@@ -1087,6 +1087,155 @@ private:
                                     convert(statement, resultType, *value))
                               : value;
     }
+    if (auto caseStatement = dyn_cast<semantic::SVCaseStatementOp>(statement)) {
+      // 12.5 evaluates the selector first, then the labels in source order,
+      // and executes only the first matching item. Qualifier reports and
+      // wildcard/pattern matching need their own staged implementation.
+      if (caseStatement.getConditionKind() !=
+              semantic::SVCaseCondition::Normal ||
+          caseStatement.getCheckKind() != semantic::SVUniquePriorityCheck::None)
+        return failure();
+      auto children = getChildren(statement);
+      auto labelCounts = caseStatement.getItemLabelCounts();
+      uint64_t itemCount = caseStatement.getItemCount();
+      uint64_t statementCount =
+          itemCount + static_cast<unsigned>(caseStatement.getHasDefault());
+      if (children.empty() || itemCount != labelCounts.size() ||
+          statementCount > children.size() - 1)
+        return failure();
+      uint64_t totalLabels = 0;
+      for (int64_t count : labelCounts) {
+        if (count <= 0 ||
+            static_cast<uint64_t>(count) > children.size() - totalLabels)
+          return failure();
+        totalLabels += count;
+      }
+      if (children.size() - 1 - statementCount != totalLabels)
+        return failure();
+      auto comparisons = ArrayRef(children).take_front(1 + totalLabels);
+      auto bodies = ArrayRef(children).take_back(statementCount);
+      uint64_t comparisonWidth = 0;
+      bool comparisonSigned = true;
+      bool comparisonFourState = false;
+      for (Operation *operand : comparisons) {
+        auto type = operand->getAttrOfType<TypeAttr>("semantic_type");
+        FailureOr<Type> normalized =
+            type ? normalizeSemanticType(type.getValue(),
+                                         getSemanticLocation(operand), function)
+                 : FailureOr<Type>(failure());
+        Type scalar = succeeded(normalized)
+                          ? sim::getPackedScalarType(*normalized)
+                          : Type{};
+        auto operandWidth = scalar ? sim::getPackedWidth(scalar) : std::nullopt;
+        if (!operandWidth || *operandWidth == 0)
+          return failure();
+        comparisonWidth = std::max(comparisonWidth, uint64_t(*operandWidth));
+        comparisonSigned &= isSignedSemanticType(type.getValue());
+        comparisonFourState |= isa<sim::LogicType>(scalar);
+      }
+      auto integralType = [&](uint64_t bitWidth, bool fourState) {
+        return TypeAttr::get(semantic::IntegralType::get(
+            builder.getContext(), bitWidth, comparisonSigned, fourState,
+            bitWidth - 1, 0,
+            fourState ? semantic::SVIntegralFlavor::Logic
+                      : semantic::SVIntegralFlavor::Bit));
+      };
+      TypeAttr comparisonType =
+          integralType(comparisonWidth, comparisonFourState);
+      auto contextValue = [&](Operation *source) -> FailureOr<Operation *> {
+        // Imported implicit conversions express the common case context.
+        // Reapply that context here: a narrow signed operand must zero-extend
+        // when any case operand is unsigned (12.5), while explicit casts
+        // retain their self-determined result.
+        if (auto conversion =
+                dyn_cast<semantic::SVConversionExpressionOp>(source)) {
+          auto implicit = source->getAttrOfType<BoolAttr>("is_implicit");
+          auto inputs = getChildren(source);
+          if ((!implicit || implicit.getValue()) && inputs.size() == 1)
+            source = inputs.front();
+        }
+        FailureOr<Operation *> value = expression(source, environment);
+        auto bitWidth = width(source);
+        auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+        FailureOr<Type> normalized =
+            type ? normalizeSemanticType(type.getValue(),
+                                         getSemanticLocation(source), function)
+                 : FailureOr<Type>(failure());
+        if (failed(value) || !bitWidth || failed(normalized))
+          return failure();
+        if (isa<semantic::SVUnbasedUnsizedIntegerLiteralOp>(source)) {
+          // '0/'1/'x/'z fill the complete case context, including an
+          // unsigned context, instead of behaving like an ordinary 1-bit
+          // based literal (5.7.1).
+          FailureOr<ParsedConstant> digit = scalarConstant(source);
+          if (failed(digit))
+            return failure();
+          char fill = digit->unknown.isZero()
+                          ? (digit->value.isZero() ? '0' : '1')
+                          : (digit->value.isZero() ? 'x' : 'z');
+          return literal(source, comparisonType,
+                         std::to_string(comparisonWidth) + "'b" +
+                             std::string(comparisonWidth, fill));
+        }
+        TypeAttr sourceContextType = integralType(
+            *bitWidth,
+            isa<sim::LogicType>(sim::getPackedScalarType(*normalized)));
+        // An unsized based literal with an unknown high bit also fills
+        // through a wider context regardless of common signedness (5.7.1).
+        if (auto fillWidth = getUnsizedUnknownFillWidth(source);
+            fillWidth && comparisonWidth > *fillWidth)
+          sourceContextType = TypeAttr::get(semantic::IntegralType::get(
+              builder.getContext(), *bitWidth, true, true, *bitWidth - 1, 0,
+              semantic::SVIntegralFlavor::Logic));
+        Operation *typed = convert(source, sourceContextType, *value);
+        return convert(source, comparisonType, typed);
+      };
+      FailureOr<Operation *> selector = contextValue(comparisons.front());
+      if (failed(selector))
+        return failure();
+      SmallVector<Operation *> labels;
+      for (Operation *label : comparisons.drop_front()) {
+        FailureOr<Operation *> value = contextValue(label);
+        if (failed(value))
+          return failure();
+        labels.push_back(*value);
+      }
+      TypeAttr predicateType = TypeAttr::get(
+          semantic::IntegralType::get(builder.getContext(), 1, false, false, 0,
+                                      0, semantic::SVIntegralFlavor::Bit));
+      Environment unmatchedValues = environment;
+      FailureOr<Operation *> unmatched =
+          caseStatement.getHasDefault()
+              ? execute({bodies.back()}, unmatchedValues, next, loop)
+              : next(unmatchedValues);
+      if (failed(unmatched))
+        return failure();
+      Operation *selection = *unmatched;
+      uint64_t labelIndex = totalLabels;
+      for (uint64_t item = itemCount; item != 0;) {
+        --item;
+        Environment values = environment;
+        FailureOr<Operation *> result =
+            execute({bodies[item]}, values, next, loop);
+        if (failed(result))
+          return failure();
+        // Nested conditionals preserve label short-circuiting, including
+        // evaluation errors in labels after an earlier match.
+        for (int64_t count = labelCounts[item]; count != 0; --count) {
+          --labelIndex;
+          Operation *matches = make(
+              statement, semantic::SVBinaryExpressionOp::getOperationName(),
+              predicateType,
+              {builder.getNamedAttr(
+                  "operator_kind",
+                  builder.getI32IntegerAttr(static_cast<int32_t>(
+                      semantic::SVBinaryOperator::CaseEquality)))},
+              {*selector, labels[labelIndex]});
+          selection = branch(statement, matches, *result, selection);
+        }
+      }
+      return evaluateBefore(statement, *selector, selection);
+    }
     if (auto conditional =
             dyn_cast<semantic::SVConditionalStatementOp>(statement)) {
       auto children = getChildren(statement);
