@@ -170,12 +170,10 @@ std::optional<uint64_t> getProvenanceSpan(Type type) {
     return getProvenanceSpan(driver.getElementType());
   if (auto layout = getStorageLayout(type))
     return layout.getSize() * 8;
-  // An event value is the 64-bit identity of its synchronization object, the
-  // same handle width every other simulation handle stores. IEEE 1800-2017
-  // 6.17 gives each event variable its own object, so an array or struct of
-  // events must reserve one whole handle per element: a narrower stride would
-  // overlap neighbouring elements once they are loaded and stored.
-  if (isa<EventType>(type))
+  // Events and covergroups store runtime identities. Aggregate geometry must
+  // reserve a whole handle for each element, including covergroup arrays
+  // whose elements are independently constructed (IEEE 1800-2023 19.3).
+  if (isa<EventType, CovergroupHandleType>(type))
     return uint64_t{simulationHandleBitWidth};
   if (isa<ProcessType>(type))
     return uint64_t{64};
@@ -272,7 +270,7 @@ std::optional<uint64_t> getProvenanceAlignment(Type type) {
     return uint64_t{32};
   if (type.isF64())
     return uint64_t{64};
-  if (isManagedHandleType(type))
+  if (isManagedHandleType(type) || isa<CovergroupHandleType>(type))
     return uint64_t{64};
   if (isa<UnpackedArrayType>(type))
     return getProvenanceAlignment(getAggregateElementType(type, 0));
