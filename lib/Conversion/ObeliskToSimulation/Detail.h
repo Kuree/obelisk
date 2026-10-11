@@ -228,6 +228,18 @@ inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
     "simulation.rand_mode_property";
 inline constexpr ::mlir::StringLiteral randomArrayModeFieldAttrName =
     "simulation.random_array_mode_field";
+inline constexpr ::mlir::StringLiteral randomStructMembersAttrName =
+    "simulation.random_struct_members";
+inline constexpr ::mlir::StringLiteral randomModeStructDepthAttrName =
+    "simulation.rand_mode_struct_depth";
+inline constexpr ::mlir::StringLiteral randomModeSelectionMaskAttrName =
+    "simulation.rand_mode_selection_mask";
+inline constexpr ::mlir::StringLiteral randomModeAncestorMaskAttrName =
+    "simulation.rand_mode_ancestor_mask";
+inline constexpr ::mlir::StringLiteral randomModeFamilyMaskAttrName =
+    "simulation.rand_mode_family_mask";
+inline constexpr ::mlir::StringLiteral randomModeStructElementFieldsAttrName =
+    "simulation.rand_mode_struct_element_fields";
 inline constexpr ::mlir::StringLiteral randomArrayElementWidthAttrName =
     "simulation.random_array_element_width";
 inline constexpr ::mlir::StringLiteral randomModeArrayFieldAttrName =

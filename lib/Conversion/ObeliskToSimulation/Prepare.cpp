@@ -2604,6 +2604,60 @@ void ObeliskSimPreparePass::runOnOperation() {
                                          std::move(positionPath)};
     }
 
+  for (semantic::SVClassTypeOp classType : classSources)
+    for (Operation *child : getChildren(classType)) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
+      if (!property ||
+          property.getLifetime() != semantic::SVVariableLifetime::Static)
+        continue;
+      auto members =
+          property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName);
+      if (!members)
+        continue;
+      auto source = descriptors.find(getHierarchyName(property));
+      if (source == descriptors.end() ||
+          source->second.kind != DescriptorInfo::Kind::Storage) {
+        emitError(getSemanticLocation(property))
+            << "static random structure has no class-wide storage descriptor";
+        return abort();
+      }
+      uint64_t scopeId = source->second.scopeId;
+      SmallVector<Attribute> updated;
+      for (auto [index, attribute] : llvm::enumerate(members)) {
+        auto member = cast<DictionaryAttr>(attribute);
+        NamedAttrList attributes(member);
+        if (member.getAs<BoolAttr>("is_randc").getValue()) {
+          if (nextStorageId > UINT64_MAX - 2) {
+            emitError(getSemanticLocation(property))
+                << "static structure member cyclic state exceeds the storage "
+                   "descriptor space";
+            return abort();
+          }
+          auto addState = [&](StringRef suffix) -> StringAttr {
+            std::string path = (llvm::Twine(getHierarchyName(property)) +
+                                ".$rand_member_" + llvm::Twine(index) + suffix)
+                                   .str();
+            uint64_t id = nextStorageId++;
+            descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId,
+                                 i64, sim::NetResolutionKind::Wire};
+            descriptors[path].rootType = i64;
+            sim::SimStorageDeclOp::create(
+                builder, getSemanticLocation(property), id, scopeId, i64,
+                sim::Lifetime::Design, builder.getStringAttr(path),
+                builder.getStringAttr("__obelisk_static_member_randc_state"),
+                schedule::ComputeObservabilityKindAttr{},
+                sim::VPITypeSemanticsAttr{});
+            return builder.getStringAttr(path);
+          };
+          attributes.set("randc_key_path", addState("_key"));
+          attributes.set("randc_position_path", addState("_position"));
+        }
+        updated.push_back(attributes.getDictionary(context));
+      }
+      property->setAttr(randomStructMembersAttrName,
+                        builder.getArrayAttr(updated));
+    }
+
   FailureOr<ContinuousDriverMap> preparedNetTopology =
       materializeNetTopology(sourceUnits, portConnections, semanticSymbols,
                              descriptors, *scopes, builder);
@@ -5468,6 +5522,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       IntegerAttr randomModeStorage;
       SmallVector<RandomSubdomain> domains;
       SmallVector<RandomObjectPathElement> nestedObjectPath;
+      DenseI64ArrayAttr storagePath;
+      Type storageType;
+      uint64_t parentModeMask = 0;
+      DictionaryAttr structMember;
+      uint64_t staticModeMask = UINT64_MAX;
     };
     struct RandomContainerProperty {
       Operation *source;
@@ -5588,8 +5647,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (auto property =
                 dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
           unsigned modeIndex = randomPropertyIndex;
-          if (property.getRandMode() != semantic::SVRandMode::None)
+          auto structMembers =
+              property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName);
+          if (property.getRandMode() != semantic::SVRandMode::None) {
             ++randomPropertyIndex;
+            if (structMembers)
+              randomPropertyIndex += structMembers.size();
+          }
           bool isStatic =
               property.getLifetime() == semantic::SVVariableLifetime::Static;
           if (explicitPropertyList
@@ -5617,6 +5681,83 @@ void ObeliskSimPreparePass::runOnOperation() {
             referencePath = builder.getStringAttr(path);
           } else {
             field = classFieldSymbols.lookup(property);
+          }
+          if (structMembers) {
+            if (modeIndex >= 64 || structMembers.size() >= 64) {
+              emitError(getSemanticLocation(property))
+                  << "random structure members exceed the 64-bit rand_mode "
+                     "inventory";
+              invalid = true;
+              continue;
+            }
+            IntegerAttr modeStorage;
+            if (isStatic &&
+                property.getRandMode() != semantic::SVRandMode::None)
+              modeStorage = property->getAttrOfType<IntegerAttr>(
+                  staticRandomModeStorageAttrName);
+            for (auto [index, attribute] : llvm::enumerate(structMembers)) {
+              auto member = cast<DictionaryAttr>(attribute);
+              Type memberType = member.getAs<TypeAttr>("type").getValue();
+              Type semanticType =
+                  member.getAs<TypeAttr>("semantic_type").getValue();
+              auto width = getIntegralRandomWidth(memberType);
+              bool randc = member.getAs<BoolAttr>("is_randc").getValue();
+              unsigned memberMode =
+                  member.getAs<IntegerAttr>("mode_index").getInt();
+              if (!width || *width == 0 || memberMode >= 64 ||
+                  (randc &&
+                   (!sim::getPackedWidth(memberType) || *width > 32))) {
+                emitError(getSemanticLocation(property))
+                    << "random structure members currently require fixed "
+                       "integral values or rand arrays; randc members require "
+                       "packed values no wider than 32 bits";
+                invalid = true;
+                continue;
+              }
+              SmallVector<RandomSubdomain> domains;
+              if (failed(
+                      collectRandomSubdomains(semanticType, 0, domains,
+                                              getSemanticLocation(property)))) {
+                invalid = true;
+                continue;
+              }
+              auto key = member.getAs<FlatSymbolRefAttr>("randc_key_field");
+              auto position =
+                  member.getAs<FlatSymbolRefAttr>("randc_position_field");
+              properties.push_back(
+                  {property,
+                   field,
+                   referencePath,
+                   memberType,
+                   *width,
+                   memberMode,
+                   false,
+                   {},
+                   0,
+                   false,
+                   {},
+                   {},
+                   {},
+                   0,
+                   isSignedSemanticType(semanticType),
+                   randc,
+                   key,
+                   position,
+                   member.getAs<StringAttr>("randc_key_path"),
+                   member.getAs<StringAttr>("randc_position_path"),
+                   modeStorage,
+                   std::move(domains),
+                   {},
+                   member.getAs<DenseI64ArrayAttr>("path"),
+                   *type,
+                   isStatic ||
+                           property.getRandMode() == semantic::SVRandMode::None
+                       ? 0
+                       : uint64_t{1} << modeIndex,
+                   member,
+                   isStatic ? (uint64_t{1} << (index + 1)) | 1 : UINT64_MAX});
+            }
+            continue;
           }
           if (isa<sim::DynamicArrayType, sim::QueueType>(*type)) {
             Type elementType =
@@ -6824,7 +6965,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties))
-      randomIndices[property.source] = index;
+      if (!property.storagePath)
+        randomIndices[property.source] = index;
 
     // A declaration template is an exact replacement for the class-owned
     // constraint roots only when this invocation's active object graph is the
@@ -6843,7 +6985,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         recursiveAliasGuards.empty() &&
         llvm::all_of(properties, [](const RandomProperty &property) {
           return property.field && !property.referencePath &&
-                 !property.isContainerSize && !property.nestedObjectField;
+                 !property.isContainerSize && !property.nestedObjectField &&
+                 !property.storagePath;
         });
     if (templateEligible) {
       call->setAttr(randomizeConstraintTemplateAttrName, constraintTemplate);
@@ -6915,7 +7058,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto getRandomPropertyIndex =
         [&](Operation *source) -> std::optional<unsigned> {
       for (auto [index, property] : llvm::enumerate(properties)) {
-        if (property.source != source)
+        if (property.source != source || property.storagePath)
           continue;
         if (randomValueOwner) {
           if (property.nestedObjectField == randomValueOwner->field &&
@@ -6932,11 +7075,74 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<uint64_t> randomPropertyWidths;
     for (const RandomProperty &property : properties)
       randomPropertyWidths.push_back(property.width);
+    // An unpacked structure contributes the leaves explicitly declared rand
+    // or randc, rather than one packed solver variable for the entire value.
+    // Ordinary members, including nonintegral members, remain state values.
+    std::function<Operation *(Operation *, SmallVectorImpl<int64_t> &)>
+        getStructureStoragePath =
+            [&](Operation *expression,
+                SmallVectorImpl<int64_t> &path) -> Operation * {
+      if (isa<semantic::SVMemberAccessExpressionOp>(expression)) {
+        auto operands = getChildren(expression);
+        auto sourceType =
+            operands.size() == 1
+                ? operands.front()->getAttrOfType<TypeAttr>("semantic_type")
+                : TypeAttr{};
+        auto structure =
+            sourceType
+                ? dyn_cast<semantic::SourceAggregateType>(sourceType.getValue())
+                : semantic::SourceAggregateType{};
+        if (structure && !structure.getIsPacked() && !structure.getIsUnion()) {
+          auto ordinal =
+              expression->getAttrOfType<IntegerAttr>("field_ordinal");
+          if (!ordinal || ordinal.getValue().isNegative() ||
+              ordinal.getValue().getActiveBits() > 31)
+            return nullptr;
+          Operation *source = getStructureStoragePath(operands.front(), path);
+          if (!source)
+            return nullptr;
+          path.push_back(ordinal.getInt());
+          return source;
+        }
+      }
+      auto reference =
+          expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto symbol = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+      return symbol != semanticSymbols.end() &&
+                     isa<semantic::SVClassPropertySymbolOp>(symbol->second)
+                 ? symbol->second
+                 : nullptr;
+    };
+    auto getStructureMemberIndex =
+        [&](Operation *expression) -> std::optional<unsigned> {
+      SmallVector<int64_t> path;
+      Operation *source = getStructureStoragePath(expression, path);
+      if (!source || path.empty())
+        return std::nullopt;
+      for (auto [index, property] : llvm::enumerate(properties)) {
+        if (property.source != source || !property.storagePath ||
+            property.storagePath.asArrayRef() != ArrayRef<int64_t>(path))
+          continue;
+        if (randomValueOwner) {
+          if (property.nestedObjectField == randomValueOwner->field &&
+              objectPathsEqual(property.nestedObjectPath,
+                               randomValueOwner->nestedObjectPath))
+            return index;
+        } else if (!property.nestedObjectField) {
+          return index;
+        }
+      }
+      return std::nullopt;
+    };
     auto getRandomValuePath = [&](Operation *expression)
         -> FailureOr<std::optional<RandomConstraintPath>> {
       return obelisk::simlowering::getRandomConstraintPath(
           expression, randomPropertyWidths,
           [&](Operation *value) -> std::optional<unsigned> {
+            if (auto index = getStructureMemberIndex(value))
+              return index;
             auto reference =
                 value->getAttrOfType<SymbolRefAttr>("referenced_symbol");
             auto symbol =
@@ -7262,6 +7468,38 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (property.randomModeStorage)
         attributes.push_back(builder.getNamedAttr(
             randomPropertyModeStorageAttrName, property.randomModeStorage));
+      if (property.storagePath) {
+        attributes.push_back(
+            builder.getNamedAttr("storage_path", property.storagePath));
+        attributes.push_back(builder.getNamedAttr(
+            "storage_type", TypeAttr::get(property.storageType)));
+        attributes.push_back(builder.getNamedAttr(
+            "parent_mode_mask",
+            builder.getIntegerAttr(builder.getI64Type(),
+                                   APInt(64, property.parentModeMask))));
+        attributes.push_back(builder.getNamedAttr(
+            "static_mode_mask",
+            builder.getIntegerAttr(builder.getI64Type(),
+                                   APInt(64, property.staticModeMask))));
+        if (auto bitmap = property.structMember.getAs<FlatSymbolRefAttr>(
+                "element_mode_field")) {
+          attributes.push_back(
+              builder.getNamedAttr("element_mode_field", bitmap));
+          attributes.push_back(builder.getNamedAttr(
+              "element_width",
+              builder.getI32IntegerAttr(
+                  getFixedRandomArrayLayout(property.type)->elementWidth)));
+        }
+        if (auto storage = property.structMember.getAs<IntegerAttr>(
+                "element_mode_storage")) {
+          attributes.push_back(
+              builder.getNamedAttr("element_mode_storage", storage));
+          attributes.push_back(builder.getNamedAttr(
+              "element_width",
+              builder.getI32IntegerAttr(
+                  getFixedRandomArrayLayout(property.type)->elementWidth)));
+        }
+      }
       if (auto bitmap = property.source->getAttrOfType<FlatSymbolRefAttr>(
               randomArrayModeFieldAttrName)) {
         if (auto layout = getFixedRandomArrayLayout(property.type)) {
@@ -7599,6 +7837,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             nested->setAttr("simulation.constant_value", constant);
       });
       constraint->walk([&](Operation *nested) {
+        if (!nested->hasAttr(randomFunctionStateAttrName))
+          if (auto index = getStructureMemberIndex(nested))
+            nested->setAttr(randomVariableAttrName,
+                            builder.getI32IntegerAttr(*index));
         if (!isa<semantic::SVMemberAccessExpressionOp,
                  semantic::SVElementSelectExpressionOp,
                  semantic::SVRangeSelectExpressionOp>(nested))
@@ -7699,6 +7941,27 @@ void ObeliskSimPreparePass::runOnOperation() {
                          : builder.getNamedAttr("storage", elementStorage));
               elementFields.push_back(builder.getDictionaryAttr(fields));
             }
+            if (auto members = property->getAttrOfType<ArrayAttr>(
+                    randomStructMembersAttrName))
+              for (Attribute attribute : members) {
+                auto member = cast<DictionaryAttr>(attribute);
+                auto memberLayout = getFixedRandomArrayLayout(
+                    member.getAs<TypeAttr>("type").getValue());
+                auto memberBitmap =
+                    member.getAs<FlatSymbolRefAttr>("element_mode_field");
+                auto memberStorage =
+                    member.getAs<IntegerAttr>("element_mode_storage");
+                if (!memberLayout || (!memberBitmap && !memberStorage))
+                  continue;
+                elementFields.push_back(builder.getDictionaryAttr({
+                    builder.getNamedAttr(
+                        "width",
+                        builder.getI32IntegerAttr(memberLayout->elementCount)),
+                    memberBitmap
+                        ? builder.getNamedAttr("field", memberBitmap)
+                        : builder.getNamedAttr("storage", memberStorage),
+                }));
+              }
             if (property.getLifetime() != semantic::SVVariableLifetime::Static)
               continue;
             auto storage = property->getAttrOfType<IntegerAttr>(
@@ -7762,6 +8025,30 @@ void ObeliskSimPreparePass::runOnOperation() {
       propertyExpression = operands.front();
       ++selectionCount;
     }
+    SmallVector<int64_t> structurePath;
+    while (isa<semantic::SVMemberAccessExpressionOp>(propertyExpression)) {
+      auto operands = getChildren(propertyExpression);
+      auto type =
+          operands.size() == 1
+              ? operands.front()->getAttrOfType<TypeAttr>("semantic_type")
+              : TypeAttr{};
+      auto structure =
+          type ? dyn_cast<semantic::SourceAggregateType>(type.getValue())
+               : semantic::SourceAggregateType{};
+      if (!structure || structure.getIsPacked() || structure.getIsUnion())
+        break;
+      auto ordinal =
+          propertyExpression->getAttrOfType<IntegerAttr>("field_ordinal");
+      if (!ordinal || ordinal.getValue().isNegative() ||
+          ordinal.getValue().getActiveBits() > 31) {
+        emitError(getSemanticLocation(call))
+            << "structure rand_mode member path is malformed";
+        invalid = true;
+        return true;
+      }
+      structurePath.insert(structurePath.begin(), ordinal.getInt());
+      propertyExpression = operands.front();
+    }
     auto member =
         dyn_cast<semantic::SVMemberAccessExpressionOp>(propertyExpression);
     auto named =
@@ -7808,6 +8095,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           break;
         }
         ++propertyIndex;
+        if (auto members = candidate->getAttrOfType<ArrayAttr>(
+                randomStructMembersAttrName))
+          propertyIndex += members.size();
       }
       if (found)
         break;
@@ -7820,6 +8110,88 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     call->setAttr(randomModeAttrName, builder.getUnitAttr());
     FailureOr<Type> propertyType = getNormalizedSemanticType(property);
+    FlatSymbolRefAttr selectedBitmap;
+    IntegerAttr selectedStorage;
+    if (auto members =
+            property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName)) {
+      bool isStatic =
+          property.getLifetime() == semantic::SVVariableLifetime::Static;
+      uint64_t rootBit = uint64_t{1} << (isStatic ? 0 : propertyIndex);
+      uint64_t familyMask = 0;
+      uint64_t selectionMask = structurePath.empty() ? rootBit : 0;
+      SmallVector<Attribute> elementFields;
+      for (auto [index, attribute] : llvm::enumerate(members)) {
+        auto member = cast<DictionaryAttr>(attribute);
+        uint64_t modeIndex =
+            isStatic ? index + 1
+                     : member.getAs<IntegerAttr>("mode_index").getInt();
+        if (modeIndex >= 64) {
+          emitError(getSemanticLocation(call))
+              << "structure rand_mode exceeds its 64-bit mode inventory";
+          invalid = true;
+          return true;
+        }
+        uint64_t bit = uint64_t{1} << modeIndex;
+        familyMask |= bit;
+        auto path = member.getAs<DenseI64ArrayAttr>("path").asArrayRef();
+        if (structurePath.size() > path.size() ||
+            !llvm::equal(ArrayRef<int64_t>(structurePath),
+                         path.take_front(structurePath.size())))
+          continue;
+        selectionMask |= bit;
+        auto bitmap = member.getAs<FlatSymbolRefAttr>("element_mode_field");
+        auto storage = member.getAs<IntegerAttr>("element_mode_storage");
+        Type type = member.getAs<TypeAttr>("type").getValue();
+        if (path.size() == structurePath.size()) {
+          propertyType = type;
+          selectedBitmap = bitmap;
+          selectedStorage = storage;
+        }
+        if (!selectionCount)
+          if (auto layout = getFixedRandomArrayLayout(type);
+              layout && (bitmap || storage))
+            elementFields.push_back(builder.getDictionaryAttr({
+                builder.getNamedAttr(
+                    "width", builder.getI32IntegerAttr(layout->elementCount)),
+                bitmap ? builder.getNamedAttr("field", bitmap)
+                       : builder.getNamedAttr("storage", storage),
+            }));
+      }
+      FailureOr<Type> selectedType =
+          getNormalizedSemanticType(callChildren.front());
+      if ((!structurePath.empty() && !selectionMask) ||
+          (callChildren.size() == 1 && succeeded(selectedType) &&
+           isa<sim::UnpackedStructType, sim::UnpackedArrayType>(
+               *selectedType))) {
+        emitError(getSemanticLocation(call))
+            << (!selectionMask
+                    ? "rand_mode selects a structure member that is not "
+                      "declared rand or randc"
+                    : "rand_mode() queries require a singular random member");
+        invalid = true;
+        return true;
+      }
+      call->setAttr(randomModeStructDepthAttrName,
+                    builder.getI32IntegerAttr(structurePath.size()));
+      call->setAttr(randomModeSelectionMaskAttrName,
+                    builder.getIntegerAttr(builder.getI64Type(),
+                                           APInt(64, selectionMask)));
+      call->setAttr(randomModeAncestorMaskAttrName,
+                    builder.getIntegerAttr(
+                        builder.getI64Type(),
+                        APInt(64, structurePath.empty() ? 0 : rootBit)));
+      call->setAttr(
+          randomModeFamilyMaskAttrName,
+          builder.getIntegerAttr(builder.getI64Type(), APInt(64, familyMask)));
+      if (!elementFields.empty())
+        call->setAttr(randomModeStructElementFieldsAttrName,
+                      builder.getArrayAttr(elementFields));
+    } else if (!structurePath.empty()) {
+      emitError(getSemanticLocation(call))
+          << "rand_mode structure has no qualified member inventory";
+      invalid = true;
+      return true;
+    }
     auto arrayLayout = succeeded(propertyType)
                            ? getFixedRandomArrayLayout(*propertyType)
                            : std::nullopt;
@@ -7833,10 +8205,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
-      auto bitmap = property->getAttrOfType<FlatSymbolRefAttr>(
-          randomArrayModeFieldAttrName);
-      auto storage = property->getAttrOfType<IntegerAttr>(
-          staticRandomArrayModeStorageAttrName);
+      auto bitmap = selectedBitmap ? selectedBitmap
+                                   : property->getAttrOfType<FlatSymbolRefAttr>(
+                                         randomArrayModeFieldAttrName);
+      auto storage = selectedStorage
+                         ? selectedStorage
+                         : property->getAttrOfType<IntegerAttr>(
+                               staticRandomArrayModeStorageAttrName);
       if (!bitmap && !storage) {
         emitError(getSemanticLocation(call))
             << "array rand_mode has no integral element mode inventory";

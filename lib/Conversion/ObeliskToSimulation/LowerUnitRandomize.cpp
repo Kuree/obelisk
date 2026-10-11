@@ -609,10 +609,41 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value disabledElements{};
     Value originalScalar{};
     Value currentValue{};
+    DenseI64ArrayAttr storagePath{};
+    Type storageType{};
+    uint64_t parentModeMask = 0;
+    uint64_t staticModeMask = UINT64_MAX;
   };
   SmallVector<Property, 0> planned;
   uint64_t plannedWidth = 0;
   Type i64 = builder.getI64Type();
+  auto captureProperty = [&](const Property &property) {
+    CapturedLValue destination;
+    destination.semanticNode = op;
+    destination.type =
+        property.storagePath ? property.storageType : property.type;
+    destination.reference = property.reference;
+    if (property.storagePath)
+      for (int64_t ordinal : property.storagePath.asArrayRef()) {
+        CapturedLValue member;
+        member.kind = CapturedLValue::Kind::AggregateElement;
+        member.semanticNode = op;
+        member.type = sim::getAggregateElementType(destination.type, ordinal);
+        member.ordinal = ordinal;
+        member.children.push_back(std::move(destination));
+        destination = std::move(member);
+      }
+    return destination;
+  };
+  auto loadProperty = [&](const Property &property) -> FailureOr<Value> {
+    return loadCapturedLValue(captureProperty(property), location);
+  };
+  auto storeProperty = [&](const Property &property,
+                           Value value) -> LogicalResult {
+    auto destination = captureProperty(property);
+    return writeCapturedLValue(destination, value, property.isSigned, false,
+                               location);
+  };
   auto parseNestedObjectPath =
       [&](ArrayAttr pathAttr,
           SmallVectorImpl<ObjectPathElement> &path) -> LogicalResult {
@@ -749,6 +780,37 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       emitError(location) << "randomize property type width is inconsistent";
       return failure();
     }
+    auto storagePath = property.getAs<DenseI64ArrayAttr>("storage_path");
+    auto storageTypeAttr = property.getAs<TypeAttr>("storage_type");
+    auto parentModeMaskAttr = property.getAs<IntegerAttr>("parent_mode_mask");
+    auto staticModeMaskAttr = property.getAs<IntegerAttr>("static_mode_mask");
+    if (storagePath || storageTypeAttr || parentModeMaskAttr ||
+        staticModeMaskAttr) {
+      if (!storagePath || storagePath.empty() || !storageTypeAttr ||
+          !parentModeMaskAttr || !staticModeMaskAttr ||
+          parentModeMaskAttr.getValue().getBitWidth() != 64 ||
+          staticModeMaskAttr.getValue().getBitWidth() != 64 ||
+          isContainerSize || isNestedObject) {
+        emitError(location) << "random structure member storage is malformed";
+        return failure();
+      }
+      Type selected = storageTypeAttr.getValue();
+      for (int64_t ordinal : storagePath.asArrayRef()) {
+        auto structure = dyn_cast<sim::UnpackedStructType>(selected);
+        if (!structure || ordinal < 0 ||
+            static_cast<uint64_t>(ordinal) >=
+                sim::getAggregateNumElements(selected)) {
+          emitError(location) << "random structure member path is malformed";
+          return failure();
+        }
+        selected = sim::getAggregateElementType(selected, ordinal);
+      }
+      if (selected != type) {
+        emitError(location)
+            << "random structure member path type is inconsistent";
+        return failure();
+      }
+    }
     Value reference;
     Value nestedObjectReference;
     FlatSymbolRefAttr nestedModeField;
@@ -778,15 +840,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
     } else if (field) {
-      Type referencedType =
-          isContainerSize ? containerTypeAttr.getValue() : type;
+      Type referencedType = isContainerSize ? containerTypeAttr.getValue()
+                            : storagePath   ? storageTypeAttr.getValue()
+                                            : type;
       Type referenceType = sim::ManagedRefType::get(
           function.getContext(), referencedType, objectType.getClassName());
       reference = sim::SimClassFieldRefOp::create(
           builder, location, referenceType, receiver, field);
     } else {
       reference = lvalues.lookup(referencePath.getValue());
-      if (!reference || getReferenceElementType(reference) != type) {
+      if (!reference || getReferenceElementType(reference) !=
+                            (storagePath ? storageTypeAttr.getValue() : type)) {
         emitError(location)
             << "static random property has no typed unit-local reference: "
             << referencePath.getValue();
@@ -1025,6 +1089,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
          nestedObjectField,
          {}});
     planned.back().elementModeReference = elementModeReference;
+    planned.back().storagePath = storagePath;
+    planned.back().storageType =
+        storageTypeAttr ? storageTypeAttr.getValue() : Type{};
+    planned.back().parentModeMask =
+        parentModeMaskAttr ? parentModeMaskAttr.getValue().getZExtValue() : 0;
+    planned.back().staticModeMask =
+        staticModeMaskAttr ? staticModeMaskAttr.getValue().getZExtValue()
+                           : UINT64_MAX;
     planned.back().elementWidth =
         elementWidth
             ? static_cast<unsigned>(elementWidth.getValue().getZExtValue())
@@ -1920,9 +1992,22 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value context = function.getBody().front().getArgument(0);
     Type referenceType = sim::RefType::get(function.getContext(), i64);
     for (const Property &property : planned) {
-      if (!property.randomModeStorage)
-        continue;
       uint64_t bit = uint64_t{1} << property.modeIndex;
+      if (!property.randomModeStorage) {
+        if (property.parentModeMask) {
+          Value parentDisabled = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(builder, location, mode,
+                                    constant64(property.parentModeMask)),
+              constant64(0));
+          Value selected =
+              arith::SelectOp::create(builder, location, parentDisabled,
+                                      constant64(bit), constant64(0));
+          relevantMode =
+              arith::OrIOp::create(builder, location, relevantMode, selected);
+        }
+        continue;
+      }
       relevantMode = arith::AndIOp::create(builder, location, relevantMode,
                                            constant64(~bit));
       Value reference = sim::SimContextStorageOp::create(
@@ -1930,9 +2015,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           builder.getI64IntegerAttr(*property.randomModeStorage));
       Value staticMode =
           sim::SimRefLoadOp::create(builder, location, i64, reference);
-      Value disabled =
-          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
-                                staticMode, constant64(0));
+      Value disabled = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(builder, location, staticMode,
+                                constant64(property.staticModeMask)),
+          constant64(0));
       Value selected = arith::SelectOp::create(builder, location, disabled,
                                                constant64(bit), constant64(0));
       relevantMode =
@@ -2288,7 +2375,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return mergeBlock->getArgument(0);
       }
       if (!property.isContainerSize)
-        return loadReference(property.reference, location);
+        return loadProperty(property);
       FailureOr<Value> container = loadReference(property.reference, location);
       if (failed(container))
         return failure();
@@ -8656,8 +8743,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         materializeCandidates(commitCandidate);
     if (failed(candidates))
       return failure();
-    if (failed(storeReference(property.reference, candidates->front(),
-                              location)) ||
+    if (failed(storeProperty(property, candidates->front())) ||
         failed(
             storeReference(property.randcKeyReference, commitKey, location)) ||
         failed(storeReference(property.randcPositionReference, commitPosition,
@@ -9003,7 +9089,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           *oldContainer, *size);
       sim::SimManagedStoreOp::create(builder, location, resized,
                                      property.reference);
-    } else if (failed(storeReference(property.reference, candidate, location)))
+    } else if (failed(storeProperty(property, candidate)))
       return failure();
     if (property.isRandC) {
       if (failed(storeReference(property.randcKeyReference,

@@ -764,8 +764,21 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     }
     for (Operation *child : getChildren(classType))
       if (auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child))
-        if (property.getRandMode() != semantic::SVRandMode::None)
+        if (property.getRandMode() != semantic::SVRandMode::None) {
           ++count;
+          auto sourceType = property.getSemanticType();
+          auto structure =
+              sourceType ? dyn_cast<semantic::SourceAggregateType>(*sourceType)
+                         : semantic::SourceAggregateType{};
+          if (structure && !structure.getIsPacked() &&
+              !structure.getIsUnion()) {
+            auto members = collectQualifiedRandomStructMembers(
+                structure, getSemanticLocation(property), property);
+            if (failed(members))
+              return failure();
+            count += members->size();
+          }
+        }
     countingRandomProperties.erase(classType);
     randomPropertyCounts[classType] = count;
     return count;
@@ -921,6 +934,28 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       }
       bool isStatic =
           property.getLifetime() == semantic::SVVariableLifetime::Static;
+      SmallVector<QualifiedRandomMember> structMembers;
+      auto propertySemanticType = property.getSemanticType();
+      auto sourceStructure =
+          propertySemanticType
+              ? dyn_cast<semantic::SourceAggregateType>(*propertySemanticType)
+              : semantic::SourceAggregateType{};
+      if (sourceStructure && !sourceStructure.getIsPacked() &&
+          !sourceStructure.getIsUnion()) {
+        if (property.getRandMode() == semantic::SVRandMode::RandC) {
+          emitError(getSemanticLocation(property))
+              << "unpacked structures shall not be randc";
+          invalid = true;
+          continue;
+        }
+        auto members = collectQualifiedRandomStructMembers(
+            sourceStructure, getSemanticLocation(property), property);
+        if (failed(members)) {
+          invalid = true;
+          continue;
+        }
+        structMembers = std::move(*members);
+      }
       std::string fieldName =
           (classSymbol.getValue() + "_field_" + llvm::Twine(ordinal)).str();
       FlatSymbolRefAttr fieldSymbol =
@@ -1013,6 +1048,55 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           field->setAttr(randomArrayElementWidthAttrName,
                          builder.getI32IntegerAttr(layout->elementWidth));
         }
+      if (sourceStructure && !sourceStructure.getIsPacked() &&
+          !sourceStructure.getIsUnion()) {
+        SmallVector<Attribute> members;
+        for (auto [index, member] : llvm::enumerate(structMembers)) {
+          SmallVector<NamedAttribute> attributes{
+              builder.getNamedAttr("path",
+                                   builder.getDenseI64ArrayAttr(member.path)),
+              builder.getNamedAttr("semantic_type",
+                                   TypeAttr::get(member.semanticType)),
+              builder.getNamedAttr("type", TypeAttr::get(member.type)),
+              builder.getNamedAttr("is_randc",
+                                   builder.getBoolAttr(member.isRandC)),
+              builder.getNamedAttr(
+                  "mode_index",
+                  builder.getI64IntegerAttr(property.getRandMode() ==
+                                                    semantic::SVRandMode::None
+                                                ? 0
+                                                : randomPropertyIndex++)),
+          };
+          auto addField = [&](StringRef suffix, Type fieldType) {
+            std::string name =
+                fieldName + "_member_" + std::to_string(index) + suffix.str();
+            auto symbol = FlatSymbolRefAttr::get(context, name);
+            sim::SimClassFieldDeclOp::create(
+                builder, getSemanticLocation(property), name, classSymbol,
+                fieldType, ordinal++, IntegerAttr{}, /*isStatic=*/false,
+                /*isWeak=*/false,
+                builder.getStringAttr("__obelisk_random_member_state"));
+            return symbol;
+          };
+          if (!isStatic && member.isRandC) {
+            attributes.push_back(builder.getNamedAttr(
+                "randc_key_field",
+                addField("_randc_key", builder.getI64Type())));
+            attributes.push_back(builder.getNamedAttr(
+                "randc_position_field",
+                addField("_randc_position", builder.getI64Type())));
+          }
+          if (!isStatic && !member.isRandC)
+            if (auto layout = getFixedRandomArrayLayout(member.type))
+              attributes.push_back(builder.getNamedAttr(
+                  "element_mode_field",
+                  addField("_element_modes",
+                           builder.getIntegerType(layout->elementCount))));
+          members.push_back(builder.getDictionaryAttr(attributes));
+        }
+        property->setAttr(randomStructMembersAttrName,
+                          builder.getArrayAttr(members));
+      }
     }
     // Every inheritance tree owns exactly one inline PCG stream.
     if (!base && !classType.getIsInterface()) {

@@ -18,6 +18,19 @@ arrays of enums retain enumerator membership. Packed tagged-union random
 declarations are illegal under 18.4; legacy synthetic IR domain tests do not
 make them supported source declarations.
 
+Unpacked structure properties contribute only their explicitly declared `rand`
+and `randc` members. Fixed integral leaves, fixed integral arrays, enum domains,
+and nested qualified structures use the same Z3 relation as other properties.
+Ordinary members retain their values, including strings and four-state symbols.
+Each packed `randc` member through 32 bits has its own persistent cycle; static
+members share
+their cycle and modes across instances. Whole-structure, member, nested-structure,
+and array-element mode setters preserve other modes. An explicit property list
+temporarily activates the selected structure's random members. Unpacked
+structure `randc` declarations and nonsingular mode queries are diagnosed.
+Dynamic container members, random object members, real members, member `randc`
+arrays, and structures in recursively randomized objects remain open.
+
 Fixed unpacked arrays of integral elements use their logical element bitstream
 for class and scope randomization, including multidimensional arrays and
 ascending or negative bounds. Explicit import and export preserve declaration

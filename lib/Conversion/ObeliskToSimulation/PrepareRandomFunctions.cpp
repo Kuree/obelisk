@@ -41,6 +41,59 @@ std::optional<FixedRandomArrayLayout> getFixedRandomArrayLayout(Type type) {
   return FixedRandomArrayLayout{*elementWidth, *width / *elementWidth};
 }
 
+FailureOr<SmallVector<QualifiedRandomMember>>
+collectQualifiedRandomStructMembers(Type type, Location location,
+                                    Operation *scope) {
+  SmallVector<QualifiedRandomMember> members;
+  SmallVector<int64_t> path;
+  std::function<LogicalResult(Type)> visit = [&](Type source) -> LogicalResult {
+    auto structure = dyn_cast<semantic::SourceAggregateType>(source);
+    if (!structure || structure.getIsPacked() || structure.getIsUnion())
+      return failure();
+    for (auto [ordinal, attribute] : llvm::enumerate(structure.getFields())) {
+      auto field = dyn_cast<DictionaryAttr>(attribute);
+      auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+      auto mode = field ? field.getAs<IntegerAttr>("rand_mode") : IntegerAttr{};
+      if (!fieldType || (field.contains("rand_mode") && !mode) ||
+          (mode &&
+           (mode.getValue().isNegative() ||
+            mode.getValue().getActiveBits() > 2 || mode.getInt() > 2))) {
+        emitError(location) << "unpacked random structure has malformed member "
+                               "qualifier metadata";
+        return failure();
+      }
+      if (!mode || mode.getInt() == 0)
+        continue;
+      bool randc = mode.getInt() == 2;
+      path.push_back(ordinal);
+      auto nested =
+          dyn_cast<semantic::SourceAggregateType>(fieldType.getValue());
+      if (nested && !nested.getIsPacked()) {
+        if (nested.getIsUnion() || randc) {
+          emitError(location)
+              << (nested.getIsUnion()
+                      ? "unpacked unions shall not be random"
+                      : "unpacked structures shall not be randc");
+          return failure();
+        }
+        if (failed(visit(fieldType.getValue())))
+          return failure();
+      } else {
+        FailureOr<Type> normalized =
+            normalizeSemanticType(fieldType.getValue(), location, scope);
+        if (failed(normalized))
+          return failure();
+        members.push_back({path, fieldType.getValue(), *normalized, randc});
+      }
+      path.pop_back();
+    }
+    return success();
+  };
+  if (failed(visit(type)))
+    return failure();
+  return members;
+}
+
 FailureOr<std::optional<RandomConstraintPath>>
 getRandomConstraintPath(Operation *expression,
                         ArrayRef<uint64_t> propertyWidths,

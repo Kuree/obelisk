@@ -34,6 +34,20 @@ struct FixedRandomArrayLayout {
 std::optional<FixedRandomArrayLayout>
 getFixedRandomArrayLayout(mlir::Type type);
 
+struct QualifiedRandomMember {
+  // Declaration-order indices into the root unpacked structure.
+  llvm::SmallVector<int64_t> path;
+  mlir::Type semanticType;
+  mlir::Type type;
+  bool isRandC;
+};
+
+/// IEEE 1800-2023 18.4 randomizes only members whose declarations carry a
+/// rand/randc qualifier. Ordinary members need no integral representation.
+mlir::FailureOr<llvm::SmallVector<QualifiedRandomMember>>
+collectQualifiedRandomStructMembers(mlir::Type type, mlir::Location location,
+                                    mlir::Operation *scope);
+
 mlir::FailureOr<std::optional<RandomConstraintPath>> getRandomConstraintPath(
     mlir::Operation *expression, llvm::ArrayRef<uint64_t> propertyWidths,
     llvm::function_ref<std::optional<unsigned>(mlir::Operation *)>

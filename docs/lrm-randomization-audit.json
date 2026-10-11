@@ -205,8 +205,8 @@
         },
         {
           "feature": "Unpacked structs with member rand qualifiers",
-          "status": "missing",
-          "detail": "The executable property planner currently requires packed values or admitted dynamic containers and class handles."
+          "status": "partial",
+          "detail": "Instance and static unpacked structure properties contribute only explicitly rand/randc qualified fixed integral leaves and rand fixed integral arrays, recursively through qualified structures. Ordinary members retain strings, nested state and X/Z symbols. Packed randc leaves through 32 bits have independent persistent cycles; static cycles and modes are shared across instances. Whole-structure, leaf, nested-structure, array-element and class mode operations compose with temporary explicit property selection. Dynamic container, class-handle, real and randc-array members, and structures in recursively randomized objects remain incomplete."
         },
         {
           "feature": "Real random variables",
@@ -231,10 +231,13 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
-          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir",
+          "test/Conversion/obelisk-to-simulation-random-struct-diagnostics.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir"
+          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir"
         ]
       }
     },
@@ -1326,9 +1329,12 @@
           "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
+          "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
+          "test/Conversion/obelisk-to-simulation-random-struct-diagnostics.mlir",
           "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir",
           "test/Runtime/obelisk-to-simulation-random-array-modes-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir"
+          "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir"
         ]
       }
     },
