@@ -180,6 +180,7 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
   if(source STREQUAL "CoverageDatabase")
     list(APPEND source_dependencies
       "${_obelisk_source_dir}/lib/Coverage/CoverageFileSupport.h"
+      "${_obelisk_source_dir}/lib/Coverage/CoverageIndex.h"
       "${_obelisk_source_dir}/lib/Coverage/CoverageDatabase.cpp")
   endif()
   if(source STREQUAL "RecursiveBitstream")

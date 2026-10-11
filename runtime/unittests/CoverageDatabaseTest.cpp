@@ -1700,6 +1700,43 @@ TEST(CoverageDatabaseTest, RejectsCyclicScopeParents) {
   EXPECT_STREQ(diagnostic.field, "scope.parent_cycle");
 }
 
+TEST(CoverageDatabaseTest, LargeSparseHierarchyAndCountersRoundTrip) {
+  constexpr uint64_t count = 65536;
+  Database db;
+  db.sourceFiles.push_back({UINT64_MAX, "large.sv", {}});
+  obelisk::coverage::Run run;
+  run.uuid[0] = 1;
+  run.flags = RunContainsLine;
+  db.runs.push_back(run);
+  for (uint64_t index = 1; index <= count; ++index) {
+    const uint64_t scope = index * 9;
+    const uint64_t line = index * 17;
+    db.scopes.push_back({scope, index == 1 ? 0 : scope - 9,
+                         "scope" + std::to_string(index), 0, "dut"});
+    db.linePoints.push_back({line, UINT64_MAX, UINT64_MAX, scope, "",
+                             static_cast<uint32_t>(index), 1,
+                             static_cast<uint32_t>(index), 2, 0, 0});
+    db.counters.push_back({run.uuid, MetricKind::Line, line, 0, 0, 0, index});
+  }
+  Diagnostic diagnostic;
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image, &diagnostic), Status::Ok) << diagnostic.field;
+  Database output;
+  ASSERT_EQ(parse(image.data(), image.size(), output, {}, &diagnostic),
+            Status::Ok)
+      << diagnostic.field;
+  EXPECT_EQ(output.scopes.size(), count);
+  EXPECT_EQ(output.counters.size(), count);
+  EXPECT_EQ(output.counters.back().value, count);
+  output.linePoints.back().scope -= 1;
+  EXPECT_EQ(validate(output, &diagnostic), Status::InvalidReference);
+  EXPECT_STREQ(diagnostic.field, "line_point");
+  output.linePoints.back().scope += 1;
+  output.scopes.front().parent = output.scopes.back().id;
+  EXPECT_EQ(validate(output, &diagnostic), Status::InvalidReference);
+  EXPECT_STREQ(diagnostic.field, "scope.parent_cycle");
+}
+
 TEST(CoverageDatabaseTest, GeneratedFixedFieldDiagnosticsAreExact) {
   Database source = makeTypedDatabase();
   auto check = [&](SectionKind section, size_t fieldOffset, uint32_t value,

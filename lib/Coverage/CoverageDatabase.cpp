@@ -3,6 +3,7 @@
 #include "obelisk/Coverage/CoverageDatabase.h"
 
 #include "CoverageFileSupport.h"
+#include "CoverageIndex.h"
 
 #include <algorithm>
 #include <atomic>
@@ -14,15 +15,11 @@
 #include <fstream>
 #include <functional>
 #include <limits>
-#include <map>
 #include <new>
 #include <optional>
-#include <set>
 #include <sstream>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
-#include <unordered_set>
 
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 #define OBELISK_COVERAGE_HAS_EXCEPTIONS 1
@@ -32,6 +29,13 @@
 
 namespace obelisk::coverage {
 namespace {
+
+using detail::groupRecords;
+using detail::IndexMap;
+using detail::IndexSet;
+using detail::lookupRows;
+using detail::RecordRange;
+using detail::sortByKey;
 
 struct SectionDescriptor {
   SectionKind kind;
@@ -391,12 +395,12 @@ bool validUtf8(const std::string &text) {
 
 struct StringTable {
   std::vector<std::string> strings;
-  std::unordered_map<std::string, uint32_t> indexes;
+  IndexMap<std::string, uint32_t> indexes;
   uint32_t get(const std::string &text) const { return indexes.at(text); }
 };
 
 Status collectStrings(const Database &database, StringTable &result) {
-  std::set<std::string> unique;
+  IndexSet<std::string> unique;
   unique.insert("");
   unique.insert(database.producer);
   for (const auto &v : database.sourceFiles)
@@ -467,10 +471,10 @@ struct EncodedSection {
   uint64_t size = 0;
 };
 
-template <typename T, typename Compare>
-std::vector<T> sorted(const std::vector<T> &input, Compare compare) {
+template <typename T, typename GetKey>
+std::vector<T> sorted(const std::vector<T> &input, GetKey getKey) {
   std::vector<T> result = input;
-  std::sort(result.begin(), result.end(), compare);
+  sortByKey(result.begin(), result.end(), getKey);
   return result;
 }
 
@@ -1582,16 +1586,31 @@ template <typename Enum> bool enumBetween(Enum value, Enum first, Enum last) {
 
 template <typename T, typename GetID>
 bool uniqueNonzero(const std::vector<T> &records, GetID getID) {
-  std::unordered_set<uint64_t> ids;
+  IndexSet<uint64_t> ids;
   for (const auto &record : records)
     if (!getID(record) || !ids.insert(getID(record)).second)
       return false;
   return true;
 }
 
-template <typename T> bool hasID(const std::vector<T> &records, uint64_t id) {
-  return id != 0 && std::any_of(records.begin(), records.end(),
-                                [&](const T &v) { return v.id == id; });
+template <typename T, typename GetKey>
+auto indexRecords(const std::vector<T> &records, GetKey getKey) {
+  using Key =
+      typename detail::OwnedIndexKey<decltype(getKey(records.front()))>::type;
+  IndexMap<Key, const T *> index;
+  for (const T &row : records)
+    index.emplace(getKey(row), &row);
+  return index;
+}
+
+template <typename T> auto indexRecords(const std::vector<T> &records) {
+  return indexRecords(records, [](const T &row) { return row.id; });
+}
+
+template <typename Key, typename T>
+const T *lookupRecord(const IndexMap<Key, const T *> &index, const Key &key) {
+  auto found = index.find(key);
+  return found == index.end() ? nullptr : found->second;
 }
 
 bool isNil(const UUID &uuid) {
@@ -1654,16 +1673,14 @@ Digest sha256(const uint8_t *data, size_t size) {
 
 Digest computeSchemaFingerprint(const Database &db) {
   SHA256 h;
-  auto files = sorted(db.sourceFiles,
-                      [](const auto &a, const auto &b) { return a.id < b.id; });
+  auto files = sorted(db.sourceFiles, [](const auto &a) { return a.id; });
   for (const auto &v : files) {
     hashScalar(h, uint32_t(2));
     hashScalar(h, v.id);
     hashString(h, v.path);
     h.update(v.digest.data(), v.digest.size());
   }
-  auto scopes = sorted(
-      db.scopes, [](const auto &a, const auto &b) { return a.id < b.id; });
+  auto scopes = sorted(db.scopes, [](const auto &a) { return a.id; });
   for (const auto &v : scopes) {
     hashScalar(h, uint32_t(3));
     hashScalar(h, v.id);
@@ -1672,8 +1689,7 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.kind);
     hashString(h, v.definition);
   }
-  auto points = sorted(
-      db.linePoints, [](const auto &a, const auto &b) { return a.id < b.id; });
+  auto points = sorted(db.linePoints, [](const auto &a) { return a.id; });
   for (const auto &v : points) {
     hashScalar(h, uint32_t(4));
     hashScalar(h, v.id);
@@ -1688,9 +1704,7 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.semanticPhase);
     hashScalar(h, v.flags);
   }
-  auto objects = sorted(db.toggleObjects, [](const auto &a, const auto &b) {
-    return a.id < b.id;
-  });
+  auto objects = sorted(db.toggleObjects, [](const auto &a) { return a.id; });
   for (const auto &v : objects) {
     hashScalar(h, uint32_t(5));
     hashScalar(h, v.id);
@@ -1719,8 +1733,7 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashString(h, v.name);
     hashScalar(h, v.flags);
   }
-  auto types = sorted(db.functionalTypes,
-                      [](const auto &a, const auto &b) { return a.id < b.id; });
+  auto types = sorted(db.functionalTypes, [](const auto &a) { return a.id; });
   for (const auto &v : types) {
     hashScalar(h, uint32_t(7));
     hashScalar(h, v.id);
@@ -1730,8 +1743,7 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.languageVersion);
     hashString(h, v.hierarchy);
   }
-  auto items = sorted(db.functionalItems,
-                      [](const auto &a, const auto &b) { return a.id < b.id; });
+  auto items = sorted(db.functionalItems, [](const auto &a) { return a.id; });
   for (const auto &v : items) {
     hashScalar(h, uint32_t(8));
     hashScalar(h, v.id);
@@ -1744,8 +1756,7 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.ordinal);
     hashString(h, v.hierarchy);
   }
-  auto bins = sorted(db.functionalBins,
-                     [](const auto &a, const auto &b) { return a.id < b.id; });
+  auto bins = sorted(db.functionalBins, [](const auto &a) { return a.id; });
   for (const auto &v : bins) {
     hashScalar(h, uint32_t(9));
     hashScalar(h, v.id);
@@ -1776,8 +1787,8 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.tupleProvenanceSpan);
     hashScalar(h, v.tupleFlags);
   }
-  auto exclusions = sorted(db.exclusions, [](const auto &a, const auto &b) {
-    return std::tie(a.metric, a.entity) < std::tie(b.metric, b.entity);
+  auto exclusions = sorted(db.exclusions, [](const auto &a) {
+    return std::tie(a.metric, a.entity);
   });
   for (const auto &v : exclusions) {
     hashScalar(h, uint32_t(12));
@@ -1786,11 +1797,9 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashString(h, v.reason);
     hashScalar(h, v.flags);
   }
-  auto functionalSources =
-      sorted(db.functionalSourceRanges, [](const auto &a, const auto &b) {
-        return std::tie(a.bin, a.role, a.ordinal) <
-               std::tie(b.bin, b.role, b.ordinal);
-      });
+  auto functionalSources = sorted(db.functionalSourceRanges, [](const auto &a) {
+    return std::tie(a.bin, a.role, a.ordinal);
+  });
   for (const auto &v : functionalSources) {
     hashScalar(h, uint32_t(19));
     hashScalar(h, v.bin);
@@ -1982,24 +1991,90 @@ Digest computeSchemaFingerprint(const Database &db) {
   return h.finish();
 }
 
+using ConfigurationKey = std::pair<uint64_t, Digest>;
+
+// Views borrow rows from one immutable database. Payload spans still address
+// that database, so no rebasing or copying is needed to hash a configuration.
+struct ConfigurationView {
+  const FunctionalConfiguration *configuration = nullptr;
+  RecordRange<FunctionalConfigurationOption> functionalConfigurationOptions;
+  RecordRange<ResolvedFunctionalItem> resolvedFunctionalItems;
+  RecordRange<ResolvedFunctionalBin> resolvedFunctionalBins;
+  RecordRange<ResolvedFunctionalValueSet> resolvedFunctionalValueSets;
+  RecordRange<ResolvedFunctionalBinPlan> resolvedFunctionalBinPlans;
+  RecordRange<ResolvedFunctionalBinGroup> resolvedFunctionalBinGroups;
+  RecordRange<ResolvedTransitionAlternative> resolvedTransitionAlternatives;
+  RecordRange<ResolvedTransitionExpansionGroup>
+      resolvedTransitionExpansionGroups;
+  RecordRange<ResolvedCrossPlan> resolvedCrossPlans;
+  RecordRange<ResolvedCrossAutomaticNode> resolvedCrossAutomaticNodes;
+  RecordRange<ResolvedCrossSelectorBinding> resolvedCrossSelectorBindings;
+  RecordRange<ResolvedFunctionalTupleSet> resolvedFunctionalTupleSets;
+};
+
+struct ConfigurationIndex {
+  IndexMap<ConfigurationKey, ConfigurationView> views;
+  IndexMap<uint64_t, const FunctionalBin *> templateBins;
+  explicit ConfigurationIndex(const Database &db)
+      : templateBins(indexRecords(db.functionalBins)) {
+    for (const auto &configuration : db.functionalConfigurations)
+      views[{configuration.type, configuration.configuration}].configuration =
+          &configuration;
+    auto add = [&](const auto &rows, auto member) {
+      for (const auto &row : rows)
+        (views[{row.type, row.configuration}].*member).rows.push_back(&row);
+    };
+    add(db.functionalConfigurationOptions,
+        &ConfigurationView::functionalConfigurationOptions);
+    add(db.resolvedFunctionalItems,
+        &ConfigurationView::resolvedFunctionalItems);
+    add(db.resolvedFunctionalBins, &ConfigurationView::resolvedFunctionalBins);
+    add(db.resolvedFunctionalValueSets,
+        &ConfigurationView::resolvedFunctionalValueSets);
+    add(db.resolvedFunctionalBinPlans,
+        &ConfigurationView::resolvedFunctionalBinPlans);
+    add(db.resolvedFunctionalBinGroups,
+        &ConfigurationView::resolvedFunctionalBinGroups);
+    add(db.resolvedTransitionAlternatives,
+        &ConfigurationView::resolvedTransitionAlternatives);
+    add(db.resolvedTransitionExpansionGroups,
+        &ConfigurationView::resolvedTransitionExpansionGroups);
+    add(db.resolvedCrossPlans, &ConfigurationView::resolvedCrossPlans);
+    add(db.resolvedCrossAutomaticNodes,
+        &ConfigurationView::resolvedCrossAutomaticNodes);
+    add(db.resolvedCrossSelectorBindings,
+        &ConfigurationView::resolvedCrossSelectorBindings);
+    add(db.resolvedFunctionalTupleSets,
+        &ConfigurationView::resolvedFunctionalTupleSets);
+  }
+  const ConfigurationView &get(uint64_t type,
+                               const Digest &configuration) const {
+    auto found = views.find({type, configuration});
+    static const ConfigurationView empty;
+    return found == views.end() ? empty : found->second;
+  }
+};
+
 static Digest computeConfigurationBundleDigest(const Database &db,
+                                               const ConfigurationIndex &index,
                                                uint64_t type,
                                                const Digest &configuration,
                                                bool includeResolvedIDs) {
+  const auto &view = index.get(type, configuration);
   SHA256 h;
   static constexpr char domain[] = "obelisk.coverage.v1.configuration";
   h.update(reinterpret_cast<const uint8_t *>(domain), sizeof(domain) - 1);
   hashScalar(h, type);
-  std::map<uint64_t, const ResolvedFunctionalItem *> items;
-  std::map<uint64_t, const ResolvedFunctionalBin *> bins;
-  std::map<uint64_t, const ResolvedFunctionalValueSet *> sets;
-  for (const auto &v : db.resolvedFunctionalItems)
+  IndexMap<uint64_t, const ResolvedFunctionalItem *> items;
+  IndexMap<uint64_t, const ResolvedFunctionalBin *> bins;
+  IndexMap<uint64_t, const ResolvedFunctionalValueSet *> sets;
+  for (const auto &v : view.resolvedFunctionalItems)
     if (v.type == type && v.configuration == configuration)
       items.emplace(v.id, &v);
-  for (const auto &v : db.resolvedFunctionalBins)
+  for (const auto &v : view.resolvedFunctionalBins)
     if (v.type == type && v.configuration == configuration)
       bins.emplace(v.id, &v);
-  for (const auto &v : db.resolvedFunctionalValueSets)
+  for (const auto &v : view.resolvedFunctionalValueSets)
     if (v.type == type && v.configuration == configuration)
       sets.emplace(v.id, &v);
   auto itemTemplate = [&](uint64_t id) {
@@ -2052,33 +2127,25 @@ static Digest computeConfigurationBundleDigest(const Database &db,
   for (const auto &[id, value] : sets)
     setOrder.push_back(value);
   if (!includeResolvedIDs) {
-    std::sort(
-        itemOrder.begin(), itemOrder.end(), [](const auto *a, const auto *b) {
-          return std::tie(a->templateItem, a->ordinal, a->name, a->hierarchy) <
-                 std::tie(b->templateItem, b->ordinal, b->name, b->hierarchy);
-        });
-    std::sort(
-        binOrder.begin(), binOrder.end(), [&](const auto *a, const auto *b) {
-          return std::make_tuple(a->templateBin, itemTemplate(a->item),
-                                 a->expansionOrdinal, a->ordinal, a->name) <
-                 std::make_tuple(b->templateBin, itemTemplate(b->item),
-                                 b->expansionOrdinal, b->ordinal, b->name);
-        });
-    std::sort(
-        setOrder.begin(), setOrder.end(), [&](const auto *a, const auto *b) {
-          auto key = [&](const auto *value) {
-            auto owner = bins.find(value->ownerBin);
-            return std::make_tuple(
-                value->templateValueSet, value->role,
-                owner == bins.end() ? uint64_t{0} : owner->second->templateBin,
-                owner == bins.end() ? uint32_t{0}
-                                    : owner->second->expansionOrdinal,
-                value->ownerSelector, value->ownerOrdinal,
-                value->ownerSubordinal, itemTemplate(value->item), value->kind,
-                value->bitWidth);
-          };
-          return key(a) < key(b);
-        });
+    sortByKey(itemOrder.begin(), itemOrder.end(), [](const auto *a) {
+      return std::tie(a->templateItem, a->ordinal, a->name, a->hierarchy);
+    });
+    sortByKey(binOrder.begin(), binOrder.end(), [&](const auto *a) {
+      return std::make_tuple(a->templateBin, itemTemplate(a->item),
+                             a->expansionOrdinal, a->ordinal, a->name);
+    });
+    sortByKey(setOrder.begin(), setOrder.end(), [&](const auto *a) {
+      auto key = [&](const auto *value) {
+        auto owner = bins.find(value->ownerBin);
+        return std::make_tuple(
+            value->templateValueSet, value->role,
+            owner == bins.end() ? uint64_t{0} : owner->second->templateBin,
+            owner == bins.end() ? uint32_t{0} : owner->second->expansionOrdinal,
+            value->ownerSelector, value->ownerOrdinal, value->ownerSubordinal,
+            itemTemplate(value->item), value->kind, value->bitWidth);
+      };
+      return key(a);
+    });
   }
   for (const auto *v : itemOrder) {
     hashScalar(h, uint32_t(1));
@@ -2145,20 +2212,17 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     }
   }
   std::vector<const FunctionalConfigurationOption *> optionOrder;
-  for (const auto &v : db.functionalConfigurationOptions)
+  for (const auto &v : view.functionalConfigurationOptions)
     if (v.type == type && v.configuration == configuration)
       optionOrder.push_back(&v);
-  std::sort(
-      optionOrder.begin(), optionOrder.end(),
-      [&](const auto *a, const auto *b) {
-        auto owner = [&](const auto *v) {
-          return v->ownerKind == FunctionalConfigurationOptionOwnerKind::Group
-                     ? type
-                     : itemTemplate(v->owner);
-        };
-        return std::make_tuple(a->ownerKind, owner(a), a->scope, a->option) <
-               std::make_tuple(b->ownerKind, owner(b), b->scope, b->option);
-      });
+  sortByKey(optionOrder.begin(), optionOrder.end(), [&](const auto *a) {
+    auto owner = [&](const auto *v) {
+      return v->ownerKind == FunctionalConfigurationOptionOwnerKind::Group
+                 ? type
+                 : itemTemplate(v->owner);
+    };
+    return std::make_tuple(a->ownerKind, owner(a), a->scope, a->option);
+  });
   for (const auto *row : optionOrder) {
     const auto &v = *row;
     hashScalar(h, uint32_t(4));
@@ -2175,24 +2239,18 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     hashString(h, v.stringValue);
   }
   std::vector<const ResolvedFunctionalBinGroup *> binGroupOrder;
-  for (const auto &v : db.resolvedFunctionalBinGroups)
+  for (const auto &v : view.resolvedFunctionalBinGroups)
     if (v.type == type && v.configuration == configuration)
       binGroupOrder.push_back(&v);
   auto templateBinOrdinal = [&](uint64_t id) {
-    auto found =
-        std::find_if(db.functionalBins.begin(), db.functionalBins.end(),
-                     [&](const auto &bin) { return bin.id == id; });
-    return found == db.functionalBins.end() ? UINT32_MAX : found->ordinal;
+    const auto *found = lookupRecord(index.templateBins, id);
+    return found ? found->ordinal : UINT32_MAX;
   };
-  std::sort(binGroupOrder.begin(), binGroupOrder.end(),
-            [&](const auto *a, const auto *b) {
-              return std::make_tuple(itemTemplate(a->item),
-                                     templateBinOrdinal(a->templateBin),
-                                     a->templateBin, a->kind) <
-                     std::make_tuple(itemTemplate(b->item),
-                                     templateBinOrdinal(b->templateBin),
-                                     b->templateBin, b->kind);
-            });
+  sortByKey(binGroupOrder.begin(), binGroupOrder.end(), [&](const auto *a) {
+    return std::make_tuple(itemTemplate(a->item),
+                           templateBinOrdinal(a->templateBin), a->templateBin,
+                           a->kind);
+  });
   for (const auto *row : binGroupOrder) {
     hashScalar(h, uint32_t(10));
     hashItemReference(row->item);
@@ -2205,19 +2263,14 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     hashScalar(h, row->kind);
   }
   std::vector<const ResolvedFunctionalBinPlan *> binPlanOrder;
-  for (const auto &v : db.resolvedFunctionalBinPlans)
+  for (const auto &v : view.resolvedFunctionalBinPlans)
     if (v.type == type && v.configuration == configuration)
       binPlanOrder.push_back(&v);
-  std::sort(
-      binPlanOrder.begin(), binPlanOrder.end(),
-      [&](const auto *a, const auto *b) {
-        const auto *left = bins.at(a->bin);
-        const auto *right = bins.at(b->bin);
-        return std::make_tuple(itemTemplate(left->item), left->templateBin,
-                               left->ordinal, left->expansionOrdinal) <
-               std::make_tuple(itemTemplate(right->item), right->templateBin,
-                               right->ordinal, right->expansionOrdinal);
-      });
+  sortByKey(binPlanOrder.begin(), binPlanOrder.end(), [&](const auto *a) {
+    const auto *left = bins.at(a->bin);
+    return std::make_tuple(itemTemplate(left->item), left->templateBin,
+                           left->ordinal, left->expansionOrdinal);
+  });
   for (const auto *row : binPlanOrder) {
     const auto &v = *row;
     hashScalar(h, uint32_t(5));
@@ -2231,21 +2284,16 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     hashScalar(h, v.flags);
   }
   std::vector<const ResolvedTransitionAlternative *> alternativeOrder;
-  for (const auto &v : db.resolvedTransitionAlternatives)
+  for (const auto &v : view.resolvedTransitionAlternatives)
     if (v.type == type && v.configuration == configuration)
       alternativeOrder.push_back(&v);
-  std::sort(alternativeOrder.begin(), alternativeOrder.end(),
-            [&](const auto *a, const auto *b) {
+  sortByKey(alternativeOrder.begin(), alternativeOrder.end(),
+            [&](const auto *a) {
               const auto *left = bins.at(a->bin);
-              const auto *right = bins.at(b->bin);
               return std::make_tuple(itemTemplate(left->item),
                                      left->templateBin, left->expansionOrdinal,
                                      a->templateAlternativeOrdinal,
-                                     a->expansionOrdinal, a->ordinal) <
-                     std::make_tuple(
-                         itemTemplate(right->item), right->templateBin,
-                         right->expansionOrdinal, b->templateAlternativeOrdinal,
-                         b->expansionOrdinal, b->ordinal);
+                                     a->expansionOrdinal, a->ordinal);
             });
   for (const auto *row : alternativeOrder) {
     const auto &alternative = *row;
@@ -2270,15 +2318,13 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     }
   }
   std::vector<const ResolvedTransitionExpansionGroup *> expansionGroupOrder;
-  for (const auto &v : db.resolvedTransitionExpansionGroups)
+  for (const auto &v : view.resolvedTransitionExpansionGroups)
     if (v.type == type && v.configuration == configuration)
       expansionGroupOrder.push_back(&v);
-  std::sort(expansionGroupOrder.begin(), expansionGroupOrder.end(),
-            [&](const auto *a, const auto *b) {
+  sortByKey(expansionGroupOrder.begin(), expansionGroupOrder.end(),
+            [&](const auto *a) {
               return std::make_tuple(itemTemplate(a->item), a->templateBin,
-                                     a->templateAlternativeOrdinal) <
-                     std::make_tuple(itemTemplate(b->item), b->templateBin,
-                                     b->templateAlternativeOrdinal);
+                                     a->templateAlternativeOrdinal);
             });
   for (const auto *row : expansionGroupOrder) {
     hashScalar(h, uint32_t(11));
@@ -2289,14 +2335,16 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     hashScalar(h, row->flags);
     hashScalar(h, row->expansionCount);
   }
+  IndexMap<uint64_t, std::vector<const ResolvedCrossAutomaticNode *>>
+      nodesByCross;
+  for (const auto &node : view.resolvedCrossAutomaticNodes)
+    nodesByCross[node.cross].push_back(&node);
   std::vector<const ResolvedCrossPlan *> crossPlanOrder;
-  for (const auto &v : db.resolvedCrossPlans)
+  for (const auto &v : view.resolvedCrossPlans)
     if (v.type == type && v.configuration == configuration)
       crossPlanOrder.push_back(&v);
-  std::sort(crossPlanOrder.begin(), crossPlanOrder.end(),
-            [&](const auto *a, const auto *b) {
-              return itemTemplate(a->cross) < itemTemplate(b->cross);
-            });
+  sortByKey(crossPlanOrder.begin(), crossPlanOrder.end(),
+            [&](const auto *a) { return itemTemplate(a->cross); });
   for (const auto *row : crossPlanOrder) {
     const auto &v = *row;
     hashScalar(h, uint32_t(7));
@@ -2309,20 +2357,18 @@ static Digest computeConfigurationBundleDigest(const Database &db,
           h,
           db.resolvedCrossAutomaticBinCountLimbs[v.firstAutomaticBinCountLimb +
                                                  index]);
-    std::map<uint64_t, const ResolvedCrossAutomaticNode *> automaticNodes;
-    for (const auto &node : db.resolvedCrossAutomaticNodes)
-      if (node.type == type && node.configuration == configuration &&
-          node.cross == v.cross)
-        automaticNodes.emplace(node.id, &node);
-    std::map<uint64_t, Digest> nodeDigests;
+    IndexMap<uint64_t, const ResolvedCrossAutomaticNode *> automaticNodes;
+    auto nodeRows = nodesByCross.find(v.cross);
+    if (nodeRows != nodesByCross.end())
+      for (const auto *node : nodeRows->second)
+        automaticNodes.emplace(node->id, node);
+    IndexMap<uint64_t, Digest> nodeDigests;
     std::vector<const ResolvedCrossAutomaticNode *> reverseNodes;
     for (const auto &[id, node] : automaticNodes)
       reverseNodes.push_back(node);
-    std::sort(reverseNodes.begin(), reverseNodes.end(),
-              [](const auto *a, const auto *b) {
-                return std::tie(a->targetOrdinal, a->id) >
-                       std::tie(b->targetOrdinal, b->id);
-              });
+    sortByKey(reverseNodes.begin(), reverseNodes.end(), [](const auto *a) {
+      return std::make_tuple(~a->targetOrdinal, ~a->id);
+    });
     for (const auto *nodePointer : reverseNodes) {
       SHA256 nodeHash;
       static constexpr char nodeDomain[] =
@@ -2366,15 +2412,16 @@ static Digest computeConfigurationBundleDigest(const Database &db,
         v.rootNode && root != nodeDigests.end() ? root->second : Digest{};
     h.update(rootDigest.data(), rootDigest.size());
   }
+  IndexMap<uint64_t, const ResolvedFunctionalTupleSet *> tupleSetsByID;
+  for (const auto &set : view.resolvedFunctionalTupleSets)
+    tupleSetsByID.emplace(set.id, &set);
   std::vector<const ResolvedCrossSelectorBinding *> bindingOrder;
-  for (const auto &v : db.resolvedCrossSelectorBindings)
+  for (const auto &v : view.resolvedCrossSelectorBindings)
     if (v.type == type && v.configuration == configuration)
       bindingOrder.push_back(&v);
-  std::sort(bindingOrder.begin(), bindingOrder.end(),
-            [&](const auto *a, const auto *b) {
-              return std::make_pair(itemTemplate(a->cross), a->node) <
-                     std::make_pair(itemTemplate(b->cross), b->node);
-            });
+  sortByKey(bindingOrder.begin(), bindingOrder.end(), [&](const auto *a) {
+    return std::make_pair(itemTemplate(a->cross), a->node);
+  });
   for (const auto *row : bindingOrder) {
     const auto &v = *row;
     hashScalar(h, uint32_t(8));
@@ -2382,38 +2429,23 @@ static Digest computeConfigurationBundleDigest(const Database &db,
     hashScalar(h, v.node);
     hashSetReference(v.valueSet);
     hashScalar(h, v.withExpression);
-    auto tupleSet = std::find_if(db.resolvedFunctionalTupleSets.begin(),
-                                 db.resolvedFunctionalTupleSets.end(),
-                                 [&](const auto &set) {
-                                   return set.type == type &&
-                                          set.configuration == configuration &&
-                                          set.id == v.tupleSet;
-                                 });
-    hashScalar(h, tupleSet == db.resolvedFunctionalTupleSets.end()
-                      ? uint64_t{0}
-                      : tupleSet->templateTupleSet);
-    hashScalar(h, tupleSet == db.resolvedFunctionalTupleSets.end()
-                      ? uint64_t{0}
-                      : tupleSet->selector);
-    hashScalar(h, tupleSet == db.resolvedFunctionalTupleSets.end()
-                      ? uint32_t{0}
-                      : static_cast<uint32_t>(tupleSet->elementMode));
+    const auto *tupleSet = lookupRecord(tupleSetsByID, v.tupleSet);
+    hashScalar(h, !tupleSet ? uint64_t{0} : tupleSet->templateTupleSet);
+    hashScalar(h, !tupleSet ? uint64_t{0} : tupleSet->selector);
+    hashScalar(h, !tupleSet ? uint32_t{0}
+                            : static_cast<uint32_t>(tupleSet->elementMode));
     hashScalar(h, v.matchesPolicy);
     hashScalar(h, v.flags);
     hashScalar(h, v.matchesCount);
   }
   std::vector<const ResolvedFunctionalTupleSet *> tupleSetOrder;
-  for (const auto &v : db.resolvedFunctionalTupleSets)
+  for (const auto &v : view.resolvedFunctionalTupleSets)
     if (v.type == type && v.configuration == configuration)
       tupleSetOrder.push_back(&v);
-  std::sort(
-      tupleSetOrder.begin(), tupleSetOrder.end(),
-      [&](const auto *a, const auto *b) {
-        return std::make_tuple(a->templateTupleSet, itemTemplate(a->cross),
-                               a->selector, a->elementMode) <
-               std::make_tuple(b->templateTupleSet, itemTemplate(b->cross),
-                               b->selector, b->elementMode);
-      });
+  sortByKey(tupleSetOrder.begin(), tupleSetOrder.end(), [&](const auto *a) {
+    return std::make_tuple(a->templateTupleSet, itemTemplate(a->cross),
+                           a->selector, a->elementMode);
+  });
   for (const auto *row : tupleSetOrder) {
     const auto &v = *row;
     hashScalar(h, uint32_t(9));
@@ -2452,7 +2484,8 @@ static Digest computeConfigurationBundleDigest(const Database &db,
 Digest
 computeFunctionalConfigurationFingerprint(const Database &db, uint64_t type,
                                           const Digest &configurationKey) {
-  return computeConfigurationBundleDigest(db, type, configurationKey,
+  const ConfigurationIndex index(db);
+  return computeConfigurationBundleDigest(db, index, type, configurationKey,
                                           /*includeResolvedIDs=*/false);
 }
 
@@ -2489,6 +2522,89 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return s;
   };
   auto text = [&](const std::string &s) { return validUtf8(s); };
+  const ConfigurationIndex configurationIndex(db);
+  // Reference indexes are built once for this immutable validation.
+  const auto sourceFilesByID = indexRecords(db.sourceFiles);
+  const auto scopesByID = indexRecords(db.scopes);
+  const auto linePointsByID = indexRecords(db.linePoints);
+  const auto toggleObjectsByID = indexRecords(db.toggleObjects);
+  const auto functionalTypesByID = indexRecords(db.functionalTypes);
+  const auto functionalItemsByID = indexRecords(db.functionalItems);
+  const auto functionalBinsByID = indexRecords(db.functionalBins);
+  const auto functionalValueSetsByID = indexRecords(db.functionalValueSets);
+  const auto functionalExpressionsByID = indexRecords(db.functionalExpressions);
+  const auto selectorsByID = indexRecords(db.crossSelectorNodes);
+  const auto crossPlansByItem =
+      indexRecords(db.crossPlans, [](const auto &row) { return row.item; });
+  const auto transitionProgramsByBin = indexRecords(
+      db.transitionPrograms, [](const auto &row) { return row.bin; });
+  const auto resolvedItemsByTemplate =
+      indexRecords(db.resolvedFunctionalItems, [](const auto &row) {
+        return std::tie(row.type, row.configuration, row.templateItem);
+      });
+  const auto crossPlansByKey =
+      indexRecords(db.resolvedCrossPlans, [](const auto &row) {
+        return std::tie(row.type, row.configuration, row.cross);
+      });
+  const auto expressionsByOwner =
+      groupRecords(db.functionalExpressions, [](const auto &row) {
+        return std::tie(row.ownerKind, row.owner, row.role);
+      });
+  auto sampleExpressionFor =
+      [&](uint64_t item) -> const FunctionalExpression * {
+    const auto &rows =
+        lookupRows(expressionsByOwner,
+                   std::make_tuple(FunctionalExpressionOwnerKind::Item, item,
+                                   FunctionalExpressionRole::CoverpointSample));
+    return rows.empty() ? nullptr : &rows.front();
+  };
+  const auto binsByItem =
+      groupRecords(db.functionalBins, [](const auto &row) { return row.item; });
+  const auto binsByType = groupRecords(db.functionalBins, [&](const auto &row) {
+    const auto *item = lookupRecord(functionalItemsByID, row.item);
+    return item ? item->type : uint64_t{0};
+  });
+  IndexMap<uint64_t, std::pair<bool, bool>> templateBinKinds;
+  for (const auto &bin : db.functionalBins) {
+    auto &kinds = templateBinKinds[bin.item];
+    kinds.first |= (bin.kind == FunctionalBinKind::State ||
+                    bin.kind == FunctionalBinKind::Transition) &&
+                   !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal |
+                                  FunctionalBinAutomatic));
+    kinds.second |= (bin.flags & FunctionalBinAutomatic) != 0;
+  }
+  const auto programsByType =
+      groupRecords(db.transitionPrograms, [&](const auto &row) {
+        const auto *item = lookupRecord(functionalItemsByID, row.item);
+        return item ? item->type : uint64_t{0};
+      });
+  const auto optionPlansByType =
+      groupRecords(db.functionalOptionPlans, [&](const auto &row) {
+        const auto *item =
+            row.ownerKind == FunctionalConfigurationOptionOwnerKind::Item
+                ? lookupRecord(functionalItemsByID, row.owner)
+                : nullptr;
+        return item ? item->type : row.owner;
+      });
+  const auto nodesByCross = groupRecords(
+      db.crossSelectorNodes, [](const auto &row) { return row.cross; });
+  const auto resolvedBinsByItem =
+      groupRecords(db.resolvedFunctionalBins, [](const auto &row) {
+        return std::tie(row.type, row.configuration, row.item);
+      });
+  const auto resolvedBinsByTemplate =
+      groupRecords(db.resolvedFunctionalBins, [](const auto &row) {
+        return std::tie(row.type, row.configuration, row.templateBin);
+      });
+  const auto alternativesByResolvedBin =
+      groupRecords(db.resolvedTransitionAlternatives, [](const auto &row) {
+        return std::tie(row.type, row.configuration, row.bin);
+      });
+  const auto configurationOptionsByKey =
+      indexRecords(db.functionalConfigurationOptions, [](const auto &row) {
+        return std::tie(row.type, row.configuration, row.ownerKind, row.owner,
+                        row.scope, row.option);
+      });
   if ((db.flags & ~KnownHeaderFlags) != 0)
     return fail(Status::InvalidEnum, "header.flags");
   if (!text(db.producer))
@@ -2526,19 +2642,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   for (const auto &v : db.sourceFiles)
     if (!text(v.path))
       return fail(Status::InvalidUtf8, "source.path");
-  std::unordered_map<uint64_t, uint64_t> scopeParents;
-  scopeParents.reserve(db.scopes.size());
+  IndexMap<uint64_t, uint64_t> scopeParents;
   for (const auto &v : db.scopes) {
     if (!text(v.name) || !text(v.definition))
       return fail(Status::InvalidUtf8, "scope");
-    if (v.parent && !hasID(db.scopes, v.parent))
+    if (v.parent && !scopesByID.count(v.parent))
       return fail(Status::InvalidReference, "scope.parent");
     scopeParents.emplace(v.id, v.parent);
   }
   // Scope selection walks descendants at runtime. Reject cycles here so every
   // consumer can rely on a forest without revalidating hostile images.
-  std::unordered_map<uint64_t, uint8_t> scopeColors;
-  scopeColors.reserve(db.scopes.size());
+  IndexMap<uint64_t, uint8_t> scopeColors;
   for (const auto &scope : db.scopes) {
     if (scopeColors[scope.id] == 2)
       continue;
@@ -2558,15 +2672,15 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       scopeColors[id] = 2;
   }
   for (const auto &v : db.linePoints)
-    if (!hasID(db.sourceFiles, v.file) || !hasID(db.sourceFiles, v.endFile) ||
-        !hasID(db.scopes, v.scope) || !v.line || !v.endLine ||
+    if (!sourceFilesByID.count(v.file) || !sourceFilesByID.count(v.endFile) ||
+        !scopesByID.count(v.scope) || !v.line || !v.endLine ||
         !text(v.macroName))
       return fail(text(v.macroName) ? Status::InvalidReference
                                     : Status::InvalidUtf8,
                   "line_point");
   for (const auto &v : db.toggleObjects)
-    if (!text(v.name) || !hasID(db.scopes, v.scope) ||
-        !hasID(db.sourceFiles, v.file) || !v.bitWidth ||
+    if (!text(v.name) || !scopesByID.count(v.scope) ||
+        !sourceFilesByID.count(v.file) || !v.bitWidth ||
         v.bitWidth > UINT32_MAX / 4 || !v.line || !v.endLine ||
         (v.flags & ~ToggleObjectFourState) != 0 || v.typeRoot == UINT32_MAX ||
         v.typeRoot >= db.toggleDimensions.size() ||
@@ -2587,7 +2701,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (!toggleSubtrees.empty() && toggleSubtrees.back().end < index)
       return fail(Status::InvalidReference, "toggle_dimension.preorder_span");
     const uint32_t kind = static_cast<uint32_t>(v.kind);
-    if (!hasID(db.toggleObjects, v.object) || !text(v.name) ||
+    if (!toggleObjectsByID.count(v.object) || !text(v.name) ||
         kind < static_cast<uint32_t>(ToggleDimensionKind::Root) ||
         kind > static_cast<uint32_t>(ToggleDimensionKind::Tag) ||
         v.flags != 0 || v.bitWidth == 0 ||
@@ -2628,15 +2742,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         return fail(Status::InvalidReference, "toggle_dimension.preorder_span");
       toggleSubtrees.push_back({static_cast<uint32_t>(index), subtreeEnd});
     }
-    if (v.bitOffset + v.bitWidth >
-        db.toggleObjects[std::lower_bound(
-                             db.toggleObjects.begin(), db.toggleObjects.end(),
-                             v.object,
-                             [](const ToggleObject &object, uint64_t id) {
-                               return object.id < id;
-                             }) -
-                         db.toggleObjects.begin()]
-            .bitWidth)
+    if (v.bitOffset + v.bitWidth > toggleObjectsByID.at(v.object)->bitWidth)
       return fail(Status::InvalidReference, "toggle_dimension.span");
   }
   for (size_t objectIndex = 0; objectIndex != db.toggleObjects.size();
@@ -2655,23 +2761,23 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       if (db.toggleDimensions[index].object != object.id)
         return fail(Status::InvalidReference, "toggle_dimension.object_group");
   }
-  std::map<uint64_t, std::string> functionalTypeHierarchies;
-  std::set<std::string> functionalHierarchies;
+  IndexMap<uint64_t, std::string> functionalTypeHierarchies;
+  IndexSet<std::string> functionalHierarchies;
   for (const auto &v : db.functionalTypes)
     if (!text(v.name) || !text(v.hierarchy) || v.hierarchy.empty() ||
-        !hasID(db.scopes, v.scope) || v.flags != 0 ||
+        !scopesByID.count(v.scope) || v.flags != 0 ||
         (v.languageVersion != 2017 && v.languageVersion != 2023) ||
         !functionalHierarchies.insert(v.hierarchy).second ||
         !functionalTypeHierarchies.emplace(v.id, v.hierarchy).second)
       return fail(Status::InvalidReference, "functional_type");
-  std::map<uint64_t, std::string> functionalItemHierarchies;
-  std::map<uint64_t, std::set<uint32_t>> itemOrdinals;
-  std::map<uint64_t, uint64_t> itemCounts;
+  IndexMap<uint64_t, std::string> functionalItemHierarchies;
+  IndexMap<uint64_t, IndexSet<uint32_t>> itemOrdinals;
+  IndexMap<uint64_t, uint64_t> itemCounts;
   for (const auto &v : db.functionalItems) {
     uint32_t kind = static_cast<uint32_t>(v.kind);
     auto typeHierarchy = functionalTypeHierarchies.find(v.type);
     if (!text(v.name) || !text(v.hierarchy) || v.hierarchy.empty() ||
-        !hasID(db.functionalTypes, v.type) || v.goal > 100 ||
+        !functionalTypesByID.count(v.type) || v.goal > 100 ||
         (v.flags & ~FunctionalItemNonAggregating) != 0 ||
         typeHierarchy == functionalTypeHierarchies.end() ||
         v.hierarchy != typeHierarchy->second + "." + v.name ||
@@ -2687,17 +2793,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (ordinals.size() != itemCounts[type] ||
         (!ordinals.empty() && *ordinals.rbegin() != ordinals.size() - 1))
       return fail(Status::InvalidReference, "functional_item.ordinal");
-  std::map<uint64_t, std::set<uint32_t>> binOrdinals;
-  std::map<uint64_t, uint64_t> binCounts;
+  IndexMap<uint64_t, IndexSet<uint32_t>> binOrdinals;
+  IndexMap<uint64_t, uint64_t> binCounts;
   for (const auto &v : db.functionalBins) {
     uint32_t kind = static_cast<uint32_t>(v.kind);
-    auto item = std::lower_bound(
-        db.functionalItems.begin(), db.functionalItems.end(), v.item,
-        [](const FunctionalItem &entry, uint64_t id) { return entry.id < id; });
+    const auto *item = lookupRecord(functionalItemsByID, v.item);
     auto itemHierarchy = functionalItemHierarchies.find(v.item);
-    bool typedOwner = item != db.functionalItems.end() && item->id == v.item &&
-                      ((v.kind == FunctionalBinKind::Cross) ==
-                       (item->kind == FunctionalItemKind::Cross));
+    bool typedOwner = item && ((v.kind == FunctionalBinKind::Cross) ==
+                               (item->kind == FunctionalItemKind::Cross));
     if (!text(v.name) || !text(v.hierarchy) || v.hierarchy.empty() ||
         !typedOwner || itemHierarchy == functionalItemHierarchies.end() ||
         v.hierarchy != itemHierarchy->second + "." + v.name ||
@@ -2771,31 +2874,13 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return value;
   };
   auto findItem = [&](uint64_t id) -> const FunctionalItem * {
-    auto found =
-        std::lower_bound(db.functionalItems.begin(), db.functionalItems.end(),
-                         id, [](const FunctionalItem &entry, uint64_t value) {
-                           return entry.id < value;
-                         });
-    return found != db.functionalItems.end() && found->id == id ? &*found
-                                                                : nullptr;
+    return lookupRecord(functionalItemsByID, id);
   };
   auto findBin = [&](uint64_t id) -> const FunctionalBin * {
-    auto found =
-        std::lower_bound(db.functionalBins.begin(), db.functionalBins.end(), id,
-                         [](const FunctionalBin &entry, uint64_t value) {
-                           return entry.id < value;
-                         });
-    return found != db.functionalBins.end() && found->id == id ? &*found
-                                                               : nullptr;
+    return lookupRecord(functionalBinsByID, id);
   };
   auto findFunctionalType = [&](uint64_t id) -> const FunctionalType * {
-    auto found =
-        std::lower_bound(db.functionalTypes.begin(), db.functionalTypes.end(),
-                         id, [](const FunctionalType &entry, uint64_t value) {
-                           return entry.id < value;
-                         });
-    return found != db.functionalTypes.end() && found->id == id ? &*found
-                                                                : nullptr;
+    return lookupRecord(functionalTypesByID, id);
   };
   if (!uniqueNonzero(db.functionalValueSets,
                      [](const auto &v) { return v.id; }) ||
@@ -2804,17 +2889,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       [](const auto &a, const auto &b) { return a.id < b.id; }))
     return fail(Status::UnsortedOrDuplicate, "functional_value_set_order");
   auto findValueSet = [&](uint64_t id) -> const FunctionalValueSet * {
-    auto found = std::lower_bound(
-        db.functionalValueSets.begin(), db.functionalValueSets.end(), id,
-        [](const FunctionalValueSet &entry, uint64_t value) {
-          return entry.id < value;
-        });
-    return found != db.functionalValueSets.end() && found->id == id ? &*found
-                                                                    : nullptr;
+    return lookupRecord(functionalValueSetsByID, id);
   };
   size_t atomCursor = 0;
   size_t limbCursor = 0;
-  std::set<uint64_t> wildcardValueSets;
+  IndexSet<uint64_t> wildcardValueSets;
   for (const auto &set : db.functionalValueSets) {
     const FunctionalItem *item = findItem(set.item);
     const FunctionalType *ownerType =
@@ -3004,9 +3083,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                                                b.ordinal);
                       }))
     return fail(Status::UnsortedOrDuplicate, "functional_formal_order");
-  std::map<std::pair<uint64_t, uint32_t>, uint32_t> nextFormalOrdinal;
-  std::set<std::pair<uint64_t, std::string>> formalNames;
-  std::map<uint64_t, const FunctionalFormal *> formalsByID;
+  IndexMap<std::pair<uint64_t, uint32_t>, uint32_t> nextFormalOrdinal;
+  IndexSet<std::pair<uint64_t, std::string>> formalNames;
+  IndexMap<uint64_t, const FunctionalFormal *> formalsByID;
   for (const auto &formal : db.functionalFormals) {
     const bool integral =
         formal.resultKind == FunctionalExpressionResultKind::Integral;
@@ -3054,23 +3133,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       [](const auto &a, const auto &b) { return a.id < b.id; }))
     return fail(Status::UnsortedOrDuplicate, "functional_expression_order");
   auto findExpression = [&](uint64_t id) -> const FunctionalExpression * {
-    auto found = std::lower_bound(
-        db.functionalExpressions.begin(), db.functionalExpressions.end(), id,
-        [](const FunctionalExpression &entry, uint64_t value) {
-          return entry.id < value;
-        });
-    return found != db.functionalExpressions.end() && found->id == id ? &*found
-                                                                      : nullptr;
+    return lookupRecord(functionalExpressionsByID, id);
   };
-  std::set<std::tuple<uint64_t, uint32_t, uint32_t, uint32_t, uint32_t>>
+  IndexSet<std::tuple<uint64_t, uint32_t, uint32_t, uint32_t, uint32_t>>
       expressionKeys;
-  std::map<std::pair<uint64_t, uint32_t>, std::set<uint32_t>> resultOrdinals;
+  IndexMap<std::pair<uint64_t, uint32_t>, IndexSet<uint32_t>> resultOrdinals;
   for (const auto &expression : db.functionalExpressions) {
     bool ownerExists = false;
     uint64_t ownerType = 0;
     switch (expression.ownerKind) {
     case FunctionalExpressionOwnerKind::Type:
-      ownerExists = hasID(db.functionalTypes, expression.owner);
+      ownerExists = functionalTypesByID.count(expression.owner);
       ownerType = expression.owner;
       break;
     case FunctionalExpressionOwnerKind::Item: {
@@ -3087,13 +3160,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       break;
     }
     case FunctionalExpressionOwnerKind::Selector: {
-      auto owner = std::find_if(
-          db.crossSelectorNodes.begin(), db.crossSelectorNodes.end(),
-          [&](const auto &v) { return v.id == expression.owner; });
-      const FunctionalItem *item = owner == db.crossSelectorNodes.end()
-                                       ? nullptr
-                                       : findItem(owner->cross);
-      ownerExists = owner != db.crossSelectorNodes.end();
+      const auto *owner = lookupRecord(selectorsByID, expression.owner);
+      const FunctionalItem *item = !owner ? nullptr : findItem(owner->cross);
+      ownerExists = owner != nullptr;
       ownerType = item ? item->type : 0;
       break;
     }
@@ -3376,7 +3445,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
   }
 
-  std::map<uint64_t, const FunctionalBinPlan *> binPlans;
+  IndexMap<uint64_t, const FunctionalBinPlan *> binPlans;
   for (const auto &plan : db.functionalBinPlans) {
     const FunctionalBin *bin = findBin(plan.bin);
     const FunctionalValueSet *set =
@@ -3388,29 +3457,20 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     bool transition = bin && bin->kind == FunctionalBinKind::Transition;
     bool stateNeedsSet = state && !(bin->flags & FunctionalBinDefault);
     std::vector<const FunctionalExpression *> withExpressions;
-    for (const auto &expression : db.functionalExpressions)
-      if (expression.owner == plan.bin &&
-          expression.ownerKind == FunctionalExpressionOwnerKind::Bin &&
-          expression.role == FunctionalExpressionRole::BinWith)
-        withExpressions.push_back(&expression);
-    std::sort(withExpressions.begin(), withExpressions.end(),
-              [](const auto *lhs, const auto *rhs) {
-                return lhs->ownerOrdinal < rhs->ownerOrdinal;
-              });
+    for (const auto &expression : lookupRows(
+             expressionsByOwner,
+             std::make_tuple(FunctionalExpressionOwnerKind::Bin, plan.bin,
+                             FunctionalExpressionRole::BinWith)))
+      withExpressions.push_back(&expression);
+    sortByKey(withExpressions.begin(), withExpressions.end(),
+              [](const auto *lhs) { return lhs->ownerOrdinal; });
     bool validWithOrdinals = true;
     for (uint32_t ordinal = 0; ordinal != withExpressions.size(); ++ordinal)
       validWithOrdinals &= withExpressions[ordinal]->ownerOrdinal == ordinal &&
                            withExpressions[ordinal]->semanticDigest ==
                                withExpressions.front()->semanticDigest;
-    const FunctionalExpression *sampleExpression = nullptr;
-    if (bin)
-      for (const auto &expression : db.functionalExpressions)
-        if (expression.owner == bin->item &&
-            expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-            expression.role == FunctionalExpressionRole::CoverpointSample) {
-          sampleExpression = &expression;
-          break;
-        }
+    const FunctionalExpression *sampleExpression =
+        sampleExpressionFor(bin ? bin->item : uint64_t{0});
     bool realState =
         state && sampleExpression &&
         sampleExpression->resultKind == FunctionalExpressionResultKind::Real;
@@ -3461,11 +3521,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if ((bin.kind != FunctionalBinKind::Cross) != (binPlans.count(bin.id) != 0))
       return fail(Status::InvalidReference, "functional_bin_plan.completeness");
 
-  std::set<std::tuple<uint32_t, uint64_t, uint32_t, uint32_t>> optionPlanKeys;
+  IndexSet<std::tuple<uint32_t, uint64_t, uint32_t, uint32_t>> optionPlanKeys;
   for (const auto &plan : db.functionalOptionPlans) {
     bool group =
         plan.ownerKind == FunctionalConfigurationOptionOwnerKind::Group;
-    bool validOwner = group ? hasID(db.functionalTypes, plan.owner)
+    bool validOwner = group ? functionalTypesByID.count(plan.owner)
                             : findItem(plan.owner) != nullptr;
     FunctionalExpressionOwnerKind expressionOwner =
         group ? FunctionalExpressionOwnerKind::Type
@@ -3571,7 +3631,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   size_t alternativeCursor = 0;
   size_t stepCursor = 0;
   uint64_t previousProgramBin = 0;
-  std::set<uint64_t> programmedBins;
+  IndexSet<uint64_t> programmedBins;
   for (const auto &program : db.transitionPrograms) {
     const FunctionalBin *bin = findBin(program.bin);
     if (!bin || bin->kind != FunctionalBinKind::Transition ||
@@ -3675,7 +3735,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   size_t targetCursor = 0;
   size_t crossBinCursor = 0;
   uint64_t previousCross = 0;
-  std::map<uint64_t, std::vector<uint64_t>> targetsByCross;
+  IndexMap<uint64_t, std::vector<uint64_t>> targetsByCross;
   for (const auto &plan : db.crossPlans) {
     const FunctionalItem *cross = findItem(plan.item);
     uint32_t retain = static_cast<uint32_t>(plan.retainAutoPolicy);
@@ -3696,7 +3756,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       FunctionalExpressionRole::CrossIff, 0, 0))
       return fail(Status::InvalidReference, "cross_plan");
     previousCross = plan.item;
-    std::set<uint64_t> uniqueTargets;
+    IndexSet<uint64_t> uniqueTargets;
     auto &targetIDs = targetsByCross[plan.item];
     uint64_t previousTupleEnd = 0;
     bool tupleFourState = false;
@@ -3760,7 +3820,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return fail(Status::InvalidReference, "cross_ranges");
   if (!uniqueNonzero(db.crossSelectorNodes, [](const auto &v) { return v.id; }))
     return fail(Status::UnsortedOrDuplicate, "cross_selector_node.id");
-  std::map<uint64_t, const CrossSelectorNode *> nodesByID;
+  IndexMap<uint64_t, const CrossSelectorNode *> nodesByID;
   size_t operandCursor = 0;
   uint64_t nodeCross = 0;
   uint32_t expectedNodeOrdinal = 0;
@@ -3891,15 +3951,13 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   // the runtime can bind a partially resolved configuration.
   for (const auto &node : db.crossSelectorNodes) {
     std::vector<const FunctionalExpression *> withExpressions;
-    for (const auto &expression : db.functionalExpressions)
-      if (expression.owner == node.id &&
-          expression.ownerKind == FunctionalExpressionOwnerKind::Selector &&
-          expression.role == FunctionalExpressionRole::SelectorWith)
-        withExpressions.push_back(&expression);
-    std::sort(withExpressions.begin(), withExpressions.end(),
-              [](const auto *left, const auto *right) {
-                return left->ownerOrdinal < right->ownerOrdinal;
-              });
+    for (const auto &expression : lookupRows(
+             expressionsByOwner,
+             std::make_tuple(FunctionalExpressionOwnerKind::Selector, node.id,
+                             FunctionalExpressionRole::SelectorWith)))
+      withExpressions.push_back(&expression);
+    sortByKey(withExpressions.begin(), withExpressions.end(),
+              [](const auto *left) { return left->ownerOrdinal; });
     if (!node.withExpression) {
       if (!withExpressions.empty())
         return fail(Status::InvalidReference,
@@ -3914,23 +3972,13 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     Digest semanticDigest =
         validBatch ? withExpressions.front()->semanticDigest : Digest{};
     if (validBatch) {
-      auto plan = std::find_if(db.crossPlans.begin(), db.crossPlans.end(),
-                               [&](const CrossPlan &candidate) {
-                                 return candidate.item == node.cross;
-                               });
-      validBatch = plan != db.crossPlans.end();
+      const auto *plan = lookupRecord(crossPlansByItem, node.cross);
+      validBatch = plan != nullptr;
       for (uint32_t ordinal = 0; validBatch && ordinal != plan->targetCount;
            ++ordinal) {
         const CrossTarget &target =
             db.crossTargets[plan->firstTarget + ordinal];
-        const FunctionalExpression *sample = nullptr;
-        for (const auto &expression : db.functionalExpressions)
-          if (expression.owner == target.target &&
-              expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-              expression.role == FunctionalExpressionRole::CoverpointSample) {
-            sample = &expression;
-            break;
-          }
+        const FunctionalExpression *sample = sampleExpressionFor(target.target);
         const uint64_t domainBits =
             sample ? uint64_t{sample->bitWidth} *
                          ((target.tupleFlags & CrossTargetDomainFourState) ? 2u
@@ -3963,8 +4011,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
   }
   size_t seenCrossBins = 0;
-  std::set<uint64_t> plannedCrossBins;
-  std::set<uint64_t> reachableSelectors;
+  IndexSet<uint64_t> plannedCrossBins;
+  IndexSet<uint64_t> reachableSelectors;
   for (const auto &plan : db.crossPlans) {
     for (uint32_t binIndex = 0; binIndex != plan.binCount; ++binIndex) {
       const CrossBinPlan &crossBin = db.crossBins[plan.firstBin + binIndex];
@@ -4006,8 +4054,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       db.functionalTupleSets.end(),
                       [](const auto &a, const auto &b) { return a.id < b.id; }))
     return fail(Status::UnsortedOrDuplicate, "functional_tuple_set_order");
-  std::map<uint64_t, const FunctionalTupleSet *> tupleSetsByID;
-  std::map<uint64_t, const FunctionalTuple *> tuplesByID;
+  IndexMap<uint64_t, const FunctionalTupleSet *> tupleSetsByID;
+  IndexMap<uint64_t, const FunctionalTuple *> tuplesByID;
   size_t tupleCursor = 0;
   size_t tupleComponentCursor = 0;
   for (const auto &set : db.functionalTupleSets) {
@@ -4068,12 +4116,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (tupleCursor != db.functionalTupleSetTuples.size() ||
       tupleComponentCursor != db.functionalTupleSetComponents.size())
     return fail(Status::InvalidReference, "functional_tuple_ranges");
-  std::set<std::tuple<uint64_t, uint32_t, uint32_t>> sourceKeys;
-  std::set<uint64_t> expandedBins;
+  IndexSet<std::tuple<uint64_t, uint32_t, uint32_t>> sourceKeys;
+  IndexSet<uint64_t> expandedBins;
   for (const auto &v : db.functionalSourceRanges) {
     uint32_t role = static_cast<uint32_t>(v.role);
-    if (!hasID(db.functionalBins, v.bin) || !knownFunctionalSourceRole(role) ||
-        !hasID(db.sourceFiles, v.file) || !hasID(db.sourceFiles, v.endFile) ||
+    if (!functionalBinsByID.count(v.bin) || !knownFunctionalSourceRole(role) ||
+        !sourceFilesByID.count(v.file) || !sourceFilesByID.count(v.endFile) ||
         !text(v.macroName) || !v.line || !v.endLine || v.flags != 0 ||
         ((v.role == FunctionalSourceRole::Expanded ||
           v.role == FunctionalSourceRole::Original) &&
@@ -4083,7 +4131,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (v.role == FunctionalSourceRole::Expanded)
       expandedBins.insert(v.bin);
   }
-  std::set<uint64_t> sourcedBins;
+  IndexSet<uint64_t> sourcedBins;
   for (const auto &v : db.functionalSourceRanges)
     sourcedBins.insert(v.bin);
   for (uint64_t bin : sourcedBins)
@@ -4096,19 +4144,19 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                                std::tie(b.bin, b.role, b.ordinal);
                       }))
     return fail(Status::UnsortedOrDuplicate, "functional_source_range_order");
-  auto entityFor = [&](MetricKind metric, uint64_t id) {
+  auto entityFor = [&](MetricKind metric, uint64_t id) -> bool {
     switch (metric) {
     case MetricKind::Line:
-      return hasID(db.linePoints, id);
+      return linePointsByID.count(id);
     case MetricKind::Toggle:
-      return hasID(db.toggleObjects, id);
+      return toggleObjectsByID.count(id);
     case MetricKind::Functional:
-      return hasID(db.functionalBins, id);
+      return functionalBinsByID.count(id);
     default:
       return false;
     }
   };
-  std::set<std::pair<uint32_t, uint64_t>> excluded;
+  IndexSet<std::pair<uint32_t, uint64_t>> excluded;
   for (const auto &v : db.exclusions) {
     if (!knownMetric(static_cast<uint32_t>(v.metric)) || !text(v.reason) ||
         !entityFor(v.metric, v.entity) ||
@@ -4121,15 +4169,15 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                                std::tie(b.metric, b.entity);
                       }))
     return fail(Status::UnsortedOrDuplicate, "exclusion_order");
-  std::set<UUID> runs;
-  std::map<UUID, uint64_t> runFlags;
+  IndexSet<UUID> runs;
+  IndexMap<UUID, uint64_t> runFlags;
   for (const auto &v : db.runs) {
     if ((v.flags & ~RunContainsCoverageMask) != 0)
       return fail(Status::InvalidDatabase, "run.flags");
     if (isNil(v.uuid) || !text(v.name) || !runs.insert(v.uuid).second)
       return fail(Status::DuplicateRun, "run.uuid");
     runFlags.emplace(v.uuid, v.flags);
-    std::set<std::string> keys;
+    IndexSet<std::string> keys;
     for (const auto &t : v.tags)
       if (t.first.empty() || !text(t.first) || !text(t.second) ||
           !keys.insert(t.first).second)
@@ -4141,10 +4189,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           db.runs.begin(), db.runs.end(),
           [](const auto &a, const auto &b) { return a.uuid < b.uuid; }))
     return fail(Status::UnsortedOrDuplicate, "run_order");
-  std::map<std::pair<UUID, uint64_t>, const ResolvedInstance *> instances;
+  IndexMap<std::pair<UUID, uint64_t>, const ResolvedInstance *> instances;
   for (const auto &v : db.resolvedInstances)
     if (!runs.count(v.run) || !(runFlags.at(v.run) & RunContainsFunctional) ||
-        !hasID(db.functionalTypes, v.type) || !v.id || !text(v.name) ||
+        !functionalTypesByID.count(v.type) || !v.id || !text(v.name) ||
         (v.flags & ~ResolvedInstanceGeneratedName) != 0 ||
         ((v.flags & ResolvedInstanceGeneratedName) && v.name.empty()) ||
         !instances.emplace(std::make_pair(v.run, v.id), &v).second)
@@ -4156,9 +4204,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return fail(Status::UnsortedOrDuplicate, "resolved_instance_order");
 
   using ConfigurationKey = std::pair<uint64_t, Digest>;
-  std::set<ConfigurationKey> configurations;
+  IndexSet<ConfigurationKey> configurations;
   for (const auto &configuration : db.functionalConfigurations)
-    if (!hasID(db.functionalTypes, configuration.type) ||
+    if (!functionalTypesByID.count(configuration.type) ||
         configuration.flags != 0 ||
         !configurations.emplace(configuration.type, configuration.configuration)
              .second)
@@ -4193,19 +4241,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (!group && option.ownerKind != InstanceOwner::Item)
       return fail(Status::InvalidDatabase, "resolved_instance_option.owner");
     if (typeOption && group) {
-      if (!hasID(db.functionalTypes, option.owner))
+      if (!functionalTypesByID.count(option.owner))
         return fail(Status::InvalidReference, "resolved_instance_option.owner");
     } else if (!typeOption && group) {
       if (option.owner != 0)
         return fail(Status::InvalidDatabase, "resolved_instance_option.owner");
     } else {
-      auto item = std::find_if(db.functionalItems.begin(),
-                               db.functionalItems.end(), [&](const auto &v) {
-                                 return v.id == option.owner &&
-                                        (typeOption ||
-                                         v.type == instance->second->type);
-                               });
-      if (item == db.functionalItems.end())
+      const auto *item = lookupRecord(functionalItemsByID, option.owner);
+      if (!item || (!typeOption && item->type != instance->second->type))
         return fail(Status::InvalidReference, "resolved_instance_option.owner");
       itemIsCross = item->kind == FunctionalItemKind::Cross;
     }
@@ -4249,10 +4292,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                   "resolved_instance_option_duplicate");
   }
 
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalItem *>
       resolvedItems;
-  std::set<std::tuple<uint64_t, Digest, uint64_t>> resolvedItemLogicalKeys;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t>> resolvedItemLogicalKeys;
   for (const auto &item : db.resolvedFunctionalItems) {
     const FunctionalItem *templateItem = findItem(item.templateItem);
     uint32_t kind = static_cast<uint32_t>(item.kind);
@@ -4288,10 +4331,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         return fail(Status::InvalidReference,
                     "resolved_functional_item.completeness");
 
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalBin *>
       resolvedBins;
-  std::set<std::tuple<uint64_t, Digest, uint64_t, uint64_t, uint32_t>>
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t, uint64_t, uint32_t>>
       resolvedBinLogicalKeys;
   for (const auto &bin : db.resolvedFunctionalBins) {
     auto owner = resolvedItems.find({bin.type, bin.configuration, bin.item});
@@ -4367,7 +4410,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
             return key(a) < key(b);
           }))
     return fail(Status::UnsortedOrDuplicate, "resolved_functional_bin_order");
-  std::map<std::tuple<uint64_t, Digest, uint64_t>, std::set<uint32_t>>
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>, IndexSet<uint32_t>>
       resolvedBinOrdinals;
   for (const auto &bin : db.resolvedFunctionalBins)
     if (!resolvedBinOrdinals[{bin.type, bin.configuration, bin.item}]
@@ -4434,7 +4477,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return FunctionalConfigurationValueKind::Unsigned;
     }
   };
-  std::set<std::tuple<uint64_t, Digest, uint32_t, uint64_t, uint32_t, uint32_t>>
+  IndexSet<std::tuple<uint64_t, Digest, uint32_t, uint64_t, uint32_t, uint32_t>>
       configurationOptionKeys;
   for (const auto &option : db.functionalConfigurationOptions) {
     bool group =
@@ -4499,7 +4542,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return fail(Status::UnsortedOrDuplicate,
                 "functional_configuration_option_order");
   for (const auto &configuration : db.functionalConfigurations)
-    for (const auto &plan : db.functionalOptionPlans) {
+    for (const auto &plan : lookupRows(optionPlansByType, configuration.type)) {
       if (plan.option == FunctionalConfigurationOptionKind::Name)
         continue;
       const FunctionalItem *templateOwner =
@@ -4510,14 +4553,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       if (templateOwner) {
         if (templateOwner->type != configuration.type)
           continue;
-        auto resolvedOwner = std::find_if(
-            db.resolvedFunctionalItems.begin(),
-            db.resolvedFunctionalItems.end(), [&](const auto &item) {
-              return item.type == configuration.type &&
-                     item.configuration == configuration.configuration &&
-                     item.templateItem == plan.owner;
-            });
-        if (resolvedOwner == db.resolvedFunctionalItems.end())
+        const auto *resolvedOwner = lookupRecord(
+            resolvedItemsByTemplate,
+            std::make_tuple(configuration.type, configuration.configuration,
+                            plan.owner));
+        if (!resolvedOwner)
           return fail(Status::InvalidReference,
                       "functional_configuration_option.owner");
         owner = resolvedOwner->id;
@@ -4536,8 +4576,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       std::tuple<FunctionalConfigurationValueKind, uint64_t, std::string>;
   using TypeOptionKey = std::tuple<FunctionalConfigurationOptionOwnerKind,
                                    uint64_t, FunctionalConfigurationOptionKind>;
-  std::map<std::tuple<uint64_t, Digest, TypeOptionKey>, TypeOptionValue>
-      typeOptionValues;
+  IndexMap<uint64_t, size_t> typeConfigurationCounts;
+  for (const auto &configuration : db.functionalConfigurations)
+    ++typeConfigurationCounts[configuration.type];
+  IndexMap<std::pair<uint64_t, TypeOptionKey>,
+           std::pair<TypeOptionValue, size_t>>
+      typeProfiles;
   for (const auto &option : db.functionalConfigurationOptions) {
     if (option.scope != FunctionalOptionScopeKind::Type)
       continue;
@@ -4551,47 +4595,29 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       templateOwner = owner->second->templateItem;
     }
     TypeOptionKey optionKey{option.ownerKind, templateOwner, option.option};
-    auto key = std::make_tuple(option.type, option.configuration, optionKey);
     TypeOptionValue value{option.valueKind, option.value, option.stringValue};
-    typeOptionValues.emplace(key, std::move(value));
+    auto [profile, inserted] =
+        typeProfiles.try_emplace(std::make_pair(option.type, optionKey),
+                                 std::make_pair(value, size_t{0}));
+    if (!inserted && profile->second.first != value)
+      return fail(Status::InvalidReference,
+                  "functional_configuration_option.type_consistency");
+    ++profile->second.second;
   }
-  // IEEE 1800-2017 19.7.1 defines type options as static members of the
-  // covergroup type. A retained database therefore has one type-option
-  // profile even when constructor-dependent instance configurations differ
-  // or originate in different runs.
-  std::map<uint64_t, std::vector<Digest>> typeConfigs;
-  for (const auto &configuration : db.functionalConfigurations)
-    typeConfigs[configuration.type].push_back(configuration.configuration);
-  for (auto &[instanceType, configList] : typeConfigs) {
-    const uint64_t currentType = instanceType;
-    std::sort(configList.begin(), configList.end());
-    configList.erase(std::unique(configList.begin(), configList.end()),
-                     configList.end());
-    if (configList.size() < 2)
-      continue;
-    std::set<TypeOptionKey> optionKeys;
-    for (const auto &[key, value] : typeOptionValues)
-      if (std::get<0>(key) == instanceType &&
-          std::binary_search(configList.begin(), configList.end(),
-                             std::get<1>(key)))
-        optionKeys.insert(std::get<2>(key));
-    for (const TypeOptionKey &optionKey : optionKeys) {
-      FunctionalConfigurationOptionKind option = std::get<2>(optionKey);
-      TypeOptionValue fallback{optionValueKind(option), 0, {}};
-      if (option == FunctionalConfigurationOptionKind::Goal)
-        std::get<1>(fallback) = 100;
-      else if (option == FunctionalConfigurationOptionKind::Weight)
-        std::get<1>(fallback) = 1;
-      auto valueFor = [&](const Digest &config) {
-        auto found = typeOptionValues.find({currentType, config, optionKey});
-        return found == typeOptionValues.end() ? fallback : found->second;
-      };
-      TypeOptionValue expected = valueFor(configList.front());
-      for (size_t index = 1; index != configList.size(); ++index)
-        if (valueFor(configList[index]) != expected)
-          return fail(Status::InvalidReference,
-                      "functional_configuration_option.type_consistency");
-    }
+  // IEEE 19.7.1 type options have one static profile, including defaults for
+  // omitted rows. Counting explicit values avoids a configurations x options
+  // product when the wire representation is sparse.
+  for (const auto &[key, profile] : typeProfiles) {
+    const auto option = std::get<2>(key.second);
+    TypeOptionValue fallback{optionValueKind(option), 0, {}};
+    if (option == FunctionalConfigurationOptionKind::Goal)
+      std::get<1>(fallback) = 100;
+    else if (option == FunctionalConfigurationOptionKind::Weight)
+      std::get<1>(fallback) = 1;
+    if (profile.first != fallback &&
+        profile.second != typeConfigurationCounts.at(key.first))
+      return fail(Status::InvalidReference,
+                  "functional_configuration_option.type_consistency");
   }
   for (const auto &option : db.functionalConfigurationOptions) {
     if (option.ownerKind != FunctionalConfigurationOptionOwnerKind::Item)
@@ -4609,7 +4635,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                   "functional_configuration_option.item_value");
     if (option.scope == FunctionalOptionScopeKind::Instance &&
         option.option == FunctionalConfigurationOptionKind::AtLeast)
-      for (const auto &bin : db.resolvedFunctionalBins)
+      for (const auto &bin :
+           lookupRows(resolvedBinsByItem,
+                      std::make_tuple(option.type, option.configuration,
+                                      option.owner)))
         if (bin.type == option.type &&
             bin.configuration == option.configuration &&
             bin.item == option.owner && bin.atLeast != option.value)
@@ -4623,16 +4652,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     auto valueFor =
         [&](FunctionalConfigurationOptionOwnerKind ownerKind,
             uint64_t owner) -> const FunctionalConfigurationOption * {
-      auto found = std::find_if(
-          db.functionalConfigurationOptions.begin(),
-          db.functionalConfigurationOptions.end(), [&](const auto &row) {
-            return row.type == type && row.configuration == configuration &&
-                   row.ownerKind == ownerKind && row.owner == owner &&
-                   row.scope == FunctionalOptionScopeKind::Instance &&
-                   row.option == option;
-          });
-      return found == db.functionalConfigurationOptions.end() ? nullptr
-                                                              : &*found;
+      return lookupRecord(configurationOptionsByKey,
+                          std::make_tuple(type, configuration, ownerKind, owner,
+                                          FunctionalOptionScopeKind::Instance,
+                                          option));
     };
     if (const auto *itemValue =
             valueFor(FunctionalConfigurationOptionOwnerKind::Item, item))
@@ -4661,17 +4684,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return fail(Status::InvalidReference,
                   "functional_configuration_option.bin_effective");
 
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalValueSet *>
       resolvedValueSets;
-  std::set<std::tuple<uint64_t, Digest, uint32_t, uint64_t, uint32_t, uint32_t,
+  IndexSet<std::tuple<uint64_t, Digest, uint32_t, uint64_t, uint32_t, uint32_t,
                       uint64_t>>
       resolvedValueSetLogicalKeys;
-  std::map<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
       resolvedValueSetConsumers;
   size_t resolvedAtomCursor = 0;
   size_t resolvedLimbCursor = 0;
-  std::set<std::tuple<uint64_t, Digest, uint64_t>> resolvedWildcardValueSets;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t>> resolvedWildcardValueSets;
   for (const auto &set : db.resolvedFunctionalValueSets) {
     auto owner = resolvedItems.find({set.type, set.configuration, set.item});
     const FunctionalType *resolvedType = findFunctionalType(set.type);
@@ -4885,7 +4908,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return fail(Status::InvalidReference,
                   "resolved_functional_value_set.id_namespace");
 
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalBinPlan *>
       resolvedBinPlans;
   for (const auto &plan : db.resolvedFunctionalBinPlans) {
@@ -4979,10 +5002,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return fail(Status::InvalidReference,
                   "resolved_functional_bin_plan.completeness");
   using ResolvedBinGroupKey = std::tuple<uint64_t, Digest, uint64_t, uint64_t>;
-  std::map<ResolvedBinGroupKey, const ResolvedFunctionalBinGroup *> binGroups;
-  std::set<std::tuple<uint64_t, Digest, uint64_t>> groupedBins;
-  std::map<std::pair<uint64_t, Digest>, uint32_t> groupBinCursors;
-  std::map<std::pair<uint64_t, Digest>, uint32_t> nonCrossBinEnds;
+  IndexMap<ResolvedBinGroupKey, const ResolvedFunctionalBinGroup *> binGroups;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t>> groupedBins;
+  IndexMap<std::pair<uint64_t, Digest>, uint32_t> groupBinCursors;
+  IndexMap<std::pair<uint64_t, Digest>, uint32_t> nonCrossBinEnds;
   for (uint32_t index = 0; index != db.resolvedFunctionalBins.size(); ++index) {
     const auto &bin = db.resolvedFunctionalBins[index];
     auto key = std::make_pair(bin.type, bin.configuration);
@@ -4990,18 +5013,18 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (bin.kind != FunctionalBinKind::Cross)
       nonCrossBinEnds[key] = index + 1;
   }
+  size_t binCursor = 0;
   for (const auto &configuration : db.functionalConfigurations) {
-    auto position = std::lower_bound(
-        db.resolvedFunctionalBins.begin(), db.resolvedFunctionalBins.end(),
-        std::tie(configuration.type, configuration.configuration),
-        [](const ResolvedFunctionalBin &bin, const auto &key) {
-          return std::tie(bin.type, bin.configuration) < key;
-        });
-    groupBinCursors.try_emplace(
-        std::make_pair(configuration.type, configuration.configuration),
-        static_cast<uint32_t>(position - db.resolvedFunctionalBins.begin()));
+    const auto key =
+        std::make_pair(configuration.type, configuration.configuration);
+    while (binCursor != db.resolvedFunctionalBins.size() &&
+           std::make_pair(db.resolvedFunctionalBins[binCursor].type,
+                          db.resolvedFunctionalBins[binCursor].configuration) <
+               key)
+      ++binCursor;
+    groupBinCursors.try_emplace(key, static_cast<uint32_t>(binCursor));
   }
-  std::map<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
       expectedResolvedBinOrdinal;
   std::optional<std::tuple<uint64_t, Digest, uint32_t, uint32_t, uint64_t>>
       previousBinGroupOrder;
@@ -5020,14 +5043,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         item->second->kind == FunctionalItemKind::Coverpoint;
     bool automaticCardinalityValid = true;
     if (generatedAutomatic) {
-      const FunctionalExpression *sample = nullptr;
-      for (const auto &expression : db.functionalExpressions)
-        if (expression.owner == item->second->templateItem &&
-            expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-            expression.role == FunctionalExpressionRole::CoverpointSample) {
-          sample = &expression;
-          break;
-        }
+      const FunctionalExpression *sample =
+          sampleExpressionFor(item->second->templateItem);
       if (sample) {
         uint64_t maximum = effectiveUnsignedOption(
             group.type, group.configuration, group.item,
@@ -5119,47 +5136,36 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return fail(Status::InvalidReference,
                   "resolved_functional_bin_group.coverage");
   for (const auto &configuration : db.functionalConfigurations) {
-    for (const auto &templateBin : db.functionalBins) {
+    for (const auto &templateBin : lookupRows(binsByType, configuration.type)) {
       if (templateBin.kind == FunctionalBinKind::Cross)
         continue;
       const FunctionalItem *staticItem = findItem(templateBin.item);
       if (!staticItem || staticItem->type != configuration.type)
         continue;
-      auto item = std::find_if(
-          db.resolvedFunctionalItems.begin(), db.resolvedFunctionalItems.end(),
-          [&](const auto &resolved) {
-            return resolved.type == configuration.type &&
-                   resolved.configuration == configuration.configuration &&
-                   resolved.templateItem == staticItem->id;
-          });
-      if (item == db.resolvedFunctionalItems.end() ||
+      const auto *item = lookupRecord(
+          resolvedItemsByTemplate,
+          std::make_tuple(configuration.type, configuration.configuration,
+                          staticItem->id));
+      if (!item ||
           !binGroups.count({configuration.type, configuration.configuration,
                             item->id, templateBin.id}))
         return fail(Status::InvalidReference,
                     "resolved_functional_bin_group.completeness");
     }
-    for (const auto &item : db.resolvedFunctionalItems) {
+    for (const auto &item :
+         configurationIndex.get(configuration.type, configuration.configuration)
+             .resolvedFunctionalItems) {
       if (item.type != configuration.type ||
           item.configuration != configuration.configuration ||
           item.kind != FunctionalItemKind::Coverpoint)
         continue;
-      bool hasNormalBin = std::any_of(
-          db.functionalBins.begin(), db.functionalBins.end(),
-          [&](const auto &bin) {
-            return bin.item == item.templateItem &&
-                   (bin.kind == FunctionalBinKind::State ||
-                    bin.kind == FunctionalBinKind::Transition) &&
-                   !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal |
-                                  FunctionalBinAutomatic));
-          });
+      const auto kinds = templateBinKinds.find(item.templateItem);
+      const bool hasNormalBin =
+          kinds != templateBinKinds.end() && kinds->second.first;
       bool hasAutomaticGroup = binGroups.count(
           {configuration.type, configuration.configuration, item.id, 0});
-      bool hasStaticAutomatic =
-          std::any_of(db.functionalBins.begin(), db.functionalBins.end(),
-                      [&](const auto &bin) {
-                        return bin.item == item.templateItem &&
-                               (bin.flags & FunctionalBinAutomatic);
-                      });
+      const bool hasStaticAutomatic =
+          kinds != templateBinKinds.end() && kinds->second.second;
       if (hasNormalBin ? (hasAutomaticGroup || hasStaticAutomatic)
                        : (hasAutomaticGroup == hasStaticAutomatic))
         return fail(Status::InvalidReference,
@@ -5170,14 +5176,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   // including explicit zero-cardinality unsized resolutions. Cross bins are
   // scalar and intentionally remain outside those groups.
   for (const auto &configuration : db.functionalConfigurations) {
-    for (const auto &templateBin : db.functionalBins) {
+    for (const auto &templateBin : lookupRows(binsByType, configuration.type)) {
       if (templateBin.kind != FunctionalBinKind::Cross)
         continue;
       const FunctionalItem *templateItem = findItem(templateBin.item);
       if (!templateItem || templateItem->type != configuration.type)
         continue;
       std::vector<const ResolvedFunctionalBin *> mirrors;
-      for (const auto &bin : db.resolvedFunctionalBins)
+      for (const auto &bin : lookupRows(
+               resolvedBinsByTemplate,
+               std::make_tuple(configuration.type, configuration.configuration,
+                               templateBin.id)))
         if (bin.type == configuration.type &&
             bin.configuration == configuration.configuration &&
             bin.templateBin == templateBin.id)
@@ -5215,7 +5224,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                db.resolvedFunctionalValueAtoms[set.firstAtom].kind ==
                    FunctionalValueAtomKind::RealInterval;
       };
-  std::map<std::tuple<uint64_t, Digest, uint64_t, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t, uint64_t>,
            std::vector<const ResolvedFunctionalBin *>>
       stateBinGroups;
   for (const auto &[key, bin] : resolvedBins)
@@ -5224,9 +5233,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       bin->templateBin}]
           .push_back(bin);
   for (auto &[groupKey, group] : stateBinGroups) {
-    std::sort(group.begin(), group.end(), [](const auto *a, const auto *b) {
-      return a->expansionOrdinal < b->expansionOrdinal;
-    });
+    sortByKey(group.begin(), group.end(),
+              [](const auto *a) { return a->expansionOrdinal; });
     const auto *plan = resolvedBinPlans.at(
         {group.front()->type, group.front()->configuration, group.front()->id});
     for (uint32_t index = 0; index != group.size(); ++index) {
@@ -5289,34 +5297,31 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       }
   }
 
-  std::map<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
       nextAlternativeOrdinal;
-  std::set<std::tuple<uint64_t, Digest, uint64_t>> alternativeIDs;
-  std::set<std::tuple<uint64_t, Digest, uint64_t, uint32_t, uint32_t>>
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t>> alternativeIDs;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t, uint32_t, uint32_t>>
       expansionKeys;
-  std::map<std::tuple<uint64_t, Digest, uint64_t>, uint32_t> alternativesByBin;
-  std::map<std::tuple<uint64_t, Digest, uint64_t, uint32_t>, std::set<uint32_t>>
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint32_t> alternativesByBin;
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t, uint32_t>, IndexSet<uint32_t>>
       expansionOrdinals;
-  std::map<std::tuple<uint64_t, Digest, uint64_t, uint32_t>, uint64_t>
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t, uint32_t>, uint64_t>
       expectedExpansionCounts;
-  std::set<std::tuple<uint64_t, Digest, uint64_t, uint32_t>> expansionGroupKeys;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t, uint32_t>> expansionGroupKeys;
   std::optional<std::tuple<uint64_t, Digest, uint32_t, uint32_t, uint32_t>>
       previousExpansionGroupOrder;
   size_t expansionAlternativeCursor = 0;
-  std::map<ResolvedBinGroupKey, uint64_t> transitionExpansionTotals;
+  IndexMap<ResolvedBinGroupKey, uint64_t> transitionExpansionTotals;
   for (const auto &group : db.resolvedTransitionExpansionGroups) {
     auto item =
         resolvedItems.find({group.type, group.configuration, group.item});
     const FunctionalBin *templateBin = findBin(group.templateBin);
     auto binGroup = binGroups.find(
         {group.type, group.configuration, group.item, group.templateBin});
-    auto program =
-        std::find_if(db.transitionPrograms.begin(), db.transitionPrograms.end(),
-                     [&](const auto &candidate) {
-                       return candidate.bin == group.templateBin;
-                     });
+    const auto *program =
+        lookupRecord(transitionProgramsByBin, group.templateBin);
     const TransitionAlternative *templateAlternative = nullptr;
-    if (program != db.transitionPrograms.end() &&
+    if (program != nullptr &&
         group.templateAlternativeOrdinal < program->alternativeCount)
       templateAlternative =
           &db.transitionAlternatives[program->firstAlternative +
@@ -5378,18 +5383,15 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return fail(Status::InvalidReference,
                 "resolved_transition_expansion_group.range");
   for (const auto &configuration : db.functionalConfigurations)
-    for (const auto &program : db.transitionPrograms) {
+    for (const auto &program : lookupRows(programsByType, configuration.type)) {
       const FunctionalItem *staticItem = findItem(program.item);
       if (!staticItem || staticItem->type != configuration.type)
         continue;
-      auto item = std::find_if(
-          db.resolvedFunctionalItems.begin(), db.resolvedFunctionalItems.end(),
-          [&](const auto &resolved) {
-            return resolved.type == configuration.type &&
-                   resolved.configuration == configuration.configuration &&
-                   resolved.templateItem == staticItem->id;
-          });
-      if (item == db.resolvedFunctionalItems.end())
+      const auto *item = lookupRecord(
+          resolvedItemsByTemplate,
+          std::make_tuple(configuration.type, configuration.configuration,
+                          staticItem->id));
+      if (!item)
         return fail(Status::InvalidReference,
                     "resolved_transition_expansion_group.item");
       auto resolvedGroup =
@@ -5429,13 +5431,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     const FunctionalBinPlan *templatePlan = nullptr;
     const TransitionProgram *program = nullptr;
     if (resolvedBin != resolvedBins.end()) {
-      auto found = std::find_if(
-          db.transitionPrograms.begin(), db.transitionPrograms.end(),
-          [&](const auto &candidate) {
-            return candidate.bin == resolvedBin->second->templateBin;
-          });
-      if (found != db.transitionPrograms.end())
-        program = &*found;
+      program = lookupRecord(transitionProgramsByBin,
+                             resolvedBin->second->templateBin);
       if (binPlans.count(resolvedBin->second->templateBin))
         templatePlan = binPlans.at(resolvedBin->second->templateBin);
     }
@@ -5579,17 +5576,25 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         ordinals.size() != expectedExpansionCounts.at(expansionKey))
       return fail(Status::InvalidReference,
                   "resolved_transition_alternative.expansion_order");
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            std::vector<const ResolvedFunctionalBin *>>
       transitionBinGroups;
   for (const auto &[key, bin] : resolvedBins)
     if (bin->kind == FunctionalBinKind::Transition)
       transitionBinGroups[{bin->type, bin->configuration, bin->templateBin}]
           .push_back(bin);
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
+           std::vector<std::pair<uint32_t, uint32_t>>>
+      expectedSequencesByGroup;
+  for (const auto &[expansionKey, ordinals] : expansionOrdinals)
+    for (uint32_t expansion : ordinals)
+      expectedSequencesByGroup[{std::get<0>(expansionKey),
+                                std::get<1>(expansionKey),
+                                std::get<2>(expansionKey)}]
+          .emplace_back(std::get<3>(expansionKey), expansion);
   for (auto &[groupKey, group] : transitionBinGroups) {
-    std::sort(group.begin(), group.end(), [](const auto *a, const auto *b) {
-      return a->expansionOrdinal < b->expansionOrdinal;
-    });
+    sortByKey(group.begin(), group.end(),
+              [](const auto *a) { return a->expansionOrdinal; });
     for (uint32_t index = 0; index != group.size(); ++index)
       if (group[index]->expansionOrdinal != index)
         return fail(Status::InvalidReference,
@@ -5608,19 +5613,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         return fail(Status::InvalidReference,
                     "resolved_transition_bin.plan_mismatch");
     }
-    std::vector<std::pair<uint32_t, uint32_t>> expectedSequences;
-    for (const auto &[expansionKey, ordinals] : expansionOrdinals) {
-      if (std::get<0>(expansionKey) != group.front()->type ||
-          std::get<1>(expansionKey) != group.front()->configuration ||
-          std::get<2>(expansionKey) != group.front()->templateBin)
-        continue;
-      for (uint32_t expansion : ordinals)
-        expectedSequences.emplace_back(std::get<3>(expansionKey), expansion);
-    }
-    std::sort(expectedSequences.begin(), expectedSequences.end());
+    const auto &expectedSequences = expectedSequencesByGroup[groupKey];
     std::vector<std::pair<uint32_t, uint32_t>> assignedSequences;
     for (const auto *bin : group)
-      for (const auto &alternative : db.resolvedTransitionAlternatives)
+      for (const auto &alternative :
+           lookupRows(alternativesByResolvedBin,
+                      std::make_tuple(bin->type, bin->configuration, bin->id)))
         if (alternative.type == bin->type &&
             alternative.configuration == bin->configuration &&
             alternative.bin == bin->id)
@@ -5639,10 +5637,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                   "resolved_transition_bin.unsized_count");
     {
       const uint64_t templateBin = group.front()->templateBin;
-      auto program = std::find_if(
-          db.transitionPrograms.begin(), db.transitionPrograms.end(),
-          [&](const auto &candidate) { return candidate.bin == templateBin; });
-      if (program != db.transitionPrograms.end())
+      const auto *program = lookupRecord(transitionProgramsByBin, templateBin);
+      if (program != nullptr)
         for (uint32_t templateOrdinal = 0;
              templateOrdinal != program->alternativeCount; ++templateOrdinal)
           if (!expansionGroupKeys.count(
@@ -5698,21 +5694,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   for (const auto &[key, item] : resolvedItems) {
     const auto resolvedKey = key;
     if ((item->kind == FunctionalItemKind::Cross) !=
-        (std::find_if(db.resolvedCrossPlans.begin(),
-                      db.resolvedCrossPlans.end(), [&](const auto &plan) {
-                        return std::tie(plan.type, plan.configuration,
-                                        plan.cross) == resolvedKey;
-                      }) != db.resolvedCrossPlans.end()))
+        (crossPlansByKey.count(resolvedKey) != 0))
       return fail(Status::InvalidReference, "resolved_cross_plan.completeness");
   }
 
   using ResolvedCrossKey = std::tuple<uint64_t, Digest, uint64_t>;
   using ResolvedCrossNodeKey = std::tuple<uint64_t, Digest, uint64_t, uint64_t>;
-  std::map<ResolvedCrossKey, const ResolvedCrossPlan *> resolvedCrossPlanMap;
+  IndexMap<ResolvedCrossKey, const ResolvedCrossPlan *> resolvedCrossPlanMap;
   for (const auto &plan : db.resolvedCrossPlans)
     resolvedCrossPlanMap.emplace(
         std::make_tuple(plan.type, plan.configuration, plan.cross), &plan);
-  std::map<ResolvedCrossNodeKey, const ResolvedCrossAutomaticNode *>
+  IndexMap<ResolvedCrossNodeKey, const ResolvedCrossAutomaticNode *>
       automaticNodesByID;
   for (const auto &node : db.resolvedCrossAutomaticNodes)
     if (!node.id ||
@@ -5732,8 +5724,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       }))
     return fail(Status::UnsortedOrDuplicate,
                 "resolved_cross_automatic_node.order");
+  using AutomaticEdgeKey =
+      std::tuple<uint64_t, Digest, uint64_t, uint64_t, uint64_t>;
+  IndexMap<AutomaticEdgeKey, const ResolvedCrossAutomaticEdge *>
+      automaticEdgesByKey;
   size_t automaticEdgeCursor = 0;
-  std::map<ResolvedCrossKey, std::vector<const ResolvedCrossAutomaticNode *>>
+  IndexMap<ResolvedCrossKey, std::vector<const ResolvedCrossAutomaticNode *>>
       automaticNodesByCross;
   for (const auto &node : db.resolvedCrossAutomaticNodes) {
     ResolvedCrossKey key{node.type, node.configuration, node.cross};
@@ -5752,15 +5748,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         node.flags)
       return fail(Status::InvalidReference, "resolved_cross_automatic_node");
     uint64_t targetTemplate = staticTargets->second[node.targetOrdinal];
-    auto target =
-        std::find_if(db.resolvedFunctionalItems.begin(),
-                     db.resolvedFunctionalItems.end(), [&](const auto &item) {
-                       return item.type == node.type &&
-                              item.configuration == node.configuration &&
-                              item.templateItem == targetTemplate;
-                     });
-    if (target == db.resolvedFunctionalItems.end() ||
-        target->kind != FunctionalItemKind::Coverpoint)
+    const auto *target = lookupRecord(
+        resolvedItemsByTemplate,
+        std::make_tuple(node.type, node.configuration, targetTemplate));
+    if (!target || target->kind != FunctionalItemKind::Coverpoint)
       return fail(Status::InvalidReference,
                   "resolved_cross_automatic_node.target");
     std::string previousName;
@@ -5768,6 +5759,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     for (uint32_t ordinal = 0; ordinal != node.edgeCount; ++ordinal) {
       const auto &edge =
           db.resolvedCrossAutomaticEdges[node.firstEdge + ordinal];
+      automaticEdgesByKey.emplace(
+          AutomaticEdgeKey{node.type, node.configuration, node.cross, node.id,
+                           edge.bin},
+          &edge);
       auto bin = resolvedBins.find({node.type, node.configuration, edge.bin});
       auto child = automaticNodesByID.find(
           {node.type, node.configuration, node.cross, edge.child});
@@ -5810,14 +5805,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (root == automaticNodesByID.end() || root->second->targetOrdinal != 0)
       return fail(Status::InvalidReference, "resolved_cross_plan.root_node");
     std::vector<const ResolvedCrossAutomaticNode *> reverseNodes = nodes;
-    std::sort(reverseNodes.begin(), reverseNodes.end(),
-              [](const auto *a, const auto *b) {
-                return std::tie(a->targetOrdinal, a->id) >
-                       std::tie(b->targetOrdinal, b->id);
-              });
-    std::map<uint64_t, WideUnsigned> pathCounts;
-    std::map<uint64_t, uint64_t> canonicalClasses;
-    std::map<std::pair<uint32_t, std::vector<std::pair<uint64_t, uint64_t>>>,
+    sortByKey(reverseNodes.begin(), reverseNodes.end(), [](const auto *a) {
+      return std::make_tuple(~a->targetOrdinal, ~a->id);
+    });
+    IndexMap<uint64_t, WideUnsigned> pathCounts;
+    IndexMap<uint64_t, uint64_t> canonicalClasses;
+    IndexMap<std::pair<uint32_t, std::vector<std::pair<uint64_t, uint64_t>>>,
              uint64_t>
         canonicalNodes;
     uint64_t nextClass = 1;
@@ -5849,7 +5842,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       canonicalClasses.emplace(node->id, nextClass++);
       pathCounts.emplace(node->id, std::move(count));
     }
-    std::set<uint64_t> reachable;
+    IndexSet<uint64_t> reachable;
     std::vector<uint64_t> worklist{plan.rootNode};
     while (!worklist.empty()) {
       uint64_t id = worklist.back();
@@ -5874,11 +5867,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                   "resolved_cross_automatic_node.path_count");
   }
 
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalTupleSet *>
       resolvedTupleSets;
-  std::set<std::tuple<uint64_t, Digest, uint64_t>> resolvedTupleIDs;
-  std::set<std::tuple<uint64_t, Digest, uint64_t>> resolvedTupleSelectors;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t>> resolvedTupleIDs;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t>> resolvedTupleSelectors;
   size_t resolvedTupleCursor = 0;
   size_t resolvedTupleComponentCursor = 0;
   for (const auto &set : db.resolvedFunctionalTupleSets) {
@@ -5926,27 +5919,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     std::vector<uint64_t> resolvedTargets;
     std::vector<const FunctionalExpression *> resolvedTargetSamples;
     for (uint64_t target : staticTargets->second) {
-      auto resolvedTarget =
-          std::find_if(db.resolvedFunctionalItems.begin(),
-                       db.resolvedFunctionalItems.end(), [&](const auto &item) {
-                         return item.type == set.type &&
-                                item.configuration == set.configuration &&
-                                item.templateItem == target;
-                       });
-      if (resolvedTarget == db.resolvedFunctionalItems.end())
+      const auto *resolvedTarget =
+          lookupRecord(resolvedItemsByTemplate,
+                       std::make_tuple(set.type, set.configuration, target));
+      if (!resolvedTarget)
         return fail(Status::InvalidReference,
                     "resolved_functional_tuple_set.target");
       resolvedTargets.push_back(resolvedTarget->id);
       const FunctionalExpression *sample = nullptr;
       if (node->second->withExpression ||
           node->second->constructionExpression) {
-        for (const auto &expression : db.functionalExpressions)
-          if (expression.owner == target &&
-              expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-              expression.role == FunctionalExpressionRole::CoverpointSample) {
-            sample = &expression;
-            break;
-          }
+        sample = sampleExpressionFor(target);
         if (!sample)
           return fail(Status::InvalidReference,
                       "resolved_functional_tuple_set.target_expression");
@@ -6032,7 +6015,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return fail(Status::UnsortedOrDuplicate,
                 "resolved_functional_tuple_set_order");
 
-  std::set<std::tuple<uint64_t, Digest, uint64_t, uint64_t>> bindingKeys;
+  IndexSet<std::tuple<uint64_t, Digest, uint64_t, uint64_t>> bindingKeys;
   for (const auto &binding : db.resolvedCrossSelectorBindings) {
     auto node = nodesByID.find(binding.node);
     auto set = resolvedValueSets.find(
@@ -6113,7 +6096,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   for (const auto &[key, cross] : resolvedItems) {
     if (cross->kind != FunctionalItemKind::Cross)
       continue;
-    for (const auto &node : db.crossSelectorNodes) {
+    for (const auto &node : lookupRows(nodesByCross, cross->templateItem)) {
       if (node.cross != cross->templateItem)
         continue;
       const FunctionalValueSet *set =
@@ -6136,7 +6119,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
 
   for (const auto &configuration : db.functionalConfigurations)
     if (computeConfigurationBundleDigest(
-            db, configuration.type, configuration.configuration,
+            db, configurationIndex, configuration.type,
+            configuration.configuration,
             /*includeResolvedIDs=*/false) != configuration.configuration)
       return fail(Status::FingerprintMismatch,
                   "functional_configuration.digest",
@@ -6144,39 +6128,31 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
 
   using SparseKey = std::tuple<UUID, uint64_t, uint64_t, std::vector<uint64_t>>;
   std::optional<SparseKey> previousSparseKey;
-  std::map<std::tuple<UUID, uint64_t, uint64_t>, uint64_t>
+  IndexMap<std::tuple<UUID, uint64_t, uint64_t>, uint64_t>
       sparseAutomaticTupleCounts;
   size_t sparseComponentCursor = 0;
   for (const auto &tuple : db.sparseCrossTuples) {
     auto instance = instances.find({tuple.run, tuple.instance});
     const FunctionalItem *cross = findItem(tuple.cross);
     auto targets = targetsByCross.find(tuple.cross);
-    auto resolvedCross =
+    const auto *resolvedCross =
         instance == instances.end()
-            ? db.resolvedFunctionalItems.end()
-            : std::find_if(db.resolvedFunctionalItems.begin(),
-                           db.resolvedFunctionalItems.end(),
-                           [&](const auto &item) {
-                             return item.type == instance->second->type &&
-                                    item.configuration ==
-                                        instance->second->configuration &&
-                                    item.templateItem == tuple.cross;
-                           });
-    auto resolvedPlan =
-        resolvedCross == db.resolvedFunctionalItems.end()
-            ? db.resolvedCrossPlans.end()
-            : std::find_if(db.resolvedCrossPlans.begin(),
-                           db.resolvedCrossPlans.end(), [&](const auto &plan) {
-                             return plan.type == instance->second->type &&
-                                    plan.configuration ==
-                                        instance->second->configuration &&
-                                    plan.cross == resolvedCross->id;
-                           });
+            ? nullptr
+            : lookupRecord(resolvedItemsByTemplate,
+                           std::make_tuple(instance->second->type,
+                                           instance->second->configuration,
+                                           tuple.cross));
+    const auto *resolvedPlan =
+        !resolvedCross
+            ? nullptr
+            : lookupRecord(crossPlansByKey,
+                           std::make_tuple(instance->second->type,
+                                           instance->second->configuration,
+                                           resolvedCross->id));
     if (instance == instances.end() || !cross ||
         cross->kind != FunctionalItemKind::Cross ||
-        cross->type != instance->second->type ||
-        resolvedCross == db.resolvedFunctionalItems.end() ||
-        resolvedPlan == db.resolvedCrossPlans.end() ||
+        cross->type != instance->second->type || !resolvedCross ||
+        !resolvedPlan ||
         resolvedPlan->retainAutoPolicy != CrossRetainAutoPolicy::Retain ||
         !resolvedPlan->automaticBinCountLimbCount ||
         targets == targetsByCross.end() ||
@@ -6193,15 +6169,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           db.sparseCrossTupleComponents[tuple.firstComponent + ordinal];
       auto bin = resolvedBins.find(
           {instance->second->type, instance->second->configuration, binID});
-      auto expectedTarget = std::find_if(
-          db.resolvedFunctionalItems.begin(), db.resolvedFunctionalItems.end(),
-          [&](const auto &item) {
-            return item.type == instance->second->type &&
-                   item.configuration == instance->second->configuration &&
-                   item.templateItem == targets->second[ordinal];
-          });
-      if (bin == resolvedBins.end() ||
-          expectedTarget == db.resolvedFunctionalItems.end() ||
+      const auto *expectedTarget =
+          lookupRecord(resolvedItemsByTemplate,
+                       std::make_tuple(instance->second->type,
+                                       instance->second->configuration,
+                                       targets->second[ordinal]));
+      if (bin == resolvedBins.end() || !expectedTarget ||
           bin->second->item != expectedTarget->id ||
           (bin->second->flags &
            (FunctionalBinDefault | FunctionalBinDefaultSequence |
@@ -6217,17 +6190,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       if (node == automaticNodesByID.end())
         return fail(Status::InvalidReference,
                     "sparse_cross_tuple.automatic_membership");
-      const ResolvedCrossAutomaticEdge *edge = nullptr;
-      for (uint32_t edgeOrdinal = 0; edgeOrdinal != node->second->edgeCount;
-           ++edgeOrdinal) {
-        const auto &candidate =
-            db.resolvedCrossAutomaticEdges[node->second->firstEdge +
-                                           edgeOrdinal];
-        if (candidate.bin == components[ordinal]) {
-          edge = &candidate;
-          break;
-        }
-      }
+      const auto *edge = lookupRecord(
+          automaticEdgesByKey,
+          AutomaticEdgeKey{instance->second->type,
+                           instance->second->configuration, resolvedPlan->cross,
+                           automaticNode, components[ordinal]});
       bool finalComponent = ordinal + 1 == components.size();
       if (!edge || (finalComponent != (edge->child == 0)))
         return fail(Status::InvalidReference,
@@ -6246,20 +6213,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return fail(Status::InvalidReference, "sparse_cross_tuple.component_range");
   for (const auto &[key, count] : sparseAutomaticTupleCounts) {
     auto instance = instances.find({std::get<0>(key), std::get<1>(key)});
-    auto resolvedCross = std::find_if(
-        db.resolvedFunctionalItems.begin(), db.resolvedFunctionalItems.end(),
-        [&](const auto &item) {
-          return item.type == instance->second->type &&
-                 item.configuration == instance->second->configuration &&
-                 item.templateItem == std::get<2>(key);
-        });
-    auto plan = std::find_if(
-        db.resolvedCrossPlans.begin(), db.resolvedCrossPlans.end(),
-        [&](const auto &candidate) {
-          return candidate.type == instance->second->type &&
-                 candidate.configuration == instance->second->configuration &&
-                 candidate.cross == resolvedCross->id;
-        });
+    const auto *resolvedCross = lookupRecord(
+        resolvedItemsByTemplate,
+        std::make_tuple(instance->second->type, instance->second->configuration,
+                        std::get<2>(key)));
+    const auto *plan = lookupRecord(
+        crossPlansByKey,
+        std::make_tuple(instance->second->type, instance->second->configuration,
+                        resolvedCross->id));
     if (plan->automaticBinCountLimbCount == 1 &&
         count > db.resolvedCrossAutomaticBinCountLimbs
                     [plan->firstAutomaticBinCountLimb])
@@ -6267,12 +6228,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                   "sparse_cross_tuple.automatic_membership");
   }
 
-  std::set<std::tuple<UUID, uint32_t, uint64_t, uint64_t, uint32_t>>
+  IndexSet<std::tuple<UUID, uint32_t, uint64_t, uint64_t, uint32_t>>
       counterKeys;
   for (const auto &v : db.counters) {
-    auto toggle = std::find_if(
-        db.toggleObjects.begin(), db.toggleObjects.end(),
-        [&](const ToggleObject &object) { return object.id == v.entity; });
+    const auto *toggle = v.metric == MetricKind::Toggle
+                             ? lookupRecord(toggleObjectsByID, v.entity)
+                             : nullptr;
     bool validFunctionalInstance = false;
     if (v.metric == MetricKind::Functional) {
       auto instance = instances.find({v.run, v.instance});
@@ -6295,8 +6256,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         (v.metric == MetricKind::Line &&
          (v.subindex != 0 || v.instance != 0)) ||
         (v.metric == MetricKind::Toggle &&
-         (toggle == db.toggleObjects.end() ||
-          toggle->bitWidth > UINT32_MAX / 4 ||
+         (!toggle || toggle->bitWidth > UINT32_MAX / 4 ||
           v.subindex >= toggle->bitWidth * 4 || v.instance != 0)) ||
         (v.metric == MetricKind::Functional &&
          (v.subindex != 0 || !v.instance || !validFunctionalInstance)) ||
@@ -6315,7 +6275,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                    std::tie(b.run, b.metric, b.entity, b.instance, b.subindex);
           }))
     return fail(Status::UnsortedOrDuplicate, "counter_order");
-  std::set<std::tuple<UUID, uint64_t, uint64_t, uint64_t>> illegalKeys;
+  IndexSet<std::tuple<UUID, uint64_t, uint64_t, uint64_t>> illegalKeys;
   for (const auto &v : db.illegalBinDiagnostics) {
     auto instance = instances.find({v.run, v.instance});
     const ResolvedFunctionalBin *bin = nullptr;
@@ -6544,7 +6504,7 @@ Status parse(const uint8_t *data, size_t size, Database &output,
     result.flags = read32(data + 12);
     result.schemaFingerprint = fingerprint;
     std::vector<DirectoryEntry> entries;
-    std::set<uint32_t> kinds;
+    IndexSet<uint32_t> kinds;
     uint64_t previousEnd = dirEnd;
     uint64_t previous = align8(previousEnd);
     uint32_t previousKind = 0;
@@ -6652,8 +6612,8 @@ Status parse(const uint8_t *data, size_t size, Database &output,
       }
       return &strings[index];
     };
-    std::map<SectionKind, std::unordered_set<uint64_t>> stableIdentities;
-    std::map<SectionKind, std::set<UUID>> uuidIdentities;
+    IndexMap<SectionKind, IndexSet<uint64_t>> stableIdentities;
+    IndexMap<SectionKind, IndexSet<UUID>> uuidIdentities;
     for (const RecordDescriptor &record : ParserRecordDescriptors) {
       const DirectoryEntry *section = entry(record.section);
       if (!section)
@@ -7677,7 +7637,7 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                });
     if (st != Status::Ok)
       return st;
-    std::map<UUID, uint32_t> expectedTagCounts;
+    IndexMap<UUID, uint32_t> expectedTagCounts;
     st = fixed(
         SectionKind::Runs, [&](const auto &e, uint64_t i, const uint8_t *p) {
           const auto *s = str(RunRecord::getName(p), e, i, RunRecord::NameName);
@@ -7806,6 +7766,9 @@ Status parse(const uint8_t *data, size_t size, Database &output,
       return st;
     bool sawProducer = false;
     std::optional<std::pair<UUID, std::string>> previousMetadataKey;
+    IndexMap<UUID, size_t> runPositions;
+    for (size_t index = 0; index != result.runs.size(); ++index)
+      runPositions.emplace(result.runs[index].uuid, index);
     st = fixed(SectionKind::UserMetadata, [&](const auto &e, uint64_t i,
                                               const uint8_t *p) {
       UUID run;
@@ -7831,12 +7794,11 @@ Status parse(const uint8_t *data, size_t size, Database &output,
         result.producer = *v;
         return Status::Ok;
       }
-      auto found = std::find_if(result.runs.begin(), result.runs.end(),
-                                [&](const Run &r) { return r.uuid == run; });
-      if (found == result.runs.end())
+      auto found = runPositions.find(run);
+      if (found == runPositions.end())
         return fail(Status::InvalidReference, e.offset + i * 24, e.kind, i,
                     "run");
-      found->tags.emplace_back(*k, *v);
+      result.runs[found->second].tags.emplace_back(*k, *v);
       return Status::Ok;
     });
     if (st != Status::Ok)
@@ -7902,21 +7864,19 @@ static Status discardTestDetailInPlace(Database &destination,
     aggregateRunIDs.push_back(r.uuid);
     aggregate.flags |= r.flags & RunContainsCoverageMask;
   }
-  std::sort(aggregateRunIDs.begin(), aggregateRunIDs.end());
+  sortByKey(aggregateRunIDs.begin(), aggregateRunIDs.end(),
+            [](const auto &value) { return value; });
   for (const UUID &uuid : aggregateRunIDs)
     h.update(uuid.data(), uuid.size());
   Digest d = h.finish();
   std::copy(d.begin(), d.begin() + 16, aggregate.uuid.begin());
   if (isNil(aggregate.uuid))
     aggregate.uuid.back() = 1;
-  std::sort(destination.resolvedInstances.begin(),
+  sortByKey(destination.resolvedInstances.begin(),
             destination.resolvedInstances.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.run, left.id) <
-                     std::tie(right.run, right.id);
-            });
-  std::map<std::tuple<uint64_t, std::string, Digest>, uint64_t> namedInstances;
-  std::map<std::pair<UUID, uint64_t>, uint64_t> remappedInstances;
+            [](const auto &left) { return std::tie(left.run, left.id); });
+  IndexMap<std::tuple<uint64_t, std::string, Digest>, uint64_t> namedInstances;
+  IndexMap<std::pair<UUID, uint64_t>, uint64_t> remappedInstances;
   uint64_t nextInstanceID = 1;
   std::vector<ResolvedInstance> aggregateInstances;
   for (auto instance : destination.resolvedInstances) {
@@ -7942,7 +7902,7 @@ static Status discardTestDetailInPlace(Database &destination,
   }
   destination.resolvedInstances = std::move(aggregateInstances);
 
-  std::map<std::tuple<uint64_t, FunctionalConfigurationOptionOwnerKind,
+  IndexMap<std::tuple<uint64_t, FunctionalConfigurationOptionOwnerKind,
                       uint64_t, FunctionalConfigurationOptionKind>,
            ResolvedInstanceOption>
       aggregateOptions;
@@ -7975,7 +7935,7 @@ static Status discardTestDetailInPlace(Database &destination,
     destination.resolvedInstanceOptions.push_back(std::move(option));
   }
 
-  std::map<std::tuple<uint32_t, uint64_t, uint64_t, uint32_t>, Counter> sums;
+  IndexMap<std::tuple<uint32_t, uint64_t, uint64_t, uint32_t>, Counter> sums;
   for (auto counter : destination.counters) {
     if (counter.metric == MetricKind::Functional) {
       auto instance = remappedInstances.find({counter.run, counter.instance});
@@ -8006,7 +7966,7 @@ static Status discardTestDetailInPlace(Database &destination,
   for (auto &entry : sums)
     destination.counters.push_back(entry.second);
 
-  std::map<std::tuple<uint64_t, uint64_t, std::vector<uint64_t>>,
+  IndexMap<std::tuple<uint64_t, uint64_t, std::vector<uint64_t>>,
            SparseCrossTuple>
       sparseSums;
   for (const auto &tuple : destination.sparseCrossTuples) {
@@ -8042,7 +8002,7 @@ static Status discardTestDetailInPlace(Database &destination,
         components.end());
   }
 
-  std::map<std::tuple<uint64_t, uint64_t, uint64_t>, IllegalBinDiagnostic>
+  IndexMap<std::tuple<uint64_t, uint64_t, uint64_t>, IllegalBinDiagnostic>
       illegalSums;
   for (auto diagnosticValue : destination.illegalBinDiagnostics) {
     auto instance =
@@ -8087,7 +8047,7 @@ static Status mergeInPlace(Database &destination, const Database &source,
                   NoRecord, "schema_fingerprint");
     return Status::SchemaMismatch;
   }
-  std::set<UUID> existingRuns;
+  IndexSet<UUID> existingRuns;
   for (const auto &run : destination.runs)
     existingRuns.insert(run.uuid);
   for (const auto &r : source.runs) {
@@ -8100,7 +8060,9 @@ static Status mergeInPlace(Database &destination, const Database &source,
 
   using ConfigurationKey = std::pair<uint64_t, Digest>;
   Database existingConfigurationData = destination;
-  std::map<ConfigurationKey, const Database *> configurationSources;
+  const ConfigurationIndex existingIndex(existingConfigurationData);
+  const ConfigurationIndex sourceIndex(source);
+  IndexMap<ConfigurationKey, const Database *> configurationSources;
   for (const auto &configuration :
        existingConfigurationData.functionalConfigurations)
     configurationSources.emplace(
@@ -8110,10 +8072,11 @@ static Status mergeInPlace(Database &destination, const Database &source,
     ConfigurationKey key{configuration.type, configuration.configuration};
     auto [found, inserted] = configurationSources.emplace(key, &source);
     if (!inserted &&
-        computeConfigurationBundleDigest(existingConfigurationData, key.first,
-                                         key.second,
+        computeConfigurationBundleDigest(existingConfigurationData,
+                                         existingIndex, key.first, key.second,
                                          /*includeResolvedIDs=*/false) !=
-            computeConfigurationBundleDigest(source, key.first, key.second,
+            computeConfigurationBundleDigest(source, sourceIndex, key.first,
+                                             key.second,
                                              /*includeResolvedIDs=*/false)) {
       setDiagnostic(diagnostic, Status::SchemaMismatch, 0,
                     SectionKind::FunctionalConfigurations, NoRecord,
@@ -8121,11 +8084,12 @@ static Status mergeInPlace(Database &destination, const Database &source,
       return Status::SchemaMismatch;
     }
     if (!inserted &&
-        computeConfigurationBundleDigest(source, key.first, key.second,
+        computeConfigurationBundleDigest(source, sourceIndex, key.first,
+                                         key.second,
                                          /*includeResolvedIDs=*/true) <
-            computeConfigurationBundleDigest(existingConfigurationData,
-                                             key.first, key.second,
-                                             /*includeResolvedIDs=*/true))
+            computeConfigurationBundleDigest(
+                existingConfigurationData, existingIndex, key.first, key.second,
+                /*includeResolvedIDs=*/true))
       found->second = &source;
   }
   destination.functionalConfigurations.clear();
@@ -8148,47 +8112,33 @@ static Status mergeInPlace(Database &destination, const Database &source,
   destination.resolvedFunctionalTupleSets.clear();
   destination.resolvedFunctionalTupleSetTuples.clear();
   destination.resolvedFunctionalTupleSetComponents.clear();
-  auto appendRows = [](auto &to, const auto &from, uint64_t type,
-                       const Digest &configuration) {
+  auto appendRows = [](auto &to, const auto &from) {
     for (const auto &row : from)
-      if (row.type == type && row.configuration == configuration)
-        to.push_back(row);
+      to.push_back(row);
   };
   for (const auto &[key, provider] : configurationSources) {
-    const ConfigurationKey configurationKey = key;
-    auto configuration = std::find_if(
-        provider->functionalConfigurations.begin(),
-        provider->functionalConfigurations.end(), [&](const auto &row) {
-          return row.type == configurationKey.first &&
-                 row.configuration == configurationKey.second;
-        });
-    destination.functionalConfigurations.push_back(*configuration);
+    const auto &view = (provider == &source ? sourceIndex : existingIndex)
+                           .get(key.first, key.second);
+    destination.functionalConfigurations.push_back(*view.configuration);
     appendRows(destination.functionalConfigurationOptions,
-               provider->functionalConfigurationOptions, key.first, key.second);
+               view.functionalConfigurationOptions);
     appendRows(destination.resolvedFunctionalItems,
-               provider->resolvedFunctionalItems, key.first, key.second);
+               view.resolvedFunctionalItems);
     size_t destinationBinBase = destination.resolvedFunctionalBins.size();
-    size_t providerBinBase = static_cast<size_t>(
-        std::lower_bound(provider->resolvedFunctionalBins.begin(),
-                         provider->resolvedFunctionalBins.end(), key,
-                         [](const ResolvedFunctionalBin &bin,
-                            const ConfigurationKey &value) {
-                           return std::make_pair(bin.type, bin.configuration) <
-                                  value;
-                         }) -
-        provider->resolvedFunctionalBins.begin());
-    appendRows(destination.resolvedFunctionalBins,
-               provider->resolvedFunctionalBins, key.first, key.second);
-    for (const auto &group : provider->resolvedFunctionalBinGroups) {
-      if (group.type != key.first || group.configuration != key.second)
-        continue;
+    size_t providerBinBase =
+        !view.resolvedFunctionalBins.empty()
+            ? &view.resolvedFunctionalBins.front() -
+                  provider->resolvedFunctionalBins.data()
+        : !view.resolvedFunctionalBinGroups.empty()
+            ? view.resolvedFunctionalBinGroups.front().firstBin
+            : 0;
+    appendRows(destination.resolvedFunctionalBins, view.resolvedFunctionalBins);
+    for (const auto &group : view.resolvedFunctionalBinGroups) {
       auto copy = group;
       copy.firstBin = destinationBinBase + (group.firstBin - providerBinBase);
       destination.resolvedFunctionalBinGroups.push_back(copy);
     }
-    for (const auto &set : provider->resolvedFunctionalValueSets) {
-      if (set.type != key.first || set.configuration != key.second)
-        continue;
+    for (const auto &set : view.resolvedFunctionalValueSets) {
       auto copy = set;
       copy.firstAtom = destination.resolvedFunctionalValueAtoms.size();
       for (uint32_t atomIndex = 0; atomIndex != set.atomCount; ++atomIndex) {
@@ -8205,23 +8155,17 @@ static Status mergeInPlace(Database &destination, const Database &source,
       destination.resolvedFunctionalValueSets.push_back(copy);
     }
     appendRows(destination.resolvedFunctionalBinPlans,
-               provider->resolvedFunctionalBinPlans, key.first, key.second);
+               view.resolvedFunctionalBinPlans);
     size_t destinationAlternativeBase =
         destination.resolvedTransitionAlternatives.size();
-    size_t providerAlternativeBase = static_cast<size_t>(
-        std::lower_bound(provider->resolvedTransitionAlternatives.begin(),
-                         provider->resolvedTransitionAlternatives.end(), key,
-                         [](const ResolvedTransitionAlternative &alternative,
-                            const ConfigurationKey &value) {
-                           return std::make_pair(alternative.type,
-                                                 alternative.configuration) <
-                                  value;
-                         }) -
-        provider->resolvedTransitionAlternatives.begin());
-    for (const auto &alternative : provider->resolvedTransitionAlternatives) {
-      if (alternative.type != key.first ||
-          alternative.configuration != key.second)
-        continue;
+    size_t providerAlternativeBase =
+        !view.resolvedTransitionAlternatives.empty()
+            ? &view.resolvedTransitionAlternatives.front() -
+                  provider->resolvedTransitionAlternatives.data()
+        : !view.resolvedTransitionExpansionGroups.empty()
+            ? view.resolvedTransitionExpansionGroups.front().firstAlternative
+            : 0;
+    for (const auto &alternative : view.resolvedTransitionAlternatives) {
       auto copy = alternative;
       copy.firstStep = destination.resolvedTransitionSteps.size();
       destination.resolvedTransitionSteps.insert(
@@ -8231,18 +8175,14 @@ static Status mergeInPlace(Database &destination, const Database &source,
               alternative.stepCount);
       destination.resolvedTransitionAlternatives.push_back(copy);
     }
-    for (const auto &group : provider->resolvedTransitionExpansionGroups) {
-      if (group.type != key.first || group.configuration != key.second)
-        continue;
+    for (const auto &group : view.resolvedTransitionExpansionGroups) {
       auto copy = group;
       copy.firstAlternative =
           destinationAlternativeBase +
           (group.firstAlternative - providerAlternativeBase);
       destination.resolvedTransitionExpansionGroups.push_back(copy);
     }
-    for (const auto &plan : provider->resolvedCrossPlans) {
-      if (plan.type != key.first || plan.configuration != key.second)
-        continue;
+    for (const auto &plan : view.resolvedCrossPlans) {
       if (destination.resolvedCrossAutomaticBinCountLimbs.size() > UINT32_MAX)
         return Status::IntegerOverflow;
       auto copy = plan;
@@ -8257,9 +8197,7 @@ static Status mergeInPlace(Database &destination, const Database &source,
               plan.automaticBinCountLimbCount);
       destination.resolvedCrossPlans.push_back(copy);
     }
-    for (const auto &node : provider->resolvedCrossAutomaticNodes) {
-      if (node.type != key.first || node.configuration != key.second)
-        continue;
+    for (const auto &node : view.resolvedCrossAutomaticNodes) {
       if (destination.resolvedCrossAutomaticEdges.size() > UINT32_MAX)
         return Status::IntegerOverflow;
       auto copy = node;
@@ -8273,10 +8211,8 @@ static Status mergeInPlace(Database &destination, const Database &source,
       destination.resolvedCrossAutomaticNodes.push_back(copy);
     }
     appendRows(destination.resolvedCrossSelectorBindings,
-               provider->resolvedCrossSelectorBindings, key.first, key.second);
-    for (const auto &set : provider->resolvedFunctionalTupleSets) {
-      if (set.type != key.first || set.configuration != key.second)
-        continue;
+               view.resolvedCrossSelectorBindings);
+    for (const auto &set : view.resolvedFunctionalTupleSets) {
       auto copy = set;
       copy.firstTuple = destination.resolvedFunctionalTupleSetTuples.size();
       for (uint32_t tupleIndex = 0; tupleIndex != set.tupleCount;
@@ -8301,72 +8237,64 @@ static Status mergeInPlace(Database &destination, const Database &source,
     }
   }
   using ResolvedIDKey = std::tuple<uint64_t, Digest, uint64_t>;
+  const auto canonicalItems =
+      indexRecords(destination.resolvedFunctionalItems, [](const auto &item) {
+        return std::tie(item.type, item.configuration, item.id);
+      });
+  const auto canonicalBins =
+      indexRecords(destination.resolvedFunctionalBins, [&](const auto &bin) {
+        const auto *item =
+            lookupRecord(canonicalItems,
+                         ResolvedIDKey{bin.type, bin.configuration, bin.item});
+        return std::make_tuple(bin.type, bin.configuration, bin.templateBin,
+                               item->templateItem, bin.expansionOrdinal,
+                               bin.kind);
+      });
   auto buildBinRemap = [&](const Database &input,
-                           std::map<ResolvedIDKey, uint64_t> &result) {
-    for (const auto &configuration : input.functionalConfigurations) {
-      ConfigurationKey key{configuration.type, configuration.configuration};
-      const Database *provider = configurationSources.at(key);
-      for (const auto &inputBin : input.resolvedFunctionalBins) {
-        if (inputBin.type != key.first || inputBin.configuration != key.second)
-          continue;
-        auto inputItem = std::find_if(
-            input.resolvedFunctionalItems.begin(),
-            input.resolvedFunctionalItems.end(), [&](const auto &item) {
-              return item.type == key.first &&
-                     item.configuration == key.second &&
-                     item.id == inputBin.item;
-            });
-        if (inputItem == input.resolvedFunctionalItems.end())
-          return Status::InvalidReference;
-        auto providerItem = std::find_if(
-            provider->resolvedFunctionalItems.begin(),
-            provider->resolvedFunctionalItems.end(), [&](const auto &item) {
-              return item.type == key.first &&
-                     item.configuration == key.second &&
-                     item.templateItem == inputItem->templateItem;
-            });
-        if (providerItem == provider->resolvedFunctionalItems.end())
-          return Status::SchemaMismatch;
-        auto providerBin = std::find_if(
-            provider->resolvedFunctionalBins.begin(),
-            provider->resolvedFunctionalBins.end(), [&](const auto &bin) {
-              return bin.type == key.first && bin.configuration == key.second &&
-                     bin.templateBin == inputBin.templateBin &&
-                     bin.item == providerItem->id &&
-                     bin.expansionOrdinal == inputBin.expansionOrdinal &&
-                     bin.kind == inputBin.kind;
-            });
-        if (providerBin == provider->resolvedFunctionalBins.end())
-          return Status::SchemaMismatch;
-        result.emplace(ResolvedIDKey{key.first, key.second, inputBin.id},
-                       providerBin->id);
-      }
+                           IndexMap<ResolvedIDKey, uint64_t> &result) {
+    const auto inputItems =
+        indexRecords(input.resolvedFunctionalItems, [](const auto &item) {
+          return std::tie(item.type, item.configuration, item.id);
+        });
+    for (const auto &inputBin : input.resolvedFunctionalBins) {
+      const auto *item = lookupRecord(
+          inputItems,
+          ResolvedIDKey{inputBin.type, inputBin.configuration, inputBin.item});
+      if (!item)
+        return Status::InvalidReference;
+      const auto *bin = lookupRecord(
+          canonicalBins,
+          std::make_tuple(inputBin.type, inputBin.configuration,
+                          inputBin.templateBin, item->templateItem,
+                          inputBin.expansionOrdinal, inputBin.kind));
+      if (!bin)
+        return Status::SchemaMismatch;
+      result.emplace(
+          ResolvedIDKey{inputBin.type, inputBin.configuration, inputBin.id},
+          bin->id);
     }
     return Status::Ok;
   };
-  std::map<ResolvedIDKey, uint64_t> existingBinRemap;
-  std::map<ResolvedIDKey, uint64_t> sourceBinRemap;
+  IndexMap<ResolvedIDKey, uint64_t> existingBinRemap;
+  IndexMap<ResolvedIDKey, uint64_t> sourceBinRemap;
   if ((status = buildBinRemap(existingConfigurationData, existingBinRemap)) !=
           Status::Ok ||
       (status = buildBinRemap(source, sourceBinRemap)) != Status::Ok)
     return status;
-  auto findInstance = [](const Database &input, const UUID &run,
-                         uint64_t instance) -> const ResolvedInstance * {
-    auto found =
-        std::lower_bound(input.resolvedInstances.begin(),
-                         input.resolvedInstances.end(), std::tie(run, instance),
-                         [](const ResolvedInstance &entry, const auto &key) {
-                           return std::tie(entry.run, entry.id) < key;
-                         });
-    return found != input.resolvedInstances.end() && found->run == run &&
-                   found->id == instance
-               ? &*found
-               : nullptr;
+  auto instanceKey = [](const auto &instance) {
+    return std::tie(instance.run, instance.id);
   };
+  const auto existingInstances =
+      indexRecords(existingConfigurationData.resolvedInstances, instanceKey);
+  const auto sourceInstances =
+      indexRecords(source.resolvedInstances, instanceKey);
   auto remapBin =
-      [&](const Database &input, const std::map<ResolvedIDKey, uint64_t> &remap,
+      [&](const Database &input, const IndexMap<ResolvedIDKey, uint64_t> &remap,
           const UUID &run, uint64_t instance, uint64_t bin) -> uint64_t {
-    const ResolvedInstance *resolved = findInstance(input, run, instance);
+    const auto &instances =
+        &input == &source ? sourceInstances : existingInstances;
+    const auto *resolved =
+        lookupRecord(instances, std::make_tuple(run, instance));
     if (!resolved)
       return 0;
     auto found = remap.find({resolved->type, resolved->configuration, bin});
@@ -8442,13 +8370,9 @@ static Status mergeInPlace(Database &destination, const Database &source,
   };
   if (!collectSparse(destination, false) || !collectSparse(source, true))
     return Status::SchemaMismatch;
-  std::sort(sparseEntries.begin(), sparseEntries.end(),
-            [](const auto &a, const auto &b) {
-              return std::tie(a.first.run, a.first.instance, a.first.cross,
-                              a.second) < std::tie(b.first.run,
-                                                   b.first.instance,
-                                                   b.first.cross, b.second);
-            });
+  sortByKey(sparseEntries.begin(), sparseEntries.end(), [](const auto &a) {
+    return std::tie(a.first.run, a.first.instance, a.first.cross, a.second);
+  });
   destination.sparseCrossTuples.clear();
   destination.sparseCrossTupleComponents.clear();
   for (auto &entry : sparseEntries) {
@@ -8463,38 +8387,25 @@ static Status mergeInPlace(Database &destination, const Database &source,
     if (status != Status::Ok)
       return status;
   }
-  std::sort(destination.runs.begin(), destination.runs.end(),
-            [](const auto &left, const auto &right) {
-              return left.uuid < right.uuid;
-            });
-  std::sort(destination.resolvedInstances.begin(),
+  sortByKey(destination.runs.begin(), destination.runs.end(),
+            [](const auto &left) { return left.uuid; });
+  sortByKey(destination.resolvedInstances.begin(),
             destination.resolvedInstances.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.run, left.id) <
-                     std::tie(right.run, right.id);
-            });
-  std::sort(destination.resolvedInstanceOptions.begin(),
-            destination.resolvedInstanceOptions.end(),
-            [](const auto &left, const auto &right) {
+            [](const auto &left) { return std::tie(left.run, left.id); });
+  sortByKey(destination.resolvedInstanceOptions.begin(),
+            destination.resolvedInstanceOptions.end(), [](const auto &left) {
               return std::tie(left.run, left.instance, left.ownerKind,
-                              left.owner, left.option) <
-                     std::tie(right.run, right.instance, right.ownerKind,
-                              right.owner, right.option);
+                              left.owner, left.option);
             });
-  std::sort(destination.counters.begin(), destination.counters.end(),
-            [](const auto &left, const auto &right) {
+  sortByKey(destination.counters.begin(), destination.counters.end(),
+            [](const auto &left) {
               return std::tie(left.run, left.metric, left.entity, left.instance,
-                              left.subindex) <
-                     std::tie(right.run, right.metric, right.entity,
-                              right.instance, right.subindex);
+                              left.subindex);
             });
-  std::sort(destination.illegalBinDiagnostics.begin(),
-            destination.illegalBinDiagnostics.end(),
-            [](const auto &left, const auto &right) {
+  sortByKey(destination.illegalBinDiagnostics.begin(),
+            destination.illegalBinDiagnostics.end(), [](const auto &left) {
               return std::tie(left.run, left.instance, left.bin,
-                              left.simulationTime) <
-                     std::tie(right.run, right.instance, right.bin,
-                              right.simulationTime);
+                              left.simulationTime);
             });
   if (diagnostic)
     *diagnostic = {};

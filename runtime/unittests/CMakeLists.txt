@@ -28,6 +28,7 @@ add_executable(ObeliskRuntimeTests
   ContainerTest.cpp
   CoverageBlockEventsTest.cpp
   CoverageDatabaseTest.cpp
+  CoverageIndexTest.cpp
   CoverageTest.cpp
   DesignBytecodeTest.cpp
   DPIOpenArrayTest.cpp
