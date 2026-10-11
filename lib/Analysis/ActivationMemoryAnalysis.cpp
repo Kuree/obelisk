@@ -10,9 +10,11 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Analysis/SimulationEffectAnalysis.h"
+#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/ADT/bit.h"
 #include <limits>
 #include <memory>
 
@@ -114,6 +116,253 @@ Ranges subtract(ArrayRef<Range> a, ArrayRef<Range> b) {
   }
   return result;
 }
+/// A persistent set of root lanes for the dense activation state. It is a
+/// big-endian Patricia trie keyed by root (Okasaki and Gill, "Fast Mergeable
+/// Integer Maps"); each leaf holds that root's sorted, coalesced intervals, so
+/// in-order traversal yields exactly the normalized Ranges form. A fused
+/// activation carries thousands of written roots through every CFG edge.
+/// Copies share the trie, an update copies one path, and unions and
+/// intersections return shared or unchanged subtrees as they are. A join
+/// therefore costs only what the two states do not share.
+class RangeSet {
+  struct Node : llvm::RefCountedBase<Node> {
+    /// Leaf key, or the bits above `mask` for a branch.
+    uint64_t prefix = 0;
+    /// The branching bit of a branch; zero for a leaf.
+    uint64_t mask = 0;
+    llvm::IntrusiveRefCntPtr<const Node> left, right;
+    Ranges lanes;
+    bool isLeaf() const { return mask == 0; }
+  };
+  using Ptr = llvm::IntrusiveRefCntPtr<const Node>;
+  Ptr root;
+
+  explicit RangeSet(Ptr root) : root(std::move(root)) {}
+  static Ptr leaf(uint64_t key, Ranges lanes) {
+    auto node = llvm::makeIntrusiveRefCnt<Node>();
+    node->prefix = key;
+    node->lanes = std::move(lanes);
+    return node;
+  }
+  static Ptr branch(uint64_t prefix, uint64_t mask, Ptr left, Ptr right) {
+    if (!left)
+      return right;
+    if (!right)
+      return left;
+    auto node = llvm::makeIntrusiveRefCnt<Node>();
+    node->prefix = prefix;
+    node->mask = mask;
+    node->left = std::move(left);
+    node->right = std::move(right);
+    return node;
+  }
+  static uint64_t above(uint64_t key, uint64_t mask) {
+    return key & ~(mask | (mask - 1));
+  }
+  static bool matches(uint64_t key, const Node &node) {
+    return above(key, node.mask) == node.prefix;
+  }
+  static bool isLeft(uint64_t key, uint64_t mask) { return !(key & mask); }
+  /// Joins two disjoint subtrees under their highest differing bit.
+  static Ptr link(uint64_t p0, Ptr t0, uint64_t p1, Ptr t1) {
+    uint64_t mask = uint64_t(1) << (63 - llvm::countl_zero(p0 ^ p1));
+    return isLeft(p0, mask) ? branch(above(p0, mask), mask, t0, t1)
+                            : branch(above(p0, mask), mask, t1, t0);
+  }
+  static const Node *find(const Node *node, uint64_t key) {
+    while (node && !node->isLeaf()) {
+      if (!matches(key, *node))
+        return nullptr;
+      node = (isLeft(key, node->mask) ? node->left : node->right).get();
+    }
+    return node && node->prefix == key ? node : nullptr;
+  }
+  /// Unites `lanes` (normalized, all of root `key`) into the trie.
+  static Ptr insert(const Ptr &node, uint64_t key, ArrayRef<Range> lanes) {
+    if (!node)
+      return leaf(key, Ranges(lanes));
+    if (node->isLeaf()) {
+      if (node->prefix != key)
+        return link(key, leaf(key, Ranges(lanes)), node->prefix, node);
+      Ranges merged = node->lanes;
+      ::obelisk::analysis::unite(merged, lanes);
+      return merged == node->lanes ? node : leaf(key, std::move(merged));
+    }
+    if (!matches(key, *node))
+      return link(key, leaf(key, Ranges(lanes)), node->prefix, node);
+    if (isLeft(key, node->mask)) {
+      Ptr left = insert(node->left, key, lanes);
+      return left == node->left
+                 ? node
+                 : branch(node->prefix, node->mask, left, node->right);
+    }
+    Ptr right = insert(node->right, key, lanes);
+    return right == node->right
+               ? node
+               : branch(node->prefix, node->mask, node->left, right);
+  }
+  /// Union that returns `s` itself when `t` adds nothing to it.
+  static Ptr uniteNodes(const Ptr &s, const Ptr &t) {
+    if (s == t || !t)
+      return s;
+    if (!s)
+      return t;
+    if (t->isLeaf())
+      return insert(s, t->prefix, t->lanes);
+    if (s->isLeaf()) {
+      // `t` is a branch, so the union differs from the leaf `s`.
+      if (const Node *same = find(t.get(), s->prefix)) {
+        Ranges merged = same->lanes;
+        ::obelisk::analysis::unite(merged, s->lanes);
+        if (merged == same->lanes)
+          return t;
+      }
+      return insert(t, s->prefix, s->lanes);
+    }
+    if (s->mask == t->mask && s->prefix == t->prefix) {
+      Ptr left = uniteNodes(s->left, t->left),
+          right = uniteNodes(s->right, t->right);
+      return left == s->left && right == s->right
+                 ? s
+                 : branch(s->prefix, s->mask, left, right);
+    }
+    if (s->mask > t->mask && matches(t->prefix, *s)) {
+      if (isLeft(t->prefix, s->mask)) {
+        Ptr left = uniteNodes(s->left, t);
+        return left == s->left ? s : branch(s->prefix, s->mask, left, s->right);
+      }
+      Ptr right = uniteNodes(s->right, t);
+      return right == s->right ? s : branch(s->prefix, s->mask, s->left, right);
+    }
+    if (t->mask > s->mask && matches(s->prefix, *t))
+      return isLeft(s->prefix, t->mask)
+                 ? branch(t->prefix, t->mask, uniteNodes(s, t->left), t->right)
+                 : branch(t->prefix, t->mask, t->left, uniteNodes(s, t->right));
+    return link(s->prefix, s, t->prefix, t);
+  }
+  /// Intersection that returns `s` itself when it is contained in `t`.
+  static Ptr intersectNodes(const Ptr &s, const Ptr &t) {
+    if (s == t)
+      return s;
+    if (!s || !t)
+      return nullptr;
+    if (s->isLeaf()) {
+      const Node *other = find(t.get(), s->prefix);
+      if (!other)
+        return nullptr;
+      Ranges common = ::obelisk::analysis::intersect(s->lanes, other->lanes);
+      if (common == s->lanes)
+        return s;
+      return common.empty() ? nullptr : leaf(s->prefix, std::move(common));
+    }
+    if (t->isLeaf()) {
+      const Node *other = find(s.get(), t->prefix);
+      if (!other)
+        return nullptr;
+      Ranges common = ::obelisk::analysis::intersect(other->lanes, t->lanes);
+      if (common == other->lanes)
+        return Ptr(other);
+      return common.empty() ? nullptr : leaf(t->prefix, std::move(common));
+    }
+    if (s->mask == t->mask && s->prefix == t->prefix) {
+      Ptr left = intersectNodes(s->left, t->left);
+      Ptr right = intersectNodes(s->right, t->right);
+      return left == s->left && right == s->right
+                 ? s
+                 : branch(s->prefix, s->mask, left, right);
+    }
+    if (s->mask > t->mask && matches(t->prefix, *s))
+      return intersectNodes(isLeft(t->prefix, s->mask) ? s->left : s->right, t);
+    if (t->mask > s->mask && matches(s->prefix, *t))
+      return intersectNodes(s, isLeft(s->prefix, t->mask) ? t->left : t->right);
+    return nullptr;
+  }
+  static bool equal(const Node *a, const Node *b) {
+    if (a == b)
+      return true;
+    if (!a || !b || a->mask != b->mask || a->prefix != b->prefix)
+      return false;
+    if (a->isLeaf())
+      return a->lanes == b->lanes;
+    return equal(a->left.get(), b->left.get()) &&
+           equal(a->right.get(), b->right.get());
+  }
+  static void append(const Node *node, Ranges &result) {
+    if (!node)
+      return;
+    if (node->isLeaf()) {
+      llvm::append_range(result, node->lanes);
+      return;
+    }
+    append(node->left.get(), result);
+    append(node->right.get(), result);
+  }
+  /// Calls `function` with each root's normalized slice of sorted `ranges`.
+  template <typename Function>
+  static void forEachRoot(ArrayRef<Range> ranges, Function function) {
+    while (!ranges.empty()) {
+      size_t count = 1;
+      while (count != ranges.size() && ranges[count].root == ranges[0].root)
+        ++count;
+      Ranges slice(ranges.take_front(count));
+      normalize(slice);
+      function(ranges[0].root, slice);
+      ranges = ranges.drop_front(count);
+    }
+  }
+
+public:
+  RangeSet() = default;
+  bool operator==(const RangeSet &other) const {
+    return equal(root.get(), other.root.get());
+  }
+  bool operator!=(const RangeSet &other) const { return !(*this == other); }
+  /// Adds `ranges`, which are sorted by root as every access set is.
+  void unite(ArrayRef<Range> ranges) {
+    forEachRoot(ranges, [&](uint64_t key, ArrayRef<Range> lanes) {
+      if (!lanes.empty())
+        root = insert(root, key, lanes);
+    });
+  }
+  /// Returns `ranges \ this`, matching `subtract(ranges, toRanges())`.
+  Ranges subtractFrom(ArrayRef<Range> ranges) const {
+    Ranges result;
+    for (const Range &range : ranges) {
+      const Node *found = find(root.get(), range.root);
+      llvm::append_range(result, found ? subtract({range}, found->lanes)
+                                       : Ranges{range});
+    }
+    return result;
+  }
+  /// Returns `ranges ∩ this`, matching `intersect(ranges, toRanges())`.
+  Ranges intersectWith(ArrayRef<Range> ranges) const {
+    Ranges result;
+    forEachRoot(ranges, [&](uint64_t key, ArrayRef<Range> lanes) {
+      if (const Node *found = find(root.get(), key))
+        llvm::append_range(result,
+                           ::obelisk::analysis::intersect(lanes, found->lanes));
+    });
+    return result;
+  }
+  /// Joins `other` into this set. Returns whether this set changed.
+  bool uniteWith(const RangeSet &other) {
+    Ptr joined = uniteNodes(root, other.root);
+    bool changed = !equal(joined.get(), root.get());
+    root = std::move(joined);
+    return changed;
+  }
+  bool intersectWith(const RangeSet &other) {
+    Ptr joined = intersectNodes(root, other.root);
+    bool changed = !equal(joined.get(), root.get());
+    root = std::move(joined);
+    return changed;
+  }
+  Ranges toRanges() const {
+    Ranges result;
+    append(root.get(), result);
+    return result;
+  }
+};
 // Provenance spans include target ABI holes so adjacent typed views use the
 // same offsets as lowering. Those holes are not language values. Keep their
 // geometry, but exclude them from dependencies and definite-write coverage.
@@ -277,13 +526,14 @@ struct LaneLink {
   }
 };
 using LaneLinks = SmallVector<LaneLink>;
+bool linkLess(const LaneLink &a, const LaneLink &b) {
+  return std::tie(a.source, a.mapping, a.low, a.sourceLow, a.width,
+                  a.sourceWidth) < std::tie(b.source, b.mapping, b.low,
+                                            b.sourceLow, b.width,
+                                            b.sourceWidth);
+}
 void normalize(LaneLinks &links) {
-  llvm::sort(links, [](const auto &a, const auto &b) {
-    return std::tie(a.source, a.mapping, a.low, a.sourceLow, a.width,
-                    a.sourceWidth) < std::tie(b.source, b.mapping, b.low,
-                                              b.sourceLow, b.width,
-                                              b.sourceWidth);
-  });
+  llvm::sort(links, linkLess);
   links.erase(std::unique(links.begin(), links.end()), links.end());
 }
 LaneLinks projectLinks(ArrayRef<LaneLink> links, uint64_t low, uint64_t width,
@@ -533,8 +783,20 @@ public:
   void enter(Block *block, ArrayAttr context) {
     currentBlock = block;
     currentContext = context;
+    currentScope = &scopeOf(block, context);
   }
   unsigned size() const { return nodes.size(); }
+  /// Blocks whose context key is always empty: they belong to no proven
+  /// loop and carry no live control values, so each executes in one context.
+  void setSingleContextBlocks(DenseSet<Block *> blocks) {
+    singleContextBlocks = std::move(blocks);
+    emptyContext = ArrayAttr::get(function.getContext(), {});
+  }
+  /// A value defined in a single-context block has one dynamic version, so
+  /// its live-in proxies would be identity copies of the definition node.
+  bool hasSingleVersion(Value value) const {
+    return singleContextBlocks.contains(value.getParentBlock());
+  }
   unsigned valueNode(Value value, Block *block, ArrayAttr context) {
     // Entry definitions dominate the entire activation and have one value in
     // every induction context. In particular, thousands of immutable capture
@@ -542,9 +804,27 @@ public:
     if (value.getParentBlock() == &function.getBody().front()) {
       block = value.getParentBlock();
       context = {};
+    } else if (hasSingleVersion(value)) {
+      block = value.getParentBlock();
+      context = emptyContext;
     }
-    auto key = std::make_tuple(value, block, context);
-    auto [it, inserted] = values.try_emplace(key, 0);
+    DenseMap<Value, unsigned> &scope =
+        currentScope && block == currentBlock && context == currentContext
+            ? *currentScope
+            : scopeOf(block, context);
+    return valueNodeIn(scope, value, block);
+  }
+  /// Value nodes of one (block, induction context) scope. A fused kernel
+  /// makes millions of live-in lookups; small per-scope maps keep them local.
+  DenseMap<Value, unsigned> &scopeOf(Block *block, ArrayAttr context) {
+    auto &scope = valueScopes[{block, context}];
+    if (!scope)
+      scope = std::make_unique<DenseMap<Value, unsigned>>();
+    return *scope;
+  }
+  unsigned valueNodeIn(DenseMap<Value, unsigned> &scope, Value value,
+                       Block *block) {
+    auto [it, inserted] = scope.try_emplace(value, 0);
     if (inserted) {
       Operation *definition = value.getDefiningOp();
       it->second = addNode(
@@ -571,8 +851,16 @@ public:
     return it->second;
   }
   void append(unsigned target, ArrayRef<LaneLink> links) {
-    llvm::append_range(nodes[target]->links, links);
-    normalize(nodes[target]->links);
+    LaneLinks &existing = nodes[target]->links;
+    // Links stay normalized. Most edges add one proxy link to a block value.
+    if (links.size() == 1) {
+      auto position = llvm::lower_bound(existing, links.front(), linkLess);
+      if (position == existing.end() || !(*position == links.front()))
+        existing.insert(position, links.front());
+      return;
+    }
+    llvm::append_range(existing, links);
+    normalize(existing);
   }
   LaneLinks controls(uint64_t width) {
     LaneLinks result;
@@ -595,22 +883,30 @@ public:
   }
   void edge(Block *target, ArrayAttr targetContext, ValueRange operands,
             Value condition) {
-    SmallVector<Value> live;
-    auto appendLive = [&](const auto &values) {
-      for (Value value : values)
-        if (value.getParentBlock() != &function.getBody().front())
-          live.push_back(value);
-    };
-    appendLive(liveness.getLiveIn(target));
-    appendLive(implicitLive.lookup(target));
-    // Liveness sets are unordered. Stable SSA ordinals keep the evaluation
-    // graph and widening independent of hash iteration order.
-    llvm::sort(live, [&](Value a, Value b) {
-      return ordinals.at(a) < ordinals.at(b);
-    });
-    live.erase(std::unique(live.begin(), live.end()), live.end());
+    // Both live sets are fixed before solving, but a block is entered once
+    // per incoming edge and context. Order its live values once.
+    auto [cached, inserted] = liveIns.try_emplace(target);
+    SmallVector<Value> &live = cached->second;
+    if (inserted) {
+      auto appendLive = [&](const auto &values) {
+        for (Value value : values)
+          if (value.getParentBlock() != &function.getBody().front())
+            live.push_back(value);
+      };
+      appendLive(liveness.getLiveIn(target));
+      appendLive(implicitLive.lookup(target));
+      // Liveness sets are unordered. Stable SSA ordinals keep the evaluation
+      // graph and widening independent of hash iteration order.
+      llvm::sort(live, [&](Value a, Value b) {
+        return ordinals.at(a) < ordinals.at(b);
+      });
+      live.erase(std::unique(live.begin(), live.end()), live.end());
+    }
+    DenseMap<Value, unsigned> &targetScope = scopeOf(target, targetContext);
     for (Value value : live) {
-      append(valueNode(value, target, targetContext),
+      if (hasSingleVersion(value))
+        continue;
+      append(valueNodeIn(targetScope, value, target),
              {{0, valueSpan(value), valueNode(value), 0, valueSpan(value),
                LaneMapping::Identity}});
     }
@@ -760,9 +1056,15 @@ private:
   DenseMap<Value, unsigned> ordinals;
   DenseMap<Block *, llvm::SetVector<Block *>> controllers;
   DenseMap<Block *, llvm::SetVector<Value>> implicitLive;
+  DenseMap<Block *, SmallVector<Value>> liveIns;
+  DenseSet<Block *> singleContextBlocks;
+  ArrayAttr emptyContext;
   Block *currentBlock = nullptr;
   ArrayAttr currentContext;
-  llvm::MapVector<std::tuple<Value, Block *, ArrayAttr>, unsigned> values;
+  DenseMap<std::pair<Block *, ArrayAttr>,
+           std::unique_ptr<DenseMap<Value, unsigned>>>
+      valueScopes;
+  DenseMap<Value, unsigned> *currentScope = nullptr;
   DenseMap<uint64_t, unsigned> incoming;
   DenseMap<std::pair<Operation *, ArrayAttr>, unsigned> stores;
   SmallVector<std::unique_ptr<LaneNode>> nodes;
@@ -909,26 +1211,18 @@ struct Memory {
   DenseMap<Value, Attribute> constants;
   HandleFacts references;
   DenseMap<uint64_t, ReachingDefinitions> reaching;
-  Ranges assigned, exposed, written, repeated;
-  bool operator==(const Memory &other) const {
-    return constants == other.constants && reaching == other.reaching &&
-           references.size() == other.references.size() &&
-           llvm::all_of(references,
-                        [&](const auto &entry) {
-                          auto found = other.references.find(entry.first);
-                          return found != other.references.end() &&
-                                 entry.second == found->second;
-                        }) &&
-           assigned == other.assigned && exposed == other.exposed &&
-           written == other.written && repeated == other.repeated;
-  }
-  void join(const Memory &other) {
+  RangeSet assigned, exposed, written, repeated;
+  /// Joins `other` into this state in place. Returns whether any fact
+  /// changed, which is exactly when the joined state differs from the old one.
+  bool join(const Memory &other) {
+    bool changed = false;
     SmallVector<Value> forget;
     for (auto [value, constant] : constants)
       if (other.constants.lookup(value) != constant)
         forget.push_back(value);
     for (Value value : forget)
       constants.erase(value);
+    changed |= !forget.empty();
     forget.clear();
     for (auto &[value, reference] : references) {
       auto found = other.references.find(value);
@@ -938,15 +1232,32 @@ struct Memory {
     // Losing an exact reference falls back to the shared sparse may facts.
     for (Value value : forget)
       references.erase(value);
+    changed |= !forget.empty();
     // Missing memory roots are unchanged incoming values, not bottom.
     // Only definition links are carried here; sparse SSA lattices are not.
+    // Stored definition links are normalized, so their union is a linear
+    // merge, and it changed exactly when it grew.
     for (auto &[root, cell] : reaching) {
       auto found = other.reaching.find(root);
-      if (found == other.reaching.end())
-        cell.links.push_back(cell.identity());
-      else
-        llvm::append_range(cell.links, found->second.links);
-      normalize(cell.links);
+      if (found == other.reaching.end()) {
+        LaneLink identity = cell.identity();
+        auto position = llvm::lower_bound(cell.links, identity, linkLess);
+        if (position == cell.links.end() || !(*position == identity)) {
+          cell.links.insert(position, identity);
+          changed = true;
+        }
+        continue;
+      }
+      const LaneLinks &incoming = found->second.links;
+      LaneLinks merged;
+      merged.reserve(cell.links.size() + incoming.size());
+      std::merge(cell.links.begin(), cell.links.end(), incoming.begin(),
+                 incoming.end(), std::back_inserter(merged), linkLess);
+      merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+      if (merged.size() != cell.links.size()) {
+        cell.links = std::move(merged);
+        changed = true;
+      }
     }
     for (const auto &[root, cell] : other.reaching)
       if (!reaching.contains(root)) {
@@ -954,11 +1265,13 @@ struct Memory {
         copy.links.push_back(copy.identity());
         normalize(copy.links);
         reaching.try_emplace(root, std::move(copy));
+        changed = true;
       }
-    assigned = intersect(assigned, other.assigned);
-    unite(exposed, other.exposed);
-    unite(written, other.written);
-    unite(repeated, other.repeated);
+    changed |= assigned.intersectWith(other.assigned);
+    changed |= exposed.uniteWith(other.exposed);
+    changed |= written.uniteWith(other.written);
+    changed |= repeated.uniteWith(other.repeated);
+    return changed;
   }
 };
 class MemoryState final : public AnalysisState {
@@ -966,17 +1279,11 @@ public:
   using AnalysisState::AnalysisState;
   llvm::MapVector<ArrayAttr, Memory> rows;
   llvm::SetVector<ArrayAttr> pending;
-  ChangeResult join(ArrayAttr context, const Memory &incoming) {
-    auto [found, inserted] = rows.try_emplace(context, incoming);
-    if (inserted) {
-      pending.insert(context);
-      return ChangeResult::Change;
-    }
-    Memory next = found->second;
-    next.join(incoming);
-    if (next == found->second)
+  ChangeResult join(ArrayAttr context, Memory &&incoming) {
+    // try_emplace leaves `incoming` intact when the row already exists.
+    auto [found, inserted] = rows.try_emplace(context, std::move(incoming));
+    if (!inserted && !found->second.join(incoming))
       return ChangeResult::NoChange;
-    found->second = std::move(next);
     pending.insert(context);
     return ChangeResult::Change;
   }
@@ -1009,6 +1316,7 @@ std::optional<HandleFact> mapCallRead(const HandleFact &read,
 }
 ReadOnlyCallSummary
 summarizeReadOnlyCall(sim::SimFuncOp function, Operation *symbols,
+                      SymbolTableCollection &symbolTables,
                       const HandleDataflowAnalysis &provenance,
                       DenseMap<Operation *, ReadOnlyCallSummary> &cache) {
   auto [found, inserted] = cache.try_emplace(function);
@@ -1055,9 +1363,9 @@ summarizeReadOnlyCall(sim::SimFuncOp function, Operation *symbols,
       summary.valid = isLocalSlotReference(store.getReference());
     else if (auto call = dyn_cast<sim::SimCallOp>(op)) {
       auto nested = summarizeReadOnlyCall(
-          SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
               symbols, call.getCalleeAttr()),
-          symbols, provenance, cache);
+          symbols, symbolTables, provenance, cache);
       summary.valid = nested.valid;
       for (const auto &read : nested.reads) {
         if (read.descriptor) {
@@ -1095,6 +1403,14 @@ public:
         provenance(provenance), maximumPartitions(maximumPartitions),
         values(values), symbols(symbols), inputsOnly(inputsOnly),
         loops(analyzeActivationBoundedLoops(function.getBody())) {
+    // A fused activation can contain hundreds of proven loops. Index loop
+    // membership and latch conditions once so each CFG edge only touches the
+    // loops that contain its target.
+    for (auto [index, loop] : llvm::enumerate(loops)) {
+      for (Block *member : loop.blocks)
+        blockLoops[member].push_back(index);
+      loopConditions[loop.condition.getOperation()].push_back(index);
+    }
     // A dependent loop can begin on a break path, outside the natural loop
     // that computed its initializer or bound. Preserve live control operands
     // across intervening blocks, including landing blocks inserted by
@@ -1118,6 +1434,13 @@ public:
         for (Value value : controlValues)
           if (liveness.getLiveIn(&block).contains(value))
             liveControlValues[&block].push_back(value);
+    }
+    if (values) {
+      DenseSet<Block *> singleContext;
+      for (Block &block : function.getBody())
+        if (!blockLoops.count(&block) && !liveControlValues.count(&block))
+          singleContext.insert(&block);
+      values->setSingleContextBlocks(std::move(singleContext));
     }
   }
   LogicalResult initialize(Operation *) override {
@@ -1146,7 +1469,7 @@ public:
     for (auto &[context, incoming] : rows) {
       if (values)
         values->enter(block, context);
-      Memory state = incoming;
+      Memory state = std::move(incoming);
       for (Operation &op : block->without_terminator())
         if (failed(transfer(&op, state))) {
           if (!unsupported)
@@ -1178,8 +1501,8 @@ public:
             state.constants.lookup(branch.getCondition()));
         // Reuse the validated fixed-width test, including a known four-state
         // parameter bound. This is exactly the recognizer's continuation test.
-        for (const auto &loop : loops)
-          if (loop.condition == branch) {
+        for (unsigned index : loopConditions.lookup(branch.getOperation()))
+          if (const auto &loop = loops[index]; true) {
             auto iv = knownIndex(loop.induction, state.constants);
             if (!iv)
               return failure();
@@ -1257,19 +1580,19 @@ private:
       return std::nullopt;
     return may->second;
   }
-  LogicalResult propagate(Block *block, const Memory &state,
+  LogicalResult propagate(Block *block, Memory state,
                           std::optional<ValueRange> operands = std::nullopt,
                           Value condition = {}) {
     if (!handleResult.isExecutable(block))
       return success();
+    // The key holds one induction value per loop containing the block, then
+    // the live control values. Rows are only compared within one block, whose
+    // loop membership is fixed.
     SmallVector<Attribute> key;
-    for (const auto &loop : loops) {
-      Attribute value = UnitAttr::get(function.getContext());
-      if (loop.members.contains(block)) {
-        value = knownIndex(loop.induction, state.constants);
-        if (!isa_and_nonnull<IntegerAttr>(value))
-          return failure();
-      }
+    for (unsigned index : blockLoops.lookup(block)) {
+      Attribute value = knownIndex(loops[index].induction, state.constants);
+      if (!isa_and_nonnull<IntegerAttr>(value))
+        return failure();
       key.push_back(value);
     }
     for (Value operand : liveControlValues.lookup(block)) {
@@ -1282,7 +1605,7 @@ private:
     auto *target = getOrCreate<MemoryState>(getProgramPointBefore(block));
     if (!target->rows.contains(context) && ++partitions > maximumPartitions)
       return failure();
-    propagateIfChanged(target, target->join(context, state));
+    propagateIfChanged(target, target->join(context, std::move(state)));
     return success();
   }
   LogicalResult branchTo(Block *target, ValueRange values, Memory state,
@@ -1308,14 +1631,14 @@ private:
     // body size. Static handle facts already live in the immutable summary.
     const auto &live = liveness.getLiveIn(target);
     DenseSet<Value> induction;
-    for (const auto &loop : loops)
-      if (loop.members.contains(target)) {
-        induction.insert(loop.induction);
-        if (loop.initValue)
-          induction.insert(loop.initValue);
-        if (loop.limitValue)
-          induction.insert(loop.limitValue);
-      }
+    for (unsigned index : blockLoops.lookup(target)) {
+      const auto &loop = loops[index];
+      induction.insert(loop.induction);
+      if (loop.initValue)
+        induction.insert(loop.initValue);
+      if (loop.limitValue)
+        induction.insert(loop.limitValue);
+    }
     auto needed = [&](Value value) {
       auto argument = dyn_cast<BlockArgument>(value);
       return (argument && argument.getOwner() == target) ||
@@ -1335,7 +1658,7 @@ private:
       else
         ++it;
     }
-    return propagate(target, state, values, condition);
+    return propagate(target, std::move(state), values, condition);
   }
   void foldConstants(Operation *op, Memory &state) {
     for (Value value : op->getResults())
@@ -1547,7 +1870,8 @@ private:
     // Reads of definitely written lanes add no new incoming dependency.
     // Private scratch still uses reaching definitions because its stores are
     // not publications. Partial and conditional writes retain exposed lanes.
-    for (auto range : subtract({{root, fact.low, fact.width}}, state.assigned))
+    for (auto range :
+         state.assigned.subtractFrom({{root, fact.low, fact.width}}))
       cell.links.push_back({range.low, range.width, cell.incoming, range.low,
                             range.width, LaneMapping::Identity});
     return cell;
@@ -1565,9 +1889,9 @@ private:
       if (!symbols)
         return failure();
       auto summary = summarizeReadOnlyCall(
-          SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
+          symbolTables.lookupNearestSymbolFrom<sim::SimFuncOp>(
               symbols, call.getCalleeAttr()),
-          symbols, provenance, callSummaries);
+          symbols, symbolTables, provenance, callSummaries);
       if (!summary.valid)
         return failure();
       if (values)
@@ -1600,7 +1924,7 @@ private:
             return failure();
           Ranges access{{*root, read.low, read.width}};
           unite(reads[op], access);
-          unite(state.exposed, subtract(access, state.assigned));
+          state.exposed.unite(state.assigned.subtractFrom(access));
         }
         if (!values)
           continue;
@@ -1754,15 +2078,15 @@ private:
       if (load) {
         if (!access.empty())
           unite(reads[op], access);
-        unite(state.exposed, subtract(access, state.assigned));
+        state.exposed.unite(state.assigned.subtractFrom(access));
       } else {
         // An empty canonical range is a private-only access, not a design
         // publication. Slicing uses inventory membership to retain its local
         // definitions; an empty entry would let it erase a selected store.
         if (!access.empty())
           unite(writes[op], access);
-        unite(state.repeated, intersect(access, state.written));
-        unite(state.written, access);
+        state.repeated.unite(state.written.intersectWith(access));
+        state.written.unite(access);
       }
       return success();
     }
@@ -1793,14 +2117,14 @@ private:
     }
     if (load) {
       unite(reads[op], access);
-      unite(state.exposed, subtract(access, state.assigned));
+      state.exposed.unite(state.assigned.subtractFrom(access));
     } else {
       unite(writes[op], access);
-      unite(state.repeated, intersect(access, state.written));
-      unite(state.written, access);
+      state.repeated.unite(state.written.intersectWith(access));
+      state.written.unite(access);
       auto span = sim::getProvenanceSpan(value.getType());
       if (!fact->dynamic && span && fact->width == *span)
-        unite(state.assigned, access);
+        state.assigned.unite(access);
     }
     return success();
   }
@@ -1848,8 +2172,11 @@ private:
   ActivationValueGraph *values;
   Operation *symbols;
   bool inputsOnly;
+  SymbolTableCollection symbolTables;
   DenseMap<Operation *, ReadOnlyCallSummary> callSummaries;
   SmallVector<BoundedLoop, 0> loops;
+  DenseMap<Block *, SmallVector<unsigned, 2>> blockLoops;
+  DenseMap<Operation *, SmallVector<unsigned, 1>> loopConditions;
   DenseMap<Block *, SmallVector<Value>> liveControlValues;
 };
 } // namespace
@@ -1931,10 +2258,10 @@ ActivationMemoryAnalysis::ActivationMemoryAnalysis(
   }
   valid = true;
   partitions = analysis->partitions;
-  liveIns = std::move(analysis->exit->exposed);
-  mayWrites = std::move(analysis->exit->written);
-  mustWrites = std::move(analysis->exit->assigned);
-  repeatedWrites = std::move(analysis->exit->repeated);
+  liveIns = analysis->exit->exposed.toRanges();
+  mayWrites = analysis->exit->written.toRanges();
+  mustWrites = analysis->exit->assigned.toRanges();
+  repeatedWrites = analysis->exit->repeated.toRanges();
   reads = std::move(analysis->reads);
   privateReads = std::move(analysis->privateReads);
   mixedPrivateWrites = analysis->mixedPrivateWrites;

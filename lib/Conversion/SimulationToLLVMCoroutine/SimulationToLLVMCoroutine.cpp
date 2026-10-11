@@ -482,12 +482,12 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
       return coverage;
     DenseMap<Block *, uint32_t> fragmentByBlock;
     Block *anchorBlock = nullptr;
+    analysis::ComputeGraphBlockIndex graphBlocks;
     for (Attribute attribute : graph.getNodes()) {
       auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
       if (!fragment || fragment.getFunction().getValue() != actor.getSymName())
         continue;
-      Block *block =
-          analysis::lookupComputeGraphBlock(actor, fragment.getBlock());
+      Block *block = graphBlocks.lookup(actor, fragment.getBlock());
       if (!block)
         continue;
       uint32_t fragmentID = fragment.getId();
@@ -1513,10 +1513,11 @@ LogicalResult NativePipelineAnalysis::prepareRoots(
   // Certify before packed lowering turns scalar storage accesses into runtime
   // ABI calls and pointers. Those implementation details are not managed heap
   // use. Generated bodies added later conservatively retain a managed scope.
+  detail::UnmanagedNativeCache unmanaged;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         function->removeAttr("obelisk.native.unmanaged");
-        if (detail::isUnmanagedNativeProcess(function))
+        if (detail::isUnmanagedNativeProcess(function, unmanaged))
           function->setAttr("obelisk.native.unmanaged", UnitAttr::get(context));
       });
   // Root records are native implementation details, not canonical process

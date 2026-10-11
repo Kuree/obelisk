@@ -10,9 +10,12 @@
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <climits>
+#include <memory>
+#include <mutex>
 
 using namespace mlir;
 namespace obelisk::analysis {
@@ -401,6 +404,68 @@ static sim::SimDesignOp getDriverDesign(sim::SimFuncOp function) {
   return result.wasInterrupted() ? function->getParentOfType<sim::SimDesignOp>()
                                  : sim::SimDesignOp();
 }
+
+/// Exact input revision of one function analysis. MLIR's fingerprint covers
+/// operation, block and value identities, attributes, properties, operands,
+/// successors and result types. Operation names are added because a new
+/// operation can reuse an erased one's address, and block argument types
+/// because in-place retyping keeps the argument identity. The solver reads
+/// nothing else except the design's driver-to-net normalization.
+struct HandleRevision {
+  OperationFingerPrint body;
+  llvm::hash_code shape;
+  uint64_t drivers;
+  bool operator==(const HandleRevision &other) const {
+    return body == other.body && shape == other.shape &&
+           drivers == other.drivers;
+  }
+};
+
+/// Fused kernels are analyzed by many independent passes and analyses, each
+/// constructing its own HandleDataflowAnalysis. Large bodies reuse the solved
+/// result while their revision is unchanged; any IR edit changes the key.
+class HandleResultCache {
+public:
+  std::shared_ptr<const HandleDataflowResult>
+  lookup(Operation *function, const HandleRevision &revision) {
+    std::lock_guard<std::mutex> lock(mutex);
+    for (auto [index, entry] : llvm::enumerate(entries)) {
+      if (entry.function != function || !(entry.revision == revision))
+        continue;
+      std::rotate(entries.begin(), entries.begin() + index,
+                  entries.begin() + index + 1);
+      return entries.front().result;
+    }
+    return nullptr;
+  }
+  void insert(Operation *function, const HandleRevision &revision,
+              std::shared_ptr<const HandleDataflowResult> result) {
+    std::lock_guard<std::mutex> lock(mutex);
+    llvm::erase_if(entries, [&](const Entry &entry) {
+      return entry.function == function;
+    });
+    entries.insert(entries.begin(), {function, revision, std::move(result)});
+    if (entries.size() > capacity)
+      entries.pop_back();
+  }
+
+private:
+  struct Entry {
+    Operation *function;
+    HandleRevision revision;
+    std::shared_ptr<const HandleDataflowResult> result;
+  };
+  static constexpr size_t capacity = 16;
+  std::mutex mutex;
+  SmallVector<Entry, 0> entries;
+};
+HandleResultCache &getHandleResultCache() {
+  static HandleResultCache cache;
+  return cache;
+}
+/// Solving is roughly linear in body size, while a revision check walks the
+/// body once. Small functions are cheaper to recompute than to fingerprint.
+constexpr unsigned cachedHandleOperations = 4096;
 } // namespace
 
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
@@ -410,40 +475,23 @@ HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
     for (auto driver : design.getOps<sim::SimDriverDeclOp>())
       driverNets[driver.getId()] = driver.getNetId();
   }
+  SmallVector<std::pair<uint64_t, uint64_t>> drivers(driverNets.begin(),
+                                                     driverNets.end());
+  llvm::sort(drivers);
+  driverDigest = llvm::hash_combine_range(drivers.begin(), drivers.end());
 }
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimFuncOp function)
     : HandleDataflowAnalysis(getDriverDesign(function)) {}
+namespace {
 HandleDataflowResult
-HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
+solveHandles(sim::SimFuncOp function,
+             const DenseMap<uint64_t, uint64_t> &driverNets,
+             bool dynamicSelectors) {
   HandleDataflowResult result;
-  if (function.isExternal() || function.getBody().empty())
-    return result;
-  bool hasHandles = false;
-  auto inspect = [&](Value value) {
-    hasHandles |=
-        resourceKind(value.getType()) != schedule::ComputeResourceKind::Unknown;
-  };
-  function.walk([&](Operation *op) {
-    for (auto value : op->getResults())
-      inspect(value);
-    for (auto &region : op->getRegions())
-      for (auto &block : region)
-        for (auto value : block.getArguments())
-          inspect(value);
-  });
-  if (!hasHandles)
-    return result;
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
   solver.load<dataflow::IntegerRangeAnalysis>();
-  bool dynamicSelectors = false;
-  function.walk([&](Operation *op) {
-    dynamicSelectors |=
-        isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
-            schedule::NativeWordViewOp, sim::SimDriverArrayElementOp,
-            sim::SimDriverDynExtractOp>(op);
-  });
   auto *scopedRanges =
       dynamicSelectors
           ? solver.load<ScopedIntegerRangeAnalysis>(function.getOperation())
@@ -477,6 +525,48 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
       }
   });
   return result;
+}
+} // namespace
+HandleDataflowResult
+HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
+  if (function.isExternal() || function.getBody().empty())
+    return {};
+  bool hasHandles = false, dynamicSelectors = false;
+  unsigned operations = 0;
+  llvm::hash_code shape = 0;
+  auto inspect = [&](Value value) {
+    hasHandles |=
+        resourceKind(value.getType()) != schedule::ComputeResourceKind::Unknown;
+  };
+  function.walk([&](Operation *op) {
+    ++operations;
+    shape = llvm::hash_combine(shape, op->getName().getAsOpaquePointer());
+    dynamicSelectors |=
+        isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
+            schedule::NativeWordViewOp, sim::SimDriverArrayElementOp,
+            sim::SimDriverDynExtractOp>(op);
+    for (auto value : op->getResults())
+      inspect(value);
+    for (auto &region : op->getRegions())
+      for (auto &block : region)
+        for (auto value : block.getArguments()) {
+          inspect(value);
+          shape = llvm::hash_combine(shape, value.getType());
+        }
+  });
+  if (!hasHandles)
+    return {};
+  if (operations < cachedHandleOperations)
+    return solveHandles(function, driverNets, dynamicSelectors);
+  HandleRevision revision{OperationFingerPrint(function), shape,
+                          driverDigest};
+  HandleResultCache &cache = getHandleResultCache();
+  if (auto cached = cache.lookup(function, revision))
+    return *cached;
+  auto solved = std::make_shared<const HandleDataflowResult>(
+      solveHandles(function, driverNets, dynamicSelectors));
+  cache.insert(function, revision, solved);
+  return *solved;
 }
 HandleFacts HandleDataflowAnalysis::derive(sim::SimFuncOp function) const {
   return analyze(function).facts;

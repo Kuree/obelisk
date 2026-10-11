@@ -254,6 +254,17 @@ Value entryAlloca(OpBuilder &builder, Location location, Type elementType,
                                 countValue, alignment);
 }
 
+Value beginTemporary(OpBuilder &builder, Location location, Type elementType,
+                     unsigned alignment) {
+  Value storage = entryAlloca(builder, location, elementType, 1, alignment);
+  LLVM::LifetimeStartOp::create(builder, location, storage);
+  return storage;
+}
+
+void endTemporary(OpBuilder &builder, Location location, Value storage) {
+  LLVM::LifetimeEndOp::create(builder, location, storage);
+}
+
 Value byteGEP(OpBuilder &builder, Location location, Value base,
               uint64_t offset) {
   Type pointer = LLVM::LLVMPointerType::get(builder.getContext());

@@ -108,9 +108,17 @@ static LogicalResult threadFunctionRuntimeStatuses(sim::SimFuncOp function) {
     localRewriter.eraseOp(operation);
   }
 
+  // Split after each check from the last one backwards. Every operation then
+  // moves once, even when a fused block holds thousands of checks; splitting
+  // forwards would move the remainder of the block again at every check.
+  DenseMap<Operation *, Block *> continuations;
+  for (sim::SimStatusCheckOp check : llvm::reverse(checks))
+    continuations[check] =
+        check->getBlock()->splitBlock(std::next(check->getIterator()));
+  LLVM::AllocaOp rootRecord =
+      checks.empty() ? LLVM::AllocaOp() : findManagedRootRangeRecord(function);
   for (sim::SimStatusCheckOp check : checks) {
-    Block *source = check->getBlock();
-    Block *continuation = source->splitBlock(std::next(check->getIterator()));
+    Block *continuation = continuations.lookup(check);
     Block *failure = new Block;
     function.getBody().push_back(failure);
     localRewriter.setInsertionPoint(check);
@@ -144,7 +152,8 @@ static LogicalResult threadFunctionRuntimeStatuses(sim::SimFuncOp function) {
     values.push_back(runtime::RTStatusToBitsOp::create(
         localRewriter, function.getLoc(), localRewriter.getI32Type(), status));
     if (!pushFailure)
-      emitManagedRootRangePop(localRewriter, function.getLoc(), function);
+      emitManagedRootRangePop(localRewriter, function.getLoc(), function,
+                              rootRecord);
     sim::SimReturnOp::create(localRewriter, function.getLoc(), values);
   }
   return success();

@@ -4,6 +4,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -146,15 +147,29 @@ static void formReadyRegion(Operation *operation) {
     end->erase();
   }
 }
-static void coalesceFunction(Operation *operation,
-                             SymbolTableCollection &symbols) {
+/// Ready updates of one function and their symbol-resolved keys.
+struct FunctionReadyUpdates {
+  Operation *function;
   SmallVector<NativeReadyUpdateOp> updates;
-  operation->walk([&](NativeReadyUpdateOp op) { updates.push_back(op); });
+  DenseMap<Operation *, Key> keys;
+};
+static FunctionReadyUpdates
+collectReadyUpdates(Operation *operation, SymbolTableCollection &symbols) {
+  FunctionReadyUpdates result{operation, {}, {}};
+  operation->walk(
+      [&](NativeReadyUpdateOp op) { result.updates.push_back(op); });
+  if (result.updates.size() >= 2)
+    for (auto update : result.updates)
+      result.keys.try_emplace(update, readyKey(update, symbols));
+  return result;
+}
+/// Rewrites only `input.function`, so distinct functions are independent.
+static void coalesceFunction(FunctionReadyUpdates &input) {
+  Operation *operation = input.function;
+  auto &updates = input.updates;
+  auto &keys = input.keys;
   if (updates.size() < 2)
     return;
-  DenseMap<Operation *, Key> keys;
-  for (auto update : updates)
-    keys.try_emplace(update, readyKey(update, symbols));
   DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
   solver.load<dataflow::DeadCodeAnalysis>();
   solver.load<dataflow::SparseConstantPropagation>();
@@ -227,12 +242,23 @@ void coalesceNativeReadyUpdates(Operation *operation) {
   // Inventories are cheap; allocate solver state only for functions that
   // actually have executable ready actions, not millions of unrelated LLVM ops.
   SymbolTableCollection symbols;
-  if (isa<FunctionOpInterface>(operation))
-    return coalesceFunction(operation, symbols);
+  if (isa<FunctionOpInterface>(operation)) {
+    FunctionReadyUpdates input = collectReadyUpdates(operation, symbols);
+    return coalesceFunction(input);
+  }
+  // Resolve keys serially with one symbol cache. Each function's chains and
+  // ready regions then stay inside its own body, so large generated bodies
+  // are solved concurrently.
+  SmallVector<FunctionReadyUpdates> inputs;
   operation->walk([&](Operation *op) {
-    if (isa<FunctionOpInterface>(op))
-      coalesceFunction(op, symbols);
+    if (!isa<FunctionOpInterface>(op))
+      return;
+    FunctionReadyUpdates input = collectReadyUpdates(op, symbols);
+    if (input.updates.size() >= 2)
+      inputs.push_back(std::move(input));
   });
+  parallelForEach(operation->getContext(), inputs,
+                  [](FunctionReadyUpdates &input) { coalesceFunction(input); });
 }
 
 } // namespace obelisk::schedule

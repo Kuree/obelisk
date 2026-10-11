@@ -3,7 +3,6 @@
 #ifndef OBELISK_ANALYSIS_SCOPEDINTEGERRANGEANALYSIS_H
 #define OBELISK_ANALYSIS_SCOPEDINTEGERRANGEANALYSIS_H
 #include "mlir/Analysis/DataFlow/DenseAnalysis.h"
-#include "mlir/Analysis/Liveness.h"
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -61,8 +60,10 @@ public:
 
 private:
   void setToEntryState(ScopedRangeLattice *state) override;
-  mlir::Liveness liveness;
   llvm::DenseSet<mlir::Value> relevant;
+  /// (block, value) pairs where a relevant value is live on entry. Block
+  /// states only hold relevant values, so this slice of liveness suffices.
+  llvm::DenseSet<std::pair<mlir::Block *, mlir::Value>> liveIns;
   std::unique_ptr<ScalarEvolutionAnalysis> evolution;
   ScopedRangeLattice::Ranges inductionBounds;
   // Exact edge certificates are scoped to this header's continuation edge.

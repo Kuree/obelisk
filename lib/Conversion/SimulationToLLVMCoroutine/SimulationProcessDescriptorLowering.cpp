@@ -22,43 +22,84 @@ uint64_t stableProcessID(StringRef name) {
   return obelisk_stable_hash(name.data(), name.size());
 }
 
-bool isUnmanagedNativeProcess(sim::SimFuncOp function) {
-  auto scalar = [](Type type) {
-    if (auto ref = dyn_cast<sim::RefType>(type)) {
-      type = ref.getElementType();
-      // A fixed array reference is an address, not an aggregate value or a
-      // managed allocation. Scalar element accesses need no GC lane. Keep
-      // whole-array values, arrays of handles, and actual calls conservative.
-      for (unsigned depth = 0; depth != 16; ++depth) {
-        auto array = dyn_cast<sim::UnpackedArrayType>(type);
-        if (!array)
-          break;
-        type = array.getElementType();
-      }
-    }
-    if (auto net = dyn_cast<sim::NetType>(type))
-      type = net.getElementType();
-    if (auto driver = dyn_cast<sim::DriverType>(type))
-      type = driver.getElementType();
-    return isa<IntegerType, FloatType, sim::LogicType, sim::ContextType,
-               sim::ProcessType, sim::TimeType, sim::BytesType, sim::ControlType,
-               sim::PackedArrayType, sim::PackedStructType,
-               sim::PackedUnionType>(type);
-  };
-  // Deliberately conservative: calls and non-scalar values need the ordinary
-  // scope, even if a future interprocedural analysis could prove otherwise.
-  return !function
+namespace {
+bool isUnmanagedNativeType(Type type) {
+  if (auto ref = dyn_cast<sim::RefType>(type))
+    type = ref.getElementType();
+  else if (auto net = dyn_cast<sim::NetType>(type))
+    type = net.getElementType();
+  else if (auto driver = dyn_cast<sim::DriverType>(type))
+    type = driver.getElementType();
+  // A fixed unpacked array of scalar elements is plain data, whether held as
+  // a value or addressed through a reference, net or driver. It owns no
+  // managed allocation, so it needs no GC lane. Arrays of handles stay
+  // conservative.
+  for (unsigned depth = 0; depth != 16; ++depth) {
+    auto array = dyn_cast<sim::UnpackedArrayType>(type);
+    if (!array)
+      break;
+    type = array.getElementType();
+  }
+  return isa<IntegerType, FloatType, sim::LogicType, sim::ContextType,
+             sim::ProcessType, sim::TimeType, sim::BytesType, sim::ControlType,
+             sim::PackedArrayType, sim::PackedStructType, sim::PackedUnionType>(
+      type);
+}
+
+/// A body is unmanaged when it holds only scalar values and each of its
+/// calls satisfies `unmanagedCall`.
+template <typename CallVerdict>
+bool scanUnmanagedNativeBody(sim::SimFuncOp function,
+                             CallVerdict &&unmanagedCall) {
+  return !function.isExternal() &&
+         !function
               .walk([&](Operation *operation) {
                 if (operation == function.getOperation())
                   return WalkResult::advance();
-                if (isa<CallOpInterface, sim::SimGCSafepointOp,
-                        sim::SimDPICallOp>(operation) ||
-                    !llvm::all_of(operation->getOperandTypes(), scalar) ||
-                    !llvm::all_of(operation->getResultTypes(), scalar))
+                if (!llvm::all_of(operation->getOperandTypes(),
+                                  isUnmanagedNativeType) ||
+                    !llvm::all_of(operation->getResultTypes(),
+                                  isUnmanagedNativeType))
                   return WalkResult::interrupt();
-                return WalkResult::advance();
+                if (auto call = dyn_cast<sim::SimCallOp>(operation))
+                  return unmanagedCall(call) ? WalkResult::advance()
+                                             : WalkResult::interrupt();
+                return isa<CallOpInterface, sim::SimGCSafepointOp,
+                           sim::SimDPICallOp>(operation)
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
               })
               .wasInterrupted();
+}
+
+/// Calls must reach only unmanaged bodies. Recursion and unresolved or
+/// external callees stay conservative.
+bool isUnmanagedNativeBody(sim::SimFuncOp function,
+                           UnmanagedNativeCache &cache) {
+  if (auto found = cache.bodies.find(function.getOperation());
+      found != cache.bodies.end())
+    return found->second;
+  // A cycle back to this body while it is analyzed is conservative.
+  cache.bodies[function.getOperation()] = false;
+  bool unmanaged = scanUnmanagedNativeBody(function, [&](sim::SimCallOp call) {
+    auto callee = cache.symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
+        call, call.getCalleeAttr());
+    return callee && callee.getEntryKind() == sim::EntryKind::Function &&
+           isUnmanagedNativeBody(callee, cache);
+  });
+  cache.bodies[function.getOperation()] = unmanaged;
+  return unmanaged;
+}
+} // namespace
+
+bool isUnmanagedNativeProcess(sim::SimFuncOp function,
+                              UnmanagedNativeCache &cache) {
+  return isUnmanagedNativeBody(function, cache);
+}
+
+bool isCallFreeUnmanagedNativeProcess(sim::SimFuncOp function) {
+  return scanUnmanagedNativeBody(function,
+                                 [](sim::SimCallOp) { return false; });
 }
 
 LogicalResult

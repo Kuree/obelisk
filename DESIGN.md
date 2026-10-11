@@ -1066,9 +1066,12 @@ an activation. This rule does not relax always_comb/always_latch startup,
 self-sensitivity or retained-state semantics; they keep their existing path.
 
 Certified local groups with one direct signal suspension and no managed
-activation state lower to ordinary native functions when they do not already
-have a direct evaluator body. Closed evaluators keep their existing fragment
-fallback alongside that direct body. Each ordinary invocation selects
+activation state lower to ordinary native functions. A generated region body
+reconstructs its continuation arguments from canonical state, so its fragment
+fallback is such a function even when a closed evaluator body also exists;
+other closed evaluators keep their coroutine fallback. Fixed unpacked arrays
+of scalars and calls whose callees are themselves unmanaged need no managed
+activation state. Each ordinary invocation selects
 the stable continuation from the canonical process frame, executes the group,
 stores its live continuation values and wait record, and returns the existing
 fragment action to the shared event loop. These groups allocate no coroutine

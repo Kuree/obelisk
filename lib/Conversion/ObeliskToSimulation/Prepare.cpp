@@ -432,6 +432,10 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
 static bool typeContainsEvent(Type type) {
   if (isa<sim::EventType>(type))
     return true;
+  // Every element of an array has the same type; a large memory array would
+  // otherwise be inspected once per element.
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    return typeContainsEvent(array.getElementType());
   if (!sim::isAggregateType(type))
     return false;
   unsigned count = sim::getAggregateNumElements(type);

@@ -68,13 +68,13 @@ void ObeliskSimPlanStaticSuperstepPass::runOnOperation() {
   if (!admission.isEligible())
     reject("no statically schedulable process actors");
 
+  analysis::ComputeGraphBlockIndex graphBlocks;
   auto isAdmittedFragment = [&](schedule::ComputeFragmentAttr fragment) {
     sim::SimFuncOp function =
         symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
     if (!function || !actorSlots.contains(function.getOperation()))
       return false;
-    Block *block =
-        analysis::lookupComputeGraphBlock(function, fragment.getBlock());
+    Block *block = graphBlocks.lookup(function, fragment.getBlock());
     auto bytecode = bytecodeFragments.find(function.getOperation());
     return block && (bytecode == bytecodeFragments.end() ||
                      !llvm::is_contained(bytecode->second, block));

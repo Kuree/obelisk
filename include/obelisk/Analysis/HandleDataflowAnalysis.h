@@ -90,6 +90,9 @@ public:
 private:
   llvm::DenseMap<uint64_t, uint64_t> driverNets;
   llvm::DenseSet<uint64_t> isolatedDrivenNets;
+  /// Order-independent digest of `driverNets`, part of each memoized
+  /// function revision.
+  uint64_t driverDigest = 0;
 };
 HandleFacts deriveHandleFacts(sim::SimFuncOp function);
 } // namespace obelisk::analysis

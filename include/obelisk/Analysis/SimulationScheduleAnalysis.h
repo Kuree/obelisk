@@ -26,6 +26,18 @@ namespace obelisk::analysis {
 /// bridge blocks that are not part of the graph ABI.
 mlir::Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal);
 
+/// Resolves many compute-graph block ordinals against one IR revision. Each
+/// function's ordinal table is built on first use, so a whole-graph sweep stays
+/// linear in the fused body size. Indexed functions must not gain, lose, or
+/// reorder blocks while the index is alive.
+class ComputeGraphBlockIndex {
+public:
+  mlir::Block *lookup(sim::SimFuncOp function, uint32_t ordinal);
+
+private:
+  llvm::DenseMap<mlir::Operation *, llvm::SmallVector<mlir::Block *>> blocks;
+};
+
 bool isSettlingEntryKind(sim::EntryKind kind);
 
 /// The implicit time-zero ordering for spawns in one root-initializer block

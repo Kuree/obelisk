@@ -73,11 +73,13 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
     builder.setInsertionPointToStart(continuation);
     return;
   }
+  SmallVector<Value, 4> temporaries;
   auto save = [&](Value value) {
     if (!value)
       return LLVM::ZeroOp::create(builder, location, pointer).getResult();
-    Value storage = entryAlloca(builder, location, value.getType(), 1, 1);
+    Value storage = beginTemporary(builder, location, value.getType(), 1);
     LLVM::StoreOp::create(builder, location, value, storage, 1);
+    temporaries.push_back(storage);
     return storage;
   };
   auto transition = LLVM::CallOp::create(
@@ -90,6 +92,9 @@ void notifySignal(ConversionPatternRewriter &builder, Location location,
   if (sourceOwner)
     ::obelisk::schedule::set<schedule::metadata::evalSourceOwner>(transition,
                                                                   sourceOwner);
+  // The runtime consumes the transition before returning.
+  for (Value storage : temporaries)
+    endTemporary(builder, location, storage);
 }
 std::optional<DirectStaticStateRange>
 resolveDirectStaticStateRange(Value handle, unsigned width,
@@ -744,7 +749,7 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
     IntegerType i64 = rewriter.getI64Type();
     Value base =
         LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
-    Value out = entryAlloca(rewriter, location, resultType, 1, 1);
+    Value out = beginTemporary(rewriter, location, resultType, 1);
     Value contextAddress = LLVM::AddressOfOp::create(
         rewriter, location, pointer, "__obelisk_current_context");
     Value context =
@@ -761,7 +766,9 @@ Value loadStatePlane(ConversionPatternRewriter &rewriter, Location location,
                          globalName == "__obelisk_state_unknown" ? 1 : 0),
             llvmConstant(rewriter, location, i32, unknownFallback ? 1 : 0),
             out});
-    return LLVM::LoadOp::create(rewriter, location, resultType, out, 1);
+    Value loaded = LLVM::LoadOp::create(rewriter, location, resultType, out, 1);
+    endTemporary(rewriter, location, out);
+    return loaded;
   };
   if ((!range || !range->guarded) && (!dynamicRange || !dynamicRange->guarded))
     return emitGeneric();
@@ -859,9 +866,9 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
     IntegerType i64 = rewriter.getI64Type();
     Value base =
         LLVM::AddressOfOp::create(rewriter, location, pointer, globalName);
-    Value in = entryAlloca(rewriter, location, inputType, 1, 1);
+    Value in = beginTemporary(rewriter, location, inputType, 1);
     LLVM::StoreOp::create(rewriter, location, input, in, 1);
-    Value changed = entryAlloca(rewriter, location, i8, 1, 1);
+    Value changed = beginTemporary(rewriter, location, i8, 1);
     LLVM::StoreOp::create(rewriter, location,
                           llvmConstant(rewriter, location, i8, 0), changed, 1);
     Value contextAddress = LLVM::AddressOfOp::create(
@@ -882,6 +889,8 @@ Value storeStatePlane(ConversionPatternRewriter &rewriter, Location location,
             in, changed});
     Value changedByte =
         LLVM::LoadOp::create(rewriter, location, i8, changed, 1);
+    endTemporary(rewriter, location, in);
+    endTemporary(rewriter, location, changed);
     return arith::CmpIOp::create(rewriter, location, arith::CmpIPredicate::ne,
                                  changedByte,
                                  llvmConstant(rewriter, location, i8, 0));

@@ -14,6 +14,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Threading.h"
 #include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
@@ -239,10 +240,18 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
     };
     auto initialization = closure(std::move(initialEntries));
     auto runtime = closure(std::move(runtimeEntries));
-    for (sim::SimFuncOp function : design.getOps<sim::SimFuncOp>()) {
-      if (function.isExternal() || function.getBody().empty() ||
-          outlinedBodies.contains(function.getOperation()))
-        continue;
+    // Handle facts are read-only per-function solves. Compute them
+    // concurrently, then consume them in design order.
+    SmallVector<sim::SimFuncOp> analyzed;
+    for (sim::SimFuncOp function : design.getOps<sim::SimFuncOp>())
+      if (!function.isExternal() && !function.getBody().empty() &&
+          !outlinedBodies.contains(function.getOperation()))
+        analyzed.push_back(function);
+    SmallVector<HandleFacts> provenances(analyzed.size());
+    parallelFor(design.getContext(), 0, analyzed.size(), [&](size_t index) {
+      provenances[index] = analysis.derive(analyzed[index]);
+    });
+    for (auto [function, provenance] : llvm::zip_equal(analyzed, provenances)) {
       // Declaration initializers called only by bootstrap execute before the
       // periodic regime. A subroutine reachable from a running actor remains
       // a writer even if bootstrap calls it too.
@@ -250,7 +259,6 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
           function.getEntryKind() == sim::EntryKind::RootInitializer ||
           (function.isPrivate() && initialization.contains(function) &&
            !runtime.contains(function));
-      auto provenance = analysis.derive(function);
       auto range = [&](Value reference) -> std::optional<Writer> {
         auto found = provenance.find(reference);
         if (found == provenance.end() || !found->second.descriptor ||

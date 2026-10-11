@@ -2,9 +2,11 @@
 
 #include "SimulationPackedLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Conversion/Passes.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Pass/AnalysisManager.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseSet.h"
@@ -167,6 +169,100 @@ struct NativeFunctionFinalizationInputs {
   bool valid = true;
 };
 
+/// Gives temporaries whose every use lies between one lifetime start and end
+/// in a single block a shared stack slot per element type and alignment, by
+/// a linear scan of each block. Runtime-call buffers otherwise each own a
+/// frame slot: a large generated body then has a frame far beyond AArch64
+/// immediate offsets, and codegen keeps frame base registers live across
+/// every call. Coroutines keep their allocations, which lay out their frames.
+static bool shareScopedTemporaries(LLVM::LLVMFuncOp function) {
+  if (ArrayAttr passthrough = function.getPassthroughAttr())
+    if (llvm::any_of(passthrough, [](Attribute attribute) {
+          auto name = dyn_cast<StringAttr>(attribute);
+          return name && name.getValue() == "presplitcoroutine";
+        }))
+      return false;
+  DenseMap<Operation *, LLVM::AllocaOp> starts, ends;
+  function.walk([&](LLVM::AllocaOp allocation) {
+    APInt count;
+    if (!matchPattern(allocation.getArraySize(), m_ConstantInt(&count)) ||
+        count != 1)
+      return;
+    Operation *start = nullptr, *end = nullptr;
+    bool scoped = true;
+    for (Operation *user : allocation->getUsers()) {
+      if (isa<LLVM::LifetimeStartOp>(user)) {
+        scoped &= !start;
+        start = user;
+      } else if (isa<LLVM::LifetimeEndOp>(user)) {
+        scoped &= !end;
+        end = user;
+      }
+    }
+    if (!scoped || !start || !end || start->getBlock() != end->getBlock() ||
+        !start->isBeforeInBlock(end))
+      return;
+    if (llvm::any_of(allocation->getUsers(), [&](Operation *user) {
+          return user != start && user != end &&
+                 (user->getBlock() != start->getBlock() ||
+                  !start->isBeforeInBlock(user) || !user->isBeforeInBlock(end));
+        }))
+      return;
+    starts[start] = allocation;
+    ends[end] = allocation;
+  });
+  if (starts.size() < 2)
+    return false;
+  using Key = std::pair<Type, uint64_t>;
+  auto keyOf = [](LLVM::AllocaOp allocation) {
+    return Key(allocation.getElemType(), allocation.getAlignment().value_or(0));
+  };
+  // Slot indices per key; every scope closes in the block that opened it.
+  SmallVector<std::pair<LLVM::AllocaOp, unsigned>> order;
+  DenseMap<Operation *, unsigned> assigned;
+  for (Block &block : function.getBody()) {
+    DenseMap<Key, SmallVector<unsigned>> available;
+    DenseMap<Key, unsigned> opened;
+    for (Operation &operation : block) {
+      if (LLVM::AllocaOp allocation = starts.lookup(&operation)) {
+        Key key = keyOf(allocation);
+        auto &free = available[key];
+        unsigned slot;
+        if (!free.empty())
+          slot = free.pop_back_val();
+        else
+          slot = opened[key]++;
+        assigned[allocation] = slot;
+        order.emplace_back(allocation, slot);
+      } else if (LLVM::AllocaOp allocation = ends.lookup(&operation)) {
+        available[keyOf(allocation)].push_back(assigned.lookup(allocation));
+      }
+    }
+  }
+  // The function entry dominates every scope.
+  OpBuilder builder(&function.getBody().front(),
+                    function.getBody().front().begin());
+  Location location = function.getLoc();
+  Type pointer = LLVM::LLVMPointerType::get(function.getContext());
+  Value one = LLVM::ConstantOp::create(builder, location, builder.getI64Type(),
+                                       builder.getI64IntegerAttr(1));
+  DenseMap<std::pair<Key, unsigned>, Value> slots;
+  SmallVector<LLVM::AllocaOp> merged;
+  // Visit scopes in program order so slot creation is deterministic.
+  for (auto [allocation, slot] : order) {
+    Key key = keyOf(allocation);
+    Value &shared = slots[{key, slot}];
+    if (!shared)
+      shared = LLVM::AllocaOp::create(builder, location, pointer, key.first,
+                                      one, key.second);
+    allocation.getResult().replaceAllUsesWith(shared);
+    merged.push_back(allocation);
+  }
+  for (LLVM::AllocaOp allocation : merged)
+    allocation.erase();
+  return true;
+}
+
 struct NativeFunctionFinalizationPass
     : PassWrapper<NativeFunctionFinalizationPass,
                   OperationPass<LLVM::LLVMFuncOp>> {
@@ -195,6 +291,7 @@ struct NativeFunctionFinalizationPass
     uint64_t inlineOperationLimit = configuration.inlineOperationLimit;
     bool changed =
         lowerWideNativeBitwiseIntegers(function, configuration.dataLayout);
+    changed |= shareScopedTemporaries(function);
     SmallVector<LLVM::CallOp> provenOffsets;
     function.walk([&](LLVM::CallOp call) {
       if (call->hasAttr(nativeInBoundsHandleOffsetAttr) && call.getCallee() &&
@@ -304,3 +401,19 @@ std::unique_ptr<Pass> createNativeFunctionFinalizationPass() {
 }
 
 } // namespace obelisk::detail
+
+namespace obelisk {
+#define GEN_PASS_DEF_SHARENATIVESCOPEDTEMPORARIESPASS
+#include "obelisk/Conversion/Passes.h.inc"
+namespace {
+struct ShareNativeScopedTemporariesPass
+    : impl::ShareNativeScopedTemporariesPassBase<
+          ShareNativeScopedTemporariesPass> {
+  void runOnOperation() override {
+    LLVM::LLVMFuncOp function = getOperation();
+    if (function.isExternal() || !detail::shareScopedTemporaries(function))
+      markAllAnalysesPreserved();
+  }
+};
+} // namespace
+} // namespace obelisk

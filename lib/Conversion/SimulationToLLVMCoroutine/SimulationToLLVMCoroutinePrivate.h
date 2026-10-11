@@ -255,6 +255,13 @@ mlir::Value llvmConstant(mlir::OpBuilder &builder, mlir::Location location,
 mlir::Value entryAlloca(mlir::OpBuilder &builder, mlir::Location location,
                         mlir::Type elementType, uint64_t count,
                         unsigned alignment);
+/// An entry-block buffer whose contents live only from the insertion point to
+/// the matching endTemporary. A large body has thousands of runtime-call
+/// buffers; lifetime markers let LLVM color them into a few stack slots.
+mlir::Value beginTemporary(mlir::OpBuilder &builder, mlir::Location location,
+                           mlir::Type elementType, unsigned alignment);
+void endTemporary(mlir::OpBuilder &builder, mlir::Location location,
+                  mlir::Value storage);
 mlir::Value byteGEP(mlir::OpBuilder &builder, mlir::Location location,
                     mlir::Value base, uint64_t offset);
 mlir::Value elementGEP(mlir::OpBuilder &builder, mlir::Location location,
@@ -367,6 +374,12 @@ void populateNativeManagedRootToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns);
 void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
                              mlir::Operation *scope);
+/// The scope's managed-root range record, if it has one. Callers popping at
+/// many exits look it up once and pass it to the overload below.
+mlir::LLVM::AllocaOp findManagedRootRangeRecord(mlir::Operation *scope);
+void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
+                             mlir::Operation *scope,
+                             mlir::LLVM::AllocaOp record);
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
 mlir::LogicalResult materializeDPIExportWrappers(mlir::ModuleOp module);
 mlir::LogicalResult materializeNativeDPIExportThunks(mlir::ModuleOp module);
@@ -496,7 +509,19 @@ mlir::LogicalResult serializeRuntimeWait(
     mlir::OpBuilder &builder,
     mlir::SmallVectorImpl<mlir::Operation *> &observerBindings);
 uint64_t stableProcessID(llvm::StringRef name);
-bool isUnmanagedNativeProcess(sim::SimFuncOp function);
+/// Shares symbol resolution and callee verdicts across many processes.
+struct UnmanagedNativeCache {
+  mlir::SymbolTableCollection symbols;
+  llvm::DenseMap<mlir::Operation *, bool> bodies;
+};
+/// Whether a process holds only scalar state and calls only unmanaged
+/// functions, so its activations need no managed root scope. This reads
+/// callee bodies: call it only where no function worker rewrites them.
+bool isUnmanagedNativeProcess(sim::SimFuncOp function,
+                              UnmanagedNativeCache &cache);
+/// The same proof with every call treated as managed. It reads only
+/// `function`, so a function-pass worker may use it.
+bool isCallFreeUnmanagedNativeProcess(sim::SimFuncOp function);
 mlir::LogicalResult
 makeProcessDescriptor(mlir::ModuleOp module, mlir::SymbolTable &embeddedSymbols,
                       mlir::Location location, llvm::StringRef baseName,

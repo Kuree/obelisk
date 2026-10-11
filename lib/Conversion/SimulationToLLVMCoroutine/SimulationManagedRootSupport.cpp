@@ -10,22 +10,26 @@
 using namespace mlir;
 
 namespace obelisk::detail {
-namespace {
 
 LLVM::AllocaOp findManagedRootRangeRecord(Operation *scope) {
   LLVM::AllocaOp record;
   scope->walk([&](LLVM::AllocaOp allocation) {
-    if (!record && allocation->hasAttr(managedRootRangeRecordAttr))
-      record = allocation;
+    if (!allocation->hasAttr(managedRootRangeRecordAttr))
+      return WalkResult::advance();
+    record = allocation;
+    return WalkResult::interrupt();
   });
   return record;
 }
 
-} // namespace
-
 void emitManagedRootRangePop(OpBuilder &builder, Location location,
                              Operation *scope) {
-  LLVM::AllocaOp record = findManagedRootRangeRecord(scope);
+  emitManagedRootRangePop(builder, location, scope,
+                          findManagedRootRangeRecord(scope));
+}
+
+void emitManagedRootRangePop(OpBuilder &builder, Location location,
+                             Operation *scope, LLVM::AllocaOp record) {
   if (!record)
     return;
   if (isa<sim::SimFuncOp>(scope)) {

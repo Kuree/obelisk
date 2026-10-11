@@ -203,12 +203,14 @@ module {
   }
 }
 
+// A value used later in the same activation keeps its SSA definition; only
+// values that cross a suspension need a continuation lane.
 // CHECK-LABEL: simulation.func @process
 // CHECK: %[[LIVE:.*]] = arith.addi
-// CHECK: cf.br ^[[USE:.*]](%[[LIVE]] : i32)
-// CHECK: ^[[USE]](%[[THREADED:.*]]: i32):
+// CHECK: cf.br ^[[USE:.*]]{{$}}
+// CHECK: ^[[USE]]:
 // CHECK-NEXT: %[[ONE:.*]] = arith.constant 1 : i32
-// CHECK-NEXT: %[[SUM:.*]] = arith.addi %[[THREADED]], %[[ONE]]
+// CHECK-NEXT: %[[SUM:.*]] = arith.addi %[[LIVE]], %[[ONE]]
 // CHECK: simulation.file.flush %{{.*}}, %[[SUM]]
 
 // CHECK-LABEL: simulation.func @cyclic_resume
@@ -281,9 +283,9 @@ module {
 
 // CHECK-LABEL: simulation.func @duplicate_successor_process
 // CHECK: %[[DUP_LIVE:.*]] = arith.addi
-// CHECK: cf.cond_br %{{.*}}, ^[[DUP_USE:.*]](%[[DUP_LIVE]] : i32), ^[[DUP_USE]](%[[DUP_LIVE]] : i32)
-// CHECK: ^[[DUP_USE]](%[[DUP_THREADED:.*]]: i32):
-// CHECK: simulation.file.flush %{{.*}}, %[[DUP_THREADED]]
+// CHECK: cf.cond_br %{{.*}}, ^[[DUP_USE:.*]], ^[[DUP_USE]]{{$}}
+// CHECK: ^[[DUP_USE]]:
+// CHECK: simulation.file.flush %{{.*}}, %[[DUP_LIVE]]
 
 // CHECK-LABEL: simulation.func @duplicate_successor_constants
 // CHECK: cf.cond_br %{{.*}}, ^[[CONST_USE:.*]], ^[[CONST_USE]]

@@ -196,9 +196,16 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
 
   SmallVector<sim::SimStatusCheckOp> checks;
   body.walk([&](sim::SimStatusCheckOp check) { checks.push_back(check); });
+  // Split from the last check backwards so each operation moves once, and
+  // find the managed-root record once rather than at every failure exit.
+  DenseMap<Operation *, Block *> continuations;
+  for (sim::SimStatusCheckOp check : llvm::reverse(checks))
+    continuations[check] =
+        check->getBlock()->splitBlock(std::next(check->getIterator()));
+  LLVM::AllocaOp rootRecord =
+      checks.empty() ? LLVM::AllocaOp() : findManagedRootRangeRecord(body);
   for (sim::SimStatusCheckOp check : checks) {
-    Block *source = check->getBlock();
-    Block *continuation = source->splitBlock(std::next(check->getIterator()));
+    Block *continuation = continuations.lookup(check);
     Block *failure = new Block;
     body.getBody().push_back(failure);
     rewriter.setInsertionPoint(check);
@@ -214,7 +221,7 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
     Value bits = runtime::RTStatusToBitsOp::create(
         rewriter, body.getLoc(), rewriter.getI32Type(), status);
     if (!pushFailure)
-      emitManagedRootRangePop(rewriter, body.getLoc(), body);
+      emitManagedRootRangePop(rewriter, body.getLoc(), body, rootRecord);
     func::ReturnOp::create(rewriter, body.getLoc(), bits);
   }
 

@@ -707,6 +707,7 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     llvm::sort(result);
     return result;
   };
+  analysis::ComputeGraphBlockIndex graphBlocks;
   for (auto [fragmentIndex, node] : llvm::enumerate(graph.getNodes())) {
     auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(node);
     if (!fragment)
@@ -722,9 +723,7 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
     sim::SimFuncOp function =
         symbols.lookup<sim::SimFuncOp>(fragment.getFunction().getValue());
     Block *block =
-        function
-            ? analysis::lookupComputeGraphBlock(function, fragment.getBlock())
-            : nullptr;
+        function ? graphBlocks.lookup(function, fragment.getBlock()) : nullptr;
     auto actor =
         function ? actorSlots.find(function.getOperation()) : actorSlots.end();
     if (!function || !block)

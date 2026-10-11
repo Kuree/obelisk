@@ -84,7 +84,7 @@ void ScopedRangeLattice::print(raw_ostream &os) const {
 ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
                                                        Operation *function,
                                                        bool allScalarValues)
-    : DenseForwardDataFlowAnalysis(solver), liveness(function) {
+    : DenseForwardDataFlowAnalysis(solver) {
   SmallVector<Value> pending;
   function->walk([&](Operation *op) {
     if (allScalarValues) {
@@ -140,6 +140,31 @@ ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
         bodyBounds.try_emplace(loop.condition, loop.induction, *body);
     }
   evolution = std::make_unique<ScalarEvolutionAnalysis>(function, relevant);
+  // Liveness of the relevant slice only: a value is live into every block on
+  // a path from a use back to its definition, as in mlir::Liveness. A fused
+  // activation has thousands of unrelated values whose full liveness would
+  // dominate this analysis.
+  for (Value value : relevant) {
+    Region *definingRegion = value.getParentRegion();
+    Block *definingBlock = value.getParentBlock();
+    for (Operation *user : value.getUsers()) {
+      for (Block *block = user->getBlock(); block;) {
+        bool inDefiningRegion = block->getParent() == definingRegion;
+        SmallVector<Block *> worklist{block};
+        while (!worklist.empty()) {
+          Block *current = worklist.pop_back_val();
+          if ((inDefiningRegion && current == definingBlock) ||
+              !liveIns.insert({current, value}).second)
+            continue;
+          llvm::append_range(worklist, current->getPredecessors());
+        }
+        if (inDefiningRegion)
+          break;
+        Operation *parent = block->getParentOp();
+        block = parent ? parent->getBlock() : nullptr;
+      }
+    }
+  }
 }
 ScopedIntegerRangeAnalysis::~ScopedIntegerRangeAnalysis() = default;
 bool ScopedIntegerRangeAnalysis::excludesXZ(Value value) const {
@@ -414,11 +439,10 @@ void ScopedIntegerRangeAnalysis::visitBlockTransfer(
   // values live into this block and its freshly mapped arguments can be
   // queried here. Map all predecessor operands first: parallel phi copies
   // may consume values that are dead on entry to the successor.
-  const auto &liveIn = liveness.getLiveIn(block);
   for (const auto &entry : llvm::make_early_inc_range(next)) {
     auto argument = dyn_cast<BlockArgument>(entry.first);
     if (!(argument && argument.getOwner() == block) &&
-        !liveIn.contains(entry.first))
+        !liveIns.contains({block, entry.first}))
       next.erase(entry.first);
   }
   propagateIfChanged(after, after->merge(std::move(next)));

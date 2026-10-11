@@ -689,22 +689,26 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
 
   bool taskCaller = false;
   function.walk([&](schedule::NativeTaskCallOp) { taskCaller = true; });
-  // Closed evaluators already have a direct group executor. Preserve their
-  // fragment fallback; ordinary activation entries are needed by groups that
-  // execute under descriptor scheduling without that evaluator.
   // A certified copy has no native state between activations. Its fallback
   // can use the same canonical continuation even when an eval body exists.
+  // A generated region body with one suspension reconstructs its
+  // continuation arguments from canonical state, so it has the same property.
+  // Its fragment fallback runs at startup and under descriptor scheduling;
+  // as an ordinary entry it needs no coroutine frame, which would otherwise
+  // hold the whole fused body's state across runtime calls. Closed evaluators
+  // that call tasks keep their coroutine fallback.
+  bool hasEvalBody =
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(function);
+  bool regionActivation =
+      !(taskCaller && hasEvalBody) &&
+      ::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
+          function) &&
+      ::obelisk::schedule::has<
+          schedule::metadata::evalReconstructsContinuationArgs>(function) &&
+      analysis.getSuspensions().size() == 1;
   bool directActivation =
-      unmanagedNative &&
-      (tableProcess.has_value() || copyActivation ||
-       (!::obelisk::schedule::has<::obelisk::schedule::Field::EvalBody>(
-            function) &&
-        (taskCaller ||
-         (::obelisk::schedule::has<schedule::metadata::nativeRegionBody>(
-              function) &&
-          ::obelisk::schedule::has<
-              schedule::metadata::evalReconstructsContinuationArgs>(function) &&
-          analysis.getSuspensions().size() == 1))));
+      unmanagedNative && (tableProcess.has_value() || copyActivation ||
+                          regionActivation || (taskCaller && !hasEvalBody));
   if (directActivation)
     function.walk([&](Operation *operation) {
       if (!sim::isSuspensionOp(operation))
@@ -1196,9 +1200,16 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
 
   SmallVector<sim::SimStatusCheckOp> checks;
   ramp.walk([&](sim::SimStatusCheckOp check) { checks.push_back(check); });
+  // Split from the last check backwards so each operation moves once, and
+  // find the managed-root record once rather than at every failure exit.
+  DenseMap<Operation *, Block *> continuations;
+  for (sim::SimStatusCheckOp check : llvm::reverse(checks))
+    continuations[check] =
+        check->getBlock()->splitBlock(std::next(check->getIterator()));
+  LLVM::AllocaOp rootRecord =
+      checks.empty() ? LLVM::AllocaOp() : findManagedRootRangeRecord(ramp);
   for (sim::SimStatusCheckOp check : checks) {
-    Block *source = check->getBlock();
-    Block *continuation = source->splitBlock(std::next(check->getIterator()));
+    Block *continuation = continuations.lookup(check);
     Block *failure = new Block;
     ramp.getBody().push_back(failure);
     builder.setInsertionPoint(check);
@@ -1215,7 +1226,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
         builder, location, builder.getI32Type(), status);
     storeAt(builder, location, instance, kInstanceStatusField, bits, 4);
     if (!pushFailure)
-      emitManagedRootRangePop(builder, location, ramp);
+      emitManagedRootRangePop(builder, location, ramp, rootRecord);
     cf::BranchOp::create(builder, location, blocks.terminate);
   }
   return success();

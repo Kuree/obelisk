@@ -554,6 +554,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     auto found = functionsByName.find(name);
     return found == functionsByName.end() ? sim::SimFuncOp{} : found->second;
   };
+  ComputeGraphBlockIndex graphBlocks;
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (graph.getVersion() != schedule::metadata::schemaVersion)
     rejectPlan("unsupported compute-graph version");
@@ -571,8 +572,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         fragment ? lookupFunction(fragment.getFunction().getValue())
                  : sim::SimFuncOp{};
     Block *block =
-        function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                 : nullptr;
+        function ? graphBlocks.lookup(function, fragment.getBlock()) : nullptr;
     return block && block->mightHaveTerminator() &&
            ::obelisk::schedule::has<schedule::metadata::boundedLoopLatch>(
                block->getTerminator());
@@ -611,9 +611,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         rejectPlan("compute-fragment IDs do not match the node inventory");
       sim::SimFuncOp function =
           lookupFunction(fragment.getFunction().getValue());
-      Block *block =
-          function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                   : nullptr;
+      Block *block = function
+                         ? graphBlocks.lookup(function, fragment.getBlock())
+                         : nullptr;
       if (!function || !block)
         rejectPlan("compute graph references a stale function or block");
       else {
@@ -733,7 +733,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
               cast<schedule::ComputeEffectAttr>(effect));
         }))
       continue;
-    Block *block = lookupComputeGraphBlock(function, fragment.getBlock());
+    Block *block = graphBlocks.lookup(function, fragment.getBlock());
     if (!block)
       continue;
     // IEEE 1800-2017 Clause 31.7 primary occurrences and Clause 31.9.1
@@ -993,9 +993,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
             lookupFunction(fragment.getFunction().getValue());
         if (actorLocalColdLoop && !isColdActor(function))
           continue;
-        Block *block =
-            function ? lookupComputeGraphBlock(function, fragment.getBlock())
-                     : nullptr;
+        Block *block = function
+                           ? graphBlocks.lookup(function, fragment.getBlock())
+                           : nullptr;
         if (block)
           requireBytecodeFragment(block->getTerminator(), reason);
       }
@@ -1364,9 +1364,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     uint64_t weight = std::max<uint64_t>(fragment.getCost(), 1);
     result.totalGraphCost += weight;
     sim::SimFuncOp function = lookupFunction(fragment.getFunction().getValue());
-    Block *block = function
-                       ? lookupComputeGraphBlock(function, fragment.getBlock())
-                       : nullptr;
+    Block *block =
+        function ? graphBlocks.lookup(function, fragment.getBlock()) : nullptr;
     auto charge = [&](ArrayRef<unsigned> indices, bool wholeActor) {
       for (unsigned index : indices) {
         attribution[index].cost += weight;
@@ -1404,9 +1403,9 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
         continue;
       sim::SimFuncOp function =
           lookupFunction(fragment.getFunction().getValue());
-      Block *block = function ? lookupComputeGraphBlock(function,
-                                                        fragment.getBlock())
-                              : nullptr;
+      Block *block = function
+                         ? graphBlocks.lookup(function, fragment.getBlock())
+                         : nullptr;
       if (!function || !block ||
           !result.actorSlots.contains(function.getOperation()))
         continue;

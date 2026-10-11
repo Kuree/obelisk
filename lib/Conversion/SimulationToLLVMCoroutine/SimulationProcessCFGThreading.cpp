@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 
+#include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Dominance.h"
@@ -13,8 +14,73 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Support/GenericDomTree.h"
+#include "llvm/Support/GenericDomTreeConstruction.h"
+
+#include <deque>
 
 using namespace mlir;
+
+namespace {
+struct ActivationGraph;
+/// A block of the activation graph: the CFG with suspension edges cut and a
+/// virtual root entering at the process entry and at every resume target.
+/// Every activation starts at one of those entries and runs to its next
+/// suspension, so dominance on this graph certifies that a definition ran
+/// earlier in the same activation.
+struct ActivationNode {
+  Block *block = nullptr;
+  ActivationGraph *graph = nullptr;
+  SmallVector<ActivationNode *, 2> successors, predecessors;
+  ActivationGraph *getParent() const { return graph; }
+  void printAsOperand(raw_ostream &os, bool) const {
+    os << (block ? "block" : "activation root");
+  }
+};
+struct ActivationGraph {
+  /// The virtual root comes first; deque storage keeps node addresses stable.
+  std::deque<ActivationNode> nodes;
+  ActivationNode &front() { return nodes.front(); }
+};
+} // namespace
+
+namespace llvm {
+template <> struct GraphTraits<ActivationNode *> {
+  using NodeRef = ActivationNode *;
+  using ChildIteratorType = SmallVectorImpl<ActivationNode *>::iterator;
+  static NodeRef getEntryNode(NodeRef node) { return node; }
+  static ChildIteratorType child_begin(NodeRef node) {
+    return node->successors.begin();
+  }
+  static ChildIteratorType child_end(NodeRef node) {
+    return node->successors.end();
+  }
+};
+template <> struct GraphTraits<Inverse<ActivationNode *>> {
+  using NodeRef = ActivationNode *;
+  using ChildIteratorType = SmallVectorImpl<ActivationNode *>::iterator;
+  static NodeRef getEntryNode(Inverse<NodeRef> node) { return node.Graph; }
+  static ChildIteratorType child_begin(NodeRef node) {
+    return node->predecessors.begin();
+  }
+  static ChildIteratorType child_end(NodeRef node) {
+    return node->predecessors.end();
+  }
+};
+template <>
+struct GraphTraits<ActivationGraph *> : GraphTraits<ActivationNode *> {
+  using nodes_iterator = pointer_iterator<std::deque<ActivationNode>::iterator>;
+  static NodeRef getEntryNode(ActivationGraph *graph) {
+    return &graph->front();
+  }
+  static nodes_iterator nodes_begin(ActivationGraph *graph) {
+    return nodes_iterator(graph->nodes.begin());
+  }
+  static nodes_iterator nodes_end(ActivationGraph *graph) {
+    return nodes_iterator(graph->nodes.end());
+  }
+};
+} // namespace llvm
 
 namespace obelisk {
 
@@ -191,6 +257,59 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
 
   DominanceInfo dominance(function);
 
+  // Every activation starts at the entry or at a resumed suspension
+  // successor and runs to its next suspension. A value needs no frame lane
+  // in a block its definition dominates on those activation paths: the CFG
+  // with suspension edges cut and every resume target as another entry. The
+  // fused kernels otherwise thread hundreds of activation-local slots through
+  // every block. Control boundaries resume through hidden edges and keep the
+  // per-block lanes below.
+  bool hiddenResumes = false;
+  function.walk([&](Operation *operation) {
+    hiddenResumes |=
+        isa<sim::SimControlBoundaryOp, schedule::NativeControlBoundaryOp>(
+            operation);
+  });
+  ActivationGraph activationGraph;
+  DenseMap<Block *, ActivationNode *> activationNodes;
+  llvm::DominatorTreeBase<ActivationNode, false> activationDominance;
+  if (!hiddenResumes) {
+    activationGraph.nodes.emplace_back();
+    activationGraph.front().graph = &activationGraph;
+    for (Block &block : function.getBody()) {
+      ActivationNode &node = activationGraph.nodes.emplace_back();
+      node.block = &block;
+      node.graph = &activationGraph;
+      activationNodes[&block] = &node;
+    }
+    auto addEdge = [](ActivationNode *from, ActivationNode *to) {
+      from->successors.push_back(to);
+      to->predecessors.push_back(from);
+    };
+    addEdge(&activationGraph.front(), activationNodes.lookup(entry));
+    for (Block &block : function.getBody()) {
+      Operation *terminator = block.getTerminator();
+      ActivationNode *from = sim::isSuspensionOp(terminator)
+                                 ? &activationGraph.front()
+                                 : activationNodes.lookup(&block);
+      for (Block *successor : terminator->getSuccessors())
+        addEdge(from, activationNodes.lookup(successor));
+    }
+    activationDominance.recalculate(activationGraph);
+  }
+  auto activationDominatesBlock = [&](Block *definition, Block *block) {
+    if (hiddenResumes || !definition || definition == block ||
+        definition->getParent() != &function.getBody())
+      return false;
+    ActivationNode *from = activationNodes.lookup(definition);
+    ActivationNode *to = activationNodes.lookup(block);
+    return from && to && activationDominance.isReachableFromEntry(to) &&
+           activationDominance.dominates(from, to);
+  };
+  auto activationDominates = [&](Value root, Block *block) {
+    return activationDominatesBlock(root.getParentBlock(), block);
+  };
+
   // A control boundary has a scheduler resume edge that is deliberately not
   // represented in the ordinary CFG: after a remote disable the coroutine is
   // entered directly at the boundary's resume successor.  Find values used by
@@ -280,6 +399,48 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     for (Block *start : starts)
       markRestoredReachability(root, start);
 
+  // A design view defined in the entry block never changes value. When one
+  // continuation restores it, its restored lane holds the view in every block
+  // that continuation dominates on activation paths. Full CFG dominance is
+  // not enough: a later resume target can enter such a block in another
+  // activation, where the lane was never restored. Using the lane keeps the
+  // same frame lanes without threading a copy through every block between
+  // the continuation and each use, which fused kernels would otherwise pay
+  // for hundreds of captured views per block.
+  // Views are pure expressions over process arguments with no managed
+  // lifetime; owned references keep per-block lanes for release planning.
+  DenseMap<Value, bool> pureOverArguments;
+  std::function<bool(Value)> isPureOverArguments = [&](Value value) {
+    if (auto argument = dyn_cast<BlockArgument>(value))
+      return argument.getOwner() == entry;
+    auto [found, inserted] = pureOverArguments.try_emplace(value, false);
+    if (!inserted)
+      return found->second;
+    Operation *definition = value.getDefiningOp();
+    bool pure = definition->getNumRegions() == 0 &&
+                isMemoryEffectFree(definition) && isSpeculatable(definition) &&
+                llvm::all_of(definition->getOperands(), isPureOverArguments);
+    pureOverArguments[value] = pure;
+    return pure;
+  };
+  auto dominatingRestoredLane = [&](Value root, Block *block) -> Value {
+    if (root.getParentBlock() != entry || controlRoots.contains(root) ||
+        !isa<sim::RefType, sim::NetType, sim::DriverType>(root.getType()) ||
+        !isPureOverArguments(root))
+      return {};
+    auto restored = restoredRoots.find(root);
+    if (restored == restoredRoots.end() || restored->second.size() != 1)
+      return {};
+    Block *resume = *restored->second.begin();
+    if (!activationDominatesBlock(resume, block))
+      return {};
+    auto lanes = threadedValues.find(resume);
+    if (lanes == threadedValues.end())
+      return {};
+    auto lane = lanes->second.find(root);
+    return lane == lanes->second.end() ? Value() : Value(lane->second);
+  };
+
   std::function<FailureOr<Value>(Value, Block *)> makeAvailable;
   struct CreatedThreadArgument {
     Block *block;
@@ -300,6 +461,8 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
     auto existing = threadedValues[block].find(root);
     if (existing != threadedValues[block].end())
       return existing->second;
+    if (Value lane = dominatingRestoredLane(root, block))
+      return lane;
 
     // Recursive reconstruction asks for the value at predecessor
     // terminators. When it reaches the block containing the definition, the
@@ -474,26 +637,48 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
           llvm::is_contained(synchronousControlBodies, &block);
       llvm::SetVector<Value> externalRoots;
       DenseMap<Value, Value> rematerializedConstants;
-      DenseSet<Value> nonRematerializableConstants;
+      DenseSet<Value> nonRematerializableConstants, nonRematerializableViews;
+      bool rematerializingView = false;
       OpBuilder rematerializationBuilder(&block, block.begin());
       std::function<Value(Value)> rematerializeConstantExpression =
           [&](Value value) -> Value {
         if (Value replacement = rematerializedConstants.lookup(value))
           return replacement;
-        if (nonRematerializableConstants.contains(value))
+        DenseSet<Value> &unavailable = rematerializingView
+                                           ? nonRematerializableViews
+                                           : nonRematerializableConstants;
+        if (unavailable.contains(value))
           return {};
+        // Process arguments are never redefined and are available after
+        // every resume. A design view that is a pure expression over them,
+        // such as a static element of a captured root, is recomputed where
+        // its semantic root is used instead of becoming a frame lane in every
+        // using block. Fused kernels use hundreds of such views per block.
+        if (auto argument = dyn_cast<BlockArgument>(value);
+            argument && rematerializingView) {
+          if (argument.getOwner() == entry)
+            return value;
+          Value root = rootOf(value);
+          Value replacement =
+              root != value ? rematerializeConstantExpression(root) : Value();
+          if (replacement)
+            rematerializedConstants.try_emplace(value, replacement);
+          else
+            unavailable.insert(value);
+          return replacement;
+        }
         auto result = dyn_cast<OpResult>(value);
         Operation *definition = result ? result.getOwner() : nullptr;
         if (!definition || definition->getNumRegions() != 0 ||
             !isMemoryEffectFree(definition) || !isSpeculatable(definition)) {
-          nonRematerializableConstants.insert(value);
+          unavailable.insert(value);
           return {};
         }
         IRMapping mapping;
         for (Value operand : definition->getOperands()) {
           Value replacement = rematerializeConstantExpression(operand);
           if (!replacement) {
-            nonRematerializableConstants.insert(value);
+            unavailable.insert(value);
             return {};
           }
           mapping.map(operand, replacement);
@@ -512,11 +697,22 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
           if (auto argument = dyn_cast<BlockArgument>(value);
               argument && argument.getOwner() == entry)
             continue;
+          // Suspension operands keep their lanes: watch and continuation
+          // inputs are part of the wait fragment's frame contract.
+          rematerializingView =
+              isa<sim::RefType, sim::NetType, sim::DriverType>(
+                  value.getType()) &&
+              !sim::isSuspensionOp(&operation);
           if (Value replacement = rematerializeConstantExpression(value)) {
             operand.set(replacement);
             continue;
           }
-          externalRoots.insert(rootOf(value));
+          Value root = rootOf(value);
+          if (activationDominates(root, &block)) {
+            operand.set(root);
+            continue;
+          }
+          externalRoots.insert(root);
         }
       for (Value root : externalRoots) {
         auto replaceExternalUses = [&](Value replacement) {
@@ -560,6 +756,10 @@ LogicalResult threadProcessStateThroughCFG(sim::SimFuncOp function) {
         auto existing = threadedValues[&block].find(root);
         if (existing != threadedValues[&block].end()) {
           replaceExternalUses(existing->second);
+          continue;
+        }
+        if (Value lane = dominatingRestoredLane(root, &block)) {
+          replaceExternalUses(lane);
           continue;
         }
 

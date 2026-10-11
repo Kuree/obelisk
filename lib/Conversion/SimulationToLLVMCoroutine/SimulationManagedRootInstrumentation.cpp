@@ -262,9 +262,11 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
          !isa<sim::SimControlBoundaryOp>(operation)))
       exits.push_back(operation);
   });
+  LLVM::AllocaOp rangeRecord =
+      exits.empty() ? LLVM::AllocaOp() : findManagedRootRangeRecord(function);
   for (Operation *exit : exits) {
     builder.setInsertionPoint(exit);
-    emitManagedRootRangePop(builder, exit->getLoc(), function);
+    emitManagedRootRangePop(builder, exit->getLoc(), function, rangeRecord);
   }
   return success();
 }

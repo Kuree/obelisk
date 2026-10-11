@@ -1,4 +1,5 @@
 #include "obelisk/Analysis/PrivateStorageAnalysis.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
@@ -20,12 +21,14 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
       snapshots.try_emplace(function, handles.analyze(function));
   DenseSet<uint64_t> escaped;
   bool foreign = false;
+  SymbolTableCollection symbols;
   for (auto function : design.getOps<sim::SimFuncOp>()) {
     const auto &facts = snapshots[function];
     function.walk([&](Operation *op) {
       foreign |= isa<sim::SimDPICallOp>(op);
       if (auto call = dyn_cast<sim::SimCallOp>(op)) {
-        auto callee = design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+        auto callee = symbols.lookupSymbolIn<sim::SimFuncOp>(
+            design, call.getCalleeAttr());
         foreign |= !callee || callee.isExternal();
       }
       // A closed call/spawn transports references; it does not itself read
@@ -37,8 +40,9 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
       if (isa<sim::SimCallOp, sim::SimSpawnOp>(op)) {
         auto call = cast<CallOpInterface>(op);
         auto symbol = dyn_cast<SymbolRefAttr>(call.getCallableForCallee());
-        auto callee = symbol ? design.lookupSymbol<sim::SimFuncOp>(symbol)
-                             : sim::SimFuncOp{};
+        auto callee =
+            symbol ? symbols.lookupSymbolIn<sim::SimFuncOp>(design, symbol)
+                   : sim::SimFuncOp{};
         if (callee && !callee.isExternal()) {
           const auto &target = snapshots[callee].facts;
           for (auto [index, operand] : llvm::enumerate(call.getArgOperands())) {

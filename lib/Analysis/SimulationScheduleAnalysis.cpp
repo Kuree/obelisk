@@ -118,6 +118,16 @@ Block *lookupComputeGraphBlock(sim::SimFuncOp function, uint32_t ordinal) {
   return nullptr;
 }
 
+Block *ComputeGraphBlockIndex::lookup(sim::SimFuncOp function,
+                                      uint32_t ordinal) {
+  auto [found, inserted] = blocks.try_emplace(function.getOperation());
+  if (inserted)
+    for (Block &block : function.getBody())
+      if (!isObserverCaptureBridge(block))
+        found->second.push_back(&block);
+  return ordinal < found->second.size() ? found->second[ordinal] : nullptr;
+}
+
 FailureOr<SimulationScheduleAnalysis>
 SimulationScheduleAnalysis::compute(ModuleOp module) {
   sim::SimDesignOp design;

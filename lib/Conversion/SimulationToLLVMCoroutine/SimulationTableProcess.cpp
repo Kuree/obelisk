@@ -17,11 +17,13 @@ namespace obelisk::detail {
 std::optional<NativeTableProcess>
 analyzeTableProcess(sim::SimFuncOp function,
                     const SimulationProcessFrameAnalysis &analysis) {
+  // Table processes admit no calls (below). Admission runs in a function
+  // worker, so it must not read callee bodies that sibling workers rewrite.
   if (function.isExternal() || analysis.getSuspensions().empty() ||
       function.getEntryKind() == sim::EntryKind::Task ||
       function.getEntryKind() == sim::EntryKind::Function ||
       function.getEntryKind() == sim::EntryKind::Observer ||
-      !isUnmanagedNativeProcess(function))
+      !isCallFreeUnmanagedNativeProcess(function))
     return std::nullopt;
   for (BlockArgument argument : function.getBody().front().getArguments()) {
     Type type = argument.getType();

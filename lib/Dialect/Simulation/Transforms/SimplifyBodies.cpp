@@ -288,12 +288,14 @@ void removeDeadPrivateStores(sim::SimDesignOp design) {
   SmallVector<std::pair<sim::SimRefStoreOp, uint64_t>> stores;
   bool foreign = false;
   analysis::HandleDataflowAnalysis handles(design);
+  SymbolTableCollection symbols;
   for (auto function : design.getOps<sim::SimFuncOp>()) {
     auto facts = handles.derive(function);
     function.walk([&](Operation *op) {
       foreign |= isa<sim::SimDPICallOp>(op);
       if (auto call = dyn_cast<sim::SimCallOp>(op)) {
-        auto callee = design.lookupSymbol<sim::SimFuncOp>(call.getCallee());
+        auto callee = symbols.lookupSymbolIn<sim::SimFuncOp>(
+            design, call.getCalleeAttr());
         foreign |= !callee || callee.isExternal();
       }
       for (Value operand : op->getOperands()) {

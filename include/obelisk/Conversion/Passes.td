@@ -95,9 +95,23 @@ def ObeliskSimThreadProcessCFGPass
     : Pass<"obelisk-sim-thread-process-cfg", "obelisk::sim::SimFuncOp"> {
   let summary = "Make process state explicit on every CFG edge";
   let description = [{
-    Threads non-capture SSA values through block arguments to make process
-    continuation state explicit, and rematerializes constant continuation
-    operands instead of storing them in the canonical process frame.
+    Threads non-capture SSA values that cross a suspension through block
+    arguments to make process continuation state explicit. Values defined
+    earlier in the same activation keep their SSA definitions. Constant
+    continuation operands and design views of process arguments are
+    rematerialized instead of being stored in the canonical process frame.
+  }];
+}
+
+def ShareNativeScopedTemporariesPass
+    : Pass<"obelisk-native-share-scoped-temporaries",
+           "mlir::LLVM::LLVMFuncOp"> {
+  let summary = "Share stack slots between lifetime-scoped temporaries";
+  let description = [{
+    Gives allocas whose every use lies between one llvm.intr.lifetime.start
+    and lifetime.end in a single block a shared entry-block slot per element
+    type and alignment. Generated runtime-call buffers would otherwise each
+    own a frame slot. Presplit coroutines keep their allocations.
   }];
 }
 
