@@ -184,8 +184,21 @@ priority, conditional and implication guards, and live constraint block modes.
 Both Z3 planning and the generated/runtime checkers preserve the same rules.
 `randcase` interprets its self-determined weights as unsigned and sums them at
 the maximum operand precision, including modular overflow and zero-total cases.
+Integral weights may have arbitrary packed widths. Generated MLIR computes a
+significant-bit mask and rejection-samples an exact rank using the process
+stream; each rank has equal probability, including totals across word boundaries.
+Tiny live totals avoid rejection over unused representation bits. Weight
+expressions are evaluated once before the loop, and zero totals select no branch
+and consume no RNG state. Native, bytecode and WASM use the same generated plan.
 
 Finite `randsequence` grammars pass typed input, output, inout, and ref arguments.
+Production weights support arbitrary integral widths. The compiler includes
+enough carry bits for the natural sum of all alternatives, then emits exact
+rejection sampling. Default weights are one, zero weights exclude alternatives,
+and a zero total consumes no RNG state. Every explicit weight is evaluated once
+on production entry, including single-rule productions; negative signed values
+and X/Z values are diagnosed before selection. Native and WASM MLIR tests cover
+64-bit sums that require carry bits, 257-bit weights, live tiny totals, and errors.
 Defaults evaluate in the declaration scope only when used; actual values and
 addresses are captured before formal bindings. Outputs copy back on return or
 grammar abort, while ref arguments alias ordinary and managed storage. Each

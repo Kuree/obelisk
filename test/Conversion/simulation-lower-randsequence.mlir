@@ -303,15 +303,13 @@ module {
   }
 }
 
-// Both signed weights are checked before they are accumulated. The total is
-// also guarded against unsigned 64-bit overflow.
+// Both signed weights are checked before they are accumulated. The total's
+// compile-time width includes enough carry bits for all alternatives.
 // CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
 // CHECK: arith.cmpi slt, %{{.*}}, %[[ZERO]]
 // CHECK: arith.addi
-// CHECK: arith.cmpi ult
 // CHECK: arith.cmpi slt, %{{.*}}, %[[ZERO]]
 // CHECK: %[[TOTAL:.*]] = arith.addi
-// CHECK: arith.cmpi ult, %[[TOTAL]],
 
 // A zero total bypasses rule selection; a nonzero total uses the process RNG.
 // CHECK: %[[ANY:.*]] = arith.cmpi ne, %[[TOTAL]], %[[ZERO]]

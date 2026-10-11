@@ -10,6 +10,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <limits>
 #include <string>
@@ -1428,6 +1429,64 @@ LogicalResult UnitLowering::lowerCase(semantic::SVCaseStatementOp op) {
   return success();
 }
 
+Value UnitLowering::emitRandomBounded(Value bound, Location location) {
+  auto type = cast<IntegerType>(bound.getType());
+  unsigned width = type.getWidth();
+  auto i64 = builder.getI64Type();
+  Value context = function.getBody().front().getArgument(0);
+  if (width <= 64) {
+    Value range = bound;
+    if (width < 64)
+      range = arith::ExtUIOp::create(builder, location, i64, bound);
+    Value draw =
+        sim::SimRandomBoundedOp::create(builder, location, i64, context, range);
+    return width == 64 ? draw
+                       : arith::TruncIOp::create(builder, location, type, draw);
+  }
+
+  auto constant = [&](uint64_t value) -> Value {
+    return arith::ConstantOp::create(builder, location, type,
+                                     builder.getIntegerAttr(type, value));
+  };
+  // Saturate bound-1's leading bit into a mask of its significant bits. This
+  // leaves an exact power-of-two proposal domain containing [0, bound), even
+  // when a live bound is much smaller than its declared width. The compiler
+  // folds the mask for constant weights; no target big-integer helper is
+  // needed.
+  Value zero = constant(0);
+  Value mask = arith::SubIOp::create(builder, location, bound, constant(1));
+  for (uint64_t shift = 1; shift < width; shift *= 2) {
+    Value suffix =
+        arith::ShRUIOp::create(builder, location, mask, constant(shift));
+    mask = arith::OrIOp::create(builder, location, mask, suffix);
+  }
+
+  Block *drawBlock = addBlock();
+  Block *acceptedBlock = addBlock();
+  Value accepted = acceptedBlock->addArgument(type, location);
+  emitBranch(drawBlock);
+  setCurrent(drawBlock);
+  Value draw = zero;
+  for (uint64_t offset = 0; offset < width; offset += 64) {
+    Value word = sim::SimRandomNextOp::create(builder, location, i64, context);
+    Value extended = arith::ExtUIOp::create(builder, location, type, word);
+    if (offset)
+      extended =
+          arith::ShLIOp::create(builder, location, extended, constant(offset));
+    draw = arith::OrIOp::create(builder, location, draw, extended);
+  }
+  draw = arith::AndIOp::create(builder, location, draw, mask);
+  Value valid = arith::CmpIOp::create(builder, location,
+                                      arith::CmpIPredicate::ult, draw, bound);
+  // Every accepted rank has exactly one pattern in the masked proposal domain.
+  // Rejecting its unused tail is unbiased, with rejection probability below
+  // 1/2.
+  cf::CondBranchOp::create(builder, location, valid, acceptedBlock,
+                           ValueRange{draw}, drawBlock, ValueRange{});
+  setCurrent(acceptedBlock);
+  return accepted;
+}
+
 LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -1443,15 +1502,14 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   ArrayRef<Operation *> statements =
       ArrayRef<Operation *>(children).take_back(itemCount);
 
-  auto i64 = builder.getI64Type();
   unsigned sumWidth = 0;
   for (Operation *node : weights) {
     FailureOr<Type> type = getNormalizedSemanticType(node);
     std::optional<unsigned> width =
         succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
-    if (!width || *width == 0 || *width > 64) {
+    if (!width || *width == 0) {
       emitError(getSemanticLocation(node))
-          << "randcase weights require integral values no wider than 64 bits";
+          << "randcase weights require integral values";
       return failure();
     }
     sumWidth = std::max(sumWidth, *width);
@@ -1462,7 +1520,7 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
 
   // IEEE 1800-2023 18.16 evaluates self-determined weights at most once.
   // Summands are unsigned and their sum has the maximum operand precision.
-  // Preserve that precision (including overflow) before widening for the RNG.
+  // Preserve that precision, including overflow, when selecting a rank.
   SmallVector<Value> bounds;
   bounds.reserve(itemCount);
   Value total = zero;
@@ -1491,17 +1549,7 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   // The draw shares the process random number generator with $urandom and
   // lands in [0, total), so it always falls inside the final item's bound and
   // that item needs no test of its own.
-  Value context = function.getBody().front().getArgument(0);
-  FailureOr<Value> range = convert(total, i64, false, location, false);
-  if (failed(range))
-    return failure();
-  Value rawDraw =
-      sim::SimRandomBoundedOp::create(builder, location, i64, context, *range);
-  FailureOr<Value> convertedDraw =
-      convert(rawDraw, sumType, false, location, false);
-  if (failed(convertedDraw))
-    return failure();
-  Value draw = *convertedDraw;
+  Value draw = emitRandomBounded(total, location);
   for (size_t item = 0; item + 1 < itemCount; ++item) {
     Block *itemBlock = addBlock();
     Block *nextItemBlock = addBlock();
@@ -2238,22 +2286,57 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     emitBranch(productionReturn);
     return success();
   };
-  auto lowerExplicitWeight = [&](Operation *node, Type i64,
-                                 Value zero) -> FailureOr<Value> {
-    FailureOr<Type> sourceType = getNormalizedSemanticType(node);
+  // Unlike randcase's fixed-precision sum (18.16), production probabilities
+  // in 18.17.1 are proportional to every nonnegative weight. Size the total
+  // from the operand widths and number of alternatives before evaluating any
+  // weight, so overflow cannot discard a legal production or fail generation.
+  unsigned maximumWeightWidth = 1;
+  for (const Rule &rule : rules) {
+    if (!rule.weight)
+      continue;
+    FailureOr<Type> type = getNormalizedSemanticType(rule.weight);
     std::optional<unsigned> width =
-        succeeded(sourceType) ? sim::getPackedWidth(*sourceType) : std::nullopt;
-    if (!width || *width > 64) {
-      emitError(getSemanticLocation(node))
-          << "randsequence weights wider than 64 bits are outside the "
-             "runtime RNG boundary";
-      return failure();
-    }
+        succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+    if (!width || !*width)
+      return emitError(getSemanticLocation(rule.weight))
+             << "randsequence weights require integral values";
+    maximumWeightWidth = std::max(maximumWeightWidth, *width);
+  }
+  unsigned carryWidth = llvm::Log2_64_Ceil(std::max<size_t>(1, rules.size()));
+  if (maximumWeightWidth > IntegerType::kMaxWidth - carryWidth)
+    return emitError(location) << "randsequence weight sum exceeds IR width";
+  Type weightType =
+      builder.getIntegerType(std::max(64u, maximumWeightWidth + carryWidth));
+  Value zero;
+  if (rules.size() > 1 || (rules.size() == 1 && rules.front().weight))
+    zero = arith::ConstantOp::create(builder, location, weightType,
+                                     builder.getIntegerAttr(weightType, 0));
+  auto lowerExplicitWeight = [&](Operation *node,
+                                 Value zero) -> FailureOr<Value> {
+    Location weightLocation = getSemanticLocation(node);
     FailureOr<Value> lowered = lowerExpression(node);
     if (failed(lowered))
       return failure();
+    if (isa<sim::LogicType>(lowered->getType())) {
+      // An X/Z value is not a nonnegative integral weight. Check before
+      // four-state-to-two-state conversion can turn unknown bits into zero.
+      Value selfEqual = sim::SimLogicCompareOp::create(
+          builder, weightLocation,
+          sim::LogicType::get(function.getContext(), 1), sim::CompareKind::Eq,
+          *lowered, *lowered);
+      Value known = sim::SimLogicIsTrueOp::create(
+          builder, weightLocation, builder.getI1Type(), selfEqual);
+      Block *valid = addBlock();
+      Block *invalid = addBlock();
+      cf::CondBranchOp::create(builder, weightLocation, known, valid, invalid);
+      setCurrent(invalid);
+      if (failed(emitRuntimeFatal(weightLocation,
+                                  "randsequence weight contains X or Z bits")))
+        return failure();
+      setCurrent(valid);
+    }
     FailureOr<Value> converted =
-        convert(*lowered, i64, isSignedNode(node), getSemanticLocation(node));
+        convert(*lowered, weightType, isSignedNode(node), weightLocation);
     if (failed(converted))
       return failure();
     if (isSignedNode(node)) {
@@ -2278,42 +2361,25 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     emitBranch(productionReturn);
   } else if (rules.size() == 1) {
     if (rules.front().weight) {
-      Type i64 = builder.getI64Type();
-      Value zero = arith::ConstantOp::create(builder, location, i64,
-                                             builder.getI64IntegerAttr(0));
-      if (failed(lowerExplicitWeight(rules.front().weight, i64, zero)))
+      if (failed(lowerExplicitWeight(rules.front().weight, zero)))
         return failure();
     }
     if (failed(lowerRule(rules.front())))
       return failure();
   } else {
-    Type i64 = builder.getI64Type();
-    Value zero = arith::ConstantOp::create(builder, location, i64,
-                                           builder.getI64IntegerAttr(0));
-    Value one = arith::ConstantOp::create(builder, location, i64,
-                                          builder.getI64IntegerAttr(1));
+    Value one = arith::ConstantOp::create(
+        builder, location, weightType, builder.getIntegerAttr(weightType, 1));
     SmallVector<Value> bounds;
     Value total = zero;
     for (const Rule &rule : rules) {
       Value weight = one;
       if (rule.weight) {
-        FailureOr<Value> loweredWeight =
-            lowerExplicitWeight(rule.weight, i64, zero);
+        FailureOr<Value> loweredWeight = lowerExplicitWeight(rule.weight, zero);
         if (failed(loweredWeight))
           return failure();
         weight = *loweredWeight;
       }
       Value next = arith::AddIOp::create(builder, location, total, weight);
-      Value overflow = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::ult, next, total);
-      Block *invalid = addBlock();
-      Block *valid = addBlock();
-      cf::CondBranchOp::create(builder, location, overflow, invalid, valid);
-      setCurrent(invalid);
-      if (failed(emitRuntimeFatal(
-              location, "randsequence weight sum overflowed 64 bits")))
-        return failure();
-      setCurrent(valid);
       total = next;
       bounds.push_back(total);
     }
@@ -2322,9 +2388,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
                                       arith::CmpIPredicate::ne, total, zero);
     cf::CondBranchOp::create(builder, location, any, select, productionReturn);
     setCurrent(select);
-    Value context = function.getBody().front().getArgument(0);
-    Value draw =
-        sim::SimRandomBoundedOp::create(builder, location, i64, context, total);
+    Value draw = emitRandomBounded(total, location);
     for (size_t index = 0; index + 1 < rules.size(); ++index) {
       Block *selected = addBlock();
       Block *nextRule = addBlock();

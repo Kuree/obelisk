@@ -1977,8 +1977,8 @@
         },
         {
           "feature": "Wide randcase weights",
-          "status": "partial",
-          "detail": "Weights through 64 bits are executable; arbitrary-width bounded sampling is not implemented."
+          "status": "supported",
+          "detail": "Arbitrary-width integral weights use unsigned self-determined summation at maximum operand precision. Generated MLIR forms a significant-bit mask and rejection-samples complete ranks with the process RNG, including partial final words, tiny dynamic totals and modular overflow."
         }
       ],
       "evidence": {
@@ -1989,7 +1989,9 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randcase.mlir",
-          "test/Runtime/obelisk-to-simulation-randcase-weight-precision-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randcase-weight-precision-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-randcase-wide.mlir",
+          "test/Runtime/obelisk-to-simulation-randcase-wide-runtime.mlir"
         ]
       }
     },
@@ -2030,8 +2032,8 @@
         },
         {
           "feature": "Weight overflow and invalid weights",
-          "status": "partial",
-          "detail": "Current finite grammar arithmetic requires further overflow and negative-weight diagnostic review."
+          "status": "supported",
+          "detail": "Compile-time operand widths and alternative counts determine an exact natural-sum width, removing the 64-bit overflow limit. Arbitrary-width nonnegative integral weights retain proportional sampling, default and zero alternatives, and once-only production-entry evaluation. Negative signed values and X/Z weights are diagnosed before conversion or selection."
         }
       ],
       "evidence": {
@@ -2046,7 +2048,9 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-randsequence-wide-weights.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-wide-weights-runtime.mlir"
         ]
       }
     },

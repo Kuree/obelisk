@@ -466,6 +466,8 @@ private:
   ::mlir::LogicalResult lowerCase(semantic::SVCaseStatementOp op);
   ::mlir::LogicalResult lowerPatternCase(semantic::SVPatternCaseStatementOp op);
   ::mlir::LogicalResult lowerRandCase(semantic::SVRandCaseStatementOp op);
+  ::mlir::Value emitRandomBounded(::mlir::Value bound,
+                                  ::mlir::Location location);
   ::mlir::LogicalResult
   lowerRandSequence(semantic::SVRandSequenceStatementOp op);
   ::mlir::LogicalResult
