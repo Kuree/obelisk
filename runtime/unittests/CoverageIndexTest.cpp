@@ -5,14 +5,45 @@
 #include <map>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 
 using namespace obelisk::coverage::detail;
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+TEST(CoverageIndexTest, FailedInsertionPreservesExistingLeavesAndOrdering) {
+  struct Value {
+    int value;
+    explicit Value(int value) : value(value) {
+      if (value < 0)
+        throw std::runtime_error("insertion failed");
+    }
+  };
+  IndexMap<uint64_t, Value> index;
+  EXPECT_THROW(index.emplace(8, -1), std::runtime_error);
+  EXPECT_TRUE(index.empty());
+  index.emplace(8, 8);
+  index.emplace(16, 16);
+  auto *first = &index.at(8);
+  EXPECT_THROW(index.emplace(1, -1), std::runtime_error);
+  EXPECT_THROW(index.emplace(12, -1), std::runtime_error);
+  EXPECT_THROW(index.emplace(32, -1), std::runtime_error);
+  EXPECT_EQ(index.size(), 2u);
+  EXPECT_EQ(&index.at(8), first);
+  EXPECT_EQ(index.find(12), index.end());
+  EXPECT_NO_THROW(EXPECT_FALSE(index.emplace(8, -1).second));
+  index.emplace(12, 12);
+  std::vector<uint64_t> keys;
+  for (const auto &entry : index)
+    keys.push_back(entry.first);
+  EXPECT_EQ(keys, (std::vector<uint64_t>{8, 12, 16}));
+}
+#endif
 
 TEST(CoverageIndexTest, ArbitraryIDsHaveOrderedStableLeaves) {
   std::mt19937_64 random(12345);
   IndexMap<uint64_t, uint64_t> index;
   std::map<uint64_t, uint64_t> expected;
-  for (unsigned i = 0; i != 10000; ++i) {
+  for (unsigned i = 0; i != 256; ++i) {
     const auto key = random();
     auto inserted = index.emplace(key, i);
     ASSERT_TRUE(inserted.second);

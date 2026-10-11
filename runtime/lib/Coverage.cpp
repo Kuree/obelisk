@@ -2,9 +2,9 @@
 
 #include "RuntimeInternal.h"
 
+#include "../../lib/Coverage/CoverageIndex.h"
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
-#include "../../lib/Coverage/CoverageIndex.h"
 #include "obelisk/Runtime/StableHash.h"
 
 #include <cctype>
@@ -23,6 +23,23 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
 #endif
+
+// Templates are partitioned once. A constructor then touches only its type's
+// static rows and its newly resolved bundle, independent of earlier instances.
+struct FunctionalCoverageConstructionSchemas {
+  obelisk::coverage::Digest schemaFingerprint{};
+  obelisk::coverage::detail::IndexMap<
+      uint64_t, std::shared_ptr<const obelisk::coverage::Database>>
+      types;
+  obelisk::coverage::detail::IndexSet<uint64_t> itemIDs, binIDs, valueSetIDs;
+  using TypeProfile = obelisk::coverage::detail::IndexMap<
+      std::tuple<obelisk::coverage::FunctionalConfigurationOptionOwnerKind,
+                 uint64_t,
+                 obelisk::coverage::FunctionalConfigurationOptionKind>,
+      std::tuple<obelisk::coverage::FunctionalConfigurationValueKind, uint64_t,
+                 std::string>>;
+  obelisk::coverage::detail::IndexMap<uint64_t, TypeProfile> loadedTypeProfiles;
+};
 
 namespace {
 using obelisk::coverage::detail::IndexMap;
@@ -862,6 +879,8 @@ obelisk::coverage::UUID makeRunUUID(obelisk_rt_context *context,
   return coverage.runUUID;
 }
 
+obelisk_rt_status mapCoverageStatus(obelisk::coverage::Status status);
+
 obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
                                CoverageState &coverage, uint32_t runStatus,
                                uint64_t simulationTime,
@@ -869,6 +888,12 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
   if (!coverage.schema)
     return OBELISK_RT_INVALID_LIFECYCLE;
   result = *coverage.schema;
+  obelisk::coverage::Diagnostic canonicalDiagnostic;
+  auto canonicalStatus =
+      obelisk::coverage::canonicalizeFunctionalConfigurations(
+          result, &canonicalDiagnostic);
+  if (canonicalStatus != obelisk::coverage::Status::Ok)
+    return mapCoverageStatus(canonicalStatus);
   retainPersistedRunData(result, coverage.persistedRunFlags);
   obelisk::coverage::Run run;
   run.uuid = makeRunUUID(context, coverage);
@@ -1172,9 +1197,20 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
                            std::unordered_set<uint64_t> &emptyBins);
 bool functionalBooleanTrue(const obelisk_rt_functional_value_v1 &value);
 
+struct FunctionalIdentityReservations {
+  const IndexSet<uint64_t> &templates;
+  IndexSet<uint64_t> resolved;
+
+  size_t count(uint64_t id) const {
+    return templates.count(id) || resolved.count(id);
+  }
+  void insert(uint64_t id) { resolved.insert(id); }
+};
+
+template <typename Reservations>
 uint64_t resolvedFunctionalID(const char *nameSpace, uint64_t typeID,
                               uint64_t templateID, uint32_t ordinal,
-                              const std::unordered_set<uint64_t> &occupied) {
+                              const Reservations &occupied) {
   uint64_t hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
   hash = obelisk_stable_hash_append(hash, nameSpace, std::strlen(nameSpace));
   hash = obelisk_stable_hash_append_byte(hash, 0);
@@ -2119,28 +2155,238 @@ emitFunctionalOverlapWarnings(const obelisk::coverage::Database &schema,
                               uint64_t type,
                               const obelisk::coverage::Digest &configuration);
 
+IndexMap<uint64_t, FunctionalCoverageConstructionSchemas::TypeProfile>
+staticFunctionalTypeProfiles(const obelisk::coverage::Database &schema) {
+  using namespace obelisk::coverage;
+  IndexMap<uint64_t, FunctionalCoverageConstructionSchemas::TypeProfile>
+      profiles;
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint64_t> items;
+  for (const auto &row : schema.resolvedFunctionalItems)
+    items.emplace(std::make_tuple(row.type, row.configuration, row.id),
+                  row.templateItem);
+  for (const auto &row : schema.functionalConfigurations)
+    profiles[row.type];
+  for (const auto &row : schema.functionalConfigurationOptions) {
+    if (row.scope != FunctionalOptionScopeKind::Type)
+      continue;
+    uint64_t fallback =
+        row.option == FunctionalConfigurationOptionKind::Goal     ? 100
+        : row.option == FunctionalConfigurationOptionKind::Weight ? 1
+                                                                  : 0;
+    auto fallbackKind = row.option == FunctionalConfigurationOptionKind::Comment
+                            ? FunctionalConfigurationValueKind::String
+                            : FunctionalConfigurationValueKind::Unsigned;
+    if (row.valueKind == fallbackKind && row.value == fallback &&
+        row.stringValue.empty())
+      continue;
+    uint64_t owner =
+        row.ownerKind == FunctionalConfigurationOptionOwnerKind::Group
+            ? row.type
+            : items.at({row.type, row.configuration, row.owner});
+    profiles[row.type].emplace(
+        std::make_tuple(row.ownerKind, owner, row.option),
+        std::make_tuple(row.valueKind, row.value, row.stringValue));
+  }
+  return profiles;
+}
+
+obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
+  using namespace obelisk::coverage;
+  if (!coverage.schema)
+    return OBELISK_RT_INVALID_DESIGN;
+  const auto &source = *coverage.schema;
+  if (coverage.constructionSchemas &&
+      coverage.constructionSchemas->schemaFingerprint ==
+          source.schemaFingerprint)
+    return OBELISK_RT_OK;
+
+  auto prepared = std::make_shared<FunctionalCoverageConstructionSchemas>();
+  prepared->schemaFingerprint = source.schemaFingerprint;
+  prepared->loadedTypeProfiles = staticFunctionalTypeProfiles(source);
+  IndexMap<uint64_t, std::shared_ptr<Database>> types;
+  IndexMap<uint64_t, const Scope *> scopes;
+  for (const auto &scope : source.scopes)
+    scopes.emplace(scope.id, &scope);
+  for (const auto &type : source.functionalTypes) {
+    auto scope = scopes.find(type.scope);
+    if (scope == scopes.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    auto schema = std::make_shared<Database>();
+    schema->flags = source.flags;
+    schema->producer = source.producer;
+    schema->functionalTypes.push_back(type);
+    schema->scopes.push_back(*scope->second);
+    // This is a private validation projection, never a persisted hierarchy.
+    schema->scopes.back().parent = 0;
+    types.emplace(type.id, std::move(schema));
+  }
+  auto schemaFor = [&](uint64_t type) -> Database & { return *types.at(type); };
+  IndexMap<uint64_t, uint64_t> itemTypes, binTypes;
+  IndexMap<std::pair<FunctionalExpressionOwnerKind, uint64_t>, uint64_t> owners;
+  using Owner = FunctionalExpressionOwnerKind;
+  for (const auto &type : source.functionalTypes)
+    owners.emplace(std::make_pair(Owner::Type, type.id), type.id);
+  for (const auto &row : source.functionalItems) {
+    schemaFor(row.type).functionalItems.push_back(row);
+    itemTypes.emplace(row.id, row.type);
+    owners.emplace(std::make_pair(Owner::Item, row.id), row.type);
+    prepared->itemIDs.insert(row.id);
+  }
+  for (const auto &row : source.functionalBins) {
+    uint64_t type = itemTypes.at(row.item);
+    schemaFor(type).functionalBins.push_back(row);
+    binTypes.emplace(row.id, type);
+    owners.emplace(std::make_pair(Owner::Bin, row.id), type);
+    prepared->binIDs.insert(row.id);
+  }
+  for (const auto &row : source.functionalFormals) {
+    schemaFor(row.type).functionalFormals.push_back(row);
+    owners.emplace(std::make_pair(Owner::Formal, row.id), row.type);
+  }
+  auto appendSpan = [](auto &destination, const auto &rows, uint32_t first,
+                       uint32_t count) {
+    destination.insert(destination.end(), rows.begin() + first,
+                       rows.begin() + first + count);
+  };
+  for (const auto &row : source.functionalValueSets) {
+    uint64_t type = itemTypes.at(row.item);
+    auto &schema = schemaFor(type);
+    auto set = row;
+    set.firstAtom = schema.functionalValueAtoms.size();
+    for (uint32_t i = 0; i != row.atomCount; ++i) {
+      auto atom = source.functionalValueAtoms[row.firstAtom + i];
+      const uint32_t first = atom.firstLimb;
+      atom.firstLimb = schema.functionalValueLimbs.size();
+      appendSpan(schema.functionalValueLimbs, source.functionalValueLimbs,
+                 first, atom.limbCount);
+      schema.functionalValueAtoms.push_back(atom);
+    }
+    schema.functionalValueSets.push_back(set);
+    owners.emplace(std::make_pair(Owner::ValueSet, row.id), type);
+    prepared->valueSetIDs.insert(row.id);
+  }
+  for (const auto &row : source.exclusions)
+    if (row.metric == MetricKind::Functional)
+      schemaFor(binTypes.at(row.entity)).exclusions.push_back(row);
+  for (const auto &row : source.functionalBinPlans)
+    schemaFor(binTypes.at(row.bin)).functionalBinPlans.push_back(row);
+  for (const auto &row : source.transitionPrograms) {
+    auto &schema = schemaFor(itemTypes.at(row.item));
+    auto program = row;
+    program.firstAlternative = schema.transitionAlternatives.size();
+    for (uint32_t i = 0; i != row.alternativeCount; ++i) {
+      auto alternative =
+          source.transitionAlternatives[row.firstAlternative + i];
+      const uint32_t first = alternative.firstStep;
+      alternative.firstStep = schema.transitionSteps.size();
+      appendSpan(schema.transitionSteps, source.transitionSteps, first,
+                 alternative.stepCount);
+      schema.transitionAlternatives.push_back(alternative);
+    }
+    schema.transitionPrograms.push_back(program);
+  }
+  for (const auto &row : source.crossPlans) {
+    auto &schema = schemaFor(itemTypes.at(row.item));
+    auto plan = row;
+    plan.firstTarget = schema.crossTargets.size();
+    plan.firstBin = schema.crossBins.size();
+    appendSpan(schema.crossTargets, source.crossTargets, row.firstTarget,
+               row.targetCount);
+    appendSpan(schema.crossBins, source.crossBins, row.firstBin, row.binCount);
+    schema.crossPlans.push_back(plan);
+  }
+  for (const auto &row : source.crossSelectorNodes) {
+    uint64_t type = itemTypes.at(row.cross);
+    auto &schema = schemaFor(type);
+    auto node = row;
+    node.firstOperand = schema.crossSelectorOperands.size();
+    appendSpan(schema.crossSelectorOperands, source.crossSelectorOperands,
+               row.firstOperand, row.operandCount);
+    schema.crossSelectorNodes.push_back(node);
+    owners.emplace(std::make_pair(Owner::Selector, row.id), type);
+  }
+  for (const auto &row : source.functionalTupleSets) {
+    auto &schema = schemaFor(itemTypes.at(row.cross));
+    auto set = row;
+    set.firstTuple = schema.functionalTupleSetTuples.size();
+    for (uint32_t i = 0; i != row.tupleCount; ++i) {
+      auto tuple = source.functionalTupleSetTuples[row.firstTuple + i];
+      const uint32_t first = tuple.firstComponent;
+      tuple.firstComponent = schema.functionalTupleSetComponents.size();
+      appendSpan(schema.functionalTupleSetComponents,
+                 source.functionalTupleSetComponents, first,
+                 tuple.componentCount);
+      schema.functionalTupleSetTuples.push_back(tuple);
+    }
+    schema.functionalTupleSets.push_back(set);
+  }
+  for (const auto &row : source.functionalExpressions)
+    schemaFor(owners.at({row.ownerKind, row.owner}))
+        .functionalExpressions.push_back(row);
+  for (const auto &row : source.functionalOptionPlans) {
+    uint64_t type =
+        row.ownerKind == FunctionalConfigurationOptionOwnerKind::Group
+            ? row.owner
+            : itemTypes.at(row.owner);
+    schemaFor(type).functionalOptionPlans.push_back(row);
+  }
+  for (auto &[id, schema] : types) {
+    schema->schemaFingerprint = computeSchemaFingerprint(*schema);
+    prepared->types.emplace(id, std::move(schema));
+  }
+  coverage.constructionSchemas = std::move(prepared);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status indexFunctionalConfigurations(CoverageState &coverage) {
+  if (coverage.configurationIndexSchema != coverage.schema.get()) {
+    IndexMap<uint64_t, std::vector<obelisk::coverage::Digest>> prepared;
+    IndexSet<FunctionalCoverageTypeKey> keys;
+    for (const auto &row : coverage.schema->functionalConfigurations) {
+      prepared[row.type].push_back(row.configuration);
+      keys.insert({row.type, row.configuration});
+    }
+    coverage.configurationsByType = std::move(prepared);
+    coverage.configurationKeys = std::move(keys);
+    coverage.configurationIndexSchema = coverage.schema.get();
+    coverage.indexedConfigurations =
+        coverage.schema->functionalConfigurations.size();
+  }
+  // Incremental indexing visits each appended configuration exactly once.
+  // Advance only after both insertions succeed, so allocation failure is
+  // retryable.
+  while (coverage.indexedConfigurations <
+         coverage.schema->functionalConfigurations.size()) {
+    const auto &row =
+        coverage.schema
+            ->functionalConfigurations[coverage.indexedConfigurations];
+    coverage.configurationKeys.insert({row.type, row.configuration});
+    auto &configurations = coverage.configurationsByType[row.type];
+    if (configurations.empty() || configurations.back() != row.configuration)
+      configurations.push_back(row.configuration);
+    ++coverage.indexedConfigurations;
+  }
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status resolveStaticFunctionalType(
     obelisk_rt_context *context, obelisk::coverage::Database &schema,
     uint64_t typeID, const obelisk_rt_functional_value_v1 *expressions,
-    uint64_t expressionCount,
-    obelisk::coverage::Digest &resolvedConfiguration) {
+    uint64_t expressionCount, obelisk::coverage::Digest &resolvedConfiguration,
+    const FunctionalCoverageConstructionSchemas &templates) {
   using namespace obelisk::coverage;
-  std::unordered_set<uint64_t> itemIDs, binIDs, valueSetIDs;
-  for (const auto &item : schema.functionalItems)
-    itemIDs.insert(item.id);
-  for (const auto &bin : schema.functionalBins)
-    binIDs.insert(bin.id);
-  for (const auto &set : schema.functionalValueSets)
-    valueSetIDs.insert(set.id);
+  FunctionalIdentityReservations itemIDs{templates.itemIDs, {}},
+      binIDs{templates.binIDs, {}}, valueSetIDs{templates.valueSetIDs, {}};
 
   std::vector<const FunctionalItem *> templateItems;
   for (const auto &item : schema.functionalItems)
     if (item.type == typeID)
       templateItems.push_back(&item);
-  std::sort(templateItems.begin(), templateItems.end(),
-            [](const auto *a, const auto *b) {
-              return std::tie(a->ordinal, a->id) < std::tie(b->ordinal, b->id);
-            });
+  sortByKey(templateItems.begin(), templateItems.end(),
+            [](const auto *item) { return std::tie(item->ordinal, item->id); });
+  IndexMap<uint64_t, uint32_t> itemOrdinals;
+  for (const auto *item : templateItems)
+    itemOrdinals.emplace(item->id, item->ordinal);
 
   std::vector<ResolvedFunctionalItem> resolvedItemRows;
   std::unordered_map<uint64_t, uint64_t> resolvedItems;
@@ -2168,18 +2414,9 @@ obelisk_rt_status resolveStaticFunctionalType(
   for (const auto &bin : schema.functionalBins)
     if (resolvedItems.count(bin.item))
       templateBins.push_back(&bin);
-  std::sort(
-      templateBins.begin(), templateBins.end(),
-      [&](const auto *a, const auto *b) {
-        auto itemOrdinal = [&](uint64_t id) {
-          auto found =
-              std::find_if(templateItems.begin(), templateItems.end(),
-                           [&](const auto *item) { return item->id == id; });
-          return found == templateItems.end() ? UINT32_MAX : (*found)->ordinal;
-        };
-        return std::make_tuple(itemOrdinal(a->item), a->ordinal, a->id) <
-               std::make_tuple(itemOrdinal(b->item), b->ordinal, b->id);
-      });
+  sortByKey(templateBins.begin(), templateBins.end(), [&](const auto *bin) {
+    return std::make_tuple(itemOrdinals.at(bin->item), bin->ordinal, bin->id);
+  });
 
   struct PendingSet {
     ResolvedFunctionalValueSet set;
@@ -2209,19 +2446,20 @@ obelisk_rt_status resolveStaticFunctionalType(
   std::vector<PendingDefaultArray> pendingDefaultArrays;
   std::unordered_map<uint64_t, uint32_t> nextResolvedBinOrdinal;
   std::unordered_set<uint64_t> transitionAlternativeIDs;
+  IndexMap<uint64_t, const obelisk_rt_functional_value_v1 *> expressionValues;
+  for (uint64_t i = 0; i != expressionCount; ++i)
+    expressionValues.emplace(expressions[i].id, &expressions[i]);
+  IndexMap<uint64_t, const FunctionalExpression *> expressionSchemas;
+  for (const auto &row : schema.functionalExpressions)
+    expressionSchemas.emplace(row.id, &row);
   auto expressionValue =
       [&](uint64_t id) -> const obelisk_rt_functional_value_v1 * {
-    for (uint64_t index = 0; index != expressionCount; ++index)
-      if (expressions[index].id == id)
-        return &expressions[index];
-    return nullptr;
+    auto entry = expressionValues.find(id);
+    return entry == expressionValues.end() ? nullptr : entry->second;
   };
   auto expressionSchema = [&](uint64_t id) -> const FunctionalExpression * {
-    auto found = std::find_if(
-        schema.functionalExpressions.begin(),
-        schema.functionalExpressions.end(),
-        [&](const FunctionalExpression &entry) { return entry.id == id; });
-    return found == schema.functionalExpressions.end() ? nullptr : &*found;
+    auto entry = expressionSchemas.find(id);
+    return entry == expressionSchemas.end() ? nullptr : entry->second;
   };
   std::vector<FunctionalConfigurationOption> configurationOptionRows;
   std::unordered_map<uint64_t, uint64_t> itemAtLeast;
@@ -5925,27 +6163,27 @@ obelisk_rt_status resolveStaticFunctionalType(
   if (resolvedItems.empty())
     return OBELISK_RT_INVALID_DESIGN;
 
-  auto pendingSetOrderKey = [&](const PendingSet &pending) {
-    auto item = std::find_if(resolvedItemRows.begin(), resolvedItemRows.end(),
-                             [&](const auto &candidate) {
-                               return candidate.id == pending.set.item;
-                             });
-    auto bin = std::find_if(resolvedBinRows.begin(), resolvedBinRows.end(),
-                            [&](const auto &candidate) {
-                              return candidate.id == pending.set.ownerBin;
-                            });
-    return std::make_tuple(
-        pending.set.templateValueSet, static_cast<uint32_t>(pending.set.role),
-        item == resolvedItemRows.end() ? uint64_t{0} : item->templateItem,
-        bin == resolvedBinRows.end() ? uint64_t{0} : bin->templateBin,
-        bin == resolvedBinRows.end() ? uint32_t{0} : bin->expansionOrdinal,
-        pending.set.ownerSelector, pending.set.ownerOrdinal,
-        pending.set.ownerSubordinal);
-  };
-  std::sort(pendingSets.begin(), pendingSets.end(),
-            [&](const auto &a, const auto &b) {
-              return pendingSetOrderKey(a) < pendingSetOrderKey(b);
-            });
+  IndexMap<uint64_t, const ResolvedFunctionalItem *> pendingItems;
+  for (const auto &row : resolvedItemRows)
+    pendingItems.emplace(row.id, &row);
+  IndexMap<uint64_t, const ResolvedFunctionalBin *> pendingBins;
+  for (const auto &row : resolvedBinRows)
+    pendingBins.emplace(row.id, &row);
+  sortByKey(
+      pendingSets.begin(), pendingSets.end(), [&](const PendingSet &pending) {
+        auto item = pendingItems.find(pending.set.item);
+        auto bin = pendingBins.find(pending.set.ownerBin);
+        return std::make_tuple(
+            pending.set.templateValueSet,
+            static_cast<uint32_t>(pending.set.role),
+            item == pendingItems.end() ? uint64_t{0}
+                                       : item->second->templateItem,
+            bin == pendingBins.end() ? uint64_t{0} : bin->second->templateBin,
+            bin == pendingBins.end() ? uint32_t{0}
+                                     : bin->second->expansionOrdinal,
+            pending.set.ownerSelector, pending.set.ownerOrdinal,
+            pending.set.ownerSubordinal);
+      });
   std::vector<ResolvedFunctionalValueSet> resolvedSetRows;
   std::vector<ResolvedFunctionalValueAtom> resolvedAtomRows;
   std::vector<ResolvedFunctionalValueLimb> resolvedLimbRows;
@@ -6705,272 +6943,50 @@ obelisk_rt_status resolveStaticFunctionalType(
     row.firstEdge -= crossEdgeBase;
   }
 
+  assert(schema.functionalConfigurations.empty() &&
+         "resolution requires a static type projection");
+  sortByKey(resolvedItemRows.begin(), resolvedItemRows.end(),
+            [](const auto &row) { return row.id; });
+  sortByKey(resolvedPlanRows.begin(), resolvedPlanRows.end(),
+            [](const auto &row) { return row.bin; });
+  sortByKey(configurationOptionRows.begin(), configurationOptionRows.end(),
+            [](const auto &row) {
+              return std::tie(row.ownerKind, row.owner, row.scope, row.option);
+            });
   schema.functionalConfigurations.push_back({typeID, configuration, 0});
-  schema.resolvedFunctionalItems.insert(schema.resolvedFunctionalItems.end(),
-                                        resolvedItemRows.begin(),
-                                        resolvedItemRows.end());
-  std::sort(schema.resolvedFunctionalItems.begin(),
-            schema.resolvedFunctionalItems.end(),
-            [](const auto &a, const auto &b) {
-              return std::tie(a.type, a.configuration, a.id) <
-                     std::tie(b.type, b.configuration, b.id);
-            });
+  schema.resolvedFunctionalItems = std::move(resolvedItemRows);
+  schema.resolvedFunctionalBins = std::move(resolvedBinRows);
+  schema.resolvedFunctionalValueSets = std::move(resolvedSetRows);
+  schema.resolvedFunctionalValueAtoms = std::move(resolvedAtomRows);
+  schema.resolvedFunctionalValueLimbs = std::move(resolvedLimbRows);
+  schema.resolvedFunctionalBinPlans = std::move(resolvedPlanRows);
+  schema.resolvedFunctionalBinGroups = std::move(resolvedGroupRows);
+  schema.resolvedTransitionAlternatives =
+      std::move(resolvedTransitionAlternativeRows);
+  schema.resolvedTransitionSteps = std::move(resolvedTransitionStepRows);
+  schema.resolvedTransitionExpansionGroups =
+      std::move(resolvedTransitionExpansionGroupRows);
+  schema.functionalConfigurationOptions = std::move(configurationOptionRows);
+  schema.resolvedCrossPlans = std::move(resolvedCrossPlanRows);
+  schema.resolvedCrossAutomaticBinCountLimbs =
+      std::move(resolvedCrossCountLimbs);
+  schema.resolvedCrossAutomaticNodes = std::move(resolvedCrossNodeRows);
+  schema.resolvedCrossAutomaticEdges = std::move(resolvedCrossEdgeRows);
+  schema.resolvedCrossSelectorBindings = std::move(resolvedSelectorBindingRows);
+  schema.resolvedFunctionalTupleSets = std::move(resolvedTupleSetRows);
+  schema.resolvedFunctionalTupleSetTuples = std::move(resolvedTupleRows);
+  schema.resolvedFunctionalTupleSetComponents =
+      std::move(resolvedTupleComponentRows);
 
-  auto binPosition = std::lower_bound(
-      schema.resolvedFunctionalBins.begin(),
-      schema.resolvedFunctionalBins.end(), std::tie(typeID, configuration),
-      [](const auto &bin, const auto &key) {
-        return std::tie(bin.type, bin.configuration) < key;
-      });
-  uint32_t insertedBin = binPosition - schema.resolvedFunctionalBins.begin();
-  for (auto &group : schema.resolvedFunctionalBinGroups) {
-    const bool followsInsertion = std::tie(group.type, group.configuration) >=
-                                  std::tie(typeID, configuration);
-    if (group.firstBin > insertedBin ||
-        (group.firstBin == insertedBin && followsInsertion))
-      group.firstBin += resolvedBinRows.size();
-  }
-  schema.resolvedFunctionalBins.insert(binPosition, resolvedBinRows.begin(),
-                                       resolvedBinRows.end());
-  for (auto &group : resolvedGroupRows)
-    group.firstBin += insertedBin;
-
-  auto setPosition = std::lower_bound(
-      schema.resolvedFunctionalValueSets.begin(),
-      schema.resolvedFunctionalValueSets.end(), std::tie(typeID, configuration),
-      [](const auto &set, const auto &key) {
-        return std::tie(set.type, set.configuration) < key;
-      });
-  size_t setIndex = setPosition - schema.resolvedFunctionalValueSets.begin();
-  uint32_t insertedAtom =
-      setPosition == schema.resolvedFunctionalValueSets.end()
-          ? schema.resolvedFunctionalValueAtoms.size()
-          : setPosition->firstAtom;
-  uint32_t insertedLimb =
-      insertedAtom == schema.resolvedFunctionalValueAtoms.size()
-          ? schema.resolvedFunctionalValueLimbs.size()
-          : schema.resolvedFunctionalValueAtoms[insertedAtom].firstLimb;
-  for (size_t index = setIndex;
-       index != schema.resolvedFunctionalValueSets.size(); ++index)
-    schema.resolvedFunctionalValueSets[index].firstAtom +=
-        resolvedAtomRows.size();
-  for (size_t index = insertedAtom;
-       index != schema.resolvedFunctionalValueAtoms.size(); ++index)
-    schema.resolvedFunctionalValueAtoms[index].firstLimb +=
-        resolvedLimbRows.size();
-  for (auto &set : resolvedSetRows)
-    set.firstAtom += insertedAtom;
-  for (auto &atom : resolvedAtomRows)
-    atom.firstLimb += insertedLimb;
-  schema.resolvedFunctionalValueLimbs.insert(
-      schema.resolvedFunctionalValueLimbs.begin() + insertedLimb,
-      resolvedLimbRows.begin(), resolvedLimbRows.end());
-  schema.resolvedFunctionalValueAtoms.insert(
-      schema.resolvedFunctionalValueAtoms.begin() + insertedAtom,
-      resolvedAtomRows.begin(), resolvedAtomRows.end());
-  schema.resolvedFunctionalValueSets.insert(
-      setPosition, resolvedSetRows.begin(), resolvedSetRows.end());
-
-  auto transitionAlternativePosition = std::lower_bound(
-      schema.resolvedTransitionAlternatives.begin(),
-      schema.resolvedTransitionAlternatives.end(),
-      std::tie(typeID, configuration),
-      [](const auto &alternative, const auto &key) {
-        return std::tie(alternative.type, alternative.configuration) < key;
-      });
-  const uint32_t insertedTransitionAlternative =
-      static_cast<uint32_t>(transitionAlternativePosition -
-                            schema.resolvedTransitionAlternatives.begin());
-  const uint32_t insertedTransitionStep =
-      transitionAlternativePosition ==
-              schema.resolvedTransitionAlternatives.end()
-          ? static_cast<uint32_t>(schema.resolvedTransitionSteps.size())
-          : transitionAlternativePosition->firstStep;
-  for (auto alternative = transitionAlternativePosition;
-       alternative != schema.resolvedTransitionAlternatives.end();
-       ++alternative)
-    alternative->firstStep += resolvedTransitionStepRows.size();
-  for (auto &alternative : resolvedTransitionAlternativeRows)
-    alternative.firstStep += insertedTransitionStep;
-  schema.resolvedTransitionSteps.insert(
-      schema.resolvedTransitionSteps.begin() + insertedTransitionStep,
-      resolvedTransitionStepRows.begin(), resolvedTransitionStepRows.end());
-  schema.resolvedTransitionAlternatives.insert(
-      transitionAlternativePosition, resolvedTransitionAlternativeRows.begin(),
-      resolvedTransitionAlternativeRows.end());
-
-  auto transitionGroupPosition = std::lower_bound(
-      schema.resolvedTransitionExpansionGroups.begin(),
-      schema.resolvedTransitionExpansionGroups.end(),
-      std::tie(typeID, configuration), [](const auto &group, const auto &key) {
-        return std::tie(group.type, group.configuration) < key;
-      });
-  for (auto &group : schema.resolvedTransitionExpansionGroups) {
-    const bool followsInsertion = std::tie(group.type, group.configuration) >=
-                                  std::tie(typeID, configuration);
-    if (group.firstAlternative > insertedTransitionAlternative ||
-        (group.firstAlternative == insertedTransitionAlternative &&
-         followsInsertion))
-      group.firstAlternative += resolvedTransitionAlternativeRows.size();
-  }
-  for (auto &group : resolvedTransitionExpansionGroupRows)
-    group.firstAlternative += insertedTransitionAlternative;
-  schema.resolvedTransitionExpansionGroups.insert(
-      transitionGroupPosition, resolvedTransitionExpansionGroupRows.begin(),
-      resolvedTransitionExpansionGroupRows.end());
-
-  schema.resolvedFunctionalBinPlans.insert(
-      schema.resolvedFunctionalBinPlans.end(), resolvedPlanRows.begin(),
-      resolvedPlanRows.end());
-  std::sort(schema.resolvedFunctionalBinPlans.begin(),
-            schema.resolvedFunctionalBinPlans.end(),
-            [](const auto &a, const auto &b) {
-              return std::tie(a.type, a.configuration, a.bin) <
-                     std::tie(b.type, b.configuration, b.bin);
-            });
-  auto groupPosition = std::lower_bound(
-      schema.resolvedFunctionalBinGroups.begin(),
-      schema.resolvedFunctionalBinGroups.end(), std::tie(typeID, configuration),
-      [](const auto &group, const auto &key) {
-        return std::tie(group.type, group.configuration) < key;
-      });
-  schema.resolvedFunctionalBinGroups.insert(
-      groupPosition, resolvedGroupRows.begin(), resolvedGroupRows.end());
-  schema.functionalConfigurationOptions.insert(
-      schema.functionalConfigurationOptions.end(),
-      configurationOptionRows.begin(), configurationOptionRows.end());
-  std::sort(schema.functionalConfigurationOptions.begin(),
-            schema.functionalConfigurationOptions.end(),
-            [](const auto &a, const auto &b) {
-              return std::tie(a.type, a.configuration, a.ownerKind, a.owner,
-                              a.scope, a.option) <
-                     std::tie(b.type, b.configuration, b.ownerKind, b.owner,
-                              b.scope, b.option);
-            });
-  std::sort(schema.functionalConfigurations.begin(),
-            schema.functionalConfigurations.end(),
-            [](const auto &a, const auto &b) {
-              return std::tie(a.type, a.configuration) <
-                     std::tie(b.type, b.configuration);
-            });
-
-  auto crossPlanPosition = std::lower_bound(
-      schema.resolvedCrossPlans.begin(), schema.resolvedCrossPlans.end(),
-      std::make_tuple(typeID, configuration, uint64_t{0}),
-      [](const auto &plan, const auto &key) {
-        return std::tie(plan.type, plan.configuration, plan.cross) < key;
-      });
-  if (schema.resolvedCrossAutomaticBinCountLimbs.size() > UINT32_MAX ||
-      resolvedCrossCountLimbs.size() >
-          UINT32_MAX - schema.resolvedCrossAutomaticBinCountLimbs.size())
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  const uint32_t insertedCrossCount =
-      crossPlanPosition == schema.resolvedCrossPlans.end()
-          ? static_cast<uint32_t>(
-                schema.resolvedCrossAutomaticBinCountLimbs.size())
-          : crossPlanPosition->firstAutomaticBinCountLimb;
-  for (auto plan = crossPlanPosition; plan != schema.resolvedCrossPlans.end();
-       ++plan)
-    plan->firstAutomaticBinCountLimb += resolvedCrossCountLimbs.size();
-  for (auto &plan : resolvedCrossPlanRows)
-    plan.firstAutomaticBinCountLimb += insertedCrossCount;
-  schema.resolvedCrossAutomaticBinCountLimbs.insert(
-      schema.resolvedCrossAutomaticBinCountLimbs.begin() + insertedCrossCount,
-      resolvedCrossCountLimbs.begin(), resolvedCrossCountLimbs.end());
-  schema.resolvedCrossPlans.insert(crossPlanPosition,
-                                   resolvedCrossPlanRows.begin(),
-                                   resolvedCrossPlanRows.end());
-
-  auto crossNodePosition = std::lower_bound(
-      schema.resolvedCrossAutomaticNodes.begin(),
-      schema.resolvedCrossAutomaticNodes.end(),
-      std::make_tuple(typeID, configuration, uint64_t{0}, uint64_t{0}),
-      [](const auto &node, const auto &key) {
-        return std::tie(node.type, node.configuration, node.cross, node.id) <
-               key;
-      });
-  if (schema.resolvedCrossAutomaticEdges.size() > UINT32_MAX ||
-      resolvedCrossEdgeRows.size() >
-          UINT32_MAX - schema.resolvedCrossAutomaticEdges.size())
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  const uint32_t insertedCrossEdge =
-      crossNodePosition == schema.resolvedCrossAutomaticNodes.end()
-          ? static_cast<uint32_t>(schema.resolvedCrossAutomaticEdges.size())
-          : crossNodePosition->firstEdge;
-  for (auto &node : schema.resolvedCrossAutomaticNodes)
-    if (node.firstEdge >= insertedCrossEdge)
-      node.firstEdge += resolvedCrossEdgeRows.size();
-  for (auto &node : resolvedCrossNodeRows)
-    node.firstEdge += insertedCrossEdge;
-  schema.resolvedCrossAutomaticEdges.insert(
-      schema.resolvedCrossAutomaticEdges.begin() + insertedCrossEdge,
-      resolvedCrossEdgeRows.begin(), resolvedCrossEdgeRows.end());
-  schema.resolvedCrossAutomaticNodes.insert(crossNodePosition,
-                                            resolvedCrossNodeRows.begin(),
-                                            resolvedCrossNodeRows.end());
-
-  auto tupleSetPosition = std::lower_bound(
-      schema.resolvedFunctionalTupleSets.begin(),
-      schema.resolvedFunctionalTupleSets.end(), std::tie(typeID, configuration),
-      [](const auto &set, const auto &key) {
-        return std::tie(set.type, set.configuration) < key;
-      });
-  const uint32_t insertedTuple =
-      tupleSetPosition == schema.resolvedFunctionalTupleSets.end()
-          ? static_cast<uint32_t>(
-                schema.resolvedFunctionalTupleSetTuples.size())
-          : tupleSetPosition->firstTuple;
-  const uint32_t insertedTupleComponent =
-      insertedTuple == schema.resolvedFunctionalTupleSetTuples.size()
-          ? static_cast<uint32_t>(
-                schema.resolvedFunctionalTupleSetComponents.size())
-          : schema.resolvedFunctionalTupleSetTuples[insertedTuple]
-                .firstComponent;
-  if (schema.resolvedFunctionalTupleSetTuples.size() > UINT32_MAX ||
-      schema.resolvedFunctionalTupleSetComponents.size() > UINT32_MAX ||
-      resolvedTupleRows.size() >
-          UINT32_MAX - schema.resolvedFunctionalTupleSetTuples.size() ||
-      resolvedTupleComponentRows.size() >
-          UINT32_MAX - schema.resolvedFunctionalTupleSetComponents.size())
-    return OBELISK_RT_OUT_OF_RESOURCES;
-  for (auto set = tupleSetPosition;
-       set != schema.resolvedFunctionalTupleSets.end(); ++set)
-    set->firstTuple += resolvedTupleRows.size();
-  for (size_t index = insertedTuple;
-       index != schema.resolvedFunctionalTupleSetTuples.size(); ++index)
-    schema.resolvedFunctionalTupleSetTuples[index].firstComponent +=
-        resolvedTupleComponentRows.size();
-  for (auto &set : resolvedTupleSetRows)
-    set.firstTuple += insertedTuple;
-  for (auto &tuple : resolvedTupleRows)
-    tuple.firstComponent += insertedTupleComponent;
-  schema.resolvedFunctionalTupleSetComponents.insert(
-      schema.resolvedFunctionalTupleSetComponents.begin() +
-          insertedTupleComponent,
-      resolvedTupleComponentRows.begin(), resolvedTupleComponentRows.end());
-  schema.resolvedFunctionalTupleSetTuples.insert(
-      schema.resolvedFunctionalTupleSetTuples.begin() + insertedTuple,
-      resolvedTupleRows.begin(), resolvedTupleRows.end());
-  schema.resolvedFunctionalTupleSets.insert(tupleSetPosition,
-                                            resolvedTupleSetRows.begin(),
-                                            resolvedTupleSetRows.end());
-  schema.resolvedCrossSelectorBindings.insert(
-      schema.resolvedCrossSelectorBindings.end(),
-      resolvedSelectorBindingRows.begin(), resolvedSelectorBindingRows.end());
-  std::sort(schema.resolvedCrossSelectorBindings.begin(),
-            schema.resolvedCrossSelectorBindings.end(),
-            [](const auto &a, const auto &b) {
-              return std::tie(a.type, a.configuration, a.cross, a.node) <
-                     std::tie(b.type, b.configuration, b.cross, b.node);
-            });
-  schema.schemaFingerprint =
-      obelisk::coverage::computeSchemaFingerprint(schema);
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status
-applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
-                           FunctionalCoverageTypeState &type) {
+obelisk_rt_status applyFunctionalTypeOptions(
+    CoverageState &coverage, uint64_t typeID, FunctionalCoverageTypeState &type,
+    const obelisk::coverage::Database *resolvedSchema = nullptr) {
+  if (!resolvedSchema)
+    resolvedSchema = type.configurationSchema ? type.configurationSchema.get()
+                                              : coverage.schema.get();
   auto overrides = coverage.typeOptions.find(typeID);
   if (overrides == coverage.typeOptions.end())
     return OBELISK_RT_OK;
@@ -6982,17 +6998,17 @@ applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
   if (options.mergeInstances)
     type.mergeInstances = *options.mergeInstances;
   if (type.items.size() != type.typeItemGoals.size() ||
-      type.items.size() != type.typeItemWeights.size() || !coverage.schema)
+      type.items.size() != type.typeItemWeights.size() || !resolvedSchema)
     return OBELISK_RT_INVALID_DESIGN;
   for (size_t index = 0; index != type.items.size(); ++index) {
     auto resolved = std::find_if(
-        coverage.schema->resolvedFunctionalItems.begin(),
-        coverage.schema->resolvedFunctionalItems.end(), [&](const auto &item) {
+        resolvedSchema->resolvedFunctionalItems.begin(),
+        resolvedSchema->resolvedFunctionalItems.end(), [&](const auto &item) {
           return item.type == typeID &&
                  item.configuration == type.configuration &&
                  item.id == type.items[index];
         });
-    if (resolved == coverage.schema->resolvedFunctionalItems.end())
+    if (resolved == resolvedSchema->resolvedFunctionalItems.end())
       return OBELISK_RT_INVALID_DESIGN;
     if (auto goal = options.itemGoals.find(resolved->templateItem);
         goal != options.itemGoals.end())
@@ -7004,25 +7020,10 @@ applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
   return OBELISK_RT_OK;
 }
 
-obelisk_rt_status
-bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
-                           const obelisk::coverage::Digest &configuration,
-                           FunctionalCoverageTypeState *&result) {
-  FunctionalCoverageTypeKey key{typeID, configuration};
-  auto found = coverage.types.find(key);
-  if (found != coverage.types.end()) {
-    result = &found->second;
-    return OBELISK_RT_OK;
-  }
-  if (!coverage.schema)
-    return OBELISK_RT_INVALID_DESIGN;
-  auto &schema = *coverage.schema;
-  if (std::none_of(
-          schema.functionalConfigurations.begin(),
-          schema.functionalConfigurations.end(), [&](const auto &entry) {
-            return entry.type == typeID && entry.configuration == configuration;
-          }))
-    return OBELISK_RT_INVALID_DESIGN;
+obelisk_rt_status createResolvedFunctionalType(
+    CoverageState &coverage, const obelisk::coverage::Database &schema,
+    uint64_t typeID, const obelisk::coverage::Digest &configuration,
+    FunctionalCoverageTypeState &result) {
   FunctionalCoverageTypeState type;
   type.configuration = configuration;
   std::unordered_set<uint64_t> emptyTransitionBins;
@@ -7550,16 +7551,193 @@ bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
   if (type.items.empty())
     return OBELISK_RT_INVALID_DESIGN;
   obelisk_rt_status typeOptionStatus =
-      applyFunctionalTypeOptions(coverage, typeID, type);
+      applyFunctionalTypeOptions(coverage, typeID, type, &schema);
   if (typeOptionStatus != OBELISK_RT_OK)
     return typeOptionStatus;
   obelisk_rt_status overlapStatus =
       emitFunctionalOverlapWarnings(schema, typeID, configuration);
   if (overlapStatus != OBELISK_RT_OK)
     return overlapStatus;
+  result = std::move(type);
+  return OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
+                           const obelisk::coverage::Digest &configuration,
+                           FunctionalCoverageTypeState *&result) {
+  FunctionalCoverageTypeKey key{typeID, configuration};
+  auto found = coverage.types.find(key);
+  if (found != coverage.types.end()) {
+    result = &found->second;
+    return OBELISK_RT_OK;
+  }
+  if (!coverage.schema)
+    return OBELISK_RT_INVALID_DESIGN;
+  FunctionalCoverageTypeState type;
+  obelisk_rt_status status = createResolvedFunctionalType(
+      coverage, *coverage.schema, typeID, configuration, type);
+  if (status != OBELISK_RT_OK)
+    return status;
   auto insertion = coverage.types.emplace(key, std::move(type));
   result = &insertion.first->second;
   return OBELISK_RT_OK;
+}
+
+// Prepare all allocation and rebasing before publishing either metadata or
+// runtime cache state. Growing global columns geometrically gives amortized
+// linear work across all constructors, including vector relocations.
+template <typename T>
+bool prepareConfigurationColumn(std::vector<T> &destination,
+                                const std::vector<T> &bundle,
+                                std::vector<T> &prepared) {
+  const size_t limit = std::min<uint64_t>(
+      UINT32_MAX, obelisk::coverage::ParseLimits{}.maxRecords);
+  if (destination.size() > limit || bundle.size() > limit - destination.size())
+    return false;
+  prepared = bundle;
+  const size_t required = destination.size() + bundle.size();
+  if (required > destination.capacity())
+    destination.reserve(
+        std::max(required, std::min(limit, destination.capacity() * 2)));
+  return true;
+}
+
+obelisk_rt_status
+prepareConfigurationAppend(obelisk::coverage::Database &destination,
+                           const obelisk::coverage::Database &bundle,
+                           obelisk::coverage::Database &prepared) {
+  if (!prepareConfigurationColumn(destination.functionalConfigurations,
+                                  bundle.functionalConfigurations,
+                                  prepared.functionalConfigurations) ||
+      !prepareConfigurationColumn(destination.functionalConfigurationOptions,
+                                  bundle.functionalConfigurationOptions,
+                                  prepared.functionalConfigurationOptions) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalItems,
+                                  bundle.resolvedFunctionalItems,
+                                  prepared.resolvedFunctionalItems) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalBins,
+                                  bundle.resolvedFunctionalBins,
+                                  prepared.resolvedFunctionalBins) ||
+      !prepareConfigurationColumn(destination.resolvedTransitionAlternatives,
+                                  bundle.resolvedTransitionAlternatives,
+                                  prepared.resolvedTransitionAlternatives) ||
+      !prepareConfigurationColumn(destination.resolvedTransitionExpansionGroups,
+                                  bundle.resolvedTransitionExpansionGroups,
+                                  prepared.resolvedTransitionExpansionGroups) ||
+      !prepareConfigurationColumn(destination.resolvedTransitionSteps,
+                                  bundle.resolvedTransitionSteps,
+                                  prepared.resolvedTransitionSteps) ||
+      !prepareConfigurationColumn(destination.resolvedCrossPlans,
+                                  bundle.resolvedCrossPlans,
+                                  prepared.resolvedCrossPlans) ||
+      !prepareConfigurationColumn(
+          destination.resolvedCrossAutomaticBinCountLimbs,
+          bundle.resolvedCrossAutomaticBinCountLimbs,
+          prepared.resolvedCrossAutomaticBinCountLimbs) ||
+      !prepareConfigurationColumn(destination.resolvedCrossAutomaticNodes,
+                                  bundle.resolvedCrossAutomaticNodes,
+                                  prepared.resolvedCrossAutomaticNodes) ||
+      !prepareConfigurationColumn(destination.resolvedCrossAutomaticEdges,
+                                  bundle.resolvedCrossAutomaticEdges,
+                                  prepared.resolvedCrossAutomaticEdges) ||
+      !prepareConfigurationColumn(destination.resolvedCrossSelectorBindings,
+                                  bundle.resolvedCrossSelectorBindings,
+                                  prepared.resolvedCrossSelectorBindings) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalValueSets,
+                                  bundle.resolvedFunctionalValueSets,
+                                  prepared.resolvedFunctionalValueSets) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalValueAtoms,
+                                  bundle.resolvedFunctionalValueAtoms,
+                                  prepared.resolvedFunctionalValueAtoms) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalValueLimbs,
+                                  bundle.resolvedFunctionalValueLimbs,
+                                  prepared.resolvedFunctionalValueLimbs) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalBinPlans,
+                                  bundle.resolvedFunctionalBinPlans,
+                                  prepared.resolvedFunctionalBinPlans) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalBinGroups,
+                                  bundle.resolvedFunctionalBinGroups,
+                                  prepared.resolvedFunctionalBinGroups) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalTupleSets,
+                                  bundle.resolvedFunctionalTupleSets,
+                                  prepared.resolvedFunctionalTupleSets) ||
+      !prepareConfigurationColumn(destination.resolvedFunctionalTupleSetTuples,
+                                  bundle.resolvedFunctionalTupleSetTuples,
+                                  prepared.resolvedFunctionalTupleSetTuples) ||
+      !prepareConfigurationColumn(
+          destination.resolvedFunctionalTupleSetComponents,
+          bundle.resolvedFunctionalTupleSetComponents,
+          prepared.resolvedFunctionalTupleSetComponents))
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  for (auto &row : prepared.resolvedFunctionalBinGroups)
+    row.firstBin += destination.resolvedFunctionalBins.size();
+  for (auto &row : prepared.resolvedFunctionalValueSets)
+    row.firstAtom += destination.resolvedFunctionalValueAtoms.size();
+  for (auto &row : prepared.resolvedFunctionalValueAtoms)
+    row.firstLimb += destination.resolvedFunctionalValueLimbs.size();
+  for (auto &row : prepared.resolvedTransitionAlternatives)
+    row.firstStep += destination.resolvedTransitionSteps.size();
+  for (auto &row : prepared.resolvedTransitionExpansionGroups)
+    row.firstAlternative += destination.resolvedTransitionAlternatives.size();
+  for (auto &row : prepared.resolvedCrossPlans)
+    row.firstAutomaticBinCountLimb +=
+        destination.resolvedCrossAutomaticBinCountLimbs.size();
+  for (auto &row : prepared.resolvedCrossAutomaticNodes)
+    row.firstEdge += destination.resolvedCrossAutomaticEdges.size();
+  for (auto &row : prepared.resolvedFunctionalTupleSets)
+    row.firstTuple += destination.resolvedFunctionalTupleSetTuples.size();
+  for (auto &row : prepared.resolvedFunctionalTupleSetTuples)
+    row.firstComponent +=
+        destination.resolvedFunctionalTupleSetComponents.size();
+  return OBELISK_RT_OK;
+}
+
+void appendPreparedConfiguration(obelisk::coverage::Database &destination,
+                                 obelisk::coverage::Database &prepared) {
+  auto append = [](auto &to, auto &from) {
+    using Row = typename std::decay_t<decltype(to)>::value_type;
+    static_assert(std::is_nothrow_move_constructible_v<Row>);
+    assert(to.capacity() - to.size() >= from.size());
+    to.insert(to.end(), std::make_move_iterator(from.begin()),
+              std::make_move_iterator(from.end()));
+  };
+  append(destination.functionalConfigurations,
+         prepared.functionalConfigurations);
+  append(destination.functionalConfigurationOptions,
+         prepared.functionalConfigurationOptions);
+  append(destination.resolvedFunctionalItems, prepared.resolvedFunctionalItems);
+  append(destination.resolvedFunctionalBins, prepared.resolvedFunctionalBins);
+  append(destination.resolvedTransitionAlternatives,
+         prepared.resolvedTransitionAlternatives);
+  append(destination.resolvedTransitionExpansionGroups,
+         prepared.resolvedTransitionExpansionGroups);
+  append(destination.resolvedTransitionSteps, prepared.resolvedTransitionSteps);
+  append(destination.resolvedCrossPlans, prepared.resolvedCrossPlans);
+  append(destination.resolvedCrossAutomaticBinCountLimbs,
+         prepared.resolvedCrossAutomaticBinCountLimbs);
+  append(destination.resolvedCrossAutomaticNodes,
+         prepared.resolvedCrossAutomaticNodes);
+  append(destination.resolvedCrossAutomaticEdges,
+         prepared.resolvedCrossAutomaticEdges);
+  append(destination.resolvedCrossSelectorBindings,
+         prepared.resolvedCrossSelectorBindings);
+  append(destination.resolvedFunctionalValueSets,
+         prepared.resolvedFunctionalValueSets);
+  append(destination.resolvedFunctionalValueAtoms,
+         prepared.resolvedFunctionalValueAtoms);
+  append(destination.resolvedFunctionalValueLimbs,
+         prepared.resolvedFunctionalValueLimbs);
+  append(destination.resolvedFunctionalBinPlans,
+         prepared.resolvedFunctionalBinPlans);
+  append(destination.resolvedFunctionalBinGroups,
+         prepared.resolvedFunctionalBinGroups);
+  append(destination.resolvedFunctionalTupleSets,
+         prepared.resolvedFunctionalTupleSets);
+  append(destination.resolvedFunctionalTupleSetTuples,
+         prepared.resolvedFunctionalTupleSetTuples);
+  append(destination.resolvedFunctionalTupleSetComponents,
+         prepared.resolvedFunctionalTupleSetComponents);
 }
 
 obelisk_rt_status
@@ -7569,32 +7747,40 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
                    uint64_t expressionCount = 0) {
   if (!coverage.schema)
     return OBELISK_RT_INVALID_DESIGN;
-
+  indexFunctionalConfigurations(coverage);
   if (!expressions && !expressionCount) {
-    const obelisk::coverage::FunctionalConfiguration *only = nullptr;
-    for (const auto &configuration :
-         coverage.schema->functionalConfigurations) {
-      if (configuration.type != typeID)
-        continue;
-      if (only)
+    auto configurations = coverage.configurationsByType.find(typeID);
+    if (configurations != coverage.configurationsByType.end()) {
+      if (configurations->second.size() != 1)
         return OBELISK_RT_INVALID_DESIGN;
-      only = &configuration;
+      return bindResolvedFunctionalType(coverage, typeID,
+                                        configurations->second.front(), result);
     }
-    if (only)
-      return bindResolvedFunctionalType(coverage, typeID, only->configuration,
-                                        result);
   }
 
-  // Resolution is transactional: malformed constructor semantics must never
-  // leave a half-bound schema or configuration cache visible to later calls.
-  obelisk::coverage::Database resolved = *coverage.schema;
-  obelisk::coverage::Digest exact{};
-  obelisk_rt_status status = resolveStaticFunctionalType(
-      context, resolved, typeID, expressions, expressionCount, exact);
+  obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
   if (status != OBELISK_RT_OK)
     return status;
+  auto templateSchema = coverage.constructionSchemas->types.find(typeID);
+  if (templateSchema == coverage.constructionSchemas->types.end())
+    return OBELISK_RT_INVALID_DESIGN;
+  // Resolution and validation touch only this type and this configuration.
+  auto resolved =
+      std::make_shared<obelisk::coverage::Database>(*templateSchema->second);
+  obelisk::coverage::Digest exact{};
+  status = resolveStaticFunctionalType(context, *resolved, typeID, expressions,
+                                       expressionCount, exact,
+                                       *coverage.constructionSchemas);
+  if (status != OBELISK_RT_OK)
+    return status;
+  FunctionalCoverageTypeKey key{typeID, exact};
+  auto existing = coverage.types.find(key);
+  if (existing != coverage.types.end()) {
+    result = &existing->second;
+    return OBELISK_RT_OK;
+  }
   obelisk::coverage::Diagnostic diagnostic;
-  if (obelisk::coverage::validate(resolved, &diagnostic) !=
+  if (obelisk::coverage::validate(*resolved, &diagnostic) !=
       obelisk::coverage::Status::Ok) {
     std::fprintf(stderr,
                  "error: resolved functional coverage schema is "
@@ -7605,8 +7791,48 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
                  diagnostic.detail.empty() ? "" : diagnostic.detail.c_str());
     return OBELISK_RT_INVALID_DESIGN;
   }
-  *coverage.schema = std::move(resolved);
-  return bindResolvedFunctionalType(coverage, typeID, exact, result);
+  const auto newProfiles = staticFunctionalTypeProfiles(*resolved);
+  const auto &profile = newProfiles.at(typeID);
+  auto loadedProfile =
+      coverage.constructionSchemas->loadedTypeProfiles.find(typeID);
+  if (loadedProfile != coverage.constructionSchemas->loadedTypeProfiles.end()) {
+    if (loadedProfile->second != profile)
+      return OBELISK_RT_INVALID_DESIGN;
+  } else {
+    auto configurations = coverage.configurationsByType.find(typeID);
+    if (configurations != coverage.configurationsByType.end() &&
+        !configurations->second.empty()) {
+      auto previous =
+          coverage.types.find({typeID, configurations->second.front()});
+      if (previous == coverage.types.end() ||
+          !previous->second.configurationSchema)
+        return OBELISK_RT_INVALID_DESIGN;
+      const auto previousProfiles =
+          staticFunctionalTypeProfiles(*previous->second.configurationSchema);
+      if (previousProfiles.at(typeID) != profile)
+        return OBELISK_RT_INVALID_DESIGN;
+    }
+  }
+  FunctionalCoverageTypeState type;
+  status =
+      createResolvedFunctionalType(coverage, *resolved, typeID, exact, type);
+  if (status != OBELISK_RT_OK)
+    return status;
+  type.configurationSchema = resolved;
+  obelisk::coverage::Database prepared;
+  const bool append = !coverage.configurationKeys.count(key);
+  if (append) {
+    status = prepareConfigurationAppend(*coverage.schema, *resolved, prepared);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  // Index insertion has the strong exception guarantee. After it succeeds,
+  // publishing the preallocated columns cannot fail.
+  auto insertion = coverage.types.emplace(key, std::move(type));
+  if (append)
+    appendPreparedConfiguration(*coverage.schema, prepared);
+  result = &insertion.first->second;
+  return OBELISK_RT_OK;
 }
 
 uint64_t ownerType(const obelisk::coverage::Database &schema,
@@ -7730,13 +7956,15 @@ std::vector<const Entry *>
 schemaOrdered(const std::vector<Entry> &entries, uint64_t typeID,
               const obelisk::coverage::Database &schema, bool constructor) {
   std::vector<const Entry *> result;
+  const bool singleType = schema.functionalTypes.size() == 1 &&
+                          schema.functionalTypes.front().id == typeID;
   for (const auto &entry : entries) {
     if constexpr (std::is_same_v<Entry, obelisk::coverage::FunctionalFormal>) {
       if (entry.type == typeID &&
           (entry.kind ==
            obelisk::coverage::FunctionalFormalKind::Constructor) == constructor)
         result.push_back(&entry);
-    } else if (ownerType(schema, entry) == typeID) {
+    } else if (singleType || ownerType(schema, entry) == typeID) {
       using Phase = obelisk::coverage::FunctionalExpressionEvaluationPhase;
       const bool selected =
           constructor ? (entry.evaluationPhase == Phase::Constructor ||
@@ -7746,13 +7974,11 @@ schemaOrdered(const std::vector<Entry> &entries, uint64_t typeID,
         result.push_back(&entry);
     }
   }
-  std::sort(result.begin(), result.end(), [](const auto *a, const auto *b) {
+  sortByKey(result.begin(), result.end(), [](const auto *row) {
     if constexpr (std::is_same_v<Entry, obelisk::coverage::FunctionalFormal>)
-      return a->ordinal < b->ordinal;
-    else if (a->evaluationPhase != b->evaluationPhase)
-      return a->evaluationPhase < b->evaluationPhase;
+      return row->ordinal;
     else
-      return a->resultOrdinal < b->resultOrdinal;
+      return std::tie(row->evaluationPhase, row->resultOrdinal);
   });
   return result;
 }
@@ -11196,11 +11422,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     CoverageState *coverage = coverageState(context, true);
     if (!coverage->schema)
       return OBELISK_RT_INVALID_DESIGN;
-    auto expectedFormals = schemaOrdered(coverage->schema->functionalFormals,
-                                         typeID, *coverage->schema, true);
-    auto expectedExpressions =
-        schemaOrdered(coverage->schema->functionalExpressions, typeID,
-                      *coverage->schema, true);
+    obelisk_rt_status templateStatus =
+        ensureFunctionalConstructionSchemas(*coverage);
+    if (templateStatus != OBELISK_RT_OK)
+      return templateStatus;
+    auto construction = coverage->constructionSchemas->types.find(typeID);
+    if (construction == coverage->constructionSchemas->types.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &templateSchema = *construction->second;
+    auto expectedFormals = schemaOrdered(templateSchema.functionalFormals,
+                                         typeID, templateSchema, true);
+    auto expectedExpressions = schemaOrdered(
+        templateSchema.functionalExpressions, typeID, templateSchema, true);
     if (formalCount != expectedFormals.size())
       return OBELISK_RT_INVALID_DESIGN;
     for (size_t index = 0; index != expectedFormals.size(); ++index) {
@@ -11255,6 +11488,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
         context, *coverage, typeID, type, expressions, expressionCount);
     if (status != OBELISK_RT_OK)
       return status;
+    const auto &schema = type->configurationSchema ? *type->configurationSchema
+                                                   : *coverage->schema;
     uint64_t handle = coverage->nextInstance;
     if (!handle)
       return OBELISK_RT_OUT_OF_RESOURCES;
@@ -11270,7 +11505,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     instance.bins = type->bins;
     for (const FunctionalCoverageCrossState &cross : type->crosses)
       instance.crossAtLeast.emplace(cross.id, cross.atLeast);
-    for (const auto &option : coverage->schema->functionalConfigurationOptions) {
+    for (const auto &option : schema.functionalConfigurationOptions) {
       using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
       using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
       using Scope = obelisk::coverage::FunctionalOptionScopeKind;
@@ -11290,30 +11525,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
       if (option.ownerKind != Owner::Item)
         continue;
       auto resolved = std::find_if(
-          coverage->schema->resolvedFunctionalItems.begin(),
-          coverage->schema->resolvedFunctionalItems.end(),
-          [&](const auto &item) {
+          schema.resolvedFunctionalItems.begin(),
+          schema.resolvedFunctionalItems.end(), [&](const auto &item) {
             return item.type == typeID &&
                    item.configuration == type->configuration &&
                    item.id == option.owner;
           });
-      if (resolved == coverage->schema->resolvedFunctionalItems.end())
+      if (resolved == schema.resolvedFunctionalItems.end())
         return OBELISK_RT_INVALID_DESIGN;
       if (option.option == Option::AtLeast)
         instance.explicitAtLeastItems.insert(resolved->templateItem);
       else if (option.option == Option::CrossNumPrintMissing) {
-        if (resolved->kind !=
-            obelisk::coverage::FunctionalItemKind::Cross)
+        if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross)
           return OBELISK_RT_INVALID_DESIGN;
         instance.crossNumPrintMissing[resolved->templateItem] = option.value;
         instance.explicitCrossNumPrintMissingItems.insert(
             resolved->templateItem);
-      }
-      else if (option.option == Option::Comment)
+      } else if (option.option == Option::Comment)
         instance.comments[resolved->templateItem] = option.stringValue;
     }
     bool hasExplicitName = false;
-    for (const auto &plan : coverage->schema->functionalOptionPlans) {
+    for (const auto &plan : schema.functionalOptionPlans) {
       if (plan.owner != typeID ||
           plan.ownerKind != obelisk::coverage::
                                 FunctionalConfigurationOptionOwnerKind::Group ||
@@ -11343,7 +11575,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
       snapshotValue(formals[index], instance.formals[index]);
     if (type->instances.size() == type->instances.max_size())
       return OBELISK_RT_OUT_OF_RESOURCES;
-    type->instances.reserve(type->instances.size() + 1);
+    if (type->instances.size() == type->instances.capacity())
+      type->instances.reserve(
+          std::max(type->instances.size() + 1,
+                   std::min(type->instances.max_size(),
+                            type->instances.capacity() * 2)));
     std::vector<uint64_t> retainedAutomaticRefs;
     retainedAutomaticRefs.reserve(instance.formals.size());
     auto insertion = coverage->instances.emplace(handle, std::move(instance));
@@ -11836,9 +12072,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     if (!handle || found == coverage->instances.end())
       return OBELISK_RT_INVALID_HANDLE;
     FunctionalCoverageInstanceState &instance = found->second;
-    auto schemaExpressions =
-        schemaOrdered(coverage->schema->functionalExpressions, instance.typeID,
-                      *coverage->schema, false);
+    auto type = coverage->types.find({instance.typeID, instance.configuration});
+    if (type == coverage->types.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &schema = type->second.configurationSchema
+                             ? *type->second.configurationSchema
+                             : *coverage->schema;
+    auto schemaExpressions = schemaOrdered(schema.functionalExpressions,
+                                           instance.typeID, schema, false);
     std::vector<const obelisk::coverage::FunctionalExpression *> expected;
     size_t supplied = 0;
     for (const auto *entry : schemaExpressions) {
@@ -11866,10 +12107,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     if (!instance.enabled)
       return OBELISK_RT_OK;
 
-    auto &schema = *coverage->schema;
-    auto type = coverage->types.find({instance.typeID, instance.configuration});
-    if (type == coverage->types.end())
-      return OBELISK_RT_INVALID_DESIGN;
     std::vector<size_t> pendingBinIncrements;
     std::set<size_t> pendingExplicitBinIncrements;
     std::map<uint64_t, uint64_t> pendingIllegalIncrements;
@@ -12391,23 +12628,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       if (resolvedBin == schema.resolvedFunctionalBins.end())
         return OBELISK_RT_INVALID_DESIGN;
       pendingIllegalHierarchies.push_back(resolvedBin->hierarchy);
-      auto diagnostic = std::find_if(
-          schema.illegalBinDiagnostics.begin(),
-          schema.illegalBinDiagnostics.end(), [&](const auto &entry) {
-            return entry.run == currentRun && entry.bin == binID &&
-                   entry.instance == handle &&
-                   entry.simulationTime == context->schedulerTime;
-          });
-      if (diagnostic == schema.illegalBinDiagnostics.end())
+      auto diagnostic =
+          std::find_if(coverage->schema->illegalBinDiagnostics.begin(),
+                       coverage->schema->illegalBinDiagnostics.end(),
+                       [&](const auto &entry) {
+                         return entry.run == currentRun && entry.bin == binID &&
+                                entry.instance == handle &&
+                                entry.simulationTime == context->schedulerTime;
+                       });
+      if (diagnostic == coverage->schema->illegalBinDiagnostics.end())
         pendingNewDiagnostics.push_back({currentRun, bin, handle,
                                          context->schedulerTime, increment,
                                          "illegal bin sampled", 0});
     }
-    if (pendingNewDiagnostics.size() > schema.illegalBinDiagnostics.max_size() -
-                                           schema.illegalBinDiagnostics.size())
+    if (pendingNewDiagnostics.size() >
+        coverage->schema->illegalBinDiagnostics.max_size() -
+            coverage->schema->illegalBinDiagnostics.size())
       return OBELISK_RT_OUT_OF_RESOURCES;
-    schema.illegalBinDiagnostics.reserve(schema.illegalBinDiagnostics.size() +
-                                         pendingNewDiagnostics.size());
+    coverage->schema->illegalBinDiagnostics.reserve(
+        coverage->schema->illegalBinDiagnostics.size() +
+        pendingNewDiagnostics.size());
 
     for (auto staged = stagedCrosses.begin(); staged != stagedCrosses.end();) {
       auto current = instance.crossTuples.find(staged->first);
@@ -12430,14 +12670,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     }
     for (const auto &[bin, increment] : pendingIllegalIncrements) {
       const uint64_t binID = bin;
-      auto diagnostic = std::find_if(
-          schema.illegalBinDiagnostics.begin(),
-          schema.illegalBinDiagnostics.end(), [&](const auto &entry) {
-            return entry.run == currentRun && entry.bin == binID &&
-                   entry.instance == handle &&
-                   entry.simulationTime == context->schedulerTime;
-          });
-      if (diagnostic == schema.illegalBinDiagnostics.end())
+      auto diagnostic =
+          std::find_if(coverage->schema->illegalBinDiagnostics.begin(),
+                       coverage->schema->illegalBinDiagnostics.end(),
+                       [&](const auto &entry) {
+                         return entry.run == currentRun && entry.bin == binID &&
+                                entry.instance == handle &&
+                                entry.simulationTime == context->schedulerTime;
+                       });
+      if (diagnostic == coverage->schema->illegalBinDiagnostics.end())
         continue;
       if (increment > UINT64_MAX - diagnostic->count) {
         diagnostic->count = UINT64_MAX;
@@ -12446,7 +12687,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         diagnostic->count += increment;
     }
     for (auto &diagnostic : pendingNewDiagnostics)
-      schema.illegalBinDiagnostics.push_back(std::move(diagnostic));
+      coverage->schema->illegalBinDiagnostics.push_back(std::move(diagnostic));
     for (const std::string &hierarchy : pendingIllegalHierarchies)
       std::fprintf(stderr,
                    "ERROR: functional coverage illegal bin '%s' sampled at "
@@ -13248,6 +13489,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
       return OBELISK_RT_OK;
     retainPersistentMetric(incoming, *selected);
     obelisk::coverage::Database combined = *coverage->schema;
+    obelisk::coverage::Status canonicalStatus =
+        obelisk::coverage::canonicalizeFunctionalConfigurations(combined,
+                                                                &diagnostic);
+    if (canonicalStatus != obelisk::coverage::Status::Ok)
+      return mapCoverageStatus(canonicalStatus);
     obelisk::coverage::Status mergeStatus =
         mergePersistentMetricSlice(combined, incoming, *selected);
     if (mergeStatus == obelisk::coverage::Status::OutOfMemory)
@@ -13256,6 +13502,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
       return OBELISK_RT_OK;
     coverage->schema =
         std::make_unique<obelisk::coverage::Database>(std::move(combined));
+    coverage->constructionSchemas.reset();
+    coverage->configurationIndexSchema = nullptr;
     *outStatus = SVCovOK;
     return OBELISK_RT_OK;
   }
@@ -13290,6 +13538,10 @@ obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
     obelisk::coverage::Database combined;
     if (coverage->schema) {
       combined = *coverage->schema;
+      status = obelisk::coverage::canonicalizeFunctionalConfigurations(
+          combined, &diagnostic);
+      if (status != obelisk::coverage::Status::Ok)
+        return mapCoverageStatus(status);
       status = obelisk::coverage::merge(combined, incoming, false, &diagnostic);
       if (status != obelisk::coverage::Status::Ok) {
         std::fprintf(stderr, "error: coverage load failed%s%s%s%s\n",
@@ -13319,6 +13571,8 @@ obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
     auto committedSchema =
         std::make_unique<obelisk::coverage::Database>(std::move(combined));
     coverage->schema = std::move(committedSchema);
+    coverage->constructionSchemas.reset();
+    coverage->configurationIndexSchema = nullptr;
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }

@@ -18,6 +18,7 @@
 #include <new>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 
@@ -2055,6 +2056,216 @@ struct ConfigurationIndex {
   }
 };
 
+static Status appendConfigurationView(Database &destination,
+                                      const Database &provider,
+                                      const ConfigurationView &view) {
+  if (!view.configuration)
+    return Status::InvalidReference;
+  auto fits = [](uint64_t first, uint64_t count, size_t size) {
+    return first <= size && count <= size - first;
+  };
+  size_t providerBinBase =
+      !view.resolvedFunctionalBins.empty()
+          ? &view.resolvedFunctionalBins.front() -
+                provider.resolvedFunctionalBins.data()
+      : !view.resolvedFunctionalBinGroups.empty()
+          ? view.resolvedFunctionalBinGroups.front().firstBin
+          : 0;
+  size_t providerAlternativeBase =
+      !view.resolvedTransitionAlternatives.empty()
+          ? &view.resolvedTransitionAlternatives.front() -
+                provider.resolvedTransitionAlternatives.data()
+      : !view.resolvedTransitionExpansionGroups.empty()
+          ? view.resolvedTransitionExpansionGroups.front().firstAlternative
+          : 0;
+  for (const auto &group : view.resolvedFunctionalBinGroups)
+    if (group.firstBin < providerBinBase ||
+        !fits(group.firstBin - providerBinBase, group.binCount,
+              view.resolvedFunctionalBins.size()))
+      return Status::InvalidReference;
+  for (const auto &alternative : view.resolvedTransitionAlternatives)
+    if (!fits(alternative.firstStep, alternative.stepCount,
+              provider.resolvedTransitionSteps.size()))
+      return Status::InvalidReference;
+  for (const auto &group : view.resolvedTransitionExpansionGroups)
+    if (group.firstAlternative < providerAlternativeBase ||
+        !fits(group.firstAlternative - providerAlternativeBase,
+              group.alternativeCount,
+              view.resolvedTransitionAlternatives.size()))
+      return Status::InvalidReference;
+  for (const auto &plan : view.resolvedCrossPlans)
+    if (!fits(plan.firstAutomaticBinCountLimb, plan.automaticBinCountLimbCount,
+              provider.resolvedCrossAutomaticBinCountLimbs.size()))
+      return Status::InvalidReference;
+  for (const auto &node : view.resolvedCrossAutomaticNodes)
+    if (!fits(node.firstEdge, node.edgeCount,
+              provider.resolvedCrossAutomaticEdges.size()))
+      return Status::InvalidReference;
+  for (const auto &set : view.resolvedFunctionalValueSets) {
+    if (!fits(set.firstAtom, set.atomCount,
+              provider.resolvedFunctionalValueAtoms.size()))
+      return Status::InvalidReference;
+    for (uint32_t i = 0; i != set.atomCount; ++i) {
+      const auto &row =
+          provider.resolvedFunctionalValueAtoms[set.firstAtom + i];
+      if (!fits(row.firstLimb, row.limbCount,
+                provider.resolvedFunctionalValueLimbs.size()))
+        return Status::InvalidReference;
+    }
+  }
+  for (const auto &set : view.resolvedFunctionalTupleSets) {
+    if (!fits(set.firstTuple, set.tupleCount,
+              provider.resolvedFunctionalTupleSetTuples.size()))
+      return Status::InvalidReference;
+    for (uint32_t i = 0; i != set.tupleCount; ++i) {
+      const auto &row =
+          provider.resolvedFunctionalTupleSetTuples[set.firstTuple + i];
+      if (!fits(row.firstComponent, row.componentCount,
+                provider.resolvedFunctionalTupleSetComponents.size()))
+        return Status::InvalidReference;
+    }
+  }
+  auto fitsAppend = [](size_t current, uint64_t count) {
+    return current <= UINT32_MAX && count <= UINT32_MAX - current;
+  };
+  uint64_t atoms = 0, limbs = 0, steps = 0, countLimbs = 0, edges = 0,
+           tuples = 0, components = 0;
+  for (const auto &set : view.resolvedFunctionalValueSets) {
+    atoms += set.atomCount;
+    for (uint32_t i = 0; i != set.atomCount; ++i)
+      limbs +=
+          provider.resolvedFunctionalValueAtoms[set.firstAtom + i].limbCount;
+  }
+  for (const auto &row : view.resolvedTransitionAlternatives)
+    steps += row.stepCount;
+  for (const auto &row : view.resolvedCrossPlans)
+    countLimbs += row.automaticBinCountLimbCount;
+  for (const auto &row : view.resolvedCrossAutomaticNodes)
+    edges += row.edgeCount;
+  for (const auto &set : view.resolvedFunctionalTupleSets) {
+    tuples += set.tupleCount;
+    for (uint32_t i = 0; i != set.tupleCount; ++i)
+      components +=
+          provider.resolvedFunctionalTupleSetTuples[set.firstTuple + i]
+              .componentCount;
+  }
+  if (!fitsAppend(destination.resolvedFunctionalBins.size(),
+                  view.resolvedFunctionalBins.size()) ||
+      !fitsAppend(destination.resolvedTransitionAlternatives.size(),
+                  view.resolvedTransitionAlternatives.size()) ||
+      !fitsAppend(destination.resolvedFunctionalValueAtoms.size(), atoms) ||
+      !fitsAppend(destination.resolvedFunctionalValueLimbs.size(), limbs) ||
+      !fitsAppend(destination.resolvedTransitionSteps.size(), steps) ||
+      !fitsAppend(destination.resolvedCrossAutomaticBinCountLimbs.size(),
+                  countLimbs) ||
+      !fitsAppend(destination.resolvedCrossAutomaticEdges.size(), edges) ||
+      !fitsAppend(destination.resolvedFunctionalTupleSetTuples.size(),
+                  tuples) ||
+      !fitsAppend(destination.resolvedFunctionalTupleSetComponents.size(),
+                  components))
+    return Status::IntegerOverflow;
+  auto appendRows = [](auto &to, const auto &from) {
+    for (const auto &row : from)
+      to.push_back(row);
+  };
+  destination.functionalConfigurations.push_back(*view.configuration);
+  appendRows(destination.functionalConfigurationOptions,
+             view.functionalConfigurationOptions);
+  appendRows(destination.resolvedFunctionalItems, view.resolvedFunctionalItems);
+  size_t destinationBinBase = destination.resolvedFunctionalBins.size();
+  appendRows(destination.resolvedFunctionalBins, view.resolvedFunctionalBins);
+  for (const auto &group : view.resolvedFunctionalBinGroups) {
+    auto copy = group;
+    copy.firstBin = destinationBinBase + (group.firstBin - providerBinBase);
+    destination.resolvedFunctionalBinGroups.push_back(copy);
+  }
+  for (const auto &set : view.resolvedFunctionalValueSets) {
+    auto copy = set;
+    copy.firstAtom = destination.resolvedFunctionalValueAtoms.size();
+    for (uint32_t atomIndex = 0; atomIndex != set.atomCount; ++atomIndex) {
+      const auto &sourceAtom =
+          provider.resolvedFunctionalValueAtoms[set.firstAtom + atomIndex];
+      auto atom = sourceAtom;
+      atom.firstLimb = destination.resolvedFunctionalValueLimbs.size();
+      for (uint32_t limbIndex = 0; limbIndex != atom.limbCount; ++limbIndex)
+        destination.resolvedFunctionalValueLimbs.push_back(
+            provider.resolvedFunctionalValueLimbs[sourceAtom.firstLimb +
+                                                  limbIndex]);
+      destination.resolvedFunctionalValueAtoms.push_back(atom);
+    }
+    destination.resolvedFunctionalValueSets.push_back(copy);
+  }
+  appendRows(destination.resolvedFunctionalBinPlans,
+             view.resolvedFunctionalBinPlans);
+  size_t destinationAlternativeBase =
+      destination.resolvedTransitionAlternatives.size();
+  for (const auto &alternative : view.resolvedTransitionAlternatives) {
+    auto copy = alternative;
+    copy.firstStep = destination.resolvedTransitionSteps.size();
+    destination.resolvedTransitionSteps.insert(
+        destination.resolvedTransitionSteps.end(),
+        provider.resolvedTransitionSteps.begin() + alternative.firstStep,
+        provider.resolvedTransitionSteps.begin() + alternative.firstStep +
+            alternative.stepCount);
+    destination.resolvedTransitionAlternatives.push_back(copy);
+  }
+  for (const auto &group : view.resolvedTransitionExpansionGroups) {
+    auto copy = group;
+    copy.firstAlternative = destinationAlternativeBase +
+                            (group.firstAlternative - providerAlternativeBase);
+    destination.resolvedTransitionExpansionGroups.push_back(copy);
+  }
+  for (const auto &plan : view.resolvedCrossPlans) {
+    if (destination.resolvedCrossAutomaticBinCountLimbs.size() > UINT32_MAX)
+      return Status::IntegerOverflow;
+    auto copy = plan;
+    copy.firstAutomaticBinCountLimb = static_cast<uint32_t>(
+        destination.resolvedCrossAutomaticBinCountLimbs.size());
+    destination.resolvedCrossAutomaticBinCountLimbs.insert(
+        destination.resolvedCrossAutomaticBinCountLimbs.end(),
+        provider.resolvedCrossAutomaticBinCountLimbs.begin() +
+            plan.firstAutomaticBinCountLimb,
+        provider.resolvedCrossAutomaticBinCountLimbs.begin() +
+            plan.firstAutomaticBinCountLimb + plan.automaticBinCountLimbCount);
+    destination.resolvedCrossPlans.push_back(copy);
+  }
+  for (const auto &node : view.resolvedCrossAutomaticNodes) {
+    if (destination.resolvedCrossAutomaticEdges.size() > UINT32_MAX)
+      return Status::IntegerOverflow;
+    auto copy = node;
+    copy.firstEdge =
+        static_cast<uint32_t>(destination.resolvedCrossAutomaticEdges.size());
+    destination.resolvedCrossAutomaticEdges.insert(
+        destination.resolvedCrossAutomaticEdges.end(),
+        provider.resolvedCrossAutomaticEdges.begin() + node.firstEdge,
+        provider.resolvedCrossAutomaticEdges.begin() + node.firstEdge +
+            node.edgeCount);
+    destination.resolvedCrossAutomaticNodes.push_back(copy);
+  }
+  appendRows(destination.resolvedCrossSelectorBindings,
+             view.resolvedCrossSelectorBindings);
+  for (const auto &set : view.resolvedFunctionalTupleSets) {
+    auto copy = set;
+    copy.firstTuple = destination.resolvedFunctionalTupleSetTuples.size();
+    for (uint32_t tupleIndex = 0; tupleIndex != set.tupleCount; ++tupleIndex) {
+      const auto &sourceTuple =
+          provider
+              .resolvedFunctionalTupleSetTuples[set.firstTuple + tupleIndex];
+      auto tuple = sourceTuple;
+      tuple.firstComponent =
+          destination.resolvedFunctionalTupleSetComponents.size();
+      for (uint32_t componentIndex = 0; componentIndex != tuple.componentCount;
+           ++componentIndex)
+        destination.resolvedFunctionalTupleSetComponents.push_back(
+            provider.resolvedFunctionalTupleSetComponents
+                [sourceTuple.firstComponent + componentIndex]);
+      destination.resolvedFunctionalTupleSetTuples.push_back(tuple);
+    }
+    destination.resolvedFunctionalTupleSets.push_back(copy);
+  }
+  return Status::Ok;
+}
+
 static Digest computeConfigurationBundleDigest(const Database &db,
                                                const ConfigurationIndex &index,
                                                uint64_t type,
@@ -2513,6 +2724,79 @@ bool isSchemaOnly(const Database &db) {
          db.resolvedFunctionalTupleSetTuples.empty() &&
          db.resolvedFunctionalTupleSetComponents.empty() &&
          db.sparseCrossTuples.empty() && db.sparseCrossTupleComponents.empty();
+}
+
+Status canonicalizeFunctionalConfigurations(Database &database,
+                                            Diagnostic *diagnostic) {
+#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+  try {
+#endif
+    IndexSet<ConfigurationKey> seen;
+    for (const auto &configuration : database.functionalConfigurations)
+      if (!seen.insert({configuration.type, configuration.configuration})
+               .second) {
+        setDiagnostic(diagnostic, Status::UnsortedOrDuplicate, 0,
+                      SectionKind::FunctionalConfigurations, NoRecord,
+                      "configuration");
+        return Status::UnsortedOrDuplicate;
+      }
+    const ConfigurationIndex index(database);
+    Database canonical;
+    for (const auto &[key, view] : index.views) {
+      (void)key;
+      Status status = appendConfigurationView(canonical, database, view);
+      if (status != Status::Ok) {
+        setDiagnostic(diagnostic, status, 0,
+                      SectionKind::FunctionalConfigurations, NoRecord,
+                      "payload span");
+        return status;
+      }
+    }
+    database.functionalConfigurations.swap(canonical.functionalConfigurations);
+    database.functionalConfigurationOptions.swap(
+        canonical.functionalConfigurationOptions);
+    database.resolvedFunctionalItems.swap(canonical.resolvedFunctionalItems);
+    database.resolvedFunctionalBins.swap(canonical.resolvedFunctionalBins);
+    database.resolvedFunctionalValueSets.swap(
+        canonical.resolvedFunctionalValueSets);
+    database.resolvedFunctionalValueAtoms.swap(
+        canonical.resolvedFunctionalValueAtoms);
+    database.resolvedFunctionalValueLimbs.swap(
+        canonical.resolvedFunctionalValueLimbs);
+    database.resolvedFunctionalBinPlans.swap(
+        canonical.resolvedFunctionalBinPlans);
+    database.resolvedFunctionalBinGroups.swap(
+        canonical.resolvedFunctionalBinGroups);
+    database.resolvedTransitionAlternatives.swap(
+        canonical.resolvedTransitionAlternatives);
+    database.resolvedTransitionExpansionGroups.swap(
+        canonical.resolvedTransitionExpansionGroups);
+    database.resolvedTransitionSteps.swap(canonical.resolvedTransitionSteps);
+    database.resolvedCrossPlans.swap(canonical.resolvedCrossPlans);
+    database.resolvedCrossAutomaticBinCountLimbs.swap(
+        canonical.resolvedCrossAutomaticBinCountLimbs);
+    database.resolvedCrossAutomaticNodes.swap(
+        canonical.resolvedCrossAutomaticNodes);
+    database.resolvedCrossAutomaticEdges.swap(
+        canonical.resolvedCrossAutomaticEdges);
+    database.resolvedCrossSelectorBindings.swap(
+        canonical.resolvedCrossSelectorBindings);
+    database.resolvedFunctionalTupleSets.swap(
+        canonical.resolvedFunctionalTupleSets);
+    database.resolvedFunctionalTupleSetTuples.swap(
+        canonical.resolvedFunctionalTupleSetTuples);
+    database.resolvedFunctionalTupleSetComponents.swap(
+        canonical.resolvedFunctionalTupleSetComponents);
+    return Status::Ok;
+#if OBELISK_COVERAGE_HAS_EXCEPTIONS
+  } catch (const std::bad_alloc &) {
+    setDiagnostic(diagnostic, Status::OutOfMemory, 0, SectionKind::Strings,
+                  NoRecord, "allocation");
+    return Status::OutOfMemory;
+  } catch (const std::length_error &) {
+    return Status::LimitExceeded;
+  }
+#endif
 }
 
 Status validate(const Database &db, Diagnostic *diagnostic) {
@@ -8112,129 +8396,12 @@ static Status mergeInPlace(Database &destination, const Database &source,
   destination.resolvedFunctionalTupleSets.clear();
   destination.resolvedFunctionalTupleSetTuples.clear();
   destination.resolvedFunctionalTupleSetComponents.clear();
-  auto appendRows = [](auto &to, const auto &from) {
-    for (const auto &row : from)
-      to.push_back(row);
-  };
   for (const auto &[key, provider] : configurationSources) {
     const auto &view = (provider == &source ? sourceIndex : existingIndex)
                            .get(key.first, key.second);
-    destination.functionalConfigurations.push_back(*view.configuration);
-    appendRows(destination.functionalConfigurationOptions,
-               view.functionalConfigurationOptions);
-    appendRows(destination.resolvedFunctionalItems,
-               view.resolvedFunctionalItems);
-    size_t destinationBinBase = destination.resolvedFunctionalBins.size();
-    size_t providerBinBase =
-        !view.resolvedFunctionalBins.empty()
-            ? &view.resolvedFunctionalBins.front() -
-                  provider->resolvedFunctionalBins.data()
-        : !view.resolvedFunctionalBinGroups.empty()
-            ? view.resolvedFunctionalBinGroups.front().firstBin
-            : 0;
-    appendRows(destination.resolvedFunctionalBins, view.resolvedFunctionalBins);
-    for (const auto &group : view.resolvedFunctionalBinGroups) {
-      auto copy = group;
-      copy.firstBin = destinationBinBase + (group.firstBin - providerBinBase);
-      destination.resolvedFunctionalBinGroups.push_back(copy);
-    }
-    for (const auto &set : view.resolvedFunctionalValueSets) {
-      auto copy = set;
-      copy.firstAtom = destination.resolvedFunctionalValueAtoms.size();
-      for (uint32_t atomIndex = 0; atomIndex != set.atomCount; ++atomIndex) {
-        const auto &sourceAtom =
-            provider->resolvedFunctionalValueAtoms[set.firstAtom + atomIndex];
-        auto atom = sourceAtom;
-        atom.firstLimb = destination.resolvedFunctionalValueLimbs.size();
-        for (uint32_t limbIndex = 0; limbIndex != atom.limbCount; ++limbIndex)
-          destination.resolvedFunctionalValueLimbs.push_back(
-              provider->resolvedFunctionalValueLimbs[sourceAtom.firstLimb +
-                                                     limbIndex]);
-        destination.resolvedFunctionalValueAtoms.push_back(atom);
-      }
-      destination.resolvedFunctionalValueSets.push_back(copy);
-    }
-    appendRows(destination.resolvedFunctionalBinPlans,
-               view.resolvedFunctionalBinPlans);
-    size_t destinationAlternativeBase =
-        destination.resolvedTransitionAlternatives.size();
-    size_t providerAlternativeBase =
-        !view.resolvedTransitionAlternatives.empty()
-            ? &view.resolvedTransitionAlternatives.front() -
-                  provider->resolvedTransitionAlternatives.data()
-        : !view.resolvedTransitionExpansionGroups.empty()
-            ? view.resolvedTransitionExpansionGroups.front().firstAlternative
-            : 0;
-    for (const auto &alternative : view.resolvedTransitionAlternatives) {
-      auto copy = alternative;
-      copy.firstStep = destination.resolvedTransitionSteps.size();
-      destination.resolvedTransitionSteps.insert(
-          destination.resolvedTransitionSteps.end(),
-          provider->resolvedTransitionSteps.begin() + alternative.firstStep,
-          provider->resolvedTransitionSteps.begin() + alternative.firstStep +
-              alternative.stepCount);
-      destination.resolvedTransitionAlternatives.push_back(copy);
-    }
-    for (const auto &group : view.resolvedTransitionExpansionGroups) {
-      auto copy = group;
-      copy.firstAlternative =
-          destinationAlternativeBase +
-          (group.firstAlternative - providerAlternativeBase);
-      destination.resolvedTransitionExpansionGroups.push_back(copy);
-    }
-    for (const auto &plan : view.resolvedCrossPlans) {
-      if (destination.resolvedCrossAutomaticBinCountLimbs.size() > UINT32_MAX)
-        return Status::IntegerOverflow;
-      auto copy = plan;
-      copy.firstAutomaticBinCountLimb = static_cast<uint32_t>(
-          destination.resolvedCrossAutomaticBinCountLimbs.size());
-      destination.resolvedCrossAutomaticBinCountLimbs.insert(
-          destination.resolvedCrossAutomaticBinCountLimbs.end(),
-          provider->resolvedCrossAutomaticBinCountLimbs.begin() +
-              plan.firstAutomaticBinCountLimb,
-          provider->resolvedCrossAutomaticBinCountLimbs.begin() +
-              plan.firstAutomaticBinCountLimb +
-              plan.automaticBinCountLimbCount);
-      destination.resolvedCrossPlans.push_back(copy);
-    }
-    for (const auto &node : view.resolvedCrossAutomaticNodes) {
-      if (destination.resolvedCrossAutomaticEdges.size() > UINT32_MAX)
-        return Status::IntegerOverflow;
-      auto copy = node;
-      copy.firstEdge =
-          static_cast<uint32_t>(destination.resolvedCrossAutomaticEdges.size());
-      destination.resolvedCrossAutomaticEdges.insert(
-          destination.resolvedCrossAutomaticEdges.end(),
-          provider->resolvedCrossAutomaticEdges.begin() + node.firstEdge,
-          provider->resolvedCrossAutomaticEdges.begin() + node.firstEdge +
-              node.edgeCount);
-      destination.resolvedCrossAutomaticNodes.push_back(copy);
-    }
-    appendRows(destination.resolvedCrossSelectorBindings,
-               view.resolvedCrossSelectorBindings);
-    for (const auto &set : view.resolvedFunctionalTupleSets) {
-      auto copy = set;
-      copy.firstTuple = destination.resolvedFunctionalTupleSetTuples.size();
-      for (uint32_t tupleIndex = 0; tupleIndex != set.tupleCount;
-           ++tupleIndex) {
-        auto tuple =
-            provider
-                ->resolvedFunctionalTupleSetTuples[set.firstTuple + tupleIndex];
-        tuple.firstComponent =
-            destination.resolvedFunctionalTupleSetComponents.size();
-        for (uint32_t componentIndex = 0;
-             componentIndex != tuple.componentCount; ++componentIndex)
-          destination.resolvedFunctionalTupleSetComponents.push_back(
-              provider->resolvedFunctionalTupleSetComponents
-                  [provider
-                       ->resolvedFunctionalTupleSetTuples[set.firstTuple +
-                                                          tupleIndex]
-                       .firstComponent +
-                   componentIndex]);
-        destination.resolvedFunctionalTupleSetTuples.push_back(tuple);
-      }
-      destination.resolvedFunctionalTupleSets.push_back(copy);
-    }
+    Status status = appendConfigurationView(destination, *provider, view);
+    if (status != Status::Ok)
+      return status;
   }
   using ResolvedIDKey = std::tuple<uint64_t, Digest, uint64_t>;
   const auto canonicalItems =

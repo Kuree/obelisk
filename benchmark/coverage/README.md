@@ -52,3 +52,27 @@ were byte-identical:
 
 These are individual observations, not thresholds. See
 `docs/coverage-format.md` for the cost model and expansion bounds.
+
+## Bounded constructor probe
+
+`configuration-scaling.sv` constructs and samples distinct constructor-resolved
+configurations, then writes a database. It is outside the unit suite, defaults
+to 16 configurations, and rejects counts above 128. For a short local check:
+
+```sh
+build/tools/driver/obelisk --std=1800-2023 -O3 --target=native \
+  --coverage=functional -o build/coverage-configuration-scaling \
+  benchmark/coverage/configuration-scaling.sv
+timeout 1s build/coverage-configuration-scaling +N=128 \
+  --coverage-output=build/configuration-scaling.obcov
+```
+
+On the same ARM64 Release build, a fixed 128-configuration input took 178 ms
+before append-only construction and 18 ms after, including startup, sampling,
+and saving. Both images were 173,816 bytes; every report field except run
+metadata matched after normalizing run UUIDs. These are single observations,
+not CI timing assertions or an extrapolation to larger inputs.
+
+The format regression uses 16 configurations. Codec and radix-index units use
+256 records; large fixture sizes belong in standalone measurements. The four
+new packing, failure, and static-profile regressions use at most two bundles.

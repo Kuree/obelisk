@@ -264,6 +264,20 @@ public:
       for (unsigned mask = 128; !(difference & mask); mask >>= 1)
         ++differingBit;
     }
+    // Finish all allocations before publishing a leaf. This index also backs
+    // persistent runtime caches, which must survive a failed insertion.
+    std::vector<size_t> path;
+    size_t subtree = root;
+    if (candidate != None) {
+      while (nodes[subtree].bit != None && nodes[subtree].bit < differingBit) {
+        path.push_back(subtree);
+        subtree = nodes[subtree].child[branch(bytes, nodes[subtree].bit)];
+      }
+    }
+    size_t required = nodes.size() + (candidate == None ? 1 : 2);
+    if (required > nodes.capacity())
+      nodes.reserve(
+          std::max(required, std::min(nodes.max_size(), nodes.capacity() * 2)));
     entries.emplace_back(std::move(ownedKey), std::move(bytes),
                          std::forward<Args>(args)...);
     Entry *inserted = &entries.back();
@@ -273,13 +287,6 @@ public:
       root = leaf;
       first = last = inserted;
       return {{this, inserted}, true};
-    }
-    std::vector<size_t> path;
-    size_t subtree = root;
-    while (nodes[subtree].bit != None && nodes[subtree].bit < differingBit) {
-      path.push_back(subtree);
-      subtree =
-          nodes[subtree].child[branch(inserted->bytes, nodes[subtree].bit)];
     }
     const unsigned side = branch(inserted->bytes, differingBit);
     inserted->previous =

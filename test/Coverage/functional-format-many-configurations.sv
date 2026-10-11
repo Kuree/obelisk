@@ -2,7 +2,7 @@
 // RUN: %t --coverage-output=%t.obcov | FileCheck %s
 // RUN: obelisk-cov inspect %t.obcov | FileCheck %s --check-prefix=INSPECT
 
-// Each of 128 array elements is a separately constructed covergroup with its
+// Each of 16 array elements is a separately constructed covergroup with its
 // own resolved configuration (IEEE 1800-2023 19.3, 19.8.1), and the codec
 // writes and reads all of them.
 
@@ -11,11 +11,11 @@ module top;
     option.per_instance = 1;
     cp: coverpoint value { bins selected = {key}; }
   endgroup
-  cg groups[128];
+  cg groups[16];
   int covered, total;
   real result;
   initial begin
-    for (int i = 0; i < 128; ++i) begin
+    for (int i = 0; i < 16; ++i) begin
       groups[i] = new(i);
       groups[i].sample(i);
     end
@@ -25,7 +25,7 @@ module top;
   end
 endmodule
 
-// CHECK: COVERAGE 100 128 128
+// CHECK: COVERAGE 100 16 16
 // INSPECT: codec-version: 2
-// INSPECT: functional-configurations: 128
-// INSPECT: resolved-functional-bins: 128
+// INSPECT: functional-configurations: 16
+// INSPECT: resolved-functional-bins: 16

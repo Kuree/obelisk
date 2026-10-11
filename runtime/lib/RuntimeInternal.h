@@ -4,6 +4,7 @@
 #ifndef OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 #define OBELISK_RUNTIME_LIB_RUNTIMEINTERNAL_H
 
+#include "../../lib/Coverage/CoverageIndex.h"
 #include "CanonicalPlane.h"
 #include "DesignBytecodeImage.h"
 #include "ExceptionSupport.h"
@@ -1753,6 +1754,9 @@ struct FunctionalCoverageCrossTupleState {
 
 struct FunctionalCoverageTypeState {
   obelisk::coverage::Digest configuration{};
+  /// Immutable constructor-resolved metadata for this configuration. Sampling
+  /// and binding must not scan configurations constructed earlier.
+  std::shared_ptr<const obelisk::coverage::Database> configurationSchema;
   uint32_t instanceGoal = 100;
   uint32_t instanceWeight = 1;
   uint32_t typeGoal = 100;
@@ -1791,6 +1795,16 @@ struct FunctionalCoverageTypeKey {
            std::tie(other.typeID, other.configuration);
   }
 };
+
+namespace obelisk::coverage::detail {
+template <> struct IndexKey<::FunctionalCoverageTypeKey> {
+  static void append(std::vector<uint8_t> &bytes,
+                     const ::FunctionalCoverageTypeKey &key) {
+    IndexKey<uint64_t>::append(bytes, key.typeID);
+    IndexKey<Digest>::append(bytes, key.configuration);
+  }
+};
+} // namespace obelisk::coverage::detail
 
 /// Mutable type-option state is context-wide and keyed only by stable schema
 /// identities. It is deliberately separate from resolved configurations so a
@@ -1890,10 +1904,23 @@ struct CovergroupBlockEventFeatureState {
 // arrays are finalized before worker execution; relaxed atomic line hits then
 // avoid the context mutex. Toggle publication already serializes committed
 // state transitions and uses the same context lock as the shadow planes.
+struct FunctionalCoverageConstructionSchemas;
+
 struct CoverageState {
   std::unique_ptr<obelisk::coverage::Database> schema;
+  std::shared_ptr<const FunctionalCoverageConstructionSchemas>
+      constructionSchemas;
+  obelisk::coverage::detail::IndexMap<uint64_t,
+                                      std::vector<obelisk::coverage::Digest>>
+      configurationsByType;
+  const obelisk::coverage::Database *configurationIndexSchema = nullptr;
+  obelisk::coverage::detail::IndexSet<FunctionalCoverageTypeKey>
+      configurationKeys;
+  size_t indexedConfigurations = 0;
   uint64_t nextInstance = 1;
-  std::map<FunctionalCoverageTypeKey, FunctionalCoverageTypeState> types;
+  obelisk::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
+                                      FunctionalCoverageTypeState>
+      types;
   std::map<uint64_t, FunctionalCoverageTypeOptions> typeOptions;
   std::unordered_map<uint64_t, FunctionalCoverageInstanceState> instances;
   std::unique_ptr<std::atomic<uint64_t>[]> lineCounters;

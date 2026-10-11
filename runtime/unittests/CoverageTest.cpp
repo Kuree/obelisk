@@ -1754,6 +1754,58 @@ TEST(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest,
+     ConflictingTypeProfileDoesNotPublishConfiguration) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  FunctionalExpression comment;
+  comment.id = 62;
+  comment.owner = 10;
+  comment.ownerKind = FunctionalExpressionOwnerKind::Type;
+  comment.role = FunctionalExpressionRole::OptionRHS;
+  comment.resultKind = FunctionalExpressionResultKind::String;
+  comment.signedness = CoverageSignedness::NotApplicable;
+  comment.ownerOrdinal =
+      static_cast<uint32_t>(FunctionalConfigurationOptionKind::Comment);
+  comment.ownerSubordinal =
+      static_cast<uint32_t>(FunctionalOptionScopeKind::Type);
+  comment.evaluationPhase = FunctionalExpressionEvaluationPhase::Option;
+  schema.functionalExpressions.push_back(comment);
+  schema.functionalOptionPlans.push_back(
+      {10, 62, FunctionalConfigurationOptionOwnerKind::Group,
+       FunctionalOptionScopeKind::Type,
+       FunctionalConfigurationOptionKind::Comment,
+       static_cast<uint32_t>(FunctionalConfigurationOptionKind::Comment), 0});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema, false);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  auto construct = [&](const char *text, obelisk_rt_covergroup_v1 &handle) {
+    return withManagedString(context, text, [&](auto value) {
+      const obelisk_rt_functional_value_v1 expression{
+          62,      0,       0,     nullptr,
+          nullptr, nullptr, value, OBELISK_RT_FUNCTIONAL_VALUE_STRING,
+          0};
+      return obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+                                             &expression, 1, &handle);
+    });
+  };
+  obelisk_rt_covergroup_v1 first = 0, rejected = 0, reused = 0;
+  ASSERT_EQ(construct("same static comment", first), OBELISK_RT_OK);
+  EXPECT_EQ(construct("conflicting static comment", rejected),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(rejected, 0u);
+  ASSERT_EQ(construct("same static comment", reused), OBELISK_RT_OK);
+  EXPECT_NE(first, reused);
+  Database saved = saveCoverage(context, "type-profile-transaction");
+  ASSERT_EQ(saved.functionalConfigurations.size(), 1u);
+  EXPECT_EQ(saved.resolvedInstances.size(), 2u);
+  ASSERT_EQ(saved.functionalConfigurationOptions.size(), 1u);
+  EXPECT_EQ(saved.functionalConfigurationOptions.front().stringValue,
+            "same static comment");
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

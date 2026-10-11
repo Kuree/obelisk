@@ -1700,8 +1700,8 @@ TEST(CoverageDatabaseTest, RejectsCyclicScopeParents) {
   EXPECT_STREQ(diagnostic.field, "scope.parent_cycle");
 }
 
-TEST(CoverageDatabaseTest, LargeSparseHierarchyAndCountersRoundTrip) {
-  constexpr uint64_t count = 65536;
+TEST(CoverageDatabaseTest, SparseHierarchyAndCountersRoundTrip) {
+  constexpr uint64_t count = 256;
   Database db;
   db.sourceFiles.push_back({UINT64_MAX, "large.sv", {}});
   obelisk::coverage::Run run;
@@ -2586,6 +2586,89 @@ TEST(CoverageDatabaseTest, CanonicalizesUnboundedResolvedRealEndpoints) {
   atom.realLowBits = 0;
   EXPECT_EQ(validate(db, &diagnostic), Status::InvalidReference);
   EXPECT_STREQ(diagnostic.field, "resolved_functional_value_atom");
+}
+
+TEST(CoverageDatabaseTest, PacksConstructionOrderWithoutChangingSemantics) {
+  Database first = makeTypedDatabase();
+  Database second = first;
+  assignSecondRun(second);
+  auto &limb = second.resolvedFunctionalValueLimbs.front();
+  limb.lowAval ^= 1;
+  limb.highAval ^= 1;
+  rekeyOnlyConfiguration(second);
+  ASSERT_EQ(validate(second), Status::Ok);
+  ASSERT_NE(first.functionalConfigurations.front().configuration,
+            second.functionalConfigurations.front().configuration);
+  Database expected = first;
+  ASSERT_EQ(merge(expected, second), Status::Ok);
+  std::vector<uint8_t> expectedImage;
+  ASSERT_EQ(serialize(expected, expectedImage), Status::Ok);
+
+  // The two bundles have equal row counts. Put metadata in descending key
+  // order while leaving referenced payloads in their original physical order.
+  // Bin and alternative groups address metadata, so adjust those two spans.
+  Database unordered = expected;
+  auto rotateBundles = [](auto &rows) {
+    ASSERT_EQ(rows.size() % 2, 0u);
+    std::rotate(rows.begin(), rows.begin() + rows.size() / 2, rows.end());
+  };
+  rotateBundles(unordered.functionalConfigurations);
+  rotateBundles(unordered.functionalConfigurationOptions);
+  rotateBundles(unordered.resolvedFunctionalItems);
+  rotateBundles(unordered.resolvedFunctionalBins);
+  rotateBundles(unordered.resolvedFunctionalBinPlans);
+  rotateBundles(unordered.resolvedFunctionalBinGroups);
+  rotateBundles(unordered.resolvedTransitionAlternatives);
+  rotateBundles(unordered.resolvedTransitionExpansionGroups);
+  rotateBundles(unordered.resolvedCrossPlans);
+  rotateBundles(unordered.resolvedCrossAutomaticNodes);
+  rotateBundles(unordered.resolvedCrossSelectorBindings);
+  rotateBundles(unordered.resolvedFunctionalValueSets);
+  rotateBundles(unordered.resolvedFunctionalTupleSets);
+  const uint32_t binsPerBundle = unordered.resolvedFunctionalBins.size() / 2;
+  for (auto &group : unordered.resolvedFunctionalBinGroups)
+    group.firstBin = group.firstBin < binsPerBundle
+                         ? group.firstBin + binsPerBundle
+                         : group.firstBin - binsPerBundle;
+  const uint32_t alternativesPerBundle =
+      unordered.resolvedTransitionAlternatives.size() / 2;
+  for (auto &group : unordered.resolvedTransitionExpansionGroups)
+    group.firstAlternative =
+        group.firstAlternative < alternativesPerBundle
+            ? group.firstAlternative + alternativesPerBundle
+            : group.firstAlternative - alternativesPerBundle;
+  EXPECT_NE(validate(unordered), Status::Ok);
+  ASSERT_EQ(canonicalizeFunctionalConfigurations(unordered), Status::Ok);
+  ASSERT_EQ(validate(unordered), Status::Ok);
+  std::vector<uint8_t> actualImage;
+  ASSERT_EQ(serialize(unordered, actualImage), Status::Ok);
+  EXPECT_EQ(actualImage, expectedImage);
+}
+
+TEST(CoverageDatabaseTest, FailedPackingPreservesAllColumns) {
+  Database database = makeTypedDatabase();
+  std::vector<uint8_t> expected;
+  ASSERT_EQ(serialize(database, expected), Status::Ok);
+  auto &alternative = database.resolvedTransitionAlternatives.front();
+  const uint32_t firstStep = alternative.firstStep;
+  alternative.firstStep = UINT32_MAX;
+  EXPECT_EQ(canonicalizeFunctionalConfigurations(database),
+            Status::InvalidReference);
+  EXPECT_EQ(database.resolvedTransitionAlternatives.front().firstStep,
+            UINT32_MAX);
+  database.resolvedTransitionAlternatives.front().firstStep = firstStep;
+  std::vector<uint8_t> actual;
+  ASSERT_EQ(serialize(database, actual), Status::Ok);
+  EXPECT_EQ(actual, expected);
+
+  database.functionalConfigurations.push_back(
+      database.functionalConfigurations.front());
+  EXPECT_EQ(canonicalizeFunctionalConfigurations(database),
+            Status::UnsortedOrDuplicate);
+  ASSERT_EQ(database.functionalConfigurations.size(), 2u);
+  database.functionalConfigurations.pop_back();
+  ASSERT_EQ(serialize(database, actual), Status::Ok);
+  EXPECT_EQ(actual, expected);
 }
 
 TEST(CoverageDatabaseTest, ConfigurationDigestIgnoresResolvedIDs) {

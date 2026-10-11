@@ -56,6 +56,15 @@ views are built once per operation; hashing each configuration visits its own
 rows. Merge rebases spans and maps resolved identities through indexed semantic
 keys. It does not scan every provider table for every configuration or bin.
 
+Runtime construction partitions static templates by covergroup type once and
+shares the global reserved-ID indexes. Each new configuration resolves and
+validates its own template projection, retains immutable local metadata for
+sampling, and appends its resolved columns with geometric capacity growth.
+Construction no longer copies, validates, sorts, or shifts earlier bundles.
+Snapshots and loads pack the bundles in radix order and rebase each referenced
+payload once. These storage and indexing steps cost O(N), including amortized
+vector growth; exact semantic expansion retains the bounds described below.
+
 Snapshot generation indexes items, types, handles, and cross identities once.
 Report generation groups configuration options once, aggregates selected
 counters once, and visits actual contributors. Toggle field intervals are
@@ -87,7 +96,7 @@ merge remains transactional and counters retain saturation behavior.
 The scaling source probe found that arrays of covergroup handles lacked
 aggregate storage geometry. The common Simulation provenance helper now gives
 each covergroup element a 64-bit span and alignment. The regression constructs
-128 different configurations, samples every instance, checks the type's bin
+16 different configurations, samples every instance, checks the type's bin
 counts, writes native and bytecode databases, reports them, and merges them.
 The change uses the existing typed storage layout contract and keeps native and
 bytecode representation consistent.
@@ -116,6 +125,18 @@ proves reflexivity and known nulls. Native lowering uses converted operands in
 one LLVM integer comparison, and bytecode emits one comparison instruction.
 The source, backend, canonicalization, and invalid-symbol regressions cover
 both tiers at O0 and O3 without adding runtime metadata lookups.
+
+Constructor scaling review preserves distinct instances and configuration
+identity (19.3), the single static type-option profile across configurations
+(19.7.1), and retained type-level instance coverage (19.8). Local projections
+retain functional exclusions and every owned transition, cross, and value-set
+payload; the persisted static hierarchy stays in the master schema. Malformed
+constructors and conflicting static profiles fail before publishing metadata.
+Packing is transactional and shared with merge. Small regressions compare the
+complete encoded image after repacking and exercise failed insertion, failed
+packing, configuration reuse, and both execution tiers. The runtime indexes
+remain context-owned and independent of MLIR; existing dialect verification
+and native/bytecode conversion tests exercise the compiler boundary.
 
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime

@@ -910,6 +910,12 @@ Digest computeSchemaFingerprint(const Database &database);
 /// `(type, configurationKey)` bundle. The key itself is not hashed.
 Digest computeFunctionalConfigurationFingerprint(
     const Database &database, uint64_t type, const Digest &configurationKey);
+/// Transactionally orders internally canonical configuration bundles and
+/// repacks their payload spans. Runtime construction can append bundles without
+/// repeatedly inserting into earlier configurations. Static schema and run
+/// identities are preserved. Each referenced payload is copied once.
+Status canonicalizeFunctionalConfigurations(Database &database,
+                                            Diagnostic *diagnostic = nullptr);
 Digest sha256(const uint8_t *data, size_t size);
 
 Status merge(Database &destination, const Database &source,
