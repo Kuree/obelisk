@@ -145,7 +145,8 @@
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/lib/RandModelCount.h",
           "lib/Solver/RandomSamplerZ3.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "runtime/include/obelisk/Runtime/RandomDomain.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -181,7 +182,9 @@
           "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
           "test/Runtime/random-sampler-plan-validation.mlir",
-          "test/Build/runtime-compiled-sampler.test"
+          "test/Build/runtime-compiled-sampler.test",
+          "test/Conversion/obelisk-to-simulation-random-wide-enum-domains.mlir",
+          "test/Runtime/random-wide-domain-plan-validation.mlir"
         ]
       }
     },
@@ -196,8 +199,8 @@
         },
         {
           "feature": "Standalone enum domains",
-          "status": "partial",
-          "detail": "Named enumerators, anonymous and typedef inventories are frozen before AST disposal. Representations through 64 bits are admitted; colliding semantic display names with different source domains are diagnosed rather than conflated."
+          "status": "supported",
+          "detail": "Named enumerators, anonymous and typedef inventories retain arbitrary-width two-state representations in class and scope plans. Compiler Z3 analyzes exact membership; wide literal-pool records feed the Boolean sampler in native and WASM execution. Frozen nonmember enum state remains legal; conflicting source domains are diagnosed."
         },
         {
           "feature": "Packed structs and untagged unions",
@@ -241,7 +244,8 @@
           "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "runtime/include/obelisk/Runtime/RandomDomain.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -251,7 +255,11 @@
           "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-wide-enum-domains.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
+          "test/Runtime/random-wide-domain-plan-validation.mlir"
         ]
       }
     },
@@ -1438,7 +1446,8 @@
           "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "runtime/include/obelisk/Runtime/RandomDomain.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
@@ -1446,7 +1455,8 @@
           "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir",
           "test/Runtime/obelisk-to-simulation-random-array-modes-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir"
         ]
       }
     },
@@ -1632,11 +1642,13 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "runtime/include/obelisk/Runtime/RandomDomain.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
-          "test/Conversion/obelisk-to-simulation-std-randomize.mlir"
+          "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir"
         ]
       }
     },

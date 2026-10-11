@@ -4757,6 +4757,9 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT UINT32_C(32)
 #define OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE UINT16_C(32)
+// V2 domain record: width is u32; mask/value are u64 literal-pool word indices.
+// A zero record flag retains the inline u16 width and u64 mask/value format.
+#define OBELISK_RT_RANDOM_DOMAIN_LITERAL_WORDS UINT32_C(1)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
 #define OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 UINT32_MAX
 

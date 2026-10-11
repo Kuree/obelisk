@@ -5,6 +5,7 @@
 #include "RandModelCount.h"
 #include "RandSolveOrder.h"
 #include "RandSolveWeighted.h"
+#include "obelisk/Runtime/RandomDomain.h"
 #include "obelisk/Runtime/RandomSamplerPlan.h"
 
 #include <algorithm>
@@ -725,17 +726,24 @@ sampleRandomPlan(const uint8_t *program, size_t programSize,
     std::vector<bool> active(groups, false);
     for (unsigned index = 0; index != records; ++index) {
       const uint8_t *p = program + offset + 8 + size_t(index) * 32;
-      unsigned group = read32(p), target = read32(p + 4), bits = read16(p + 8);
-      uint64_t mask = read64(p + 16), value = read64(p + 24);
+      random::DomainRecord decoded;
+      if (!random::readDomainRecord(p, width, wide, program + literals,
+                                    wide ? read32(program + 24) : 0, nullptr,
+                                    decoded) ||
+          decoded.group >= groups)
+        return SamplerResult::Invalid;
+      unsigned group = decoded.group, target = decoded.targetOffset;
       ID match = 1;
-      for (unsigned bit = 0; bit != bits; ++bit) {
+      for (unsigned bit = 0; bit != decoded.width; ++bit) {
         active[group] =
             active[group] ||
             ((mutableMask[(target + bit) / 64] >> ((target + bit) % 64)) & 1) !=
                 0;
-        if ((mask >> bit) & 1)
-          match = circuit.conjunction(match, variable[target + bit] ^
-                                                 ID(!((value >> bit) & 1)));
+        if ((decoded.maskWord(bit / 64) >> (bit % 64)) & 1)
+          match = circuit.conjunction(
+              match,
+              variable[target + bit] ^
+                  ID(!((decoded.valueWord(bit / 64) >> (bit % 64)) & 1)));
       }
       domains[group] = circuit.disjunction(domains[group], match);
     }

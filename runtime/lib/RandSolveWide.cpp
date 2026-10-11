@@ -4,6 +4,7 @@
 #include "RandSamplePlan.h"
 #include "RandSolveOrder.h"
 #include "RandSolveWeighted.h"
+#include "obelisk/Runtime/RandomDomain.h"
 #include "obelisk/Runtime/RandomSamplerPlan.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -43,15 +44,14 @@ struct SolveBeforeEdge {
 };
 
 struct DomainPattern {
-  uint64_t mask = 0;
-  uint64_t value = 0;
+  obelisk::random::DomainRecord bits;
   uint64_t freeMask = 0;
   uint64_t cardinality = 0;
 };
 
 struct DomainGroup {
   uint32_t targetOffset = 0;
-  uint16_t width = 0;
+  uint32_t width = 0;
   std::vector<DomainPattern> patterns;
   uint64_t cardinality = 0;
   bool fullCardinality = false;
@@ -662,8 +662,6 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
   if (depth != 0 || !sawHard || sawSoft != result.hasSoft ||
       softPriorities != expectedSoftPriorities ||
-      std::any_of(literalUse.begin(), literalUse.end(),
-                  [](uint8_t used) { return used != 1; }) ||
       std::any_of(result.captureWidths.begin(), result.captureWidths.end(),
                   [](uint32_t width) { return width == 0; }))
     return false;
@@ -721,21 +719,22 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     WideValue encodedMask(result.aggregateWidth);
     const uint8_t *cursor = bytes + domainRecordsOffset;
     for (uint32_t index = 0; index != domainRecordCount; ++index) {
-      uint32_t groupIndex = read32(cursor);
-      uint32_t targetOffset = read32(cursor + 4);
-      uint16_t width = read16(cursor + 8);
-      uint16_t reserved16 = read16(cursor + 10);
-      uint32_t reserved32 = read32(cursor + 12);
-      uint64_t patternMask = read64(cursor + 16);
-      uint64_t patternValue = read64(cursor + 24);
+      obelisk::random::DomainRecord decoded;
+      if (!obelisk::random::readDomainRecord(
+              cursor, result.aggregateWidth, true, bytes + literalOffset,
+              literalWordCount, literalUse.data(), decoded) ||
+          decoded.group >= domainGroupCount)
+        return false;
       cursor += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
-      uint64_t fieldMask = width == 0 ? 0 : widthMask(width);
-      if (groupIndex >= domainGroupCount || width == 0 || width > 64 ||
-          targetOffset > result.aggregateWidth ||
-          width > result.aggregateWidth - targetOffset || reserved16 != 0 ||
-          reserved32 != 0 || (patternMask & ~fieldMask) != 0 ||
-          (patternValue & ~patternMask) != 0 ||
-          (width == 64 && patternMask == 0))
+      uint32_t groupIndex = decoded.group;
+      uint32_t targetOffset = decoded.targetOffset;
+      uint32_t width = decoded.width;
+      // Wide semantic domains are sampled by the compiled exact plan. The
+      // legacy bounded radix traversal only stores narrow domain indices.
+      if (width > 64 &&
+          (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
+           !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                      OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED))))
         return false;
       DomainGroup &group = result.domainGroups[groupIndex];
       if (seen[groupIndex] &&
@@ -752,27 +751,30 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
         }
       }
       for (const DomainPattern &other : group.patterns)
-        if (((patternValue ^ other.value) & (patternMask & other.mask)) == 0)
+        if (obelisk::random::domainPatternsOverlap(decoded, other.bits))
           return false;
-      uint64_t freeMask = fieldMask & ~patternMask;
-      unsigned freeBits = countBits(freeMask);
-      if (freeBits == 64)
-        return false;
-      uint64_t cardinality = uint64_t{1} << freeBits;
-      uint64_t updated = 0;
-      bool overflow =
-          __builtin_add_overflow(group.cardinality, cardinality, &updated);
-      if (group.fullCardinality || (overflow && updated != 0))
-        return false;
-      group.fullCardinality = overflow;
-      group.cardinality = updated;
-      group.patterns.push_back(
-          {patternMask, patternValue, freeMask, cardinality});
+      uint64_t freeMask = 0, cardinality = 0;
+      if (width <= 64) {
+        freeMask = widthMask(width) & ~decoded.maskWord(0);
+        unsigned freeBits = countBits(freeMask);
+        cardinality = uint64_t{1} << freeBits;
+        uint64_t updated = 0;
+        bool overflow =
+            __builtin_add_overflow(group.cardinality, cardinality, &updated);
+        if (group.fullCardinality || (overflow && updated != 0))
+          return false;
+        group.fullCardinality = overflow;
+        group.cardinality = updated;
+      }
+      group.patterns.push_back({decoded, freeMask, cardinality});
     }
     if (std::any_of(seen.begin(), seen.end(),
                     [](uint8_t value) { return value == 0; }))
       return false;
   }
+  if (std::any_of(literalUse.begin(), literalUse.end(),
+                  [](uint8_t used) { return used != 1; }))
+    return false;
   result.maxDepth = static_cast<uint32_t>(maxDepth);
   uint64_t requiredCaptureWords = 0;
   for (size_t index = 0; index != result.captureWidths.size(); ++index) {
@@ -1137,8 +1139,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
         WideValue overlap =
             extract(mutableMask.words.data(), mutableMask.words.size(),
                     group.targetOffset, group.width);
-        if (truth(overlap) && overlap.words[0] != highMask(group.width))
-          return OBELISK_RT_INVALID_ARGUMENT;
+        if (truth(overlap))
+          for (size_t word = 0; word != overlap.words.size(); ++word)
+            if (overlap.words[word] != (word + 1 == overlap.words.size()
+                                            ? highMask(group.width)
+                                            : UINT64_MAX))
+              return OBELISK_RT_INVALID_ARGUMENT;
       }
       if (maxAttempts == 0)
         return OBELISK_RT_OK;
@@ -1169,7 +1175,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
                                  uint64_t &groupIndex) {
       uint64_t base = 0;
       for (const DomainPattern &pattern : group.patterns) {
-        if ((field & pattern.mask) == pattern.value) {
+        if ((field & pattern.bits.maskWord(0)) == pattern.bits.valueWord(0)) {
           groupIndex = base + compressBits(field, pattern.freeMask);
           return true;
         }
@@ -1181,7 +1187,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       uint64_t base = 0;
       for (const DomainPattern &pattern : group.patterns) {
         if (groupIndex - base < pattern.cardinality)
-          return pattern.value |
+          return pattern.bits.valueWord(0) |
                  expandBits(groupIndex - base, pattern.freeMask);
         base += pattern.cardinality;
       }

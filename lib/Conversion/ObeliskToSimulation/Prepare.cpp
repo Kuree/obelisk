@@ -4615,15 +4615,15 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
 
   struct RandomDomainPattern {
-    uint64_t mask;
-    uint64_t value;
+    APInt mask;
+    APInt value;
   };
   struct RandomSubdomain {
     uint64_t offset;
     uint64_t width;
     SmallVector<RandomDomainPattern> patterns;
   };
-  llvm::DenseMap<Type, SmallVector<uint64_t>> enumValues;
+  llvm::DenseMap<Type, SmallVector<APInt>> enumValues;
   llvm::DenseMap<Type, ArrayAttr> frozenEnumDomains;
   llvm::DenseSet<Type> ambiguousFrozenEnumDomains;
   if (auto domains = module->getAttrOfType<ArrayAttr>("obelisk.enum_domains")) {
@@ -4647,7 +4647,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   module->removeAttr("obelisk.enum_domains");
 
   auto widthMask = [](uint64_t width) {
-    return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
+    return width ? APInt::getAllOnes(static_cast<unsigned>(width))
+                 : APInt(1, 0);
   };
   constexpr size_t maxRandomDomainPatterns = 4096;
   std::function<FailureOr<SmallVector<RandomDomainPattern>>(Type, Location)>
@@ -4656,7 +4657,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       [&](Type type,
           Location location) -> FailureOr<SmallVector<RandomDomainPattern>> {
     std::optional<uint64_t> width = getSemanticBitstreamWidth(type);
-    if (!width || *width > 64)
+    if (!width || *width == 0 || *width > UINT32_MAX)
       return failure();
     if (auto enumeration = dyn_cast<semantic::EnumType>(type)) {
       if (ambiguousFrozenEnumDomains.contains(enumeration)) {
@@ -4675,7 +4676,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               << "random enum domain has no declaration inventory";
           return failure();
         }
-        SmallVector<uint64_t> values;
+        SmallVector<APInt> values;
         SmallVector<std::pair<Attribute, Location>> enumerators;
         if (frozen != frozenEnumDomains.end()) {
           for (Attribute value : frozen->second)
@@ -4698,7 +4699,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 << "random enum values must be fixed two-state constants";
             return failure();
           }
-          uint64_t bits = parsed->value.getZExtValue();
+          APInt bits = parsed->value;
           if (!llvm::is_contained(values, bits))
             values.push_back(bits);
         }
@@ -4706,12 +4707,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           emitError(location) << "random enum domain has no values";
           return failure();
         }
-        llvm::sort(values);
+        llvm::sort(values,
+                   [](const APInt &a, const APInt &b) { return a.ult(b); });
         found = enumValues.try_emplace(enumeration, std::move(values)).first;
       }
       SmallVector<RandomDomainPattern> patterns;
-      uint64_t mask = widthMask(*width);
-      for (uint64_t value : found->second)
+      APInt mask = widthMask(*width);
+      for (const APInt &value : found->second)
         patterns.push_back({mask, value});
       return patterns;
     }
@@ -4728,8 +4730,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       combined.reserve(result.size() * nested.size());
       for (const RandomDomainPattern &outer : result)
         for (const RandomDomainPattern &inner : nested)
-          combined.push_back({outer.mask | (inner.mask << offset),
-                              outer.value | (inner.value << offset)});
+          combined.push_back(
+              {outer.mask | (inner.mask.zextOrTrunc(*width).shl(offset)),
+               outer.value | (inner.value.zextOrTrunc(*width).shl(offset))});
       result = std::move(combined);
       return success();
     };
@@ -4742,7 +4745,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           buildWholeDomain(elementType, location);
       if (!elementWidth || *elementWidth == 0 || failed(element))
         return failure();
-      SmallVector<RandomDomainPattern> result{{0, 0}};
+      SmallVector<RandomDomainPattern> result{
+          {APInt(*width, 0), APInt(*width, 0)}};
       for (uint64_t index = 0; index != count; ++index)
         if (failed(combine(result, *element, index * *elementWidth)))
           return failure();
@@ -4765,7 +4769,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       // their random domain to its enumerators. Only a standalone enum (or
       // an array of enums) has that finite semantic domain.
       if (!aggregate.getIsTagged())
-        return SmallVector<RandomDomainPattern>{{0, 0}};
+        return SmallVector<RandomDomainPattern>{
+            {APInt(*width, 0), APInt(*width, 0)}};
       if (aggregate.getIsUnion()) {
         uint64_t tagBits = aggregate.getTagBits();
         if (tagBits == 0 || tagBits > *width)
@@ -4781,11 +4786,12 @@ void ObeliskSimPreparePass::runOnOperation() {
               ordinal.getValue().getActiveBits() > 64)
             return failure();
           uint64_t fieldOrdinal = ordinal.getValue().getZExtValue();
-          if (fieldOrdinal > widthMask(tagBits))
+          if (APInt(64, fieldOrdinal).getActiveBits() > tagBits)
             return failure();
           Type fieldType = typeAttr.getValue();
           uint64_t fieldWidth = 0;
-          SmallVector<RandomDomainPattern> fieldPatterns{{0, 0}};
+          SmallVector<RandomDomainPattern> fieldPatterns{
+              {APInt(*width, 0), APInt(*width, 0)}};
           if (!isa<semantic::VoidType>(fieldType)) {
             std::optional<uint64_t> packedWidth =
                 getSemanticBitstreamWidth(fieldType);
@@ -4796,13 +4802,15 @@ void ObeliskSimPreparePass::runOnOperation() {
             fieldWidth = *packedWidth;
             fieldPatterns = std::move(*nested);
           }
-          uint64_t paddingMask =
-              widthMask(payloadWidth) & ~widthMask(fieldWidth);
-          uint64_t tagMask = widthMask(tagBits) << payloadWidth;
-          uint64_t tagValue = fieldOrdinal << payloadWidth;
+          APInt paddingMask = widthMask(payloadWidth).zextOrTrunc(*width) &
+                              ~widthMask(fieldWidth).zextOrTrunc(*width);
+          APInt tagMask =
+              widthMask(tagBits).zextOrTrunc(*width).shl(payloadWidth);
+          APInt tagValue = APInt(*width, fieldOrdinal).shl(payloadWidth);
           for (const RandomDomainPattern &pattern : fieldPatterns) {
-            result.push_back({pattern.mask | paddingMask | tagMask,
-                              pattern.value | tagValue});
+            result.push_back(
+                {pattern.mask.zextOrTrunc(*width) | paddingMask | tagMask,
+                 pattern.value.zextOrTrunc(*width) | tagValue});
             if (result.size() > maxRandomDomainPatterns) {
               emitError(location) << "random finite-domain expansion exceeds "
                                   << maxRandomDomainPatterns << " patterns";
@@ -4812,9 +4820,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         return result;
       }
-      return SmallVector<RandomDomainPattern>{{0, 0}};
+      return SmallVector<RandomDomainPattern>{
+          {APInt(*width, 0), APInt(*width, 0)}};
     }
-    return SmallVector<RandomDomainPattern>{{0, 0}};
+    return SmallVector<RandomDomainPattern>{
+        {APInt(*width, 0), APInt(*width, 0)}};
   };
 
   std::function<LogicalResult(Type, uint64_t,
@@ -5248,11 +5258,17 @@ void ObeliskSimPreparePass::runOnOperation() {
           for (const RandomDomainPattern &pattern : domain.patterns)
             patterns.push_back(builder.getDictionaryAttr({
                 builder.getNamedAttr(
-                    "mask", builder.getIntegerAttr(builder.getI64Type(),
-                                                   APInt(64, pattern.mask))),
+                    "mask", builder.getIntegerAttr(
+                                builder.getIntegerType(
+                                    std::max<uint64_t>(64, domain.width)),
+                                pattern.mask.zextOrTrunc(
+                                    std::max<uint64_t>(64, domain.width)))),
                 builder.getNamedAttr(
-                    "value", builder.getIntegerAttr(builder.getI64Type(),
-                                                    APInt(64, pattern.value))),
+                    "value", builder.getIntegerAttr(
+                                 builder.getIntegerType(
+                                     std::max<uint64_t>(64, domain.width)),
+                                 pattern.value.zextOrTrunc(
+                                     std::max<uint64_t>(64, domain.width)))),
             }));
           domains.push_back(builder.getDictionaryAttr({
               builder.getNamedAttr("offset",
@@ -6908,7 +6924,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         RandomSubdomain nonnegative;
         nonnegative.offset = 31;
         nonnegative.width = 1;
-        nonnegative.patterns.push_back({1, 0});
+        nonnegative.patterns.push_back({APInt(1, 1), APInt(1, 0)});
         properties.push_back({property.source,
                               property.field,
                               {},
@@ -7540,11 +7556,17 @@ void ObeliskSimPreparePass::runOnOperation() {
           for (const RandomDomainPattern &pattern : domain.patterns) {
             patterns.push_back(builder.getDictionaryAttr({
                 builder.getNamedAttr(
-                    "mask", builder.getIntegerAttr(builder.getI64Type(),
-                                                   APInt(64, pattern.mask))),
+                    "mask", builder.getIntegerAttr(
+                                builder.getIntegerType(
+                                    std::max<uint64_t>(64, domain.width)),
+                                pattern.mask.zextOrTrunc(
+                                    std::max<uint64_t>(64, domain.width)))),
                 builder.getNamedAttr(
-                    "value", builder.getIntegerAttr(builder.getI64Type(),
-                                                    APInt(64, pattern.value))),
+                    "value", builder.getIntegerAttr(
+                                 builder.getIntegerType(
+                                     std::max<uint64_t>(64, domain.width)),
+                                 pattern.value.zextOrTrunc(
+                                     std::max<uint64_t>(64, domain.width)))),
             }));
           }
           domains.push_back(builder.getDictionaryAttr({

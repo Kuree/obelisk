@@ -14,7 +14,13 @@ against a local licensed LRM with
 
 Packed structs and untagged unions have the full integral random domain,
 including unnamed encodings of nested enum members. Standalone enums and
-arrays of enums retain enumerator membership. Packed tagged-union random
+arrays of enums retain enumerator membership at arbitrary integral widths.
+Compiler Z3 proves their exact finite domains; native and WASM compiled samplers
+preserve signed representations, high words and live state-dependent restrictions.
+Disabled enum elements retain state, including non-enumerator encodings. Wide
+version-2 domain records store masks and values in disjoint literal-pool ranges;
+malformed indices, padding, overlaps and unused words are rejected before sampling.
+Packed tagged-union random
 declarations are illegal under 18.4; legacy synthetic IR domain tests do not
 make them supported source declarations.
 

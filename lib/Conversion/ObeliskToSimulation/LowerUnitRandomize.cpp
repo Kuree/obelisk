@@ -560,9 +560,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return failure();
 
   struct DomainPattern {
-    uint64_t mask;
-    uint64_t value;
-    uint64_t freeMask;
+    APInt mask;
+    APInt value;
+    APInt freeMask;
     uint64_t cardinality;
   };
   struct PropertyDomain {
@@ -948,13 +948,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     SmallVector<PropertyDomain> propertyDomains;
     if (auto domains = property.getAs<ArrayAttr>("domains")) {
-      if (width > 64) {
-        emitError(location)
-            << "finite semantic domains in random properties wider than 64 "
-               "bits are not executable yet";
-        return failure();
-      }
-      uint64_t coveredMask = 0;
+      APInt coveredMask(width, 0);
       for (Attribute domainAttr : domains) {
         auto domain = dyn_cast<DictionaryAttr>(domainAttr);
         auto offsetAttr =
@@ -973,15 +967,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         uint64_t domainOffset = offsetAttr.getValue().getZExtValue();
         uint64_t domainWidth = domainWidthAttr.getValue().getZExtValue();
-        if (domainWidth == 0 || domainWidth > 64 || domainOffset > width ||
+        if (domainWidth == 0 || domainOffset > width ||
             domainWidth > width - domainOffset) {
           emitError(location) << "randomize property domain is out of range";
           return failure();
         }
-        uint64_t localMask =
-            domainWidth == 64 ? UINT64_MAX : (uint64_t{1} << domainWidth) - 1;
-        uint64_t shiftedMask = localMask << domainOffset;
-        if ((coveredMask & shiftedMask) != 0) {
+        APInt localMask = APInt::getAllOnes(domainWidth);
+        APInt shiftedMask = localMask.zextOrTrunc(width).shl(domainOffset);
+        if (!(coveredMask & shiftedMask).isZero()) {
           emitError(location) << "randomize property domains overlap";
           return failure();
         }
@@ -990,7 +983,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                       static_cast<unsigned>(domainWidth),
                                       {},
                                       0};
-        bool fullCardinality = false;
+        APInt cardinality(domainWidth + 1, 0);
         for (Attribute patternAttr : patternsAttr) {
           auto pattern = dyn_cast<DictionaryAttr>(patternAttr);
           auto maskAttr =
@@ -998,58 +991,40 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           auto valueAttr =
               pattern ? pattern.getAs<IntegerAttr>("value") : IntegerAttr{};
           if (!maskAttr || !valueAttr ||
-              maskAttr.getValue().getBitWidth() > 64 ||
-              valueAttr.getValue().getBitWidth() > 64) {
+              maskAttr.getValue().getActiveBits() > domainWidth ||
+              valueAttr.getValue().getActiveBits() > domainWidth) {
             emitError(location)
                 << "randomize property domain pattern is malformed";
             return failure();
           }
-          uint64_t patternMask = maskAttr.getValue().getZExtValue();
-          uint64_t patternValue = valueAttr.getValue().getZExtValue();
-          if ((patternMask & ~localMask) != 0 ||
-              (patternValue & ~patternMask) != 0) {
+          APInt patternMask = maskAttr.getValue().zextOrTrunc(domainWidth);
+          APInt patternValue = valueAttr.getValue().zextOrTrunc(domainWidth);
+          if (!(patternValue & ~patternMask).isZero()) {
             emitError(location)
                 << "randomize property domain pattern is inconsistent";
             return failure();
           }
           for (const DomainPattern &other : propertyDomain.patterns)
-            if (((patternValue ^ other.value) & (patternMask & other.mask)) ==
-                0) {
+            if (((patternValue ^ other.value) & (patternMask & other.mask))
+                    .isZero()) {
               emitError(location)
                   << "randomize property domain patterns overlap";
               return failure();
             }
-          uint64_t freeMask = localMask & ~patternMask;
-          unsigned freeBits = 0;
-          for (uint64_t bits = freeMask; bits != 0; bits &= bits - 1)
-            ++freeBits;
+          APInt freeMask = ~patternMask;
+          unsigned freeBits = freeMask.popcount();
+          cardinality += APInt::getOneBitSet(domainWidth + 1, freeBits);
           uint64_t patternCardinality =
-              freeBits == 64 ? 0 : uint64_t{1} << freeBits;
-          uint64_t updated = 0;
-          bool overflow = __builtin_add_overflow(propertyDomain.cardinality,
-                                                 patternCardinality, &updated);
-          if (fullCardinality || freeBits == 64 || (overflow && updated != 0)) {
-            emitError(location)
-                << "randomize property domain cardinality is malformed";
-            return failure();
-          }
-          if (overflow)
-            fullCardinality = true;
-          else
-            propertyDomain.cardinality = updated;
+              freeBits >= 64 ? 0 : uint64_t{1} << freeBits;
           propertyDomain.patterns.push_back(
               {patternMask, patternValue, freeMask, patternCardinality});
         }
-        bool coversFullDomain =
-            fullCardinality ||
-            (domainWidth != 64 &&
-             propertyDomain.cardinality == (uint64_t{1} << domainWidth));
-        // A domain that covers every field encoding carries no semantic
-        // restriction. Treat its bits as ordinary packed bits instead of
-        // retaining a zero-cardinality radix that would later require an
-        // invalid division or remainder operation.
-        if (coversFullDomain)
+        if (cardinality == APInt::getOneBitSet(domainWidth + 1, domainWidth))
           continue;
+        // Only the narrow generated-code radix paths use this field. Wide
+        // domain counts and ranks come from the compiler-generated sampler.
+        propertyDomain.cardinality =
+            cardinality.getActiveBits() <= 64 ? cardinality.getZExtValue() : 0;
         propertyDomains.push_back(std::move(propertyDomain));
       }
     }
@@ -2113,6 +2088,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return count;
   };
   auto propertyDomainMask = [&](const Property &property) {
+    assert(property.width <= 64);
     uint64_t result = 0;
     for (const PropertyDomain &domain : property.domains) {
       uint64_t mask =
@@ -2161,8 +2137,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       for (const DomainPattern &pattern : domain.patterns) {
         if (groupIndex - base < pattern.cardinality) {
           uint64_t selected =
-              pattern.value |
-              expandConstantBits(groupIndex - base, pattern.freeMask);
+              pattern.value.getZExtValue() |
+              expandConstantBits(groupIndex - base,
+                                 pattern.freeMask.getZExtValue());
           field |= selected << domain.offset;
           break;
         }
@@ -2211,19 +2188,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         lastBase += pattern.cardinality;
       const DomainPattern &last = domain.patterns.back();
       Value selected = arith::OrIOp::create(
-          builder, location, constant64(last.value),
+          builder, location, constant64(last.value.getZExtValue()),
           expandStaticBits(arith::SubIOp::create(builder, location, groupIndex,
                                                  constant64(lastBase)),
-                           last.freeMask));
+                           last.freeMask.getZExtValue()));
       uint64_t end = lastBase;
       for (const DomainPattern &pattern :
            llvm::reverse(ArrayRef(domain.patterns).drop_back())) {
         end -= pattern.cardinality;
         Value candidate = arith::OrIOp::create(
-            builder, location, constant64(pattern.value),
+            builder, location, constant64(pattern.value.getZExtValue()),
             expandStaticBits(arith::SubIOp::create(builder, location,
                                                    groupIndex, constant64(end)),
-                             pattern.freeMask));
+                             pattern.freeMask.getZExtValue()));
         Value use = arith::CmpIOp::create(
             builder, location, arith::CmpIPredicate::ult, groupIndex,
             constant64(end + pattern.cardinality));
@@ -6021,6 +5998,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   append32(programFlags);
   SmallVector<uint64_t> literalWords;
   SmallVector<uint32_t> instructionAuxiliaries;
+  llvm::DenseMap<const DomainPattern *, std::pair<uint32_t, uint32_t>>
+      domainLiteralIndices;
   if (wideProgram) {
     for (const EncodedInstruction &encoded : programInstructions) {
       uint32_t auxiliary = 0;
@@ -6048,6 +6027,26 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       instructionAuxiliaries.push_back(auxiliary);
     }
+    for (const Property &property : planned)
+      for (const PropertyDomain &domain : property.domains) {
+        if (domain.width <= 64)
+          continue;
+        for (const DomainPattern &pattern : domain.patterns) {
+          uint64_t words = pattern.mask.getNumWords();
+          if (literalWords.size() > UINT32_MAX ||
+              words * 2 > UINT32_MAX - literalWords.size()) {
+            emitError(location) << "wide random literal pool exceeds 32 bits";
+            return failure();
+          }
+          uint32_t maskIndex = static_cast<uint32_t>(literalWords.size());
+          literalWords.append(pattern.mask.getRawData(),
+                              pattern.mask.getRawData() + words);
+          uint32_t valueIndex = static_cast<uint32_t>(literalWords.size());
+          literalWords.append(pattern.value.getRawData(),
+                              pattern.value.getRawData() + words);
+          domainLiteralIndices[&pattern] = {maskIndex, valueIndex};
+        }
+      }
     append32(static_cast<uint32_t>(literalWords.size()));
     append32(0);
   }
@@ -6147,11 +6146,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         for (const DomainPattern &pattern : domain.patterns) {
           append32(group);
           append32(propertyOffset + domain.offset);
-          append16(static_cast<uint16_t>(domain.width));
-          append16(0);
-          append32(0);
-          append64(pattern.mask);
-          append64(pattern.value);
+          append32(domain.width);
+          if (domain.width > 64) {
+            append32(OBELISK_RT_RANDOM_DOMAIN_LITERAL_WORDS);
+            auto [maskIndex, valueIndex] =
+                domainLiteralIndices.lookup(&pattern);
+            append64(maskIndex);
+            append64(valueIndex);
+          } else {
+            append32(0);
+            append64(pattern.mask.getZExtValue());
+            append64(pattern.value.getZExtValue());
+          }
         }
         ++group;
       }
@@ -6349,7 +6355,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     APInt propertyMask = APInt::getLowBitsSet(assignmentWidth, property.width)
                              .shl(propertyOffset);
     if (!property.domains.empty()) {
-      if (!property.isRandC && !validAssignmentTable &&
+      if (!property.isRandC && property.width <= 64 && !validAssignmentTable &&
           (proposalAssignmentTableMask & propertyMask) != propertyMask)
         proposalFiniteDomains.push_back(
             {propertyOffset, &property, propertyDomainCardinality(property)});
@@ -8460,18 +8466,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (offset != 0)
           field = arith::ShRUIOp::create(builder, location, field,
                                          constantAssignment64(offset));
-        uint64_t fieldMask =
-            domain.width == 64 ? UINT64_MAX : (uint64_t{1} << domain.width) - 1;
+        APInt fieldMask = APInt::getAllOnes(domain.width);
         field = arith::AndIOp::create(builder, location, field,
-                                      constantAssignment64(fieldMask));
+                                      constantAssignment(fieldMask));
         Value member = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(false));
         for (const DomainPattern &pattern : domain.patterns) {
           Value masked = arith::AndIOp::create(
-              builder, location, field, constantAssignment64(pattern.mask));
-          Value matches = arith::CmpIOp::create(
-              builder, location, arith::CmpIPredicate::eq, masked,
-              constantAssignment64(pattern.value));
+              builder, location, field, constantAssignment(pattern.mask));
+          Value matches =
+              arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                    masked, constantAssignment(pattern.value));
           member = arith::OrIOp::create(builder, location, member, matches);
         }
         Value mutableField = mutableMask;
@@ -8479,7 +8484,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           mutableField = arith::ShRUIOp::create(builder, location, mutableField,
                                                 constantAssignment64(offset));
         mutableField = arith::AndIOp::create(builder, location, mutableField,
-                                             constantAssignment64(fieldMask));
+                                             constantAssignment(fieldMask));
         Value inactive =
             arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                                   mutableField, constantAssignment64(0));

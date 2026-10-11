@@ -6,6 +6,7 @@
 
 #include "RandomProgramSMT.h"
 
+#include "obelisk/Runtime/RandomDomain.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/Builders.h"
@@ -192,7 +193,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   uint32_t programFlags = read32(program + 20);
   // Function priority solves independent higher constraint sets first. A
   // table over the whole relation would incorrectly condition those choices
-  // on lower-stage constraints. Target Z3 handles the staged program.
+  // on lower-stage constraints. The compiled sampler handles the staged
+  // program.
   if (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
     return std::nullopt;
   uint32_t literalWordCount = version2 ? read32(program + 24) : 0;
@@ -341,6 +343,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
   if (programSize != expectedSize)
     return std::nullopt;
+  std::vector<uint8_t> literalUse(literalWordCount, 0);
   if (version2) {
     uint64_t nextLiteralWord = 0;
     for (uint32_t index = 0; index != instructionCount; ++index) {
@@ -353,8 +356,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       nextLiteralWord += (static_cast<uint64_t>(decoded->width) + 63) / 64;
     }
-    if (nextLiteralWord != literalWordCount)
-      return std::nullopt;
+    std::fill_n(literalUse.begin(), nextLiteralWord, 1);
   }
 
   if (hasSolveBefore) {
@@ -481,36 +483,35 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
 
   struct DomainPattern {
-    uint64_t mask;
-    uint64_t value;
+    llvm::APInt mask;
+    llvm::APInt value;
   };
   struct DomainGroup {
     bool seen = false;
     uint32_t targetOffset = 0;
-    uint16_t width = 0;
+    uint32_t width = 0;
     std::vector<DomainPattern> patterns;
   };
   std::vector<DomainGroup> domainGroups(domainGroupCount);
   if (hasDomains) {
     const uint8_t *record = program + domainRecordsOffset;
     for (uint32_t index = 0; index != domainRecordCount; ++index) {
-      uint32_t group = read32(record);
-      uint32_t targetOffset = read32(record + 4);
-      uint16_t width = read16(record + 8);
-      uint16_t reserved16 = read16(record + 10);
-      uint32_t reserved32 = read32(record + 12);
-      uint64_t mask = read64(record + 16);
-      uint64_t value = read64(record + 24);
-      record += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
-      uint64_t fieldMask = width == 64  ? UINT64_MAX
-                           : width == 0 ? 0
-                                        : (uint64_t{1} << width) - 1;
-      if (group >= domainGroupCount || width == 0 || width > 64 ||
-          targetOffset > aggregateWidth ||
-          width > aggregateWidth - targetOffset || reserved16 != 0 ||
-          reserved32 != 0 || (mask & ~fieldMask) != 0 || (value & ~mask) != 0 ||
-          (width == 64 && mask == 0))
+      obelisk::random::DomainRecord decoded;
+      if (!obelisk::random::readDomainRecord(
+              record, aggregateWidth, version2, program + literalPoolOffset,
+              literalWordCount, literalUse.data(), decoded) ||
+          decoded.group >= domainGroupCount)
         return std::nullopt;
+      record += OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+      uint32_t group = decoded.group;
+      uint32_t targetOffset = decoded.targetOffset;
+      uint32_t width = decoded.width;
+      llvm::SmallVector<uint64_t> maskWords, valueWords;
+      for (uint64_t word = 0; word != decoded.words(); ++word) {
+        maskWords.push_back(decoded.maskWord(word));
+        valueWords.push_back(decoded.valueWord(word));
+      }
+      llvm::APInt mask(width, maskWords), value(width, valueWords);
       DomainGroup &info = domainGroups[group];
       if (info.seen &&
           (info.targetOffset != targetOffset || info.width != width))
@@ -519,7 +520,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       info.targetOffset = targetOffset;
       info.width = width;
       for (const DomainPattern &other : info.patterns)
-        if (((value ^ other.value) & (mask & other.mask)) == 0)
+        if (((value ^ other.value) & (mask & other.mask)).isZero())
           return std::nullopt;
       info.patterns.push_back({mask, value});
     }
@@ -538,6 +539,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       }
     }
   }
+
+  if (llvm::any_of(literalUse, [](uint8_t used) { return used != 1; }))
+    return std::nullopt;
 
   RandomProgramSMT result;
   result.context = std::make_unique<mlir::MLIRContext>();
@@ -1124,11 +1128,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         mlir::smt::BoolConstantOp::create(builder, location, false);
     for (const DomainPattern &pattern : group.patterns) {
       mlir::Value masked = mlir::smt::BVAndOp::create(
-          builder, location, field,
-          constant(builder, location, pattern.mask, group.width));
-      mlir::Value matches = mlir::smt::EqOp::create(
-          builder, location, masked,
-          constant(builder, location, pattern.value, group.width));
+          builder, location, field, constant(builder, location, pattern.mask));
+      mlir::Value matches =
+          mlir::smt::EqOp::create(builder, location, masked,
+                                  constant(builder, location, pattern.value));
       member = mlir::smt::OrOp::create(builder, location, member, matches);
     }
     hard = mlir::smt::AndOp::create(builder, location, hard, member);
