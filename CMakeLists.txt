@@ -47,6 +47,8 @@ option(OBELISK_ENABLE_Z3
   "Use compiler-side Z3 analysis for constrained-random planning" ON)
 set(OBELISK_Z3_SOURCE_DIR "" CACHE PATH
   "Extracted Z3 source tree used instead of the pinned archive")
+set(OBELISK_Z3_INSTALL_DIR "" CACHE PATH
+  "Existing pinned static Z3 installation for the compiler host")
 
 # Op definitions generated from the SystemVerilog AST inventory dominate the
 # build's critical path when one translation unit compiles a whole dialect.
@@ -322,7 +324,27 @@ if(OBELISK_ENABLE_Z3)
     list(APPEND _obelisk_z3_cmake_args
       "-DCMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER}")
   endif()
-  if(OBELISK_Z3_SOURCE_DIR)
+  if(OBELISK_Z3_INSTALL_DIR)
+    set(_obelisk_z3_install "${OBELISK_Z3_INSTALL_DIR}")
+    if(NOT EXISTS "${_obelisk_z3_install}/lib/libz3.a" OR
+       NOT EXISTS "${_obelisk_z3_install}/include/z3.h" OR
+       NOT EXISTS "${_obelisk_z3_install}/include/z3_version.h")
+      message(FATAL_ERROR
+        "OBELISK_Z3_INSTALL_DIR must contain pinned static Z3 headers and lib/libz3.a")
+    endif()
+    file(STRINGS "${_obelisk_z3_install}/include/z3_version.h"
+      _obelisk_z3_installed_version
+      REGEX "^#define Z3_FULL_VERSION[ \t]+\"")
+    string(REGEX REPLACE "^#define Z3_FULL_VERSION[ \t]+\"([^\"]+)\"$" "\\1"
+      _obelisk_z3_installed_version "${_obelisk_z3_installed_version}")
+    if(NOT _obelisk_z3_installed_version STREQUAL "${OBELISK_Z3_VERSION}.0")
+      message(FATAL_ERROR
+        "OBELISK_Z3_INSTALL_DIR must contain Z3 ${OBELISK_Z3_VERSION}.0")
+    endif()
+    # Keep the dependency used by the solver's object library without running
+    # a second ExternalProject against the shared installation.
+    add_custom_target(obelisk_z3_project)
+  elseif(OBELISK_Z3_SOURCE_DIR)
     file(STRINGS "${OBELISK_Z3_SOURCE_DIR}/CMakeLists.txt"
       _obelisk_z3_project_line
       REGEX "^project\\(Z3 VERSION ${OBELISK_Z3_VERSION}\\.0 LANGUAGES CXX\\)$")
@@ -347,7 +369,9 @@ if(OBELISK_ENABLE_Z3)
       INSTALL_DIR "${_obelisk_z3_install}"
       BUILD_BYPRODUCTS "${_obelisk_z3_install}/lib/libz3.a")
   endif()
-  file(MAKE_DIRECTORY "${_obelisk_z3_install}/include")
+  if(NOT OBELISK_Z3_INSTALL_DIR)
+    file(MAKE_DIRECTORY "${_obelisk_z3_install}/include")
+  endif()
   add_library(ObeliskZ3 STATIC IMPORTED GLOBAL)
   set_target_properties(ObeliskZ3 PROPERTIES
     IMPORTED_LOCATION "${_obelisk_z3_install}/lib/libz3.a"
@@ -362,8 +386,12 @@ if(OBELISK_ENABLE_Z3)
     find_package(Threads REQUIRED)
     target_link_libraries(ObeliskZ3 INTERFACE Threads::Threads)
   endif()
-  add_dependencies(ObeliskZ3 obelisk_z3_project)
-  message(STATUS "Building compiler-only Z3 ${OBELISK_Z3_VERSION} from source")
+  if(OBELISK_Z3_INSTALL_DIR)
+    message(STATUS "Reusing compiler-only Z3 ${OBELISK_Z3_VERSION} at ${_obelisk_z3_install}")
+  else()
+    add_dependencies(ObeliskZ3 obelisk_z3_project)
+    message(STATUS "Building compiler-only Z3 ${OBELISK_Z3_VERSION} from source")
+  endif()
 endif()
 
 # slang v11.0 declares these dependencies by git tag. Declare checksummed
