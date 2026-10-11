@@ -14,6 +14,7 @@
 #include "PrepareDeclarations.h"
 #include "PrepareNetTopology.h"
 #include "PrepareRandomFunctions.h"
+#include "PrepareRandomIteration.h"
 #include "PrepareRandomTemplates.h"
 #include "PrepareTopology.h"
 #include "PrepareUnits.h"
@@ -4872,6 +4873,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         ArrayRef(callChildren).drop_front(argumentStart);
     SmallVector<Operation *> constraintRoots(
         callChildren.begin(), callChildren.begin() + argumentStart);
+    if (failed(expandStaticRandomForeachConstraints(constraintRoots, builder))) {
+      invalid = true;
+      return true;
+    }
 
     struct ScopeProperty {
       StringAttr path;
@@ -6852,6 +6857,11 @@ void ObeliskSimPreparePass::runOnOperation() {
                         builder.getI32IntegerAttr(indices->second[next++]));
       }
       root = cloned;
+    }
+
+    if (failed(expandStaticRandomForeachConstraints(constraintRoots, builder))) {
+      invalid = true;
+      return true;
     }
 
     auto getNestedConstraintOwner = [&](Operation *root) -> NestedObjectPlan * {

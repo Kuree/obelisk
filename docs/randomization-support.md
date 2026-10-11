@@ -96,11 +96,19 @@ Both Z3 planning and the generated/runtime checkers preserve the same rules.
 `randcase` interprets its self-determined weights as unsigned and sums them at
 the maximum operand precision, including modular overflow and zero-total cases.
 
-Constraint execution includes IEEE 1800-2023 18.5.7.1 universal `foreach`
+Fixed `foreach` constraints expand into ordinary Z3 predicates before random
+dependency analysis in both class and scope randomization. Packed dimensions
+can be multidimensional, descending, negative, or omitted; fixed unpacked state
+arrays supply per-element captures. Typed iterator constants preserve selected
+bit paths, and later iterations receive higher soft priority. An all-omitted
+loop contributes an empty conjunction. Explicit ordering and live modes use the
+ordinary exact runtime solver after expansion.
+
+Constraint execution also includes IEEE 1800-2023 18.5.7.1 universal `foreach`
 predicates over one-dimensional dynamic arrays and queues. The live container
 size is sampled for each candidate, the declared iterator type is respected,
-and an empty container contributes the identity value `true`. Multidimensional,
-fixed-array, associative-array, and string forms remain explicit boundaries.
+and an empty container contributes the identity value `true`. Random fixed unpacked properties, generalized runtime
+dimensions, associative arrays, and strings remain explicit boundaries.
 The current dynamic-`foreach` solver path accepts ordinary packed random
 domains without `solve before`; finite semantic domains require a future
 domain-index traversal. It checks a complete aggregate domain through 2^20

@@ -675,7 +675,7 @@
         {
           "feature": "Iterative constraint family",
           "status": "partial",
-          "detail": "Executable support is specialized to admitted dynamic arrays and queues."
+          "detail": "Fixed foreach dimensions expand into ordinary predicates before Z3 planning and function dependency analysis; runtime iteration covers admitted one-dimensional dynamic arrays and queues."
         }
       ],
       "evidence": {
@@ -685,11 +685,14 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
-          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir"
+          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
         ]
       }
     },
@@ -704,8 +707,8 @@
         },
         {
           "feature": "Fixed, associative, string, and multidimensional foreach",
-          "status": "missing",
-          "detail": "Not admitted by the current constraint inventory."
+          "status": "partial",
+          "detail": "Fixed packed dimensions, including multidimensional arrays, descending or negative bounds and omitted iterators, expand into typed constant-index predicates for class and scope randomization. Fixed unpacked state-array elements are captured per predicate. Z3 handles the resulting ordinary relation, live modes, soft preferences and explicit solve-before. Random fixed unpacked properties and associative, string and generalized runtime dimensions remain incomplete."
         },
         {
           "feature": "Index-dependent guards",
@@ -720,11 +723,14 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
-          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir"
+          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
         ]
       }
     },
@@ -1037,7 +1043,7 @@
         {
           "feature": "Contained objects and foreach priority",
           "status": "partial",
-          "detail": "All object-containment and runtime-iteration priority relationships need dedicated verification."
+          "detail": "Static foreach expansion preserves declaration-order iteration so later body instances receive higher soft priority, including descending ranges. Full object-containment and runtime-iteration relationships still need coverage."
         }
       ],
       "evidence": {
@@ -1048,13 +1054,16 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp"
+          "runtime/lib/RandSolveSMT.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir"
+          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir",
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
         ]
       }
     },
