@@ -750,9 +750,11 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) {
     size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
     if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)
-      offset +=
-          OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
-          size_t(read32(program + offset)) * OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+      offset += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+                size_t(read32(program + offset)) *
+                    (wide ? assignmentWords * 16 +
+                                OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
+                          : OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE);
     if (offset + 8 > programSize)
       return SMTCompletion::Unavailable;
     unsigned groups = read32(program + offset);

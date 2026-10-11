@@ -115,7 +115,7 @@
         {
           "feature": "Complete solution discovery",
           "status": "partial",
-          "detail": "Compiler Z3 proves static plans. Native and WASM runtime Z3 complete ordinary integral residuals and ordered aggregates through 64 bits with live captures, frozen bits, domains, block masks and optimal soft priorities. Wider ordered, weighted and runtime-foreach paths retain limits; non-integral forms remain incomplete."
+          "detail": "Compiler Z3 proves static plans. Native and WASM runtime Z3 complete ordinary and explicitly ordered packed integral residuals of arbitrary aggregate width with live captures, frozen bits, domains, block masks and optimal soft priorities. Weighted and runtime-foreach paths retain limits; non-integral forms remain incomplete."
         },
         {
           "feature": "Failure leaves random properties unchanged",
@@ -817,7 +817,7 @@
         {
           "feature": "Conditional ordered probabilities",
           "status": "partial",
-          "detail": "Compiler Z3 tables and structural plans preserve ordering. Native and WASM runtime Z3 use exact existential projection counts for aggregates through 64 bits, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Wider ordered residual metadata remains incomplete. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group."
+          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM runtime Z3 count exact existential projections for packed integral aggregates, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Real ordering and general selected paths remain incomplete."
         },
         {
           "feature": "Randc implicit priority",
@@ -844,7 +844,9 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
           "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-ordered-z3-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-order-latest-layer-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-order-latest-layer-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-ordered-wide-z3-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-ordered-wide-table-runtime.mlir"
         ]
       }
     },

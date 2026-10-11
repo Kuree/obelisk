@@ -42,10 +42,17 @@ struct DomainRecord {
   uint64_t value;
 };
 
+struct SolveBeforeEdge {
+  std::vector<uint64_t> before;
+  std::vector<uint64_t> after;
+  uint32_t block = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+};
+
 std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
                              std::vector<Instruction> instructions,
                              uint32_t flags = 0,
-                             std::vector<DomainRecord> domains = {}) {
+                             std::vector<DomainRecord> domains = {},
+                             std::vector<SolveBeforeEdge> edges = {}) {
   std::vector<uint64_t> literals;
   for (Instruction &instruction : instructions) {
     if (instruction.opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
@@ -74,6 +81,17 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
   }
   for (uint64_t literal : literals)
     append64(bytes, literal);
+  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0) {
+    append32(bytes, static_cast<uint32_t>(edges.size()));
+    for (const SolveBeforeEdge &edge : edges) {
+      for (uint64_t word : edge.before)
+        append64(bytes, word);
+      for (uint64_t word : edge.after)
+        append64(bytes, word);
+      append32(bytes, edge.block);
+      append32(bytes, 0);
+    }
+  }
   if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0) {
     uint32_t groupCount = 0;
     for (const DomainRecord &domain : domains)
@@ -433,6 +451,47 @@ TEST_F(RandSolveWideTest, RejectsMalformedFiniteDomainMetadata) {
   rejects(std::move(truncated));
 }
 
+TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
+  auto rejects = [&](const std::vector<uint8_t> &bytes) {
+    uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, 1};
+    uint64_t assignment[] = {0, 0}, nextState = 0;
+    uint32_t success = 1;
+    EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 2,
+                  UINT64_MAX, 1, 83, 21, nullptr, 0, nullptr, 0, assignment,
+                  &success, &nextState),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(success, 0u);
+    EXPECT_EQ(nextState, 83u);
+  };
+  std::vector<Instruction> truth = {
+      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
+  auto encode = [&](std::vector<SolveBeforeEdge> edges) {
+    return program(65, 0, truth,
+                   OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                       OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                   {}, std::move(edges));
+  };
+  rejects(encode({}));
+  rejects(encode({{{0, 0}, {0, 1}}}));
+  rejects(encode({{{0, 2}, {1, 0}}}));
+  rejects(encode({{{1, 0}, {1, 1}}}));
+  rejects(encode({{{1, 0}, {0, 1}, 64}}));
+  // Declaration cycles remain invalid even when their blocks are disabled.
+  rejects(encode({{{1, 0}, {0, 1}, 0}, {{0, 1}, {1, 0}, 1}}));
+  auto bytes = encode({{{1, 0}, {0, 1}}});
+  bytes.back() = 1;
+  rejects(bytes);
+  bytes.back() = 0;
+  bytes.pop_back();
+  rejects(bytes);
+  bytes = encode({{{1, 0}, {0, 1}}});
+  bytes[20] &= ~OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  rejects(bytes);
+}
+
 TEST_F(RandSolveWideTest, HonorsConstraintModeMask) {
   std::vector<uint8_t> bytes =
       program(65, 0,
@@ -637,6 +696,108 @@ TEST_F(RandSolveWideTest, RejectsNonContiguousSoftPriorities) {
 }
 
 #ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
+  auto bytes = program(131, 1,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
+                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 130},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+                       {}, {{{0, 0, 4}, {UINT64_MAX, UINT64_MAX, 3}, 0}});
+  uint64_t start[] = {0, 0, 0}, mutableMask[] = {UINT64_MAX, UINT64_MAX, 7};
+  uint64_t captures[] = {7, UINT64_C(0x123456789abcdef0), 2},
+           assignment[3] = {};
+  uint32_t widths[] = {130}, success = 0;
+  uint64_t state = 71;
+  auto solve = [&](uint64_t disabled) {
+    return obelisk_rt_v1_random_solve_wide_modes_state(
+        context, bytes.data(), bytes.size(), start, mutableMask, 3, disabled, 1,
+        state, 15, captures, 3, widths, 1, assignment, &success, &state);
+  };
+  unsigned guardTrue = 0;
+  uint64_t ones[3] = {}, zeros[3] = {};
+  for (unsigned iteration = 0; iteration != 128; ++iteration) {
+    captures[0] = iteration & 1 ? 11 : 7;
+    ASSERT_EQ(solve(0), OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    if (assignment[2] & 4) {
+      ++guardTrue;
+      EXPECT_EQ(assignment[0], captures[0]);
+      EXPECT_EQ(assignment[1], captures[1]);
+      EXPECT_EQ(assignment[2] & 3, captures[2]);
+    } else {
+      for (unsigned word = 0; word != 3; ++word) {
+        ones[word] |= assignment[word];
+        zeros[word] |= ~assignment[word];
+      }
+    }
+    EXPECT_EQ(assignment[2] & ~uint64_t{7}, 0u);
+  }
+  EXPECT_GT(guardTrue, 32u);
+  EXPECT_LT(guardTrue, 96u);
+  EXPECT_EQ(ones[0], UINT64_MAX);
+  EXPECT_EQ(ones[1], UINT64_MAX);
+  EXPECT_EQ(ones[2] & 3, 3u);
+  EXPECT_EQ(zeros[0], UINT64_MAX);
+  EXPECT_EQ(zeros[1], UINT64_MAX);
+  EXPECT_EQ(zeros[2] & 3, 3u);
+  // Disabling the ordering block restores the ordinary joint distribution.
+  for (unsigned iteration = 0; iteration != 16; ++iteration) {
+    ASSERT_EQ(solve(1), OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ(assignment[2] & 4, 0u);
+  }
+  // Freezing the guard leaves exactly one completion and consumes no draw.
+  start[2] = 4;
+  mutableMask[2] = 3;
+  uint64_t unchanged = state;
+  ASSERT_EQ(solve(0), OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ(assignment[0], captures[0]);
+  EXPECT_EQ(assignment[1], captures[1]);
+  EXPECT_EQ(assignment[2], 4 | captures[2]);
+  EXPECT_EQ(state, unchanged);
+}
+
+TEST_F(RandSolveWideTest, OrderedDomainsFollowVariableLengthEdges) {
+  auto bytes = program(65, 1,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 64},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
+                       {{0, 0, 32, UINT32_MAX, 7}, {0, 0, 32, UINT32_MAX, 11}},
+                       {{{0, 1}, {UINT64_MAX, 0}}});
+  uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, 1};
+  uint64_t capture = 7, assignment[2] = {}, state = 71;
+  uint32_t width = 32, success = 0;
+  unsigned guardTrue = 0;
+  for (unsigned iteration = 0; iteration != 64; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                  1, state, 15, &capture, 1, &width, 1, assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_TRUE(uint32_t(assignment[0]) == 7 || uint32_t(assignment[0]) == 11);
+    if (assignment[1]) {
+      ++guardTrue;
+      EXPECT_EQ(uint32_t(assignment[0]), 7u);
+    }
+  }
+  EXPECT_GT(guardTrue, 16u);
+  EXPECT_LT(guardTrue, 48u);
+}
+
 TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
   auto bytes = program(192, 1,
                        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},

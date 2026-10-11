@@ -4698,6 +4698,10 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM UINT32_C(32)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
+// V2 edges contain ceil(aggregate_width/64) little-endian words for each
+// before/after mask, followed by a 32-bit constraint block and zero reserved
+// word. Their record size is 16 * assignment_word_count + this fixed tail.
+#define OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2 UINT16_C(8)
 #define OBELISK_RT_RANDOM_DIST_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DIST_RECORD_SIZE UINT16_C(48)
 #define OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED UINT32_C(1)

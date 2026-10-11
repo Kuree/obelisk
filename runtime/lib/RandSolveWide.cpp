@@ -32,6 +32,12 @@ struct WideInstruction {
   WideValue literal;
 };
 
+struct SolveBeforeEdge {
+  WideValue beforeMask;
+  WideValue afterMask;
+  uint32_t constraintBlock;
+};
+
 struct DomainPattern {
   uint64_t mask = 0;
   uint64_t value = 0;
@@ -55,6 +61,7 @@ struct WideProgram {
   std::vector<uint64_t> captureOffsets;
   std::vector<WideInstruction> instructions;
   std::vector<DomainGroup> domainGroups;
+  std::vector<SolveBeforeEdge> solveEdges;
 };
 
 uint16_t read16(const uint8_t *bytes) {
@@ -347,6 +354,86 @@ bool isBinary(uint8_t opcode) {
           opcode <= OBELISK_RT_RANDOM_POWER_V1);
 }
 
+bool intersects(const WideValue &left, const WideValue &right) {
+  for (size_t index = 0; index != left.words.size(); ++index)
+    if ((left.words[index] & right.words[index]) != 0)
+      return true;
+  return false;
+}
+
+void unite(WideValue &left, const WideValue &right) {
+  for (size_t index = 0; index != left.words.size(); ++index)
+    left.words[index] |= right.words[index];
+}
+
+bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
+                            const WideValue &mutableMask,
+                            uint64_t constraintMask,
+                            std::vector<WideValue> &layers) {
+  std::vector<SolveBeforeEdge> active;
+  std::vector<WideValue> nodes;
+  auto addNode = [&](WideValue node) {
+    for (size_t index = 0; index != nodes.size();) {
+      if (!intersects(nodes[index], node)) {
+        ++index;
+        continue;
+      }
+      unite(node, nodes[index]);
+      nodes.erase(nodes.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+    nodes.push_back(std::move(node));
+  };
+  for (const SolveBeforeEdge &edge : edges) {
+    if (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+        ((constraintMask >> edge.constraintBlock) & 1) != 0)
+      continue;
+    WideValue before = bitwise(edge.beforeMask, mutableMask, mutableMask.width,
+                               OBELISK_RT_RANDOM_BIT_AND_V1);
+    WideValue after = bitwise(edge.afterMask, mutableMask, mutableMask.width,
+                              OBELISK_RT_RANDOM_BIT_AND_V1);
+    if (!truth(before) || !truth(after))
+      continue;
+    addNode(before);
+    addNode(after);
+    active.push_back(
+        {std::move(before), std::move(after), edge.constraintBlock});
+  }
+  layers.clear();
+  while (!nodes.empty()) {
+    WideValue layer(mutableMask.width), remaining(mutableMask.width);
+    for (const WideValue &node : nodes)
+      unite(remaining, node);
+    for (const WideValue &node : nodes) {
+      bool hasSuccessor = std::any_of(
+          active.begin(), active.end(), [&](const SolveBeforeEdge &edge) {
+            return intersects(edge.beforeMask, node) &&
+                   intersects(edge.afterMask, remaining);
+          });
+      if (!hasSuccessor)
+        unite(layer, node);
+    }
+    if (!truth(layer))
+      return false;
+    nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
+                               [&](const WideValue &node) {
+                                 return intersects(node, layer);
+                               }),
+                nodes.end());
+    layers.push_back(std::move(layer));
+  }
+  // Latest legal ordering groups, with unspecified fields in the final group.
+  std::reverse(layers.begin(), layers.end());
+  if (!layers.empty()) {
+    WideValue ordered(mutableMask.width);
+    for (const WideValue &layer : layers)
+      unite(ordered, layer);
+    for (size_t index = 0; index != ordered.words.size(); ++index)
+      layers.back().words[index] |=
+          mutableMask.words[index] & ~ordered.words[index];
+  }
+  return true;
+}
+
 bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                       const uint32_t *captureWidths, uint64_t captureCount,
                       uint64_t captureWordCount) {
@@ -361,12 +448,16 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   uint32_t flags = read32(bytes + 20);
   uint32_t literalWordCount = read32(bytes + 24);
   bool encodedDomains = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
+  bool encodedOrder = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
       (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)) != 0)
+    return false;
+  if (encodedOrder && !(flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM))
     return false;
   result.hasSoft = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   uint64_t instructionBytes = static_cast<uint64_t>(instructionCount) *
@@ -380,6 +471,22 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     return false;
   uint64_t literalOffset = expectedSize;
   expectedSize += literalBytes;
+  uint64_t solveRecordsOffset = 0, solveRecordSize = 0;
+  uint32_t solveEdgeCount = 0;
+  if (encodedOrder) {
+    if (expectedSize > size ||
+        size - expectedSize < OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
+      return false;
+    solveEdgeCount = read32(bytes + expectedSize);
+    solveRecordsOffset =
+        expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+    solveRecordSize = ((uint64_t(result.aggregateWidth) + 63) / 64) * 16 +
+                      OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+    if (solveEdgeCount == 0 ||
+        solveEdgeCount > (size - solveRecordsOffset) / solveRecordSize)
+      return false;
+    expectedSize = solveRecordsOffset + solveEdgeCount * solveRecordSize;
+  }
   uint32_t domainGroupCount = 0;
   uint32_t domainRecordCount = 0;
   uint64_t domainRecordsOffset = 0;
@@ -521,6 +628,37 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       std::any_of(result.captureWidths.begin(), result.captureWidths.end(),
                   [](uint32_t width) { return width == 0; }))
     return false;
+
+  if (encodedOrder) {
+    const uint8_t *cursor = bytes + solveRecordsOffset;
+    for (uint32_t index = 0; index != solveEdgeCount; ++index) {
+      SolveBeforeEdge edge{WideValue(result.aggregateWidth),
+                           WideValue(result.aggregateWidth), 0};
+      for (WideValue *mask : {&edge.beforeMask, &edge.afterMask})
+        for (uint64_t &word : mask->words) {
+          word = read64(cursor);
+          cursor += 8;
+        }
+      edge.constraintBlock = read32(cursor);
+      uint32_t reserved = read32(cursor + 4);
+      cursor += OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+      uint64_t upperMask = highMask(result.aggregateWidth);
+      if (!truth(edge.beforeMask) || !truth(edge.afterMask) ||
+          (edge.beforeMask.words.back() & ~upperMask) != 0 ||
+          (edge.afterMask.words.back() & ~upperMask) != 0 ||
+          intersects(edge.beforeMask, edge.afterMask) || reserved != 0 ||
+          (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+           edge.constraintBlock >= 64))
+        return false;
+      result.solveEdges.push_back(std::move(edge));
+    }
+    WideValue all(result.aggregateWidth);
+    std::fill(all.words.begin(), all.words.end(), UINT64_MAX);
+    normalize(all);
+    std::vector<WideValue> validationLayers;
+    if (!buildSolveBeforeLayers(result.solveEdges, all, 0, validationLayers))
+      return false;
+  }
 
   if (encodedDomains) {
     if (domainGroupCount == 0 || domainRecordCount == 0 ||
@@ -947,10 +1085,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       }
       if (maxAttempts == 0)
         return OBELISK_RT_OK;
+      std::vector<WideValue> solveLayers;
+      if (!buildSolveBeforeLayers(program.solveEdges, mutableMask,
+                                  constraintMask, solveLayers))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      std::vector<uint64_t> orderedMasks;
+      for (const WideValue &layer : solveLayers)
+        orderedMasks.insert(orderedMasks.end(), layer.words.begin(),
+                            layer.words.end());
       auto result = obelisk::runtime::completeRandomProgram(
           programBytes, static_cast<size_t>(programSize), startWords,
           mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
-          captureWidths, captureCount, outAssignmentWords, &randomState);
+          captureWidths, captureCount, outAssignmentWords, &randomState,
+          orderedMasks.data(), solveLayers.size());
       if (result == obelisk::runtime::SMTCompletion::Satisfiable)
         *outSuccess = 1;
       else

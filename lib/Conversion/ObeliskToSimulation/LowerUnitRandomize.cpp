@@ -2464,8 +2464,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         [&](sim::SimRandomSoftConstraintOp) { hasSoftConstraint = true; });
 
   struct SolveBeforeEdge {
-    uint64_t beforeMask;
-    uint64_t afterMask;
+    APInt beforeMask;
+    APInt afterMask;
     uint32_t constraintBlock;
 
     bool operator==(const SolveBeforeEdge &other) const {
@@ -2473,33 +2473,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
              constraintBlock == other.constraintBlock;
     }
   };
-  SmallVector<uint64_t> propertyMasks;
+  SmallVector<APInt> propertyMasks;
   uint64_t solvePropertyOffset = 0;
   for (const Property &property : planned) {
-    if (totalWidth <= 64) {
-      uint64_t valueMask = property.width == 64
-                               ? UINT64_MAX
-                               : (uint64_t{1} << property.width) - 1;
-      propertyMasks.push_back(valueMask << solvePropertyOffset);
-    } else {
-      propertyMasks.push_back(0);
-    }
+    propertyMasks.push_back(
+        APInt::getLowBitsSet(assignmentWidth, property.width)
+            .shl(solvePropertyOffset));
     solvePropertyOffset += property.width;
   }
   SmallVector<SolveBeforeEdge> solveBeforeEdges;
-  SmallVector<uint64_t> solveBeforeLayerMasks;
-  uint64_t randomAssignmentMask = totalWidth == 64 ? UINT64_MAX
-                                  : totalWidth < 64
-                                      ? (uint64_t{1} << totalWidth) - 1
-                                      : 0;
+  SmallVector<APInt> solveBeforeLayerMasks;
+  APInt randomAssignmentMask =
+      APInt::getLowBitsSet(assignmentWidth, totalWidth);
   bool hasSolveBefore = false;
-  auto randomPropertyMask = [&](Operation *expression) -> FailureOr<uint64_t> {
-    if (totalWidth > 64) {
-      emitError(getSemanticLocation(expression))
-          << "solve before on a wide randomization plan requires plan "
-             "decomposition";
-      return failure();
-    }
+  auto randomPropertyMask = [&](Operation *expression) -> FailureOr<APInt> {
     auto indexAttr =
         expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
     if (!indexAttr || indexAttr.getValue().isNegative() ||
@@ -2535,12 +2522,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
       for (size_t pair = 0; pair != pairs.size(); pair += 2) {
-        uint64_t beforeMask = static_cast<uint64_t>(pairs[pair]);
-        uint64_t afterMask = static_cast<uint64_t>(pairs[pair + 1]);
-        if (beforeMask == 0 || afterMask == 0 ||
-            (beforeMask & ~randomAssignmentMask) != 0 ||
-            (afterMask & ~randomAssignmentMask) != 0 ||
-            (beforeMask & afterMask) != 0) {
+        APInt beforeMask(assignmentWidth, static_cast<uint64_t>(pairs[pair]));
+        APInt afterMask(assignmentWidth,
+                        static_cast<uint64_t>(pairs[pair + 1]));
+        if (beforeMask.isZero() || afterMask.isZero() ||
+            !(beforeMask & ~randomAssignmentMask).isZero() ||
+            !(afterMask & ~randomAssignmentMask).isZero() ||
+            !(beforeMask & afterMask).isZero()) {
           emitError(getSemanticLocation(root))
               << "constraint function ordering metadata is out of range";
           return failure();
@@ -2577,17 +2565,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 << "solve before has inconsistent operand counts";
             return WalkResult::interrupt();
           }
-          SmallVector<uint64_t> before;
-          SmallVector<uint64_t> after;
+          SmallVector<APInt> before;
+          SmallVector<APInt> after;
           for (auto [operandIndex, operand] : llvm::enumerate(operands)) {
-            FailureOr<uint64_t> property = randomPropertyMask(operand);
+            FailureOr<APInt> property = randomPropertyMask(operand);
             if (failed(property))
               return WalkResult::interrupt();
             (operandIndex < solveCount ? before : after).push_back(*property);
           }
-          for (uint64_t lhs : before)
-            for (uint64_t rhs : after) {
-              if ((lhs & rhs) != 0) {
+          for (const APInt &lhs : before)
+            for (const APInt &rhs : after) {
+              if (!(lhs & rhs).isZero()) {
                 emitError(getSemanticLocation(solve))
                     << "solve before cannot order a property before itself";
                 return WalkResult::interrupt();
@@ -2606,10 +2594,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     // each transitive overlap class together so, for example, an edge to one
     // field of a packed slice cannot cause the other bits of that slice to be
     // sampled in an earlier layer.
-    SmallVector<uint64_t> nodes;
-    auto addNode = [&](uint64_t node) {
+    SmallVector<APInt> nodes;
+    auto addNode = [&](APInt node) {
       for (size_t index = 0; index != nodes.size();) {
-        if ((nodes[index] & node) == 0) {
+        if ((nodes[index] & node).isZero()) {
           ++index;
           continue;
         }
@@ -2623,36 +2611,35 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       addNode(edge.afterMask);
     }
     while (!nodes.empty()) {
-      uint64_t layer = 0;
-      uint64_t remaining = 0;
-      for (uint64_t node : nodes)
+      APInt layer = APInt::getZero(assignmentWidth);
+      APInt remaining = APInt::getZero(assignmentWidth);
+      for (const APInt &node : nodes)
         remaining |= node;
-      for (uint64_t node : nodes) {
+      for (const APInt &node : nodes) {
         bool hasSuccessor =
             llvm::any_of(solveBeforeEdges, [&](const auto &edge) {
-              return (edge.beforeMask & node) != 0 &&
-                     (edge.afterMask & remaining) != 0;
+              return !(edge.beforeMask & node).isZero() &&
+                     !(edge.afterMask & remaining).isZero();
             });
         if (!hasSuccessor)
           layer |= node;
       }
-      if (layer == 0) {
+      if (layer.isZero()) {
         emitError(location) << "solve before ordering contains a cycle";
         return failure();
       }
       solveBeforeLayerMasks.push_back(layer);
-      llvm::erase_if(nodes, [&](uint64_t node) { return (node & layer) != 0; });
+      llvm::erase_if(
+          nodes, [&](const APInt &node) { return !(node & layer).isZero(); });
     }
     // Peel sinks first so partially ordered fields are deferred to their
     // latest legal layer. Unspecified fields join the final ordered group.
     std::reverse(solveBeforeLayerMasks.begin(), solveBeforeLayerMasks.end());
-    if (!solveBeforeLayerMasks.empty() && totalWidth <= 64) {
-      uint64_t orderedMask = 0;
-      for (uint64_t layer : solveBeforeLayerMasks)
+    if (!solveBeforeLayerMasks.empty()) {
+      APInt orderedMask = APInt::getZero(assignmentWidth);
+      for (const APInt &layer : solveBeforeLayerMasks)
         orderedMask |= layer;
-      uint64_t allMask =
-          totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
-      solveBeforeLayerMasks.back() |= allMask & ~orderedMask;
+      solveBeforeLayerMasks.back() |= randomAssignmentMask & ~orderedMask;
     }
   }
   if (hasRuntimeForeachConstraint && hasSolveBefore) {
@@ -4669,8 +4656,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (hasSolveBefore) {
     append32(static_cast<uint32_t>(solveBeforeEdges.size()));
     for (const SolveBeforeEdge &edge : solveBeforeEdges) {
-      append64(edge.beforeMask);
-      append64(edge.afterMask);
+      for (const APInt *bits : {&edge.beforeMask, &edge.afterMask}) {
+        if (wideProgram) {
+          for (unsigned word = 0; word != bits->getNumWords(); ++word)
+            append64(bits->getRawData()[word]);
+        } else {
+          append64(bits->getZExtValue());
+        }
+      }
       append32(edge.constraintBlock);
       append32(0);
     }
@@ -4791,9 +4784,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                        rows.end());
         return node;
       }
-      SmallVector<std::pair<uint64_t, SmallVector<APInt>>> groups;
+      SmallVector<std::pair<APInt, SmallVector<APInt>>> groups;
       for (const APInt &row : rows) {
-        uint64_t key = row.getZExtValue() & solveBeforeLayerMasks[layer];
+        APInt key = row & solveBeforeLayerMasks[layer];
         auto group = llvm::find_if(
             groups, [&](const auto &entry) { return entry.first == key; });
         if (group == groups.end()) {
@@ -4803,7 +4796,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         group->second.push_back(row);
       }
       llvm::sort(groups, [](const auto &lhs, const auto &rhs) {
-        return lhs.first < rhs.first;
+        return lhs.first.ult(rhs.first);
       });
       SmallVector<unsigned> children;
       for (const auto &group : groups)
@@ -5048,9 +5041,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   if (hasSolveBefore && !proposalAliases.empty()) {
     auto solveLayerForField = [&](uint32_t fieldOffset, unsigned fieldWidth) {
-      uint64_t valueMask =
-          fieldWidth == 64 ? UINT64_MAX : (uint64_t{1} << fieldWidth) - 1;
-      uint64_t fieldMask = valueMask << fieldOffset;
+      APInt fieldMask =
+          APInt::getLowBitsSet(assignmentWidth, fieldWidth).shl(fieldOffset);
       for (auto [layerIndex, layerMask] :
            llvm::enumerate(solveBeforeLayerMasks))
         if ((fieldMask & layerMask) == fieldMask)
@@ -5913,12 +5905,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       proposalFiniteDomains.empty() && proposalCaptureDomains.empty() &&
       llvm::all_of(proposalDefinitions, isClosedDefinition);
   exactProposal |= closedDefinitionProposal;
-  // Mode changes can reach the residual block even when the default-mode
-  // proposal is exact. Reject ordered or weighted metadata that the wide
-  // runtime cannot interpret instead of generating a latent failure. Finite
-  // semantic domains use the same versioned mixed-radix traversal as the
-  // narrow residual solver.
-  if (wideProgram && (hasSolveBefore || !distPlans.empty())) {
+  // Mode changes can reach residuals even when the default proposal is exact.
+  // Wide ordered metadata requires target Z3 for conditional projections.
+  bool unsupportedWideOrder = false;
+#ifndef OBELISK_RUNTIME_Z3
+  unsupportedWideOrder = hasSolveBefore;
+#endif
+  if (wideProgram && (unsupportedWideOrder || !distPlans.empty())) {
     emitError(location)
         << "wide residual random fallback does not yet support solve before "
            "or dist";
@@ -5982,11 +5975,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<std::optional<unsigned>> propertyLayers(planned.size());
     for (auto [property, propertyMask] : llvm::enumerate(propertyMasks)) {
       std::optional<unsigned> selectedLayer;
-      uint64_t orderedBits = 0;
+      APInt orderedBits = APInt::getZero(assignmentWidth);
       for (auto [layerIndex, layerMask] :
            llvm::enumerate(solveBeforeLayerMasks)) {
-        uint64_t bits = propertyMask & layerMask;
-        if (bits == 0)
+        APInt bits = propertyMask & layerMask;
+        if (bits.isZero())
           continue;
         orderedBits |= bits;
         if (selectedLayer && *selectedLayer != layerIndex)
@@ -5996,7 +5989,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // Generated structural definitions and aliases operate on whole
       // properties. A path-level order that covers only part of a property
       // must stay in the bit-mask-aware table or residual runtime paths.
-      if (orderedBits != 0 && orderedBits != propertyMask)
+      if (!orderedBits.isZero() && orderedBits != propertyMask)
         return false;
       propertyLayers[property] = selectedLayer;
     }
@@ -6017,13 +6010,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool solveBeforeRequiresRuntime = hasSolveBefore && !softProposalExact;
   if (hasSolveBefore && !solveBeforeTableRoot &&
       analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
-    uint64_t orderedPropertyMask = 0;
-    for (uint64_t layerMask : solveBeforeLayerMasks)
+    APInt orderedPropertyMask = APInt::getZero(assignmentWidth);
+    for (const APInt &layerMask : solveBeforeLayerMasks)
       orderedPropertyMask |= layerMask;
 
-    uint64_t uncoveredOrderedMask =
-        orderedPropertyMask & ~proposalAssignmentTableMask.getZExtValue();
-    if (uncoveredOrderedMask != 0) {
+    APInt uncoveredOrderedMask =
+        orderedPropertyMask & ~proposalAssignmentTableMask;
+    if (!uncoveredOrderedMask.isZero()) {
       // This also rejects a path-level order that covers only part of a
       // property. Whole-property aliases and definitions cannot preserve that
       // distribution even when component partitioning happens not to expose a
