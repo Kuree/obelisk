@@ -1317,6 +1317,50 @@ TEST_F(RandSolveTest, RejectsMalformedPrograms) {
 }
 
 #ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveTest, UniformResidualUsesWholeJointSetInsteadOfCyclicGaps) {
+  std::vector<uint8_t> bytes =
+      program(9, 0,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 8},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 0},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  uint64_t assignment = 0, state = 71;
+  uint32_t success = 0;
+  std::vector<bool> seen(256, false);
+  unsigned guardTrue = 0;
+  for (unsigned iteration = 0; iteration != 128; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 256, 511, 0, 1, state,
+                  15, nullptr, 0, &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ASSERT_LT(assignment, 512u);
+    if (assignment & 256) {
+      EXPECT_EQ(assignment & 255, 0u);
+      ++guardTrue;
+    } else {
+      seen[assignment] = true;
+    }
+  }
+  EXPECT_LT(guardTrue, 8u);
+  EXPECT_GT(std::count(seen.begin(), seen.end(), true), 64);
+  // No attempt, no draw; stateless callers cannot request unbiased sampling.
+  uint64_t original = state;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 256, 511, 0, 0, state, 15,
+                nullptr, 0, &assignment, &success, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(state, original);
+  EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+                                       1, nullptr, 0, &assignment, &success),
+            OBELISK_RT_INVALID_ARGUMENT);
+}
+
 TEST_F(RandSolveTest, CompletesSparseRootsWithLiveCapturesAndSoftModes) {
   std::vector<uint8_t> bytes =
       program(32, 3,

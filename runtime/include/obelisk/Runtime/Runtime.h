@@ -4690,6 +4690,11 @@ struct obelisk_rt_random_state_v1 {
 // max_attempts then bounds the enumeration fast path rather than the solver.
 // This flag does not alter ordered or weighted sampling.
 #define OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION UINT32_C(16)
+// Sample ordinary integral residuals uniformly over all legal assignments.
+// Requires a stateful entry point and target Z3; a nonzero max_attempts enables
+// solving without bounding the exact finite count. Legacy flags retain their
+// traversal order. Ordered and weighted programs use their separate policies.
+#define OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM UINT32_C(32)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 #define OBELISK_RT_RANDOM_DIST_HEADER_SIZE UINT16_C(8)

@@ -5,10 +5,12 @@
 #include "obelisk/Runtime/Runtime.h"
 
 #ifdef OBELISK_RUNTIME_Z3
+#include "RandModelCount.h"
 #include <z3.h>
 
 #include <algorithm>
 #include <array>
+#include <unordered_set>
 #include <vector>
 
 namespace obelisk::runtime {
@@ -294,6 +296,10 @@ public:
     }
     if (check() != Z3_L_TRUE)
       return false;
+    return model(variable, width, output);
+  }
+
+  bool model(Z3_ast variable, unsigned width, uint64_t *output) {
     Z3_model model = Z3_solver_get_model(context, solver);
     Z3_model_inc_ref(context, model);
     bool valid = true;
@@ -309,6 +315,204 @@ public:
     return valid;
   }
 
+  Z3_ast packBits(const std::vector<Z3_ast> &bits) {
+    std::vector<Z3_ast> pieces;
+    for (Z3_ast bit : bits)
+      pieces.push_back(Z3_mk_ite(context, bit, constant(1, 1), constant(0, 1)));
+    while (pieces.size() != 1) {
+      size_t next = 0;
+      for (size_t index = 0; index < pieces.size(); index += 2)
+        pieces[next++] =
+            index + 1 == pieces.size()
+                ? pieces[index]
+                : Z3_mk_concat(context, pieces[index + 1], pieces[index]);
+      pieces.resize(next);
+    }
+    return pieces.front();
+  }
+
+  bool sampleComponent(const std::vector<Z3_ast> &bits, Z3_ast predicate,
+                       obelisk_rt_random_state_v1 &state,
+                       std::vector<bool> &selected) {
+    unsigned width = bits.size();
+    Z3_ast variable = packBits(bits);
+    // Sparse nonlinear components need not construct a potentially large
+    // decision diagram. Projection blocks only these bits, so unrelated free
+    // fields cannot turn four roots into an apparent unbounded solution set.
+    std::vector<std::vector<uint64_t>> assignments;
+    Z3_solver_push(context, solver);
+    bool complete = false;
+    bool valid = true;
+    for (unsigned index = 0; index != 17; ++index) {
+      Z3_lbool result = check();
+      if (result == Z3_L_FALSE) {
+        complete = true;
+        break;
+      }
+      std::vector<uint64_t> value((uint64_t(width) + 63) / 64, 0);
+      if (result != Z3_L_TRUE || !model(variable, width, value.data())) {
+        valid = false;
+        break;
+      }
+      require(Z3_mk_not(
+          context, Z3_mk_eq(context, variable, words(value.data(), width))));
+      assignments.push_back(std::move(value));
+    }
+    Z3_solver_pop(context, solver, 1);
+    if (!valid)
+      return false;
+    if (complete) {
+      if (assignments.empty())
+        return false;
+      std::sort(assignments.begin(), assignments.end(),
+                [](const auto &a, const auto &b) {
+                  return std::lexicographical_compare(a.rbegin(), a.rend(),
+                                                      b.rbegin(), b.rend());
+                });
+      uint64_t index = 0;
+      if (assignments.size() != 1 &&
+          obelisk_rt_v1_random_state_bounded(&state, assignments.size(),
+                                             &index) != OBELISK_RT_OK)
+        return false;
+      selected.resize(width);
+      for (unsigned bit = 0; bit != width; ++bit)
+        selected[bit] = (assignments[index][bit / 64] >> (bit % 64)) & 1;
+      return true;
+    }
+    ModelCounter counter(context, bits);
+    if (!counter.build(predicate))
+      return false;
+    ModelCount count = counter.count();
+    if (count.zero())
+      return false;
+    selected = counter.assignment(ModelCount::randomBelow(count, state));
+    return true;
+  }
+
+  bool uniform(unsigned width, const std::vector<Z3_ast> &bits,
+               const std::vector<unsigned> &physicalBits, const uint64_t *start,
+               const uint64_t *mutableMask, obelisk_rt_random_state_v1 &state,
+               uint64_t *output) {
+    Z3_ast_vector assertions = Z3_solver_get_assertions(context, solver);
+    Z3_ast_vector_inc_ref(context, assertions);
+    std::vector<Z3_ast> pending;
+    for (unsigned index = 0; index != Z3_ast_vector_size(context, assertions);
+         ++index)
+      pending.push_back(
+          Z3_simplify(context, Z3_ast_vector_get(context, assertions, index)));
+    Z3_ast_vector_dec_ref(context, assertions);
+
+    // The legal set of disjoint components is their Cartesian product.
+    // Sampling each component uniformly therefore gives an exact joint draw.
+    std::unordered_map<Z3_ast, size_t> input;
+    std::vector<size_t> parents(bits.size());
+    for (size_t index = 0; index != bits.size(); ++index) {
+      input.emplace(bits[index], index);
+      parents[index] = index;
+    }
+    auto root = [&](size_t index) {
+      size_t result = index;
+      while (parents[result] != result)
+        result = parents[result];
+      while (parents[index] != index) {
+        size_t next = parents[index];
+        parents[index] = result;
+        index = next;
+      }
+      return result;
+    };
+    struct Predicate {
+      Z3_ast value;
+      std::vector<size_t> support;
+    };
+    std::vector<Predicate> predicates;
+    while (!pending.empty()) {
+      Z3_ast value = pending.back();
+      pending.pop_back();
+      Z3_app app = Z3_to_app(context, value);
+      unsigned arity = Z3_get_app_num_args(context, app);
+      if (Z3_get_decl_kind(context, Z3_get_app_decl(context, app)) ==
+          Z3_OP_AND) {
+        for (unsigned index = 0; index != arity; ++index)
+          pending.push_back(Z3_get_app_arg(context, app, index));
+        continue;
+      }
+      std::vector<size_t> support;
+      std::unordered_set<Z3_ast> visited;
+      std::vector<Z3_ast> walk{value};
+      while (!walk.empty()) {
+        Z3_ast next = walk.back();
+        walk.pop_back();
+        if (!visited.insert(next).second)
+          continue;
+        auto found = input.find(next);
+        if (found != input.end()) {
+          support.push_back(found->second);
+          continue;
+        }
+        if (Z3_get_ast_kind(context, next) == Z3_NUMERAL_AST)
+          continue;
+        if (Z3_get_ast_kind(context, next) != Z3_APP_AST)
+          return false;
+        Z3_app nested = Z3_to_app(context, next);
+        for (unsigned index = 0; index != Z3_get_app_num_args(context, nested);
+             ++index)
+          walk.push_back(Z3_get_app_arg(context, nested, index));
+      }
+      if (support.empty())
+        continue;
+      for (size_t index = 1; index != support.size(); ++index) {
+        size_t a = root(support.front()), b = root(support[index]);
+        parents[std::max(a, b)] = std::min(a, b);
+      }
+      predicates.push_back({value, std::move(support)});
+    }
+    std::vector<std::vector<size_t>> components(bits.size());
+    std::vector<std::vector<Z3_ast>> constraints(bits.size());
+    for (const Predicate &predicate : predicates)
+      constraints[root(predicate.support.front())].push_back(predicate.value);
+    std::vector<size_t> freeBits;
+    for (size_t index = 0; index != bits.size(); ++index) {
+      size_t component = root(index);
+      if (constraints[component].empty())
+        freeBits.push_back(index);
+      else
+        components[component].push_back(index);
+    }
+    obelisk_rt_random_state_v1 nextState = state;
+    std::vector<bool> selected(bits.size(), false);
+    for (size_t index = 0; index != components.size(); ++index) {
+      if (components[index].empty())
+        continue;
+      std::vector<Z3_ast> inputs;
+      for (size_t bit : components[index])
+        inputs.push_back(bits[bit]);
+      Z3_ast predicate = Z3_mk_and(context, constraints[index].size(),
+                                   constraints[index].data());
+      std::vector<bool> local;
+      if (!sampleComponent(inputs, predicate, nextState, local))
+        return false;
+      for (size_t bit = 0; bit != local.size(); ++bit)
+        selected[components[index][bit]] = local[bit];
+    }
+    uint64_t draw = 0;
+    for (size_t index = 0; index != freeBits.size(); ++index) {
+      if (index % 64 == 0)
+        draw = obelisk_rt_v1_random_state_next64(&nextState);
+      selected[freeBits[index]] = (draw >> (index % 64)) & 1;
+    }
+    for (size_t index = 0; index != (uint64_t(width) + 63) / 64; ++index)
+      output[index] = start[index] & ~mutableMask[index];
+    for (size_t index = 0; index != selected.size(); ++index)
+      if (selected[index])
+        output[physicalBits[index] / 64] |= uint64_t{1}
+                                            << (physicalBits[index] % 64);
+    if (width % 64)
+      output[(width - 1) / 64] &= (uint64_t{1} << (width % 64)) - 1;
+    state = nextState;
+    return true;
+  }
+
   Z3_context context = nullptr;
   Z3_solver solver = nullptr;
 };
@@ -320,7 +524,8 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
                       const uint64_t *start, const uint64_t *mutableMask,
                       size_t assignmentWords, uint64_t constraintMask,
                       const uint64_t *captures, const uint32_t *captureWidths,
-                      size_t captureCount, uint64_t *assignment) {
+                      size_t captureCount, uint64_t *assignment,
+                      obelisk_rt_random_state_v1 *randomState) {
   bool wide = read16(program + 4) == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
   unsigned header = wide ? OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
                          : OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
@@ -332,12 +537,68 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   if (flags & (OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                OBELISK_RT_RANDOM_PROGRAM_HAS_DIST))
     return SMTCompletion::Unavailable;
-  if (assignmentWords != (uint64_t(width) + 63) / 64)
+  if (width == 0 || assignmentWords != (uint64_t(width) + 63) / 64)
+    return SMTCompletion::Unavailable;
+  bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) != 0;
+  if (uniform && !randomState)
     return SMTCompletion::Unavailable;
   Formula f;
-  Z3_ast variable =
-      Z3_mk_const(f.context, Z3_mk_string_symbol(f.context, "assignment"),
-                  Z3_mk_bv_sort(f.context, width));
+  Z3_ast variable = nullptr;
+  std::vector<Z3_ast> booleanBits;
+  std::vector<unsigned> physicalBits;
+  if (uniform) {
+    // Interleave fields from their least significant bits. Carry chains and
+    // relations between equally sized fields then share prefixes instead of
+    // expanding every value of one field before visiting another field.
+    std::vector<unsigned> boundaries{0, width};
+    for (unsigned index = 0; index != instructions; ++index) {
+      const uint8_t *p = program + header + size_t(index) * 16;
+      if (p[0] != OBELISK_RT_RANDOM_PUSH_VARIABLE_V1)
+        continue;
+      unsigned bits = wide ? read32(p + 4) : p[1];
+      unsigned offset = read32(p + (wide ? 8 : 4));
+      boundaries.push_back(offset);
+      boundaries.push_back(offset + bits);
+    }
+    std::sort(boundaries.begin(), boundaries.end());
+    boundaries.erase(std::unique(boundaries.begin(), boundaries.end()),
+                     boundaries.end());
+    std::vector<Z3_ast> pieces(width);
+    unsigned maximum = 0;
+    for (size_t field = 1; field != boundaries.size(); ++field)
+      maximum = std::max(maximum, boundaries[field] - boundaries[field - 1]);
+    for (unsigned column = 0; column != maximum; ++column)
+      for (size_t field = 1; field != boundaries.size(); ++field) {
+        unsigned bit = boundaries[field - 1] + column;
+        if (bit >= boundaries[field])
+          continue;
+        if (((mutableMask[bit / 64] >> (bit % 64)) & 1) == 0) {
+          pieces[bit] = f.constant((start[bit / 64] >> (bit % 64)) & 1, 1);
+          continue;
+        }
+        Z3_ast input = Z3_mk_const(f.context, Z3_mk_int_symbol(f.context, bit),
+                                   Z3_mk_bool_sort(f.context));
+        booleanBits.push_back(input);
+        physicalBits.push_back(bit);
+        pieces[bit] =
+            Z3_mk_ite(f.context, input, f.constant(1, 1), f.constant(0, 1));
+      }
+    // A balanced concatenation also avoids a width-deep Z3 expression stack.
+    while (pieces.size() != 1) {
+      size_t next = 0;
+      for (size_t index = 0; index < pieces.size(); index += 2)
+        pieces[next++] =
+            index + 1 == pieces.size()
+                ? pieces[index]
+                : Z3_mk_concat(f.context, pieces[index + 1], pieces[index]);
+      pieces.resize(next);
+    }
+    variable = pieces.front();
+  } else {
+    variable =
+        Z3_mk_const(f.context, Z3_mk_string_symbol(f.context, "assignment"),
+                    Z3_mk_bv_sort(f.context, width));
+  }
   Z3_ast fixedMask = Z3_mk_bvnot(f.context, f.words(mutableMask, width));
   f.require(Z3_mk_eq(f.context, Z3_mk_bvand(f.context, variable, fixedMask),
                      Z3_mk_bvand(f.context, f.words(start, width), fixedMask)));
@@ -478,6 +739,11 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
     if (result == Z3_L_FALSE)
       Z3_solver_pop(f.context, f.solver, 1);
   }
+  if (uniform)
+    return f.uniform(width, booleanBits, physicalBits, start, mutableMask,
+                     *randomState, assignment)
+               ? SMTCompletion::Satisfiable
+               : SMTCompletion::Unknown;
   Z3_solver_push(f.context, f.solver);
   f.require(Z3_mk_bvuge(f.context, variable, f.words(start, width)));
   result = f.check();
@@ -497,7 +763,7 @@ namespace obelisk::runtime {
 SMTCompletion completeRandomProgram(const uint8_t *, size_t, const uint64_t *,
                                     const uint64_t *, size_t, uint64_t,
                                     const uint64_t *, const uint32_t *, size_t,
-                                    uint64_t *) {
+                                    uint64_t *, obelisk_rt_random_state_v1 *) {
   return SMTCompletion::Unavailable;
 }
 } // namespace obelisk::runtime

@@ -579,7 +579,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) != 0)
+                        OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
+                        OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)) != 0)
     return OBELISK_RT_INVALID_ARGUMENT;
   uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
                             static_cast<uint64_t>(instructionCount) *
@@ -856,6 +857,20 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
       if (overlap != 0)
         domainMutableMask |= group.targetMask;
+    }
+    if ((programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) &&
+        !encodedSolveBefore && !encodedDist) {
+      if (!randomState)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if (maxAttempts == 0)
+        return OBELISK_RT_OK;
+      auto result = obelisk::runtime::completeRandomProgram(
+          program, static_cast<size_t>(programSize), &start, &mutableMask, 1,
+          constraintMask, captures, nullptr, captureCount, outAssignment,
+          randomState);
+      if (result == obelisk::runtime::SMTCompletion::Satisfiable)
+        *outSuccess = 1;
+      return OBELISK_RT_OK;
     }
     uint64_t ordinaryMutableMask = mutableMask & ~domainMutableMask;
     unsigned ordinaryMutableWidth = countBits(ordinaryMutableMask);

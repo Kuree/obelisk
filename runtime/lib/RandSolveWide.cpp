@@ -365,7 +365,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       read32(bytes + 28) != 0 ||
       (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) != 0)
+                 OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
+                 OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)) != 0)
     return false;
   result.hasSoft = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   uint64_t instructionBytes = static_cast<uint64_t>(instructionCount) *
@@ -936,6 +937,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     normalize(mutableMask);
 
     obelisk_rt_random_state_v1 randomState{rngState, rngIncrement};
+    if (read32(programBytes + 20) & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) {
+      for (const DomainGroup &group : program.domainGroups) {
+        WideValue overlap =
+            extract(mutableMask.words.data(), mutableMask.words.size(),
+                    group.targetOffset, group.width);
+        if (truth(overlap) && overlap.words[0] != highMask(group.width))
+          return OBELISK_RT_INVALID_ARGUMENT;
+      }
+      if (maxAttempts == 0)
+        return OBELISK_RT_OK;
+      auto result = obelisk::runtime::completeRandomProgram(
+          programBytes, static_cast<size_t>(programSize), startWords,
+          mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
+          captureWidths, captureCount, outAssignmentWords, &randomState);
+      if (result == obelisk::runtime::SMTCompletion::Satisfiable)
+        *outSuccess = 1;
+      else
+        std::fill_n(outAssignmentWords,
+                    static_cast<size_t>(assignmentWordCount), 0);
+      *outRngState = randomState.state;
+      return OBELISK_RT_OK;
+    }
     WideValue ordinaryMutableMask = mutableMask;
     std::vector<uint64_t> domainIndices(program.domainGroups.size(), 0);
     auto groupIndexForField = [](const DomainGroup &group, uint64_t field,

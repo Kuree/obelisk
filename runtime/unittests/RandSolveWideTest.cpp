@@ -637,6 +637,59 @@ TEST_F(RandSolveWideTest, RejectsNonContiguousSoftPriorities) {
 }
 
 #ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
+  auto bytes = program(192, 1,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {OBELISK_RT_RANDOM_MUL_V1, 32},
+                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM);
+  uint64_t start[] = {0, 0, UINT64_C(0x1234567800000000)};
+  uint64_t mutableMask[] = {UINT64_MAX, UINT64_MAX, UINT32_MAX};
+  uint64_t captures[] = {49}, assignment[3] = {};
+  uint32_t widths[] = {32}, success = 0;
+  uint64_t state = 71;
+  uint32_t seen = 0;
+  uint64_t freeOnes = 0, freeZeros = 0;
+  for (unsigned iteration = 0; iteration != 64; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 3, 0,
+                  1, state, 15, captures, 1, widths, 1, assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    uint32_t root = assignment[0];
+    EXPECT_EQ(uint32_t(uint64_t(root) * root), 49u);
+    EXPECT_EQ(assignment[2] >> 32, UINT64_C(0x12345678));
+    if (root == 7)
+      seen |= 1;
+    else if (root == UINT32_C(0x7ffffff9))
+      seen |= 2;
+    else if (root == UINT32_C(0x80000007))
+      seen |= 4;
+    else if (root == UINT32_C(0xfffffff9))
+      seen |= 8;
+    freeOnes |= assignment[1];
+    freeZeros |= ~assignment[1];
+  }
+  EXPECT_EQ(seen, 15u);
+  EXPECT_EQ(freeOnes, UINT64_MAX);
+  EXPECT_EQ(freeZeros, UINT64_MAX);
+  captures[0] = 2;
+  uint64_t unchanged = state;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mutableMask, 3, 0,
+                1, state, 15, captures, 1, widths, 1, assignment, &success,
+                &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(state, unchanged);
+  EXPECT_EQ(assignment[0] | assignment[1] | assignment[2], 0u);
+}
+
 TEST_F(RandSolveWideTest, CompletesWideSystemFunctionsWithCaptureBoundaries) {
   std::vector<uint8_t> bytes =
       program(128, 2,

@@ -26,14 +26,23 @@ results can also become proven definitions in generated code. Random
 `$isunknown` inputs are two-state; mixed unknown-plane state remains open.
 These paths execute in native and WASM runtime builds.
 
-Runtime Z3 completes ordinary integral residual solves when the bounded
-interpreter cannot find a solution or prove the enabled soft priorities.
-It uses current state captures, inactive bits, constraint modes and active
-semantic domains. The compiler opts in through the versioned program header;
-existing bounded C ABI clients retain their work limit. These completions
-select the first legal assignment in cyclic bit-vector order; exact uniform
-joint sampling of general residual relations remains open. Ordered, weighted,
-and dynamic-foreach residual paths retain their existing limits.
+Runtime Z3 resolves ordinary integral residual solves with current state
+captures, inactive bits, constraint modes and active semantic domains. After
+proving the optimal enabled soft priorities, it samples each independent
+constraint component uniformly. Sparse components use complete Z3-proven
+projection tables; other components use Z3 Boolean bit blasting and exact
+reduced decision-diagram counts. Counts and rejection-sampled ranks have
+arbitrary precision, including full domains beyond 64 bits. Free assignment
+bits are sampled independently; frozen state and auxiliary solver terms do
+not multiply the counts. Exact counting can require exponential work for
+complex Boolean relations.
+
+The compiler opts in through `SMT_UNIFORM` in the versioned program header.
+A nonzero work bound enables exact solving; zero still requests no solve.
+Existing bounded C ABI clients retain their work limit and cyclic ordering;
+`SMT_COMPLETION` clients can separately opt into complete cyclic discovery.
+Ordered, weighted and dynamic-foreach residual paths retain their existing
+limits. This does not close the non-integral or container gaps in the audit.
 
 Both target runtimes statically link the pinned Z3 source, using the native
 target libc++ ABI and Emscripten's JavaScript exception ABI respectively.
