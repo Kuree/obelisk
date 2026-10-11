@@ -17,6 +17,7 @@
 #include "llvm/ADT/bit.h"
 #include <limits>
 #include <memory>
+#include <numeric>
 
 using namespace mlir;
 namespace obelisk::analysis {
@@ -569,6 +570,94 @@ struct ReachingDefinitions {
     return !(*this == other);
   }
 };
+/// Reaching definitions per tracked root. Every CFG edge and revisited row
+/// copies a whole dense state, while an activation updates few roots between
+/// copies. Cells are therefore shared copy-on-write: a copy only shares them,
+/// a write clones just its own cell, and a join skips the cells both states
+/// still share.
+class ReachingMap {
+  struct Cell : llvm::RefCountedBase<Cell> {
+    explicit Cell(ReachingDefinitions value) : value(std::move(value)) {}
+    ReachingDefinitions value;
+  };
+  using Ptr = llvm::IntrusiveRefCntPtr<Cell>;
+  DenseMap<uint64_t, Ptr> cells;
+
+public:
+  const ReachingDefinitions *find(uint64_t root) const {
+    auto found = cells.find(root);
+    return found == cells.end() ? nullptr : &found->second->value;
+  }
+  /// The cell of `root` for writing, first unshared, or null if untracked.
+  ReachingDefinitions *write(uint64_t root) {
+    auto found = cells.find(root);
+    if (found == cells.end())
+      return nullptr;
+    if (found->second->UseCount() > 1)
+      found->second = llvm::makeIntrusiveRefCnt<Cell>(found->second->value);
+    return &found->second->value;
+  }
+  const ReachingDefinitions &set(uint64_t root, ReachingDefinitions cell) {
+    Ptr &slot = cells[root];
+    slot = llvm::makeIntrusiveRefCnt<Cell>(std::move(cell));
+    return slot->value;
+  }
+  /// Joins `other` into this map. Missing roots are unchanged incoming values,
+  /// not bottom. Stored definition links are normalized, so their union is a
+  /// linear merge, and it changed exactly when it grew.
+  bool join(const ReachingMap &other) {
+    bool changed = false;
+    for (auto &[root, cell] : cells) {
+      auto found = other.cells.find(root);
+      if (found != other.cells.end() && found->second == cell)
+        continue;
+      const ReachingDefinitions &own = cell->value;
+      if (found == other.cells.end()) {
+        LaneLink identity = own.identity();
+        auto position = llvm::lower_bound(own.links, identity, linkLess);
+        if (position == own.links.end() || !(*position == identity)) {
+          ReachingDefinitions next = own;
+          next.links.insert(next.links.begin() + (position - own.links.begin()),
+                            identity);
+          cell = llvm::makeIntrusiveRefCnt<Cell>(std::move(next));
+          changed = true;
+        }
+        continue;
+      }
+      const ReachingDefinitions &incoming = found->second->value;
+      LaneLinks merged;
+      merged.reserve(own.links.size() + incoming.links.size());
+      std::merge(own.links.begin(), own.links.end(), incoming.links.begin(),
+                 incoming.links.end(), std::back_inserter(merged), linkLess);
+      merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+      if (merged.size() != own.links.size()) {
+        cell = llvm::makeIntrusiveRefCnt<Cell>(
+            ReachingDefinitions{own.width, own.incoming, std::move(merged)});
+        changed = true;
+      } else if (incoming == own) {
+        // Equal contents: share the cell so later joins skip it.
+        cell = found->second;
+      }
+    }
+    for (const auto &[root, cell] : other.cells) {
+      if (cells.contains(root))
+        continue;
+      LaneLink identity = cell->value.identity();
+      auto position = llvm::lower_bound(cell->value.links, identity, linkLess);
+      if (position != cell->value.links.end() && *position == identity) {
+        cells.try_emplace(root, cell);
+      } else {
+        ReachingDefinitions copy = cell->value;
+        copy.links.insert(
+            copy.links.begin() + (position - cell->value.links.begin()),
+            identity);
+        cells.try_emplace(root, llvm::makeIntrusiveRefCnt<Cell>(std::move(copy)));
+      }
+      changed = true;
+    }
+    return changed;
+  }
+};
 struct LaneNode {
   unsigned id;
   uint64_t width;
@@ -642,19 +731,33 @@ protected:
       work->enqueue(id, solver);
   }
 };
+/// Solves the lanes of every representative node. A forwarding node shares
+/// its representative's anchor and state.
 class SparseLaneDataflow final : public DataFlowAnalysis {
 public:
   SparseLaneDataflow(DataFlowSolver &solver,
-                     ArrayRef<std::unique_ptr<LaneNode>> nodes)
-      : DataFlowAnalysis(solver), nodes(nodes) {
+                     ArrayRef<std::unique_ptr<LaneNode>> nodes,
+                     ArrayRef<unsigned> representatives)
+      : DataFlowAnalysis(solver), nodes(nodes),
+        representatives(representatives) {
     registerAnchorKind<LaneAnchor>();
   }
   LogicalResult initialize(Operation *) override {
+    anchors.resize(nodes.size());
+    states.resize(nodes.size());
+    for (const auto &node : nodes)
+      if (isRepresentative(*node)) {
+        anchors[node->id] = getLatticeAnchor<LaneAnchor>(node.get());
+        states[node->id] = getOrCreate<LaneState>(anchors[node->id]);
+      }
+    for (const auto &node : nodes)
+      if (!isRepresentative(*node)) {
+        anchors[node->id] = anchors[representatives[node->id]];
+        states[node->id] = states[representatives[node->id]];
+      }
     for (const auto &node : nodes) {
-      anchors.push_back(getLatticeAnchor<LaneAnchor>(node.get()));
-      states.push_back(getOrCreate<LaneState>(anchors.back()));
-    }
-    for (const auto &node : nodes) {
+      if (!isRepresentative(*node))
+        continue;
       auto *point = node->operation ? getProgramPointAfter(node->operation)
                                     : getProgramPointBefore(node->block);
       auto &work = targets[point];
@@ -671,6 +774,8 @@ public:
       }
     }
     for (const auto &node : nodes) {
+      if (!isRepresentative(*node))
+        continue;
       auto *state = states[node->id];
       propagateIfChanged(state,
                          state->join(node->seed, node->width, node->logical));
@@ -705,7 +810,11 @@ public:
   SmallVector<LaneAnchor *> anchors;
 
 private:
+  bool isRepresentative(const LaneNode &node) const {
+    return representatives[node.id] == node.id;
+  }
   ArrayRef<std::unique_ptr<LaneNode>> nodes;
+  ArrayRef<unsigned> representatives;
   SmallVector<LaneState *> states;
   llvm::MapVector<ProgramPoint *, std::unique_ptr<LaneWorklist>> targets;
 };
@@ -883,32 +992,43 @@ public:
   }
   void edge(Block *target, ArrayAttr targetContext, ValueRange operands,
             Value condition) {
+    // A row is revisited whenever its memory state grows, but the links of
+    // an edge depend only on its blocks, contexts and successor operands (the
+    // condition is the terminator's own). Emit each edge once.
+    if (!emittedEdges
+             .insert({currentBlock, currentContext, target, targetContext,
+                      operands.empty() ? nullptr
+                                       : operands.getBase().getOpaqueValue()})
+             .second)
+      return;
     // Both live sets are fixed before solving, but a block is entered once
     // per incoming edge and context. Order its live values once.
     auto [cached, inserted] = liveIns.try_emplace(target);
-    SmallVector<Value> &live = cached->second;
+    SmallVector<std::pair<Value, uint64_t>> &live = cached->second;
     if (inserted) {
-      auto appendLive = [&](const auto &values) {
-        for (Value value : values)
+      SmallVector<Value> values;
+      auto appendLive = [&](const auto &range) {
+        for (Value value : range)
           if (value.getParentBlock() != &function.getBody().front())
-            live.push_back(value);
+            values.push_back(value);
       };
       appendLive(liveness.getLiveIn(target));
       appendLive(implicitLive.lookup(target));
       // Liveness sets are unordered. Stable SSA ordinals keep the evaluation
       // graph and widening independent of hash iteration order.
-      llvm::sort(live, [&](Value a, Value b) {
+      llvm::sort(values, [&](Value a, Value b) {
         return ordinals.at(a) < ordinals.at(b);
       });
-      live.erase(std::unique(live.begin(), live.end()), live.end());
+      values.erase(std::unique(values.begin(), values.end()), values.end());
+      for (Value value : values)
+        live.emplace_back(value, valueSpan(value));
     }
     DenseMap<Value, unsigned> &targetScope = scopeOf(target, targetContext);
-    for (Value value : live) {
+    for (auto [value, span] : live) {
       if (hasSingleVersion(value))
         continue;
       append(valueNodeIn(targetScope, value, target),
-             {{0, valueSpan(value), valueNode(value), 0, valueSpan(value),
-               LaneMapping::Identity}});
+             {{0, span, valueNode(value), 0, span, LaneMapping::Identity}});
     }
     for (auto [argument, operand] :
          llvm::zip_equal(target->getArguments(), operands)) {
@@ -968,7 +1088,7 @@ public:
   }
   LogicalResult solve(
       Ranges &inputs, Ranges &finalInputs,
-      const DenseMap<uint64_t, ReachingDefinitions> &finalMemory,
+      const ReachingMap &finalMemory,
       ArrayRef<Range> finalWrites,
       DenseMap<Operation *, SmallVector<ActivationMemoryAnalysis::Publication>>
           &publications,
@@ -977,16 +1097,17 @@ public:
     // intermediate publications. A whole-array copy inside an induction loop
     // can expose old lanes early and overwrite them before the activation ends.
     for (auto range : inputsOnly ? ArrayRef<Range>{} : finalWrites) {
-      auto found = finalMemory.find(range.root);
-      if (found == finalMemory.end())
+      const ReachingDefinitions *found = finalMemory.find(range.root);
+      if (!found)
         return failure();
       unsigned node =
           addNode(range.width, &function.getBody().front(), function);
-      append(node, projectLinks(found->second.links, range.low, range.width));
+      append(node, projectLinks(found->links, range.low, range.width));
       finalSinks.insert(node);
     }
+    SmallVector<unsigned> representatives = collapseForwarders();
     DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
-    auto *flow = solver.load<SparseLaneDataflow>(nodes);
+    auto *flow = solver.load<SparseLaneDataflow>(nodes, representatives);
     if (failed(solver.initializeAndRun(function)))
       return failure();
     auto facts = [&](unsigned node) -> const Influences & {
@@ -1037,6 +1158,80 @@ public:
   }
 
 private:
+  /// Most nodes are live-in proxies that forward one definition unchanged
+  /// along CFG edges, for example through both arms of a diamond. A node whose
+  /// only links are full identities of one source, besides its own, and that
+  /// adds no seed or lane filter denotes that source's lanes. Map each such
+  /// node to a representative whose state it shares, and point every link at
+  /// representatives, so the solver anchors only nodes that seed, project or
+  /// join lanes. A separately joined copy could only keep exact relations that
+  /// a widened source already covers, so sharing is as sound and as precise.
+  SmallVector<unsigned> collapseForwarders() {
+    SmallVector<unsigned> parent(nodes.size());
+    std::iota(parent.begin(), parent.end(), 0u);
+    auto find = [&](unsigned id) {
+      while (parent[id] != id)
+        id = parent[id] = parent[parent[id]];
+      return id;
+    };
+    auto isForward = [](const LaneNode &node, const LaneLink &link) {
+      return link.mapping == LaneMapping::Identity && link.low == 0 &&
+             link.sourceLow == 0 && link.width == node.width &&
+             link.sourceWidth == node.width;
+    };
+    auto forwardedSource = [&](const LaneNode &node) -> std::optional<unsigned> {
+      if (!node.seed.empty())
+        return std::nullopt;
+      std::optional<unsigned> source;
+      for (const LaneLink &link : node.links) {
+        if (!isForward(node, link))
+          return std::nullopt;
+        unsigned from = find(link.source);
+        if (from == node.id)
+          continue;
+        if (source && *source != from)
+          return std::nullopt;
+        source = from;
+      }
+      if (!source)
+        return std::nullopt;
+      const LaneNode &target = *nodes[*source];
+      if (target.width != node.width ||
+          !(node.logical.empty() || llvm::equal(node.logical, target.logical)))
+        return std::nullopt;
+      return source;
+    };
+    // Links may point forward (loop back edges), so repeat until stable.
+    // Only roots are re-parented, onto other roots, so no cycle can form.
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (const auto &node : nodes)
+        if (parent[node->id] == node->id)
+          if (auto source = forwardedSource(*node)) {
+            parent[node->id] = *source;
+            changed = true;
+          }
+    }
+    for (unsigned id = 0; id != nodes.size(); ++id)
+      parent[id] = find(id);
+    for (const auto &node : nodes) {
+      if (parent[node->id] != node->id)
+        continue;
+      bool remapped = false;
+      for (LaneLink &link : node->links) {
+        remapped |= parent[link.source] != link.source;
+        link.source = parent[link.source];
+      }
+      if (!remapped)
+        continue;
+      // A full identity of the node itself adds nothing to its join.
+      llvm::erase_if(node->links, [&](const LaneLink &link) {
+        return link.source == node->id && isForward(*node, link);
+      });
+      normalize(node->links);
+    }
+    return parent;
+  }
   unsigned addNode(uint64_t width, Block *block, Operation *operation) {
     unsigned id = nodes.size();
     nodes.push_back(std::make_unique<LaneNode>(
@@ -1056,7 +1251,9 @@ private:
   DenseMap<Value, unsigned> ordinals;
   DenseMap<Block *, llvm::SetVector<Block *>> controllers;
   DenseMap<Block *, llvm::SetVector<Value>> implicitLive;
-  DenseMap<Block *, SmallVector<Value>> liveIns;
+  DenseMap<Block *, SmallVector<std::pair<Value, uint64_t>>> liveIns;
+  DenseSet<std::tuple<Block *, ArrayAttr, Block *, ArrayAttr, void *>>
+      emittedEdges;
   DenseSet<Block *> singleContextBlocks;
   ArrayAttr emptyContext;
   Block *currentBlock = nullptr;
@@ -1210,7 +1407,7 @@ void ActivationValueGraph::pure(Operation *op,
 struct Memory {
   DenseMap<Value, Attribute> constants;
   HandleFacts references;
-  DenseMap<uint64_t, ReachingDefinitions> reaching;
+  ReachingMap reaching;
   RangeSet assigned, exposed, written, repeated;
   /// Joins `other` into this state in place. Returns whether any fact
   /// changed, which is exactly when the joined state differs from the old one.
@@ -1233,40 +1430,8 @@ struct Memory {
     for (Value value : forget)
       references.erase(value);
     changed |= !forget.empty();
-    // Missing memory roots are unchanged incoming values, not bottom.
     // Only definition links are carried here; sparse SSA lattices are not.
-    // Stored definition links are normalized, so their union is a linear
-    // merge, and it changed exactly when it grew.
-    for (auto &[root, cell] : reaching) {
-      auto found = other.reaching.find(root);
-      if (found == other.reaching.end()) {
-        LaneLink identity = cell.identity();
-        auto position = llvm::lower_bound(cell.links, identity, linkLess);
-        if (position == cell.links.end() || !(*position == identity)) {
-          cell.links.insert(position, identity);
-          changed = true;
-        }
-        continue;
-      }
-      const LaneLinks &incoming = found->second.links;
-      LaneLinks merged;
-      merged.reserve(cell.links.size() + incoming.size());
-      std::merge(cell.links.begin(), cell.links.end(), incoming.begin(),
-                 incoming.end(), std::back_inserter(merged), linkLess);
-      merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
-      if (merged.size() != cell.links.size()) {
-        cell.links = std::move(merged);
-        changed = true;
-      }
-    }
-    for (const auto &[root, cell] : other.reaching)
-      if (!reaching.contains(root)) {
-        auto copy = cell;
-        copy.links.push_back(copy.identity());
-        normalize(copy.links);
-        reaching.try_emplace(root, std::move(copy));
-        changed = true;
-      }
+    changed |= reaching.join(other.reaching);
     changed |= assigned.intersectWith(other.assigned);
     changed |= exposed.uniteWith(other.exposed);
     changed |= written.uniteWith(other.written);
@@ -1929,19 +2094,13 @@ private:
         if (!values)
           continue;
         ReachingDefinitions incoming;
-        ReachingDefinitions *cell;
+        const ReachingDefinitions *cell;
         if (inputsOnly &&
             read.resource != schedule::ComputeResourceKind::Local) {
           incoming = incomingCell(*root, read, state);
           cell = &incoming;
         } else {
-          auto [it, inserted] = state.reaching.try_emplace(*root);
-          cell = &it->second;
-          if (inserted) {
-            cell->width = read.rootWidth;
-            cell->incoming = values->incomingNode(*root, read.rootWidth);
-            cell->links.push_back(cell->identity());
-          }
+          cell = &trackedCell(state, *root, read.rootWidth);
         }
         auto links = projectLinks(cell->links, read.low, read.width);
         for (Value result : call.getResults()) {
@@ -1972,7 +2131,7 @@ private:
         ReachingDefinitions cell{
             *span, values->valueNode(alloc.getInitialValue()), {}};
         cell.links.push_back(cell.identity());
-        state.reaching[root->second] = std::move(cell);
+        state.reaching.set(root->second, std::move(cell));
       }
       return success();
     }
@@ -1990,11 +2149,11 @@ private:
       if (!values)
         return success();
       auto slot = localRoots.find(getLocalSlot(value));
-      auto cell = slot == localRoots.end() ? state.reaching.end()
-                                           : state.reaching.find(slot->second);
-      if (cell == state.reaching.end() || !fact->width ||
-          fact->low > cell->second.width ||
-          fact->width > cell->second.width - fact->low) {
+      const ReachingDefinitions *cell =
+          slot == localRoots.end() ? nullptr
+                                   : state.reaching.find(slot->second);
+      if (!cell || !fact->width || fact->low > cell->width ||
+          fact->width > cell->width - fact->low) {
         untrackedLocalSlots = true;
         if (load)
           values->pure(op, state.constants);
@@ -2002,8 +2161,11 @@ private:
       }
       auto span = sim::getProvenanceSpan(value.getType());
       bool exact = !fact->dynamic && span && fact->width == *span;
-      updateReaching(cell->second, load, store, value, *fact, exact,
-                     /*publication=*/{});
+      if (load)
+        readReaching(*cell, load, value, *fact, exact);
+      else
+        writeReaching(*state.reaching.write(slot->second), store, *fact, exact,
+                      /*publication=*/{});
       return success();
     }
     if (isa<sim::SimDriverDriveOp>(op) &&
@@ -2047,31 +2209,23 @@ private:
                                 /*exact=*/false);
             continue;
           }
-          auto cell = state.reaching.find(root);
-          if (cell == state.reaching.end())
+          ReachingDefinitions *cell = state.reaching.write(root);
+          if (!cell)
             return failure();
-          updateReaching(cell->second, nullptr, store, value, candidate,
-                         /*exact=*/false, {});
+          writeReaching(*cell, store, candidate, /*exact=*/false, {});
           continue;
         }
         auto span = sim::getProvenanceSpan(value.getType());
         bool exact = !candidate.dynamic && span && candidate.width == *span;
         if (inputsOnly && !local) {
           auto cell = incomingCell(root, candidate, state);
-          updateReaching(cell, load, nullptr, value, candidate, exact, {});
+          readReaching(cell, load, value, candidate, exact);
           continue;
         }
-        auto [cell, inserted] = state.reaching.try_emplace(root);
-        if (inserted) {
-          if (local)
-            return failure();
-          cell->second.width = candidate.rootWidth;
-          cell->second.incoming =
-              values->incomingNode(root, candidate.rootWidth);
-          cell->second.links.push_back(cell->second.identity());
-        }
-        updateReaching(cell->second, load, nullptr, value, candidate, exact,
-                       {});
+        if (local && !state.reaching.find(root))
+          return failure();
+        readReaching(trackedCell(state, root, candidate.rootWidth), load, value,
+                     candidate, exact);
       }
       normalize(access);
       mixedPrivateWrites |= bool(store) && hasPrivateCandidate && !access.empty();
@@ -2099,21 +2253,16 @@ private:
         logical.access(accessedType, {*root, fact->low, fact->width}, exact);
     if (values) {
       ReachingDefinitions incoming;
-      ReachingDefinitions *cell;
-      if (inputsOnly) {
+      if (inputsOnly)
         incoming = incomingCell(*root, *fact, state);
-        cell = &incoming;
-      } else {
-        auto [it, inserted] = state.reaching.try_emplace(*root);
-        cell = &it->second;
-        if (inserted) {
-          cell->width = fact->rootWidth;
-          cell->incoming = values->incomingNode(*root, fact->rootWidth);
-          cell->links.push_back(cell->identity());
-        }
-      }
-      updateReaching(*cell, load, store, value, *fact, exact,
-                     Range{*root, fact->low, fact->width});
+      else
+        trackedCell(state, *root, fact->rootWidth);
+      if (load)
+        readReaching(inputsOnly ? incoming : *state.reaching.find(*root), load,
+                     value, *fact, exact);
+      else
+        writeReaching(inputsOnly ? incoming : *state.reaching.write(*root),
+                      store, *fact, exact, Range{*root, fact->low, fact->width});
     }
     if (load) {
       unite(reads[op], access);
@@ -2128,39 +2277,49 @@ private:
     }
     return success();
   }
-  /// Reaching-value lanes of one root cell for a load or store. A design
-  /// store also records its publication; a private slot store does not.
-  void updateReaching(ReachingDefinitions &cell, Operation *load,
-                      Operation *store, Value value, const HandleFact &fact,
-                      bool exact, std::optional<Range> publication) {
-    if (load) {
-      auto links = projectLinks(cell.links, fact.low, fact.width);
-      if (!exact)
-        for (auto &link : links) {
-          link.low = 0;
-          link.width = valueSpan(load->getResult(0));
-          link.mapping = LaneMapping::AllToAll;
-        }
-      links.push_back(values->valueLink(value, valueSpan(load->getResult(0))));
-      values->append(values->valueNode(load->getResult(0)), links);
-    } else {
-      unsigned node =
-          publication ? values->publication(store, *publication, exact)
-                      : values->privateStore(cast<sim::SimRefStoreOp>(store));
-      if (exact) {
-        auto retained = projectLinks(cell.links, 0, fact.low);
-        llvm::append_range(retained,
-                           projectLinks(cell.links, fact.low + fact.width,
-                                        cell.width - fact.low - fact.width,
-                                        fact.low + fact.width));
-        cell.links = std::move(retained);
+  /// The tracked cell of `root`, created as its incoming value if absent.
+  const ReachingDefinitions &trackedCell(Memory &state, uint64_t root,
+                                         uint64_t width) {
+    if (const ReachingDefinitions *cell = state.reaching.find(root))
+      return *cell;
+    ReachingDefinitions cell{width, values->incomingNode(root, width), {}};
+    cell.links.push_back(cell.identity());
+    return state.reaching.set(root, std::move(cell));
+  }
+  /// Reaching-value lanes of one root cell for a load.
+  void readReaching(const ReachingDefinitions &cell, Operation *load,
+                    Value value, const HandleFact &fact, bool exact) {
+    auto links = projectLinks(cell.links, fact.low, fact.width);
+    if (!exact)
+      for (auto &link : links) {
+        link.low = 0;
+        link.width = valueSpan(load->getResult(0));
+        link.mapping = LaneMapping::AllToAll;
       }
-      cell.links.push_back(
-          {fact.low, fact.width, node, 0,
-           valueSpan(ActivationMemoryAnalysis::getStoredValue(store)),
-           exact ? LaneMapping::Identity : LaneMapping::AllToAll});
-      normalize(cell.links);
+    links.push_back(values->valueLink(value, valueSpan(load->getResult(0))));
+    values->append(values->valueNode(load->getResult(0)), links);
+  }
+  /// The new reaching definition of a store. A design store also records its
+  /// publication; a private slot store does not.
+  void writeReaching(ReachingDefinitions &cell, Operation *store,
+                     const HandleFact &fact, bool exact,
+                     std::optional<Range> publication) {
+    unsigned node =
+        publication ? values->publication(store, *publication, exact)
+                    : values->privateStore(cast<sim::SimRefStoreOp>(store));
+    if (exact) {
+      auto retained = projectLinks(cell.links, 0, fact.low);
+      llvm::append_range(retained,
+                         projectLinks(cell.links, fact.low + fact.width,
+                                      cell.width - fact.low - fact.width,
+                                      fact.low + fact.width));
+      cell.links = std::move(retained);
     }
+    cell.links.push_back(
+        {fact.low, fact.width, node, 0,
+         valueSpan(ActivationMemoryAnalysis::getStoredValue(store)),
+         exact ? LaneMapping::Identity : LaneMapping::AllToAll});
+    normalize(cell.links);
   }
   sim::SimFuncOp function;
   const Liveness &liveness;

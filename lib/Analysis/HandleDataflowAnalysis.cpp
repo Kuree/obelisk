@@ -421,51 +421,43 @@ struct HandleRevision {
   }
 };
 
-/// Fused kernels are analyzed by many independent passes and analyses, each
-/// constructing its own HandleDataflowAnalysis. Large bodies reuse the solved
-/// result while their revision is unchanged; any IR edit changes the key.
+/// Many independent passes and analyses each construct a
+/// HandleDataflowAnalysis and solve the same unchanged functions, small
+/// callees once per call site. Every function reuses its solved result while
+/// its revision is unchanged; any IR edit changes the key. Checking a revision
+/// walks the body once, far cheaper than solving it. Only the latest revision
+/// of each function is kept.
 class HandleResultCache {
 public:
   std::shared_ptr<const HandleDataflowResult>
   lookup(Operation *function, const HandleRevision &revision) {
     std::lock_guard<std::mutex> lock(mutex);
-    for (auto [index, entry] : llvm::enumerate(entries)) {
-      if (entry.function != function || !(entry.revision == revision))
-        continue;
-      std::rotate(entries.begin(), entries.begin() + index,
-                  entries.begin() + index + 1);
-      return entries.front().result;
-    }
-    return nullptr;
+    auto found = entries.find(function);
+    return found != entries.end() && found->second.revision == revision
+               ? found->second.result
+               : nullptr;
   }
   void insert(Operation *function, const HandleRevision &revision,
               std::shared_ptr<const HandleDataflowResult> result) {
     std::lock_guard<std::mutex> lock(mutex);
-    llvm::erase_if(entries, [&](const Entry &entry) {
-      return entry.function == function;
-    });
-    entries.insert(entries.begin(), {function, revision, std::move(result)});
-    if (entries.size() > capacity)
-      entries.pop_back();
+    Entry entry{revision, std::move(result)};
+    auto [found, inserted] = entries.try_emplace(function, entry);
+    if (!inserted)
+      found->second = std::move(entry);
   }
 
 private:
   struct Entry {
-    Operation *function;
     HandleRevision revision;
     std::shared_ptr<const HandleDataflowResult> result;
   };
-  static constexpr size_t capacity = 16;
   std::mutex mutex;
-  SmallVector<Entry, 0> entries;
+  DenseMap<Operation *, Entry> entries;
 };
 HandleResultCache &getHandleResultCache() {
   static HandleResultCache cache;
   return cache;
 }
-/// Solving is roughly linear in body size, while a revision check walks the
-/// body once. Small functions are cheaper to recompute than to fingerprint.
-constexpr unsigned cachedHandleOperations = 4096;
 } // namespace
 
 HandleDataflowAnalysis::HandleDataflowAnalysis(sim::SimDesignOp design) {
@@ -530,16 +522,14 @@ solveHandles(sim::SimFuncOp function,
 HandleDataflowResult
 HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   if (function.isExternal() || function.getBody().empty())
-    return {};
+    return HandleDataflowResult();
   bool hasHandles = false, dynamicSelectors = false;
-  unsigned operations = 0;
   llvm::hash_code shape = 0;
   auto inspect = [&](Value value) {
     hasHandles |=
         resourceKind(value.getType()) != schedule::ComputeResourceKind::Unknown;
   };
   function.walk([&](Operation *op) {
-    ++operations;
     shape = llvm::hash_combine(shape, op->getName().getAsOpaquePointer());
     dynamicSelectors |=
         isa<sim::SimRefArrayElementOp, sim::SimRefDynExtractOp,
@@ -555,9 +545,7 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
         }
   });
   if (!hasHandles)
-    return {};
-  if (operations < cachedHandleOperations)
-    return solveHandles(function, driverNets, dynamicSelectors);
+    return HandleDataflowResult();
   HandleRevision revision{OperationFingerPrint(function), shape,
                           driverDigest};
   HandleResultCache &cache = getHandleResultCache();
