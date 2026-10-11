@@ -35,6 +35,7 @@ struct EncodedSolveBeforeEdge {
   uint64_t beforeMask;
   uint64_t afterMask;
   uint32_t constraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+  bool functionPriority = false;
 };
 
 struct EncodedDistRange {
@@ -57,13 +58,20 @@ struct EncodedDomainPattern {
   uint64_t value;
 };
 
+struct EncodedPriorityInput {
+  uint32_t instruction;
+  uint64_t references;
+  uint64_t arguments = 0;
+};
+
 std::vector<uint8_t>
 program(uint32_t width, uint32_t captures,
         std::initializer_list<EncodedInstruction> instructions,
         bool hasSoft = false,
         std::initializer_list<EncodedSolveBeforeEdge> solveEdges = {},
         std::initializer_list<EncodedDistRange> distRanges = {},
-        std::initializer_list<EncodedDomainPattern> domainPatterns = {}) {
+        std::initializer_list<EncodedDomainPattern> domainPatterns = {},
+        std::initializer_list<EncodedPriorityInput> priorityInputs = {}) {
   std::vector<uint8_t> bytes;
   append32(bytes, OBELISK_RT_RANDOM_PROGRAM_MAGIC);
   append16(bytes, OBELISK_RT_RANDOM_PROGRAM_VERSION);
@@ -78,6 +86,14 @@ program(uint32_t width, uint32_t captures,
     flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
   if (domainPatterns.size() != 0)
     flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
+  for (const auto &edge : solveEdges)
+    if (edge.functionPriority)
+      flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
+               OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  if (priorityInputs.size() != 0)
+    flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
+             OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+             OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
   append32(bytes, flags);
   for (const EncodedInstruction &instruction : instructions) {
     bytes.push_back(instruction.opcode);
@@ -87,13 +103,24 @@ program(uint32_t width, uint32_t captures,
     append32(bytes, instruction.operand);
     append64(bytes, instruction.immediate);
   }
-  if (solveEdges.size() != 0) {
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) {
     append32(bytes, static_cast<uint32_t>(solveEdges.size()));
     for (const EncodedSolveBeforeEdge &edge : solveEdges) {
       append64(bytes, edge.beforeMask);
       append64(bytes, edge.afterMask);
       append32(bytes, edge.constraintBlock);
+      append32(bytes, edge.functionPriority
+                          ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                          : 0u);
+    }
+  }
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) {
+    append32(bytes, static_cast<uint32_t>(priorityInputs.size()));
+    for (const auto &input : priorityInputs) {
+      append32(bytes, input.instruction);
       append32(bytes, 0);
+      append64(bytes, input.references);
+      append64(bytes, input.arguments);
     }
   }
   if (distRanges.size() != 0) {
@@ -1375,6 +1402,271 @@ TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
 }
 
 #ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveTest, FunctionPriorityPreservesSimplifiedSourceReferences) {
+  auto bytes = program(2, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       false, {{2, 1, 0, true}}, {}, {}, {{3, 3, 2}, {10, 3}});
+  unsigned accepted = 0;
+  for (unsigned seed = 0; seed != 256; ++seed) {
+    obelisk_rt_random_state_v1 state;
+    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    uint64_t original = state.state, assignment = 7;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 1, state.state,
+                  state.increment, nullptr, 0, &assignment, &success,
+                  &state.state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(assignment, 0u);
+    if (success)
+      ++accepted;
+    else
+      EXPECT_EQ(state.state, original);
+  }
+  // y == 0 && x == x belongs to the lower stage by its source references,
+  // even though Boolean simplification removes its dependence on x.
+  EXPECT_GT(accepted, 96u);
+  EXPECT_LT(accepted, 160u);
+}
+
+TEST_F(RandSolveTest,
+       FunctionReturnOnlyConstraintsHaveAnIndependentArgumentStage) {
+  auto bytes = program(2, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       false, {}, {}, {}, {{2, 2, 2}, {6, 3}});
+  unsigned accepted = 0;
+  for (unsigned seed = 0; seed != 256; ++seed) {
+    obelisk_rt_random_state_v1 state;
+    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    uint64_t original = state.state, assignment = 7;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 1, state.state,
+                  state.increment, nullptr, 0, &assignment, &success,
+                  &state.state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(assignment, 0u);
+    if (success)
+      ++accepted;
+    else
+      EXPECT_EQ(state.state, original);
+  }
+  EXPECT_GT(accepted, 96u);
+  EXPECT_LT(accepted, 160u);
+  uint64_t assignment = 0, state = 71;
+  uint32_t success = 0;
+  // Disabling the function removes its priority. The remaining equality has
+  // an ordinary uniform joint distribution, including x=y=1.
+  unsigned ones = 0;
+  for (unsigned iteration = 0; iteration != 64; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 1, 1, state, 15,
+                  nullptr, 0, &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_TRUE(assignment == 0 || assignment == 3);
+    ones += assignment == 3;
+  }
+  EXPECT_GT(ones, 16u);
+  EXPECT_LT(ones, 48u);
+  // A frozen argument is already state. Its failed return check draws no RNG.
+  uint64_t original = state;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 2, 1, 0, 1, state, 15,
+                nullptr, 0, &assignment, &success, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(state, original);
+}
+
+TEST_F(RandSolveTest, FunctionPriorityRejectsMalformedSourceRecords) {
+  auto bytes = program(2, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       false, {}, {}, {}, {{2, 2, 2}, {6, 3}});
+  size_t first = bytes.size() - 48;
+  auto reject = [&](size_t offset, uint8_t value) {
+    auto malformed = bytes;
+    malformed[offset] = value;
+    uint64_t assignment = 0, state = 71;
+    uint32_t success = 0;
+    EXPECT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, malformed.data(), malformed.size(), 0, 3, 0, 1,
+                  state, 15, nullptr, 0, &assignment, &success, &state),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(state, 71u);
+  };
+  reject(first, 7);      // Index outside the instruction stream.
+  reject(first, 1);      // A source record must name an END instruction.
+  reject(first + 4, 1);  // Reserved word.
+  reject(first + 24, 2); // Duplicate index, missing the second constraint.
+  reject(first + 8, 4);  // References outside aggregate width.
+  reject(first + 16, 4); // Arguments outside aggregate width.
+  reject(first + 16, 1); // Arguments not contained in references.
+  reject(first - 4, 1);  // An incomplete set of source records.
+}
+
+TEST_F(RandSolveTest, FunctionPriorityCanFailAfterAnIndependentHigherSolve) {
+  auto bytes = program(2, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       false, {{2, 1, 0, true}});
+  unsigned accepted = 0;
+  for (unsigned seed = 0; seed != 256; ++seed) {
+    obelisk_rt_random_state_v1 state;
+    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    uint64_t original = state.state, assignment = UINT64_MAX;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 1, state.state,
+                  state.increment, nullptr, 0, &assignment, &success,
+                  &state.state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(assignment, 0u);
+    if (success)
+      ++accepted;
+    else
+      EXPECT_EQ(state.state, original);
+  }
+  // Explicit ordering would always choose y=0 using the complete relation.
+  // Function priority solves y independently and fails when it chooses y=1.
+  EXPECT_GT(accepted, 96u);
+  EXPECT_LT(accepted, 160u);
+  uint64_t assignment = 0, state = 71;
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, 3, 1, 1, state, 15,
+                nullptr, 0, &assignment, &success, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment & 1, 0u);
+}
+
+TEST_F(RandSolveTest,
+       FunctionStagesResolveSoftPreferencesBeforeLowerConstraints) {
+  auto bytes = program(2, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 2, 0}},
+                       true, {{2, 1, 0, true}});
+  uint64_t assignment = 7, state = 71;
+  uint32_t success = 1;
+  auto solve = [&](uint64_t disabled) {
+    return obelisk_rt_v1_random_solve_modes_state(
+        context, bytes.data(), bytes.size(), 0, 3, disabled, 1, state, 15,
+        nullptr, 0, &assignment, &success, &state);
+  };
+  ASSERT_EQ(solve(0), OBELISK_RT_OK);
+  // The higher preference selects y=1, so later hard constraints fail. It is
+  // not discarded merely because the lower relation would prefer y=0.
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(assignment, 0u);
+  EXPECT_EQ(state, 71u);
+  ASSERT_EQ(solve(1), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 2u);
+  ASSERT_EQ(solve(2), OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 3u);
+}
+
+TEST_F(RandSolveTest, ExplicitOrderingRemainsConditionalWithinAFunctionStage) {
+  auto bytes = program(3, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 2},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       false, {{2, 4, 0, true}, {1, 2}});
+  unsigned beforeTrue = 0, argumentTrue = 0;
+  for (unsigned seed = 0; seed != 512; ++seed) {
+    obelisk_rt_random_state_v1 state;
+    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    uint64_t assignment = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 7, 0, 1, state.state,
+                  state.increment, nullptr, 0, &assignment, &success,
+                  &state.state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ((assignment >> 2) & 1, (assignment >> 1) & 1);
+    EXPECT_NE(assignment & 3, 3u);
+    beforeTrue += (assignment & 1) != 0;
+    argumentTrue += (assignment & 2) != 0;
+  }
+  EXPECT_GT(beforeTrue, 216u);
+  EXPECT_LT(beforeTrue, 296u);
+  EXPECT_GT(argumentTrue, 88u);
+  EXPECT_LT(argumentTrue, 168u);
+}
+
+TEST_F(RandSolveTest, FunctionPathConstraintsUseOnlyTheSelectedBits) {
+  auto bytes =
+      program(3, 0,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 1},
+               {OBELISK_RT_RANDOM_CAST_V1, 1},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 0},
+               {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2, 0, 1},
+               {OBELISK_RT_RANDOM_CAST_V1, 1},
+               {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 2}},
+              false, {{2, 1, 0, true}}, {}, {{0, 1, 2, 3, 1}, {0, 1, 2, 3, 2}});
+  for (unsigned seed = 0; seed != 32; ++seed) {
+    uint64_t state = seed + 71, assignment = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 7, 0, 1, state, 15,
+                  nullptr, 0, &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ(assignment, 4u);
+    EXPECT_EQ(state, seed + 71u);
+  }
+}
+
 TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
   constexpr uint64_t guardMask = uint64_t{1} << 32;
   std::vector<uint8_t> bytes =

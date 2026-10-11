@@ -1,6 +1,7 @@
 //===- RandSolve.cpp - Constrained-random residual solver -----------------===//
 
 #include "ExceptionSupport.h"
+#include "RandSolveOrder.h"
 #include "RandSolveSMT.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -26,6 +27,7 @@ struct SolveBeforeEdge {
   uint64_t beforeMask;
   uint64_t afterMask;
   uint32_t constraintBlock;
+  bool functionPriority = false;
 };
 
 struct DistRange {
@@ -134,67 +136,19 @@ bool constraintEnabled(uint32_t constraintBlock, uint64_t constraintMask) {
 bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
                             uint64_t mutableMask, uint64_t constraintMask,
                             std::vector<uint64_t> &layers) {
-  std::vector<uint64_t> nodes;
-  auto addNode = [&](uint64_t node) {
-    for (size_t index = 0; index != nodes.size();) {
-      if ((nodes[index] & node) == 0) {
-        ++index;
-        continue;
-      }
-      node |= nodes[index];
-      nodes.erase(nodes.begin() + static_cast<std::ptrdiff_t>(index));
-    }
-    nodes.push_back(node);
-  };
-  for (const SolveBeforeEdge &edge : edges) {
-    if (!constraintEnabled(edge.constraintBlock, constraintMask))
-      continue;
-    uint64_t before = edge.beforeMask & mutableMask;
-    uint64_t after = edge.afterMask & mutableMask;
-    if (before == 0 || after == 0)
-      continue;
-    addNode(before);
-    addNode(after);
-  }
-
+  std::vector<obelisk::runtime::SolveOrderEdge> orderEdges;
+  for (const SolveBeforeEdge &edge : edges)
+    orderEdges.push_back({{edge.beforeMask},
+                          {edge.afterMask},
+                          edge.constraintBlock,
+                          edge.functionPriority});
+  std::vector<obelisk::runtime::OrderMask> masks;
+  if (!obelisk::runtime::buildSolveOrderLayers(orderEdges, {mutableMask},
+                                               constraintMask, false, masks))
+    return false;
   layers.clear();
-  while (!nodes.empty()) {
-    uint64_t layer = 0;
-    uint64_t remaining = 0;
-    for (uint64_t node : nodes)
-      remaining |= node;
-    for (uint64_t node : nodes) {
-      bool hasSuccessor = false;
-      for (const SolveBeforeEdge &edge : edges) {
-        if (!constraintEnabled(edge.constraintBlock, constraintMask) ||
-            (edge.beforeMask & mutableMask & node) == 0)
-          continue;
-        uint64_t after = edge.afterMask & mutableMask;
-        if ((after & remaining) != 0) {
-          hasSuccessor = true;
-          break;
-        }
-      }
-      if (!hasSuccessor)
-        layer |= node;
-    }
-    if (layer == 0)
-      return false;
-    layers.push_back(layer);
-    nodes.erase(
-        std::remove_if(nodes.begin(), nodes.end(),
-                       [&](uint64_t node) { return (node & layer) != 0; }),
-        nodes.end());
-  }
-  // IEEE 1800-2023 18.5.9 defers partially ordered variables as late as
-  // possible. Peeling sinks and then reversing gives those latest layers.
-  std::reverse(layers.begin(), layers.end());
-  if (!layers.empty()) {
-    uint64_t orderedMask = 0;
-    for (uint64_t layer : layers)
-      orderedMask |= layer;
-    layers.back() |= mutableMask & ~orderedMask;
-  }
+  for (const auto &mask : masks)
+    layers.push_back(mask[0]);
   return true;
 }
 
@@ -579,69 +533,96 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       read16(program + 4) != OBELISK_RT_RANDOM_PROGRAM_VERSION ||
       read16(program + 6) != OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE)
     return OBELISK_RT_INVALID_ARGUMENT;
-  uint32_t aggregateWidth = read32(program + 8);
-  uint32_t instructionCount = read32(program + 12);
-  uint32_t encodedCaptures = read32(program + 16);
-  uint32_t programFlags = read32(program + 20);
-  if (aggregateWidth > 64 || encodedCaptures != captureCount ||
-      (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                        OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)) != 0)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
-                            static_cast<uint64_t>(instructionCount) *
-                                OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
-  bool encodedSolveBefore =
-      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
-  uint32_t solveEdgeCount = 0;
-  if (encodedSolveBefore) {
-    if (programSize < instructionEnd + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    solveEdgeCount = read32(program + instructionEnd);
-    instructionEnd += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
-                      static_cast<uint64_t>(solveEdgeCount) *
-                          OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
-  }
-  bool encodedDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
-  uint32_t distGroupCount = 0;
-  uint32_t distRecordCount = 0;
-  uint64_t distRecordsOffset = 0;
-  if (encodedDist) {
-    if (programSize < instructionEnd + OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    distGroupCount = read32(program + instructionEnd);
-    distRecordCount = read32(program + instructionEnd + 4);
-    distRecordsOffset = instructionEnd + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
-    instructionEnd =
-        distRecordsOffset + static_cast<uint64_t>(distRecordCount) *
-                                OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
-  }
-  bool encodedDomains =
-      (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
-  uint32_t domainGroupCount = 0;
-  uint32_t domainRecordCount = 0;
-  uint64_t domainRecordsOffset = 0;
-  if (encodedDomains) {
-    if (instructionEnd > UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
-        programSize < instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    domainGroupCount = read32(program + instructionEnd);
-    domainRecordCount = read32(program + instructionEnd + 4);
-    domainRecordsOffset = instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
-    if (domainRecordCount > (UINT64_MAX - domainRecordsOffset) /
-                                OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    instructionEnd =
-        domainRecordsOffset + static_cast<uint64_t>(domainRecordCount) *
-                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
-  }
-  if (programSize != instructionEnd)
-    return OBELISK_RT_INVALID_ARGUMENT;
-
   OBELISK_RT_TRY {
+    uint32_t aggregateWidth = read32(program + 8);
+    uint32_t instructionCount = read32(program + 12);
+    uint32_t encodedCaptures = read32(program + 16);
+    uint32_t programFlags = read32(program + 20);
+    if (aggregateWidth > 64 || encodedCaptures != captureCount ||
+        (programFlags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
+                          OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
+                          OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) !=
+            0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
+                              static_cast<uint64_t>(instructionCount) *
+                                  OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
+    bool encodedSolveBefore =
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
+    bool encodedPriority =
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+    if (encodedPriority &&
+        (!encodedSolveBefore ||
+         !(programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) ||
+         (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST)))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint32_t solveEdgeCount = 0;
+    if (encodedSolveBefore) {
+      if (programSize <
+          instructionEnd + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      solveEdgeCount = read32(program + instructionEnd);
+      instructionEnd += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+                        static_cast<uint64_t>(solveEdgeCount) *
+                            OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+    }
+    bool sourceFunctionArguments = false;
+    if (encodedPriority) {
+      if (instructionEnd > programSize)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      size_t offset = instructionEnd;
+      obelisk::runtime::PriorityInputs inputs;
+      if (!obelisk::runtime::readPriorityInputs(
+              program, programSize, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE,
+              instructionCount, aggregateWidth, offset, inputs))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      instructionEnd = offset;
+      for (const auto &input : inputs)
+        sourceFunctionArguments |= std::any_of(
+            input.second.arguments.begin(), input.second.arguments.end(),
+            [](uint64_t word) { return word != 0; });
+    }
+    bool encodedDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+    uint32_t distGroupCount = 0;
+    uint32_t distRecordCount = 0;
+    uint64_t distRecordsOffset = 0;
+    if (encodedDist) {
+      if (programSize < instructionEnd + OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      distGroupCount = read32(program + instructionEnd);
+      distRecordCount = read32(program + instructionEnd + 4);
+      distRecordsOffset = instructionEnd + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
+      instructionEnd =
+          distRecordsOffset + static_cast<uint64_t>(distRecordCount) *
+                                  OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+    }
+    bool encodedDomains =
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
+    uint32_t domainGroupCount = 0;
+    uint32_t domainRecordCount = 0;
+    uint64_t domainRecordsOffset = 0;
+    if (encodedDomains) {
+      if (instructionEnd > UINT64_MAX - OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE ||
+          programSize < instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      domainGroupCount = read32(program + instructionEnd);
+      domainRecordCount = read32(program + instructionEnd + 4);
+      domainRecordsOffset =
+          instructionEnd + OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE;
+      if (domainRecordCount > (UINT64_MAX - domainRecordsOffset) /
+                                  OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      instructionEnd =
+          domainRecordsOffset + static_cast<uint64_t>(domainRecordCount) *
+                                    OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE;
+    }
+    if (programSize != instructionEnd)
+      return OBELISK_RT_INVALID_ARGUMENT;
+
     std::vector<Instruction> instructions;
     instructions.reserve(instructionCount);
     size_t depth = 0, maxDepth = 0;
@@ -680,22 +661,30 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                    OBELISK_RT_RANDOM_INSTRUCTION_SIZE +
                OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
       uint64_t aggregateMask = widthMask(aggregateWidth);
+      bool sawFunctionEdge = false;
       for (uint32_t index = 0; index != solveEdgeCount; ++index) {
         SolveBeforeEdge edge{read64(cursor), read64(cursor + 8),
                              read32(cursor + 16)};
         uint32_t reserved = read32(cursor + 20);
+        edge.functionPriority =
+            (reserved & OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
+        sawFunctionEdge |= edge.functionPriority;
         cursor += OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
         if (edge.beforeMask == 0 || edge.afterMask == 0 ||
             (edge.beforeMask & ~aggregateMask) != 0 ||
             (edge.afterMask & ~aggregateMask) != 0 ||
-            (edge.beforeMask & edge.afterMask) != 0 || reserved != 0 ||
+            (edge.beforeMask & edge.afterMask) != 0 ||
+            (reserved &
+             ~(encodedPriority ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                               : 0u)) != 0 ||
             (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
              edge.constraintBlock >= 64))
           return OBELISK_RT_INVALID_ARGUMENT;
         solveEdges.push_back(edge);
       }
       std::vector<uint64_t> validationLayers;
-      if (solveEdges.empty() ||
+      if ((!encodedPriority && solveEdges.empty()) ||
+          (encodedPriority && !sawFunctionEdge && !sourceFunctionArguments) ||
           !buildSolveBeforeLayers(solveEdges, aggregateMask, 0,
                                   validationLayers))
         return OBELISK_RT_INVALID_ARGUMENT;

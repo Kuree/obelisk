@@ -113,6 +113,42 @@ private:
   std::vector<uint64_t> words;
 };
 
+/// Simplify exact bit-vector semantics to Boolean input circuits. The caller
+/// owns a non-reference-counted Z3 context, so returned ASTs remain alive.
+inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
+                              std::vector<Z3_ast> &formulas) {
+  Z3_goal goal = Z3_mk_goal(context, false, false, false);
+  Z3_goal_inc_ref(context, goal);
+  Z3_goal_assert(context, goal, predicate);
+  Z3_tactic simplify = Z3_mk_tactic(context, "simplify");
+  Z3_tactic_inc_ref(context, simplify);
+  Z3_tactic blast = Z3_mk_tactic(context, "bit-blast");
+  Z3_tactic_inc_ref(context, blast);
+  Z3_tactic first = Z3_tactic_and_then(context, simplify, blast);
+  Z3_tactic_inc_ref(context, first);
+  Z3_tactic tactic = Z3_tactic_and_then(context, first, simplify);
+  Z3_tactic_inc_ref(context, tactic);
+  Z3_apply_result result = Z3_tactic_apply(context, tactic, goal);
+  bool valid = result && Z3_get_error_code(context) == Z3_OK;
+  if (result)
+    Z3_apply_result_inc_ref(context, result);
+  valid = valid && Z3_apply_result_get_num_subgoals(context, result) == 1;
+  formulas.clear();
+  if (valid) {
+    Z3_goal output = Z3_apply_result_get_subgoal(context, result, 0);
+    for (unsigned index = 0; index != Z3_goal_size(context, output); ++index)
+      formulas.push_back(Z3_goal_formula(context, output, index));
+  }
+  if (result)
+    Z3_apply_result_dec_ref(context, result);
+  Z3_tactic_dec_ref(context, tactic);
+  Z3_tactic_dec_ref(context, first);
+  Z3_tactic_dec_ref(context, blast);
+  Z3_tactic_dec_ref(context, simplify);
+  Z3_goal_dec_ref(context, goal);
+  return valid;
+}
+
 /// Count a Z3 Boolean circuit with a reduced ordered decision diagram. Z3
 /// provides the bit-vector semantics and bit blasting; the diagram supplies
 /// exact counts, which a satisfiability model alone cannot provide. Only the
@@ -135,43 +171,16 @@ public:
   bool build(Z3_ast predicate) {
     // The bit-blast tactic preserves the existing Boolean input symbols and
     // does not introduce Tseitin variables requiring projected counting.
-    Z3_goal goal = Z3_mk_goal(context, false, false, false);
-    Z3_goal_inc_ref(context, goal);
-    Z3_goal_assert(context, goal, predicate);
-    Z3_tactic simplify = Z3_mk_tactic(context, "simplify");
-    Z3_tactic_inc_ref(context, simplify);
-    Z3_tactic blast = Z3_mk_tactic(context, "bit-blast");
-    Z3_tactic_inc_ref(context, blast);
-    Z3_tactic first = Z3_tactic_and_then(context, simplify, blast);
-    Z3_tactic_inc_ref(context, first);
-    Z3_tactic tactic = Z3_tactic_and_then(context, first, simplify);
-    Z3_tactic_inc_ref(context, tactic);
-    Z3_apply_result result = Z3_tactic_apply(context, tactic, goal);
-    bool valid = result && Z3_get_error_code(context) == Z3_OK;
-    if (result)
-      Z3_apply_result_inc_ref(context, result);
-    valid = valid && Z3_apply_result_get_num_subgoals(context, result) == 1;
-    root = 1;
-    if (valid) {
-      Z3_goal output = Z3_apply_result_get_subgoal(context, result, 0);
-      for (unsigned index = 0; valid && index != Z3_goal_size(context, output);
-           ++index) {
-        ID circuit = 0;
-        valid = convert(Z3_goal_formula(context, output, index), circuit);
-        if (valid)
-          root = conjunction(root, circuit);
-      }
-    }
-    if (result)
-      Z3_apply_result_dec_ref(context, result);
-    Z3_tactic_dec_ref(context, tactic);
-    Z3_tactic_dec_ref(context, first);
-    Z3_tactic_dec_ref(context, blast);
-    Z3_tactic_dec_ref(context, simplify);
-    Z3_goal_dec_ref(context, goal);
-    if (!valid)
+    std::vector<Z3_ast> formulas;
+    if (!bitBlastPredicate(context, predicate, formulas))
       return false;
-
+    root = 1;
+    for (Z3_ast formula : formulas) {
+      ID circuit = 0;
+      if (!convert(formula, circuit))
+        return false;
+      root = conjunction(root, circuit);
+    }
     project(std::vector<bool>(variableCount, true));
     return true;
   }

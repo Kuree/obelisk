@@ -6,6 +6,7 @@
 
 #ifdef OBELISK_RUNTIME_Z3
 #include "RandModelCount.h"
+#include "RandSolveOrder.h"
 #include <z3.h>
 
 #include <algorithm>
@@ -563,6 +564,231 @@ public:
     return true;
   }
 
+  bool projection(const std::vector<Z3_ast> &bits,
+                  const std::vector<unsigned> &physicalBits,
+                  const OrderMask &mask, obelisk_rt_random_state_v1 &state,
+                  OrderMask &output) {
+    std::vector<Z3_ast> selectedBits;
+    std::vector<size_t> indices;
+    std::vector<bool> keep(bits.size(), false);
+    for (size_t bit = 0; bit != bits.size(); ++bit)
+      if ((mask[physicalBits[bit] / 64] >> (physicalBits[bit] % 64)) & 1) {
+        keep[bit] = true;
+        indices.push_back(bit);
+        selectedBits.push_back(bits[bit]);
+      }
+    if (indices.empty())
+      return check() == Z3_L_TRUE;
+    Z3_ast variable = packBits(selectedBits);
+    std::vector<OrderMask> table;
+    bool complete = false;
+    Z3_solver_push(context, solver);
+    for (unsigned index = 0; index != 17; ++index) {
+      Z3_lbool result = check();
+      if (result == Z3_L_FALSE) {
+        complete = true;
+        break;
+      }
+      OrderMask value((selectedBits.size() + 63) / 64, 0);
+      if (result != Z3_L_TRUE ||
+          !model(variable, selectedBits.size(), value.data())) {
+        Z3_solver_pop(context, solver, 1);
+        return false;
+      }
+      require(Z3_mk_not(context,
+                        Z3_mk_eq(context, variable,
+                                 words(value.data(), selectedBits.size()))));
+      table.push_back(std::move(value));
+    }
+    Z3_solver_pop(context, solver, 1);
+    std::vector<bool> selected(bits.size(), false);
+    if (complete) {
+      if (table.empty())
+        return false;
+      std::sort(table.begin(), table.end(), [](const auto &a, const auto &b) {
+        return std::lexicographical_compare(a.rbegin(), a.rend(), b.rbegin(),
+                                            b.rend());
+      });
+      uint64_t rank = 0;
+      if (table.size() != 1 &&
+          obelisk_rt_v1_random_state_bounded(&state, table.size(), &rank) !=
+              OBELISK_RT_OK)
+        return false;
+      for (size_t index = 0; index != indices.size(); ++index)
+        selected[indices[index]] =
+            (table[rank][index / 64] >> (index % 64)) & 1;
+    } else {
+      Z3_ast_vector assertions = Z3_solver_get_assertions(context, solver);
+      Z3_ast_vector_inc_ref(context, assertions);
+      std::vector<Z3_ast> predicates;
+      for (unsigned index = 0; index != Z3_ast_vector_size(context, assertions);
+           ++index)
+        predicates.push_back(Z3_ast_vector_get(context, assertions, index));
+      Z3_ast predicate =
+          Z3_mk_and(context, predicates.size(), predicates.data());
+      Z3_ast_vector_dec_ref(context, assertions);
+      ModelCounter counter(context, bits);
+      if (!counter.build(predicate))
+        return false;
+      counter.project(keep);
+      ModelCount count = counter.count();
+      if (count.zero())
+        return false;
+      selected = counter.assignment(ModelCount::randomBelow(count, state));
+    }
+    for (size_t index : indices) {
+      unsigned bit = physicalBits[index];
+      uint64_t field = uint64_t{1} << (bit % 64);
+      output[bit / 64] =
+          (output[bit / 64] & ~field) | (selected[index] ? field : 0);
+      // An explicit-order choice becomes fixed for the next projection in
+      // this same function priority stage.
+      require(selected[index] ? bits[index] : Z3_mk_not(context, bits[index]));
+    }
+    return true;
+  }
+
+  SMTCompletion prioritized(
+      const std::vector<Z3_ast> &bits,
+      const std::vector<unsigned> &physicalBits,
+      const std::vector<Z3_ast> &hard, const std::array<Z3_ast, 64> &soft,
+      const std::vector<const PriorityInput *> &hardInputs,
+      const std::array<const PriorityInput *, 64> &softInputs,
+      const std::vector<Z3_ast> &domains,
+      const std::vector<SolveOrderEdge> &edges, const uint64_t *start,
+      const uint64_t *mutableMask, size_t wordCount, uint64_t disabledBlocks,
+      obelisk_rt_random_state_v1 &state, uint64_t *output) {
+    OrderMask arguments(wordCount, 0);
+    for (const PriorityInput *input : hardInputs)
+      if (input)
+        orderUnite(arguments, input->arguments);
+    for (const PriorityInput *input : softInputs)
+      if (input)
+        orderUnite(arguments, input->arguments);
+    std::vector<OrderMask> stages;
+    if (!buildSolveOrderLayers(edges,
+                               OrderMask(mutableMask, mutableMask + wordCount),
+                               disabledBlocks, true, stages, false, &arguments))
+      return SMTCompletion::Unavailable;
+    std::unordered_map<Z3_ast, size_t> inputStages;
+    for (size_t bit = 0; bit != bits.size(); ++bit)
+      for (size_t stage = 0; stage != stages.size(); ++stage)
+        if ((stages[stage][physicalBits[bit] / 64] >>
+             (physicalBits[bit] % 64)) &
+            1)
+          inputStages.emplace(bits[bit], stage);
+    auto stageFor = [&](Z3_ast predicate, const PriorityInput *input,
+                        size_t &stage) {
+      stage = 0;
+      if (input) {
+        for (size_t bit = 0; bit != bits.size(); ++bit) {
+          unsigned physical = physicalBits[bit];
+          size_t inputStage = inputStages.at(bits[bit]);
+          if ((input->references[physical / 64] >> (physical % 64)) & 1)
+            stage = std::max(stage, inputStage);
+          // A function result is state after its arguments have been solved,
+          // even when the expression has no other mutable variable.
+          if ((input->arguments[physical / 64] >> (physical % 64)) & 1)
+            stage = std::max(stage, inputStage + 1);
+        }
+        return stage < stages.size();
+      }
+      // Bit blasting removes irrelevant bits of selected packed paths. A
+      // synthetic C ABI program without source records uses this fallback.
+      std::vector<Z3_ast> pending;
+      if (!bitBlastPredicate(context, predicate, pending))
+        return false;
+      std::unordered_set<Z3_ast> visited;
+      stage = 0;
+      while (!pending.empty()) {
+        Z3_ast ast = pending.back();
+        pending.pop_back();
+        if (!visited.insert(ast).second)
+          continue;
+        auto found = inputStages.find(ast);
+        if (found != inputStages.end()) {
+          stage = std::max(stage, found->second);
+          continue;
+        }
+        if (Z3_get_ast_kind(context, ast) != Z3_APP_AST)
+          return false;
+        Z3_app app = Z3_to_app(context, ast);
+        unsigned arity = Z3_get_app_num_args(context, app);
+        if (arity == 0 &&
+            Z3_get_decl_kind(context, Z3_get_app_decl(context, app)) ==
+                Z3_OP_UNINTERPRETED)
+          return false;
+        for (unsigned index = 0; index != arity; ++index)
+          pending.push_back(Z3_get_app_arg(context, app, index));
+      }
+      return true;
+    };
+    std::vector<size_t> hardStages(hard.size()), softStages(soft.size());
+    for (size_t index = 0; index != hard.size(); ++index)
+      if (!stageFor(hard[index], hardInputs[index], hardStages[index]))
+        return SMTCompletion::Unavailable;
+    for (size_t index = 0; index != soft.size(); ++index)
+      if (soft[index] &&
+          !stageFor(soft[index], softInputs[index], softStages[index]))
+        return SMTCompletion::Unavailable;
+    obelisk_rt_random_state_v1 nextState = state;
+    OrderMask assignment(start, start + wordCount);
+    std::vector<Z3_ast> from, to;
+    auto substitute = [&](Z3_ast predicate) {
+      return from.empty() ? predicate
+                          : Z3_substitute(context, predicate, from.size(),
+                                          from.data(), to.data());
+    };
+    for (size_t stage = 0; stage != stages.size(); ++stage) {
+      Z3_solver_reset(context, solver);
+      // Intrinsic enum/tagged domains remain legal in every projection, even
+      // when a priority path selects only some bits of their representation.
+      for (Z3_ast domain : domains)
+        require(substitute(domain));
+      for (size_t index = 0; index != hard.size(); ++index)
+        if (hardStages[index] == stage)
+          require(substitute(hard[index]));
+      Z3_lbool result = check();
+      if (result != Z3_L_TRUE)
+        return result == Z3_L_FALSE ? SMTCompletion::Unsatisfiable
+                                    : SMTCompletion::Unknown;
+      for (size_t priority = soft.size(); priority-- != 0;) {
+        if (!soft[priority] || softStages[priority] != stage)
+          continue;
+        Z3_solver_push(context, solver);
+        require(substitute(soft[priority]));
+        result = check();
+        if (result == Z3_L_UNDEF)
+          return SMTCompletion::Unknown;
+        if (result == Z3_L_FALSE)
+          Z3_solver_pop(context, solver, 1);
+      }
+      std::vector<OrderMask> layers;
+      if (!buildSolveOrderLayers(edges, stages[stage], disabledBlocks, false,
+                                 layers, true))
+        return SMTCompletion::Unavailable;
+      if (layers.empty())
+        layers.push_back(stages[stage]);
+      for (const OrderMask &layer : layers)
+        if (!projection(bits, physicalBits, layer, nextState, assignment))
+          return SMTCompletion::Unknown;
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        if ((stages[stage][physicalBits[bit] / 64] >>
+             (physicalBits[bit] % 64)) &
+            1) {
+          from.push_back(bits[bit]);
+          to.push_back(
+              (assignment[physicalBits[bit] / 64] >> (physicalBits[bit] % 64)) &
+                      1
+                  ? Z3_mk_true(context)
+                  : Z3_mk_false(context));
+        }
+    }
+    std::copy(assignment.begin(), assignment.end(), output);
+    state = nextState;
+    return SMTCompletion::Satisfiable;
+  }
+
   Z3_context context = nullptr;
   Z3_solver solver = nullptr;
 };
@@ -584,6 +810,8 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   unsigned instructions = read32(program + 12);
   unsigned flags = read32(program + 20);
   bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) != 0;
+  bool functionPriority =
+      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
   // Weighted sampling requires its own measure over target projections.
   // Solve-order projections are sampled only by the uniform stateful policy.
   if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) ||
@@ -660,7 +888,23 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
         (captureWidths ? (uint64_t(captureWidths[capture - 1]) + 63) / 64 : 1);
   std::vector<Bits> stack;
   std::array<Z3_ast, 64> soft{};
+  std::vector<Z3_ast> priorityHard, priorityDomains;
   size_t literals = header + size_t(instructions) * 16;
+  size_t domainsOffset =
+      literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)
+    domainsOffset += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+                     size_t(read32(program + domainsOffset)) *
+                         (wide ? assignmentWords * 16 +
+                                     OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
+                               : OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE);
+  PriorityInputs sourceInputs;
+  if (functionPriority &&
+      !readPriorityInputs(program, programSize, header, instructions, width,
+                          domainsOffset, sourceInputs))
+    return SMTCompletion::Unavailable;
+  std::vector<const PriorityInput *> hardInputs;
+  std::array<const PriorityInput *, 64> softInputs{};
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     unsigned opcode = p[0];
@@ -704,10 +948,19 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
                      (constraintMask & (uint64_t{1} << operand)) == 0;
       Z3_ast predicate =
           enabled ? f.truth(stack.back()) : Z3_mk_true(f.context);
-      if (opcode == OBELISK_RT_RANDOM_END_HARD_V1)
-        f.require(predicate);
-      else
+      auto source = sourceInputs.find(index);
+      const PriorityInput *input =
+          enabled && source != sourceInputs.end() ? &source->second : nullptr;
+      if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
+        if (functionPriority) {
+          priorityHard.push_back(predicate);
+          hardInputs.push_back(input);
+        } else
+          f.require(predicate);
+      } else {
         soft[auxiliary] = predicate;
+        softInputs[auxiliary] = input;
+      }
       stack.clear();
     } else if (opcode == OBELISK_RT_RANDOM_SELECT_V1) {
       if (stack.size() < 3)
@@ -748,13 +1001,7 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
     }
   }
   if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) {
-    size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
-    if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)
-      offset += OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
-                size_t(read32(program + offset)) *
-                    (wide ? assignmentWords * 16 +
-                                OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2
-                          : OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE);
+    size_t offset = domainsOffset;
     if (offset + 8 > programSize)
       return SMTCompletion::Unavailable;
     unsigned groups = read32(program + offset);
@@ -778,8 +1025,37 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
       domains[group] = f.disjunction(domains[group], match);
     }
     for (unsigned group = 0; group != groups; ++group)
-      if (active[group])
-        f.require(domains[group]);
+      if (active[group]) {
+        if (functionPriority)
+          priorityDomains.push_back(domains[group]);
+        else
+          f.require(domains[group]);
+      }
+  }
+  if (functionPriority) {
+    size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
+    uint32_t count = read32(program + offset);
+    const uint8_t *cursor =
+        program + offset + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
+    std::vector<SolveOrderEdge> edges;
+    for (uint32_t index = 0; index != count; ++index) {
+      SolveOrderEdge edge;
+      for (OrderMask *mask : {&edge.before, &edge.after})
+        for (size_t word = 0; word != assignmentWords; ++word) {
+          mask->push_back(read64(cursor));
+          cursor += 8;
+        }
+      edge.block = read32(cursor);
+      edge.functionPriority =
+          (read32(cursor + 4) &
+           OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
+      cursor += 8;
+      edges.push_back(std::move(edge));
+    }
+    return f.prioritized(booleanBits, physicalBits, priorityHard, soft,
+                         hardInputs, softInputs, priorityDomains, edges, start,
+                         mutableMask, assignmentWords, constraintMask,
+                         *randomState, assignment);
   }
   Z3_lbool result = f.check();
   if (result != Z3_L_TRUE)

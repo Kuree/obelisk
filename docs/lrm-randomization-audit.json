@@ -893,8 +893,8 @@
         },
         {
           "feature": "Implicit function priority can shrink solution space",
-          "status": "missing",
-          "detail": "Implicit function edges currently use explicit solve-before machinery, which conditions higher-priority values on the complete lower-priority relation. The LRM requires solving higher-priority-only constraints first and permits subsequent failure; that separate solve stage is not implemented."
+          "status": "partial",
+          "detail": "Native and WASM target Z3 solve higher-only integral constraint sets independently, freeze accepted arguments, and allow lower stages to fail without committing assignments or solver RNG. Source path masks preserve syntactic dependencies through simplification; guarded atoms retain separate stages. Explicit solve-before uses conditional projections within each function stage. Wide packed paths, soft priorities, live modes, frozen arguments and semantic domains are covered. Staged randc histories, aliased object identity, dynamic foreach and general procedural function evaluation remain open and are diagnosed."
         },
         {
           "feature": "Integral system functions",
@@ -914,12 +914,19 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "runtime/lib/RandSolveSMT.cpp",
+          "runtime/lib/RandSolveOrder.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-functions.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-wide-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-system-functions-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-priority-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-priority-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-priority-source-inputs-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-priority-return-only-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-priority-guarded-set-runtime.mlir"
         ]
       }
     },

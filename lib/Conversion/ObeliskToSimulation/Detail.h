@@ -300,6 +300,10 @@ inline constexpr ::mlir::StringLiteral randomFunctionStateAttrName =
     "simulation.random_function_state";
 inline constexpr ::mlir::StringLiteral randomFunctionOrderAttrName =
     "simulation.random_function_order";
+inline constexpr ::mlir::StringLiteral randomPriorityInputsAttrName =
+    "simulation.random_priority_inputs";
+inline constexpr ::mlir::StringLiteral randomPriorityArgumentsAttrName =
+    "simulation.random_priority_arguments";
 
 /// Total, side-effect-free integral system functions encoded by the random
 /// program. Unlike user functions, these do not introduce implicit solve

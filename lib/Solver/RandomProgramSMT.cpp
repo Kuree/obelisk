@@ -190,6 +190,11 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   uint32_t instructionCount = read32(program + 12);
   uint32_t captureCount = read32(program + 16);
   uint32_t programFlags = read32(program + 20);
+  // Function priority solves independent higher constraint sets first. A
+  // table over the whole relation would incorrectly condition those choices
+  // on lower-stage constraints. Target Z3 handles the staged program.
+  if (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
+    return std::nullopt;
   uint32_t literalWordCount = version2 ? read32(program + 24) : 0;
   if ((version1 && aggregateWidth > 64) ||
       (version2 && read32(program + 28) != 0) ||
@@ -271,6 +276,9 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   uint32_t solveEdgeCount = 0;
   size_t solveEdgesOffset = 0;
+  size_t solveMaskWords = version2 ? (uint64_t(aggregateWidth) + 63) / 64 : 1;
+  size_t solveEdgeSize =
+      solveMaskWords * 16 + OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
   if (hasSolveBefore) {
     if (expectedSize > std::numeric_limits<size_t>::max() -
                            OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE ||
@@ -278,13 +286,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       return std::nullopt;
     solveEdgeCount = read32(program + expectedSize);
     solveEdgesOffset = expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
-    if (solveEdgeCount == 0 ||
+    if (aggregateWidth == 0 || solveEdgeCount == 0 ||
         solveEdgeCount >
             (std::numeric_limits<size_t>::max() - solveEdgesOffset) /
-                OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE)
+                solveEdgeSize)
       return std::nullopt;
-    expectedSize = solveEdgesOffset + static_cast<size_t>(solveEdgeCount) *
-                                          OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
+    expectedSize =
+        solveEdgesOffset + static_cast<size_t>(solveEdgeCount) * solveEdgeSize;
   }
   bool hasDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
   if (hasDist && hasSolveBefore)
@@ -348,32 +356,35 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
 
   if (hasSolveBefore) {
-    // Version 1 solve-order records carry aggregate masks. Version 2 retains
-    // that section for compatibility, but a wide ordering needs the decomposed
-    // plan representation introduced separately from wide expressions.
-    if (aggregateWidth > 64)
-      return std::nullopt;
-    uint64_t aggregateMask =
-        aggregateWidth == 64 ? UINT64_MAX : (uint64_t{1} << aggregateWidth) - 1;
-    std::vector<uint64_t> propertyMasks;
-    std::vector<std::pair<uint64_t, uint64_t>> solveEdges;
+    std::vector<llvm::APInt> propertyMasks;
+    std::vector<std::pair<llvm::APInt, llvm::APInt>> solveEdges;
     const uint8_t *edge = program + solveEdgesOffset;
+    auto readMask = [&]() -> std::optional<llvm::APInt> {
+      llvm::SmallVector<uint64_t> words;
+      for (size_t word = 0; word != solveMaskWords; ++word) {
+        words.push_back(read64(edge));
+        edge += 8;
+      }
+      if (aggregateWidth % 64 && (words.back() >> (aggregateWidth % 64)) != 0)
+        return std::nullopt;
+      return llvm::APInt(aggregateWidth, words);
+    };
     for (uint32_t index = 0; index != solveEdgeCount; ++index) {
-      uint64_t beforeMask = read64(edge);
-      uint64_t afterMask = read64(edge + 8);
-      uint32_t constraintBlock = read32(edge + 16);
-      uint32_t reserved = read32(edge + 20);
-      edge += OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
-      if (beforeMask == 0 || afterMask == 0 ||
-          (beforeMask & ~aggregateMask) != 0 ||
-          (afterMask & ~aggregateMask) != 0 || (beforeMask & afterMask) != 0 ||
-          reserved != 0 ||
+      auto before = readMask(), after = readMask();
+      if (!before || !after)
+        return std::nullopt;
+      llvm::APInt beforeMask = *before, afterMask = *after;
+      uint32_t constraintBlock = read32(edge);
+      uint32_t reserved = read32(edge + 4);
+      edge += OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
+      if (beforeMask.isZero() || afterMask.isZero() ||
+          !(beforeMask & afterMask).isZero() || reserved != 0 ||
           (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            constraintBlock >= 64))
         return std::nullopt;
-      for (uint64_t propertyMask : {beforeMask, afterMask}) {
-        for (uint64_t existing : propertyMasks)
-          if (existing != propertyMask && (existing & propertyMask) != 0)
+      for (const llvm::APInt &propertyMask : {beforeMask, afterMask}) {
+        for (const llvm::APInt &existing : propertyMasks)
+          if (existing != propertyMask && !(existing & propertyMask).isZero())
             return std::nullopt;
         if (!llvm::is_contained(propertyMasks, propertyMask))
           propertyMasks.push_back(propertyMask);
@@ -381,10 +392,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       solveEdges.emplace_back(beforeMask, afterMask);
     }
 
-    std::vector<uint64_t> remaining = propertyMasks;
+    std::vector<llvm::APInt> remaining = propertyMasks;
     while (!remaining.empty()) {
-      std::vector<uint64_t> layer;
-      for (uint64_t propertyMask : remaining) {
+      std::vector<llvm::APInt> layer;
+      for (const llvm::APInt &propertyMask : remaining) {
         bool hasPredecessor = llvm::any_of(solveEdges, [&](const auto &edge) {
           return edge.second == propertyMask &&
                  llvm::is_contained(remaining, edge.first);
@@ -394,7 +405,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       }
       if (layer.empty())
         return std::nullopt;
-      llvm::erase_if(remaining, [&](uint64_t propertyMask) {
+      llvm::erase_if(remaining, [&](const llvm::APInt &propertyMask) {
         return llvm::is_contained(layer, propertyMask);
       });
     }

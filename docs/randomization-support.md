@@ -51,6 +51,19 @@ tables use arbitrary-width projection keys. Weighted and dynamic-foreach
 residual paths retain their existing limits. This does not close the non-integral
 or container gaps in the audit.
 
+User-function argument priority subdivides integral constraints into separate
+Z3 solves. Each higher-only set is solved independently and its accepted values
+become state for later sets, which can then fail. Explicit ordering still uses
+conditional projections inside each function stage. Source masks retain the
+referenced packed paths even when Z3 simplifies their Boolean dependence away;
+atomic constraints inside guards keep their separate stages. Function-return
+checks run after their mutable arguments are selected, including expressions
+with no lower result variable. Soft preferences are selected within their stage,
+and failures commit neither assignments nor solver RNG state. Both runtimes
+support wide paths, live modes, frozen arguments and intrinsic semantic domains.
+Staged randc histories, aliased object identity and dynamic foreach combinations
+remain open and are diagnosed.
+
 Both target runtimes statically link the pinned Z3 source, using the native
 target libc++ ABI and Emscripten's JavaScript exception ABI respectively.
 The browser host initializes static constructors and implements exception

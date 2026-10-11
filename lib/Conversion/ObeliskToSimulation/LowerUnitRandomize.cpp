@@ -2467,10 +2467,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     APInt beforeMask;
     APInt afterMask;
     uint32_t constraintBlock;
+    bool functionPriority = false;
 
     bool operator==(const SolveBeforeEdge &other) const {
       return beforeMask == other.beforeMask && afterMask == other.afterMask &&
-             constraintBlock == other.constraintBlock;
+             constraintBlock == other.constraintBlock &&
+             functionPriority == other.functionPriority;
     }
   };
   SmallVector<APInt> propertyMasks;
@@ -2486,6 +2488,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   APInt randomAssignmentMask =
       APInt::getLowBitsSet(assignmentWidth, totalWidth);
   bool hasSolveBefore = false;
+  bool hasFunctionPriority = false;
   auto randomPropertyMask = [&](Operation *expression) -> FailureOr<APInt> {
     auto indexAttr =
         expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
@@ -2513,18 +2516,37 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       solveConstraintBlock = static_cast<uint32_t>(value.getZExtValue());
     }
-    if (auto order = root->getAttrOfType<DenseI64ArrayAttr>(
-            randomFunctionOrderAttrName)) {
-      ArrayRef<int64_t> pairs = order.asArrayRef();
+    if (Attribute order = root->getAttr(randomFunctionOrderAttrName)) {
+      hasSolveBefore = true;
+      hasFunctionPriority = true;
+      SmallVector<APInt> pairs;
+      if (auto dense = dyn_cast<DenseI64ArrayAttr>(order)) {
+        for (int64_t value : dense.asArrayRef())
+          pairs.emplace_back(assignmentWidth, static_cast<uint64_t>(value));
+      } else if (auto array = dyn_cast<ArrayAttr>(order)) {
+        for (Attribute value : array) {
+          auto integer = dyn_cast<IntegerAttr>(value);
+          if (!integer ||
+              integer.getValue().getActiveBits() > assignmentWidth) {
+            emitError(getSemanticLocation(root))
+                << "constraint function ordering metadata is malformed";
+            return failure();
+          }
+          pairs.push_back(integer.getValue().zextOrTrunc(assignmentWidth));
+        }
+      } else {
+        emitError(getSemanticLocation(root))
+            << "constraint function ordering metadata is malformed";
+        return failure();
+      }
       if (pairs.size() % 2 != 0) {
         emitError(getSemanticLocation(root))
             << "constraint function ordering metadata is malformed";
         return failure();
       }
       for (size_t pair = 0; pair != pairs.size(); pair += 2) {
-        APInt beforeMask(assignmentWidth, static_cast<uint64_t>(pairs[pair]));
-        APInt afterMask(assignmentWidth,
-                        static_cast<uint64_t>(pairs[pair + 1]));
+        APInt beforeMask = pairs[pair];
+        APInt afterMask = pairs[pair + 1];
         if (beforeMask.isZero() || afterMask.isZero() ||
             !(beforeMask & ~randomAssignmentMask).isZero() ||
             !(afterMask & ~randomAssignmentMask).isZero() ||
@@ -2534,7 +2556,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         }
         hasSolveBefore = true;
-        SolveBeforeEdge edge{beforeMask, afterMask, solveConstraintBlock};
+        hasFunctionPriority = true;
+        SolveBeforeEdge edge{beforeMask, afterMask, solveConstraintBlock, true};
         if (!llvm::is_contained(solveBeforeEdges, edge))
           solveBeforeEdges.push_back(edge);
       }
@@ -2641,6 +2664,25 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         orderedMask |= layer;
       solveBeforeLayerMasks.back() |= randomAssignmentMask & ~orderedMask;
     }
+  }
+#ifndef OBELISK_RUNTIME_Z3
+  if (hasFunctionPriority) {
+    emitError(location)
+        << "constraint function priority subdivision requires runtime Z3";
+    return failure();
+  }
+#endif
+  if (hasFunctionPriority && hasRandC) {
+    emitError(location)
+        << "constraint function priorities with randc require staged cyclic "
+           "histories";
+    return failure();
+  }
+  if (hasFunctionPriority && !aliasEqualities.empty()) {
+    emitError(location)
+        << "constraint function priorities over aliased rand objects require "
+           "identity-aware priority stages";
+    return failure();
   }
   if (hasRuntimeForeachConstraint && hasSolveBefore) {
     emitError(location)
@@ -4167,6 +4209,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
 
   std::function<LogicalResult(Operation *, Operation *)> emitProgramConstraint;
+  Operation *priorityHardTarget = nullptr;
   emitProgramConstraint = [&](Operation *constraint,
                               Operation *softTarget) -> LogicalResult {
     SmallVector<Operation *> nested = getChildren(constraint);
@@ -4191,8 +4234,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     if (auto expression =
             dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
-      bool selected =
-          softTarget ? softTarget == constraint : !expression.getIsSoft();
+      bool selected = softTarget ? softTarget == constraint
+                                 : !expression.getIsSoft() &&
+                                       (!priorityHardTarget ||
+                                        priorityHardTarget == constraint);
       if (!selected) {
         emitLiteral(true);
         return success();
@@ -4223,7 +4268,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return success();
     }
     if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
-      if (softTarget) {
+      if (softTarget ||
+          (priorityHardTarget && priorityHardTarget != constraint)) {
         emitLiteral(true);
         return success();
       }
@@ -4382,6 +4428,34 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     });
     return references;
   };
+  struct PriorityInputRecord {
+    uint32_t index;
+    APInt references, arguments;
+  };
+  SmallVector<PriorityInputRecord> priorityInputRecords;
+  auto priorityInputs = [&](Operation *source) {
+    if (auto inputs =
+            source->getAttrOfType<IntegerAttr>(randomPriorityInputsAttrName))
+      return inputs.getValue().zextOrTrunc(assignmentWidth);
+    APInt inputs = APInt::getZero(assignmentWidth);
+    for (const SoftReference &reference : collectSoftReferences(source))
+      if (!reference.symbol)
+        inputs |= APInt::getLowBitsSet(assignmentWidth, reference.width)
+                      .shl(reference.offset);
+    return inputs;
+  };
+  auto priorityArguments = [&](Operation *source) {
+    if (auto inputs =
+            source->getAttrOfType<IntegerAttr>(randomPriorityArgumentsAttrName))
+      return inputs.getValue().zextOrTrunc(assignmentWidth);
+    return APInt::getZero(assignmentWidth);
+  };
+  auto recordPriorityInputs = [&](APInt inputs, APInt arguments) {
+    if (hasFunctionPriority)
+      priorityInputRecords.push_back(
+          {static_cast<uint32_t>(programInstructions.size() - 1),
+           std::move(inputs), std::move(arguments)});
+  };
   llvm::DenseMap<Operation *, SmallVector<const SoftDisable *>> softDisablers;
   for (const SoftDisable &disable : softDisables) {
     SmallVector<Operation *> targets = getChildren(disable.source);
@@ -4476,23 +4550,36 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                          : SmallVector<Operation *>{root};
     for (Operation *item : items) {
       bool hasHard = false;
+      SmallVector<Operation *> hardConstraints;
       SmallVector<semantic::SVExpressionConstraintOp> softConstraints;
       item->walk([&](Operation *nested) {
         if (auto expression =
                 dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
           if (expression.getIsSoft())
             softConstraints.push_back(expression);
-          else
+          else {
             hasHard = true;
+            hardConstraints.push_back(nested);
+          }
         } else if (isa<semantic::SVUniquenessConstraintOp>(nested)) {
           hasHard = true;
+          hardConstraints.push_back(nested);
         }
       });
       if (hasHard) {
-        activeProgramConstraintBlock = constraintBlock;
-        if (failed(emitProgramConstraint(item, /*softTarget=*/nullptr)))
-          return failure();
-        instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false, constraintBlock);
+        // Preserve each atomic source constraint inside a conditional set.
+        // Its inherited guards remain in the emitted predicate and input mask.
+        if (!hasFunctionPriority)
+          hardConstraints = {item};
+        for (Operation *hard : hardConstraints) {
+          priorityHardTarget = hasFunctionPriority ? hard : nullptr;
+          activeProgramConstraintBlock = constraintBlock;
+          if (failed(emitProgramConstraint(item, /*softTarget=*/nullptr)))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false, constraintBlock);
+          recordPriorityInputs(priorityInputs(hard), priorityArguments(hard));
+        }
+        priorityHardTarget = nullptr;
         emittedHard = true;
       }
       for (semantic::SVExpressionConstraintOp soft : softConstraints) {
@@ -4509,6 +4596,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         instruction(OBELISK_RT_RANDOM_END_SOFT_V1, 1, false, constraintBlock,
                     softPriorities.lookup(soft));
+        APInt inputs = priorityInputs(soft);
+        APInt arguments = priorityArguments(soft);
+        for (const SoftDisable *disable : softDisablers.lookup(soft)) {
+          inputs |= priorityInputs(disable->source);
+          arguments |= priorityArguments(disable->source);
+        }
+        recordPriorityInputs(std::move(inputs), std::move(arguments));
         emittedSoft = true;
       }
     }
@@ -4537,6 +4631,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     emitLiteral(true);
     instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+    recordPriorityInputs(APInt::getZero(assignmentWidth),
+                         APInt::getZero(assignmentWidth));
   }
   if (!distPlans.empty() && hasSolveBefore) {
     emitError(location)
@@ -4576,6 +4672,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 #endif
   if (hasSolveBefore)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
+  if (hasFunctionPriority)
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY;
   if (!distPlans.empty())
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
   bool hasFiniteDomains = llvm::any_of(planned, [](const Property &property) {
@@ -4665,7 +4763,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
       }
       append32(edge.constraintBlock);
+      append32(edge.functionPriority
+                   ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                   : 0u);
+    }
+  }
+  if (hasFunctionPriority) {
+    append32(static_cast<uint32_t>(priorityInputRecords.size()));
+    for (const auto &record : priorityInputRecords) {
+      append32(record.index);
       append32(0);
+      for (const APInt *inputs : {&record.references, &record.arguments})
+        for (unsigned word = 0; word != inputs->getNumWords(); ++word)
+          append64(inputs->getRawData()[word]);
     }
   }
   if (!distPlans.empty()) {
@@ -6007,7 +6117,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return true;
   };
 
-  bool solveBeforeRequiresRuntime = hasSolveBefore && !softProposalExact;
+  bool solveBeforeRequiresRuntime =
+      hasFunctionPriority || (hasSolveBefore && !softProposalExact);
   if (hasSolveBefore && !solveBeforeTableRoot &&
       analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
     APInt orderedPropertyMask = APInt::getZero(assignmentWidth);
@@ -6098,6 +6209,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   auto sampleBoundedIndex = [&](uint64_t cardinality, Value draw,
                                 Value &streamState) -> Value {
+    // Assignment draws may span several words; table cardinalities and the
+    // rejection sampler use one uniformly random 64-bit word.
+    if (draw.getType() != i64)
+      draw = arith::TruncIOp::create(builder, location, i64, draw);
     if ((cardinality & (cardinality - 1)) == 0)
       return arith::AndIOp::create(builder, location, draw,
                                    constant64(cardinality - 1));

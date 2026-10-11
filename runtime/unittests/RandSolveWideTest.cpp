@@ -46,6 +46,7 @@ struct SolveBeforeEdge {
   std::vector<uint64_t> before;
   std::vector<uint64_t> after;
   uint32_t block = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+  bool functionPriority = false;
 };
 
 std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
@@ -89,9 +90,13 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
       for (uint64_t word : edge.after)
         append64(bytes, word);
       append32(bytes, edge.block);
-      append32(bytes, 0);
+      append32(bytes, edge.functionPriority
+                          ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                          : 0u);
     }
   }
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
+    append32(bytes, 0);
   if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0) {
     uint32_t groupCount = 0;
     for (const DomainRecord &domain : domains)
@@ -696,6 +701,42 @@ TEST_F(RandSolveWideTest, RejectsNonContiguousSoftPriorities) {
 }
 
 #ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveWideTest, FunctionArgumentStagesPreserveWideFailureSemantics) {
+  auto bytes = program(131, 0,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},
+                        {OBELISK_RT_RANDOM_CAST_V1, 130},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
+                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
+                           OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY,
+                       {}, {{{0, 0, 4}, {UINT64_MAX, UINT64_MAX, 3}, 0, true}});
+  unsigned accepted = 0;
+  uint64_t start[] = {0, 0, 0}, mask[] = {UINT64_MAX, UINT64_MAX, 7};
+  for (unsigned seed = 0; seed != 128; ++seed) {
+    obelisk_rt_random_state_v1 state;
+    obelisk_rt_v1_random_state_seed(&state, seed, 17);
+    uint64_t original = state.state, assignment[3] = {};
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mask, 3, 0, 1,
+                  state.state, state.increment, nullptr, 0, nullptr, 0,
+                  assignment, &success, &state.state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(assignment[0] | assignment[1] | assignment[2], 0u);
+    if (success)
+      ++accepted;
+    else
+      EXPECT_EQ(state.state, original);
+  }
+  EXPECT_GT(accepted, 40u);
+  EXPECT_LT(accepted, 88u);
+}
+
 TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
   auto bytes = program(131, 1,
                        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 130},

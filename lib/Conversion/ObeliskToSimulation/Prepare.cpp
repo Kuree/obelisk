@@ -7033,6 +7033,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       randomPropertyOffsets.push_back(randomPropertyOffset);
       randomPropertyOffset += property.width;
     }
+    unsigned orderingWidth =
+        static_cast<unsigned>(std::max<uint64_t>(64, randomPropertyOffset));
 
     // IEEE 1800 function arguments establish implicit solve ordering. Match
     // Slang's analysis exactly: rand value paths occurring in arguments to a
@@ -7041,10 +7043,16 @@ void ObeliskSimPreparePass::runOnOperation() {
     // traversed for this analysis because its non-argument reads are state.
     for (Operation *root : constraintRoots) {
       randomValueOwner = getNestedConstraintOwner(root);
-      SmallVector<std::pair<uint64_t, uint64_t>> functionOrder;
-      root->walk([&](semantic::SVExpressionConstraintOp expression) {
-        SmallVector<uint64_t> arguments;
-        SmallVector<uint64_t> nonArguments;
+      SmallVector<std::pair<APInt, APInt>> functionOrder;
+      bool functionArgumentsPresent = false;
+      root->walk([&](Operation *expression) {
+        if (!isa<semantic::SVExpressionConstraintOp,
+                 semantic::SVUniquenessConstraintOp,
+                 semantic::SVDisableSoftConstraintOp>(expression))
+          return;
+        SmallVector<APInt> arguments;
+        SmallVector<APInt> nonArguments;
+        APInt referencedInputs = APInt::getZero(orderingWidth);
         bool impreciseArguments = false;
         bool impreciseNonArguments = false;
         Operation *imprecisePath = nullptr;
@@ -7074,29 +7082,34 @@ void ObeliskSimPreparePass::runOnOperation() {
               }
               if (*path) {
                 const RandomValuePath &valuePath = **path;
+                // Preserve source references even if expression simplification
+                // later removes their Boolean dependence. Function priority
+                // classifies constraints by the variables they include.
+                referencedInputs |=
+                    APInt::getLowBitsSet(orderingWidth, valuePath.width)
+                        .shl(randomPropertyOffsets[valuePath.property] +
+                             valuePath.offset);
                 if (!valuePath.precise) {
                   (inFunctionArgument ? impreciseArguments
                                       : impreciseNonArguments) = true;
                   if (!imprecisePath)
                     imprecisePath = nested;
                 } else {
-                  uint64_t valueMask =
-                      valuePath.width == 64
-                          ? UINT64_MAX
-                          : (uint64_t{1} << valuePath.width) - 1;
                   uint64_t globalOffset =
                       randomPropertyOffsets[valuePath.property] +
                       valuePath.offset;
-                  if (globalOffset >= 64 ||
-                      valuePath.width > 64 - globalOffset) {
+                  if (globalOffset >= randomPropertyOffset ||
+                      valuePath.width > randomPropertyOffset - globalOffset) {
                     (inFunctionArgument ? impreciseArguments
                                         : impreciseNonArguments) = true;
                     if (!imprecisePath)
                       imprecisePath = nested;
                     return;
                   }
-                  uint64_t mask = valueMask << globalOffset;
-                  SmallVector<uint64_t> &target =
+                  APInt mask =
+                      APInt::getLowBitsSet(orderingWidth, valuePath.width)
+                          .shl(globalOffset);
+                  SmallVector<APInt> &target =
                       inFunctionArgument ? arguments : nonArguments;
                   if (!llvm::is_contained(target, mask))
                     target.push_back(mask);
@@ -7113,8 +7126,31 @@ void ObeliskSimPreparePass::runOnOperation() {
               for (Operation *child : getChildren(nested))
                 collectReferences(child, inFunctionArgument);
             };
-        for (Operation *child : getChildren(expression))
-          collectReferences(child, false);
+        if (!isa<semantic::SVDisableSoftConstraintOp>(expression))
+          for (Operation *child : getChildren(expression))
+            collectReferences(child, false);
+        for (Operation *parent = expression->getParentOp();
+             parent && parent != root->getParentOp();
+             parent = parent->getParentOp()) {
+          if (isa<semantic::SVImplicationConstraintOp,
+                  semantic::SVConditionalConstraintOp>(parent)) {
+            SmallVector<Operation *> parts = getChildren(parent);
+            if (!parts.empty())
+              collectReferences(parts.front(), false);
+          }
+        }
+        expression->setAttr(
+            randomPriorityInputsAttrName,
+            builder.getIntegerAttr(builder.getIntegerType(orderingWidth),
+                                   referencedInputs));
+        APInt argumentInputs = APInt::getZero(orderingWidth);
+        for (const APInt &argument : arguments)
+          argumentInputs |= argument;
+        expression->setAttr(
+            randomPriorityArgumentsAttrName,
+            builder.getIntegerAttr(builder.getIntegerType(orderingWidth),
+                                   argumentInputs));
+        functionArgumentsPresent |= !argumentInputs.isZero();
         bool hasArgumentPath = impreciseArguments || !arguments.empty();
         bool hasNonArgumentPath =
             impreciseNonArguments || !nonArguments.empty();
@@ -7126,22 +7162,24 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return;
         }
-        for (uint64_t before : arguments)
-          for (uint64_t after : nonArguments)
-            if ((before & after) == 0 &&
+        for (const APInt &before : arguments)
+          for (const APInt &after : nonArguments)
+            if ((before & after).isZero() &&
                 !llvm::is_contained(functionOrder,
                                     std::make_pair(before, after)))
               functionOrder.emplace_back(before, after);
       });
-      if (!functionOrder.empty()) {
-        SmallVector<int64_t> encoded;
+      if (!functionOrder.empty() || functionArgumentsPresent) {
+        SmallVector<Attribute> encoded;
         encoded.reserve(functionOrder.size() * 2);
         for (auto [before, after] : functionOrder) {
-          encoded.push_back(static_cast<int64_t>(before));
-          encoded.push_back(static_cast<int64_t>(after));
+          encoded.push_back(builder.getIntegerAttr(
+              builder.getIntegerType(orderingWidth), before));
+          encoded.push_back(builder.getIntegerAttr(
+              builder.getIntegerType(orderingWidth), after));
         }
         root->setAttr(randomFunctionOrderAttrName,
-                      builder.getDenseI64ArrayAttr(encoded));
+                      builder.getArrayAttr(encoded));
       }
     }
     randomValueOwner = nullptr;

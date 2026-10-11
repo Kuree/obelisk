@@ -1,6 +1,7 @@
 //===- RandSolveWide.cpp - Wide constrained-random fallback --------------===//
 
 #include "ExceptionSupport.h"
+#include "RandSolveOrder.h"
 #include "RandSolveSMT.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -36,6 +37,7 @@ struct SolveBeforeEdge {
   WideValue beforeMask;
   WideValue afterMask;
   uint32_t constraintBlock;
+  bool functionPriority = false;
 };
 
 struct DomainPattern {
@@ -361,75 +363,23 @@ bool intersects(const WideValue &left, const WideValue &right) {
   return false;
 }
 
-void unite(WideValue &left, const WideValue &right) {
-  for (size_t index = 0; index != left.words.size(); ++index)
-    left.words[index] |= right.words[index];
-}
-
 bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
                             const WideValue &mutableMask,
                             uint64_t constraintMask,
                             std::vector<WideValue> &layers) {
-  std::vector<SolveBeforeEdge> active;
-  std::vector<WideValue> nodes;
-  auto addNode = [&](WideValue node) {
-    for (size_t index = 0; index != nodes.size();) {
-      if (!intersects(nodes[index], node)) {
-        ++index;
-        continue;
-      }
-      unite(node, nodes[index]);
-      nodes.erase(nodes.begin() + static_cast<std::ptrdiff_t>(index));
-    }
-    nodes.push_back(std::move(node));
-  };
-  for (const SolveBeforeEdge &edge : edges) {
-    if (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
-        ((constraintMask >> edge.constraintBlock) & 1) != 0)
-      continue;
-    WideValue before = bitwise(edge.beforeMask, mutableMask, mutableMask.width,
-                               OBELISK_RT_RANDOM_BIT_AND_V1);
-    WideValue after = bitwise(edge.afterMask, mutableMask, mutableMask.width,
-                              OBELISK_RT_RANDOM_BIT_AND_V1);
-    if (!truth(before) || !truth(after))
-      continue;
-    addNode(before);
-    addNode(after);
-    active.push_back(
-        {std::move(before), std::move(after), edge.constraintBlock});
-  }
+  std::vector<obelisk::runtime::SolveOrderEdge> orderEdges;
+  for (const SolveBeforeEdge &edge : edges)
+    orderEdges.push_back({edge.beforeMask.words, edge.afterMask.words,
+                          edge.constraintBlock, edge.functionPriority});
+  std::vector<obelisk::runtime::OrderMask> masks;
+  if (!obelisk::runtime::buildSolveOrderLayers(orderEdges, mutableMask.words,
+                                               constraintMask, false, masks))
+    return false;
   layers.clear();
-  while (!nodes.empty()) {
-    WideValue layer(mutableMask.width), remaining(mutableMask.width);
-    for (const WideValue &node : nodes)
-      unite(remaining, node);
-    for (const WideValue &node : nodes) {
-      bool hasSuccessor = std::any_of(
-          active.begin(), active.end(), [&](const SolveBeforeEdge &edge) {
-            return intersects(edge.beforeMask, node) &&
-                   intersects(edge.afterMask, remaining);
-          });
-      if (!hasSuccessor)
-        unite(layer, node);
-    }
-    if (!truth(layer))
-      return false;
-    nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
-                               [&](const WideValue &node) {
-                                 return intersects(node, layer);
-                               }),
-                nodes.end());
+  for (auto &mask : masks) {
+    WideValue layer(mutableMask.width);
+    layer.words = std::move(mask);
     layers.push_back(std::move(layer));
-  }
-  // Latest legal ordering groups, with unspecified fields in the final group.
-  std::reverse(layers.begin(), layers.end());
-  if (!layers.empty()) {
-    WideValue ordered(mutableMask.width);
-    for (const WideValue &layer : layers)
-      unite(ordered, layer);
-    for (size_t index = 0; index != ordered.words.size(); ++index)
-      layers.back().words[index] |=
-          mutableMask.words[index] & ~ordered.words[index];
   }
   return true;
 }
@@ -449,15 +399,20 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   uint32_t literalWordCount = read32(bytes + 24);
   bool encodedDomains = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
   bool encodedOrder = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
+  bool encodedPriority =
+      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
       (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)) != 0)
+                 OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
     return false;
   if (encodedOrder && !(flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM))
+    return false;
+  if (encodedPriority && !encodedOrder)
     return false;
   result.hasSoft = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
   uint64_t instructionBytes = static_cast<uint64_t>(instructionCount) *
@@ -482,10 +437,26 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
         expectedSize + OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE;
     solveRecordSize = ((uint64_t(result.aggregateWidth) + 63) / 64) * 16 +
                       OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
-    if (solveEdgeCount == 0 ||
+    if ((!encodedPriority && solveEdgeCount == 0) ||
         solveEdgeCount > (size - solveRecordsOffset) / solveRecordSize)
       return false;
     expectedSize = solveRecordsOffset + solveEdgeCount * solveRecordSize;
+  }
+  bool sourceFunctionArguments = false;
+  if (encodedPriority) {
+    if (expectedSize > size)
+      return false;
+    size_t offset = expectedSize;
+    obelisk::runtime::PriorityInputs inputs;
+    if (!obelisk::runtime::readPriorityInputs(
+            bytes, size, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2,
+            instructionCount, result.aggregateWidth, offset, inputs))
+      return false;
+    expectedSize = offset;
+    for (const auto &input : inputs)
+      sourceFunctionArguments |= std::any_of(
+          input.second.arguments.begin(), input.second.arguments.end(),
+          [](uint64_t word) { return word != 0; });
   }
   uint32_t domainGroupCount = 0;
   uint32_t domainRecordCount = 0;
@@ -631,6 +602,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
 
   if (encodedOrder) {
     const uint8_t *cursor = bytes + solveRecordsOffset;
+    bool sawFunctionEdge = false;
     for (uint32_t index = 0; index != solveEdgeCount; ++index) {
       SolveBeforeEdge edge{WideValue(result.aggregateWidth),
                            WideValue(result.aggregateWidth), 0};
@@ -641,12 +613,18 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
         }
       edge.constraintBlock = read32(cursor);
       uint32_t reserved = read32(cursor + 4);
+      edge.functionPriority =
+          (reserved & OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
+      sawFunctionEdge |= edge.functionPriority;
       cursor += OBELISK_RT_RANDOM_SOLVE_EDGE_TAIL_SIZE_V2;
       uint64_t upperMask = highMask(result.aggregateWidth);
       if (!truth(edge.beforeMask) || !truth(edge.afterMask) ||
           (edge.beforeMask.words.back() & ~upperMask) != 0 ||
           (edge.afterMask.words.back() & ~upperMask) != 0 ||
-          intersects(edge.beforeMask, edge.afterMask) || reserved != 0 ||
+          intersects(edge.beforeMask, edge.afterMask) ||
+          (reserved &
+           ~(encodedPriority ? OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY
+                             : 0u)) != 0 ||
           (edge.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            edge.constraintBlock >= 64))
         return false;
@@ -656,7 +634,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     std::fill(all.words.begin(), all.words.end(), UINT64_MAX);
     normalize(all);
     std::vector<WideValue> validationLayers;
-    if (!buildSolveBeforeLayers(result.solveEdges, all, 0, validationLayers))
+    if ((encodedPriority && !sawFunctionEdge && !sourceFunctionArguments) ||
+        !buildSolveBeforeLayers(result.solveEdges, all, 0, validationLayers))
       return false;
   }
 
