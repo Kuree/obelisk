@@ -226,12 +226,24 @@ inline constexpr ::mlir::StringLiteral randomModeAttrName =
     "simulation.rand_mode";
 inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
     "simulation.rand_mode_property";
+inline constexpr ::mlir::StringLiteral randomArrayModeFieldAttrName =
+    "simulation.random_array_mode_field";
+inline constexpr ::mlir::StringLiteral randomArrayElementWidthAttrName =
+    "simulation.random_array_element_width";
+inline constexpr ::mlir::StringLiteral randomModeArrayFieldAttrName =
+    "simulation.rand_mode_array_field";
+inline constexpr ::mlir::StringLiteral randomModeArrayStorageAttrName =
+    "simulation.rand_mode_array_storage";
+inline constexpr ::mlir::StringLiteral randomModeArrayTypeAttrName =
+    "simulation.rand_mode_array_type";
 inline constexpr ::mlir::StringLiteral randomModeStaticStorageAttrName =
     "simulation.rand_mode_static_storage";
 inline constexpr ::mlir::StringLiteral randomModeStaticDispatchAttrName =
     "simulation.rand_mode_static_dispatch";
 inline constexpr ::mlir::StringLiteral staticRandomModeStorageAttrName =
     "simulation.static_random_mode_storage";
+inline constexpr ::mlir::StringLiteral staticRandomArrayModeStorageAttrName =
+    "simulation.static_random_array_mode_storage";
 inline constexpr ::mlir::StringLiteral constraintModeAttrName =
     "simulation.constraint_mode";
 inline constexpr ::mlir::StringLiteral constraintModeBlockAttrName =

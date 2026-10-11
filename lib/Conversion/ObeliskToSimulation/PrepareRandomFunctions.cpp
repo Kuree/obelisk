@@ -28,6 +28,19 @@ std::optional<unsigned> getIntegralRandomWidth(Type type) {
   return std::nullopt;
 }
 
+std::optional<FixedRandomArrayLayout> getFixedRandomArrayLayout(Type type) {
+  if (!isa<sim::UnpackedArrayType>(type))
+    return std::nullopt;
+  auto width = getIntegralRandomWidth(type);
+  while (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    type = array.getElementType();
+  auto elementWidth = sim::getPackedWidth(type);
+  if (!width || !elementWidth || *elementWidth == 0 || *width == 0 ||
+      *width % *elementWidth != 0)
+    return std::nullopt;
+  return FixedRandomArrayLayout{*elementWidth, *width / *elementWidth};
+}
+
 FailureOr<std::optional<RandomConstraintPath>>
 getRandomConstraintPath(Operation *expression,
                         ArrayRef<uint64_t> propertyWidths,

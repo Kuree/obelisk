@@ -603,6 +603,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<ObjectPathElement> nestedObjectPath;
     FlatSymbolRefAttr nestedObjectRootField;
     Value nestedObjectID;
+    Value elementModeReference{};
+    unsigned elementWidth = 0;
+    Value disabledElements{};
+    Value originalScalar{};
   };
   SmallVector<Property, 0> planned;
   uint64_t plannedWidth = 0;
@@ -796,6 +800,42 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       randomModeStorage = storage.getZExtValue();
     }
+    auto elementModeField =
+        property.getAs<FlatSymbolRefAttr>("element_mode_field");
+    auto elementModeStorage =
+        property.getAs<IntegerAttr>("element_mode_storage");
+    auto elementWidth = property.getAs<IntegerAttr>("element_width");
+    Value elementModeReference;
+    if (elementModeField || elementModeStorage || elementWidth) {
+      auto layout = getFixedRandomArrayLayout(type);
+      if (!layout || !elementWidth || elementWidth.getValue().isNegative() ||
+          elementWidth.getValue().getActiveBits() > 32 ||
+          elementWidth.getValue().getZExtValue() != layout->elementWidth ||
+          static_cast<bool>(elementModeField) ==
+              static_cast<bool>(elementModeStorage) ||
+          randcAttr.getValue() || isContainerSize || isNestedObject ||
+          (elementModeField && !field) ||
+          (elementModeStorage &&
+           (field || elementModeStorage.getValue().isNegative() ||
+            elementModeStorage.getValue().getActiveBits() > 63))) {
+        emitError(location) << "randomize array element modes are malformed";
+        return failure();
+      }
+      if (!op->hasAttr(randomizeExplicitPropertiesAttrName)) {
+        Type bitmapType = builder.getIntegerType(layout->elementCount);
+        if (elementModeField)
+          elementModeReference = sim::SimClassFieldRefOp::create(
+              builder, location,
+              sim::ManagedRefType::get(function.getContext(), bitmapType,
+                                       objectType.getClassName()),
+              receiver, elementModeField);
+        else
+          elementModeReference = sim::SimContextStorageOp::create(
+              builder, location,
+              sim::RefType::get(function.getContext(), bitmapType),
+              function.getBody().front().getArgument(0), elementModeStorage);
+      }
+    }
     if (referencePath && !op->hasAttr(randomizeExplicitPropertiesAttrName) &&
         !randomModeStorage) {
       emitError(location)
@@ -982,6 +1022,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
          std::move(nestedObjectPath),
          nestedObjectField,
          {}});
+    planned.back().elementModeReference = elementModeReference;
+    planned.back().elementWidth =
+        elementWidth
+            ? static_cast<unsigned>(elementWidth.getValue().getZExtValue())
+            : 0;
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -2118,6 +2163,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value currentAssignment = constantAssignment64(0);
   Value mutableMask = constantAssignment64(0);
   SmallVector<Value> propertyEnabled;
+  bool hasArrayElementModes =
+      llvm::any_of(planned, [](const Property &property) {
+        return static_cast<bool>(property.elementModeReference);
+      });
   SmallVector<uint32_t> propertyOffsets;
   uint64_t currentOffset = 0;
   for (Property &property : planned) {
@@ -2249,6 +2298,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(current))
       return failure();
     FailureOr<Value> scalar = toRandomScalar(*current, location);
+    if (succeeded(scalar))
+      property.originalScalar = *scalar;
     FailureOr<Value> extended =
         succeeded(scalar) ? convert(*scalar, assignmentType, property.isSigned,
                                     location, false)
@@ -2273,6 +2324,75 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (nestedEnabled)
       enabled =
           arith::AndIOp::create(builder, location, enabled, nestedEnabled);
+    Value activeElementMask;
+    if (property.elementModeReference) {
+      FailureOr<Value> bitmap =
+          loadReference(property.elementModeReference, location);
+      if (failed(bitmap))
+        return failure();
+      property.disabledElements = *bitmap;
+      auto bitmapType = cast<IntegerType>((*bitmap).getType());
+      auto bitmapConstant = [&](APInt value) -> Value {
+        return arith::ConstantOp::create(
+            builder, location, bitmapType,
+            builder.getIntegerAttr(bitmapType, value));
+      };
+      Value zero = bitmapConstant(APInt(bitmapType.getWidth(), 0));
+      Value allDisabled =
+          bitmapConstant(APInt::getAllOnes(bitmapType.getWidth()));
+      Value anyActive = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ne, *bitmap, allDisabled);
+      enabled = arith::AndIOp::create(builder, location, enabled, anyActive);
+      Value allActive = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, *bitmap, zero);
+      randomizationEnabled = arith::AndIOp::create(
+          builder, location, randomizationEnabled, allActive);
+      // Solver masks describe representation bits, while the persistent
+      // array inventory has one bit per complete integral element. Spread
+      // those bits with logarithmically many shifts, then fill each leaf's
+      // representation. Do not emit an aggregate-width constant per element.
+      Value activeBits =
+          arith::XOrIOp::create(builder, location, *bitmap, allDisabled);
+      FailureOr<Value> extendedModes =
+          convert(activeBits, assignmentType, false, location);
+      if (failed(extendedModes))
+        return failure();
+      activeElementMask = *extendedModes;
+      if (property.elementWidth > 1) {
+        uint64_t highestBlock =
+            bitmapType.getWidth() > 1
+                ? uint64_t{1} << llvm::Log2_64(bitmapType.getWidth() - 1)
+                : 0;
+        for (uint64_t block = highestBlock; block; block >>= 1) {
+          uint64_t distance = uint64_t{property.elementWidth - 1} * block;
+          APInt placement(assignmentWidth, 0);
+          for (uint64_t leaf = 0; leaf < bitmapType.getWidth(); ++leaf)
+            placement.setBit(leaf + uint64_t{property.elementWidth - 1} *
+                                        (leaf & ~(block - 1)));
+          Value shifted =
+              arith::ShLIOp::create(builder, location, activeElementMask,
+                                    constantAssignment64(distance));
+          activeElementMask = arith::AndIOp::create(
+              builder, location,
+              arith::OrIOp::create(builder, location, activeElementMask,
+                                   shifted),
+              constantAssignment(placement));
+        }
+        for (uint64_t filled = 1; filled < property.elementWidth;) {
+          uint64_t step =
+              std::min(filled, uint64_t{property.elementWidth} - filled);
+          activeElementMask = arith::OrIOp::create(
+              builder, location, activeElementMask,
+              arith::ShLIOp::create(builder, location, activeElementMask,
+                                    constantAssignment64(step)));
+          filled += step;
+        }
+      }
+      if (currentOffset)
+        activeElementMask =
+            arith::ShLIOp::create(builder, location, activeElementMask,
+                                  constantAssignment64(currentOffset));
+    }
     if (property.isContainerSize && !property.hasUnconditionalSizeConstraint) {
       Value disabledSizeConstraints =
           arith::AndIOp::create(builder, location, relevantConstraintMode,
@@ -2403,9 +2523,32 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                       constantAssignment(aggregateMask),
                                       constantAssignment64(0))
                   .getResult();
+    if (activeElementMask)
+      enabledMask = arith::AndIOp::create(builder, location, enabledMask,
+                                          activeElementMask);
     mutableMask =
         arith::OrIOp::create(builder, location, mutableMask, enabledMask);
     currentOffset += property.width;
+  }
+  if (hasArrayElementModes) {
+    Value anyActive = arith::ConstantOp::create(
+        builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+    for (Value enabled : propertyEnabled)
+      anyActive = arith::OrIOp::create(builder, location, anyActive, enabled);
+    for (const ContainerProperty &property : plannedContainers) {
+      if (property.inertClassHandles)
+        continue;
+      Value active = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq,
+          arith::AndIOp::create(builder, location, relevantMode,
+                                constant64(uint64_t{1} << property.modeIndex)),
+          constant64(0));
+      anyActive = arith::OrIOp::create(builder, location, anyActive, active);
+    }
+    allPropertiesDisabled = arith::XOrIOp::create(
+        builder, location, anyActive,
+        arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                  builder.getBoolAttr(true)));
   }
   struct AliasEquality {
     uint32_t leftOffset;
@@ -6379,6 +6522,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     usePlannedSampling = arith::AndIOp::create(
         builder, location, usePlannedSampling, randomizationEnabled);
   }
+  if (hasArrayElementModes)
+    usePlannedSampling = arith::AndIOp::create(
+        builder, location, usePlannedSampling, randomizationEnabled);
   cf::CondBranchOp::create(builder, location, usePlannedSampling,
                            plannedSamplingBlock, ValueRange{},
                            modeSamplingDispatchBlock, ValueRange{});
@@ -7817,6 +7963,55 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, enabled, store, ValueRange{},
                              nextProperty, ValueRange{});
     setCurrent(store);
+    if (property.disabledElements &&
+        isa<sim::LogicType>(property.originalScalar.getType())) {
+      // Select entire four-state leaves. Ordinary bitwise masking would turn
+      // preserved Z symbols into X and violate the inactive-value contract.
+      FailureOr<Value> scalar = toRandomScalar(candidate, location);
+      if (failed(scalar))
+        return failure();
+      auto bitmapType = cast<IntegerType>(property.disabledElements.getType());
+      Type leafType =
+          sim::LogicType::get(function.getContext(), property.elementWidth);
+      SmallVector<Value> leaves;
+      for (unsigned leaf = bitmapType.getWidth(); leaf != 0; --leaf) {
+        Value oldLeaf = sim::SimLogicExtractOp::create(
+            builder, location, leafType, property.originalScalar,
+            builder.getI64IntegerAttr(uint64_t{leaf - 1} *
+                                      property.elementWidth));
+        Value newLeaf = sim::SimLogicExtractOp::create(
+            builder, location, leafType, *scalar,
+            builder.getI64IntegerAttr(uint64_t{leaf - 1} *
+                                      property.elementWidth));
+        Value bit = arith::ConstantOp::create(
+            builder, location, bitmapType,
+            builder.getIntegerAttr(
+                bitmapType,
+                APInt::getOneBitSet(bitmapType.getWidth(), leaf - 1)));
+        Value zero = arith::ConstantOp::create(
+            builder, location, bitmapType,
+            builder.getIntegerAttr(bitmapType,
+                                   APInt(bitmapType.getWidth(), 0)));
+        Value active = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq,
+            arith::AndIOp::create(builder, location, property.disabledElements,
+                                  bit),
+            zero);
+        leaves.push_back(arith::SelectOp::create(builder, location, active,
+                                                 newLeaf, oldLeaf));
+      }
+      Value preserved = leaves.size() == 1
+                            ? leaves.front()
+                            : sim::SimLogicConcatOp::create(
+                                  builder, location,
+                                  property.originalScalar.getType(), leaves)
+                                  .getResult();
+      FailureOr<Value> array =
+          convertFixedBitstreamTarget(preserved, property.type, location);
+      if (failed(array))
+        return failure();
+      candidate = *array;
+    }
     if (property.nestedObjectReference) {
       FailureOr<Value> loadedObject =
           loadReference(property.nestedObjectReference, location);

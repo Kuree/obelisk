@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrepareTopology.h"
+#include "PrepareRandomFunctions.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "Detail.h"
@@ -3180,6 +3181,34 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         sim::Lifetime::Design, builder.getStringAttr(hierarchy),
         builder.getStringAttr("__obelisk_rand_mode"),
         schedule::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
+    FailureOr<Type> propertyType = getNormalizedSemanticType(property);
+    if (succeeded(propertyType) &&
+        property.getRandMode() == semantic::SVRandMode::Rand)
+      if (auto layout = getFixedRandomArrayLayout(*propertyType)) {
+        std::string elements =
+            (llvm::Twine(path) + ".$rand_element_modes").str();
+        if (descriptors.count(elements)) {
+          emitError(getSemanticLocation(property))
+              << "static array rand_mode conflicts with an existing design "
+                 "object";
+          invalid = true;
+          return;
+        }
+        uint64_t elementId = nextStorageId++;
+        Type elementType = builder.getIntegerType(layout->elementCount);
+        property->setAttr(staticRandomArrayModeStorageAttrName,
+                          builder.getI64IntegerAttr(elementId));
+        descriptors[elements] = {DescriptorInfo::Kind::Storage, elementId,
+                                 scopeId, elementType,
+                                 sim::NetResolutionKind::Wire};
+        descriptors[elements].rootType = elementType;
+        sim::SimStorageDeclOp::create(
+            builder, getSemanticLocation(property), elementId, scopeId,
+            elementType, sim::Lifetime::Design, builder.getStringAttr(elements),
+            builder.getStringAttr("__obelisk_rand_element_modes"),
+            schedule::ComputeObservabilityKindAttr{},
+            sim::VPITypeSemanticsAttr{});
+      }
   });
 
   for (Operation *op : designObjects) {

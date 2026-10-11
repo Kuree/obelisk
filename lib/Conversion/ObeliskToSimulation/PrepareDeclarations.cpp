@@ -8,6 +8,7 @@
 #include "PrepareDeclarations.h"
 
 #include "Detail.h"
+#include "PrepareRandomFunctions.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
@@ -998,6 +999,20 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                          result.randcPositionFieldSymbols.lookup(property));
         }
       }
+      if (!isStatic && property.getRandMode() == semantic::SVRandMode::Rand)
+        if (auto layout = getFixedRandomArrayLayout(*type)) {
+          std::string name = fieldName + "_element_modes";
+          FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
+          sim::SimClassFieldDeclOp::create(
+              builder, getSemanticLocation(property), name, classSymbol,
+              builder.getIntegerType(layout->elementCount), ordinal++,
+              IntegerAttr{}, /*isStatic=*/false, /*isWeak=*/false,
+              builder.getStringAttr("__obelisk_rand_element_modes"));
+          property->setAttr(randomArrayModeFieldAttrName, symbol);
+          field->setAttr(randomArrayModeFieldAttrName, symbol);
+          field->setAttr(randomArrayElementWidthAttrName,
+                         builder.getI32IntegerAttr(layout->elementWidth));
+        }
     }
     // Every inheritance tree owns exactly one inline PCG stream.
     if (!base && !classType.getIsInterface()) {

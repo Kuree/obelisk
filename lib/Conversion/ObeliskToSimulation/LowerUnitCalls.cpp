@@ -1,6 +1,7 @@
 //===- LowerUnitCalls.cpp - Lower function and class calls ------------===//
 
 #include "LowerUnit.h"
+#include "PrepareRandomFunctions.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Runtime/Runtime.h"
@@ -679,6 +680,17 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         op->getAttrOfType<IntegerAttr>(randomModeStaticStorageAttrName);
     auto staticDispatchAttr =
         op->getAttrOfType<ArrayAttr>(randomModeStaticDispatchAttrName);
+    auto arrayTypeAttr =
+        op->getAttrOfType<TypeAttr>(randomModeArrayTypeAttrName);
+    auto arrayModeField =
+        op->getAttrOfType<FlatSymbolRefAttr>(randomModeArrayFieldAttrName);
+    auto arrayModeStorage =
+        op->getAttrOfType<IntegerAttr>(randomModeArrayStorageAttrName);
+    if (static_cast<bool>(arrayTypeAttr) !=
+        static_cast<bool>(arrayModeField || arrayModeStorage)) {
+      emitError(location) << "array rand_mode metadata is malformed";
+      return failure();
+    }
     if ((propertyIndexAttr && staticStorageAttr) ||
         ((propertyIndexAttr || staticStorageAttr) && staticDispatchAttr)) {
       emitError(location) << "rand_mode metadata is malformed";
@@ -689,12 +701,23 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     Operation *receiverNode = children.front();
+    SmallVector<Operation *> arrayIndices;
+    while (auto selection =
+               dyn_cast<semantic::SVElementSelectExpressionOp>(receiverNode)) {
+      auto operands = getChildren(selection);
+      if (!arrayTypeAttr || operands.size() != 2) {
+        emitError(location) << "selected rand_mode has no array mode inventory";
+        return failure();
+      }
+      arrayIndices.push_back(operands.back());
+      receiverNode = operands.front();
+    }
+    std::reverse(arrayIndices.begin(), arrayIndices.end());
     bool implicitThisProperty = false;
     if (propertyIndexAttr || staticStorageAttr) {
       auto member =
-          dyn_cast<semantic::SVMemberAccessExpressionOp>(children.front());
-      auto named =
-          dyn_cast<semantic::SVNamedValueExpressionOp>(children.front());
+          dyn_cast<semantic::SVMemberAccessExpressionOp>(receiverNode);
+      auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(receiverNode);
       SmallVector<Operation *> memberChildren =
           member ? getChildren(member) : SmallVector<Operation *>{};
       bool classQualifiedStatic = staticStorageAttr && named;
@@ -737,6 +760,22 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           builder.getI64IntegerAttr(storage));
     };
 
+    SmallVector<Value> loweredIndices;
+    for (Operation *index : arrayIndices) {
+      FailureOr<Value> value = lowerExpression(index);
+      auto sourceType = index->getAttrOfType<TypeAttr>("semantic_type");
+      FailureOr<Value> normalized =
+          succeeded(value)
+              ? toArrayIndex(*value,
+                             sourceType &&
+                                 isSignedSemanticType(sourceType.getValue()),
+                             location)
+              : FailureOr<Value>(failure());
+      if (failed(normalized))
+        return failure();
+      loweredIndices.push_back(*normalized);
+    }
+
     FailureOr<Value> setterEnabled;
     if (children.size() == 2) {
       FailureOr<Value> argument = lowerExpression(children.back());
@@ -746,7 +785,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
     }
 
-    if (staticStorageAttr) {
+    if (staticStorageAttr && !arrayTypeAttr) {
       APInt storage = staticStorageAttr.getValue();
       if (storage.isNegative() || storage.getActiveBits() > 63) {
         emitError(location) << "static property rand_mode storage is malformed";
@@ -774,13 +813,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return convert(enabled, *resultType, false, location);
     }
 
-    if (!receiverNode && !implicitThisProperty) {
+    if (!staticStorageAttr && !receiverNode && !implicitThisProperty) {
       emitError(location) << "rand_mode receiver is not a class object";
       return failure();
     }
     sim::SimClassDeclOp declaration =
-        lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
-                                                     objectType.getClassName());
+        objectType ? lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                         function, objectType.getClassName())
+                   : sim::SimClassDeclOp{};
     while (declaration &&
            !declaration->hasAttr("simulation.random_mode_field")) {
       if (!declaration.getBaseAttr())
@@ -792,15 +832,25 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
                                "simulation.random_mode_field")
                          : FlatSymbolRefAttr{};
-    if (!declaration || !modeField) {
+    if (!staticStorageAttr && (!declaration || !modeField)) {
       emitError(location) << "rand_mode receiver has no mode state";
       return failure();
     }
-    Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
-                                                  objectType.getClassName());
-    Value reference = sim::SimClassFieldRefOp::create(
-        builder, location, referenceType, loweredReceiver, modeField);
-    uint64_t propertyBit = 0;
+    Value reference;
+    if (staticStorageAttr) {
+      APInt storage = staticStorageAttr.getValue();
+      if (storage.isNegative() || storage.getActiveBits() > 63) {
+        emitError(location) << "static property rand_mode storage is malformed";
+        return failure();
+      }
+      reference = staticModeReference(storage.getZExtValue());
+    } else {
+      Type referenceType = sim::ManagedRefType::get(function.getContext(), i64,
+                                                    objectType.getClassName());
+      reference = sim::SimClassFieldRefOp::create(
+          builder, location, referenceType, loweredReceiver, modeField);
+    }
+    uint64_t propertyBit = staticStorageAttr ? 1 : 0;
     if (propertyIndexAttr) {
       APInt propertyIndex = propertyIndexAttr.getValue();
       if (propertyIndex.isNegative() || propertyIndex.getActiveBits() > 64 ||
@@ -810,17 +860,229 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       }
       propertyBit = uint64_t{1} << propertyIndex.getZExtValue();
     }
+    if (arrayTypeAttr) {
+      auto layout = getFixedRandomArrayLayout(arrayTypeAttr.getValue());
+      if (!layout ||
+          static_cast<bool>(arrayModeField) ==
+              static_cast<bool>(arrayModeStorage) ||
+          !propertyBit ||
+          (arrayModeField && (!objectType || !propertyIndexAttr)) ||
+          (arrayModeStorage && !staticStorageAttr) ||
+          (arrayModeStorage &&
+           (arrayModeStorage.getValue().isNegative() ||
+            arrayModeStorage.getValue().getActiveBits() > 63))) {
+        emitError(location) << "array rand_mode metadata is malformed";
+        return failure();
+      }
+      Type bitmapType = builder.getIntegerType(layout->elementCount);
+      Value bitmapReference;
+      if (arrayModeField) {
+        Type refType = sim::ManagedRefType::get(
+            function.getContext(), bitmapType, objectType.getClassName());
+        bitmapReference = sim::SimClassFieldRefOp::create(
+            builder, location, refType, loweredReceiver, arrayModeField);
+      } else {
+        bitmapReference = sim::SimContextStorageOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), bitmapType),
+            function.getBody().front().getArgument(0), arrayModeStorage);
+      }
+      auto bitmapConstant = [&](APInt value) -> Value {
+        return arith::ConstantOp::create(
+            builder, location, bitmapType,
+            builder.getIntegerAttr(bitmapType, value));
+      };
+      Value bitmapZero = bitmapConstant(APInt(layout->elementCount, 0));
+      if (arrayIndices.empty()) {
+        if (children.size() != 2) {
+          emitError(location)
+              << "rand_mode() queries require a singular array element";
+          return failure();
+        }
+        if (failed(storeReference(bitmapReference, bitmapZero, location)))
+          return failure();
+      } else {
+        Value valid = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+        Value offset = arith::ConstantOp::create(builder, location, i64,
+                                                 builder.getI64IntegerAttr(0));
+        // Bit zero describes the rightmost integral leaf in the logical
+        // bitstream. Each source index contributes its distance from the
+        // declared right bound, scaled by the remaining dimensions.
+        Type selectedType = arrayTypeAttr.getValue();
+        unsigned remaining = layout->elementCount;
+        for (Value index : loweredIndices) {
+          auto array = dyn_cast<sim::UnpackedArrayType>(selectedType);
+          if (!array) {
+            emitError(location)
+                << "rand_mode selection is not an unpacked array element";
+            return failure();
+          }
+          Value known =
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true));
+          if (auto logic = dyn_cast<sim::LogicType>(index.getType())) {
+            Value bits = sim::SimLogicToBitsOp::create(
+                builder, location, builder.getIntegerType(logic.getWidth()),
+                index);
+            Value roundTrip =
+                sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+            known = sim::SimLogicCompareOp::create(
+                builder, location, builder.getI1Type(),
+                sim::CompareKind::CaseEq, index, roundTrip);
+            index = bits;
+          }
+          auto indexType = cast<IntegerType>(index.getType());
+          auto indexConstant = [&](int64_t value) -> Value {
+            return arith::ConstantOp::create(
+                builder, location, indexType,
+                builder.getIntegerAttr(
+                    indexType, APInt(indexType.getWidth(),
+                                     static_cast<uint64_t>(value), true)));
+          };
+          // Check the widened index before narrowing. Otherwise a large or
+          // unknown index could accidentally select an existing mode bit.
+          Value inRange = arith::AndIOp::create(
+              builder, location,
+              arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::sge, index,
+                  indexConstant(std::min(array.getLeft(), array.getRight()))),
+              arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::sle, index,
+                  indexConstant(std::max(array.getLeft(), array.getRight()))));
+          valid = arith::AndIOp::create(
+              builder, location, valid,
+              arith::AndIOp::create(builder, location, known, inRange));
+          Value distance =
+              array.getLeft() >= array.getRight()
+                  ? arith::SubIOp::create(builder, location, index,
+                                          indexConstant(array.getRight()))
+                        .getResult()
+                  : arith::SubIOp::create(builder, location,
+                                          indexConstant(array.getRight()),
+                                          index)
+                        .getResult();
+          remaining /= sim::getAggregateNumElements(array);
+          Value ordinal =
+              arith::TruncIOp::create(builder, location, i64, distance);
+          ordinal = arith::MulIOp::create(
+              builder, location, ordinal,
+              arith::ConstantOp::create(builder, location, i64,
+                                        builder.getI64IntegerAttr(remaining)));
+          offset = arith::AddIOp::create(builder, location, offset, ordinal);
+          selectedType = array.getElementType();
+        }
+        if (children.size() == 1 && isa<sim::UnpackedArrayType>(selectedType)) {
+          emitError(location)
+              << "rand_mode() queries require a singular array element";
+          return failure();
+        }
+        FailureOr<Type> resultType = children.size() == 1
+                                         ? getNormalizedSemanticType(op)
+                                         : FailureOr<Type>(builder.getI1Type());
+        if (failed(resultType))
+          return failure();
+        Block *active = addBlock();
+        Block *inactive = addBlock();
+        Block *done = addBlock();
+        Value result = done->addArgument(*resultType, location);
+        cf::CondBranchOp::create(builder, location, valid, active, ValueRange{},
+                                 inactive, ValueRange{});
+        setCurrent(inactive);
+        Value falseBit = arith::ConstantOp::create(
+            builder, location, builder.getI1Type(), builder.getBoolAttr(false));
+        FailureOr<Value> falseResult =
+            convert(falseBit, *resultType, false, location);
+        if (failed(falseResult))
+          return failure();
+        cf::BranchOp::create(builder, location, done, ValueRange{*falseResult});
+        setCurrent(active);
+        FailureOr<Value> oldMode = loadReference(reference, location);
+        FailureOr<Value> bitmap = loadReference(bitmapReference, location);
+        if (failed(oldMode) || failed(bitmap))
+          return failure();
+        Value parentDisabled = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne,
+            arith::AndIOp::create(
+                builder, location, *oldMode,
+                arith::ConstantOp::create(
+                    builder, location, i64,
+                    builder.getIntegerAttr(i64, APInt(64, propertyBit)))),
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(0)));
+        FailureOr<Value> shift = convert(offset, bitmapType, false, location);
+        if (failed(shift))
+          return failure();
+        Value selectionMask =
+            arith::ShLIOp::create(builder, location,
+                                  bitmapConstant(APInt::getLowBitsSet(
+                                      layout->elementCount, remaining)),
+                                  *shift);
+        Value newResult;
+        if (children.size() == 1) {
+          Value elementDisabled = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(builder, location, *bitmap, selectionMask),
+              bitmapZero);
+          Value disabled = arith::OrIOp::create(
+              builder, location, parentDisabled, elementDisabled);
+          Value enabled = arith::XOrIOp::create(
+              builder, location, disabled,
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true)));
+          FailureOr<Value> converted =
+              convert(enabled, *resultType, false, location);
+          if (failed(converted))
+            return failure();
+          newResult = *converted;
+        } else {
+          // The parent bit lazily disables the whole array. Materialize that
+          // state before changing a subset, then clear the parent bit so the
+          // bitmap alone describes the remaining inactive elements.
+          Value oldBitmap = arith::SelectOp::create(
+              builder, location, parentDisabled,
+              bitmapConstant(APInt::getAllOnes(layout->elementCount)), *bitmap);
+          Value enabledBitmap = arith::AndIOp::create(
+              builder, location, oldBitmap,
+              arith::XOrIOp::create(
+                  builder, location, selectionMask,
+                  bitmapConstant(APInt::getAllOnes(layout->elementCount))));
+          Value disabledBitmap =
+              arith::OrIOp::create(builder, location, oldBitmap, selectionMask);
+          Value nextBitmap = arith::SelectOp::create(
+              builder, location, *setterEnabled, enabledBitmap, disabledBitmap);
+          Value nextMode = arith::AndIOp::create(
+              builder, location, *oldMode,
+              arith::ConstantOp::create(
+                  builder, location, i64,
+                  builder.getIntegerAttr(i64, APInt(64, ~propertyBit))));
+          if (failed(storeReference(bitmapReference, nextBitmap, location)) ||
+              failed(storeReference(reference, nextMode, location)))
+            return failure();
+          newResult =
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(false));
+        }
+        cf::BranchOp::create(builder, location, done, ValueRange{newResult});
+        setCurrent(done);
+        return result;
+      }
+    }
     if (children.size() == 2) {
       Value zero = arith::ConstantOp::create(builder, location, i64,
                                              builder.getI64IntegerAttr(0));
       Value disabled = arith::ConstantOp::create(
           builder, location, i64,
           builder.getIntegerAttr(
-              i64, APInt(64, propertyIndexAttr ? propertyBit : UINT64_MAX)));
+              i64, APInt(64, (propertyIndexAttr || staticStorageAttr)
+                                 ? propertyBit
+                                 : UINT64_MAX)));
       Value mode;
-      if (propertyIndexAttr) {
-        Value oldMode =
-            sim::SimManagedLoadOp::create(builder, location, i64, reference);
+      if (propertyIndexAttr || staticStorageAttr) {
+        FailureOr<Value> loaded = loadReference(reference, location);
+        if (failed(loaded))
+          return failure();
+        Value oldMode = *loaded;
         Value bit = arith::ConstantOp::create(
             builder, location, i64,
             builder.getIntegerAttr(i64, APInt(64, propertyBit)));
@@ -837,8 +1099,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         mode = arith::SelectOp::create(builder, location, *setterEnabled, zero,
                                        disabled);
       }
-      auto storeMode = [&](ArrayRef<int64_t> staticStorages) {
-        sim::SimManagedStoreOp::create(builder, location, mode, reference);
+      auto storeMode = [&](ArrayRef<int64_t> staticStorages,
+                           ArrayAttr elementFields,
+                           FlatSymbolRefAttr target) -> LogicalResult {
+        if (failed(storeReference(reference, mode, location)))
+          return failure();
         Value staticMode = arith::SelectOp::create(
             builder, location, *setterEnabled, zero,
             arith::ConstantOp::create(builder, location, i64,
@@ -847,6 +1112,54 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           sim::SimRefStoreOp::create(
               builder, location, staticMode,
               staticModeReference(static_cast<uint64_t>(storage)));
+        if (elementFields) {
+          Value object = loweredReceiver;
+          Type targetType =
+              sim::ClassHandleType::get(function.getContext(), target);
+          if (object.getType() != targetType)
+            object = sim::SimClassCastOp::create(builder, location, targetType,
+                                                 object);
+          for (Attribute attribute : elementFields) {
+            auto entry = dyn_cast<DictionaryAttr>(attribute);
+            auto field = entry ? entry.getAs<FlatSymbolRefAttr>("field")
+                               : FlatSymbolRefAttr{};
+            auto storage =
+                entry ? entry.getAs<IntegerAttr>("storage") : IntegerAttr{};
+            auto width =
+                entry ? entry.getAs<IntegerAttr>("width") : IntegerAttr{};
+            if (!width || width.getValue().isNegative() ||
+                width.getValue().isZero() ||
+                width.getValue().getActiveBits() > 32 ||
+                static_cast<bool>(field) == static_cast<bool>(storage) ||
+                (storage && (storage.getValue().isNegative() ||
+                             storage.getValue().getActiveBits() > 63))) {
+              emitError(location) << "rand_mode element dispatch is malformed";
+              return failure();
+            }
+            Type bitmapType =
+                builder.getIntegerType(width.getValue().getZExtValue());
+            Value bitmapReference;
+            if (field)
+              bitmapReference = sim::SimClassFieldRefOp::create(
+                  builder, location,
+                  sim::ManagedRefType::get(function.getContext(), bitmapType,
+                                           target),
+                  object, field);
+            else
+              bitmapReference = sim::SimContextStorageOp::create(
+                  builder, location,
+                  sim::RefType::get(function.getContext(), bitmapType),
+                  function.getBody().front().getArgument(0), storage);
+            Value bitmapZero = arith::ConstantOp::create(
+                builder, location, bitmapType,
+                builder.getIntegerAttr(
+                    bitmapType,
+                    APInt(cast<IntegerType>(bitmapType).getWidth(), 0)));
+            if (failed(storeReference(bitmapReference, bitmapZero, location)))
+              return failure();
+          }
+        }
+        return success();
       };
       if (staticDispatchAttr) {
         Block *done = addBlock();
@@ -869,7 +1182,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           cf::CondBranchOp::create(builder, location, matches, selected,
                                    ValueRange{}, next, ValueRange{});
           setCurrent(selected);
-          storeMode(storages.asArrayRef());
+          if (failed(storeMode(storages.asArrayRef(),
+                               entry.getAs<ArrayAttr>("element_fields"),
+                               target)))
+            return failure();
           cf::BranchOp::create(builder, location, done);
           setCurrent(next);
         }
@@ -880,7 +1196,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         cf::BranchOp::create(builder, location, done);
         setCurrent(done);
       } else {
-        storeMode({});
+        if (failed(storeMode({}, {}, {})))
+          return failure();
       }
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))

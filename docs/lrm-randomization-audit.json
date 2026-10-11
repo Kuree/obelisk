@@ -1299,13 +1299,13 @@
         },
         {
           "feature": "Per-element unpacked array rand_mode",
-          "status": "missing",
-          "detail": "Requires an element-level mode inventory rather than one property mask."
+          "status": "partial",
+          "detail": "Fixed unpacked integral arrays have persistent per-leaf mode bitmaps, including multidimensional subarray setters, arbitrary leaf counts, static sharing, and inherited dynamic-class resets. Disabled four-state leaves preserve X/Z on commits. Only singular leaves may be queried. Dynamic arrays, queues, and per-element randc histories remain open."
         },
         {
           "feature": "Large-domain partial selection solving",
           "status": "partial",
-          "detail": "Masked runtime fallback remains bounded; sparse wide constraints can fail when the all-enabled Z3 proposal is bypassed."
+          "detail": "With runtime Z3, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. The optional no-runtime-Z3 fallback remains bounded; non-integral and dynamic-container relations remain open."
         }
       ],
       "evidence": {
@@ -1315,10 +1315,16 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareTopology.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir"
+          "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir",
+          "test/Runtime/obelisk-to-simulation-random-array-modes-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir"
         ]
       }
     },

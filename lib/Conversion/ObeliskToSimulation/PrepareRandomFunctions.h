@@ -25,6 +25,15 @@ struct RandomConstraintPath {
 /// arrays of those values. Non-integral leaves require a different solver.
 std::optional<unsigned> getIntegralRandomWidth(mlir::Type type);
 
+struct FixedRandomArrayLayout {
+  unsigned elementWidth;
+  unsigned elementCount;
+};
+
+/// The mode inventory follows integral leaves in logical bit-stream order.
+std::optional<FixedRandomArrayLayout>
+getFixedRandomArrayLayout(mlir::Type type);
+
 mlir::FailureOr<std::optional<RandomConstraintPath>> getRandomConstraintPath(
     mlir::Operation *expression, llvm::ArrayRef<uint64_t> propertyWidths,
     llvm::function_ref<std::optional<unsigned>(mlir::Operation *)>
