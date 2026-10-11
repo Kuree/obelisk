@@ -5269,6 +5269,50 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                   constantAssignment64(0))
                   .getResult();
 
+    // A state-selected conditional evaluates only its selected arm. Retain
+    // both arms while the condition is RANDOM, just as for an if constraint,
+    // and drop inactive arm dependencies from implicit function ordering.
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalExpressionOp>(expression);
+        conditional && conditional.getConditionCount() == 1 &&
+        conditional.getConditionPatternFlags().size() == 1 &&
+        conditional.getConditionPatternFlags().front() == 0 &&
+        !values.empty() &&
+        isa<IntegerType>(sim::getPackedScalarType(values[0].value.getType()))) {
+      if (values.size() != 3)
+        return failure();
+      if (expression->hasAttr(randomFunctionConditionalAttrName) &&
+          !matchPattern(values[0].random, m_Zero()) &&
+          (!matchPattern(values[1].valid, m_One()) ||
+           !matchPattern(values[2].valid, m_One()))) {
+        emitError(getSemanticLocation(expression))
+            << "candidate-conditioned constraint function evaluation errors "
+               "require staged function execution";
+        return failure();
+      }
+      FailureOr<Value> trueGuard = stateGuard(values[0], true);
+      FailureOr<Value> falseGuard = stateGuard(values[0], false);
+      if (failed(trueGuard) || failed(falseGuard))
+        return failure();
+      Value yesEnabled = guardNot(*falseGuard);
+      Value noEnabled = guardNot(*trueGuard);
+      valid = guardAnd(values[0].valid,
+                       guardAnd(guardOr(*falseGuard, values[1].valid),
+                                guardOr(*trueGuard, values[2].valid)));
+      random = guardAnd(
+          valid, guardOr(values[0].random,
+                         guardOr(guardAnd(yesEnabled, values[1].random),
+                                 guardAnd(noEnabled, values[2].random))));
+      guardInputs = unionGuardInputs(
+          values[0].inputs,
+          unionGuardInputs(selectGuardInputs(yesEnabled, values[1].inputs),
+                           selectGuardInputs(noEnabled, values[2].inputs)));
+      guardArguments = unionGuardInputs(
+          values[0].arguments,
+          unionGuardInputs(selectGuardInputs(yesEnabled, values[1].arguments),
+                           selectGuardInputs(noEnabled, values[2].arguments)));
+    }
+
     Value result;
     auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(expression);
     auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression);

@@ -911,7 +911,7 @@
         {
           "feature": "Side-effect-free user functions",
           "status": "partial",
-          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported; procedural control flow and other receivers are incomplete."
+          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Loops, cases, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
         },
         {
           "feature": "Function body state reads",
@@ -931,7 +931,7 @@
         {
           "feature": "Scope-randomization user functions",
           "status": "partial",
-          "detail": "Scope randomization shares class expression-function validation, packed path priority analysis and target Z3 stages. Module/package and other non-instance expression functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, and wide integral assignments. Instance receiver plans, procedural control flow and general function bodies remain incomplete."
+          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and target Z3 stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Instance receiver plans, loops, cases and other general function bodies remain incomplete."
         }
       ],
       "evidence": {
@@ -958,7 +958,12 @@
           "test/Conversion/obelisk-to-simulation-random-scope-functions.mlir",
           "test/Runtime/obelisk-to-simulation-random-scope-functions-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-scope-functions-wide-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-state-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-scope-function-state-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-wide-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-procedural-function-diagnostics.mlir"
         ]
       }
     },
@@ -969,7 +974,7 @@
         {
           "feature": "State-only guards",
           "status": "partial",
-          "detail": "Integral state predicates and handle comparisons are evaluated safely before solving, including null and bounds checks. Mixed unknown-plane predicates and non-integral solving remain open."
+          "detail": "Integral state predicates and handle comparisons are evaluated safely before solving, including null and bounds checks. Mixed unknown-plane predicates and non-integral solving remain open. State-selected function body branches validate only the selected arm, including executed unused initializers. Procedural unknown truth is false; a known one bit remains true."
         },
         {
           "feature": "FALSE/TRUE/ERROR/RANDOM guard algebra",
@@ -1016,7 +1021,8 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir"
         ]
       }
     },

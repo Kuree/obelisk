@@ -4,6 +4,7 @@
 #include "Detail.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 #include <functional>
 #include <limits>
@@ -507,9 +508,349 @@ LogicalResult freezeRandomConstraintPriorityInputs(
   return failure(invalid);
 }
 
+namespace {
+
+// Convert automatic, side-effect-free statement bodies into value expressions.
+// Branch continuations carry distinct local environments, so a return exits
+// exactly its source path and an assignment affects only subsequent reads.
+// Every executed initializer/RHS remains an evaluation input even when its
+// local result is unused: a bad state dereference still contributes ERROR.
+class ConstraintFunctionBody {
+public:
+  ConstraintFunctionBody(semantic::SVSubroutineSymbolOp function,
+                         semantic::SVCallExpressionOp call,
+                         const llvm::StringMap<Operation *> &symbols,
+                         Builder &builder, Block &expressions)
+      : function(function), call(call), symbols(symbols), builder(builder),
+        expressions(expressions) {}
+
+  FailureOr<Operation *> compile() {
+    resultType = call->getAttrOfType<TypeAttr>("semantic_type");
+    if (!resultType)
+      return failure();
+    FailureOr<Type> normalizedResult = normalizeSemanticType(
+        resultType.getValue(), getSemanticLocation(call), function);
+    if (failed(normalizedResult) || !sim::getPackedWidth(*normalizedResult))
+      return failure();
+    if (auto reference = function.getReturnVariableSymbol())
+      resultVariable = symbols.lookup(reference->getLeafReference());
+    Environment environment;
+    bool invalid = false;
+    function->walk([&](Operation *node) {
+      if (auto local = dyn_cast<semantic::SVVariableSymbolOp>(node)) {
+        if (function.getThisVariableSymbol() &&
+            function.getThisVariableSymbol()->getLeafReference() ==
+                local.getSymName())
+          return;
+        if (node != resultVariable &&
+            local.getLifetime() == semantic::SVVariableLifetime::Static)
+          return;
+        auto type = node->getAttrOfType<TypeAttr>("semantic_type");
+        if (!type) {
+          invalid = true;
+          return;
+        }
+        FailureOr<Type> normalized = normalizeSemanticType(
+            type.getValue(), getSemanticLocation(node), node);
+        auto scalar = succeeded(normalized)
+                          ? sim::getPackedScalarType(*normalized)
+                          : Type{};
+        if (!scalar) {
+          invalid = true;
+          return;
+        }
+        Operation *initial =
+            literal(node, type, isa<sim::LogicType>(scalar) ? "'x" : "0");
+        if (node == resultVariable &&
+            local.getLifetime() == semantic::SVVariableLifetime::Static)
+          unassignedStaticResult = initial;
+        environment[node] = initial;
+        if (!local.getIsConst().value_or(false))
+          writable.insert(node);
+      } else if (auto formal =
+                     dyn_cast<semantic::SVFormalArgumentSymbolOp>(node)) {
+        if (formal.getDirection() == semantic::SVArgumentDirection::In &&
+            !formal.getIsConst().value_or(false))
+          writable.insert(node);
+      }
+    });
+    if (invalid)
+      return failure();
+    SmallVector<Operation *> statements;
+    for (Operation *child : getChildren(function))
+      if (child->getName().getStringRef().starts_with("obelisk.sv.statement."))
+        statements.push_back(child);
+    return execute(
+        statements, environment,
+        [&](Environment &values) -> FailureOr<Operation *> {
+          // A two-state automatic return variable has its ordinary default
+          // value on fallthrough. Four-state defaults retain X and are never
+          // invented as a valid two-state constraint value.
+          if (resultVariable)
+            return values.lookup(resultVariable) != unassignedStaticResult
+                       ? FailureOr<Operation *>(values.lookup(resultVariable))
+                       : FailureOr<Operation *>(failure());
+          return literal(call, resultType, "0");
+        });
+  }
+
+private:
+  using Environment = llvm::DenseMap<Operation *, Operation *>;
+  using Continuation = std::function<FailureOr<Operation *>(Environment &)>;
+
+  Operation *symbol(Operation *node) const {
+    auto reference = node->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    return reference ? symbols.lookup(reference.getLeafReference()) : nullptr;
+  }
+
+  Operation *make(Operation *source, StringRef name, TypeAttr type,
+                  ArrayRef<NamedAttribute> attributes,
+                  ArrayRef<Operation *> operands) {
+    OperationState state(source->getLoc(), name);
+    if (type)
+      state.addAttribute("semantic_type", type);
+    state.addAttribute("node_id", source->getAttr("node_id"));
+    state.addAttributes(attributes);
+    auto *region = state.addRegion();
+    region->push_back(new Block());
+    for (Operation *operand : operands)
+      region->front().push_back(operand->clone());
+    Operation *node = Operation::create(state);
+    expressions.push_back(node);
+    return node;
+  }
+
+  Operation *literal(Operation *source, TypeAttr type, StringRef value) {
+    return make(
+        source, semantic::SVIntegerLiteralOp::getOperationName(), type,
+        {builder.getNamedAttr("constant_value", builder.getStringAttr(value))},
+        {});
+  }
+
+  Operation *convert(Operation *source, TypeAttr type, Operation *value) {
+    return make(
+        source, semantic::SVConversionExpressionOp::getOperationName(), type,
+        {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true))},
+        {value});
+  }
+
+  Operation *evaluateBefore(Operation *source, Operation *value,
+                            Operation *result) {
+    return make(source, semantic::SVConversionExpressionOp::getOperationName(),
+                resultType,
+                {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true)),
+                 builder.getNamedAttr(randomEvaluationInputsAttrName,
+                                      builder.getI64IntegerAttr(1))},
+                {value, result});
+  }
+
+  FailureOr<Operation *> expression(Operation *source, Environment &environment,
+                                    Operation *assignmentValue = nullptr) {
+    if (isa<semantic::SVAssignmentExpressionOp>(source))
+      return failure();
+    if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(source))
+      if (unary.getOperatorKind() == semantic::SVUnaryOperator::Preincrement ||
+          unary.getOperatorKind() == semantic::SVUnaryOperator::Predecrement ||
+          unary.getOperatorKind() == semantic::SVUnaryOperator::Postincrement ||
+          unary.getOperatorKind() == semantic::SVUnaryOperator::Postdecrement)
+        return failure();
+    if (isa<semantic::SVLValueReferenceExpressionOp>(source))
+      return assignmentValue ? FailureOr<Operation *>(assignmentValue)
+                             : FailureOr<Operation *>(failure());
+    if (Operation *declaration = symbol(source))
+      if (Operation *value = environment.lookup(declaration))
+        return value != unassignedStaticResult
+                   ? FailureOr<Operation *>(value)
+                   : FailureOr<Operation *>(failure());
+    Operation *cloned = source->cloneWithoutRegions();
+    for (auto [sourceRegion, clonedRegion] :
+         llvm::zip_equal(source->getRegions(), cloned->getRegions())) {
+      for (Block &block : sourceRegion) {
+        auto *target = new Block();
+        clonedRegion.push_back(target);
+        for (Operation &child : block) {
+          FailureOr<Operation *> value =
+              expression(&child, environment, assignmentValue);
+          if (failed(value)) {
+            cloned->destroy();
+            return failure();
+          }
+          target->push_back((*value)->clone());
+        }
+      }
+    }
+    expressions.push_back(cloned);
+    return cloned;
+  }
+
+  FailureOr<Operation *> execute(ArrayRef<Operation *> statements,
+                                 Environment &environment,
+                                 const Continuation &continuation) {
+    if (statements.empty())
+      return continuation(environment);
+    Operation *statement = statements.front();
+    Continuation next = [&](Environment &values) {
+      return execute(statements.drop_front(), values, continuation);
+    };
+    if (isa<semantic::SVStatementListOp, semantic::SVBlockStatementOp>(
+            statement)) {
+      auto children = getChildren(statement);
+      return execute(children, environment, next);
+    }
+    if (isa<semantic::SVEmptyStatementOp>(statement) ||
+        statement->getName().getStringRef().starts_with("obelisk.sv.symbol."))
+      return next(environment);
+    if (auto declaration =
+            dyn_cast<semantic::SVVariableDeclStatementOp>(statement)) {
+      Operation *variable = symbol(statement);
+      if (!variable)
+        return failure();
+      if (!environment.contains(variable))
+        return next(environment);
+      auto initializers = getChildren(statement);
+      if (initializers.empty())
+        initializers = getChildren(variable);
+      if (initializers.empty())
+        return next(environment);
+      if (initializers.size() != 1)
+        return failure();
+      FailureOr<Operation *> value =
+          expression(initializers.front(), environment);
+      if (failed(value))
+        return failure();
+      Operation *converted =
+          convert(statement, variable->getAttrOfType<TypeAttr>("semantic_type"),
+                  *value);
+      environment[variable] = converted;
+      FailureOr<Operation *> result = next(environment);
+      return succeeded(result) ? FailureOr<Operation *>(evaluateBefore(
+                                     statement, converted, *result))
+                               : result;
+    }
+    if (auto ret = dyn_cast<semantic::SVReturnStatementOp>(statement)) {
+      auto values = getChildren(ret);
+      if (values.empty())
+        return resultVariable && environment.lookup(resultVariable) !=
+                                     unassignedStaticResult
+                   ? FailureOr<Operation *>(environment.lookup(resultVariable))
+                   : FailureOr<Operation *>(failure());
+      if (values.size() != 1)
+        return failure();
+      FailureOr<Operation *> value = expression(values.front(), environment);
+      return succeeded(value) ? FailureOr<Operation *>(
+                                    convert(statement, resultType, *value))
+                              : value;
+    }
+    if (auto conditional =
+            dyn_cast<semantic::SVConditionalStatementOp>(statement)) {
+      auto children = getChildren(statement);
+      if (conditional.getConditionCount() != 1 ||
+          conditional.getConditionPatternFlags().size() != 1 ||
+          conditional.getConditionPatternFlags().front() != 0 ||
+          children.size() !=
+              2u + static_cast<unsigned>(conditional.getHasElse()))
+        return failure();
+      FailureOr<Operation *> condition =
+          expression(children.front(), environment);
+      if (failed(condition))
+        return failure();
+      // Procedural if treats an unknown truth value as false. A conditional
+      // expression instead merges its arms, so reduce the full condition to
+      // one bit before converting its truth value to a two-state predicate.
+      TypeAttr truthType = TypeAttr::get(
+          semantic::IntegralType::get(builder.getContext(), 1, false, true, 0,
+                                      0, semantic::SVIntegralFlavor::Logic));
+      TypeAttr predicateType = TypeAttr::get(
+          semantic::IntegralType::get(builder.getContext(), 1, false, false, 0,
+                                      0, semantic::SVIntegralFlavor::Bit));
+      auto logicalNot = [&](Operation *value) {
+        return make(
+            statement, semantic::SVUnaryExpressionOp::getOperationName(),
+            truthType,
+            {builder.getNamedAttr(
+                "operator_kind", builder.getI32IntegerAttr(static_cast<int32_t>(
+                                     semantic::SVUnaryOperator::LogicalNot)))},
+            {value});
+      };
+      Operation *predicate =
+          convert(statement, predicateType, logicalNot(logicalNot(*condition)));
+      Environment trueValues = environment;
+      Environment falseValues = environment;
+      FailureOr<Operation *> yes = execute({children[1]}, trueValues, next);
+      FailureOr<Operation *> no =
+          conditional.getHasElse() ? execute({children[2]}, falseValues, next)
+                                   : next(falseValues);
+      if (failed(yes) || failed(no))
+        return failure();
+      return make(statement,
+                  semantic::SVConditionalExpressionOp::getOperationName(),
+                  resultType,
+                  {builder.getNamedAttr(randomFunctionConditionalAttrName,
+                                        builder.getUnitAttr()),
+                   builder.getNamedAttr("condition_count",
+                                        builder.getI64IntegerAttr(1)),
+                   builder.getNamedAttr("condition_pattern_flags",
+                                        builder.getDenseI64ArrayAttr({0})),
+                   builder.getNamedAttr(
+                       "is_signed", builder.getBoolAttr(isSignedSemanticType(
+                                        resultType.getValue())))},
+                  {predicate, *yes, *no});
+    }
+    if (auto expr = dyn_cast<semantic::SVExpressionStatementOp>(statement)) {
+      auto children = getChildren(expr);
+      auto assignment =
+          children.size() == 1
+              ? dyn_cast<semantic::SVAssignmentExpressionOp>(children.front())
+              : semantic::SVAssignmentExpressionOp{};
+      auto operands =
+          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
+      Operation *variable =
+          operands.size() == 2 ? symbol(operands.front()) : nullptr;
+      if (!assignment ||
+          assignment.getAssignmentKind() !=
+              semantic::SVAssignmentKind::Blocking ||
+          !variable || !writable.contains(variable) ||
+          !isa<semantic::SVNamedValueExpressionOp>(operands.front()))
+        return failure();
+      Operation *oldValue = environment.lookup(variable);
+      if (oldValue == unassignedStaticResult)
+        oldValue = nullptr;
+      else if (!oldValue)
+        oldValue = operands.front();
+      FailureOr<Operation *> value =
+          expression(operands.back(), environment, oldValue);
+      if (failed(value))
+        return failure();
+      Operation *converted =
+          convert(statement, variable->getAttrOfType<TypeAttr>("semantic_type"),
+                  *value);
+      environment[variable] = converted;
+      FailureOr<Operation *> result = next(environment);
+      return succeeded(result) ? FailureOr<Operation *>(evaluateBefore(
+                                     statement, converted, *result))
+                               : result;
+    }
+    return failure();
+  }
+
+  semantic::SVSubroutineSymbolOp function;
+  semantic::SVCallExpressionOp call;
+  const llvm::StringMap<Operation *> &symbols;
+  Builder &builder;
+  Block &expressions;
+  TypeAttr resultType;
+  Operation *resultVariable = nullptr;
+  Operation *unassignedStaticResult = nullptr;
+  llvm::SmallPtrSet<Operation *, 16> writable;
+};
+
+} // namespace
+
 static FailureOr<Operation *>
 getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
-                            semantic::SVCallExpressionOp call) {
+                            semantic::SVCallExpressionOp call,
+                            const llvm::StringMap<Operation *> &symbols,
+                            Builder &builder, Block &expressions) {
   MLIRContext *context = function.getContext();
   SmallVector<semantic::SVReturnStatementOp> returns;
   SmallVector<semantic::SVExpressionStatementOp> expressionStatements;
@@ -545,14 +886,41 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
       unsupportedStatement = true;
   });
   if (unsupportedLocal || unsupportedStatement) {
+    FailureOr<Operation *> result =
+        ConstraintFunctionBody(function, call, symbols, builder, expressions)
+            .compile();
+    if (succeeded(result))
+      return result;
     emitError(getSemanticLocation(call))
         << "constraint function " << function.getName().value_or("")
-        << " must be a side-effect-free expression function";
+        << " must be a side-effect-free expression function or an admitted "
+           "automatic statement body";
     return failure();
   }
+  auto requiresStatementEvaluation = [&](Operation *expression) {
+    bool required = false;
+    expression->walk([&](Operation *node) {
+      required |= isa<semantic::SVAssignmentExpressionOp>(node);
+      if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(node))
+        required |=
+            unary.getOperatorKind() ==
+                semantic::SVUnaryOperator::Preincrement ||
+            unary.getOperatorKind() ==
+                semantic::SVUnaryOperator::Predecrement ||
+            unary.getOperatorKind() ==
+                semantic::SVUnaryOperator::Postincrement ||
+            unary.getOperatorKind() == semantic::SVUnaryOperator::Postdecrement;
+      if (auto reference =
+              node->getAttrOfType<SymbolRefAttr>("referenced_symbol"))
+        required |= function.getReturnVariableSymbol() &&
+                    reference.getLeafReference() ==
+                        function.getReturnVariableSymbol()->getLeafReference();
+    });
+    return required;
+  };
   if (returns.size() == 1 && expressionStatements.empty()) {
     SmallVector<Operation *> values = getChildren(returns.front());
-    if (values.size() == 1)
+    if (values.size() == 1 && !requiresStatementEvaluation(values.front()))
       return values.front();
   }
   if (returns.empty() && expressionStatements.size() == 1) {
@@ -573,13 +941,19 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
             semantic::SVAssignmentKind::Blocking &&
         function.getReturnVariableSymbol() && lhs &&
         lhs.getLeafReference() ==
-            function.getReturnVariableSymbol()->getLeafReference())
+            function.getReturnVariableSymbol()->getLeafReference() &&
+        !requiresStatementEvaluation(operands.back()))
       return operands.back();
   }
+  FailureOr<Operation *> result =
+      ConstraintFunctionBody(function, call, symbols, builder, expressions)
+          .compile();
+  if (succeeded(result))
+    return result;
   emitError(getSemanticLocation(call))
       << "constraint function " << function.getName().value_or("")
-      << " must define its result with one return expression or one "
-         "blocking assignment";
+      << " must be a side-effect-free expression function or an admitted "
+         "automatic statement body";
   return failure();
 }
 
@@ -659,8 +1033,10 @@ LogicalResult expandRandomConstraintFunctions(
            llvm::zip_equal(formals, templates->getOperations()))
         functionSubstitutions[formal.getOperation()] = &actual;
 
-      FailureOr<Operation *> result =
-          getConstraintFunctionResult(*function, callExpression);
+      auto functionExpressions = std::make_unique<Block>();
+      FailureOr<Operation *> result = getConstraintFunctionResult(
+          *function, callExpression, semanticSymbols, builder,
+          *functionExpressions);
       if (failed(result))
         return failure();
       callStack.push_back(function->getOperation());
