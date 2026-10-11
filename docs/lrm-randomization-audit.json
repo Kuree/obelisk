@@ -911,7 +911,7 @@
         {
           "feature": "Side-effect-free user functions",
           "status": "partial",
-          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Loops, cases, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
+          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Constant repeat loops and same-width logical right-shift for loops have exact expansions, including the LRM count_ones example, lexical break/continue, early returns, local reinitialization and standalone updates. Counts follow 12.7.2 after typed casts; negative/X/Z counts execute zero times. The policy is 256 iterations per loop and 4096 expanded bodies per call. General dynamic, larger and unbounded loops, cases, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
         },
         {
           "feature": "Function body state reads",
@@ -931,7 +931,7 @@
         {
           "feature": "Scope-randomization user functions",
           "status": "partial",
-          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and target Z3 stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Instance receiver plans, loops, cases and other general function bodies remain incomplete."
+          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and target Z3 stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Instance receiver plans, general loops, cases and other general function bodies remain incomplete."
         }
       ],
       "evidence": {
@@ -963,7 +963,12 @@
           "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-wide-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-procedural-function-diagnostics.mlir"
+          "test/Conversion/obelisk-to-simulation-random-procedural-function-diagnostics.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-count-ones-loop-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-repeat-loop-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-count-ones-loop-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-repeat-loop-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-function-loop-diagnostics.mlir"
         ]
       }
     },

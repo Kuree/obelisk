@@ -9,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <string>
 
 using namespace mlir;
 
@@ -559,12 +560,17 @@ public:
           invalid = true;
           return;
         }
-        Operation *initial =
-            literal(node, type, isa<sim::LogicType>(scalar) ? "'x" : "0");
+        std::string initialSpelling =
+            isa<sim::LogicType>(scalar)
+                ? std::to_string(cast<sim::LogicType>(scalar).getWidth()) +
+                      "'bx"
+                : "0";
+        Operation *initial = literal(node, type, initialSpelling);
         if (node == resultVariable &&
             local.getLifetime() == semantic::SVVariableLifetime::Static)
           unassignedStaticResult = initial;
         environment[node] = initial;
+        initialValues[node] = initial;
         if (!local.getIsConst().value_or(false))
           writable.insert(node);
       } else if (auto formal =
@@ -597,6 +603,15 @@ public:
 private:
   using Environment = llvm::DenseMap<Operation *, Operation *>;
   using Continuation = std::function<FailureOr<Operation *>(Environment &)>;
+  struct LoopContext {
+    Continuation leave;
+    Continuation advance;
+  };
+
+  // These source expressions are cloned into both the generated checker and
+  // the solver program. Larger or unbounded loops need staged execution rather
+  // than an arbitrarily truncated unroll.
+  static constexpr uint64_t maxUnrolledIterations = 256;
 
   Operation *symbol(Operation *node) const {
     auto reference = node->getAttrOfType<SymbolRefAttr>("referenced_symbol");
@@ -644,6 +659,235 @@ private:
                 {value, result});
   }
 
+  Operation *branch(Operation *source, Operation *condition, Operation *yes,
+                    Operation *no) {
+    // Procedural if treats an unknown truth value as false. A conditional
+    // expression instead merges its arms, so reduce the full condition to
+    // one bit before converting its truth value to a two-state predicate.
+    TypeAttr truthType = TypeAttr::get(
+        semantic::IntegralType::get(builder.getContext(), 1, false, true, 0, 0,
+                                    semantic::SVIntegralFlavor::Logic));
+    TypeAttr predicateType = TypeAttr::get(
+        semantic::IntegralType::get(builder.getContext(), 1, false, false, 0, 0,
+                                    semantic::SVIntegralFlavor::Bit));
+    auto logicalNot = [&](Operation *value) {
+      return make(
+          source, semantic::SVUnaryExpressionOp::getOperationName(), truthType,
+          {builder.getNamedAttr("operator_kind",
+                                builder.getI32IntegerAttr(static_cast<int32_t>(
+                                    semantic::SVUnaryOperator::LogicalNot)))},
+          {value});
+    };
+    Operation *predicate =
+        convert(source, predicateType, logicalNot(logicalNot(condition)));
+    return make(
+        source, semantic::SVConditionalExpressionOp::getOperationName(),
+        resultType,
+        {builder.getNamedAttr(randomFunctionConditionalAttrName,
+                              builder.getUnitAttr()),
+         builder.getNamedAttr("condition_count", builder.getI64IntegerAttr(1)),
+         builder.getNamedAttr("condition_pattern_flags",
+                              builder.getDenseI64ArrayAttr({0})),
+         builder.getNamedAttr(
+             "is_signed",
+             builder.getBoolAttr(isSignedSemanticType(resultType.getValue())))},
+        {predicate, yes, no});
+  }
+
+  std::optional<uint64_t> width(Operation *source) const {
+    auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+    return type ? getSemanticBitstreamWidth(type.getValue()) : std::nullopt;
+  }
+
+  FailureOr<ParsedConstant> scalarConstant(Operation *source) {
+    auto bitWidth = width(source);
+    if (!bitWidth || *bitWidth == 0 ||
+        *bitWidth > std::numeric_limits<unsigned>::max())
+      return failure();
+    if (isa<semantic::SVConversionExpressionOp>(source)) {
+      auto operands = getChildren(source);
+      if (operands.size() != 1)
+        return failure();
+      FailureOr<ParsedConstant> value = scalarConstant(operands.front());
+      auto type = operands.front()->getAttrOfType<TypeAttr>("semantic_type");
+      if (failed(value) || !type)
+        return failure();
+      bool signExtend = isSignedSemanticType(type.getValue());
+      value->value = signExtend ? value->value.sextOrTrunc(*bitWidth)
+                                : value->value.zextOrTrunc(*bitWidth);
+      value->unknown = signExtend ? value->unknown.sextOrTrunc(*bitWidth)
+                                  : value->unknown.zextOrTrunc(*bitWidth);
+      return coerceConstant(source, *value);
+    }
+    if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(source)) {
+      auto operands = getChildren(unary);
+      if (operands.size() != 1 ||
+          (unary.getOperatorKind() != semantic::SVUnaryOperator::Plus &&
+           unary.getOperatorKind() != semantic::SVUnaryOperator::Minus))
+        return failure();
+      FailureOr<ParsedConstant> value = scalarConstant(operands.front());
+      if (failed(value) || value->value.getBitWidth() != *bitWidth)
+        return failure();
+      if (unary.getOperatorKind() == semantic::SVUnaryOperator::Minus) {
+        if (value->unknown.isZero())
+          value->value = -value->value;
+        else {
+          value->value = APInt::getZero(*bitWidth);
+          value->unknown = APInt::getAllOnes(*bitWidth);
+        }
+      }
+      return coerceConstant(source, *value);
+    }
+    std::optional<StringRef> spelling = getConstantSpelling(source);
+    if (!spelling)
+      return failure();
+    FailureOr<ParsedConstant> parsed =
+        parseSVInteger(*spelling, *bitWidth, getSemanticLocation(source));
+    if (failed(parsed))
+      return failure();
+    return coerceConstant(source, *parsed);
+  }
+
+  FailureOr<ParsedConstant> coerceConstant(Operation *source,
+                                           ParsedConstant value) {
+    auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+    if (!type)
+      return failure();
+    FailureOr<Type> normalized = normalizeSemanticType(
+        type.getValue(), getSemanticLocation(source), function);
+    if (failed(normalized))
+      return failure();
+    if (isa<IntegerType>(sim::getPackedScalarType(*normalized))) {
+      value.value &= ~value.unknown;
+      value.unknown.clearAllBits();
+    }
+    return value;
+  }
+
+  FailureOr<APInt> constant(Operation *source) {
+    FailureOr<ParsedConstant> value = scalarConstant(source);
+    if (failed(value) || !value->unknown.isZero())
+      return failure();
+    return value->value;
+  }
+
+  // Each conversion must preserve every source bit. Shift steps additionally
+  // require the declared width, so widening a signed value before shifting
+  // cannot reintroduce sign bits when it is truncated back into the variable.
+  Operation *selectedVariable(Operation *source, uint64_t declaredWidth,
+                              bool exactWidth) const {
+    while (isa<semantic::SVConversionExpressionOp>(source)) {
+      auto operands = getChildren(source);
+      auto convertedWidth = width(source);
+      if (operands.size() != 1 || !convertedWidth ||
+          (exactWidth ? *convertedWidth != declaredWidth
+                      : *convertedWidth < declaredWidth))
+        return nullptr;
+      source = operands.front();
+    }
+    return isa<semantic::SVNamedValueExpressionOp>(source) &&
+                   width(source) == declaredWidth
+               ? symbol(source)
+               : nullptr;
+  }
+
+  std::optional<uint64_t> shiftLoopBound(Operation *condition, Operation *step,
+                                         Operation *body) {
+    auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(step);
+    auto operands = assignment ? getChildren(step) : SmallVector<Operation *>{};
+    Operation *variable =
+        operands.size() == 2 ? symbol(operands.front()) : nullptr;
+    if (!assignment ||
+        assignment.getAssignmentKind() !=
+            semantic::SVAssignmentKind::Blocking ||
+        assignment.getHasTimingControl() || !variable ||
+        !writable.contains(variable) ||
+        !isa<semantic::SVNamedValueExpressionOp>(operands.front()))
+      return std::nullopt;
+    uint64_t declaredWidth = width(variable).value_or(0);
+    if (declaredWidth == 0)
+      return std::nullopt;
+    Operation *rhs = operands.back();
+    while (isa<semantic::SVConversionExpressionOp>(rhs)) {
+      auto inputs = getChildren(rhs);
+      if (inputs.size() != 1 || width(rhs) != declaredWidth)
+        return std::nullopt;
+      rhs = inputs.front();
+    }
+    auto shift = dyn_cast<semantic::SVBinaryExpressionOp>(rhs);
+    auto inputs = shift ? getChildren(shift) : SmallVector<Operation *>{};
+    if (!shift ||
+        shift.getOperatorKind() !=
+            semantic::SVBinaryOperator::LogicalShiftRight ||
+        inputs.size() != 2 || width(shift) != declaredWidth ||
+        (selectedVariable(inputs.front(), declaredWidth, true) != variable &&
+         !(isa<semantic::SVLValueReferenceExpressionOp>(inputs.front()) &&
+           width(inputs.front()) == declaredWidth)))
+      return std::nullopt;
+    FailureOr<APInt> amount = constant(inputs.back());
+    auto amountType = inputs.back()->getAttrOfType<TypeAttr>("semantic_type");
+    if (failed(amount) || !amountType || amount->isZero() ||
+        (isSignedSemanticType(amountType.getValue()) && amount->isNegative()) ||
+        amount->getActiveBits() > 64)
+      return std::nullopt;
+    auto comparison = dyn_cast<semantic::SVBinaryExpressionOp>(condition);
+    auto predicates =
+        comparison ? getChildren(comparison) : SmallVector<Operation *>{};
+    if (!comparison ||
+        comparison.getOperatorKind() !=
+            semantic::SVBinaryOperator::Inequality ||
+        predicates.size() != 2)
+      return std::nullopt;
+    bool nonzeroTest = false;
+    for (unsigned index = 0; index != 2; ++index) {
+      FailureOr<APInt> zero = constant(predicates[1 - index]);
+      nonzeroTest |= selectedVariable(predicates[index], declaredWidth,
+                                      false) == variable &&
+                     succeeded(zero) && zero->isZero();
+    }
+    if (!nonzeroTest)
+      return std::nullopt;
+    bool writesVariant = false;
+    body->walk([&](Operation *node) {
+      if (isa<semantic::SVAssignmentExpressionOp,
+              semantic::SVUnaryExpressionOp>(node)) {
+        bool update = isa<semantic::SVAssignmentExpressionOp>(node);
+        if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(node))
+          update |= unary.getOperatorKind() ==
+                        semantic::SVUnaryOperator::Preincrement ||
+                    unary.getOperatorKind() ==
+                        semantic::SVUnaryOperator::Predecrement ||
+                    unary.getOperatorKind() ==
+                        semantic::SVUnaryOperator::Postincrement ||
+                    unary.getOperatorKind() ==
+                        semantic::SVUnaryOperator::Postdecrement;
+        auto targets = getChildren(node);
+        if (update && !targets.empty())
+          targets.front()->walk([&](Operation *target) {
+            writesVariant |= symbol(target) == variable;
+          });
+      } else if (isa<semantic::SVVariableDeclStatementOp>(node)) {
+        writesVariant |= symbol(node) == variable;
+      }
+    });
+    if (writesVariant)
+      return std::nullopt;
+    uint64_t shiftBits = amount->getZExtValue();
+    uint64_t bound = declaredWidth / shiftBits +
+                     static_cast<uint64_t>(declaredWidth % shiftBits != 0);
+    return bound <= maxUnrolledIterations ? std::optional<uint64_t>(bound)
+                                          : std::nullopt;
+  }
+
+  SmallVector<Operation *> expressionStatements(ArrayRef<Operation *> values) {
+    SmallVector<Operation *> statements;
+    for (Operation *value : values)
+      statements.push_back(
+          make(value, semantic::SVExpressionStatementOp::getOperationName(), {},
+               {}, {value}));
+    return statements;
+  }
+
   FailureOr<Operation *> expression(Operation *source, Environment &environment,
                                     Operation *assignmentValue = nullptr) {
     if (isa<semantic::SVAssignmentExpressionOp>(source))
@@ -685,21 +929,31 @@ private:
 
   FailureOr<Operation *> execute(ArrayRef<Operation *> statements,
                                  Environment &environment,
-                                 const Continuation &continuation) {
+                                 const Continuation &continuation,
+                                 LoopContext *loop = nullptr) {
     if (statements.empty())
       return continuation(environment);
     Operation *statement = statements.front();
     Continuation next = [&](Environment &values) {
-      return execute(statements.drop_front(), values, continuation);
+      return execute(statements.drop_front(), values, continuation, loop);
     };
     if (isa<semantic::SVStatementListOp, semantic::SVBlockStatementOp>(
             statement)) {
+      if (auto block = dyn_cast<semantic::SVBlockStatementOp>(statement))
+        if (block.getBlockKind() != semantic::SVStatementBlockKind::Sequential)
+          return failure();
       auto children = getChildren(statement);
-      return execute(children, environment, next);
+      return execute(children, environment, next, loop);
     }
     if (isa<semantic::SVEmptyStatementOp>(statement) ||
         statement->getName().getStringRef().starts_with("obelisk.sv.symbol."))
       return next(environment);
+    if (isa<semantic::SVBreakStatementOp>(statement))
+      return loop ? loop->leave(environment)
+                  : FailureOr<Operation *>(failure());
+    if (isa<semantic::SVContinueStatementOp>(statement))
+      return loop ? loop->advance(environment)
+                  : FailureOr<Operation *>(failure());
     if (auto declaration =
             dyn_cast<semantic::SVVariableDeclStatementOp>(statement)) {
       Operation *variable = symbol(statement);
@@ -707,6 +961,7 @@ private:
         return failure();
       if (!environment.contains(variable))
         return next(environment);
+      environment[variable] = initialValues.lookup(variable);
       auto initializers = getChildren(statement);
       if (initializers.empty())
         initializers = getChildren(variable);
@@ -726,6 +981,97 @@ private:
       return succeeded(result) ? FailureOr<Operation *>(evaluateBefore(
                                      statement, converted, *result))
                                : result;
+    }
+    if (isa<semantic::SVRepeatLoopStatementOp>(statement)) {
+      auto children = getChildren(statement);
+      if (children.size() != 2)
+        return failure();
+      FailureOr<ParsedConstant> count = scalarConstant(children.front());
+      auto type = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+      if (failed(count) || !type)
+        return failure();
+      uint64_t iterations = 0;
+      // IEEE 1800-2023 12.7.2 treats negative, X and Z counts as zero. Apply
+      // intervening casts first; a two-state cast may leave known positive
+      // bits after discarding its unknown bits.
+      if (count->unknown.isZero() && (!isSignedSemanticType(type.getValue()) ||
+                                      !count->value.isNegative())) {
+        if (count->value.getActiveBits() > 64 ||
+            count->value.getZExtValue() > maxUnrolledIterations)
+          return failure();
+        iterations = count->value.getZExtValue();
+      }
+      std::function<FailureOr<Operation *>(uint64_t, Environment &)> iterate;
+      iterate = [&](uint64_t remaining,
+                    Environment &values) -> FailureOr<Operation *> {
+        if (remaining == 0)
+          return next(values);
+        if (remainingUnrollBudget == 0)
+          return failure();
+        --remainingUnrollBudget;
+        Continuation advance = [&](Environment &updated) {
+          return iterate(remaining - 1, updated);
+        };
+        LoopContext current{next, advance};
+        return execute({children[1]}, values, advance, &current);
+      };
+      return iterate(iterations, environment);
+    }
+    if (auto forLoop = dyn_cast<semantic::SVForLoopStatementOp>(statement)) {
+      auto children = getChildren(statement);
+      uint64_t initializerCount = forLoop.getInitializerCount();
+      if (!forLoop.getHasCondition() || forLoop.getStepCount() != 1 ||
+          initializerCount > children.size() ||
+          children.size() - initializerCount != 3)
+        return failure();
+      Operation *condition = children[initializerCount];
+      Operation *step = children[initializerCount + 1];
+      Operation *body = children.back();
+      std::optional<uint64_t> bound = shiftLoopBound(condition, step, body);
+      if (!bound)
+        return failure();
+      SmallVector<Operation *> initializers =
+          expressionStatements(ArrayRef(children).take_front(initializerCount));
+      SmallVector<Operation *> steps = expressionStatements({step});
+      std::function<FailureOr<Operation *>(uint64_t, Environment &)> iterate;
+      iterate = [&](uint64_t remaining,
+                    Environment &values) -> FailureOr<Operation *> {
+        // The validated step clears every bit after this many iterations.
+        // The only admitted condition then evaluates false, without a read
+        // that could introduce an error or a function side effect.
+        if (remaining == 0)
+          return next(values);
+        if (remainingUnrollBudget == 0)
+          return failure();
+        --remainingUnrollBudget;
+        FailureOr<Operation *> predicate = expression(condition, values);
+        if (failed(predicate))
+          return failure();
+        Environment trueValues = values;
+        Environment falseValues = values;
+        Continuation advance = [&](Environment &updated) {
+          return execute(
+              steps, updated,
+              [&](Environment &stepped) {
+                return iterate(remaining - 1, stepped);
+              },
+              loop);
+        };
+        LoopContext current{next, advance};
+        FailureOr<Operation *> yes =
+            execute({body}, trueValues, advance, &current);
+        FailureOr<Operation *> no = next(falseValues);
+        return succeeded(yes) && succeeded(no)
+                   ? FailureOr<Operation *>(
+                         branch(statement, *predicate, *yes, *no))
+                   : FailureOr<Operation *>(failure());
+      };
+      return execute(
+          initializers, environment,
+          [&](Environment &initialized) {
+            return iterate(*bound, initialized);
+          },
+          loop);
     }
     if (auto ret = dyn_cast<semantic::SVReturnStatementOp>(statement)) {
       auto values = getChildren(ret);
@@ -754,47 +1100,17 @@ private:
           expression(children.front(), environment);
       if (failed(condition))
         return failure();
-      // Procedural if treats an unknown truth value as false. A conditional
-      // expression instead merges its arms, so reduce the full condition to
-      // one bit before converting its truth value to a two-state predicate.
-      TypeAttr truthType = TypeAttr::get(
-          semantic::IntegralType::get(builder.getContext(), 1, false, true, 0,
-                                      0, semantic::SVIntegralFlavor::Logic));
-      TypeAttr predicateType = TypeAttr::get(
-          semantic::IntegralType::get(builder.getContext(), 1, false, false, 0,
-                                      0, semantic::SVIntegralFlavor::Bit));
-      auto logicalNot = [&](Operation *value) {
-        return make(
-            statement, semantic::SVUnaryExpressionOp::getOperationName(),
-            truthType,
-            {builder.getNamedAttr(
-                "operator_kind", builder.getI32IntegerAttr(static_cast<int32_t>(
-                                     semantic::SVUnaryOperator::LogicalNot)))},
-            {value});
-      };
-      Operation *predicate =
-          convert(statement, predicateType, logicalNot(logicalNot(*condition)));
       Environment trueValues = environment;
       Environment falseValues = environment;
-      FailureOr<Operation *> yes = execute({children[1]}, trueValues, next);
+      FailureOr<Operation *> yes =
+          execute({children[1]}, trueValues, next, loop);
       FailureOr<Operation *> no =
-          conditional.getHasElse() ? execute({children[2]}, falseValues, next)
-                                   : next(falseValues);
+          conditional.getHasElse()
+              ? execute({children[2]}, falseValues, next, loop)
+              : next(falseValues);
       if (failed(yes) || failed(no))
         return failure();
-      return make(statement,
-                  semantic::SVConditionalExpressionOp::getOperationName(),
-                  resultType,
-                  {builder.getNamedAttr(randomFunctionConditionalAttrName,
-                                        builder.getUnitAttr()),
-                   builder.getNamedAttr("condition_count",
-                                        builder.getI64IntegerAttr(1)),
-                   builder.getNamedAttr("condition_pattern_flags",
-                                        builder.getDenseI64ArrayAttr({0})),
-                   builder.getNamedAttr(
-                       "is_signed", builder.getBoolAttr(isSignedSemanticType(
-                                        resultType.getValue())))},
-                  {predicate, *yes, *no});
+      return branch(statement, *condition, *yes, *no);
     }
     if (auto expr = dyn_cast<semantic::SVExpressionStatementOp>(statement)) {
       auto children = getChildren(expr);
@@ -802,23 +1118,52 @@ private:
           children.size() == 1
               ? dyn_cast<semantic::SVAssignmentExpressionOp>(children.front())
               : semantic::SVAssignmentExpressionOp{};
-      auto operands =
-          assignment ? getChildren(assignment) : SmallVector<Operation *>{};
-      Operation *variable =
-          operands.size() == 2 ? symbol(operands.front()) : nullptr;
-      if (!assignment ||
-          assignment.getAssignmentKind() !=
-              semantic::SVAssignmentKind::Blocking ||
+      auto unary =
+          children.size() == 1
+              ? dyn_cast<semantic::SVUnaryExpressionOp>(children.front())
+              : semantic::SVUnaryExpressionOp{};
+      bool increment =
+          unary &&
+          (unary.getOperatorKind() == semantic::SVUnaryOperator::Preincrement ||
+           unary.getOperatorKind() == semantic::SVUnaryOperator::Postincrement);
+      bool decrement =
+          unary &&
+          (unary.getOperatorKind() == semantic::SVUnaryOperator::Predecrement ||
+           unary.getOperatorKind() == semantic::SVUnaryOperator::Postdecrement);
+      auto operands = assignment ? getChildren(assignment)
+                      : unary    ? getChildren(unary)
+                                 : SmallVector<Operation *>{};
+      Operation *variable = operands.size() == (assignment ? 2u : 1u)
+                                ? symbol(operands.front())
+                                : nullptr;
+      if ((!assignment && !increment && !decrement) ||
+          (assignment && (assignment.getHasTimingControl() ||
+                          assignment.getAssignmentKind() !=
+                              semantic::SVAssignmentKind::Blocking)) ||
           !variable || !writable.contains(variable) ||
           !isa<semantic::SVNamedValueExpressionOp>(operands.front()))
         return failure();
       Operation *oldValue = environment.lookup(variable);
-      if (oldValue == unassignedStaticResult)
+      if (unassignedStaticResult && oldValue == unassignedStaticResult)
         oldValue = nullptr;
       else if (!oldValue)
         oldValue = operands.front();
+      auto type = variable->getAttrOfType<TypeAttr>("semantic_type");
+      if (!assignment && !oldValue)
+        return failure();
       FailureOr<Operation *> value =
-          expression(operands.back(), environment, oldValue);
+          assignment
+              ? expression(operands.back(), environment, oldValue)
+              : FailureOr<Operation *>(make(
+                    unary, semantic::SVBinaryExpressionOp::getOperationName(),
+                    type,
+                    {builder.getNamedAttr(
+                        "operator_kind",
+                        builder.getI32IntegerAttr(static_cast<int32_t>(
+                            increment
+                                ? semantic::SVBinaryOperator::Add
+                                : semantic::SVBinaryOperator::Subtract)))},
+                    {oldValue, literal(unary, type, "1")}));
       if (failed(value))
         return failure();
       Operation *converted =
@@ -841,6 +1186,8 @@ private:
   TypeAttr resultType;
   Operation *resultVariable = nullptr;
   Operation *unassignedStaticResult = nullptr;
+  Environment initialValues;
+  uint64_t remainingUnrollBudget = 4096;
   llvm::SmallPtrSet<Operation *, 16> writable;
 };
 
@@ -881,6 +1228,9 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
       return;
     }
     StringRef name = nested->getName().getStringRef();
+    if (auto block = dyn_cast<semantic::SVBlockStatementOp>(nested))
+      unsupportedStatement |=
+          block.getBlockKind() != semantic::SVStatementBlockKind::Sequential;
     if (name.starts_with("obelisk.sv.statement.") &&
         !isa<semantic::SVStatementListOp, semantic::SVBlockStatementOp>(nested))
       unsupportedStatement = true;
@@ -936,7 +1286,7 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
                    ? operands.front()->getAttrOfType<SymbolRefAttr>(
                          "referenced_symbol")
                    : SymbolRefAttr{};
-    if (assignment &&
+    if (assignment && !assignment.getHasTimingControl() &&
         assignment.getAssignmentKind() ==
             semantic::SVAssignmentKind::Blocking &&
         function.getReturnVariableSymbol() && lhs &&
