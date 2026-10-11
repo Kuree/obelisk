@@ -2782,6 +2782,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     });
     return dependent;
   };
+#ifdef OBELISK_RUNTIME_Z3
+  constexpr bool rawDistWeights = true;
+#else
+  constexpr bool rawDistWeights = false;
+#endif
+  Operation *activeSoftDistSource = nullptr;
   struct DistRangePlan {
     uint64_t lower;
     uint64_t cardinality;
@@ -2790,6 +2796,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint32_t weightCapture;
     bool weightSigned;
     Value weight;
+    uint64_t itemIdentity;
+    bool perRange;
   };
   struct DistPlan {
     Operation *source;
@@ -2797,6 +2805,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint32_t propertyOffset;
     uint32_t constraintBlock;
     SmallVector<DistRangePlan> ranges;
+    Operation *softSource;
   };
   SmallVector<DistPlan> distPlans;
   uint32_t activeProgramConstraintBlock =
@@ -3405,6 +3414,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         uint64_t denominator;
         uint64_t selectionCardinality;
         bool isDefault;
+        uint64_t identity;
       };
       SmallVector<PendingRange> pending;
       SmallVector<std::pair<uint64_t, uint64_t>> explicitIntervals;
@@ -3432,14 +3442,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           lower = upper = *singleton;
         }
         uint64_t cardinality = upper - lower + 1;
-        if (cardinality == 0 && item.perRange && property.domains.empty()) {
+        if (!rawDistWeights && cardinality == 0 && item.perRange &&
+            property.domains.empty()) {
           emitError(getSemanticLocation(item.value))
               << "a per-range dist weight cannot span the complete 64-bit "
                  "domain";
           return failure();
         }
         pending.push_back({lower, cardinality, item.weight, item.perRange,
-                           cardinality, cardinality, false});
+                           cardinality, cardinality, false, pending.size()});
         explicitIntervals.emplace_back(lower, upper);
         return success();
       };
@@ -3486,7 +3497,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             defaultCardinality = updated;
         }
         bool defaultPerRange = defaultWeightKind.getInt() != 0;
-        if (defaultPerRange && property.domains.empty() &&
+        if (!defaultPerRange) {
+          emitError(getSemanticLocation(defaultWeight))
+              << "a default dist specification must use the :/ operator";
+          return failure();
+        }
+        if (!rawDistWeights && defaultPerRange && property.domains.empty() &&
             !complement.empty() && defaultCardinality == 0) {
           emitError(getSemanticLocation(defaultWeight))
               << "a per-range default dist weight cannot cover the complete "
@@ -3494,13 +3510,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         }
         for (auto interval : complement)
-          pending.push_back({interval.first,
-                             interval.second - interval.first + 1,
-                             defaultWeight, defaultPerRange, defaultCardinality,
-                             interval.second - interval.first + 1, true});
+          pending.push_back(
+              {interval.first, interval.second - interval.first + 1,
+               defaultWeight, defaultPerRange, defaultCardinality,
+               interval.second - interval.first + 1, true, rawItems.size()});
       }
 
-      if (!property.domains.empty()) {
+      if (!rawDistWeights && !property.domains.empty()) {
         constexpr uint64_t maxFiniteDistDomain = uint64_t{1} << 20;
         uint64_t semanticCardinality = propertyDomainCardinality(property);
         if (semanticCardinality == 0 ||
@@ -3540,7 +3556,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
       uint64_t normalization = 1;
       for (const PendingRange &range : pending) {
-        if (!range.perRange)
+        if (rawDistWeights || !range.perRange)
           continue;
         uint64_t divisor = std::gcd(normalization, range.denominator);
         uint64_t factor = range.denominator / divisor;
@@ -3579,14 +3595,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           }
           // IEEE 1800-2023 18.5.3 interprets the self-determined weight
           // expression as unsigned, including signed negative bit patterns.
-          if (cast<IntegerType>((*scalar).getType()).getWidth() > 64) {
+          if (!rawDistWeights &&
+              cast<IntegerType>((*scalar).getType()).getWidth() > 64) {
             emitError(getSemanticLocation(weight))
                 << "dist weights wider than 64 bits are not executable yet";
             return failure();
           }
           isSigned = false;
-          FailureOr<Value> extended = convert(
-              *scalar, i64, isSigned, getSemanticLocation(weight), false);
+          Type weightType =
+              rawDistWeights
+                  ? builder.getIntegerType(std::max<unsigned>(
+                        64, cast<IntegerType>((*scalar).getType()).getWidth()))
+                  : i64;
+          FailureOr<Value> extended =
+              convert(*scalar, weightType, isSigned,
+                      getSemanticLocation(weight), false);
           if (failed(extended))
             return failure();
           uint32_t capture = static_cast<uint32_t>(programCaptures.size());
@@ -3605,8 +3628,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return *implicitWeight;
       };
 
-      DistPlan plan{
-          expression, propertyIndex, 0, activeProgramConstraintBlock, {}};
+      DistPlan plan{expression, propertyIndex,
+                    0,          activeProgramConstraintBlock,
+                    {},         activeSoftDistSource};
       for (unsigned index = 0; index != propertyIndex; ++index)
         plan.propertyOffset += planned[index].width;
       for (const PendingRange &range : pending) {
@@ -3615,10 +3639,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             materializeWeight(range.weight, weightSigned);
         if (failed(weight))
           return failure();
-        uint64_t coefficient =
-            range.perRange ? normalization / range.denominator : normalization;
-        if (range.selectionCardinality == 0 ||
-            coefficient > UINT64_MAX / range.selectionCardinality) {
+        uint64_t coefficient = rawDistWeights ? 1
+                               : range.perRange
+                                   ? normalization / range.denominator
+                                   : normalization;
+        if (!rawDistWeights &&
+            (range.selectionCardinality == 0 ||
+             coefficient > UINT64_MAX / range.selectionCardinality)) {
           emitError(getSemanticLocation(expression))
               << "dist range selection mass exceeds 64 bits";
           return failure();
@@ -3627,7 +3654,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             coefficient * range.selectionCardinality;
         plan.ranges.push_back({range.lower, range.cardinality, coefficient,
                                selectionCoefficient, weight->first,
-                               weightSigned, weight->second});
+                               weightSigned, weight->second, range.identity,
+                               range.perRange});
       }
       if (plan.ranges.empty()) {
         emitError(getSemanticLocation(expression))
@@ -3642,9 +3670,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             materializeWeight(weight, weightSigned);
         if (failed(materialized))
           return failure();
-        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64, weightSigned,
+        unsigned width =
+            cast<IntegerType>(materialized->second.getType()).getWidth();
+        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, width, weightSigned,
                     materialized->first);
-        instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, false, 0, 0);
+        instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, width, false, 0, 0);
         instruction(OBELISK_RT_RANDOM_GT_V1, 1, weightSigned);
         return success();
       };
@@ -4637,12 +4667,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       for (semantic::SVExpressionConstraintOp soft : softConstraints) {
         bool containsDist = false;
         soft->walk([&](semantic::SVDistExpressionOp) { containsDist = true; });
-        if (containsDist) {
+        if (containsDist && !rawDistWeights) {
           emitError(getSemanticLocation(soft))
               << "soft dist constraints are not executable yet";
           return failure();
         }
         activeProgramConstraintBlock = constraintBlock;
+        activeSoftDistSource = soft;
         if (failed(emitProgramConstraint(item, soft)) ||
             failed(emitSoftDisablers(soft)))
           return failure();
@@ -4656,6 +4687,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         recordPriorityInputs(std::move(inputs), std::move(arguments));
         emittedSoft = true;
+        activeSoftDistSource = nullptr;
       }
     }
   }
@@ -4686,19 +4718,99 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     recordPriorityInputs(APInt::getZero(assignmentWidth),
                          APInt::getZero(assignmentWidth));
   }
-  if (!distPlans.empty() && hasSolveBefore) {
+  if (!rawDistWeights && !distPlans.empty() && hasSolveBefore) {
     emitError(location)
         << "dist combined with solve before is not executable yet";
     return failure();
   }
   for (auto [index, plan] : llvm::enumerate(distPlans))
     for (const DistPlan &other : ArrayRef(distPlans).drop_front(index + 1))
-      if (plan.propertyIndex == other.propertyIndex) {
+      if (!rawDistWeights && plan.propertyIndex == other.propertyIndex) {
         emitError(getSemanticLocation(other.source))
             << "multiple active dist constraints for one property are not "
                "executable yet";
         return failure();
       }
+  if (rawDistWeights && !distPlans.empty() && hasFunctionPriority) {
+    emitError(location)
+        << "dist across independent constraint function priority stages is "
+           "not executable yet";
+    return failure();
+  }
+  if (rawDistWeights) {
+    for (auto [group, plan] : llvm::enumerate(distPlans)) {
+      const APInt &target = propertyMasks[plan.propertyIndex];
+      // Removing a mode-controlled edge must not split the distributed field
+      // into independently normalized pieces.
+      for (const SolveBeforeEdge &edge : solveBeforeEdges)
+        for (const APInt *endpoint : {&edge.beforeMask, &edge.afterMask}) {
+          APInt overlap = *endpoint & target;
+          if (!overlap.isZero() && overlap != target) {
+            emitError(getSemanticLocation(plan.source))
+                << "dist target split by selected solve before paths requires "
+                   "a conditional weight measure across those paths";
+            return failure();
+          }
+        }
+      APInt predecessors = target;
+      for (;;) {
+        APInt previous = predecessors;
+        for (const SolveBeforeEdge &edge : solveBeforeEdges)
+          if ((edge.constraintBlock ==
+                   OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+               edge.constraintBlock == plan.constraintBlock) &&
+              !(edge.afterMask & predecessors).isZero())
+            predecessors |= edge.beforeMask;
+        if (predecessors == previous)
+          break;
+      }
+      predecessors &= ~target;
+      auto emitGuard = [&](Operation *guard, bool positive) -> LogicalResult {
+        if (!(priorityInputs(guard) & ~predecessors).isZero()) {
+          emitError(getSemanticLocation(guard))
+              << "candidate-dependent dist activation requires its inputs to "
+                 "be solved before the complete distributed target";
+          return failure();
+        }
+        if (failed(emitProgramExpression(guard)))
+          return failure();
+        if (!positive)
+          instruction(OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1);
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        return success();
+      };
+      emitLiteral(true);
+      for (Operation *child = plan.source, *parent = child->getParentOp();
+           parent; child = parent, parent = parent->getParentOp()) {
+        if (!isa<semantic::SVImplicationConstraintOp,
+                 semantic::SVConditionalConstraintOp>(parent))
+          continue;
+        SmallVector<Operation *> branches = getChildren(parent);
+        if (isa<semantic::SVImplicationConstraintOp>(parent)) {
+          if (failed(emitGuard(branches.front(), true)))
+            return failure();
+        } else if (isa<semantic::SVConditionalConstraintOp>(parent)) {
+          if (failed(emitGuard(branches.front(), child == branches[1])))
+            return failure();
+        }
+      }
+      if (plan.softSource)
+        for (const SoftDisable *disable :
+             softDisablers.lookup(plan.softSource)) {
+          if (disable->block == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1)
+            emitLiteral(true);
+          else
+            instruction(OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, false,
+                        disable->block);
+          for (auto [guard, positive] : disable->guards)
+            if (failed(emitGuard(guard, positive)))
+              return failure();
+          instruction(OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1);
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        }
+      instruction(OBELISK_RT_RANDOM_END_DIST_GUARD_V1, 1, false, group);
+    }
+  }
   thisObject = programSavedThis;
   randomizeCandidateValues = std::move(programSavedCandidates);
   restoreProgramBindings.release();
@@ -4721,6 +4833,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
   if (distPlans.empty())
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  else
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED;
 #endif
   if (hasSolveBefore)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
@@ -4842,13 +4956,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         append32(plan.constraintBlock);
         append32(plan.propertyOffset);
         append16(static_cast<uint16_t>(planned[plan.propertyIndex].width));
-        append16(0);
+        append16(rawDistWeights && plan.softSource
+                     ? softPriorities.lookup(plan.softSource) + 1
+                     : 0);
         append64(range.lower);
         append64(range.cardinality);
-        append64(range.coefficient);
+        append64(rawDistWeights ? range.itemIdentity : range.coefficient);
         append32(range.weightCapture);
         uint32_t flags =
             range.weightSigned ? OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED : 0;
+        if (rawDistWeights) {
+          flags |= OBELISK_RT_RANDOM_DIST_RAW_WEIGHT;
+          if (range.perRange)
+            flags |= OBELISK_RT_RANDOM_DIST_PER_RANGE;
+        }
         if (planned[plan.propertyIndex].isSigned)
           flags |= OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
         append32(flags);
@@ -4898,7 +5019,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     fallbackAttempts *= cardinality;
   }
-  if (hasFiniteDomains && !distPlans.empty() && !completeFallbackDomain) {
+  if (!rawDistWeights && hasFiniteDomains && !distPlans.empty() &&
+      !completeFallbackDomain) {
     emitError(location)
         << "dist over a finite semantic domain currently requires exhaustive "
            "fallback traversal of at most 2^20 aggregate assignments";
@@ -6073,7 +6195,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 #ifndef OBELISK_RUNTIME_Z3
   unsupportedWideOrder = hasSolveBefore;
 #endif
-  if (wideProgram && (unsupportedWideOrder || !distPlans.empty())) {
+  if (wideProgram &&
+      (unsupportedWideOrder || (!rawDistWeights && !distPlans.empty()))) {
     emitError(location)
         << "wide residual random fallback does not yet support solve before "
            "or dist";
@@ -6169,8 +6292,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return true;
   };
 
-  bool solveBeforeRequiresRuntime =
-      hasFunctionPriority || (hasSolveBefore && !softProposalExact);
+  bool weightedRequiresRuntime = rawDistWeights && !distPlans.empty();
+  bool solveBeforeRequiresRuntime = weightedRequiresRuntime ||
+                                    hasFunctionPriority ||
+                                    (hasSolveBefore && !softProposalExact);
   if (hasSolveBefore && !solveBeforeTableRoot &&
       analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
     APInt orderedPropertyMask = APInt::getZero(assignmentWidth);
@@ -6239,7 +6364,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *modeSamplingDispatchBlock = addBlock();
   Block *plannedSamplingBlock = addBlock();
   Value usePlannedSampling = allConstraintsEnabled;
-  if (hasFiniteDomains && !distPlans.empty()) {
+  if (weightedRequiresRuntime || (hasFiniteDomains && !distPlans.empty())) {
     usePlannedSampling = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(false));
   } else if (hasSolveBefore || !distPlans.empty() || hasFiniteDomains ||
@@ -6360,6 +6485,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             : valid;
   };
   for (const DistPlan &plan : distPlans) {
+    if (weightedRequiresRuntime)
+      break;
     MaterializedDistPlan materialized{&plan, {}, constant64(0)};
     for (const DistRangePlan &range : plan.ranges) {
       if (range.weightSigned)
@@ -6841,9 +6968,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             arith::CmpIPredicate positivePredicate =
                 range.weightSigned ? arith::CmpIPredicate::sgt
                                    : arith::CmpIPredicate::ugt;
-            Value positive =
-                arith::CmpIOp::create(builder, location, positivePredicate,
-                                      range.weight, constant64(0));
+            Value positive = arith::CmpIOp::create(
+                builder, location, positivePredicate, range.weight,
+                arith::ConstantOp::create(
+                    builder, location, range.weight.getType(),
+                    builder.getIntegerAttr(range.weight.getType(), 0)));
             Value active =
                 arith::AndIOp::create(builder, location, matches, positive);
             supported =
@@ -7578,7 +7707,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(modeSamplingDispatchBlock);
   storeRandomState(modeState);
-  if (!hasRuntimeForeachConstraint && (hasSolveBefore || hasFiniteDomains))
+  if (!hasRuntimeForeachConstraint &&
+      (weightedRequiresRuntime || hasSolveBefore || hasFiniteDomains))
     cf::BranchOp::create(builder, location, modeFallbackBlock,
                          ValueRange{modeStart});
   else

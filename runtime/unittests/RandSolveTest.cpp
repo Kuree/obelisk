@@ -48,6 +48,7 @@ struct EncodedDistRange {
   uint64_t coefficient;
   uint32_t weightCapture;
   uint32_t flags = 0;
+  uint16_t softPriority = 0;
 };
 
 struct EncodedDomainPattern {
@@ -94,6 +95,9 @@ program(uint32_t width, uint32_t captures,
     flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
              OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
              OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  for (const auto &range : distRanges)
+    if (range.flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT)
+      flags |= OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED;
   append32(bytes, flags);
   for (const EncodedInstruction &instruction : instructions) {
     bytes.push_back(instruction.opcode);
@@ -134,7 +138,7 @@ program(uint32_t width, uint32_t captures,
       append32(bytes, range.constraintBlock);
       append32(bytes, range.targetOffset);
       append16(bytes, range.width);
-      append16(bytes, 0);
+      append16(bytes, range.softPriority);
       append64(bytes, range.lower);
       append64(bytes, range.cardinality);
       append64(bytes, range.coefficient);
@@ -1888,6 +1892,113 @@ TEST_F(RandSolveTest, CompletesSparseRootsWithLiveCapturesAndSoftModes) {
   ASSERT_EQ(solve(0, 0), OBELISK_RT_OK);
   EXPECT_EQ(success, 0u);
 }
+
+TEST_F(RandSolveTest, WeightedRangesRetainOriginalMassAfterFiltering) {
+  // LRM 18.5.3: x>101; x dist {[100:102]:=1, 103:=1} gives 102
+  // three times 103's mass. With :/ the two items have equal mass.
+  uint64_t capture = 1;
+  for (bool perRange : {false, true}) {
+    uint32_t flags = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
+                     (perRange ? OBELISK_RT_RANDOM_DIST_PER_RANGE : 0u);
+    auto bytes = program(8, 1,
+                         {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+                          {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 101},
+                          {OBELISK_RT_RANDOM_GT_V1, 1},
+                          {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 8},
+                          {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 8, 0, 0, 103},
+                          {OBELISK_RT_RANDOM_LE_V1, 1},
+                          {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+                          {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+                         false, {},
+                         {{0, UINT32_MAX, 0, 8, 100, 3, 0, 0, flags},
+                          {0, UINT32_MAX, 0, 8, 103, 1, 1, 0, flags}});
+    uint64_t state = 713, assignment = 0;
+    unsigned first = 0;
+    for (unsigned draw = 0; draw != 192; ++draw) {
+      uint32_t success = 0;
+      ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                    context, bytes.data(), bytes.size(), 0, 255, 0, 1, state,
+                    15, &capture, 1, &assignment, &success, &state),
+                OBELISK_RT_OK);
+      ASSERT_EQ(success, 1u);
+      ASSERT_TRUE(assignment == 102 || assignment == 103);
+      first += assignment == 102;
+    }
+    EXPECT_GT(first, perRange ? 66u : 118u);
+    EXPECT_LT(first, perRange ? 126u : 173u);
+  }
+}
+
+TEST_F(RandSolveTest, WeightedDefaultComplementRemainsOneItem) {
+  // default :/ 1 is the noncontiguous set {0,2}. Filtering out 0 leaves
+  // its entire mass at 2, matching the explicit singleton 1's mass.
+  uint32_t raw =
+      OBELISK_RT_RANDOM_DIST_RAW_WEIGHT | OBELISK_RT_RANDOM_DIST_PER_RANGE;
+  auto bytes = program(2, 1,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+                        {OBELISK_RT_RANDOM_GE_V1, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+                        {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 2},
+                        {OBELISK_RT_RANDOM_LE_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+                       false, {},
+                       {{0, UINT32_MAX, 0, 2, 1, 1, 0, 0, raw},
+                        {0, UINT32_MAX, 0, 2, 0, 1, 1, 0, raw},
+                        {0, UINT32_MAX, 0, 2, 2, 1, 1, 0, raw}});
+  uint64_t capture = 1, state = 713, assignment = 0;
+  unsigned twos = 0;
+  for (unsigned draw = 0; draw != 192; ++draw) {
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 3, 0, 1, state, 15,
+                  &capture, 1, &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ASSERT_TRUE(assignment == 1 || assignment == 2);
+    twos += assignment == 2;
+  }
+  EXPECT_GT(twos, 66u);
+  EXPECT_LT(twos, 126u);
+}
+
+TEST_F(RandSolveTest, WeightedSoftAndDisabledGuardsDoNotRestrictAssignments) {
+  uint32_t raw = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT;
+  auto bytes = program(1, 1,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+                        {OBELISK_RT_RANDOM_END_SOFT_V1, 1}},
+                       true, {}, {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, raw, 1}});
+  uint64_t capture = UINT64_MAX, state = 713, assignment = 0;
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, 1, 0, 1, state, 15,
+                &capture, 1, &assignment, &success, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 1u);
+
+  bytes = program(1, 1,
+                  {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+                   {OBELISK_RT_RANDOM_END_HARD_V1, 1},
+                   {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0},
+                   {OBELISK_RT_RANDOM_END_DIST_GUARD_V1, 1}},
+                  false, {}, {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, raw}});
+  unsigned seen = 0;
+  for (unsigned draw = 0; draw != 24; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0, 1, 0, 1, state, 15,
+                  &capture, 1, &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    seen |= 1u << assignment;
+  }
+  EXPECT_EQ(seen, 3u);
+}
+
 #endif
 
 } // namespace

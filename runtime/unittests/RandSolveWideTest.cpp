@@ -49,11 +49,24 @@ struct SolveBeforeEdge {
   bool functionPriority = false;
 };
 
+struct WeightedRecord {
+  uint32_t group;
+  uint32_t block;
+  uint32_t offset;
+  uint16_t width;
+  uint64_t lower;
+  uint64_t cardinality;
+  uint64_t item;
+  uint32_t capture;
+  uint32_t flags;
+};
+
 std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
                              std::vector<Instruction> instructions,
                              uint32_t flags = 0,
                              std::vector<DomainRecord> domains = {},
-                             std::vector<SolveBeforeEdge> edges = {}) {
+                             std::vector<SolveBeforeEdge> edges = {},
+                             std::vector<WeightedRecord> weighted = {}) {
   std::vector<uint64_t> literals;
   for (Instruction &instruction : instructions) {
     if (instruction.opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1)
@@ -97,6 +110,25 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
   }
   if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
     append32(bytes, 0);
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) {
+    uint32_t groups = 0;
+    for (const auto &record : weighted)
+      groups = std::max(groups, record.group + 1);
+    append32(bytes, groups);
+    append32(bytes, weighted.size());
+    for (const auto &record : weighted) {
+      append32(bytes, record.group);
+      append32(bytes, record.block);
+      append32(bytes, record.offset);
+      append16(bytes, record.width);
+      append16(bytes, 0);
+      append64(bytes, record.lower);
+      append64(bytes, record.cardinality);
+      append64(bytes, record.item);
+      append32(bytes, record.capture);
+      append32(bytes, record.flags);
+    }
+  }
   if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0) {
     uint32_t groupCount = 0;
     for (const DomainRecord &domain : domains)
@@ -936,6 +968,133 @@ TEST_F(RandSolveWideTest, CompletesWideSystemFunctionsWithCaptureBoundaries) {
   EXPECT_EQ(assignment[1], 0u);
   EXPECT_EQ(nextState, 71u);
 }
+
+TEST_F(RandSolveWideTest, WeightedWideMassIgnoresCompanionMultiplicity) {
+  // A 129-bit companion has 2^129 completions for x=0, one for x=1.
+  // The wide unsigned weights 2^64 and 3*2^64 still require x's ratio 1:3.
+  auto bytes = program(
+      130, 2,
+      {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1},
+       {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 129, 0, 1},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+       {OBELISK_RT_RANDOM_EQ_V1, 1},
+       {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
+       {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129, 0, 0},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+       {OBELISK_RT_RANDOM_GT_V1, 1},
+       {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129, 0, 1},
+       {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+       {OBELISK_RT_RANDOM_GT_V1, 1},
+       {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+       {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
+      OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+          OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+      {}, {},
+      {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, OBELISK_RT_RANDOM_DIST_RAW_WEIGHT},
+       {0, UINT32_MAX, 0, 1, 1, 1, 1, 1, OBELISK_RT_RANDOM_DIST_RAW_WEIGHT}});
+  uint64_t start[] = {0, 0, 0}, mask[] = {UINT64_MAX, UINT64_MAX, 3};
+  uint64_t captures[] = {0, 1, 0, 0, 3, 0}, assignment[3] = {};
+  uint32_t widths[] = {129, 129}, success = 0;
+  uint64_t state = 713, companionSeen = 0;
+  unsigned ones = 0;
+  for (unsigned draw = 0; draw != 192; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mask, 3, 0, 1,
+                  state, 15, captures, 6, widths, 2, assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    if (assignment[0] & 1) {
+      ++ones;
+      EXPECT_EQ(assignment[0], 1u);
+      EXPECT_EQ(assignment[1], 0u);
+      EXPECT_EQ(assignment[2], 0u);
+    } else {
+      companionSeen |= assignment[1];
+    }
+  }
+  EXPECT_GT(ones, 118u);
+  EXPECT_LT(ones, 173u);
+  EXPECT_EQ(companionSeen, UINT64_MAX);
+}
+
+TEST_F(RandSolveWideTest, WeightedFull64BitRangeAndLargeMassNeverOverflow) {
+  // :/ can describe a full 2^64 range, and := mass can exceed 128 bits.
+  // Other constraints leave only the value 3; weights cannot make it fail.
+  for (bool perRange : {false, true}) {
+    uint32_t flags = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
+                     (perRange ? OBELISK_RT_RANDOM_DIST_PER_RANGE : 0u);
+    auto bytes =
+        program(64, 1,
+                {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64},
+                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {3}},
+                 {OBELISK_RT_RANDOM_EQ_V1, 1},
+                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
+                 {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129},
+                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+                 {OBELISK_RT_RANDOM_GT_V1, 1},
+                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
+                OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+                    OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+                {}, {}, {{0, UINT32_MAX, 0, 64, 0, 0, 0, 0, flags}});
+    uint64_t start = 0, mask = UINT64_MAX,
+             captures[] = {UINT64_MAX, UINT64_MAX, 1};
+    uint64_t assignment = 0, state = 713;
+    uint32_t width = 129, success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                  state, 15, captures, 3, &width, 1, &assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(success, 1u);
+    EXPECT_EQ(assignment, 3u);
+  }
+}
+
+TEST_F(RandSolveWideTest, WeightedProjectionNormalizesHugeLegalCardinalities) {
+  // The full-range item has 2^64-1 legal values after excluding zero, yet
+  // retains the same :/ mass as singleton 1. This exercises a large exact
+  // denominator and overlapping contributions without traversing the domain.
+  uint32_t raw =
+      OBELISK_RT_RANDOM_DIST_RAW_WEIGHT | OBELISK_RT_RANDOM_DIST_PER_RANGE;
+  auto bytes =
+      program(64, 1,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {0}},
+               {OBELISK_RT_RANDOM_NE_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 129},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 129, 0, 0, 0, {0, 0, 0}},
+               {OBELISK_RT_RANDOM_GT_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
+              OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+                  OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+              {}, {},
+              {{0, UINT32_MAX, 0, 64, 0, 0, 0, 0, raw},
+               {0, UINT32_MAX, 0, 64, 1, 1, 1, 0, raw}});
+  uint64_t start = 0, mask = UINT64_MAX,
+           captures[] = {UINT64_MAX, UINT64_MAX, 1};
+  uint64_t assignment = 0, state = 713, otherBits = 0;
+  uint32_t width = 129, success = 0;
+  unsigned ones = 0;
+  for (unsigned draw = 0; draw != 64; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                  state, 15, captures, 3, &width, 1, &assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ASSERT_NE(assignment, 0u);
+    ones += assignment == 1;
+    otherBits |= assignment;
+  }
+  EXPECT_GT(ones, 14u);
+  EXPECT_LT(ones, 50u);
+  EXPECT_EQ(otherBits, UINT64_MAX);
+}
+
 #endif
 
 } // namespace

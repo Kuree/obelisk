@@ -4657,7 +4657,7 @@ struct obelisk_rt_random_state_v1 {
 // operand:u32, and auxiliary:u32. PUSH_LITERAL auxiliary is a word-pool index;
 // END_SOFT auxiliary is its priority; every other auxiliary is zero. This
 // allows arbitrary-width bit-vector expressions without changing the compact
-// version-1 runtime fast path. END instructions use
+// version-1 runtime fast path. END_HARD and END_SOFT use
 // operand as the disabled constraint-block bit (or the unmasked sentinel).
 // END_SOFT uses the v1 immediate or v2 auxiliary as a contiguous, zero-based
 // priority where larger values have higher priority; END_HARD requires that
@@ -4702,6 +4702,16 @@ struct obelisk_rt_random_state_v1 {
 // stages ignore lower-stage constraints and become state for later stages.
 // Requires SMT_UNIFORM; failed later stages commit no assignment or RNG state.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY UINT32_C(64)
+// Exact weighted target projections with arbitrary-precision unsigned masses.
+// Requires target Z3 and stateful solving. Dist records use RAW_WEIGHT; their
+// coefficient field is an item identity and the reserved u16 is zero for hard
+// distributions or one plus the owning soft priority. Split intervals sharing
+// an item identity form one range item, including the default complement.
+// Requires HAS_DIST; independent function-priority stages are not supported.
+// The RPN hard/soft predicates must include each distribution's membership
+// and nonzero-weight support. END_DIST_GUARD supplies optional activation;
+// its operand is a group index, and omitting it means unconditional activation.
+#define OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED UINT32_C(128)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 // V2 edges contain ceil(aggregate_width/64) little-endian words for each
@@ -4723,6 +4733,8 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_DIST_RECORD_SIZE UINT16_C(48)
 #define OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED UINT32_C(1)
 #define OBELISK_RT_RANDOM_DIST_TARGET_SIGNED UINT32_C(2)
+#define OBELISK_RT_RANDOM_DIST_RAW_WEIGHT UINT32_C(4)
+#define OBELISK_RT_RANDOM_DIST_PER_RANGE UINT32_C(8)
 #define OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE UINT16_C(32)
 #define OBELISK_RT_RANDOM_INSTRUCTION_SIGNED UINT8_C(1)
@@ -4776,7 +4788,10 @@ typedef enum obelisk_rt_random_opcode_v1 {
   // Unary two-state bitstream functions. Their unsigned input retains its
   // own width; the count/result is truncated to the instruction's width.
   OBELISK_RT_RANDOM_COUNT_ONES_V1 = 42,
-  OBELISK_RT_RANDOM_CLOG2_V1 = 43
+  OBELISK_RT_RANDOM_CLOG2_V1 = 43,
+  // Pops a distribution's activation guard. Operand is the group index;
+  // flags and auxiliary are zero. Valid only under SMT_WEIGHTED.
+  OBELISK_RT_RANDOM_END_DIST_GUARD_V1 = 44
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called

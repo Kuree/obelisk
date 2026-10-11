@@ -203,7 +203,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
                         OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)) != 0 ||
+                        OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                        OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() - headerSize) /
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2)
     return std::nullopt;
@@ -295,7 +296,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         solveEdgesOffset + static_cast<size_t>(solveEdgeCount) * solveEdgeSize;
   }
   bool hasDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
-  if (hasDist && hasSolveBefore)
+  bool weighted = (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+  if ((weighted && !hasDist) || (hasDist && hasSolveBefore && !weighted))
     return std::nullopt;
   uint32_t distGroupCount = 0;
   uint32_t distRecordCount = 0;
@@ -308,7 +310,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     distGroupCount = read32(program + expectedSize);
     distRecordCount = read32(program + expectedSize + 4);
     distRecordsOffset = expectedSize + OBELISK_RT_RANDOM_DIST_HEADER_SIZE;
-    if (distGroupCount == 0 || distRecordCount == 0 ||
+    if (distGroupCount == 0 || distGroupCount > distRecordCount ||
         distRecordCount >
             (std::numeric_limits<size_t>::max() - distRecordsOffset) /
                 OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
@@ -439,13 +441,17 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       bool fullDomain = cardinality == 0 && width == 64 && lower == 0;
       if (group >= distGroupCount || width == 0 || width > 64 ||
           targetOffset > aggregateWidth ||
-          width > aggregateWidth - targetOffset || reserved != 0 ||
-          lower > mask ||
+          width > aggregateWidth - targetOffset ||
+          (weighted ? reserved > 64 : reserved != 0) || lower > mask ||
           (!fullDomain &&
            (cardinality == 0 || cardinality - 1 > mask - lower)) ||
-          coefficient == 0 || capture >= captureCount ||
-          (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
-                     OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0 ||
+          (!weighted && coefficient == 0) || capture >= captureCount ||
+          (weighted ? !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
+                          (flags & ~(OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
+                                     OBELISK_RT_RANDOM_DIST_PER_RANGE |
+                                     OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0
+                    : (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
+                                 OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0) ||
           (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            constraintBlock >= 64))
         return std::nullopt;
@@ -567,6 +573,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   bool sawHard = false;
   bool sawSoft = false;
   uint64_t softPriorities = 0;
+  std::vector<bool> guardSeen(distGroupCount, false);
   for (uint32_t index = 0; index != instructionCount; ++index) {
     std::optional<DecodedInstruction> decoded = decodeInstruction(index);
     if (!decoded)
@@ -623,6 +630,14 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       stack.push_back({constant(builder, location, *decoded->literal), width,
                        std::nullopt, std::nullopt, index});
+      continue;
+    }
+    if (opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+      if (!weighted || width != 1 || flags != 0 || stack.size() != 1 ||
+          immediate != 0 || operand >= guardSeen.size() || guardSeen[operand])
+        return std::nullopt;
+      guardSeen[operand] = true;
+      stack.clear();
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||

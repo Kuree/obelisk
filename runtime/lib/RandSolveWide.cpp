@@ -3,6 +3,7 @@
 #include "ExceptionSupport.h"
 #include "RandSolveOrder.h"
 #include "RandSolveSMT.h"
+#include "RandSolveWeighted.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -401,6 +402,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   bool encodedOrder = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   bool encodedPriority =
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+  bool encodedDist = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
       (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
@@ -408,9 +411,14 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                  OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+                 OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
     return false;
-  if (encodedOrder && !(flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM))
+  if ((encodedDist != weighted) || (weighted && encodedPriority))
+    return false;
+  if (encodedOrder && !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                                 OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)))
     return false;
   if (encodedPriority && !encodedOrder)
     return false;
@@ -458,6 +466,23 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
           input.second.arguments.begin(), input.second.arguments.end(),
           [](uint64_t word) { return word != 0; });
   }
+  std::vector<obelisk::runtime::WeightedGroup> weightedGroups;
+  if (weighted) {
+    if (expectedSize > size ||
+        size - expectedSize < OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+      return false;
+    size_t records = read32(bytes + expectedSize + 4);
+    if (records > (size - expectedSize - OBELISK_RT_RANDOM_DIST_HEADER_SIZE) /
+                      OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
+      return false;
+    size_t footerSize = OBELISK_RT_RANDOM_DIST_HEADER_SIZE +
+                        records * OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+    if (!obelisk::runtime::parseWeightedGroups(
+            bytes + expectedSize, footerSize, result.aggregateWidth,
+            encodedCaptureCount, weightedGroups))
+      return false;
+    expectedSize += footerSize;
+  }
   uint32_t domainGroupCount = 0;
   uint32_t domainRecordCount = 0;
   uint64_t domainRecordsOffset = 0;
@@ -487,6 +512,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   bool sawHard = false;
   bool sawSoft = false;
   uint64_t softPriorities = 0;
+  std::vector<bool> guardSeen(weightedGroups.size(), false);
   for (uint32_t index = 0; index != instructionCount; ++index) {
     const uint8_t *cursor =
         bytes + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
@@ -561,6 +587,15 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       }
       depth = 0;
       break;
+    case OBELISK_RT_RANDOM_END_DIST_GUARD_V1:
+      if (!weighted || instruction.width != 1 || instruction.flags != 0 ||
+          depth != 1 || instruction.auxiliary != 0 ||
+          instruction.operand >= guardSeen.size() ||
+          guardSeen[instruction.operand])
+        return false;
+      guardSeen[instruction.operand] = true;
+      depth = 0;
+      break;
     case OBELISK_RT_RANDOM_SELECT_V1:
       if (instruction.auxiliary != 0 || depth < 3)
         return false;
@@ -599,6 +634,11 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       std::any_of(result.captureWidths.begin(), result.captureWidths.end(),
                   [](uint32_t width) { return width == 0; }))
     return false;
+
+  for (const auto &group : weightedGroups)
+    if (group.softPriority != UINT32_MAX &&
+        !(softPriorities & (uint64_t{1} << group.softPriority)))
+      return false;
 
   if (encodedOrder) {
     const uint8_t *cursor = bytes + solveRecordsOffset;
@@ -787,6 +827,10 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
         hard &= satisfied;
       else
         soft[instruction.auxiliary] &= satisfied;
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+      stack.pop_back();
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
@@ -1054,7 +1098,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     normalize(mutableMask);
 
     obelisk_rt_random_state_v1 randomState{rngState, rngIncrement};
-    if (read32(programBytes + 20) & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) {
+    if (read32(programBytes + 20) & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                                     OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)) {
       for (const DomainGroup &group : program.domainGroups) {
         WideValue overlap =
             extract(mutableMask.words.data(), mutableMask.words.size(),

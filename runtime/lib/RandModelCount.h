@@ -13,8 +13,9 @@
 
 namespace obelisk::runtime {
 
-/// Nonnegative arbitrary-precision cardinalities. Counts include 2^N for a
-/// full N-bit domain, so a fixed-width assignment integer is insufficient.
+/// Nonnegative arbitrary-precision cardinalities and integral mass factors.
+/// Counts include 2^N for a full N-bit domain, so a fixed-width assignment
+/// integer is insufficient.
 class ModelCount {
 public:
   explicit ModelCount(uint64_t value = 0) {
@@ -27,6 +28,14 @@ public:
     value.words.resize(size_t(bit) / 64 + 1, 0);
     value.words[bit / 64] = uint64_t{1} << (bit % 64);
     return value;
+  }
+
+  static ModelCount fromWords(const uint64_t *value, size_t count) {
+    ModelCount result;
+    if (count)
+      result.words.assign(value, value + count);
+    result.normalize();
+    return result;
   }
 
   bool zero() const { return words.empty(); }
@@ -54,6 +63,55 @@ public:
     }
     result.normalize();
     return result;
+  }
+
+  ModelCount multiplied(const ModelCount &other) const {
+    if (zero() || other.zero())
+      return ModelCount();
+    ModelCount result;
+    result.words.resize(words.size() + other.words.size(), 0);
+    for (size_t lhs = 0; lhs != words.size(); ++lhs) {
+      uint64_t carry = 0;
+      for (size_t rhs = 0; rhs != other.words.size(); ++rhs) {
+        unsigned __int128 product =
+            static_cast<unsigned __int128>(words[lhs]) * other.words[rhs] +
+            result.words[lhs + rhs] + carry;
+        result.words[lhs + rhs] = static_cast<uint64_t>(product);
+        carry = static_cast<uint64_t>(product >> 64);
+      }
+      result.words[lhs + other.words.size()] = carry;
+    }
+    result.normalize();
+    return result;
+  }
+
+  /// Integer quotient. The caller establishes that the divisor is nonzero.
+  /// Distribution normalization uses this only for exact integral factors.
+  ModelCount divided(const ModelCount &other) const {
+    if (compare(other) < 0)
+      return ModelCount();
+    unsigned shift = bitWidth() - other.bitWidth();
+    ModelCount divisor = other.shifted(shift);
+    ModelCount remainder = *this;
+    ModelCount quotient;
+    quotient.words.resize(size_t(shift) / 64 + 1, 0);
+    for (unsigned bit = shift;; --bit) {
+      if (remainder.compare(divisor) >= 0) {
+        remainder.subtract(divisor);
+        quotient.words[bit / 64] |= uint64_t{1} << (bit % 64);
+      }
+      if (bit == 0)
+        break;
+      uint64_t carry = 0;
+      for (size_t word = divisor.words.size(); word-- != 0;) {
+        uint64_t nextCarry = divisor.words[word] << 63;
+        divisor.words[word] = (divisor.words[word] >> 1) | carry;
+        carry = nextCarry;
+      }
+      divisor.normalize();
+    }
+    quotient.normalize();
+    return quotient;
   }
 
   void add(const ModelCount &other) {
@@ -105,6 +163,12 @@ public:
   }
 
 private:
+  unsigned bitWidth() const {
+    return zero() ? 0
+                  : static_cast<unsigned>((words.size() - 1) * 64 + 64 -
+                                          __builtin_clzll(words.back()));
+  }
+
   void normalize() {
     while (!words.empty() && words.back() == 0)
       words.pop_back();
@@ -169,18 +233,46 @@ public:
   }
 
   bool build(Z3_ast predicate) {
+    root = 1;
+    return constrain(predicate);
+  }
+
+  /// Add a predicate to the current relation, respecting previously accepted
+  /// values. Copies can thus count a range projection without changing the
+  /// relation used for subsequent conditional sampling.
+  bool constrain(Z3_ast predicate) {
     // The bit-blast tactic preserves the existing Boolean input symbols and
     // does not introduce Tseitin variables requiring projected counting.
     std::vector<Z3_ast> formulas;
     if (!bitBlastPredicate(context, predicate, formulas))
       return false;
-    root = 1;
     for (Z3_ast formula : formulas) {
       ID circuit = 0;
       if (!convert(formula, circuit))
         return false;
       root = conjunction(root, circuit);
     }
+    restrict(fixedValues, fixed);
+    return true;
+  }
+
+  /// Reuse a relation already bit-blasted by Z3. Weighted item combinations
+  /// share the same input inventory and accepted prefix; importing their
+  /// diagrams avoids invoking the tactic again for every Cartesian term.
+  bool intersect(const ModelCounter &other) {
+    if (context != other.context || inputs != other.inputs ||
+        fixed != other.fixed || fixedValues != other.fixedValues)
+      return false;
+    auto reached = other.reachable(other.root);
+    std::vector<ID> imported(other.nodes.size());
+    imported[1] = 1;
+    for (ID id = 2; id != reached.size(); ++id)
+      if (reached[id]) {
+        const Node &node = other.nodes[id];
+        imported[id] =
+            makeNode(node.variable, imported[node.low], imported[node.high]);
+      }
+    root = conjunction(root, imported[other.root]);
     project(std::vector<bool>(variableCount, true));
     return true;
   }

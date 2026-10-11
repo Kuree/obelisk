@@ -478,22 +478,22 @@
         {
           "feature": "Per-range and per-value probability",
           "status": "partial",
-          "detail": "Unconstrained normalization is exact within 64-bit mass limits; preserving an item's original mass when other constraints remove range values remains open."
+          "detail": "Runtime Z3 preserves each constant integral item's original mass after filtering. Exact target projections and arbitrary-precision normalization support wide weights, overlapping items and noncontiguous defaults. Expression targets, dynamic endpoints and real ranges remain open."
         },
         {
           "feature": "Nonzero weights never make an otherwise legal solve fail",
           "status": "partial",
-          "detail": "Normalization overflow and large residual spaces still fail; arbitrary precision or a solver-backed sampling strategy is required."
+          "detail": "The runtime Z3 policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. General expression targets, unresolved activation and function-priority stage combinations remain diagnosed."
         },
         {
           "feature": "Soft dist and dist with solve before",
-          "status": "missing",
-          "detail": "Currently diagnosed rather than implemented."
+          "status": "partial",
+          "detail": "Runtime Z3 retains or discards soft distributions in global soft-priority order and samples whole distributed targets conditionally on earlier solve-before layers. State guards and earlier candidate guards are supported. Split-target ordering, unresolved candidate activation and independent function-priority stage combinations remain open."
         },
         {
           "feature": "Multiple active distributions on one target",
-          "status": "missing",
-          "detail": "Currently diagnosed rather than combined."
+          "status": "partial",
+          "detail": "Runtime Z3 combines per-value masses from every enabled distribution on admitted direct integral targets, preserving legal intersections even for incompatible requested marginals. General expression targets and real distributions remain open."
         },
         {
           "feature": "Dynamic endpoints, candidate weights, and real ranges",
@@ -508,11 +508,19 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "runtime/lib/RandSolveSMT.cpp",
+          "runtime/lib/RandSolveWeighted.h",
+          "runtime/lib/RandModelCount.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
-          "test/Conversion/obelisk-to-simulation-random-domains.mlir"
+          "test/Conversion/obelisk-to-simulation-random-domains.mlir",
+          "test/Runtime/obelisk-to-simulation-random-weighted-z3-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-weighted-diagnostics.mlir",
+          "runtime/unittests/RandSolveTest.cpp",
+          "runtime/unittests/RandSolveWideTest.cpp",
+          "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.mlir"
         ]
       }
     },

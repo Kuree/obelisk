@@ -7,6 +7,7 @@
 #ifdef OBELISK_RUNTIME_Z3
 #include "RandModelCount.h"
 #include "RandSolveOrder.h"
+#include "RandSolveWeighted.h"
 #include <z3.h>
 
 #include <algorithm>
@@ -514,6 +515,230 @@ public:
     return true;
   }
 
+  bool weighted(unsigned width, Z3_ast variable,
+                const std::vector<Z3_ast> &bits,
+                const std::vector<unsigned> &physicalBits,
+                const std::vector<WeightedGroup> &groups,
+                const std::vector<Z3_ast> &guards, uint64_t retainedSoft,
+                uint64_t constraintMask, const uint64_t *captures,
+                const uint32_t *captureWidths,
+                const std::vector<size_t> &captureOffsets,
+                const uint64_t *start, const uint64_t *mutableMask,
+                obelisk_rt_random_state_v1 &state, const uint64_t *masks,
+                size_t layerCount, uint64_t *output) {
+    Z3_ast_vector assertions = Z3_solver_get_assertions(context, solver);
+    Z3_ast_vector_inc_ref(context, assertions);
+    std::vector<Z3_ast> predicates;
+    for (unsigned index = 0; index != Z3_ast_vector_size(context, assertions);
+         ++index)
+      predicates.push_back(Z3_ast_vector_get(context, assertions, index));
+    Z3_ast predicate = Z3_mk_and(context, predicates.size(), predicates.data());
+    Z3_ast_vector_dec_ref(context, assertions);
+    ModelCounter counter(context, bits);
+    if (!counter.build(predicate))
+      return false;
+    obelisk_rt_random_state_v1 nextState = state;
+    size_t words = (uint64_t(width) + 63) / 64;
+    std::vector<bool> accepted(bits.size(), false);
+    struct Choice {
+      ModelCounter region;
+      ModelCount mass, count, coefficient;
+    };
+    struct Term {
+      std::vector<size_t> choices;
+      ModelCount mass;
+    };
+    for (size_t layer = 0; layer != std::max<size_t>(1, layerCount); ++layer) {
+      std::vector<bool> keep(bits.size(), false);
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        keep[bit] =
+            !accepted[bit] &&
+            (!layerCount || ((masks[layer * words + physicalBits[bit] / 64] >>
+                              (physicalBits[bit] % 64)) &
+                             1));
+      std::vector<bool> targets(bits.size(), false);
+      std::vector<std::vector<Choice>> choices;
+      for (size_t groupIndex = 0; groupIndex != groups.size(); ++groupIndex) {
+        const WeightedGroup &group = groups[groupIndex];
+        if ((group.constraintBlock !=
+                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+             ((constraintMask >> group.constraintBlock) & 1)) ||
+            (group.softPriority != UINT32_MAX &&
+             !((retainedSoft >> group.softPriority) & 1)))
+          continue;
+        std::vector<bool> target(bits.size(), false);
+        bool current = false, later = false;
+        for (size_t bit = 0; bit != bits.size(); ++bit) {
+          target[bit] = !accepted[bit] &&
+                        physicalBits[bit] >= group.targetOffset &&
+                        physicalBits[bit] - group.targetOffset < group.width;
+          current |= target[bit] && keep[bit];
+          later |= target[bit] && !keep[bit];
+        }
+        if (!current)
+          continue;
+        // The compiler requires each distributed target to belong to one
+        // solve layer. Partially ordered target paths need a posterior measure
+        // carried across their layers rather than fresh range normalization.
+        if (later)
+          return false;
+        Z3_ast guard = groupIndex < guards.size() && guards[groupIndex]
+                           ? guards[groupIndex]
+                           : Z3_mk_true(context);
+        ModelCounter active = counter;
+        ModelCounter inactive = counter;
+        if (!active.constrain(guard) ||
+            !inactive.constrain(Z3_mk_not(context, guard)))
+          return false;
+        if (active.count().zero())
+          continue;
+        // Activation is state or an already accepted ordering layer. A guard
+        // that still varies needs a conditional, scale-invariant measure.
+        if (!inactive.count().zero())
+          return false;
+        std::vector<Choice> eligible;
+        Z3_ast field =
+            Z3_mk_extract(context, group.targetOffset + group.width - 1,
+                          group.targetOffset, variable);
+        if (group.isSigned)
+          field = Z3_mk_bvxor(
+              context, field,
+              constant(uint64_t{1} << (group.width - 1), group.width));
+        for (const WeightedItem &item : group.items) {
+          unsigned weightWidth =
+              captureWidths ? captureWidths[item.weightCapture] : 64;
+          size_t weightWords = (uint64_t(weightWidth) + 63) / 64;
+          std::vector<uint64_t> weight(
+              captures + captureOffsets[item.weightCapture],
+              captures + captureOffsets[item.weightCapture] + weightWords);
+          if (weightWidth % 64)
+            weight.back() &= (uint64_t{1} << (weightWidth % 64)) - 1;
+          ModelCount mass = ModelCount::fromWords(weight.data(), weight.size());
+          if (mass.zero())
+            continue;
+          Z3_ast region = Z3_mk_false(context);
+          for (const WeightedInterval &interval : item.intervals) {
+            Z3_ast match = Z3_mk_true(context);
+            if (interval.cardinality != 0) {
+              Z3_ast bounds[]{
+                  Z3_mk_bvuge(context, field,
+                              constant(interval.lower, group.width)),
+                  Z3_mk_bvule(
+                      context, field,
+                      constant(interval.lower + interval.cardinality - 1,
+                               group.width))};
+              match = Z3_mk_and(context, 2, bounds);
+            }
+            region = disjunction(region, match);
+          }
+          if (!item.perRange) {
+            uint64_t cardinality = item.intervals.front().cardinality;
+            mass = mass.multiplied(cardinality ? ModelCount(cardinality)
+                                               : ModelCount::powerOfTwo(64));
+          }
+          ModelCounter range = counter;
+          if (!range.constrain(region))
+            return false;
+          range.project(target);
+          ModelCount count = range.count();
+          if (!count.zero())
+            eligible.push_back({std::move(range), std::move(mass),
+                                std::move(count), ModelCount()});
+        }
+        if (eligible.empty())
+          return false;
+        // Each source item's original mass is shared by its legal target
+        // values. A common denominator keeps the resulting ratios integral
+        // without a fixed-width normalization or rounding step.
+        ModelCount denominator(1);
+        for (const Choice &choice : eligible)
+          denominator = denominator.multiplied(choice.count);
+        for (Choice &choice : eligible)
+          choice.coefficient =
+              choice.mass.multiplied(denominator.divided(choice.count));
+        choices.push_back(std::move(eligible));
+        for (size_t bit = 0; bit != bits.size(); ++bit)
+          targets[bit] = targets[bit] || target[bit];
+      }
+      if (!choices.empty()) {
+        std::vector<size_t> indices(choices.size(), 0);
+        std::vector<Term> terms;
+        ModelCount total;
+        for (;;) {
+          ModelCounter branch = counter;
+          ModelCount coefficient(1);
+          for (size_t group = 0; group != choices.size(); ++group) {
+            const Choice &choice = choices[group][indices[group]];
+            if (!branch.intersect(choice.region))
+              return false;
+            coefficient = coefficient.multiplied(choice.coefficient);
+          }
+          branch.project(targets);
+          ModelCount mass = coefficient.multiplied(branch.count());
+          if (!mass.zero()) {
+            total.add(mass);
+            terms.push_back({indices, std::move(mass)});
+          }
+          size_t index = indices.size();
+          while (index != 0) {
+            --index;
+            if (++indices[index] != choices[index].size())
+              break;
+            indices[index] = 0;
+          }
+          if (index == 0 && indices.front() == 0)
+            break;
+        }
+        if (total.zero())
+          return false;
+        ModelCount rank = ModelCount::randomBelow(total, nextState);
+        const Term *selected = nullptr;
+        for (const Term &term : terms) {
+          if (rank.compare(term.mass) < 0) {
+            selected = &term;
+            break;
+          }
+          rank.subtract(term.mass);
+        }
+        if (!selected)
+          return false;
+        ModelCounter branch = counter;
+        for (size_t group = 0; group != choices.size(); ++group)
+          if (!branch.intersect(
+                  choices[group][selected->choices[group]].region))
+            return false;
+        branch.project(targets);
+        auto value = branch.assignment(
+            ModelCount::randomBelow(branch.count(), nextState));
+        counter.restrict(value, targets);
+      }
+      counter.project(keep);
+      ModelCount count = counter.count();
+      if (count.zero())
+        return false;
+      auto value =
+          counter.assignment(ModelCount::randomBelow(count, nextState));
+      counter.restrict(value, keep);
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        accepted[bit] = accepted[bit] || keep[bit];
+    }
+    counter.project(std::vector<bool>(bits.size(), true));
+    ModelCount count = counter.count();
+    if (count.zero())
+      return false;
+    auto value = counter.assignment(ModelCount::randomBelow(count, nextState));
+    for (size_t word = 0; word != words; ++word)
+      output[word] = start[word] & ~mutableMask[word];
+    for (size_t bit = 0; bit != value.size(); ++bit)
+      if (value[bit])
+        output[physicalBits[bit] / 64] |= uint64_t{1}
+                                          << (physicalBits[bit] % 64);
+    if (width % 64)
+      output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
+    state = nextState;
+    return true;
+  }
+
   bool ordered(unsigned width, const std::vector<Z3_ast> &bits,
                const std::vector<unsigned> &physicalBits, const uint64_t *start,
                const uint64_t *mutableMask, obelisk_rt_random_state_v1 &state,
@@ -810,22 +1035,24 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   unsigned instructions = read32(program + 12);
   unsigned flags = read32(program + 20);
   bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) != 0;
+  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+  bool exact = uniform || weighted;
   bool functionPriority =
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
-  // Weighted sampling requires its own measure over target projections.
-  // Solve-order projections are sampled only by the uniform stateful policy.
-  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) ||
-      ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) && !uniform))
+  if (((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) && !weighted) ||
+      (weighted &&
+       (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) || functionPriority)) ||
+      ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) && !exact))
     return SMTCompletion::Unavailable;
   if (width == 0 || assignmentWords != (uint64_t(width) + 63) / 64)
     return SMTCompletion::Unavailable;
-  if ((uniform && !randomState) || (orderedLayerCount && !orderedMasks))
+  if ((exact && !randomState) || (orderedLayerCount && !orderedMasks))
     return SMTCompletion::Unavailable;
   Formula f;
   Z3_ast variable = nullptr;
   std::vector<Z3_ast> booleanBits;
   std::vector<unsigned> physicalBits;
-  if (uniform) {
+  if (exact) {
     // Interleave fields from their least significant bits. Carry chains and
     // relations between equally sized fields then share prefixes instead of
     // expanding every value of one field before visiting another field.
@@ -903,6 +1130,24 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
       !readPriorityInputs(program, programSize, header, instructions, width,
                           domainsOffset, sourceInputs))
     return SMTCompletion::Unavailable;
+  std::vector<WeightedGroup> weightedGroups;
+  if (weighted) {
+    if (domainsOffset > programSize ||
+        programSize - domainsOffset < OBELISK_RT_RANDOM_DIST_HEADER_SIZE)
+      return SMTCompletion::Unavailable;
+    size_t records = read32(program + domainsOffset + 4);
+    if (records >
+        (programSize - domainsOffset - OBELISK_RT_RANDOM_DIST_HEADER_SIZE) /
+            OBELISK_RT_RANDOM_DIST_RECORD_SIZE)
+      return SMTCompletion::Unavailable;
+    size_t footerSize = OBELISK_RT_RANDOM_DIST_HEADER_SIZE +
+                        records * OBELISK_RT_RANDOM_DIST_RECORD_SIZE;
+    if (!parseWeightedGroups(program + domainsOffset, footerSize, width,
+                             captureCount, weightedGroups))
+      return SMTCompletion::Unavailable;
+    domainsOffset += footerSize;
+  }
+  std::vector<Z3_ast> distributionGuards(weightedGroups.size(), nullptr);
   std::vector<const PriorityInput *> hardInputs;
   std::array<const PriorityInput *, 64> softInputs{};
   for (unsigned index = 0; index != instructions; ++index) {
@@ -940,6 +1185,12 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
     } else if (opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
       stack.push_back(
           {f.constant(((constraintMask >> operand) & 1) == 0, 1), 1});
+    } else if (opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+      if (!weighted || stack.size() != 1 ||
+          operand >= distributionGuards.size() || distributionGuards[operand])
+        return SMTCompletion::Unavailable;
+      distributionGuards[operand] = f.truth(stack.back());
+      stack.clear();
     } else if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
                opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
       if (stack.size() != 1)
@@ -1061,6 +1312,7 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   if (result != Z3_L_TRUE)
     return result == Z3_L_FALSE ? SMTCompletion::Unsatisfiable
                                 : SMTCompletion::Unknown;
+  uint64_t retainedSoft = 0;
   for (size_t priority = soft.size(); priority-- != 0;) {
     if (!soft[priority])
       continue;
@@ -1071,7 +1323,17 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
       return SMTCompletion::Unknown;
     if (result == Z3_L_FALSE)
       Z3_solver_pop(f.context, f.solver, 1);
+    else
+      retainedSoft |= uint64_t{1} << priority;
   }
+  if (weighted)
+    return f.weighted(width, variable, booleanBits, physicalBits,
+                      weightedGroups, distributionGuards, retainedSoft,
+                      constraintMask, captures, captureWidths, captureOffsets,
+                      start, mutableMask, *randomState, orderedMasks,
+                      orderedLayerCount, assignment)
+               ? SMTCompletion::Satisfiable
+               : SMTCompletion::Unknown;
   if (uniform)
     return (orderedLayerCount
                 ? f.ordered(width, booleanBits, physicalBits, start,

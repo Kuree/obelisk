@@ -3,6 +3,7 @@
 #include "ExceptionSupport.h"
 #include "RandSolveOrder.h"
 #include "RandSolveSMT.h"
+#include "RandSolveWeighted.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -238,6 +239,12 @@ bool validateInstruction(const Instruction &instruction,
     sawHard |= instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1;
     sawSoft |= instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
     break;
+  case OBELISK_RT_RANDOM_END_DIST_GUARD_V1:
+    if (instruction.width != 1 || instruction.flags != 0 || depth != 1 ||
+        instruction.immediate != 0)
+      return false;
+    depth = 0;
+    break;
   case OBELISK_RT_RANDOM_SELECT_V1:
     if (depth < 3)
       return false;
@@ -328,6 +335,10 @@ bool evaluate(const std::vector<Instruction> &instructions,
         hard &= truth;
       else
         soft[instruction.immediate] &= truth;
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+      stack.pop_back();
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_SELECT_V1) {
@@ -545,6 +556,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                           OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
                           OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
                           OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                          OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) !=
             0)
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -587,6 +599,10 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
             [](uint64_t word) { return word != 0; });
     }
     bool encodedDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
+    bool weighted =
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+    if (weighted && (!encodedDist || encodedPriority))
+      return OBELISK_RT_INVALID_ARGUMENT;
     uint32_t distGroupCount = 0;
     uint32_t distRecordCount = 0;
     uint64_t distRecordsOffset = 0;
@@ -691,7 +707,19 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     }
 
     std::vector<std::vector<DistRange>> distGroups;
-    if (encodedDist) {
+    std::vector<obelisk::runtime::WeightedGroup> weightedGroups;
+    if (weighted) {
+      if (!obelisk::runtime::parseWeightedGroups(
+              program + distRecordsOffset - OBELISK_RT_RANDOM_DIST_HEADER_SIZE,
+              OBELISK_RT_RANDOM_DIST_HEADER_SIZE +
+                  size_t(distRecordCount) * OBELISK_RT_RANDOM_DIST_RECORD_SIZE,
+              aggregateWidth, encodedCaptures, weightedGroups))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      for (const auto &group : weightedGroups)
+        if (group.softPriority != UINT32_MAX &&
+            !(softPriorities & (uint64_t{1} << group.softPriority)))
+          return OBELISK_RT_INVALID_ARGUMENT;
+    } else if (encodedDist) {
       if (distGroupCount == 0 || distRecordCount == 0)
         return OBELISK_RT_INVALID_ARGUMENT;
       distGroups.resize(distGroupCount);
@@ -742,6 +770,14 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       if (encodedSolveBefore)
         return OBELISK_RT_INVALID_ARGUMENT;
     }
+    std::vector<bool> guardSeen(weightedGroups.size(), false);
+    for (const Instruction &instruction : instructions)
+      if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
+        if (!weighted || instruction.operand >= guardSeen.size() ||
+            guardSeen[instruction.operand])
+          return OBELISK_RT_INVALID_ARGUMENT;
+        guardSeen[instruction.operand] = true;
+      }
 
     std::vector<DomainGroup> domainGroups;
     uint64_t encodedDomainMask = 0;
@@ -856,8 +892,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       if (overlap != 0)
         domainMutableMask |= group.targetMask;
     }
-    if ((programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) &&
-        !encodedDist) {
+    if (weighted || ((programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) &&
+                     !encodedDist)) {
       if (!randomState)
         return OBELISK_RT_INVALID_ARGUMENT;
       if (maxAttempts == 0)
