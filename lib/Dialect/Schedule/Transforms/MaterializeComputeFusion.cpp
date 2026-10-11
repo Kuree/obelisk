@@ -38,6 +38,8 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <atomic>
+
 using namespace mlir;
 
 namespace obelisk {
@@ -1638,6 +1640,47 @@ public:
   }
 };
 
+/// Promotes one borrowed evaluator body. PromoteEvalStoragePass runs it as a
+/// nested pipeline so MLIR promotes independent bodies concurrently; other
+/// functions are left untouched.
+class PromoteEvalFunctionPass final
+    : public PassWrapper<PromoteEvalFunctionPass,
+                         OperationPass<sim::SimFuncOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PromoteEvalFunctionPass)
+  struct Counters {
+    std::atomic<uint64_t> before{0}, after{0};
+  };
+  PromoteEvalFunctionPass(const OpPassManager &promotion, Counters &counters)
+      : promotion(promotion), counters(counters) {}
+  PromoteEvalFunctionPass(const PromoteEvalFunctionPass &other)
+      : PassWrapper(other), promotion(other.promotion),
+        counters(other.counters) {}
+
+  void runOnOperation() final {
+    sim::SimFuncOp function = getOperation();
+    uint64_t slots = 0;
+    if (schedule::has<schedule::Field::EvalBorrowedCaptures>(function))
+      function.walk([&](sim::SimRefAllocOp) { ++slots; });
+    if (!slots) {
+      markAllAnalysesPreserved();
+      return;
+    }
+    if (failed(runPipeline(promotion, function)))
+      return signalPassFailure();
+    uint64_t after = 0;
+    function.walk([&](sim::SimRefAllocOp) { ++after; });
+    function.removeEffectSummaryAttr();
+    function.removeFragmentAbiAttr();
+    counters.before += slots;
+    counters.after += after;
+  }
+
+private:
+  OpPassManager promotion;
+  Counters &counters;
+};
+
 class PromoteEvalStoragePass final
     : public impl::PromoteEvalStoragePassBase<PromoteEvalStoragePass> {
 public:
@@ -1681,33 +1724,20 @@ public:
   }
 
   void runOnOperation() final {
-    bool changed = false;
-    uint64_t before = 0, after = 0;
-    for (sim::SimFuncOp function :
-         getOperation().getBody().front().getOps<sim::SimFuncOp>()) {
-      if (!schedule::has<schedule::Field::EvalBorrowedCaptures>(function))
-        continue;
-      uint64_t slots = 0;
-      function.walk([&](sim::SimRefAllocOp) { ++slots; });
-      if (!slots)
-        continue;
-      before += slots;
-      if (failed(runPipeline(promotion, function))) {
-        signalPassFailure();
-        return;
-      }
-      function.walk([&](sim::SimRefAllocOp) { ++after; });
-      function.removeEffectSummaryAttr();
-      function.removeFragmentAbiAttr();
-      changed = true;
-    }
+    PromoteEvalFunctionPass::Counters counters;
+    OpPassManager functions(sim::SimDesignOp::getOperationName());
+    functions.nest<sim::SimFuncOp>().addPass(
+        std::make_unique<PromoteEvalFunctionPass>(promotion, counters));
+    if (failed(runPipeline(functions, getOperation())))
+      return signalPassFailure();
+    uint64_t before = counters.before, after = counters.after;
     inputSlots += before;
     remainingSlots += after;
     if (getOperation()->getParentOfType<ModuleOp>()->hasAttr(
             "obelisk.debug.native_timing"))
       llvm::errs() << "obelisk eval storage promotion: slots-before=" << before
                    << " slots-after=" << after << '\n';
-    if (changed)
+    if (before)
       getOperation().removeComputeGraphAttr();
     else
       markAllAnalysesPreserved();

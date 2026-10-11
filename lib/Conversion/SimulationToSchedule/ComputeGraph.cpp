@@ -21,6 +21,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Threading.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -624,7 +625,15 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
   llvm::sort(functions, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
     return lhs.getSymName() < rhs.getSymName();
   });
-  for (sim::SimFuncOp function : functions) {
+  // Handle facts are read-only per-function solves. Compute them
+  // concurrently, then summarize in name order.
+  SmallVector<analysis::HandleFacts> provenances(functions.size());
+  parallelFor(design.getContext(), 0, functions.size(), [&](size_t index) {
+    if (!functions[index].getBody().empty())
+      provenances[index] =
+          analysis.descriptorProvenance.derive(functions[index]);
+  });
+  for (auto [function, provenance] : llvm::zip_equal(functions, provenances)) {
     analysis.functionIndex[function.getSymName()] = analysis.functions.size();
     analysis.indexForFunction[function.getOperation()] =
         analysis.functions.size();
@@ -635,7 +644,7 @@ ProgramAnalysis analyzeProgram(sim::SimDesignOp design) {
       info.baseEffects = {{schedule::ComputeEffectKind::Read},
                           {schedule::ComputeEffectKind::Write}};
     } else {
-      info.provenance = analysis.descriptorProvenance.derive(function);
+      info.provenance = std::move(provenance);
       info.baseEffects = collectDirectEffects(info);
       analysis.expandConnectivity(info.baseEffects);
     }
