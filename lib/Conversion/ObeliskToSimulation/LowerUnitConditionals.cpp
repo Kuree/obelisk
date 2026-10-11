@@ -1522,6 +1522,39 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   return success();
 }
 
+// Only the grammar controls contain syntactic production occurrences. Code
+// blocks may contain another randsequence with its own production inventory.
+static void
+collectRandSequenceItems(Operation *node,
+                         SmallVectorImpl<semantic::SVProdItemOp> &items) {
+  if (auto item = dyn_cast<semantic::SVProdItemOp>(node)) {
+    items.push_back(item);
+    return;
+  }
+  if (isa<semantic::SVCodeBlockProdOp>(node))
+    return;
+  for (Operation *child : getChildren(node))
+    collectRandSequenceItems(child, items);
+}
+
+LogicalResult
+UnitLowering::copyRandSequenceOutputs(RandSequenceProductionReturn &production,
+                                      Location location) {
+  for (auto &output : production.copyOuts) {
+    FailureOr<Value> value = loadReference(output.formalReference, location);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*value, output.destination.type, output.formalSigned, location,
+                output.destinationSigned);
+    if (failed(converted) ||
+        failed(writeCapturedLValue(output.destination, *converted,
+                                   output.destinationSigned, false, location)))
+      return failure();
+  }
+  return success();
+}
+
 LogicalResult
 UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
   Location location = getSemanticLocation(op);
@@ -1529,6 +1562,8 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
   RandSequenceContext context;
   context.breakTarget = addBlock();
   context.controlDepth = controlScopes.size();
+  context.loopDepth = loopTargets.size();
+  context.productionDepth = randSequenceProductionReturns.size();
   for (Operation *child : children) {
     auto production = dyn_cast<semantic::SVFrozenRandSeqProductionOp>(child);
     if (!production) {
@@ -1572,26 +1607,25 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
       return failure();
     }
     state = 1;
-    WalkResult result = found->second->walk([&](semantic::SVProdItemOp item) {
+    SmallVector<semantic::SVProdItemOp> items;
+    collectRandSequenceItems(found->second, items);
+    for (semantic::SVProdItemOp item : items) {
       auto reference = item->getAttrOfType<SymbolRefAttr>("target");
       if (!reference) {
         emitError(getSemanticLocation(item))
             << "randsequence production item has no target";
-        return WalkResult::interrupt();
+        return failure();
       }
       auto target =
           context.productions.find(reference.getLeafReference().getValue());
       if (target == context.productions.end()) {
         emitError(getSemanticLocation(item))
             << "randsequence references unknown production " << reference;
-        return WalkResult::interrupt();
+        return failure();
       }
       if (failed(visit(target->getKey())))
-        return WalkResult::interrupt();
-      return WalkResult::advance();
-    });
-    if (result.wasInterrupted())
-      return failure();
+        return failure();
+    }
     state = 2;
     return success();
   };
@@ -1623,18 +1657,23 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
 
 LogicalResult UnitLowering::lowerRandSequenceProduction(
     semantic::SVFrozenRandSeqProductionOp production,
-    ArrayRef<Operation *> actuals) {
+    ArrayRef<Operation *> actuals, Value resultReference) {
   Location location = getSemanticLocation(production);
   auto productionType = production->getAttrOfType<TypeAttr>("semantic_type");
   if (!productionType) {
     emitError(location) << "randsequence production has no semantic type";
     return failure();
   }
-  if (!isa<semantic::VoidType>(productionType.getValue())) {
-    emitError(location)
-        << "value-returning randsequence productions are outside the current "
-           "executable boundary";
-    return failure();
+  bool returnsValue = !isa<semantic::VoidType>(productionType.getValue());
+  Type resultType;
+  if (returnsValue) {
+    FailureOr<Type> normalized =
+        normalizeSemanticType(productionType.getValue(), location, function);
+    if (failed(normalized))
+      return failure();
+    resultType = *normalized;
+  } else if (resultReference) {
+    return emitError(location) << "void production cannot bind a result";
   }
 
   ArrayAttr formals = production.getFormalArguments();
@@ -1682,42 +1721,117 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     }
   });
 
-  SmallVector<Value> explicitValues;
-  explicitValues.reserve(actuals.size());
-  for (Operation *actual : actuals) {
-    FailureOr<Value> value = lowerExpression(actual);
-    if (failed(value))
-      return failure();
-    explicitValues.push_back(*value);
+  struct Actual {
+    Value value{};
+    Value reference{};
+    std::optional<CapturedLValue> destination;
+    bool sourceSigned = false;
+  };
+  SmallVector<Actual> explicitValues;
+  SmallVector<RandSequenceProductionReturn::CopyOut> copyOuts;
+  // Evaluate actual values and capture actual addresses in the caller's
+  // scope before binding any callee formal. Outputs do not read the actual.
+  for (auto [index, attribute] : llvm::enumerate(formals)) {
+    auto formal = dyn_cast<DictionaryAttr>(attribute);
+    auto direction =
+        formal ? formal.getAs<IntegerAttr>("direction") : IntegerAttr{};
+    if (!direction || direction.getInt() < 0 || direction.getInt() > 3)
+      return emitError(location) << "malformed randsequence formal direction";
+    Operation *actual = index < actuals.size() ? actuals[index] : nullptr;
+    if (!actual || isa<semantic::SVEmptyArgumentExpressionOp>(actual))
+      actual = defaultExpressions[index];
+    if (!actual)
+      return emitError(location) << "randsequence production argument " << index
+                                 << " has no actual or default value";
+    if (direction.getInt() !=
+        static_cast<int64_t>(semantic::SVArgumentDirection::In)) {
+      if (isa<semantic::SVAssignmentExpressionOp>(actual)) {
+        auto children = getChildren(actual);
+        if (children.size() == 2 &&
+            isa<semantic::SVEmptyArgumentExpressionOp>(children.back()))
+          actual = children.front();
+      }
+    }
+    Actual argument;
+    argument.sourceSigned = isSignedNode(actual);
+    if (!isa<semantic::SVEmptyArgumentExpressionOp>(actual)) {
+      if (direction.getInt() ==
+          static_cast<int64_t>(semantic::SVArgumentDirection::In)) {
+        FailureOr<Value> value = lowerExpression(actual);
+        if (failed(value))
+          return failure();
+        argument.value = cloneSequentialValue(*value, location);
+      } else if (direction.getInt() ==
+                 static_cast<int64_t>(semantic::SVArgumentDirection::Ref)) {
+        FailureOr<Value> reference = lowerExpression(actual, /*lvalue=*/true);
+        if (failed(reference))
+          return failure();
+        argument.reference = *reference;
+      } else {
+        FailureOr<CapturedLValue> destination = captureLValue(actual, location);
+        if (failed(destination))
+          return failure();
+        argument.destination = *destination;
+        if (direction.getInt() ==
+            static_cast<int64_t>(semantic::SVArgumentDirection::InOut)) {
+          FailureOr<Value> value = loadCapturedLValue(*destination, location);
+          if (failed(value))
+            return failure();
+          argument.value = cloneSequentialValue(*value, location);
+        }
+      }
+    }
+    explicitValues.push_back(std::move(argument));
   }
   for (auto [index, attribute] : llvm::enumerate(formals)) {
     auto formal = cast<DictionaryAttr>(attribute);
     auto direction = formal.getAs<IntegerAttr>("direction");
     auto path = formal.getAs<StringAttr>("referenced_path");
     auto semanticType = formal.getAs<TypeAttr>("semantic_type");
-    if (!direction ||
-        direction.getInt() !=
-            static_cast<int64_t>(semantic::SVArgumentDirection::In) ||
+    if (!direction || direction.getInt() < 0 || direction.getInt() > 3 ||
         !path || !semanticType) {
-      emitError(location)
-          << "randsequence currently requires typed input formals";
+      emitError(location) << "randsequence requires typed formal arguments";
       return failure();
     }
     FailureOr<Type> type =
         normalizeSemanticType(semanticType.getValue(), location, function);
     if (failed(type))
       return failure();
+    bool formalSigned = isSignedSemanticType(semanticType.getValue());
+    Actual argument = explicitValues[index];
+    if (direction.getInt() ==
+        static_cast<int64_t>(semantic::SVArgumentDirection::Ref)) {
+      if (!argument.reference ||
+          getReferenceElementType(argument.reference) != *type) {
+        return emitError(location)
+               << "randsequence ref actual must be an equivalent variable "
+                  "reference";
+      }
+      FailureOr<Value> reference =
+          isa<sim::RefType>(argument.reference.getType())
+              ? FailureOr<Value>(argument.reference)
+              : toArgumentReference(argument.reference, *type, location);
+      if (failed(reference))
+        return emitError(location)
+               << "randsequence ref actual is not addressable";
+      std::string bindingPath = path.getValue().str();
+      savedBindings.push_back(
+          {bindingPath, values.lookup(bindingPath), lvalues.lookup(bindingPath),
+           values.count(bindingPath) != 0, lvalues.count(bindingPath) != 0});
+      values[bindingPath] = *reference;
+      lvalues[bindingPath] = *reference;
+      continue;
+    }
     Value initial;
     bool sourceSigned = false;
-    if (index < explicitValues.size()) {
-      initial = explicitValues[index];
-      sourceSigned = isSignedNode(actuals[index]);
-    } else if (defaultExpressions[index]) {
-      FailureOr<Value> value = lowerExpression(defaultExpressions[index]);
-      if (failed(value))
-        return failure();
-      initial = *value;
-      sourceSigned = isSignedNode(defaultExpressions[index]);
+    if (direction.getInt() ==
+        static_cast<int64_t>(semantic::SVArgumentDirection::Out)) {
+      initial = createDefaultValue(builder, location, *type);
+      if (!initial)
+        return emitError(location) << "unsupported randsequence output type";
+    } else if (argument.value) {
+      initial = argument.value;
+      sourceSigned = argument.sourceSigned;
     } else {
       emitError(location) << "randsequence production argument " << index
                           << " has no actual or default value";
@@ -1736,6 +1850,23 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
         *converted);
     values[bindingPath] = reference;
     lvalues[bindingPath] = reference;
+    if (argument.destination)
+      copyOuts.push_back({*argument.destination, reference, formalSigned,
+                          argument.sourceSigned});
+  }
+
+  if (returnsValue) {
+    Value undefined = createDefaultValue(builder, location, resultType);
+    if (!undefined)
+      return emitError(location) << "unsupported randsequence return type";
+    if (!resultReference) {
+      resultReference = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), resultType), undefined);
+    } else if (getReferenceElementType(resultReference) != resultType ||
+               failed(storeReference(resultReference, undefined, location))) {
+      return emitError(location) << "randsequence return binding type mismatch";
+    }
   }
 
   ArrayRef<int64_t> itemCounts = production.getRuleItemCounts();
@@ -1745,11 +1876,13 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   ArrayRef<int64_t> isRandJoin = production.getRuleIsRandJoin();
   ArrayRef<int64_t> hasRandJoinExpressions =
       production.getRuleHasRandJoinExpressions();
+  ArrayAttr ruleVariables = production.getRuleVariables();
   size_t ruleCount = production.getRuleCount();
   if (itemCounts.size() != ruleCount || hasWeights.size() != ruleCount ||
       hasWeightCodeBlocks.size() != ruleCount ||
       isRandJoin.size() != ruleCount ||
-      hasRandJoinExpressions.size() != ruleCount) {
+      hasRandJoinExpressions.size() != ruleCount ||
+      ruleVariables.size() != ruleCount) {
     emitError(location) << "malformed randsequence rule metadata";
     return failure();
   }
@@ -1760,6 +1893,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     Operation *weightCodeBlock = nullptr;
     bool randJoin = false;
     Operation *randJoinBias = nullptr;
+    ArrayAttr variables;
   };
   SmallVector<Rule> rules;
   rules.reserve(ruleCount);
@@ -1774,6 +1908,9 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       return failure();
     }
     Rule rule;
+    rule.variables = dyn_cast<ArrayAttr>(ruleVariables[index]);
+    if (!rule.variables)
+      return emitError(location) << "malformed randsequence rule variables";
     rule.randJoin = isRandJoin[index];
     if (hasWeights[index]) {
       if (nextChild == children.size())
@@ -1806,7 +1943,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
 
   Block *productionReturn = addBlock();
   randSequenceProductionReturns.push_back(
-      {productionReturn, controlScopes.size()});
+      {productionReturn, controlScopes.size(), resultReference,
+       std::move(copyOuts)});
   llvm::scope_exit popReturn([&] { randSequenceProductionReturns.pop_back(); });
   auto lowerRandJoin = [&](const Rule &rule) -> LogicalResult {
     if (rule.items.size() < 2)
@@ -1985,6 +2123,107 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     return success();
   };
   auto lowerRule = [&](const Rule &rule) -> LogicalResult {
+    // 18.17.7 allocates an implicit result variable per returning production
+    // in this rule. Multiple syntactic occurrences use a [1:N] array; a
+    // repeated occurrence keeps one slot and replaces its value each time.
+    llvm::StringMap<SmallVector<semantic::SVProdItemOp>> returningItems;
+    llvm::StringMap<Type> returnTypes;
+    SmallVector<semantic::SVProdItemOp> items;
+    for (Operation *item : rule.items)
+      collectRandSequenceItems(item, items);
+    for (semantic::SVProdItemOp item : items) {
+      auto targetRef = item->getAttrOfType<SymbolRefAttr>("target");
+      auto target = targetRef ? randSequenceContexts.back().productions.find(
+                                    targetRef.getLeafReference())
+                              : randSequenceContexts.back().productions.end();
+      if (target == randSequenceContexts.back().productions.end())
+        return emitError(location) << "unknown rule production";
+      auto semanticType =
+          target->second->getAttrOfType<TypeAttr>("semantic_type");
+      if (!semanticType)
+        return emitError(location) << "rule production has no return type";
+      if (isa<semantic::VoidType>(semanticType.getValue()))
+        continue;
+      auto name = target->second->getAttrOfType<StringAttr>("production_name");
+      StringRef productionName = name ? name.getValue() : target->getKey();
+      FailureOr<Type> type =
+          normalizeSemanticType(semanticType.getValue(), location, function);
+      if (failed(type))
+        return failure();
+      returningItems[productionName].push_back(item);
+      returnTypes[productionName] = *type;
+    }
+
+    SmallVector<SavedBinding> savedRuleBindings;
+    llvm::scope_exit restoreRuleBindings([&] {
+      for (const SavedBinding &saved : llvm::reverse(savedRuleBindings)) {
+        if (saved.hadValue)
+          values[saved.path] = saved.value;
+        else
+          values.erase(saved.path);
+        if (saved.hadLValue)
+          lvalues[saved.path] = saved.lvalue;
+        else
+          lvalues.erase(saved.path);
+      }
+    });
+    llvm::DenseMap<Operation *, Value> resultReferences;
+    llvm::StringSet<> boundNames;
+    for (Attribute attribute : rule.variables) {
+      auto variable = dyn_cast<DictionaryAttr>(attribute);
+      auto name = variable ? variable.getAs<StringAttr>("name") : StringAttr{};
+      auto path = variable ? variable.getAs<StringAttr>("referenced_path")
+                           : StringAttr{};
+      auto semanticType =
+          variable ? variable.getAs<TypeAttr>("semantic_type") : TypeAttr{};
+      if (!name || !path || !semanticType ||
+          !returningItems.count(name.getValue()) ||
+          !boundNames.insert(name.getValue()).second)
+        return emitError(location)
+               << "malformed rule return-variable inventory";
+      FailureOr<Type> type =
+          normalizeSemanticType(semanticType.getValue(), location, function);
+      if (failed(type))
+        return failure();
+      auto &occurrences = returningItems[name.getValue()];
+      Type returnType = returnTypes[name.getValue()];
+      if (occurrences.size() == 1) {
+        if (*type != returnType)
+          return emitError(location) << "rule return variable has wrong type";
+      } else {
+        auto array = dyn_cast<sim::UnpackedArrayType>(*type);
+        if (!array || array.getElementType() != returnType ||
+            array.getLeft() != 1 ||
+            array.getRight() != static_cast<int64_t>(occurrences.size()))
+          return emitError(location) << "rule return array must use [1:N]";
+      }
+      Value undefined = createDefaultValue(builder, location, *type);
+      if (!undefined)
+        return emitError(location) << "unsupported rule return-variable type";
+      Value reference = sim::SimRefAllocOp::create(
+          builder, location, sim::RefType::get(function.getContext(), *type),
+          undefined);
+      std::string bindingPath = path.getValue().str();
+      savedRuleBindings.push_back(
+          {bindingPath, values.lookup(bindingPath), lvalues.lookup(bindingPath),
+           values.count(bindingPath) != 0, lvalues.count(bindingPath) != 0});
+      values[bindingPath] = reference;
+      lvalues[bindingPath] = reference;
+      for (auto [index, item] : llvm::enumerate(occurrences)) {
+        Value destination = reference;
+        if (occurrences.size() > 1)
+          destination = sim::SimRefSubelementOp::create(
+              builder, location,
+              sim::RefType::get(function.getContext(), returnType), reference,
+              builder.getDenseI64ArrayAttr({static_cast<int64_t>(index)}));
+        resultReferences[item] = destination;
+      }
+    }
+    if (boundNames.size() != returningItems.size())
+      return emitError(location) << "missing rule return-variable binding";
+    randSequenceResultReferences.push_back(std::move(resultReferences));
+    llvm::scope_exit popResultReferences(
+        [&] { randSequenceResultReferences.pop_back(); });
     if (rule.randJoin) {
       if (failed(lowerRandJoin(rule)))
         return failure();
@@ -2101,7 +2340,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       return failure();
   }
   setCurrent(productionReturn);
-  return success();
+  return copyRandSequenceOutputs(randSequenceProductionReturns.back(),
+                                 location);
 }
 
 LogicalResult
@@ -2124,7 +2364,15 @@ UnitLowering::lowerRandSequenceProductionItem(semantic::SVProdItemOp item) {
       actuals.size() != static_cast<uint64_t>(argumentCount.getInt()))
     return emitError(getSemanticLocation(item))
            << "malformed randsequence actual argument inventory";
-  return lowerRandSequenceProduction(found->second, actuals);
+  Value resultReference =
+      randSequenceResultReferences.empty()
+          ? Value{}
+          : randSequenceResultReferences.back().lookup(item);
+  auto type = found->second->getAttrOfType<TypeAttr>("semantic_type");
+  if (type && !isa<semantic::VoidType>(type.getValue()) && !resultReference)
+    return emitError(getSemanticLocation(item))
+           << "returning production item has no rule variable";
+  return lowerRandSequenceProduction(found->second, actuals, resultReference);
 }
 
 LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {

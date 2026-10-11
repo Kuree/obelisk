@@ -5113,11 +5113,18 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   if (isa<semantic::SVRepeatLoopStatementOp>(op))
     return lowerRepeat(op);
   if (isa<semantic::SVBreakStatementOp>(op)) {
-    if (loopTargets.empty()) {
+    if (loopTargets.empty() ||
+        (!randSequenceContexts.empty() &&
+         loopTargets.size() == randSequenceContexts.back().loopDepth)) {
       if (randSequenceContexts.empty()) {
         emitError(location) << "break is not nested in a loop or randsequence";
         return failure();
       }
+      for (size_t index = randSequenceProductionReturns.size();
+           index > randSequenceContexts.back().productionDepth; --index)
+        if (failed(copyRandSequenceOutputs(
+                randSequenceProductionReturns[index - 1], location)))
+          return failure();
       emitControlLeaves(randSequenceContexts.back().controlDepth, location);
       cf::BranchOp::create(builder, location,
                            randSequenceContexts.back().breakTarget);
@@ -5142,16 +5149,26 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   }
   if (isa<semantic::SVReturnStatementOp>(op)) {
     if (!randSequenceProductionReturns.empty()) {
-      if (!children.empty()) {
+      auto &production = randSequenceProductionReturns.back();
+      if (children.size() != (production.resultReference ? 1u : 0u)) {
         emitError(location)
-            << "value-returning randsequence productions are outside the "
-               "current executable boundary";
+            << "randsequence return must match the production return type";
         return failure();
       }
-      emitControlLeaves(randSequenceProductionReturns.back().controlDepth,
-                        location);
-      cf::BranchOp::create(builder, location,
-                           randSequenceProductionReturns.back().target);
+      if (production.resultReference) {
+        FailureOr<Value> result = lowerExpression(children.front());
+        if (failed(result))
+          return failure();
+        Type resultType = getReferenceElementType(production.resultReference);
+        FailureOr<Value> converted = convert(
+            *result, resultType, isSignedNode(children.front()), location);
+        if (failed(converted) ||
+            failed(storeReference(production.resultReference, *converted,
+                                  location)))
+          return failure();
+      }
+      emitControlLeaves(production.controlDepth, location);
+      cf::BranchOp::create(builder, location, production.target);
       setCurrent(addBlock());
       return success();
     }

@@ -1863,19 +1863,22 @@
         {
           "feature": "Randsequence grammar execution",
           "status": "partial",
-          "detail": "Finite void grammars are frozen into MLIR; recursive grammars and value passing remain incomplete."
+          "detail": "Finite grammars support typed rule-local return values, input/output/inout/ref arguments, defaults, and nested grammars in native and WASM execution. Recursive activations and generalized rand join remain incomplete."
         }
       ],
       "evidence": {
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -1898,12 +1901,15 @@
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -1921,12 +1927,15 @@
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -1944,12 +1953,15 @@
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -1967,12 +1979,15 @@
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -1990,12 +2005,15 @@
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -2006,19 +2024,22 @@
         {
           "feature": "Break and return production abort",
           "status": "partial",
-          "detail": "Void grammar abort control is supported; value-returning production aborts require value-passing support."
+          "detail": "Void and typed returns terminate the current production, and break aborts the current grammar without exiting an enclosing loop or grammar. Output and inout arguments copy back from inner to outer activations. Recursive grammar frames remain open."
         }
       ],
       "evidence": {
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     },
@@ -2028,20 +2049,23 @@
       "features": [
         {
           "feature": "Production arguments and return values",
-          "status": "missing",
-          "detail": "The runtime grammar slice only admits void, parameter-free productions."
+          "status": "partial",
+          "detail": "Finite productions support input/output/inout/ref bindings, declaration-scope defaults and captured output addresses. Typed return values use one rule-local slot or a [1:N] array in syntactic occurrence order, including conditional, case and repeated items. Native and WASM MLIR tests cover strings, 129-bit values, unpacked arrays, nested return chains, early returns, managed ref aliases and output copy-back on grammar abort. Recursive activation frames and generalized rand join still limit grammar execution."
         }
       ],
       "evidence": {
         "sources": [
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
-          "runtime/lib/Random.cpp"
+          "runtime/lib/Random.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
-          "test/Conversion/simulation-lower-randsequence.mlir"
+          "test/Conversion/simulation-lower-randsequence.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
         ]
       }
     }

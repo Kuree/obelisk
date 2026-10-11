@@ -130,6 +130,19 @@ Both Z3 planning and the generated/runtime checkers preserve the same rules.
 `randcase` interprets its self-determined weights as unsigned and sums them at
 the maximum operand precision, including modular overflow and zero-total cases.
 
+Finite `randsequence` grammars pass typed input, output, inout, and ref arguments.
+Defaults evaluate in the declaration scope only when used; actual values and
+addresses are captured before formal bindings. Outputs copy back on return or
+grammar abort, while ref arguments alias ordinary and managed storage. Each
+rule owns its production results: one value for a single occurrence, or an
+array indexed from 1 through the number of syntactic occurrences. Conditional
+and case items retain separate slots, and repeat overwrites one slot on each
+generation. Typed returns end the current production; break ends the current
+grammar while respecting enclosing loops and nested grammars. These paths use
+the ordinary typed Simulation IR for native and WASM execution, including
+strings, wide integral values and unpacked arrays. Recursive activations and
+general rand join remain open.
+
 Fixed `foreach` constraints expand into ordinary Z3 predicates before random
 dependency analysis in both class and scope randomization. Fixed packed and
 unpacked dimensions can be multidimensional, descending, negative, or omitted;

@@ -8204,6 +8204,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                      getSemanticSymbolReference(production));
       attributes.set("referenced_path",
                      builder.getStringAttr(getHierarchyName(production)));
+      attributes.set("production_name", production.getNameAttr());
       attributes.set("formal_arguments", builder.getArrayAttr(formalArguments));
       attributes.set("rule_variables", builder.getArrayAttr(ruleVariables));
 
