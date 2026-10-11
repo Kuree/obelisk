@@ -3360,6 +3360,7 @@ int main(int argc, char **argv) {
   if (options.command == "inspect") {
     llvm::outs()
         << "format: obcov\ncodec-version: " << CodecVersion
+        << "\nchecksum: sha256-trailer"
         << "\nschema-fingerprint: "
         << digestText(computeSchemaFingerprint(database))
         << "\nproducer: " << database.producer

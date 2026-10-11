@@ -54,9 +54,9 @@ size_t sectionOffset(const std::vector<uint8_t> &bytes, SectionKind kind) {
 }
 
 void refreshChecksum(std::vector<uint8_t> &bytes) {
-  std::fill(bytes.begin() + 72, bytes.begin() + 104, 0);
-  Digest digest = sha256(bytes.data(), bytes.size());
-  std::copy(digest.begin(), digest.end(), bytes.begin() + 72);
+  const size_t payloadSize = bytes.size() - ChecksumSize;
+  Digest digest = sha256(bytes.data(), payloadSize);
+  std::copy(digest.begin(), digest.end(), bytes.begin() + payloadSize);
 }
 
 template <typename Range>
@@ -1242,7 +1242,7 @@ void permuteResolvedItemAndBinIDs(Database &db) {
     remapBin(component);
 }
 
-TEST(CoverageDatabaseTest, TypedV1RoundTripsDeterministically) {
+TEST(CoverageDatabaseTest, TypedV2RoundTripsDeterministically) {
   Database db = makeTypedDatabase();
   ResolvedInstanceOption typeGoal;
   typeGoal.run = db.runs.front().uuid;
@@ -1492,7 +1492,50 @@ TEST(CoverageDatabaseTest, StreamsSameImageAndStopsAfterSinkFailure) {
   EXPECT_LE(sink.maxChunk, sectionOffset(expected, SectionKind::Strings));
 }
 
-TEST(CoverageDatabaseTest, GeneratedFixedRecordsPreserveV1Layout) {
+TEST(CoverageDatabaseTest, StreamChecksumIsTheFinalChunk) {
+  Database db = makeTypedDatabase();
+  struct Stream {
+    std::vector<uint8_t> bytes;
+    size_t lastChunk = 0;
+  } stream;
+  auto sink = [](const uint8_t *data, size_t size, void *user) {
+    auto &stream = *static_cast<Stream *>(user);
+    stream.lastChunk = size;
+    stream.bytes.insert(stream.bytes.end(), data, data + size);
+    return true;
+  };
+  ASSERT_EQ(serialize(db, sink, &stream), Status::Ok);
+  EXPECT_EQ(stream.lastChunk, ChecksumSize);
+  const size_t payloadSize = stream.bytes.size() - ChecksumSize;
+  Digest expected = sha256(stream.bytes.data(), payloadSize);
+  EXPECT_TRUE(std::equal(expected.begin(), expected.end(),
+                         stream.bytes.begin() + payloadSize));
+  Database output;
+  Diagnostic diagnostic;
+  stream.bytes.back() ^= 1;
+  EXPECT_EQ(
+      parse(stream.bytes.data(), stream.bytes.size(), output, {}, &diagnostic),
+      Status::ChecksumMismatch);
+  EXPECT_EQ(diagnostic.offset, payloadSize);
+  stream.bytes.resize(payloadSize);
+  EXPECT_NE(parse(stream.bytes.data(), stream.bytes.size(), output),
+            Status::Ok);
+
+  size_t written = 0;
+  std::pair<size_t *, size_t> failing{&written, payloadSize};
+  auto failTrailer = [](const uint8_t *, size_t size, void *user) {
+    auto &state = *static_cast<std::pair<size_t *, size_t> *>(user);
+    if (*state.first == state.second)
+      return false;
+    *state.first += size;
+    return true;
+  };
+  EXPECT_EQ(serialize(db, failTrailer, &failing, &diagnostic), Status::IoError);
+  EXPECT_EQ(written, payloadSize);
+  EXPECT_STREQ(diagnostic.field, "checksum_sink");
+}
+
+TEST(CoverageDatabaseTest, GeneratedFixedRecordsMatchSchema) {
   Database db = makeTypedDatabase();
   std::vector<uint8_t> image;
   ASSERT_EQ(serialize(db, image), Status::Ok);
@@ -1689,11 +1732,13 @@ TEST(CoverageDatabaseTest, GeneratedFixedFieldDiagnosticsAreExact) {
         "reserved");
 }
 
-TEST(CoverageDatabaseTest, RejectsNonV1AndUnknownSections) {
+TEST(CoverageDatabaseTest, RejectsOtherVersionsAndUnknownSections) {
   Database db = makeTypedDatabase();
   std::vector<uint8_t> image;
   ASSERT_EQ(serialize(db, image), Status::Ok);
   put32(image, 8, CodecVersion + 1);
+  EXPECT_EQ(parse(image.data(), image.size(), db), Status::VersionMismatch);
+  put32(image, 8, 1);
   EXPECT_EQ(parse(image.data(), image.size(), db), Status::VersionMismatch);
 
   ASSERT_EQ(serialize(makeTypedDatabase(), image), Status::Ok);

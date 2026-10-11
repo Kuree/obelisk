@@ -61,14 +61,14 @@ module top;
 endmodule
 
 // LINE-INSPECT: format: obcov
-// LINE-INSPECT: codec-version: 1
+// LINE-INSPECT: codec-version: 2
 // LINE-INSPECT: runs: 1
 // LINE-INSPECT: line-points: 3
 // LINE-INSPECT: functional-types: 1
 // LINE-INSPECT: functional-configurations: 0
 // LINE-INSPECT: resolved-instances: 0
 // DATABASE-INSPECT: format: obcov
-// DATABASE-INSPECT: codec-version: 1
+// DATABASE-INSPECT: codec-version: 2
 // DATABASE-INSPECT: runs: 1
 // DATABASE-INSPECT: line-points: 0
 // DATABASE-INSPECT: functional-types: 1

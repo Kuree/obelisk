@@ -223,8 +223,17 @@ def ResolvedValueSetSelectorIntersection
 def ResolvedValueSetTupleComponent
     : CoverageResolvedValueSetRole<"TupleComponent", 4>;
 
-// Section values are the exact v1 wire ABI. The reader rejects every unknown
-// section and every codec version other than v1.
+// The v2 envelope can be emitted to a non-seekable sink in one pass. The
+// checksum is a SHA-256 trailer over the header, directory and section bytes.
+// Section records are shared by every producer and consumer through TableGen.
+def CoverageWireFormat {
+  int version = 2;
+  int headerSize = 72;
+  int directoryRecordSize = 32;
+  int checksumSize = 32;
+}
+
+// The reader rejects every unknown section and every other codec version.
 class CoverageSection<string cppName_, int value_, int recordSize_,
                       bit required_ = 0, bit staticSchema_ = 0> {
   string cppName = cppName_;

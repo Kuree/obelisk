@@ -1526,12 +1526,12 @@ Status encodeSections(const Database &db, const StringTable &strings,
       ResolvedInstanceOptionRecord::setOwner(p, v.owner);
       ResolvedInstanceOptionRecord::setOwnerKind(
           p, static_cast<uint32_t>(v.ownerKind));
-      ResolvedInstanceOptionRecord::setOption(
-          p, static_cast<uint32_t>(v.option));
+      ResolvedInstanceOptionRecord::setOption(p,
+                                              static_cast<uint32_t>(v.option));
       ResolvedInstanceOptionRecord::setValueKind(
           p, static_cast<uint32_t>(v.valueKind));
-      ResolvedInstanceOptionRecord::setStringValue(
-          p, strings.get(v.stringValue));
+      ResolvedInstanceOptionRecord::setStringValue(p,
+                                                   strings.get(v.stringValue));
       ResolvedInstanceOptionRecord::setValue(p, v.value);
       ResolvedInstanceOptionRecord::setFlags(p, v.flags);
     });
@@ -1614,16 +1614,6 @@ template <typename T> void hashScalar(SHA256 &hash, T value) {
   for (size_t i = 0; i != sizeof(T); ++i)
     bytes[i] = uint8_t(v >> (i * 8));
   hash.update(bytes, sizeof(bytes));
-}
-
-Digest checksumWithZeroDigest(const uint8_t *data, size_t size) {
-  SHA256 hash;
-  hash.update(data, 72);
-  uint8_t zero[32]{};
-  hash.update(zero, 32);
-  if (size > 104)
-    hash.update(data + 104, size - 104);
-  return hash.finish();
 }
 
 struct DirectoryEntry {
@@ -2468,8 +2458,8 @@ computeFunctionalConfigurationFingerprint(const Database &db, uint64_t type,
 
 bool isSchemaOnly(const Database &db) {
   return db.runs.empty() && db.resolvedInstances.empty() &&
-         db.resolvedInstanceOptions.empty() &&
-         db.counters.empty() && db.illegalBinDiagnostics.empty() &&
+         db.resolvedInstanceOptions.empty() && db.counters.empty() &&
+         db.illegalBinDiagnostics.empty() &&
          db.functionalConfigurations.empty() &&
          db.functionalConfigurationOptions.empty() &&
          db.resolvedFunctionalItems.empty() &&
@@ -6405,6 +6395,11 @@ Status serialize(const Database &database, WriteCallback callback, void *user,
       }
       total = align8(total);
     }
+    if (addOverflow(total, ChecksumSize, total)) {
+      setDiagnostic(diagnostic, Status::IntegerOverflow, total,
+                    SectionKind::Strings, NoRecord, "checksum_size");
+      return Status::IntegerOverflow;
+    }
     HeaderBytes prefix;
     if (!prefix.reserve(start)) {
       setDiagnostic(diagnostic, Status::OutOfMemory, 0, SectionKind::Strings,
@@ -6420,7 +6415,6 @@ Status serialize(const Database &database, WriteCallback callback, void *user,
     prefix.u32(HeaderSize);
     Digest fingerprint = computeSchemaFingerprint(database);
     prefix.raw(fingerprint);
-    prefix.zero(32);
     uint64_t offset = start;
     for (const auto &s : sections) {
       prefix.u32(static_cast<uint32_t>(s.kind));
@@ -6440,31 +6434,36 @@ Status serialize(const Database &database, WriteCallback callback, void *user,
     prefix.pad8();
 
     SHA256 hash;
-    hash.update(prefix.value.data(), prefix.value.size());
-    auto hashSink = [](const uint8_t *data, size_t size, void *user) {
-      static_cast<SHA256 *>(user)->update(data, size);
+    struct Stream {
+      WriteCallback callback;
+      void *user;
+      SHA256 &hash;
+    } stream{callback, user, hash};
+    auto writeAndHash = [](const uint8_t *data, size_t size, void *user) {
+      auto &stream = *static_cast<Stream *>(user);
+      if (!stream.callback(data, size, stream.user))
+        return false;
+      stream.hash.update(data, size);
       return true;
     };
-    encoded = encodeSections(database, strings, hashSink, &hash, sections,
-                             &failedSection, &failedRecord, &failedField);
-    if (encoded != Status::Ok) {
-      setDiagnostic(diagnostic, encoded, 0, failedSection, failedRecord,
-                    failedField ? failedField : "hash_pass");
-      return encoded;
-    }
-    Digest checksum = hash.finish();
-    std::copy(checksum.begin(), checksum.end(), prefix.value.begin() + 72);
-    if (!callback(prefix.value.data(), prefix.value.size(), user)) {
+    if (!writeAndHash(prefix.value.data(), prefix.value.size(), &stream)) {
       setDiagnostic(diagnostic, Status::IoError, 0, SectionKind::Strings,
                     NoRecord, "sink");
       return Status::IoError;
     }
-    encoded = encodeSections(database, strings, callback, user, sections,
+    encoded = encodeSections(database, strings, writeAndHash, &stream, sections,
                              &failedSection, &failedRecord, &failedField);
     if (encoded != Status::Ok) {
       setDiagnostic(diagnostic, encoded, 0, failedSection, failedRecord,
                     failedField ? failedField : "sink");
       return encoded;
+    }
+    Digest checksum = hash.finish();
+    static_assert(ChecksumSize == std::tuple_size<Digest>::value);
+    if (!callback(checksum.data(), checksum.size(), user)) {
+      setDiagnostic(diagnostic, Status::IoError, total - ChecksumSize,
+                    SectionKind::Strings, NoRecord, "checksum_sink");
+      return Status::IoError;
     }
     if (diagnostic)
       *diagnostic = {};
@@ -6506,7 +6505,7 @@ Status parse(const uint8_t *data, size_t size, Database &output,
     if (!data && size)
       return fail(Status::InvalidArgument, 0, SectionKind::Strings, NoRecord,
                   "data");
-    if (size < HeaderSize)
+    if (size < HeaderSize + ChecksumSize)
       return fail(Status::Truncated, size, SectionKind::Strings, NoRecord,
                   "header");
     if (std::memcmp(data, Magic, 8) != 0)
@@ -6530,15 +6529,16 @@ Status parse(const uint8_t *data, size_t size, Database &output,
     if (count > limits.maxRecords)
       return fail(Status::LimitExceeded, 32, SectionKind::Strings, NoRecord,
                   "section_count");
+    const size_t payloadSize = size - ChecksumSize;
     if (mulOverflow(count, DirectoryRecordSize, dirSize) ||
-        addOverflow(dirOffset, dirSize, dirEnd) || dirEnd > size)
+        addOverflow(dirOffset, dirSize, dirEnd) || dirEnd > payloadSize)
       return fail(Status::IntegerOverflow, 32, SectionKind::Strings, NoRecord,
                   "section_count");
     Digest expected{};
-    std::copy(data + 72, data + 104, expected.begin());
-    if (checksumWithZeroDigest(data, size) != expected)
-      return fail(Status::ChecksumMismatch, 72, SectionKind::Strings, NoRecord,
-                  "sha256");
+    std::copy(data + payloadSize, data + size, expected.begin());
+    if (sha256(data, payloadSize) != expected)
+      return fail(Status::ChecksumMismatch, payloadSize, SectionKind::Strings,
+                  NoRecord, "sha256");
     Digest fingerprint{};
     std::copy(data + 40, data + 72, fingerprint.begin());
     result.flags = read32(data + 12);
@@ -6562,7 +6562,7 @@ Status parse(const uint8_t *data, size_t size, Database &output,
       if ((flags & ~RequiredSection) != 0)
         return fail(Status::InvalidEnum, dirOffset + i * 32 + 4, kind, i,
                     "flags");
-      if (off % 8 || addOverflow(off, bytes, end) || end > size ||
+      if (off % 8 || addOverflow(off, bytes, end) || end > payloadSize ||
           off != previous)
         return fail(off % 8 ? Status::Misaligned : Status::SectionOverlap,
                     dirOffset + i * 32, kind, i, "offset");
@@ -6594,10 +6594,10 @@ Status parse(const uint8_t *data, size_t size, Database &output,
       }
       entries.push_back({kind, flags, off, bytes, records});
     }
-    if (previous != size)
+    if (previous != payloadSize)
       return fail(Status::BadCount, previous, SectionKind::Strings, NoRecord,
                   "trailing_bytes");
-    for (uint64_t padding = previousEnd; padding != size; ++padding)
+    for (uint64_t padding = previousEnd; padding != payloadSize; ++padding)
       if (data[padding] != 0)
         return fail(Status::InvalidDatabase, padding, SectionKind::Strings,
                     NoRecord, "padding");
@@ -7721,33 +7721,31 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                });
     if (st != Status::Ok)
       return st;
-    st = fixed(SectionKind::ResolvedInstanceOptions,
-               [&](const auto &e, uint64_t i, const uint8_t *p) {
-                 const auto *s = str(
-                     ResolvedInstanceOptionRecord::getStringValue(p), e, i,
-                     ResolvedInstanceOptionRecord::StringValueName);
-                 if (!s)
-                   return Status::InvalidReference;
-                 ResolvedInstanceOption v;
-                 std::copy(ResolvedInstanceOptionRecord::getRun(p),
-                           ResolvedInstanceOptionRecord::getRun(p) +
-                               v.run.size(),
-                           v.run.begin());
-                 v.instance = ResolvedInstanceOptionRecord::getInstance(p);
-                 v.owner = ResolvedInstanceOptionRecord::getOwner(p);
-                 v.ownerKind = static_cast<
-                     FunctionalConfigurationOptionOwnerKind>(
-                     ResolvedInstanceOptionRecord::getOwnerKind(p));
-                 v.option = static_cast<FunctionalConfigurationOptionKind>(
-                     ResolvedInstanceOptionRecord::getOption(p));
-                 v.valueKind = static_cast<FunctionalConfigurationValueKind>(
-                     ResolvedInstanceOptionRecord::getValueKind(p));
-                 v.stringValue = *s;
-                 v.value = ResolvedInstanceOptionRecord::getValue(p);
-                 v.flags = ResolvedInstanceOptionRecord::getFlags(p);
-                 result.resolvedInstanceOptions.push_back(std::move(v));
-                 return Status::Ok;
-               });
+    st = fixed(SectionKind::ResolvedInstanceOptions, [&](const auto &e,
+                                                         uint64_t i,
+                                                         const uint8_t *p) {
+      const auto *s = str(ResolvedInstanceOptionRecord::getStringValue(p), e, i,
+                          ResolvedInstanceOptionRecord::StringValueName);
+      if (!s)
+        return Status::InvalidReference;
+      ResolvedInstanceOption v;
+      std::copy(ResolvedInstanceOptionRecord::getRun(p),
+                ResolvedInstanceOptionRecord::getRun(p) + v.run.size(),
+                v.run.begin());
+      v.instance = ResolvedInstanceOptionRecord::getInstance(p);
+      v.owner = ResolvedInstanceOptionRecord::getOwner(p);
+      v.ownerKind = static_cast<FunctionalConfigurationOptionOwnerKind>(
+          ResolvedInstanceOptionRecord::getOwnerKind(p));
+      v.option = static_cast<FunctionalConfigurationOptionKind>(
+          ResolvedInstanceOptionRecord::getOption(p));
+      v.valueKind = static_cast<FunctionalConfigurationValueKind>(
+          ResolvedInstanceOptionRecord::getValueKind(p));
+      v.stringValue = *s;
+      v.value = ResolvedInstanceOptionRecord::getValue(p);
+      v.flags = ResolvedInstanceOptionRecord::getFlags(p);
+      result.resolvedInstanceOptions.push_back(std::move(v));
+      return Status::Ok;
+    });
     if (st != Status::Ok)
       return st;
     st = fixed(SectionKind::Counters, [&](const auto &e, uint64_t i,
@@ -8404,7 +8402,8 @@ static Status mergeInPlace(Database &destination, const Database &source,
                                        source.resolvedInstances.end());
   destination.resolvedInstanceOptions.insert(
       destination.resolvedInstanceOptions.end(),
-      source.resolvedInstanceOptions.begin(), source.resolvedInstanceOptions.end());
+      source.resolvedInstanceOptions.begin(),
+      source.resolvedInstanceOptions.end());
   for (auto counter : source.counters) {
     if (counter.metric == MetricKind::Functional) {
       counter.entity = remapBin(source, sourceBinRemap, counter.run,

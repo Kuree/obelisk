@@ -48,10 +48,10 @@ size_t sectionOffset(const std::vector<uint8_t> &bytes,
 }
 
 void refreshChecksum(std::vector<uint8_t> &bytes) {
-  std::fill(bytes.begin() + 72, bytes.begin() + 104, 0);
+  const size_t payloadSize = bytes.size() - obelisk::coverage::ChecksumSize;
   obelisk::coverage::Digest digest =
-      obelisk::coverage::sha256(bytes.data(), bytes.size());
-  std::copy(digest.begin(), digest.end(), bytes.begin() + 72);
+      obelisk::coverage::sha256(bytes.data(), payloadSize);
+  std::copy(digest.begin(), digest.end(), bytes.begin() + payloadSize);
 }
 
 class CoverageRuntimeTest : public testing::Test {

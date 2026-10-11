@@ -1,7 +1,7 @@
 //===- CoverageSchemaTestPass.cpp - Print embedded coverage schemas ------===//
 //
 // Parse each module's embedded schema-only coverage database with the native
-// v1 codec, print its records one per line, and check that every
+// codec, print its records one per line, and check that every
 // covergroup.sample operand matches the FunctionalExpression it names.
 //
 //===----------------------------------------------------------------------===//

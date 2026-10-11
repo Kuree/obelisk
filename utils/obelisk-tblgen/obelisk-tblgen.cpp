@@ -4783,9 +4783,13 @@ bool emitCoverageDecls(const RecordKeeper &records, raw_ostream &os) {
   os << "#ifndef OBELISK_COVERAGE_FORMAT_DECLS_H_INC\n";
   os << "#define OBELISK_COVERAGE_FORMAT_DECLS_H_INC\n\n";
   os << "namespace obelisk::coverage {\n";
-  os << "inline constexpr uint32_t CodecVersion = 1;\n";
-  os << "inline constexpr uint32_t HeaderSize = 104;\n";
-  os << "inline constexpr uint32_t DirectoryRecordSize = 32;\n";
+  const Record *wireFormat = records.getDef("CoverageWireFormat");
+  for (auto field : {std::pair{"CodecVersion", "version"},
+                     std::pair{"HeaderSize", "headerSize"},
+                     std::pair{"DirectoryRecordSize", "directoryRecordSize"},
+                     std::pair{"ChecksumSize", "checksumSize"}})
+    os << "inline constexpr uint32_t " << field.first << " = "
+       << wireFormat->getValueAsInt(field.second) << ";\n";
   os << "enum class MetricKind : uint32_t {\n";
   for (const Record *metric : sortedCoverageRecords(records, "CoverageMetric"))
     os << "  " << metric->getValueAsString("cppName") << " = "

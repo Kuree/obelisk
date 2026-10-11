@@ -148,7 +148,8 @@
 # RUN: not obelisk-cov report --format=json %t.type-conflict-a.obcov %t.type-conflict-b.obcov 2>&1 | FileCheck %s --check-prefix=TYPE-CONFLICT
 
 # INSPECT: format: obcov
-# INSPECT: codec-version: 1
+# INSPECT: codec-version: 2
+# INSPECT-NEXT: checksum: sha256-trailer
 # INSPECT: runs: 1
 # INSPECT: line-points: 3
 # INSPECT: toggle-objects: 1
