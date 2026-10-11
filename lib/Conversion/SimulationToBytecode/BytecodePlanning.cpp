@@ -12,7 +12,6 @@
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
 
-#include "mlir/Analysis/Liveness.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -180,7 +179,6 @@ LogicalResult Encoder::planFunctions() {
   for (auto [index, function] : llvm::enumerate(functions)) {
     FunctionPlan &plan = plans.emplace_back();
     plan.function = function;
-    plan.liveness = std::make_unique<Liveness>(function);
     plan.index = static_cast<uint32_t>(index);
     plan.stableID = getStableID(function);
     if (plan.stableID == 0)

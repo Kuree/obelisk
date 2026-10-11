@@ -14,7 +14,7 @@
 #include "obelisk/Analysis/SimulationVPIAnalysis.h"
 #include "obelisk/Runtime/Runtime.h"
 
-#include "mlir/Analysis/Liveness.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -531,26 +531,47 @@ LogicalResult Encoder::encodeFunctions() {
     // quadratic bytecode for large randomization dispatchers.
     DenseMap<Operation *, RootSet> liveRoots;
     DenseMap<Operation *, RootSet> liveAggregateRoots;
-    for (Block &block : plan.function.getBody()) {
-      const LivenessBlockInfo *blockInfo = plan.liveness->getLiveness(&block);
-      if (!blockInfo)
-        continue;
-      // LivenessBlockInfo::currentlyLiveValues recomputes the live range of
-      // every value in the block for every queried operation. Large UVM
-      // dispatch functions contain many allocation/call safepoints, making
-      // that convenience API quadratic. A single backwards transfer gives
-      // the same pre-operation set: discard definitions, then add operands.
-      Liveness::ValueSetT live(blockInfo->out());
-      for (Operation &operation : llvm::reverse(block)) {
-        for (Value result : operation.getResults())
-          live.erase(result);
-        for (Value operand : operation.getOperands())
-          live.insert(operand);
-        if (mayCollect(&operation)) {
-          RootSet &roots = liveRoots[&operation];
-          for (Value value : live) {
-            addRoot(roots, value);
-            addAggregateRoots(liveAggregateRoots[&operation], value);
+    // Only values holding managed roots can enter a root set, so only their
+    // liveness is needed. Find each one's live-out blocks from the blocks it
+    // is live into, rather than building every block's full live set; a
+    // function without roots needs none.
+    DenseSet<Value> rootValues;
+    for (const auto &[value, source] : plan.registers)
+      if (isManagedRoot(source) || aggregateShadows.contains(value))
+        rootValues.insert(value);
+    if (!rootValues.empty()) {
+      analysis::ValueLiveness liveness;
+      DenseMap<Block *, SmallVector<Value>> liveOutRoots;
+      for (Value value : rootValues) {
+        llvm::SmallPtrSet<Block *, 8> candidates;
+        candidates.insert(value.getParentBlock());
+        for (Block *liveIn : liveness.getLiveInBlocks(value))
+          candidates.insert(liveIn->pred_begin(), liveIn->pred_end());
+        for (Block *block : candidates)
+          if (liveness.isLiveOut(value, block))
+            liveOutRoots[block].push_back(value);
+      }
+      for (Block &block : plan.function.getBody()) {
+        // LivenessBlockInfo::currentlyLiveValues recomputes the live range of
+        // every value in the block for every queried operation. Large UVM
+        // dispatch functions contain many allocation/call safepoints, making
+        // that convenience API quadratic. A single backwards transfer gives
+        // the same pre-operation set: discard definitions, then add operands.
+        llvm::SmallPtrSet<Value, 16> live;
+        for (Value value : liveOutRoots.lookup(&block))
+          live.insert(value);
+        for (Operation &operation : llvm::reverse(block)) {
+          for (Value result : operation.getResults())
+            live.erase(result);
+          for (Value operand : operation.getOperands())
+            if (rootValues.contains(operand))
+              live.insert(operand);
+          if (mayCollect(&operation)) {
+            RootSet &roots = liveRoots[&operation];
+            for (Value value : live) {
+              addRoot(roots, value);
+              addAggregateRoots(liveAggregateRoots[&operation], value);
+            }
           }
         }
       }

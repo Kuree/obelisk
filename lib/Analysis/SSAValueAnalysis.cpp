@@ -373,7 +373,7 @@ ConstantTimeAnalysis::ConstantTimeAnalysis(sim::SimFuncOp function) {
           record(value);
   });
 }
-bool ValueLiveness::isLiveIn(Value value, Block *block) {
+const DenseSet<Block *> &ValueLiveness::getLiveInBlocks(Value value) {
   auto [found, inserted] = liveIns.try_emplace(value);
   DenseSet<Block *> &live = found->second;
   if (inserted) {
@@ -403,6 +403,17 @@ bool ValueLiveness::isLiveIn(Value value, Block *block) {
       llvm::append_range(worklist, current->getPredecessors());
     }
   }
-  return live.contains(block);
+  return live;
+}
+bool ValueLiveness::isLiveOut(Value value, Block *block) {
+  if (llvm::any_of(block->getSuccessors(), [&](Block *successor) {
+        return isLiveIn(value, successor);
+      }))
+    return true;
+  return value.getParentBlock() == block &&
+         llvm::any_of(value.getUsers(), [&](Operation *user) {
+           return block->getParent()->findAncestorBlockInRegion(
+                      *user->getBlock()) != block;
+         });
 }
 } // namespace obelisk::analysis

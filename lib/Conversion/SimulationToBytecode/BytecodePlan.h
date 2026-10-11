@@ -10,7 +10,6 @@
 #include "BytecodeLayout.h"
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
 
-#include "mlir/Analysis/Liveness.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -86,7 +85,6 @@ struct FunctionPlan {
   uint32_t twoStateLogicRegisters = 0;
   uint32_t initialScheduleRank = UINT32_MAX;
   llvm::DenseMap<mlir::Block *, uint32_t> blockScheduleRanks;
-  std::unique_ptr<mlir::Liveness> liveness;
   struct ManagedRootShadow {
     mlir::Value value;
     uint64_t bitOffset;

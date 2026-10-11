@@ -58,7 +58,13 @@ bool propagateActivationValueRoots(sim::SimFuncOp function);
 /// the IR.
 class ValueLiveness {
 public:
-  bool isLiveIn(mlir::Value value, mlir::Block *block);
+  bool isLiveIn(mlir::Value value, mlir::Block *block) {
+    return getLiveInBlocks(value).contains(block);
+  }
+  /// Matches mlir::Liveness's live-out set: the value is live into a
+  /// successor, or defined in `block` and used in another block of its region.
+  bool isLiveOut(mlir::Value value, mlir::Block *block);
+  const llvm::DenseSet<mlir::Block *> &getLiveInBlocks(mlir::Value value);
 
 private:
   llvm::DenseMap<mlir::Value, llvm::DenseSet<mlir::Block *>> liveIns;
