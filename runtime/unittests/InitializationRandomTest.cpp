@@ -214,6 +214,44 @@ TEST_F(InitializationRandomTest,
   leave(b);
 }
 
+TEST_F(InitializationRandomTest, ManualSeedReplacesInheritedThreadSequence) {
+  size_t first = add();
+  size_t second = add();
+  auto &left = context->scheduledProcesses[first];
+  auto &right = context->scheduledProcesses[second];
+  ASSERT_NE(left.random.increment, right.random.increment);
+  auto untouched = right.random;
+  auto contextState = context->random;
+  context->activeLogicalProcessToken =
+      left.token | OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  context->activeRandom = &left.random;
+  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  auto seeded = left.random;
+  same(right.random, untouched);
+  same(context->random, contextState);
+  context->activeLogicalProcessToken =
+      right.token | OBELISK_RT_LOGICAL_PROCESS_NATIVE_TAG;
+  context->activeRandom = &right.random;
+  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  same(right.random, seeded);
+
+  // Bytecode tasks use exactly the same mapping, including a running task
+  // whose stream was inherited from a different parent.
+  context->scheduledDesignTasks.emplace_back();
+  auto &task = context->scheduledDesignTasks.back();
+  task.id = 1;
+  obelisk_rt_v1_random_state_seed(&task.random, 987, 654);
+  context->activeLogicalProcessToken = task.id;
+  context->activeRandom = &task.random;
+  ASSERT_EQ(obelisk_rt_v1_random_seed(context, 123), OBELISK_RT_OK);
+  same(task.random, seeded);
+  for (unsigned index = 0; index != 16; ++index)
+    EXPECT_EQ(next(), obelisk_rt_v1_random_state_next64(&seeded));
+
+  context->activeLogicalProcessToken = 0;
+  context->activeRandom = nullptr;
+}
+
 TEST_F(InitializationRandomTest, MalformedBindingsDoNotChangeTheActiveStream) {
   uint64_t activation = 999;
   auto before = context->random;

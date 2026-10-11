@@ -1536,7 +1536,7 @@
         {
           "feature": "Urandom unsigned return and optional seed",
           "status": "supported",
-          "detail": "$urandom supports zero arguments and a seed argument and uses the active process stream."
+          "detail": "$urandom supports zero arguments and an optional integral seed. Explicit seeding replaces both PCG state words with the same canonical mapping as process::srandom, so equal seeds determine equal sequences across independently inherited thread streams, including negative 32-bit seeds and repeated seeding."
         }
       ],
       "evidence": {
@@ -1544,11 +1544,14 @@
           "runtime/lib/Random.cpp",
           "runtime/lib/Process.cpp",
           "runtime/lib/Runtime.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitSystemCalls.cpp"
         ],
         "tests": [
           "test/Conversion/simulation-lower-random-seed.mlir",
-          "test/Conversion/simulation-process-random-state.mlir"
+          "test/Conversion/simulation-process-random-state.mlir",
+          "runtime/unittests/InitializationRandomTest.cpp",
+          "test/Runtime/obelisk-to-simulation-random-manual-seed-runtime.mlir"
         ]
       }
     },
@@ -1728,7 +1731,8 @@
         "tests": [
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-manual-seed-runtime.mlir"
         ]
       }
     },

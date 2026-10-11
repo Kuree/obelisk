@@ -254,8 +254,10 @@ obelisk_rt_v1_random_seed(obelisk_rt_context *context, uint64_t seed) {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     obelisk_rt_random_state_v1 *state =
         obelisk_rt_random_active_state_unlocked(context);
-    uint64_t sequence = state->increment >> 1;
-    obelisk_rt_v1_random_state_seed(state, seed, sequence);
+    // IEEE 1800-2023 18.13.1 makes an explicit seed determine the complete
+    // sequence, independent of this thread's inherited stream selector. Use
+    // the same canonical mapping as object and process srandom().
+    obelisk_rt_v1_random_state_seed(state, seed, kDefaultSequence);
     return OBELISK_RT_OK;
   }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
