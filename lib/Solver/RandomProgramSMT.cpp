@@ -1004,8 +1004,25 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       default:
         return std::nullopt;
       }
-      stack.push_back(
-          booleanValue(builder, location, predicate, lhs.instructionBegin));
+      StackValue combined =
+          booleanValue(builder, location, predicate, lhs.instructionBegin);
+      if (opcode == OBELISK_RT_RANDOM_LOGICAL_AND_V1) {
+        // Conjoining definedness does not weaken a direct equality or bound.
+        // Retain an unambiguous candidate; Z3 still proves it from the complete
+        // hard formula before generating a structural sampling proposal.
+        if (bool(lhs.directDefinition) != bool(rhs.directDefinition))
+          combined.directDefinition = lhs.directDefinition
+                                          ? lhs.directDefinition
+                                          : rhs.directDefinition;
+        if (bool(lhs.directEquality) != bool(rhs.directEquality))
+          combined.directEquality =
+              lhs.directEquality ? lhs.directEquality : rhs.directEquality;
+        if (bool(lhs.directCaptureBound) != bool(rhs.directCaptureBound))
+          combined.directCaptureBound = lhs.directCaptureBound
+                                            ? lhs.directCaptureBound
+                                            : rhs.directCaptureBound;
+      }
+      stack.push_back(std::move(combined));
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_SHIFT_LEFT_V1 ||

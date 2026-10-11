@@ -625,6 +625,7 @@ private:
     if (type)
       state.addAttribute("semantic_type", type);
     state.addAttribute("node_id", source->getAttr("node_id"));
+    state.addAttribute(randomFunctionExpressionAttrName, builder.getUnitAttr());
     state.addAttributes(attributes);
     auto *region = state.addRegion();
     region->push_back(new Block());
@@ -907,6 +908,7 @@ private:
                    ? FailureOr<Operation *>(value)
                    : FailureOr<Operation *>(failure());
     Operation *cloned = source->cloneWithoutRegions();
+    cloned->setAttr(randomFunctionExpressionAttrName, builder.getUnitAttr());
     for (auto [sourceRegion, clonedRegion] :
          llvm::zip_equal(source->getRegions(), cloned->getRegions())) {
       for (Block &block : sourceRegion) {

@@ -886,9 +886,12 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
   // Integral power always produces a four-state result. Normalize its base to
   // that result plane even when the source operand was two-state so the
   // expansion below also serves generated constraint checkers.
-  if (kind == Binary::Power && isa<sim::LogicType>(scalarResultType) &&
-      !isa<sim::LogicType>((*lhs).getType())) {
-    lhs = convert(*lhs, scalarResultType, signedOp, location);
+  if (kind == Binary::Power && !isa<sim::LogicType>((*lhs).getType())) {
+    auto width = sim::getPackedWidth(scalarResultType);
+    if (!width)
+      return failure();
+    lhs = convert(*lhs, sim::LogicType::get(function.getContext(), *width),
+                  signedOp, location);
     if (failed(lhs))
       return failure();
   }

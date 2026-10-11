@@ -49,16 +49,17 @@
 // CHECK: %[[LIVE_BLOCK_MODE_REF:.*]] = simulation.class.field_ref {{.*}}[@{{.*}}__obelisk_constraint_mode]
 // CHECK: %[[LIVE_BLOCK_MODES:.*]] = simulation.managed.load %[[LIVE_BLOCK_MODE_REF]]
 // CHECK: %[[RELEVANT_MODE:.*]] = arith.andi
-// CHECK: %[[ALL_PROPERTIES_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c0_i64.*}} : i64
-// CHECK: %[[ALL_DISABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c1_i64.*}} : i64
-// CHECK: %[[RELEVANT_BLOCK_MODES:.*]] = arith.andi %[[LIVE_BLOCK_MODES]], %{{c1_i64.*}} : i64
-// CHECK: %[[ALL_BLOCKS_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_BLOCK_MODES]], %{{c0_i64.*}} : i64
+// CHECK-DAG: %[[ALL_PROPERTIES_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c0_i64.*}} : i64
+// CHECK-DAG: %[[ALL_DISABLED:.*]] = arith.cmpi eq, %[[RELEVANT_MODE]], %{{c1_i64.*}} : i64
+// CHECK-DAG: %[[RELEVANT_BLOCK_MODES:.*]] = arith.andi %[[LIVE_BLOCK_MODES]], %{{c1_i64.*}} : i64
+// CHECK-DAG: %[[ALL_BLOCKS_ENABLED:.*]] = arith.cmpi eq, %[[RELEVANT_BLOCK_MODES]], %{{c0_i64.*}} : i64
 // CHECK: arith.select
+// CHECK: simulation.ref.load %[[LIMIT_ARG]]
 // CHECK: cf.cond_br %[[ALL_DISABLED]]
 // CHECK: arith.muli
-// CHECK: %[[USE_PLAN:.*]] = arith.andi %[[ALL_BLOCKS_ENABLED]], %[[ALL_PROPERTIES_ENABLED]] : i1
-// CHECK: cf.cond_br %[[USE_PLAN]]
-// CHECK: simulation.managed.store
+// The creation guard has already excluded the all-frozen path, so the
+// optimized proposal needs only the live constraint-block check here.
+// CHECK: cf.cond_br %[[ALL_BLOCKS_ENABLED]]
 // CHECK: arith.cmpi slt
 // CHECK: arith.ori
 // CHECK: arith.cmpi sgt
@@ -67,7 +68,6 @@
 // CHECK: arith.cmpi eq
 // CHECK: arith.cmpi sge
 // CHECK: arith.cmpi sle
-// CHECK: simulation.ref.load %[[LIMIT_ARG]]
 // CHECK: cf.cond_br
 // CHECK: arith.cmpi uge
 // CHECK: simulation.random.solve {{.*}} mutable {{.*}} constraints %[[RELEVANT_BLOCK_MODES]]

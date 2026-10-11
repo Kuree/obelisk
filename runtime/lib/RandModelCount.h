@@ -203,7 +203,7 @@ public:
   /// retain the exact Boolean plan. Runtime sampling never truncates a count.
   bool prepareDiagram(random::BooleanCircuit::ID predicate, size_t budget,
                       size_t circuitBudget) {
-    return convert(predicate, root, budget, circuitBudget);
+    return convertConstrained(predicate, root, budget, circuitBudget);
   }
 
   /// Re-encode a completed decision diagram using the original named inputs.
@@ -230,7 +230,7 @@ public:
     if (std::find(fixed.begin(), fixed.end(), true) != fixed.end())
       predicate = circuit->restrict(predicate, fixedValues, fixed);
     ID relation = 0;
-    if (!convert(predicate, relation))
+    if (!convertConstrained(predicate, relation))
       return false;
     root = conjunction(root, relation);
     restrict(fixedValues, fixed);
@@ -462,6 +462,75 @@ private:
   ID disjunction(ID a, ID b) { return conditional(a, 1, b); }
   ID negate(ID a) { return conditional(a, 0, 1); }
   ID exclusiveOr(ID a, ID b) { return conditional(a, negate(b), b); }
+
+  /// Substitute mandatory literals before branching through arithmetic gates.
+  /// A positive AND forces both children; a negated AND does not. Restore the
+  /// literals in the diagram so counting, projection and weighted intersections
+  /// retain exactly the original relation and the same input inventory.
+  bool convertConstrained(random::BooleanCircuit::ID predicate, ID &result,
+                          size_t budget = 0, size_t circuitBudget = 0) {
+    using CircuitID = random::BooleanCircuit::ID;
+    auto found = circuits.find(predicate);
+    if (found != circuits.end()) {
+      result = found->second;
+      return true;
+    }
+    std::vector<bool> selected(variableCount, false);
+    std::vector<bool> values(variableCount, false);
+    CircuitID remaining = predicate;
+    for (;;) {
+      bool changed = false;
+      std::vector<bool> visited(circuit->getNodes().size(), false);
+      std::vector<CircuitID> pending{remaining};
+      while (!pending.empty()) {
+        if ((budget && --budget == 0) ||
+            (circuitBudget && circuit->getNodes().size() > circuitBudget))
+          return false;
+        CircuitID id = pending.back();
+        pending.pop_back();
+        if (id == 0) {
+          result = 0;
+          circuits.emplace(predicate, 0);
+          return true;
+        }
+        if (id == 1 || visited[id / 2])
+          continue;
+        auto node = circuit->getNodes()[id / 2];
+        // Opposite polarities of an AND have different implications. Mark
+        // only the positive occurrence, which is the one we can decompose.
+        if (node.opcode == random::PlanOpcode::And && !(id & 1)) {
+          visited[id / 2] = true;
+          pending.push_back(node.a);
+          pending.push_back(node.b);
+        } else if (node.opcode == random::PlanOpcode::RandomBit) {
+          if (node.b >= variableCount)
+            return false;
+          bool value = !(id & 1);
+          if (selected[node.b] && values[node.b] != value) {
+            result = 0;
+            circuits.emplace(predicate, 0);
+            return true;
+          }
+          changed |= !selected[node.b];
+          selected[node.b] = true;
+          values[node.b] = value;
+        }
+      }
+      if (!changed)
+        break;
+      remaining = circuit->restrict(remaining, values, selected);
+    }
+    if (!convert(remaining, result, budget, circuitBudget))
+      return false;
+    ID literals = 1;
+    for (size_t variable = variableCount; variable-- != 0;)
+      if (selected[variable])
+        literals = values[variable] ? makeNode(variable, 0, literals)
+                                    : makeNode(variable, literals, 0);
+    result = conjunction(result, literals);
+    circuits.emplace(predicate, result);
+    return true;
+  }
 
   // Shannon-expand the final predicate, simplifying each cofactor in the
   // compiler's AND graph. Constructing arithmetic BDDs one gate at a time can

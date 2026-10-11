@@ -336,6 +336,8 @@ inline constexpr ::mlir::StringLiteral randomEvaluationInputsAttrName =
     "simulation.random_evaluation_inputs";
 inline constexpr ::mlir::StringLiteral randomFunctionConditionalAttrName =
     "simulation.random_function_conditional";
+inline constexpr ::mlir::StringLiteral randomFunctionExpressionAttrName =
+    "simulation.random_function_expression";
 
 /// Total, side-effect-free integral system functions encoded by the random
 /// program. Unlike user functions, these do not introduce implicit solve

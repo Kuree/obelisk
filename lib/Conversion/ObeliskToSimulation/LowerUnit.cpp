@@ -2609,6 +2609,12 @@ static bool fillsWidenedUnknown(Operation *source, Type targetType) {
 // common unsigned binary or case context must be zero-extended), unlike an
 // ordinary assignment conversion, which extends according to the source.
 FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
+  // Safe constraint evaluation may have supplied this conversion's complete
+  // value, including an unknown-plane projection. Re-entering its operand
+  // would bypass that value and could repeat a guarded read.
+  if (auto captured = expressionCaptures.find(op);
+      captured != expressionCaptures.end())
+    return captured->second;
   auto conversion = dyn_cast<semantic::SVConversionExpressionOp>(op);
   SmallVector<Operation *> children =
       conversion ? getChildren(conversion) : SmallVector<Operation *>{};

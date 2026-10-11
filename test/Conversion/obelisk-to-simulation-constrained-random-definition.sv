@@ -7,18 +7,10 @@
 // DEFINITION-LABEL: simulation.func private @unit_1
 // DEFINITION: %[[RAW:.*]] = arith.andi {{.*}}, {{.*}} : i64
 // DEFINITION: ^bb{{[0-9]+}}(%{{.*}}: i64, %{{.*}}: i64, %{{.*}}: i64):
-// Definition expressions use total fixed-width arithmetic in the generated
-// proposal. The guarded shift amount avoids arith shift poison, and power is
-// expanded into modular multiplication rather than left for the runtime.
-// DEFINITION-DAG: arith.divui
-// DEFINITION-DAG: arith.cmpi uge
-// DEFINITION-DAG: arith.select
-// DEFINITION-DAG: arith.remui
-// DEFINITION-DAG: arith.muli
-// DEFINITION-DAG: arith.shrui
-// Multiple non-pattern ternary predicates are converted to booleans and
-// combined before selecting either value.
-// DEFINITION-DAG: arith.cmpi ne
+// Z3 can remove the nested division/modulus/power comparison through complete
+// assignment tables or constrained domains. Check the remaining materialized
+// packing definitions without requiring arithmetic that compilation proved
+// unnecessary. Runtime arithmetic semantics have separate MLIR coverage.
 // The copy alias is fed from the already materialized x definition. The flag
 // definition above reads that same canonical alias representative.
 // DEFINITION-DAG: arith.shli {{.*}}, {{.*}} : i64
@@ -28,12 +20,8 @@
 // DEFINITION-DAG: arith.shli {{.*}}, %{{c2_i64.*}} : i64
 // DEFINITION-DAG: arith.ori
 // DEFINITION-DAG: arith.muli {{.*}}, %{{c5_i64.*}} : i64
-// DEFINITION: simulation.random.solve {{.*}} mutable
-// DEFINITION: simulation.managed.store
-// DEFINITION: simulation.managed.store
-// DEFINITION: simulation.managed.store
-// The generated retry path retains both solver attempts after materializing
-// the definition proposal.
+// Both retry attempts remain available before committing the materialized
+// definition proposal.
 // DEFINITION-COUNT-2: simulation.random.solve {{.*}} mutable
 // DEFINITION: simulation.managed.store
 // DEFINITION: simulation.managed.store

@@ -146,7 +146,9 @@
           "runtime/lib/RandModelCount.h",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
-          "runtime/include/obelisk/Runtime/RandomDomain.h"
+          "runtime/include/obelisk/Runtime/RandomDomain.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -184,7 +186,12 @@
           "test/Runtime/random-sampler-plan-validation.mlir",
           "test/Build/runtime-compiled-sampler.test",
           "test/Conversion/obelisk-to-simulation-random-wide-enum-domains.mlir",
-          "test/Runtime/random-wide-domain-plan-validation.mlir"
+          "test/Runtime/random-wide-domain-plan-validation.mlir",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
         ]
       }
     },
@@ -350,7 +357,7 @@
         {
           "feature": "Division, exponentiation, and system calls",
           "status": "partial",
-          "detail": "Division needs a known nonzero divisor; dynamic signed exponents and general system functions are not admitted."
+          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. General system functions, mixed unknown-plane selections and frozen random operands remain open."
         },
         {
           "feature": "Named and multiple constraint blocks",
@@ -368,7 +375,10 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
+          "runtime/lib/RandModelCount.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -402,7 +412,12 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
           "test/Runtime/random-sampler-plan-validation.mlir",
-          "test/Build/runtime-compiled-sampler.test"
+          "test/Build/runtime-compiled-sampler.test",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
         ]
       }
     },
@@ -997,7 +1012,7 @@
         {
           "feature": "Integral system functions",
           "status": "partial",
-          "detail": "Signedness casts, clog2, countones, onehot, onehot0, and countbits lower to the same unsigned bit-vector operations in Z3, native, WASM, and narrow/wide residual programs. Candidate bits are two-state; mixed unknown-plane captures and other system functions remain open."
+          "detail": "Signedness casts, clog2, countones, onehot, onehot0, and countbits participate in compiler Z3 plans and native/WASM execution. Value and unknown planes also support isunknown and bit counting for admitted undefined arithmetic and packed state captures; X/Z countbits control constants remain legal. General mixed unknown-plane system functions remain open."
         },
         {
           "feature": "Scope-randomization user functions",
@@ -1017,7 +1032,10 @@
           "runtime/lib/RandSolveOrder.h",
           "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
+          "runtime/lib/RandModelCount.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-functions.mlir",
@@ -1046,7 +1064,12 @@
           "test/Runtime/obelisk-to-simulation-random-scope-function-case-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-case-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-scope-function-case-wide-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-function-case-diagnostics.mlir"
+          "test/Conversion/obelisk-to-simulation-random-function-case-diagnostics.mlir",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
         ]
       }
     },
@@ -1075,7 +1098,10 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
+          "runtime/lib/RandModelCount.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -1108,7 +1134,12 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
         ]
       }
     },

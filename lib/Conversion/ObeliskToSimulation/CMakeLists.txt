@@ -22,6 +22,7 @@ add_mlir_library(ObeliskToSimulation
   LowerUnitPlaSystemCalls.cpp
   LowerUnitRealConversionSystemCalls.cpp
   LowerUnitRandomize.cpp
+  RandomArithmetic.cpp
   LowerUnitRealMathSystemCalls.cpp
   LowerUnitScanSystemCalls.cpp
   LowerUnitSystemCalls.cpp

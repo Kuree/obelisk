@@ -8,6 +8,7 @@
 
 #include "LowerUnit.h"
 #include "PrepareRandomFunctions.h"
+#include "RandomArithmetic.h"
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -3445,18 +3446,43 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     instruction(opcode, width, signedOperation);
     return success();
   };
+  // Compiler Z3 receives canonical value bits and independent unknown planes.
+  // The target samples Boolean plans; it never reconstructs SV arithmetic.
+  RandomArithmetic arithmetic(builder.getContext(), expressionWidth,
+                              dependsOnCandidate);
+  bool arithmeticFailure = false;
+  auto arithmeticValidity = [&](Operation *expression) -> Operation * {
+    if (isa<semantic::SVDistExpressionOp>(expression))
+      return nullptr;
+    auto known = arithmetic.known(expression);
+    if (failed(known)) {
+      arithmeticFailure = true;
+      return nullptr;
+    }
+    return *known;
+  };
   struct SafeConstraintValue {
     Value value;
     Value valid;
     Value random;
     Value inputs;
     Value arguments;
+    Value errors;
   };
   std::function<FailureOr<SafeConstraintValue>(Operation *)>
       safeConstraintValue;
   std::function<FailureOr<Value>(Operation *)> constraintCreationValid;
   std::function<LogicalResult(Operation *)> emitProgramExpression;
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
+    if (arithmeticFailure)
+      return failure();
+    if (!isa<semantic::SVDistExpressionOp>(expression) &&
+        arithmetic.needed(expression)) {
+      auto planes = arithmetic.get(expression);
+      if (failed(planes))
+        return failure();
+      return emitProgramExpression(planes->value);
+    }
     if (auto inputs = expression->getAttrOfType<IntegerAttr>(
             randomEvaluationInputsAttrName)) {
       auto nested = getChildren(expression);
@@ -4408,7 +4434,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 semantic::SVCallExpressionOp>(nestedExpression))
           hasRuntimeInput = true;
       });
-      if (!dependsOnCandidate(expression) && hasRuntimeInput)
+      if (!dependsOnCandidate(expression) && hasRuntimeInput &&
+          (!expression->hasAttr(randomArithmeticNodeAttr) ||
+           expression->hasAttr(randomArithmeticPlaneAttr)))
         return captureExpression();
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
         return failure();
@@ -4416,7 +4444,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                   isSignedNode(nested.front()));
       return success();
     }
-    if (!dependsOnCandidate(expression))
+    // Compiler arithmetic nodes remain structural even when their operands
+    // are constant or state-only. Only the original state leaves and raw
+    // unknown-plane projections become parameters of the Z3 plan.
+    if (!dependsOnCandidate(expression) &&
+        !expression->hasAttr(randomArithmeticNodeAttr))
       return captureExpression();
 
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
@@ -4591,12 +4623,76 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return success();
     }
     if (auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(expression)) {
+      using Binary = semantic::SVBinaryOperator;
+      if (nested.size() != 2)
+        return failure();
+      bool signedBase = isSignedNode(nested[0]);
+      if (binary.getOperatorKind() == Binary::Divide ||
+          binary.getOperatorKind() == Binary::Mod) {
+        // Undefined arithmetic was normalized above. Its value plane already
+        // has a nonzero divisor; a known nonzero source needs no normalization.
+        if (failed(emitProgramExpression(nested[0])) ||
+            failed(emitProgramExpression(nested[1])))
+          return failure();
+        instruction(binary.getOperatorKind() == Binary::Divide
+                        ? OBELISK_RT_RANDOM_DIV_V1
+                        : OBELISK_RT_RANDOM_MOD_V1,
+                    *width, signedBase);
+        return success();
+      }
+      if (binary.getOperatorKind() == Binary::Power &&
+          isSignedNode(nested[1])) {
+        auto exponentWidth = expressionWidth(nested[1]);
+        if (failed(exponentWidth))
+          return failure();
+        auto emitNegative = [&]() -> LogicalResult {
+          if (failed(emitProgramExpression(nested[1])))
+            return failure();
+          literalInstruction(*exponentWidth, true, APInt(*exponentWidth, 0));
+          instruction(OBELISK_RT_RANDOM_LT_V1, 1, true);
+          return success();
+        };
+        auto emitBaseEquals = [&](const APInt &value) -> LogicalResult {
+          if (failed(emitProgramExpression(nested[0])))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_CAST_V1, *width, signedBase);
+          literalInstruction(*width, false, value);
+          instruction(OBELISK_RT_RANDOM_EQ_V1, 1);
+          return success();
+        };
+        if (failed(emitNegative()) || failed(emitBaseEquals(APInt(*width, 1))))
+          return failure();
+        literalInstruction(*width, false, APInt(*width, 1));
+        if (signedBase) {
+          if (failed(emitBaseEquals(APInt::getAllOnes(*width))) ||
+              failed(emitProgramExpression(nested[1])))
+            return failure();
+          literalInstruction(*exponentWidth, false, APInt(*exponentWidth, 1));
+          instruction(OBELISK_RT_RANDOM_BIT_AND_V1, *exponentWidth);
+          literalInstruction(*width, false, APInt::getAllOnes(*width));
+          literalInstruction(*width, false, APInt(*width, 1));
+          instruction(OBELISK_RT_RANDOM_SELECT_V1, *width);
+          literalInstruction(*width, false, APInt(*width, 0));
+          instruction(OBELISK_RT_RANDOM_SELECT_V1, *width);
+        } else {
+          literalInstruction(*width, false, APInt(*width, 0));
+        }
+        instruction(OBELISK_RT_RANDOM_SELECT_V1, *width);
+        if (failed(emitProgramExpression(nested[0])) || failed(emitNegative()))
+          return failure();
+        literalInstruction(*exponentWidth, false, APInt(*exponentWidth, 0));
+        if (failed(emitProgramExpression(nested[1])))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_SELECT_V1, *exponentWidth);
+        instruction(OBELISK_RT_RANDOM_POWER_V1, *width, signedBase);
+        instruction(OBELISK_RT_RANDOM_SELECT_V1, *width);
+        return success();
+      }
       if (nested.size() != 2 || failed(emitProgramExpression(nested[0])) ||
           failed(emitProgramExpression(nested[1])))
         return failure();
       uint8_t opcode = 0;
       bool signedOperation = isSignedNode(nested.front());
-      using Binary = semantic::SVBinaryOperator;
       switch (binary.getOperatorKind()) {
       case Binary::Add:
         opcode = OBELISK_RT_RANDOM_ADD_V1;
@@ -4607,27 +4703,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       case Binary::Multiply:
         opcode = OBELISK_RT_RANDOM_MUL_V1;
         break;
-      case Binary::Divide:
-      case Binary::Mod: {
-        FailureOr<unsigned> divisorWidth = expressionWidth(nested[1]);
-        std::optional<StringRef> spelling = getConstantSpelling(nested[1]);
-        FailureOr<ParsedConstant> divisor =
-            succeeded(divisorWidth) && spelling
-                ? parseSVInteger(*spelling, *divisorWidth,
-                                 getSemanticLocation(nested[1]))
-                : FailureOr<ParsedConstant>(failure());
-        if (failed(divisor) || !divisor->unknown.isZero() ||
-            divisor->value.isZero()) {
-          emitError(getSemanticLocation(expression))
-              << "runtime random division and modulo require a statically "
-                 "nonzero divisor";
-          return failure();
-        }
-        opcode = binary.getOperatorKind() == Binary::Divide
-                     ? OBELISK_RT_RANDOM_DIV_V1
-                     : OBELISK_RT_RANDOM_MOD_V1;
-        break;
-      }
       case Binary::BinaryAnd:
         opcode = OBELISK_RT_RANDOM_BIT_AND_V1;
         break;
@@ -4687,22 +4762,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                      : OBELISK_RT_RANDOM_SHIFT_RIGHT_V1;
         break;
       case Binary::Power:
-        if (isSignedNode(nested[1])) {
-          FailureOr<unsigned> exponentWidth = expressionWidth(nested[1]);
-          std::optional<StringRef> spelling = getConstantSpelling(nested[1]);
-          FailureOr<ParsedConstant> exponent =
-              succeeded(exponentWidth) && spelling
-                  ? parseSVInteger(*spelling, *exponentWidth,
-                                   getSemanticLocation(nested[1]))
-                  : FailureOr<ParsedConstant>(failure());
-          if (failed(exponent) || !exponent->unknown.isZero() ||
-              exponent->value.isNegative()) {
-            emitError(getSemanticLocation(expression))
-                << "runtime random integral power requires an unsigned or "
-                   "statically nonnegative exponent";
-            return failure();
-          }
-        }
         opcode = OBELISK_RT_RANDOM_POWER_V1;
         break;
       default:
@@ -4860,6 +4919,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Operation *priorityHardTarget = nullptr;
   emitProgramConstraint = [&](Operation *constraint,
                               Operation *softTarget) -> LogicalResult {
+    if (arithmeticFailure)
+      return failure();
     SmallVector<Operation *> nested = getChildren(constraint);
     if (isa<semantic::SVConstraintListOp>(constraint)) {
       if (nested.empty()) {
@@ -4886,18 +4947,56 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                  : !expression.getIsSoft() &&
                                        (!priorityHardTarget ||
                                         priorityHardTarget == constraint);
-      if (!selected) {
+      if (nested.size() != 1)
+        return failure();
+      Operation *valid = arithmeticValidity(nested.front());
+      bool safetyOnly =
+          !softTarget && expression.getIsSoft() && valid &&
+          (!priorityHardTarget || priorityHardTarget == constraint);
+      if (!selected && !safetyOnly) {
         emitLiteral(true);
         return success();
       }
-      return nested.size() == 1 ? emitProgramExpression(nested.front())
-                                : failure();
+      if (safetyOnly)
+        return emitProgramExpression(valid);
+      auto equality = dyn_cast<semantic::SVBinaryExpressionOp>(nested.front());
+      if (equality &&
+          equality.getOperatorKind() == semantic::SVBinaryOperator::Equality &&
+          arithmetic.needed(equality)) {
+        // A true equality requires equal canonical value bits and a known
+        // result. Keep its direct definition visible to compiler Z3; encoding
+        // the three-valued comparison as one masked Boolean hides that shape.
+        auto operands = getChildren(equality);
+        if (operands.size() != 2)
+          return failure();
+        auto left = arithmetic.get(operands[0]);
+        auto right = arithmetic.get(operands[1]);
+        if (failed(left) || failed(right) ||
+            failed(emitProgramExpression(left->value)) ||
+            failed(emitProgramExpression(right->value)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_EQ_V1, 1, isSignedNode(operands[0]));
+      } else if (failed(emitProgramExpression(nested.front())))
+        return failure();
+      if (valid) {
+        if (failed(emitProgramExpression(valid)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+      }
+      return success();
     }
     if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
       if (nested.size() != 2 || failed(emitProgramExpression(nested[0])) ||
           failed(emitProgramConstraint(nested[1], softTarget)))
         return failure();
       instruction(OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1);
+      if (!softTarget &&
+          (!priorityHardTarget || priorityHardTarget == constraint))
+        if (Operation *valid = arithmeticValidity(nested.front())) {
+          if (failed(emitProgramExpression(valid)))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        }
       return success();
     }
     if (auto conditional =
@@ -4913,6 +5012,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         emitLiteral(true);
       }
       instruction(OBELISK_RT_RANDOM_SELECT_V1, 1);
+      if (!softTarget &&
+          (!priorityHardTarget || priorityHardTarget == constraint))
+        if (Operation *valid = arithmeticValidity(nested.front())) {
+          if (failed(emitProgramExpression(valid)))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        }
       return success();
     }
     if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
@@ -4934,6 +5040,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
       if (first)
         emitLiteral(true);
+      for (Operation *operand : nested)
+        if (Operation *valid = arithmeticValidity(operand)) {
+          if (failed(emitProgramExpression(valid)))
+            return failure();
+          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+        }
       return success();
     }
     if (isa<semantic::SVForeachConstraintOp>(constraint)) {
@@ -5194,6 +5306,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   llvm::DenseMap<Operation *, SafeConstraintValue> safeStateValues;
   bool freezeSafeStateValues = true;
+  bool preserveArithmeticSource = false;
   llvm::SmallDenseSet<Value> nonNullReceivers;
   for (Value object = receiver; object;) {
     nonNullReceivers.insert(object);
@@ -5203,7 +5316,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   safeConstraintValue =
       [&](Operation *expression) -> FailureOr<SafeConstraintValue> {
     bool candidate = dependsOnCandidate(expression);
-    if (!candidate)
+    if (!candidate && !preserveArithmeticSource)
       if (auto found = safeStateValues.find(expression);
           found != safeStateValues.end())
         return found->second;
@@ -5211,6 +5324,46 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(resultType))
       return failure();
     SmallVector<Operation *> operands = getChildren(expression);
+    if (auto plane =
+            expression->getAttrOfType<IntegerAttr>(randomArithmeticPlaneAttr)) {
+      if (operands.size() != 1 || (plane.getInt() != 0 && plane.getInt() != 1))
+        return failure();
+      bool saved = preserveArithmeticSource;
+      preserveArithmeticSource = true;
+      auto input = safeConstraintValue(operands.front());
+      preserveArithmeticSource = saved;
+      auto scalar = succeeded(input) ? toRandomScalar(input->value, location)
+                                     : FailureOr<Value>(failure());
+      if (failed(scalar))
+        return failure();
+      Type bitsType = sim::getPackedScalarType(*resultType);
+      Value value;
+      if (auto logic = dyn_cast<sim::LogicType>(scalar->getType())) {
+        Value bits =
+            sim::SimLogicToBitsOp::create(builder, location, bitsType, *scalar);
+        if (plane.getInt() == 0)
+          value = bits;
+        else {
+          Value known =
+              sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+          value = sim::SimLogicCaseDifferenceMaskOp::create(
+              builder, location, bitsType, *scalar, known);
+        }
+      } else {
+        auto converted = convert(*scalar, bitsType, false, location);
+        if (failed(converted))
+          return failure();
+        value =
+            plane.getInt() == 0
+                ? *converted
+                : arith::ConstantOp::create(builder, location, bitsType,
+                                            builder.getIntegerAttr(bitsType, 0))
+                      .getResult();
+      }
+      return SafeConstraintValue{
+          value,         input->errors,    input->random,
+          input->inputs, input->arguments, input->errors};
+    }
     SmallVector<Operation *> inputs;
     for (Operation *operand : operands) {
       if (isa<semantic::SVNullLiteralOp>(operand)) {
@@ -5226,12 +5379,35 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     SmallVector<SafeConstraintValue> values;
     Value valid = guardConstant(true);
-    for (Operation *input : inputs) {
-      FailureOr<SafeConstraintValue> value = safeConstraintValue(input);
-      if (failed(value))
-        return failure();
-      values.push_back(*value);
-      valid = guardAnd(valid, value->valid);
+    Value errors = guardConstant(true);
+    auto caseComparison = dyn_cast<semantic::SVBinaryExpressionOp>(expression);
+    bool consumesSymbols =
+        caseComparison && (caseComparison.getOperatorKind() ==
+                               semantic::SVBinaryOperator::CaseEquality ||
+                           caseComparison.getOperatorKind() ==
+                               semantic::SVBinaryOperator::CaseInequality);
+    {
+      bool saved = preserveArithmeticSource;
+      auto restore =
+          llvm::scope_exit([&] { preserveArithmeticSource = saved; });
+      preserveArithmeticSource |= consumesSymbols;
+      for (Operation *input : inputs) {
+        FailureOr<SafeConstraintValue> value = safeConstraintValue(input);
+        if (failed(value))
+          return failure();
+        values.push_back(*value);
+        valid = guardAnd(valid, value->valid);
+        errors = guardAnd(errors, value->errors);
+      }
+    }
+    if (consumesSymbols)
+      valid = errors;
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
+        call && call.getIsSystemCall() &&
+        call.getCalleeName() == "$countbits" && !values.empty()) {
+      // X/Z controls are legal constant symbol selectors, rather than
+      // unknown data values. Their structural evaluation must still succeed.
+      valid = guardAnd(values.front().valid, errors);
     }
     APInt inputMask = priorityInputs(expression);
     Value guardInputs = constantAssignment(inputMask);
@@ -5256,13 +5432,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         conditional.getConditionPatternFlags().size() == 1 &&
         conditional.getConditionPatternFlags().front() == 0 &&
         !values.empty() &&
-        isa<IntegerType>(sim::getPackedScalarType(values[0].value.getType()))) {
+        sim::getPackedScalarType(values[0].value.getType())) {
       if (values.size() != 3)
         return failure();
       if (expression->hasAttr(randomFunctionConditionalAttrName) &&
           !matchPattern(values[0].random, m_Zero()) &&
-          (!matchPattern(values[1].valid, m_One()) ||
-           !matchPattern(values[2].valid, m_One()))) {
+          (!matchPattern(values[1].errors, m_One()) ||
+           !matchPattern(values[2].errors, m_One()))) {
         emitError(getSemanticLocation(expression))
             << "candidate-conditioned constraint function evaluation errors "
                "require staged function execution";
@@ -5277,6 +5453,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       valid = guardAnd(values[0].valid,
                        guardAnd(guardOr(*falseGuard, values[1].valid),
                                 guardOr(*trueGuard, values[2].valid)));
+      errors = guardAnd(values[0].errors,
+                        guardAnd(guardOr(*falseGuard, values[1].errors),
+                                 guardOr(*trueGuard, values[2].errors)));
       random = guardAnd(
           valid, guardOr(values[0].random,
                          guardOr(guardAnd(yesEnabled, values[1].random),
@@ -5307,6 +5486,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (failed(converted))
         return failure();
       result = *converted;
+      // Expanded function evaluation retains errors in every executed input.
+      // An unused four-state value does not taint a known function result.
+      valid = guardAnd(errors, values.back().valid);
     } else if (binary && (binary.getOperatorKind() ==
                               semantic::SVBinaryOperator::LogicalAnd ||
                           binary.getOperatorKind() ==
@@ -5324,6 +5506,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       Value absorbs = guardOr(*lhsAbsorbs, *rhsAbsorbs);
       valid = guardOr(absorbs, valid);
+      errors = guardOr(absorbs, errors);
       random = guardAnd(
           guardNot(absorbs),
           guardAnd(valid, guardOr(values[0].random, values[1].random)));
@@ -5380,15 +5563,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // Capture each address operand once. Runtime reads of a null member or
       // an invalid element occur only on the valid edge; the other edge carries
       // a typed dummy and ERROR, allowing the guard algebra to sift it safely.
-      if (expression->hasAttr(randomEvaluationErrorAttrName))
+      auto requireSafeRead = [&](Value condition) {
+        valid = guardAnd(valid, condition);
+        errors = guardAnd(errors, condition);
+      };
+      if (expression->hasAttr(randomEvaluationErrorAttrName)) {
         valid = guardConstant(false);
+        errors = guardConstant(false);
+      }
       if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
           !values.empty() && expression->hasAttr("simulation.class_field") &&
           isa<sim::ClassHandleType>(values.front().value.getType()) &&
           !nonNullReceivers.contains(values.front().value)) {
         Value isNull = sim::SimManagedIsNullOp::create(
             builder, location, builder.getI1Type(), values.front().value);
-        valid = guardAnd(valid, guardNot(isNull));
+        requireSafeRead(guardNot(isNull));
       }
       if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
           !values.empty() && !dependsOnCandidate(inputs.front())) {
@@ -5402,10 +5591,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               expression->getAttrOfType<IntegerAttr>("field_ordinal");
           if (!ordinal || ordinal.getValue().getActiveBits() > 32)
             return failure();
-          valid = guardAnd(valid, sim::SimUnionIsActiveOp::create(
-                                      builder, location, builder.getI1Type(),
-                                      values.front().value,
-                                      ordinal.getValue().getZExtValue()));
+          requireSafeRead(sim::SimUnionIsActiveOp::create(
+              builder, location, builder.getI1Type(), values.front().value,
+              ordinal.getValue().getZExtValue()));
         }
       }
       if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
@@ -5469,8 +5657,42 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                arith::CmpIOp::create(builder, location,
                                                      arith::CmpIPredicate::sge,
                                                      right, constant64(0)));
-          valid = guardAnd(valid, guardAnd(known, inRange));
+          requireSafeRead(guardAnd(known, inRange));
         }
+      }
+      if (binary && values.size() == 2 &&
+          (binary.getOperatorKind() == semantic::SVBinaryOperator::Divide ||
+           binary.getOperatorKind() == semantic::SVBinaryOperator::Mod)) {
+        auto right = convert(values[1].value, *resultType,
+                             isSignedNode(inputs[1]), location);
+        auto nonzero = succeeded(right) ? truthValue(*right, location)
+                                        : FailureOr<Value>(failure());
+        if (failed(nonzero))
+          return failure();
+        valid = guardAnd(valid, guardOr(values[1].random, *nonzero));
+      }
+      if (binary && values.size() == 2 &&
+          binary.getOperatorKind() == semantic::SVBinaryOperator::Power &&
+          isSignedNode(inputs[1])) {
+        auto base = convert(values[0].value, *resultType,
+                            isSignedNode(inputs[0]), location);
+        auto baseNonzero = succeeded(base) ? truthValue(*base, location)
+                                           : FailureOr<Value>(failure());
+        auto exponent = toPackedScalar(values[1].value, location);
+        if (failed(baseNonzero) || failed(exponent))
+          return failure();
+        auto exponentWidth = sim::getPackedWidth(exponent->getType());
+        auto signedType = builder.getIntegerType(*exponentWidth);
+        auto signedExponent = convert(*exponent, signedType, false, location);
+        if (failed(signedExponent))
+          return failure();
+        Value negative = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::slt, *signedExponent,
+            arith::ConstantOp::create(builder, location, signedType,
+                                      builder.getIntegerAttr(signedType, 0)));
+        valid =
+            guardAnd(valid, guardOr(guardOr(values[0].random, values[1].random),
+                                    guardOr(*baseNonzero, guardNot(negative))));
       }
       SmallVector<std::pair<Operation *, Value>> previous;
       for (auto [input, value] : llvm::zip_equal(inputs, values)) {
@@ -5485,7 +5707,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             expressionCaptures.erase(input);
         }
       });
-      if (matchPattern(valid, m_One())) {
+      if (matchPattern(errors, m_One())) {
         FailureOr<Value> lowered = lowerExpression(expression);
         if (failed(lowered))
           return failure();
@@ -5495,7 +5717,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Block *invalid = addBlock();
         Block *done = addBlock();
         result = done->addArgument(*resultType, location);
-        cf::CondBranchOp::create(builder, location, valid, read, ValueRange{},
+        cf::CondBranchOp::create(builder, location, errors, read, ValueRange{},
                                  invalid, ValueRange{});
         setCurrent(invalid);
         Value dummy = createDefaultValue(builder, location, *resultType);
@@ -5508,9 +5730,61 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         setCurrent(done);
       }
     }
-    SafeConstraintValue safe{result, valid, random, guardInputs,
-                             guardArguments};
-    if (!candidate && freezeSafeStateValues)
+    // An X/Z value is an evaluation error while forming constraints. An active
+    // random input is a relation to be solved; its current stored X bits do not
+    // participate in creation. Frozen random fields follow state semantics.
+    if (!expression->hasAttr(randomArithmeticNodeAttr))
+      if (auto logic = dyn_cast<sim::LogicType>(result.getType())) {
+        Type bitsType = builder.getIntegerType(logic.getWidth());
+        Value bits =
+            sim::SimLogicToBitsOp::create(builder, location, bitsType, result);
+        Value restored =
+            sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+        Value known = sim::SimLogicCompareOp::create(
+            builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
+            result, restored);
+        valid = guardAnd(valid, guardOr(random, known));
+      }
+    if (!preserveArithmeticSource &&
+        !isa<semantic::SVDistExpressionOp>(expression) &&
+        arithmetic.needed(expression)) {
+      auto planes = arithmetic.get(expression);
+      if (failed(planes))
+        return failure();
+      auto value = safeConstraintValue(planes->value);
+      if (failed(value))
+        return failure();
+      auto converted = convert(value->value, *resultType,
+                               isSignedNode(expression), location);
+      if (failed(converted))
+        return failure();
+      result = *converted;
+      errors = guardAnd(errors, value->errors);
+      bool coercion = isa<semantic::SVConversionExpressionOp>(expression) &&
+                      isa<IntegerType>(sim::getPackedScalarType(*resultType));
+      Operation *knownExpression = arithmeticValidity(expression);
+      if (arithmeticFailure)
+        return failure();
+      if (coercion || !knownExpression)
+        valid = errors;
+      else {
+        auto known = safeConstraintValue(knownExpression);
+        auto predicate = succeeded(known) ? truthValue(known->value, location)
+                                          : FailureOr<Value>(failure());
+        if (failed(predicate))
+          return failure();
+        if (!candidate)
+          valid = guardAnd(errors, *predicate);
+        else {
+          Value stateKnown = guardAnd(
+              known->valid, guardAnd(guardNot(known->random), *predicate));
+          valid = guardAnd(errors, guardOr(valid, stateKnown));
+        }
+      }
+    }
+    SafeConstraintValue safe{result,      valid,          random,
+                             guardInputs, guardArguments, errors};
+    if (!candidate && !preserveArithmeticSource && freezeSafeStateValues)
       safeStateValues[expression] = safe;
     return safe;
   };
@@ -5760,15 +6034,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       item->walk([&](Operation *nested) {
         if (auto expression =
                 dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
-          if (expression.getIsSoft())
+          if (expression.getIsSoft()) {
             softConstraints.push_back(expression);
-          else {
+            auto operands = getChildren(nested);
+            if (operands.size() == 1 && arithmeticValidity(operands.front())) {
+              hasHard = true;
+              hardConstraints.push_back(nested);
+            }
+          } else {
             hasHard = true;
             hardConstraints.push_back(nested);
           }
         } else if (isa<semantic::SVUniquenessConstraintOp>(nested)) {
           hasHard = true;
           hardConstraints.push_back(nested);
+        } else if (isa<semantic::SVImplicationConstraintOp,
+                       semantic::SVConditionalConstraintOp>(nested)) {
+          auto operands = getChildren(nested);
+          if (!operands.empty() && arithmeticValidity(operands.front())) {
+            hasHard = true;
+            hardConstraints.push_back(nested);
+          }
         }
       });
       if (hasHard) {
@@ -8060,6 +8346,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       softSatisfied = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(true));
 
+    auto requireArithmeticValidity = [&](Operation *expression,
+                                         Value predicate) -> FailureOr<Value> {
+      Operation *validity = arithmeticValidity(expression);
+      if (!validity)
+        return predicate;
+      auto value = safeConstraintValue(validity);
+      auto valid = succeeded(value) ? truthValue(value->value, location)
+                                    : FailureOr<Value>(failure());
+      if (failed(valid))
+        return failure();
+      return guardAnd(predicate, *valid);
+    };
+
     std::function<FailureOr<Value>(Operation *, Operation *)> lowerConstraint =
         [&](Operation *constraint, Operation *softTarget) -> FailureOr<Value> {
       SmallVector<Operation *> nested = getChildren(constraint);
@@ -8086,7 +8385,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
         bool selected =
             softTarget ? softTarget == constraint : !expression.getIsSoft();
-        if (!selected)
+        Operation *arithmeticValid =
+            nested.size() == 1 ? arithmeticValidity(nested.front()) : nullptr;
+        bool safetyOnly =
+            !softTarget && expression.getIsSoft() && arithmeticValid;
+        if (!selected && !safetyOnly)
           return arith::ConstantOp::create(
                      builder, getSemanticLocation(constraint),
                      builder.getI1Type(), builder.getBoolAttr(true))
@@ -8200,6 +8503,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (failed(predicate))
           return failure();
         Value result = *predicate;
+        if (arithmeticValid) {
+          auto safe = safeConstraintValue(arithmeticValid);
+          auto valid =
+              succeeded(safe)
+                  ? truthValue(safe->value, getSemanticLocation(constraint))
+                  : FailureOr<Value>(failure());
+          if (failed(valid))
+            return failure();
+          result = safetyOnly ? *valid : guardAnd(result, *valid);
+        }
         if (softTarget)
           for (const SoftDisable *disable : softDisablers.lookup(softTarget)) {
             Value enabled = arith::ConstantOp::create(
@@ -8258,9 +8571,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         Value notPredicate = arith::CmpIOp::create(
             builder, getSemanticLocation(constraint), arith::CmpIPredicate::eq,
             *predicate, falseValue);
-        return arith::OrIOp::create(builder, getSemanticLocation(constraint),
-                                    notPredicate, *body)
-            .getResult();
+        Value result = arith::OrIOp::create(
+            builder, getSemanticLocation(constraint), notPredicate, *body);
+        return softTarget ? FailureOr<Value>(result)
+                          : requireArithmeticValidity(nested.front(), result);
       }
       if (auto conditional =
               dyn_cast<semantic::SVConditionalConstraintOp>(constraint)) {
@@ -8290,9 +8604,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               builder, getSemanticLocation(constraint), builder.getI1Type(),
               builder.getBoolAttr(true));
         }
-        return arith::SelectOp::create(builder, getSemanticLocation(constraint),
-                                       *predicate, *thenValue, elseValue)
-            .getResult();
+        Value result =
+            arith::SelectOp::create(builder, getSemanticLocation(constraint),
+                                    *predicate, *thenValue, elseValue);
+        return softTarget ? FailureOr<Value>(result)
+                          : requireArithmeticValidity(nested.front(), result);
       }
       if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
         if (softTarget)
@@ -8331,6 +8647,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             result = arith::AndIOp::create(
                 builder, getSemanticLocation(constraint), result, distinct);
           }
+        for (Operation *operand : nested) {
+          auto valid = requireArithmeticValidity(operand, result);
+          if (failed(valid))
+            return failure();
+          result = *valid;
+        }
         return result;
       }
       if (auto foreach =
