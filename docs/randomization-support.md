@@ -64,6 +64,12 @@ support wide paths, live modes, frozen arguments and intrinsic semantic domains.
 Staged randc histories, aliased object identity and dynamic foreach combinations
 remain open and are diagnosed.
 
+`std::randomize` uses the same expression-function plan as class randomization.
+Non-instance user functions retain argument priority and frozen body reads,
+including wide integral scope assignments. Validation rejects output, inout and
+mutable ref formals, recursion and cyclic priority dependencies. General
+procedural functions and scope calls through instance receivers remain open.
+
 Both target runtimes statically link the pinned Z3 source, using the native
 target libc++ ABI and Emscripten's JavaScript exception ABI respectively.
 The browser host initializes static constructors and implements exception

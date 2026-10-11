@@ -903,8 +903,8 @@
         },
         {
           "feature": "Scope-randomization user functions",
-          "status": "missing",
-          "detail": "Scope system functions are executable; user functions still require a shared frozen function plan."
+          "status": "partial",
+          "detail": "Scope randomization shares class expression-function validation, packed path priority analysis and target Z3 stages. Module/package and other non-instance expression functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, and wide integral assignments. Instance receiver plans, procedural control flow and general function bodies remain incomplete."
         }
       ],
       "evidence": {
@@ -916,7 +916,8 @@
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
           "runtime/lib/RandSolveSMT.cpp",
-          "runtime/lib/RandSolveOrder.h"
+          "runtime/lib/RandSolveOrder.h",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-functions.mlir",
@@ -926,7 +927,11 @@
           "test/Runtime/obelisk-to-simulation-random-function-priority-wide-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-priority-source-inputs-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-priority-return-only-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-priority-guarded-set-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-function-priority-guarded-set-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-scope-functions.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-functions-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-functions-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-state-runtime.mlir"
         ]
       }
     },
