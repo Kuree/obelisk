@@ -32,7 +32,9 @@ add_llvm_executable(obelisk-cov obelisk-cov.cpp
   "${coverage_report_html}"
   "${coverage_report_css}"
   "${coverage_report_js}")
-target_include_directories(obelisk-cov PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(obelisk-cov PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}"
+  "${PROJECT_SOURCE_DIR}/lib/Coverage")
 target_link_libraries(obelisk-cov PRIVATE
   ObeliskCoverage
   ObeliskSourceTokens

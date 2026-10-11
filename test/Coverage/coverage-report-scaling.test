@@ -1,0 +1,26 @@
+# RUN: %coverage-scaling-fixture 2048 128 %t.obcov
+# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+# RUN: obelisk-cov report --format=json --test=run128 %t.obcov | FileCheck %s --check-prefix=FILTERED --implicit-check-not='"contributors":[{'
+# RUN: %coverage-scaling-fixture 2048 128 %t.single-line.obcov same-line
+# RUN: obelisk-cov report --format=lcov %t.single-line.obcov | FileCheck %s --check-prefix=LCOV --implicit-check-not=DA:
+
+# 2048 line points and toggle fields, hit only by the first of 128 runs, keep
+# exactly that contributor through the sparse report indexes.
+# JSON: "metrics":{"line":{"available":true,"covered":2048,"total":2048,"partial":0,"percent":100.000000},"toggle":{"available":true,"covered":2048,"total":4096,
+# JSON-COUNT-2048: "count":1,"overflow":false,"covered":true,"excluded":false,"exclusion_reason":"","contributors":[{"uuid":"00000000-0000-0000-0000-000000000001","name":"run1","count":1}]}
+# JSON-COUNT-2048: {"index":[[IDX:[0-9]+]],"paths":["data.field[[IDX]]"],"zero_to_one":{"count":1,"covered":true,"overflow":false,"contributors":[{"uuid":"00000000-0000-0000-0000-000000000001","name":"run1","count":1}]},"one_to_zero":{"count":0,"covered":false,"overflow":false,"contributors":[]}
+
+# Selecting one test keeps only that run and none of the others' hits.
+# FILTERED: "metrics":{"line":{"available":true,"covered":0,"total":2048,"partial":0,"percent":0.000000},"toggle":{"available":true,"covered":0,"total":4096,
+# FILTERED-SAME: "runs":[{"uuid":"00000000-0000-0000-0000-000000000080","name":"run128",{{[^]]*}}}],"files"
+# FILTERED-COUNT-2048: "count":0,"overflow":false,"covered":false,"excluded":false,"exclusion_reason":"","contributors":[]}
+
+# LCOV groups one source line's points once per run.
+# LCOV: TN:run1
+# LCOV-NEXT: SF:probe.sv
+# LCOV-NEXT: VER:
+# LCOV-NEXT: DA:1,1
+# LCOV-NEXT: LF:1
+# LCOV-NEXT: LH:1
+# LCOV-NEXT: end_of_record
+# LCOV-COUNT-127: DA:1,0{{$}}

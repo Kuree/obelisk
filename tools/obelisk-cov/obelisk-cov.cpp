@@ -1,5 +1,6 @@
 //===- obelisk-cov.cpp - Obelisk coverage reporting tool ----------------===//
 
+#include "CoverageIndex.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
 #include "obelisk/Frontend/SourceTokens.h"
 
@@ -22,17 +23,19 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
-#include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <sstream>
 #include <tuple>
-#include <unordered_map>
 
 using namespace obelisk::coverage;
 
 namespace {
+using obelisk::coverage::detail::groupRecords;
+using obelisk::coverage::detail::IndexMap;
+using obelisk::coverage::detail::IndexSet;
+using obelisk::coverage::detail::lookupRows;
+using obelisk::coverage::detail::sortByKey;
 
 #include "CoverageReport.css.inc"
 #include "CoverageReport.html.inc"
@@ -48,7 +51,7 @@ struct Options {
   obelisk::frontend::LanguageVersion languageVersion =
       obelisk::frontend::LanguageVersion::IEEE1800_2023;
   bool discard = false;
-  std::map<MetricKind, double> thresholds;
+  IndexMap<MetricKind, double> thresholds;
   std::vector<std::string> inputs;
 };
 
@@ -64,12 +67,117 @@ struct Summary {
   double percentage() const {
     return calculated >= 0.0 ? calculated
            : total           ? 100.0 * static_cast<double>(covered) /
-                         static_cast<double>(total)
-                   : 0.0;
+                                   static_cast<double>(total)
+                             : 0.0;
   }
 };
 
+using ConfigurationKey = std::pair<uint64_t, Digest>;
+using ResolvedKey = std::tuple<uint64_t, Digest, uint64_t>;
+using AutomaticNodeKey = std::tuple<uint64_t, Digest, uint64_t, uint64_t>;
+using ConfigurationOptionKey =
+    std::tuple<uint64_t, Digest, uint64_t,
+               FunctionalConfigurationOptionOwnerKind,
+               FunctionalOptionScopeKind, FunctionalConfigurationOptionKind>;
+
+template <typename T, typename GetKey>
+auto recordIndex(const std::vector<T> &rows, GetKey getKey) {
+  using Key = typename obelisk::coverage::detail::OwnedIndexKey<decltype(getKey(
+      rows.front()))>::type;
+  IndexMap<Key, const T *> index;
+  for (const auto &row : rows)
+    index.emplace(getKey(row), &row);
+  return index;
+}
+
+template <typename Key, typename T>
+const T *findRecord(const IndexMap<Key, const T *> &index, const Key &key) {
+  auto found = index.find(key);
+  return found == index.end() ? nullptr : found->second;
+}
+
+// One report owns one index over its immutable input. Rendering and automatic
+// cross queries reuse these views rather than rebuilding whole-table indexes.
+struct ReportIndex {
+  IndexMap<ConfigurationOptionKey, const FunctionalConfigurationOption *>
+      options;
+  IndexMap<ConfigurationKey, obelisk::coverage::detail::RecordRange<
+                                 FunctionalConfigurationOption>>
+      optionsByConfiguration;
+  IndexMap<uint64_t, const FunctionalItem *> templateItems;
+  IndexMap<uint64_t, const CrossPlan *> crossPlans;
+  IndexMap<uint64_t, const CrossBinPlan *> crossBins;
+  IndexMap<ResolvedKey, const ResolvedCrossPlan *> resolvedCrossPlans;
+  IndexMap<AutomaticNodeKey, const ResolvedCrossAutomaticNode *> nodes;
+  IndexMap<ResolvedKey, const ResolvedFunctionalBin *> bins;
+  IndexMap<UUID, const Run *> runs;
+  // Dyadic interval decomposition gives point queries a fixed 64-key bound.
+  // This avoids scanning every struct field for every reported toggle bit.
+  IndexMap<std::tuple<uint32_t, unsigned, uint64_t>, std::vector<uint32_t>>
+      toggleChildrenByPrefix;
+  IndexMap<uint32_t, uint64_t> toggleChildShifts;
+  IndexMap<uint32_t, std::vector<uint32_t>> toggleChildren;
+
+  explicit ReportIndex(const Database &database) {
+    for (const auto &row : database.functionalConfigurationOptions)
+      options.emplace(ConfigurationOptionKey{row.type, row.configuration,
+                                             row.owner, row.ownerKind,
+                                             row.scope, row.option},
+                      &row);
+    optionsByConfiguration = groupRecords(
+        database.functionalConfigurationOptions, [](const auto &row) {
+          return ConfigurationKey{row.type, row.configuration};
+        });
+    templateItems = recordIndex(database.functionalItems,
+                                [](const auto &row) { return row.id; });
+    crossPlans = recordIndex(database.crossPlans,
+                             [](const auto &row) { return row.item; });
+    crossBins = recordIndex(database.crossBins,
+                            [](const auto &row) { return row.bin; });
+    resolvedCrossPlans =
+        recordIndex(database.resolvedCrossPlans, [](const auto &row) {
+          return ResolvedKey{row.type, row.configuration, row.cross};
+        });
+    nodes =
+        recordIndex(database.resolvedCrossAutomaticNodes, [](const auto &row) {
+          return AutomaticNodeKey{row.type, row.configuration, row.cross,
+                                  row.id};
+        });
+    bins = recordIndex(database.resolvedFunctionalBins, [](const auto &row) {
+      return ResolvedKey{row.type, row.configuration, row.id};
+    });
+    runs = recordIndex(database.runs, [](const auto &row) { return row.uuid; });
+    for (size_t index = 0; index != database.toggleDimensions.size(); ++index) {
+      const auto &row = database.toggleDimensions[index];
+      if (row.parent == UINT32_MAX)
+        continue;
+      toggleChildren[row.parent].push_back(static_cast<uint32_t>(index));
+      uint64_t start = row.bitOffset, remaining = row.bitWidth;
+      while (remaining) {
+        unsigned shift = 0;
+        while (shift != 63 && (uint64_t{1} << (shift + 1)) <= remaining &&
+               (start & ((uint64_t{1} << (shift + 1)) - 1)) == 0)
+          ++shift;
+        toggleChildrenByPrefix[{row.parent, shift, start >> shift}].push_back(
+            static_cast<uint32_t>(index));
+        toggleChildShifts[row.parent] |= uint64_t{1} << shift;
+        uint64_t width = uint64_t{1} << shift;
+        remaining -= width;
+        start += width;
+      }
+    }
+  }
+};
+
+struct AggregatedCounter {
+  uint64_t value = 0;
+  bool overflow = false;
+};
+
 struct ReportData {
+  ReportIndex index;
+  explicit ReportData(const Database &database) : index(database) {}
+  using EntityKey = std::tuple<MetricKind, uint64_t, uint32_t>;
   using CounterKey = std::tuple<UUID, MetricKind, uint64_t, uint64_t, uint32_t>;
   struct Contribution {
     UUID run{};
@@ -151,11 +259,11 @@ struct ReportData {
     std::string comment;
     Digest configuration{};
     std::vector<std::pair<UUID, uint64_t>> sources;
-    std::map<uint64_t, SparseCount> binCounts;
-    std::map<uint64_t, std::map<std::vector<uint64_t>, SparseCount>>
+    IndexMap<uint64_t, SparseCount> binCounts;
+    IndexMap<uint64_t, IndexMap<std::vector<uint64_t>, SparseCount>>
         sparseCrossCounts;
     std::vector<FunctionalItem> items;
-    std::map<uint64_t, ItemOptions> itemOptions;
+    IndexMap<uint64_t, ItemOptions> itemOptions;
     uint64_t goal = 100;
     uint64_t weight = 1;
     uint64_t atLeast = 1;
@@ -186,12 +294,14 @@ struct ReportData {
     double percentage = 0.0;
     bool contributes = false;
   };
-  std::set<UUID> runs;
-  std::set<std::pair<uint64_t, Digest>> configurations;
-  std::map<CounterKey, uint64_t> counts;
-  std::set<CounterKey> overflowedCounters;
+  IndexSet<UUID> runs;
+  IndexSet<std::pair<uint64_t, Digest>> configurations;
+  IndexMap<CounterKey, uint64_t> counts;
+  IndexSet<CounterKey> overflowedCounters;
   std::vector<FunctionalInstance> functionalInstances;
-  std::map<uint64_t, FunctionalType> functionalTypes;
+  IndexMap<uint64_t, FunctionalType> functionalTypes;
+  IndexMap<EntityKey, AggregatedCounter> aggregates;
+  IndexMap<EntityKey, std::vector<Contribution>> contributors;
   Summary line;
   Summary toggle;
   Summary functional;
@@ -314,8 +424,10 @@ bool parseOptions(int argc, char **argv, Options &options) {
     return false;
   if (options.command == "merge" && options.output.empty())
     return false;
-  static const std::set<std::string> formats = {"text", "html", "json", "lcov"};
-  return options.command != "report" || formats.count(options.format);
+  static const std::array<std::string, 4> formats = {"text", "html", "json",
+                                                     "lcov"};
+  return options.command != "report" ||
+         std::count(formats.begin(), formats.end(), options.format);
 }
 
 void printDiagnostic(const std::string &path, const Diagnostic &diagnostic) {
@@ -442,32 +554,17 @@ std::optional<llvm::APInt> checkedMultiplyUnsigned(const llvm::APInt &left,
   return result.trunc(std::max(1u, result.getActiveBits()));
 }
 
-using AutomaticNodeKey = std::tuple<uint64_t, Digest, uint64_t, uint64_t>;
-
 std::optional<llvm::APInt>
-countAutomaticGraphUnion(const Database &database,
+countAutomaticGraphUnion(const Database &database, const ReportIndex &index,
                          std::vector<AutomaticNodeKey> roots) {
-  std::map<AutomaticNodeKey, const ResolvedCrossAutomaticNode *> nodes;
-  for (const auto &node : database.resolvedCrossAutomaticNodes)
-    nodes.emplace(
-        AutomaticNodeKey{node.type, node.configuration, node.cross, node.id},
-        &node);
-  std::map<std::tuple<uint64_t, Digest, uint64_t>, std::string> binNames;
-  for (const auto &bin : database.resolvedFunctionalBins)
-    binNames.emplace(std::make_tuple(bin.type, bin.configuration, bin.id),
-                     bin.name);
-  std::sort(roots.begin(), roots.end());
+  const auto &nodes = index.nodes;
+  const auto &resolvedBins = index.bins;
+  sortByKey(roots.begin(), roots.end(), [](const auto &key) { return key; });
   roots.erase(std::unique(roots.begin(), roots.end()), roots.end());
-  struct Successor {
-    bool accepts = false;
-    std::vector<AutomaticNodeKey> nodes;
-    bool operator<(const Successor &other) const {
-      return std::tie(accepts, nodes) < std::tie(other.accepts, other.nodes);
-    }
-  };
+  using Successor = std::pair<bool, std::vector<AutomaticNodeKey>>;
   using State = std::vector<AutomaticNodeKey>;
   using Transitions = std::vector<std::pair<Successor, uint64_t>>;
-  std::map<State, Transitions> graph;
+  IndexMap<State, Transitions> graph;
   std::vector<State> worklist;
   std::vector<State> states;
   if (!roots.empty())
@@ -481,7 +578,7 @@ countAutomaticGraphUnion(const Database &database,
       continue;
     if (graph.size() >= limit || active.size() > limit)
       return std::nullopt;
-    std::map<std::string, Successor> byName;
+    IndexMap<std::string, Successor> byName;
     for (const AutomaticNodeKey &key : active) {
       auto foundNode = nodes.find(key);
       if (foundNode == nodes.end())
@@ -491,23 +588,24 @@ countAutomaticGraphUnion(const Database &database,
         const auto &edge =
             database.resolvedCrossAutomaticEdges[node->firstEdge + ordinal];
         auto foundName =
-            binNames.find({node->type, node->configuration, edge.bin});
-        if (foundName == binNames.end())
+            resolvedBins.find({node->type, node->configuration, edge.bin});
+        if (foundName == resolvedBins.end())
           return std::nullopt;
-        auto &successor = byName[foundName->second];
+        auto &successor = byName[foundName->second->name];
         if (edge.child)
-          successor.nodes.emplace_back(node->type, node->configuration,
-                                       node->cross, edge.child);
+          successor.second.emplace_back(node->type, node->configuration,
+                                        node->cross, edge.child);
         else
-          successor.accepts = true;
+          successor.first = true;
       }
     }
-    std::map<Successor, uint64_t> equivalentNames;
+    IndexMap<Successor, uint64_t> equivalentNames;
     for (auto &[name, successor] : byName) {
-      std::sort(successor.nodes.begin(), successor.nodes.end());
-      successor.nodes.erase(
-          std::unique(successor.nodes.begin(), successor.nodes.end()),
-          successor.nodes.end());
+      sortByKey(successor.second.begin(), successor.second.end(),
+                [](const auto &key) { return key; });
+      successor.second.erase(
+          std::unique(successor.second.begin(), successor.second.end()),
+          successor.second.end());
       ++equivalentNames[successor];
     }
     if (equivalentNames.size() > limit - transitionCount)
@@ -516,23 +614,22 @@ countAutomaticGraphUnion(const Database &database,
     Transitions transitions(equivalentNames.begin(), equivalentNames.end());
     for (const auto &[successor, multiplicity] : transitions) {
       (void)multiplicity;
-      if (!successor.accepts)
-        worklist.push_back(successor.nodes);
+      if (!successor.first)
+        worklist.push_back(successor.second);
     }
     states.push_back(active);
     graph.emplace(std::move(active), std::move(transitions));
   }
-  std::sort(states.begin(), states.end(), [&](const State &a, const State &b) {
-    return nodes.at(a.front())->targetOrdinal >
-           nodes.at(b.front())->targetOrdinal;
+  sortByKey(states.begin(), states.end(), [&](const State &state) {
+    return ~nodes.at(state.front())->targetOrdinal;
   });
-  std::map<State, llvm::APInt> counts;
+  IndexMap<State, llvm::APInt> counts;
   for (const State &state : states) {
     llvm::APInt total(1, 0);
     for (const auto &[successor, multiplicity] : graph.at(state)) {
       llvm::APInt suffix(1, 1);
-      if (!successor.accepts) {
-        auto found = counts.find(successor.nodes);
+      if (!successor.first) {
+        auto found = counts.find(successor.second);
         if (found == counts.end())
           return std::nullopt;
         suffix = found->second;
@@ -554,48 +651,9 @@ countAutomaticGraphUnion(const Database &database,
                                 : std::optional<llvm::APInt>(result->second);
 }
 
-bool automaticGraphContains(const Database &database, AutomaticNodeKey root,
-                            const std::vector<std::string> &components) {
-  for (size_t dimension = 0; dimension != components.size(); ++dimension) {
-    auto node = std::find_if(
-        database.resolvedCrossAutomaticNodes.begin(),
-        database.resolvedCrossAutomaticNodes.end(), [&](const auto &value) {
-          return AutomaticNodeKey{value.type, value.configuration, value.cross,
-                                  value.id} == root;
-        });
-    if (node == database.resolvedCrossAutomaticNodes.end())
-      return false;
-    const ResolvedCrossAutomaticEdge *matching = nullptr;
-    for (uint32_t ordinal = 0; ordinal != node->edgeCount; ++ordinal) {
-      const auto &edge =
-          database.resolvedCrossAutomaticEdges[node->firstEdge + ordinal];
-      auto bin = std::find_if(
-          database.resolvedFunctionalBins.begin(),
-          database.resolvedFunctionalBins.end(), [&](const auto &value) {
-            return value.type == node->type &&
-                   value.configuration == node->configuration &&
-                   value.id == edge.bin;
-          });
-      if (bin != database.resolvedFunctionalBins.end() &&
-          bin->name == components[dimension]) {
-        matching = &edge;
-        break;
-      }
-    }
-    if (!matching)
-      return false;
-    if (dimension + 1 == components.size())
-      return matching->child == 0;
-    if (!matching->child)
-      return false;
-    std::get<3>(root) = matching->child;
-  }
-  return false;
-}
-
 bool appendMissingAutomaticBins(
-    const Database &database, AutomaticNodeKey root,
-    const std::set<std::vector<uint64_t>> &materialized, uint64_t limit,
+    const Database &database, const ReportIndex &index, AutomaticNodeKey root,
+    const IndexSet<std::vector<uint64_t>> &materialized, uint64_t limit,
     uint64_t atLeast,
     std::vector<ReportData::FunctionalItem::AutomaticBin> &bins,
     std::string &error) {
@@ -606,17 +664,8 @@ bool appendMissingAutomaticBins(
     return false;
   }
 
-  std::map<AutomaticNodeKey, const ResolvedCrossAutomaticNode *> nodes;
-  for (const auto &node : database.resolvedCrossAutomaticNodes)
-    nodes.emplace(
-        AutomaticNodeKey{node.type, node.configuration, node.cross, node.id},
-        &node);
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
-           const ResolvedFunctionalBin *>
-      resolvedBins;
-  for (const auto &bin : database.resolvedFunctionalBins)
-    resolvedBins.emplace(std::make_tuple(bin.type, bin.configuration, bin.id),
-                         &bin);
+  const auto &nodes = index.nodes;
+  const auto &resolvedBins = index.bins;
 
   struct Frame {
     AutomaticNodeKey key;
@@ -694,37 +743,29 @@ std::string summaryCountText(const Summary &summary, bool covered) {
   return integerText(covered ? summary.exactCovered : summary.exactTotal);
 }
 
-using ConfigurationKey = std::pair<uint64_t, Digest>;
-
-uint64_t configurationOption(const Database &database,
+uint64_t configurationOption(const ReportIndex &index,
                              const ConfigurationKey &configuration,
                              uint64_t owner,
                              FunctionalConfigurationOptionOwnerKind ownerKind,
                              FunctionalOptionScopeKind scope,
                              FunctionalConfigurationOptionKind option,
                              uint64_t fallback) {
-  for (const FunctionalConfigurationOption &value :
-       database.functionalConfigurationOptions)
-    if (value.type == configuration.first &&
-        value.configuration == configuration.second && value.owner == owner &&
-        value.ownerKind == ownerKind && value.scope == scope &&
-        value.option == option)
-      return value.value;
-  return fallback;
+  const auto *value = findRecord(
+      index.options,
+      ConfigurationOptionKey{configuration.first, configuration.second, owner,
+                             ownerKind, scope, option});
+  return value ? value->value : fallback;
 }
 
 std::string configurationStringOption(
-    const Database &database, const ConfigurationKey &configuration,
+    const ReportIndex &index, const ConfigurationKey &configuration,
     uint64_t owner, FunctionalConfigurationOptionOwnerKind ownerKind,
     FunctionalOptionScopeKind scope, FunctionalConfigurationOptionKind option) {
-  for (const FunctionalConfigurationOption &value :
-       database.functionalConfigurationOptions)
-    if (value.type == configuration.first &&
-        value.configuration == configuration.second && value.owner == owner &&
-        value.ownerKind == ownerKind && value.scope == scope &&
-        value.option == option)
-      return value.stringValue;
-  return {};
+  const auto *value = findRecord(
+      index.options,
+      ConfigurationOptionKey{configuration.first, configuration.second, owner,
+                             ownerKind, scope, option});
+  return value ? value->stringValue : std::string{};
 }
 
 double applyGoal(double percentage, uint64_t goal) {
@@ -734,7 +775,7 @@ double applyGoal(double percentage, uint64_t goal) {
 }
 
 bool functionalBinContributes(const ResolvedFunctionalBin &bin,
-                              const std::set<uint64_t> &excludedTemplates) {
+                              const IndexSet<uint64_t> &excludedTemplates) {
   constexpr uint32_t nonContributing =
       FunctionalBinDefault | FunctionalBinDefaultSequence |
       FunctionalBinIgnore | FunctionalBinIllegal | FunctionalBinEmpty;
@@ -743,7 +784,8 @@ bool functionalBinContributes(const ResolvedFunctionalBin &bin,
 }
 
 ReportData analyze(const Database &database, const std::string &test) {
-  ReportData report;
+  ReportData report(database);
+  const auto &index = report.index;
   for (const Run &run : database.runs)
     if (wildcard(test.c_str(), run.name.c_str()))
       report.runs.insert(run.uuid);
@@ -755,23 +797,28 @@ ReportData analyze(const Database &database, const std::string &test) {
       if (counter.value > UINT64_MAX - value || (counter.flags & 1))
         report.overflowedCounters.insert(key);
       value = saturatingAdd(value, counter.value);
+      if (!counter.instance) {
+        ReportData::EntityKey entity{counter.metric, counter.entity,
+                                     counter.subindex};
+        auto &aggregate = report.aggregates[entity];
+        aggregate.overflow |=
+            counter.value > UINT64_MAX - aggregate.value || (counter.flags & 1);
+        aggregate.value = saturatingAdd(aggregate.value, counter.value);
+        if (counter.value)
+          report.contributors[entity].push_back(
+              {counter.run, counter.value, (counter.flags & 1) != 0});
+      }
     }
-  std::set<std::pair<MetricKind, uint64_t>> excluded;
+  IndexSet<std::pair<MetricKind, uint64_t>> excluded;
   for (const Exclusion &value : database.exclusions)
     excluded.emplace(value.metric, value.entity);
   auto aggregate = [&](MetricKind metric, uint64_t entity, uint32_t subindex) {
-    uint64_t result = 0;
-    for (const UUID &run : report.runs) {
-      auto found = report.counts.find(
-          std::make_tuple(run, metric, entity, uint64_t{0}, subindex));
-      if (found != report.counts.end())
-        result = saturatingAdd(result, found->second);
-    }
-    return result;
+    auto found = report.aggregates.find({metric, entity, subindex});
+    return found == report.aggregates.end() ? uint64_t{0} : found->second.value;
   };
 
   report.line.available = !database.linePoints.empty();
-  std::map<std::pair<uint64_t, uint32_t>, std::vector<const LinePoint *>> lines;
+  IndexMap<std::pair<uint64_t, uint32_t>, std::vector<const LinePoint *>> lines;
   for (const LinePoint &point : database.linePoints)
     if (!excluded.count({MetricKind::Line, point.id}))
       lines[{point.file, point.line}].push_back(&point);
@@ -805,15 +852,15 @@ ReportData analyze(const Database &database, const std::string &test) {
   for (const auto &type : database.functionalTypes)
     report.functionalTypes[type.id].type = type.id;
 
-  std::map<ConfigurationKey, std::vector<const ResolvedFunctionalItem *>>
+  IndexMap<ConfigurationKey, std::vector<const ResolvedFunctionalItem *>>
       resolvedItems;
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            std::vector<const ResolvedFunctionalBin *>>
       resolvedBins;
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalBin *>
       resolvedBinsByID;
-  std::map<ConfigurationKey, std::set<uint64_t>> resolvedBinIDs;
+  IndexMap<ConfigurationKey, IndexSet<uint64_t>> resolvedBinIDs;
   for (const ResolvedFunctionalItem &item : database.resolvedFunctionalItems)
     resolvedItems[{item.type, item.configuration}].push_back(&item);
   for (const ResolvedFunctionalBin &bin : database.resolvedFunctionalBins) {
@@ -822,7 +869,7 @@ ReportData analyze(const Database &database, const std::string &test) {
     resolvedBinsByID[{bin.type, bin.configuration, bin.id}] = &bin;
     resolvedBinIDs[key].insert(bin.id);
   }
-  std::set<uint64_t> excludedFunctionalTemplates;
+  IndexSet<uint64_t> excludedFunctionalTemplates;
   for (const Exclusion &value : database.exclusions)
     if (value.metric == MetricKind::Functional)
       excludedFunctionalTemplates.insert(value.entity);
@@ -832,21 +879,18 @@ ReportData analyze(const Database &database, const std::string &test) {
     uint64_t weight = 1;
     bool mergeInstances = false;
     std::string comment;
-    std::map<uint64_t, uint64_t> itemGoals;
-    std::map<uint64_t, uint64_t> itemWeights;
-    std::map<uint64_t, std::string> itemComments;
+    IndexMap<uint64_t, uint64_t> itemGoals;
+    IndexMap<uint64_t, uint64_t> itemWeights;
+    IndexMap<uint64_t, std::string> itemComments;
   };
-  std::map<std::pair<UUID, uint64_t>, TypeOptionProfile> runTypeOptions;
-  std::map<uint64_t, TypeOptionProfile> typeOptions;
-  auto findTemplateItem = [&](uint64_t id) -> const FunctionalItem * {
-    auto found = std::find_if(database.functionalItems.begin(),
-                              database.functionalItems.end(),
-                              [&](const auto &item) { return item.id == id; });
-    return found == database.functionalItems.end() ? nullptr : &*found;
+  IndexMap<std::pair<UUID, uint64_t>, TypeOptionProfile> runTypeOptions;
+  IndexMap<uint64_t, TypeOptionProfile> typeOptions;
+  auto findTemplateItem = [&](uint64_t id) {
+    return findRecord(index.templateItems, id);
   };
   auto conflict = [&](llvm::StringRef what, uint64_t type) {
-    report.error = "conflicting " + what.str() +
-                   " for functional type " + std::to_string(type);
+    report.error = "conflicting " + what.str() + " for functional type " +
+                   std::to_string(type);
   };
 
   // A procedural type_option update is run-local execution state. Seed an
@@ -859,47 +903,46 @@ ReportData analyze(const Database &database, const std::string &test) {
       continue;
     ConfigurationKey configuration{instance.type, instance.configuration};
     TypeOptionProfile profile;
-    profile.goal = configurationOption(
-        database, configuration, instance.type,
-        FunctionalConfigurationOptionOwnerKind::Group,
-        FunctionalOptionScopeKind::Type,
-        FunctionalConfigurationOptionKind::Goal, 100);
-    profile.weight = configurationOption(
-        database, configuration, instance.type,
-        FunctionalConfigurationOptionOwnerKind::Group,
-        FunctionalOptionScopeKind::Type,
-        FunctionalConfigurationOptionKind::Weight, 1);
+    profile.goal =
+        configurationOption(index, configuration, instance.type,
+                            FunctionalConfigurationOptionOwnerKind::Group,
+                            FunctionalOptionScopeKind::Type,
+                            FunctionalConfigurationOptionKind::Goal, 100);
+    profile.weight =
+        configurationOption(index, configuration, instance.type,
+                            FunctionalConfigurationOptionOwnerKind::Group,
+                            FunctionalOptionScopeKind::Type,
+                            FunctionalConfigurationOptionKind::Weight, 1);
     profile.mergeInstances =
-        configurationOption(database, configuration, instance.type,
+        configurationOption(index, configuration, instance.type,
                             FunctionalConfigurationOptionOwnerKind::Group,
                             FunctionalOptionScopeKind::Type,
                             FunctionalConfigurationOptionKind::MergeInstances,
                             0) != 0;
-    profile.comment = configurationStringOption(
-        database, configuration, instance.type,
-        FunctionalConfigurationOptionOwnerKind::Group,
-        FunctionalOptionScopeKind::Type,
-        FunctionalConfigurationOptionKind::Comment);
+    profile.comment =
+        configurationStringOption(index, configuration, instance.type,
+                                  FunctionalConfigurationOptionOwnerKind::Group,
+                                  FunctionalOptionScopeKind::Type,
+                                  FunctionalConfigurationOptionKind::Comment);
     for (const ResolvedFunctionalItem *item : resolvedItems[configuration]) {
-      profile.itemGoals[item->templateItem] = configurationOption(
-          database, configuration, item->id,
-          FunctionalConfigurationOptionOwnerKind::Item,
-          FunctionalOptionScopeKind::Type,
-          FunctionalConfigurationOptionKind::Goal, 100);
-      profile.itemWeights[item->templateItem] = configurationOption(
-          database, configuration, item->id,
-          FunctionalConfigurationOptionOwnerKind::Item,
-          FunctionalOptionScopeKind::Type,
-          FunctionalConfigurationOptionKind::Weight, 1);
+      profile.itemGoals[item->templateItem] =
+          configurationOption(index, configuration, item->id,
+                              FunctionalConfigurationOptionOwnerKind::Item,
+                              FunctionalOptionScopeKind::Type,
+                              FunctionalConfigurationOptionKind::Goal, 100);
+      profile.itemWeights[item->templateItem] =
+          configurationOption(index, configuration, item->id,
+                              FunctionalConfigurationOptionOwnerKind::Item,
+                              FunctionalOptionScopeKind::Type,
+                              FunctionalConfigurationOptionKind::Weight, 1);
       profile.itemComments[item->templateItem] = configurationStringOption(
-          database, configuration, item->id,
+          index, configuration, item->id,
           FunctionalConfigurationOptionOwnerKind::Item,
           FunctionalOptionScopeKind::Type,
           FunctionalConfigurationOptionKind::Comment);
     }
-    auto [position, inserted] =
-        runTypeOptions.emplace(std::make_pair(instance.run, instance.type),
-                               profile);
+    auto [position, inserted] = runTypeOptions.emplace(
+        std::make_pair(instance.run, instance.type), profile);
     if (!inserted &&
         (position->second.goal != profile.goal ||
          position->second.weight != profile.weight ||
@@ -970,8 +1013,8 @@ ReportData analyze(const Database &database, const std::string &test) {
 
   using InstanceGroupKey =
       std::tuple<bool, uint64_t, std::string, Digest, UUID, uint64_t>;
-  std::map<InstanceGroupKey, size_t> groups;
-  std::map<std::pair<UUID, uint64_t>, size_t> instanceGroups;
+  IndexMap<InstanceGroupKey, size_t> groups;
+  IndexMap<std::pair<UUID, uint64_t>, size_t> instanceGroups;
   const UUID noRun{};
   for (const ResolvedInstance &instance : database.resolvedInstances) {
     if (!report.runs.count(instance.run))
@@ -991,32 +1034,32 @@ ReportData analyze(const Database &database, const std::string &test) {
       group.configuration = instance.configuration;
       ConfigurationKey configuration{instance.type, instance.configuration};
       group.comment = configurationStringOption(
-          database, configuration, instance.type,
+          index, configuration, instance.type,
           FunctionalConfigurationOptionOwnerKind::Group,
           FunctionalOptionScopeKind::Instance,
           FunctionalConfigurationOptionKind::Comment);
       group.goal =
-          configurationOption(database, configuration, instance.type,
+          configurationOption(index, configuration, instance.type,
                               FunctionalConfigurationOptionOwnerKind::Group,
                               FunctionalOptionScopeKind::Instance,
                               FunctionalConfigurationOptionKind::Goal, 100);
       group.weight =
-          configurationOption(database, configuration, instance.type,
+          configurationOption(index, configuration, instance.type,
                               FunctionalConfigurationOptionOwnerKind::Group,
                               FunctionalOptionScopeKind::Instance,
                               FunctionalConfigurationOptionKind::Weight, 1);
-      group.atLeast = configurationOption(
-          database, configuration, instance.type,
-          FunctionalConfigurationOptionOwnerKind::Group,
-          FunctionalOptionScopeKind::Instance,
+      group.atLeast =
+          configurationOption(index, configuration, instance.type,
+                              FunctionalConfigurationOptionOwnerKind::Group,
+                              FunctionalOptionScopeKind::Instance,
                               FunctionalConfigurationOptionKind::AtLeast, 1);
       group.groupCrossNumPrintMissing = configurationOption(
-          database, configuration, instance.type,
+          index, configuration, instance.type,
           FunctionalConfigurationOptionOwnerKind::Group,
           FunctionalOptionScopeKind::Instance,
           FunctionalConfigurationOptionKind::CrossNumPrintMissing, 0);
       group.perInstance =
-          configurationOption(database, configuration, instance.type,
+          configurationOption(index, configuration, instance.type,
                               FunctionalConfigurationOptionOwnerKind::Group,
                               FunctionalOptionScopeKind::Instance,
                               FunctionalConfigurationOptionKind::PerInstance,
@@ -1036,8 +1079,7 @@ ReportData analyze(const Database &database, const std::string &test) {
     if (group == instanceGroups.end())
       continue;
     auto &instance = report.functionalInstances[group->second];
-    if (option.ownerKind ==
-        FunctionalConfigurationOptionOwnerKind::Group) {
+    if (option.ownerKind == FunctionalConfigurationOptionOwnerKind::Group) {
       if (option.option == FunctionalConfigurationOptionKind::Goal) {
         instance.goal = instance.hasMutableGoal
                             ? std::max(instance.goal, option.value)
@@ -1072,11 +1114,11 @@ ReportData analyze(const Database &database, const std::string &test) {
     if (option.option == FunctionalConfigurationOptionKind::Goal)
       item.goal = item.goal ? std::max(*item.goal, option.value) : option.value;
     else if (option.option == FunctionalConfigurationOptionKind::Weight)
-      item.weight = item.weight ? std::max(*item.weight, option.value)
-                                : option.value;
+      item.weight =
+          item.weight ? std::max(*item.weight, option.value) : option.value;
     else if (option.option == FunctionalConfigurationOptionKind::AtLeast)
-      item.atLeast = item.atLeast ? std::max(*item.atLeast, option.value)
-                                 : option.value;
+      item.atLeast =
+          item.atLeast ? std::max(*item.atLeast, option.value) : option.value;
     else if (option.option ==
              FunctionalConfigurationOptionKind::CrossNumPrintMissing)
       item.crossNumPrintMissing =
@@ -1084,9 +1126,8 @@ ReportData analyze(const Database &database, const std::string &test) {
               ? std::max(*item.crossNumPrintMissing, option.value)
               : option.value;
     else if (option.option == FunctionalConfigurationOptionKind::Comment)
-      item.comment = item.comment
-                         ? std::max(*item.comment, option.stringValue)
-                         : option.stringValue;
+      item.comment = item.comment ? std::max(*item.comment, option.stringValue)
+                                  : option.stringValue;
   }
   for (const ResolvedCrossPlan &plan : database.resolvedCrossPlans)
     if (report.configurations.count({plan.type, plan.configuration}) &&
@@ -1146,12 +1187,12 @@ ReportData analyze(const Database &database, const std::string &test) {
       item.templateItem = schema->templateItem;
       item.name = schema->name;
       item.comment = configurationStringOption(
-          database, configuration, schema->id,
+          index, configuration, schema->id,
           FunctionalConfigurationOptionOwnerKind::Item,
           FunctionalOptionScopeKind::Instance,
           FunctionalConfigurationOptionKind::Comment);
       item.typeComment = configurationStringOption(
-          database, configuration, schema->id,
+          index, configuration, schema->id,
           FunctionalConfigurationOptionOwnerKind::Item,
           FunctionalOptionScopeKind::Type,
           FunctionalConfigurationOptionKind::Comment);
@@ -1161,12 +1202,12 @@ ReportData analyze(const Database &database, const std::string &test) {
       item.goal = schema->goal;
       item.weight = schema->weight;
       item.typeGoal =
-          configurationOption(database, configuration, schema->id,
+          configurationOption(index, configuration, schema->id,
                               FunctionalConfigurationOptionOwnerKind::Item,
                               FunctionalOptionScopeKind::Type,
                               FunctionalConfigurationOptionKind::Goal, 100);
       item.typeWeight =
-          configurationOption(database, configuration, schema->id,
+          configurationOption(index, configuration, schema->id,
                               FunctionalConfigurationOptionOwnerKind::Item,
                               FunctionalOptionScopeKind::Type,
                               FunctionalConfigurationOptionKind::Weight, 1);
@@ -1194,30 +1235,21 @@ ReportData analyze(const Database &database, const std::string &test) {
         if (mutableOptions->second.comment)
           item.comment = *mutableOptions->second.comment;
       }
-      const uint64_t configuredGroupAtLeast = configurationOption(
-          database, configuration, instance.type,
-          FunctionalConfigurationOptionOwnerKind::Group,
-          FunctionalOptionScopeKind::Instance,
-          FunctionalConfigurationOptionKind::AtLeast, 1);
+      const uint64_t configuredGroupAtLeast =
+          configurationOption(index, configuration, instance.type,
+                              FunctionalConfigurationOptionOwnerKind::Group,
+                              FunctionalOptionScopeKind::Instance,
+                              FunctionalConfigurationOptionKind::AtLeast, 1);
       const uint64_t configuredItemAtLeast = configurationOption(
-          database, configuration, schema->id,
+          index, configuration, schema->id,
           FunctionalConfigurationOptionOwnerKind::Item,
           FunctionalOptionScopeKind::Instance,
-          FunctionalConfigurationOptionKind::AtLeast,
-          configuredGroupAtLeast);
-      const bool hasConfiguredItemAtLeast = std::any_of(
-          database.functionalConfigurationOptions.begin(),
-          database.functionalConfigurationOptions.end(),
-          [&](const FunctionalConfigurationOption &option) {
-            return option.type == instance.type &&
-                   option.configuration == instance.configuration &&
-                   option.owner == schema->id &&
-                   option.ownerKind ==
-                       FunctionalConfigurationOptionOwnerKind::Item &&
-                   option.scope == FunctionalOptionScopeKind::Instance &&
-                   option.option ==
-                       FunctionalConfigurationOptionKind::AtLeast;
-          });
+          FunctionalConfigurationOptionKind::AtLeast, configuredGroupAtLeast);
+      const bool hasConfiguredItemAtLeast = index.options.count(
+          {instance.type, instance.configuration, schema->id,
+           FunctionalConfigurationOptionOwnerKind::Item,
+           FunctionalOptionScopeKind::Instance,
+           FunctionalConfigurationOptionKind::AtLeast});
       const uint64_t instanceAtLeast =
           mutableOptions != instance.itemOptions.end() &&
                   mutableOptions->second.atLeast
@@ -1263,21 +1295,12 @@ ReportData analyze(const Database &database, const std::string &test) {
       item.coveredWide = llvm::APInt(64, item.covered);
       item.totalWide = llvm::APInt(64, item.total);
       if (item.kind == FunctionalItemKind::Cross) {
-        auto staticPlan =
-            std::find_if(database.crossPlans.begin(), database.crossPlans.end(),
-                         [&](const CrossPlan &plan) {
-                           return plan.item == item.templateItem;
-                         });
-        auto resolvedPlan = std::find_if(database.resolvedCrossPlans.begin(),
-                                         database.resolvedCrossPlans.end(),
-                                         [&](const ResolvedCrossPlan &plan) {
-                                           return plan.type == instance.type &&
-                                                  plan.configuration ==
-                                                      instance.configuration &&
-                                                  plan.cross == item.id;
-                                         });
-        if (staticPlan == database.crossPlans.end() ||
-            resolvedPlan == database.resolvedCrossPlans.end()) {
+        const auto *staticPlan =
+            findRecord(index.crossPlans, item.templateItem);
+        const auto *resolvedPlan = findRecord(
+            index.resolvedCrossPlans,
+            ResolvedKey{instance.type, instance.configuration, item.id});
+        if (!staticPlan || !resolvedPlan) {
           report.error = "missing resolved cross plan for functional item " +
                          std::to_string(item.id);
           return report;
@@ -1289,7 +1312,7 @@ ReportData analyze(const Database &database, const std::string &test) {
           uint64_t atLeast = instanceAtLeast;
           item.automaticAtLeast = atLeast;
           item.crossNumPrintMissing = configurationOption(
-              database, configuration, item.id,
+              index, configuration, item.id,
               FunctionalConfigurationOptionOwnerKind::Item,
               FunctionalOptionScopeKind::Instance,
               FunctionalConfigurationOptionKind::CrossNumPrintMissing,
@@ -1298,7 +1321,7 @@ ReportData analyze(const Database &database, const std::string &test) {
               mutableOptions->second.crossNumPrintMissing)
             item.crossNumPrintMissing =
                 *mutableOptions->second.crossNumPrintMissing;
-          std::set<std::vector<uint64_t>> materialized;
+          IndexSet<std::vector<uint64_t>> materialized;
           auto tuples = instance.sparseCrossCounts.find(item.templateItem);
           if (tuples != instance.sparseCrossCounts.end())
             for (const auto &[components, count] : tuples->second) {
@@ -1358,7 +1381,7 @@ ReportData analyze(const Database &database, const std::string &test) {
             if (missingCount.getActiveBits() <= 64)
               printMissing =
                   std::min(printMissing, missingCount.getZExtValue());
-            if (!appendMissingAutomaticBins(database, item.automaticRoot,
+            if (!appendMissingAutomaticBins(database, index, item.automaticRoot,
                                             materialized, printMissing, atLeast,
                                             item.automaticBins, report.error))
               return report;
@@ -1414,23 +1437,23 @@ ReportData analyze(const Database &database, const std::string &test) {
     type.type = instance.type;
     type.instances.push_back(instanceIndex);
     uint64_t typeGoal =
-        configurationOption(database, configuration, instance.type,
+        configurationOption(index, configuration, instance.type,
                             FunctionalConfigurationOptionOwnerKind::Group,
                             FunctionalOptionScopeKind::Type,
                             FunctionalConfigurationOptionKind::Goal, 100);
     uint64_t typeWeight =
-        configurationOption(database, configuration, instance.type,
+        configurationOption(index, configuration, instance.type,
                             FunctionalConfigurationOptionOwnerKind::Group,
                             FunctionalOptionScopeKind::Type,
                             FunctionalConfigurationOptionKind::Weight, 1);
     bool mergeInstances =
-        configurationOption(database, configuration, instance.type,
+        configurationOption(index, configuration, instance.type,
                             FunctionalConfigurationOptionOwnerKind::Group,
                             FunctionalOptionScopeKind::Type,
                             FunctionalConfigurationOptionKind::MergeInstances,
                             0) != 0;
     std::string typeComment =
-        configurationStringOption(database, configuration, instance.type,
+        configurationStringOption(index, configuration, instance.type,
                                   FunctionalConfigurationOptionOwnerKind::Group,
                                   FunctionalOptionScopeKind::Type,
                                   FunctionalConfigurationOptionKind::Comment);
@@ -1447,7 +1470,8 @@ ReportData analyze(const Database &database, const std::string &test) {
       if (item.aggregating)
         itemOptions.emplace_back(item.templateItem, item.typeGoal,
                                  item.typeWeight, item.typeComment);
-    std::sort(itemOptions.begin(), itemOptions.end());
+    sortByKey(itemOptions.begin(), itemOptions.end(),
+              [](const auto &key) { return key; });
     if (!type.hasProfile) {
       type.goal = typeGoal;
       type.weight = typeWeight;
@@ -1470,9 +1494,10 @@ ReportData analyze(const Database &database, const std::string &test) {
     double weighted = 0.0;
     uint64_t totalWeight = 0;
     if (!type.mergeInstances) {
-      std::map<uint64_t, uint64_t> cumulativeAtLeast;
+      IndexMap<uint64_t, uint64_t> cumulativeAtLeast;
       for (size_t instanceIndex : type.instances)
-        for (const auto &item : report.functionalInstances[instanceIndex].items) {
+        for (const auto &item :
+             report.functionalInstances[instanceIndex].items) {
           cumulativeAtLeast[item.templateItem] =
               std::max(cumulativeAtLeast[item.templateItem], item.atLeast);
         }
@@ -1529,10 +1554,10 @@ ReportData analyze(const Database &database, const std::string &test) {
         uint64_t goal = 100;
         uint64_t weight = 1;
         uint64_t atLeast = 0;
-        std::map<std::string, MergedBin> bins;
+        IndexMap<std::string, MergedBin> bins;
         std::vector<AutomaticProfile> automaticProfiles;
       };
-      std::map<std::pair<uint64_t, std::string>, MergedItem> items;
+      IndexMap<std::pair<uint64_t, std::string>, MergedItem> items;
       for (size_t instanceIndex : type.instances) {
         const auto &instance = report.functionalInstances[instanceIndex];
         for (const auto &item : instance.items) {
@@ -1565,14 +1590,14 @@ ReportData analyze(const Database &database, const std::string &test) {
           if (item.atLeast)
             positiveRoots = roots;
           auto unionCount =
-              countAutomaticGraphUnion(database, std::move(roots));
+              countAutomaticGraphUnion(database, index, std::move(roots));
           if (!unionCount) {
             report.error = "automatic cross union exceeds traversal limits";
             return report;
           }
           automaticTotal = std::move(*unionCount);
-          auto positiveUnionCount =
-              countAutomaticGraphUnion(database, std::move(positiveRoots));
+          auto positiveUnionCount = countAutomaticGraphUnion(
+              database, index, std::move(positiveRoots));
           if (!positiveUnionCount) {
             report.error = "automatic cross union exceeds traversal limits";
             return report;
@@ -1580,30 +1605,12 @@ ReportData analyze(const Database &database, const std::string &test) {
           positiveAutomaticTotal = std::move(*positiveUnionCount);
         }
 
-        std::map<std::string, MergedBin> automaticBins;
-        std::map<std::string, std::vector<std::string>> automaticComponents;
+        IndexMap<std::string, MergedBin> automaticBins;
         for (const auto &profile : item.automaticProfiles)
           for (const auto &bin : profile.bins) {
             auto &merged = automaticBins[bin.name];
             merged.count = saturatingAdd(merged.count, bin.count);
-            automaticComponents.emplace(bin.name, bin.componentNames);
           }
-        for (auto &[name, bin] : automaticBins) {
-          const auto &components = automaticComponents.at(name);
-          bool contained = false;
-          for (const auto &profile : item.automaticProfiles) {
-            if (automaticGraphContains(database, profile.root, components)) {
-              contained = true;
-            }
-          }
-          if (!contained) {
-            report.error = "sparse cross tuple is outside its automatic "
-                           "universe for item " +
-                           std::to_string(key.first);
-            return report;
-          }
-        }
-
         llvm::APInt total = addUnsigned(automaticTotal, item.bins.size());
         if (total.isZero() || !item.weight)
           continue;
@@ -1611,8 +1618,7 @@ ReportData analyze(const Database &database, const std::string &test) {
         for (const auto &[name, bin] : item.bins)
           materializedCovered += bin.count >= item.atLeast;
         for (const auto &[name, bin] : automaticBins)
-          materializedCovered +=
-              item.atLeast && bin.count >= item.atLeast;
+          materializedCovered += item.atLeast && bin.count >= item.atLeast;
         unsigned automaticWidth = std::max(
             automaticTotal.getBitWidth(), positiveAutomaticTotal.getBitWidth());
         automaticWidth = std::max(automaticWidth, 1u);
@@ -1759,66 +1765,38 @@ std::string cspHash(llvm::StringRef input) {
   return llvm::encodeBase64(hasher.final());
 }
 
-uint64_t runCount(const ReportData &report, const UUID &run, MetricKind metric,
-                  uint64_t entity, uint32_t subindex) {
-  auto found = report.counts.find(
-      std::make_tuple(run, metric, entity, uint64_t{0}, subindex));
-  return found == report.counts.end() ? 0 : found->second;
-}
-
-struct AggregatedCounter {
-  uint64_t value = 0;
-  bool overflow = false;
-};
-
 AggregatedCounter aggregateCounter(const ReportData &report, MetricKind metric,
                                    uint64_t entity, uint32_t subindex) {
-  AggregatedCounter result;
-  for (const UUID &run : report.runs) {
-    ReportData::CounterKey key =
-        std::make_tuple(run, metric, entity, uint64_t{0}, subindex);
-    auto found = report.counts.find(key);
-    if (found == report.counts.end())
-      continue;
-    if (found->second > UINT64_MAX - result.value ||
-        report.overflowedCounters.count(key))
-      result.overflow = true;
-    result.value = saturatingAdd(result.value, found->second);
-  }
-  return result;
+  auto found = report.aggregates.find({metric, entity, subindex});
+  return found == report.aggregates.end() ? AggregatedCounter{} : found->second;
 }
 
 void jsonContributors(llvm::json::OStream &out, const Database &database,
                       const ReportData &report, MetricKind metric,
                       uint64_t entity, uint32_t subindex) {
   out.array([&] {
-    for (const Run &run : database.runs) {
-      if (!report.runs.count(run.uuid))
-        continue;
-      uint64_t count = runCount(report, run.uuid, metric, entity, subindex);
-      if (!count)
-        continue;
+    auto found = report.contributors.find({metric, entity, subindex});
+    if (found == report.contributors.end())
+      return;
+    for (const auto &contributor : found->second) {
+      const auto *run = findRecord(report.index.runs, contributor.run);
       out.object([&] {
-        out.attribute("uuid", formatUUID(run.uuid));
-        out.attribute("name", run.name);
-        out.attribute("count", count);
+        out.attribute("uuid", formatUUID(contributor.run));
+        out.attribute("name", run ? run->name : std::string{});
+        out.attribute("count", contributor.count);
       });
     }
   });
 }
 
-const Run *findRun(const Database &database, const UUID &uuid) {
-  auto found = std::lower_bound(
-      database.runs.begin(), database.runs.end(), uuid,
-      [](const Run &run, const UUID &value) { return run.uuid < value; });
-  return found != database.runs.end() && found->uuid == uuid ? &*found
-                                                             : nullptr;
+const Run *findRun(const ReportData &report, const UUID &uuid) {
+  return findRecord(report.index.runs, uuid);
 }
 
 void jsonFunctionalContributors(
-    llvm::json::OStream &out, const Database &database,
+    llvm::json::OStream &out, const ReportData &report,
     llvm::ArrayRef<ReportData::Contribution> contributors) {
-  std::map<UUID, AggregatedCounter> grouped;
+  IndexMap<UUID, AggregatedCounter> grouped;
   for (const ReportData::Contribution &contributor : contributors) {
     if (!contributor.count)
       continue;
@@ -1830,7 +1808,7 @@ void jsonFunctionalContributors(
   }
   out.array([&] {
     for (const auto &[run, contributor] : grouped) {
-      const Run *metadata = findRun(database, run);
+      const Run *metadata = findRun(report, run);
       out.object([&] {
         out.attribute("uuid", formatUUID(run));
         out.attribute("name", metadata ? metadata->name : std::string{});
@@ -1879,6 +1857,7 @@ std::string declaredIndexText(int64_t start, uint64_t offset, bool increasing) {
 }
 
 std::vector<std::string> toggleBitPaths(const Database &database,
+                                        const ReportIndex &index,
                                         const ToggleObject &object,
                                         uint64_t bit) {
   struct Frame {
@@ -1941,18 +1920,38 @@ std::vector<std::string> toggleBitPaths(const Database &database,
     }
 
     std::vector<std::pair<uint32_t, uint64_t>> children;
-    const uint64_t end = uint64_t{frame.node} + 1 + node.childCount;
-    for (uint64_t index = frame.node + 1; index != end; ++index) {
-      const ToggleDimension &child = database.toggleDimensions[index];
-      if (child.parent != frame.node)
-        continue;
+    std::vector<uint32_t> candidates;
+    const bool array = node.kind == ToggleDimensionKind::PackedArray ||
+                       node.kind == ToggleDimensionKind::UnpackedArray;
+    if (array) {
+      auto found = index.toggleChildren.find(frame.node);
+      if (found != index.toggleChildren.end())
+        candidates = found->second;
+    } else {
+      auto foundShifts = index.toggleChildShifts.find(frame.node);
+      uint64_t shifts = foundShifts == index.toggleChildShifts.end()
+                            ? 0
+                            : foundShifts->second;
+      for (unsigned shift = 0; shifts; ++shift, shifts >>= 1) {
+        if (!(shifts & 1))
+          continue;
+        auto found = index.toggleChildrenByPrefix.find(
+            {frame.node, shift, childBit >> shift});
+        if (found != index.toggleChildrenByPrefix.end())
+          candidates.insert(candidates.end(), found->second.begin(),
+                            found->second.end());
+      }
+      sortByKey(candidates.begin(), candidates.end(),
+                [](uint32_t value) { return value; });
+    }
+    for (uint32_t candidate : candidates) {
+      const ToggleDimension &child = database.toggleDimensions[candidate];
       uint64_t candidateBit = childBit;
-      if (node.kind == ToggleDimensionKind::PackedArray ||
-          node.kind == ToggleDimensionKind::UnpackedArray)
+      if (array)
         candidateBit = child.bitOffset + childBit - node.bitOffset;
       if (candidateBit >= child.bitOffset &&
           candidateBit - child.bitOffset < child.bitWidth)
-        children.emplace_back(static_cast<uint32_t>(index), candidateBit);
+        children.emplace_back(candidate, candidateBit);
     }
     if (children.empty()) {
       paths.push_back(path + '[' + std::to_string(frame.bit) + ']');
@@ -1961,14 +1960,14 @@ std::vector<std::string> toggleBitPaths(const Database &database,
     for (auto child = children.rbegin(); child != children.rend(); ++child)
       stack.push_back({child->first, child->second, path});
   }
-  std::sort(paths.begin(), paths.end());
+  sortByKey(paths.begin(), paths.end(), [](const auto &key) { return key; });
   paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
   return paths;
 }
 
 void textReport(llvm::raw_ostream &out, const Database &database,
                 const ReportData &report,
-                const std::map<MetricKind, double> &thresholds) {
+                const IndexMap<MetricKind, double> &thresholds) {
   out << "Obelisk coverage\n"
       << "schema: " << digestText(computeSchemaFingerprint(database)) << '\n'
       << "tests: " << report.runs.size() << '\n';
@@ -1994,11 +1993,11 @@ void textReport(llvm::raw_ostream &out, const Database &database,
   print(MetricKind::Toggle, report.toggle);
   print(MetricKind::Functional, report.functional);
   if (report.functional.available) {
-    std::map<uint64_t, std::string> functionalExclusions;
+    IndexMap<uint64_t, std::string> functionalExclusions;
     for (const Exclusion &exclusion : database.exclusions)
       if (exclusion.metric == MetricKind::Functional)
         functionalExclusions.emplace(exclusion.entity, exclusion.reason);
-    std::unordered_map<uint64_t, const FunctionalType *> types;
+    IndexMap<uint64_t, const FunctionalType *> types;
     for (const FunctionalType &type : database.functionalTypes)
       types[type.id] = &type;
     out << "functional detail:\n";
@@ -2104,13 +2103,13 @@ void textReport(llvm::raw_ostream &out, const Database &database,
     std::string hierarchy;
     std::string testName;
   };
-  std::map<UUID, const Run *> runsByID;
+  IndexMap<UUID, const Run *> runsByID;
   for (const Run &run : database.runs)
     runsByID.emplace(run.uuid, &run);
-  std::map<std::pair<UUID, uint64_t>, const ResolvedInstance *> instancesByID;
+  IndexMap<std::pair<UUID, uint64_t>, const ResolvedInstance *> instancesByID;
   for (const ResolvedInstance &instance : database.resolvedInstances)
     instancesByID.emplace(std::make_pair(instance.run, instance.id), &instance);
-  std::map<std::tuple<uint64_t, Digest, uint64_t>,
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
            const ResolvedFunctionalBin *>
       binsByID;
   for (const ResolvedFunctionalBin &bin : database.resolvedFunctionalBins)
@@ -2136,18 +2135,11 @@ void textReport(llvm::raw_ostream &out, const Database &database,
         {&diagnostic, std::move(hierarchy),
          run == runsByID.end() ? std::string{} : run->second->name});
   }
-  std::sort(
-      illegalRows.begin(), illegalRows.end(),
-      [](const IllegalDiagnosticRow &left, const IllegalDiagnosticRow &right) {
-        return std::tie(left.testName, left.hierarchy,
-                        left.diagnostic->instance,
-                        left.diagnostic->simulationTime,
-                        left.diagnostic->message, left.diagnostic->count) <
-               std::tie(right.testName, right.hierarchy,
-                        right.diagnostic->instance,
-                        right.diagnostic->simulationTime,
-                        right.diagnostic->message, right.diagnostic->count);
-      });
+  sortByKey(illegalRows.begin(), illegalRows.end(), [](const auto &row) {
+    return std::tie(row.testName, row.hierarchy, row.diagnostic->instance,
+                    row.diagnostic->simulationTime, row.diagnostic->message,
+                    row.diagnostic->count);
+  });
   if (!illegalRows.empty())
     out << "illegal-bin diagnostics:\n";
   for (const IllegalDiagnosticRow &row : illegalRows) {
@@ -2181,7 +2173,7 @@ void jsonFixedAttribute(llvm::json::OStream &out, llvm::StringRef key,
 
 void jsonSummary(llvm::json::OStream &out, MetricKind metric,
                  const Summary &summary,
-                 const std::map<MetricKind, double> &thresholds) {
+                 const IndexMap<MetricKind, double> &thresholds) {
   out.attributeObject(metricName(metric), [&] {
     out.attribute("available", summary.available);
     jsonRawAttribute(out, "covered", summaryCountText(summary, true));
@@ -2201,9 +2193,9 @@ void jsonSummary(llvm::json::OStream &out, MetricKind metric,
 /// the HTML report uses it to carry source text.
 void jsonReport(
     llvm::raw_ostream &stream, const Database &database,
-    const ReportData &report, const std::map<MetricKind, double> &thresholds,
+    const ReportData &report, const IndexMap<MetricKind, double> &thresholds,
     llvm::function_ref<void(llvm::json::OStream &)> extra = nullptr) {
-  std::map<std::pair<MetricKind, uint64_t>, std::string> exclusionReasons;
+  IndexMap<std::pair<MetricKind, uint64_t>, std::string> exclusionReasons;
   for (const Exclusion &exclusion : database.exclusions)
     exclusionReasons.emplace(std::make_pair(exclusion.metric, exclusion.entity),
                              exclusion.reason);
@@ -2335,7 +2327,8 @@ void jsonReport(
                   report, MetricKind::Toggle, object.id, base + 3);
               out.object([&] {
                 out.attribute("index", bit);
-                out.attribute("paths", toggleBitPaths(database, object, bit));
+                out.attribute("paths", toggleBitPaths(database, report.index,
+                                                      object, bit));
                 auto transition = [&](llvm::StringRef name,
                                       const AggregatedCounter &count,
                                       uint32_t subindex, bool covered) {
@@ -2582,10 +2575,9 @@ void jsonReport(
           out.attribute("flags", configuration.flags);
           out.attributeArray("options", [&] {
             for (const FunctionalConfigurationOption &option :
-                 database.functionalConfigurationOptions) {
-              if (option.type != configuration.type ||
-                  option.configuration != configuration.configuration)
-                continue;
+                 lookupRows(report.index.optionsByConfiguration,
+                            ConfigurationKey{configuration.type,
+                                             configuration.configuration})) {
               out.object([&] {
                 out.attribute("owner", option.owner);
                 out.attribute("owner_kind",
@@ -2772,8 +2764,8 @@ void jsonReport(
         });
       }
     });
-    std::set<uint32_t> selectedResolvedTuples;
-    std::set<uint32_t> selectedResolvedTupleComponents;
+    IndexSet<uint32_t> selectedResolvedTuples;
+    IndexSet<uint32_t> selectedResolvedTupleComponents;
     for (const ResolvedFunctionalTupleSet &set :
          database.resolvedFunctionalTupleSets) {
       if (!report.configurations.count({set.type, set.configuration}))
@@ -2964,6 +2956,8 @@ void jsonReport(
     });
     out.attributeArray("functional_instance_groups", [&] {
       for (const auto &instance : report.functionalInstances) {
+        const auto itemsByTemplate = recordIndex(
+            instance.items, [](const auto &item) { return item.templateItem; });
         out.object([&] {
           out.attribute("type", instance.type);
           out.attribute("name", instance.name);
@@ -3015,31 +3009,23 @@ void jsonReport(
                 out.attributeArray("targets", [&] {
                   if (item.kind != FunctionalItemKind::Cross)
                     return;
-                  auto plan = std::find_if(
-                      database.crossPlans.begin(), database.crossPlans.end(),
-                      [&](const CrossPlan &value) {
-                        return value.item == item.templateItem;
-                      });
-                  if (plan == database.crossPlans.end())
+                  const auto *plan =
+                      findRecord(report.index.crossPlans, item.templateItem);
+                  if (!plan)
                     return;
                   for (uint32_t ordinal = 0; ordinal != plan->targetCount;
                        ++ordinal) {
                     const CrossTarget &target =
                         database.crossTargets[plan->firstTarget + ordinal];
-                    auto resolvedTarget = std::find_if(
-                        instance.items.begin(), instance.items.end(),
-                        [&](const ReportData::FunctionalItem &value) {
-                          return value.templateItem == target.target;
-                        });
+                    const auto *resolvedTarget =
+                        findRecord(itemsByTemplate, target.target);
                     out.object([&] {
                       out.attribute("template_item", target.target);
-                      out.attribute("id", resolvedTarget == instance.items.end()
-                                              ? uint64_t{0}
-                                              : resolvedTarget->id);
-                      out.attribute("name",
-                                    resolvedTarget == instance.items.end()
-                                        ? std::string{}
-                                        : resolvedTarget->name);
+                      out.attribute("id", !resolvedTarget ? uint64_t{0}
+                                                          : resolvedTarget->id);
+                      out.attribute("name", !resolvedTarget
+                                                ? std::string{}
+                                                : resolvedTarget->name);
                       out.attribute("ordinal", target.ordinal);
                     });
                   }
@@ -3048,12 +3034,9 @@ void jsonReport(
                   for (const auto &bin : item.bins) {
                     uint64_t crossSelector = 0;
                     if (bin.kind == FunctionalBinKind::Cross) {
-                      auto plan = std::find_if(
-                          database.crossBins.begin(), database.crossBins.end(),
-                          [&](const CrossBinPlan &value) {
-                            return value.bin == bin.templateBin;
-                          });
-                      if (plan != database.crossBins.end())
+                      const auto *plan =
+                          findRecord(report.index.crossBins, bin.templateBin);
+                      if (plan)
                         crossSelector = plan->rootSelector;
                     }
                     auto exclusion = exclusionReasons.find(
@@ -3079,8 +3062,7 @@ void jsonReport(
                                         : exclusion->second);
                       out.attribute("covered", bin.covered);
                       out.attributeBegin("contributors");
-                      jsonFunctionalContributors(out, database,
-                                                 bin.contributors);
+                      jsonFunctionalContributors(out, report, bin.contributors);
                       out.attributeEnd();
                     });
                   }
@@ -3103,8 +3085,7 @@ void jsonReport(
                           });
                       });
                       out.attributeBegin("contributors");
-                      jsonFunctionalContributors(out, database,
-                                                 bin.contributors);
+                      jsonFunctionalContributors(out, report, bin.contributors);
                       out.attributeEnd();
                     });
                 });
@@ -3128,13 +3109,13 @@ void jsonReport(
       }
     });
     out.attributeArray("illegal_bin_diagnostics", [&] {
-      std::map<std::pair<UUID, uint64_t>, const ResolvedInstance *>
+      IndexMap<std::pair<UUID, uint64_t>, const ResolvedInstance *>
           resolvedInstancesByID;
       for (const ResolvedInstance &instance : database.resolvedInstances)
         if (report.runs.count(instance.run))
           resolvedInstancesByID.emplace(
               std::make_pair(instance.run, instance.id), &instance);
-      std::map<std::tuple<uint64_t, Digest, uint64_t>,
+      IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
                const ResolvedFunctionalBin *>
           resolvedBinsByID;
       for (const ResolvedFunctionalBin &bin : database.resolvedFunctionalBins)
@@ -3145,7 +3126,7 @@ void jsonReport(
            database.illegalBinDiagnostics) {
         if (!report.runs.count(diagnostic.run))
           continue;
-        const Run *run = findRun(database, diagnostic.run);
+        const Run *run = findRun(report, diagnostic.run);
         auto instance = resolvedInstancesByID.find(
             std::make_pair(diagnostic.run, diagnostic.instance));
         std::string hierarchy;
@@ -3207,24 +3188,36 @@ std::string lcovPathField(const std::string &input) {
 
 void lcovReport(llvm::raw_ostream &out, const Database &database,
                 const ReportData &report) {
-  std::unordered_map<uint64_t, const SourceFile *> files;
+  IndexMap<uint64_t, const SourceFile *> files;
   for (const auto &file : database.sourceFiles)
     files[file.id] = &file;
-  std::set<uint64_t> excluded;
+  IndexSet<uint64_t> excluded;
   for (const Exclusion &value : database.exclusions)
     if (value.metric == MetricKind::Line)
       excluded.insert(value.entity);
-  std::set<std::string> versionedFiles;
+  IndexMap<uint64_t, const LinePoint *> points;
+  IndexMap<uint64_t, IndexSet<uint32_t>> lines;
+  for (const LinePoint &point : database.linePoints)
+    if (!excluded.count(point.id)) {
+      points.emplace(point.id, &point);
+      lines[point.file].insert(point.line);
+    }
+  IndexMap<std::tuple<UUID, uint64_t, uint32_t>, uint64_t> counts;
+  for (const Counter &counter : database.counters) {
+    if (counter.metric != MetricKind::Line || !report.runs.count(counter.run))
+      continue;
+    auto point = points.find(counter.entity);
+    if (point == points.end())
+      continue;
+    auto &count =
+        counts[{counter.run, point->second->file, point->second->line}];
+    count = std::max(count, counter.value);
+  }
+  IndexSet<std::string> versionedFiles;
   for (const Run &run : database.runs)
     if (report.runs.count(run.uuid)) {
-      std::map<uint64_t, std::map<uint32_t, uint64_t>> lines;
-      for (const LinePoint &point : database.linePoints)
-        if (!excluded.count(point.id))
-          lines[point.file][point.line] = std::max(
-              lines[point.file][point.line],
-              runCount(report, run.uuid, MetricKind::Line, point.id, 0));
-      for (const auto &fileLines : lines) {
-        auto found = files.find(fileLines.first);
+      for (const auto &[file, fileLines] : lines) {
+        auto found = files.find(file);
         if (found == files.end())
           continue;
         out << "TN:" << lcovTestName(run.name)
@@ -3232,11 +3225,13 @@ void lcovReport(llvm::raw_ostream &out, const Database &database,
         if (versionedFiles.insert(found->second->path).second)
           out << "VER:" << digestText(found->second->digest) << '\n';
         uint64_t hit = 0;
-        for (const auto &line : fileLines.second) {
-          out << "DA:" << line.first << ',' << line.second << '\n';
-          hit += line.second != 0;
+        for (uint32_t line : fileLines) {
+          auto count = counts.find({run.uuid, file, line});
+          uint64_t value = count == counts.end() ? 0 : count->second;
+          out << "DA:" << line << ',' << value << '\n';
+          hit += value != 0;
         }
-        out << "LF:" << fileLines.second.size() << "\nLH:" << hit
+        out << "LF:" << fileLines.size() << "\nLH:" << hit
             << "\nend_of_record\n";
       }
     }
@@ -3247,7 +3242,7 @@ void lcovReport(llvm::raw_ostream &out, const Database &database,
 void htmlReport(llvm::raw_ostream &out, const Database &database,
                 const ReportData &report, const std::string &sourceRoot,
                 obelisk::frontend::LanguageVersion languageVersion,
-                const std::map<MetricKind, double> &thresholds) {
+                const IndexMap<MetricKind, double> &thresholds) {
   // A file's text is used only when it is exactly the text that was compiled.
   auto writeSources = [&](llvm::json::OStream &json) {
     json.attributeArray("sources", [&] {
@@ -3266,8 +3261,8 @@ void htmlReport(llvm::raw_ostream &out, const Database &database,
           if (!buffer)
             continue;
           llvm::StringRef text = (*buffer)->getBuffer();
-          Digest actual = sha256(
-              reinterpret_cast<const uint8_t *>(text.data()), text.size());
+          Digest actual = sha256(reinterpret_cast<const uint8_t *>(text.data()),
+                                 text.size());
           if (actual == file.digest) {
             contents = std::move(*buffer);
             break;

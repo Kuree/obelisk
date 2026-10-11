@@ -37,10 +37,13 @@ TEST(CoverageIndexTest, ArbitraryIDsHaveOrderedStableLeaves) {
   EXPECT_TRUE(index.empty());
   EXPECT_EQ(copied.size(), expected.size());
   EXPECT_EQ(moved.size(), expected.size());
+  EXPECT_EQ(copied, moved);
   for (const auto &[key, value] : expected) {
     EXPECT_EQ(copied.at(key), value);
     EXPECT_EQ(moved.at(key), value);
   }
+  ++copied.begin()->second;
+  EXPECT_NE(copied, moved);
 }
 
 TEST(CoverageIndexTest, VariableKeysCanSplitAboveExistingLongPrefixes) {

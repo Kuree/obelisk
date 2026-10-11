@@ -202,6 +202,10 @@ public:
   }
   size_t size() const { return entries.size(); }
   bool empty() const { return entries.empty(); }
+  bool operator==(const IndexMap &other) const {
+    return size() == other.size() && std::equal(begin(), end(), other.begin());
+  }
+  bool operator!=(const IndexMap &other) const { return !(*this == other); }
   iterator begin() { return {this, first}; }
   iterator end() { return {this, nullptr}; }
   const_iterator begin() const { return {this, first}; }

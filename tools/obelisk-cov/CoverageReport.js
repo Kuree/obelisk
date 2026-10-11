@@ -93,6 +93,10 @@ const groupBy = (rows, key) => {
   }
   return map;
 };
+const groupsByType = groupBy(d.functional_instance_groups, g => g.type);
+const functionalTypes = new Map(d.functional_types.map(t => [t.id, t]));
+const itemsByGroup = new Map(d.functional_instance_groups.map(g =>
+  [g, new Map(g.items.map(i => [i.id, i]))]));
 const alternativesByBin = groupBy(d.resolved_transition_alternatives,
   a => a.type + '|' + a.configuration + '|' + a.bin);
 const stepsByAlternative = groupBy(d.resolved_transition_steps,
@@ -132,15 +136,19 @@ const resolvedBins = new Map(d.resolved_functional_bins.map(
   b => [b.type + '|' + b.configuration + '|' + b.id, b]));
 const automaticNodes = new Map(d.resolved_cross_automatic_nodes.map(
   n => [n.type + '|' + n.configuration + '|' + n.cross + '|' + n.id, n]));
-const automaticEdges = groupBy(d.resolved_cross_automatic_edges,
-  e => e.type + '|' + e.configuration + '|' + e.cross + '|' + e.node);
+const automaticEdges = new Map();
+for (const edge of d.resolved_cross_automatic_edges) {
+  const key = edge.type + '|' + edge.configuration + '|' + edge.cross + '|' + edge.node;
+  if (!automaticEdges.has(key)) automaticEdges.set(key, new Map());
+  const name = resolvedBins.get(edge.type + '|' + edge.configuration + '|' + edge.bin)?.name || '';
+  if (!automaticEdges.get(key).has(name)) automaticEdges.get(key).set(name, edge);
+}
 const automaticContains = (g, i, components) => {
   let node = i.automatic_root_node;
   for (let dimension = 0; dimension !== components.length; ++dimension) {
     const key = g.type + '|' + g.configuration + '|' + i.id + '|' + node;
     if (!automaticNodes.has(key)) return false;
-    const edge = (automaticEdges.get(key) || []).find(e =>
-      (resolvedBins.get(g.type + '|' + g.configuration + '|' + e.bin)?.name || '') === components[dimension]);
+    const edge = automaticEdges.get(key)?.get(components[dimension]);
     if (!edge) return false;
     if (dimension + 1 === components.length) return edge.child === '0';
     if (edge.child === '0') return false;
@@ -224,7 +232,7 @@ function uniqueContributions() {
         if (b.one_to_zero.covered) awardCritical(b.one_to_zero.contributors, 1, 'toggle');
       }
   for (const t of d.functional_types) {
-    const groups = d.functional_instance_groups.filter(g => g.type === t.id);
+    const groups = groupsByType.get(t.id) || [];
     const cumulativeAtLeast = new Map();
     for (const g of groups)
       for (const i of g.items) {
@@ -242,7 +250,7 @@ function uniqueContributions() {
         }
       continue;
     }
-    const merged = new Map(), automaticProfiles = new Map();
+    const merged = new Map();
     const addMerged = (key, b, threshold) => {
       let value = merged.get(key);
       if (!value) merged.set(key, value = {atLeast: 0n, contributors: []});
@@ -257,20 +265,12 @@ function uniqueContributions() {
         const threshold = cumulativeAtLeast.get(i.template_item) || 0n;
         for (const b of i.bins)
           if (b.contributing) addMerged(prefix + 'bin|' + b.name, b, threshold);
-        if (BigInt(i.automatic_total) !== 0n) {
-          if (!automaticProfiles.has(prefix)) automaticProfiles.set(prefix, []);
-          automaticProfiles.get(prefix).push({group: g, item: i});
-        }
         for (const b of i.automatic_bins) {
-          const value = addMerged(prefix + 'auto|' + b.name, b, threshold);
-          value.profile = prefix;
-          value.components = b.components.map(c => c.name);
+          if (automaticContains(g, i, b.components.map(c => c.name)))
+            addMerged(prefix + 'auto|' + b.name, b, threshold);
         }
       }
     for (const value of merged.values()) {
-      if (value.profile && !(automaticProfiles.get(value.profile) || []).some(
-          p => automaticContains(p.group, p.item, value.components)))
-        continue;
       awardCritical(value.contributors, value.atLeast, 'functional');
     }
   }
@@ -281,7 +281,6 @@ function uniqueContributions() {
 
 /* -------------------------------------------------------------- totals */
 
-const groupsByType = groupBy(d.functional_instance_groups, g => g.type);
 // What each scope and file view lists, gathered once.
 const pointsByScope = groupBy(d.line_points, p => p.scope);
 const pointsByFile = groupBy(d.line_points, p => p.file);
@@ -894,7 +893,7 @@ function viewFile(fid, target) {
 // explicit bin) are dots.
 function crossMatrix(g, i) {
   if (i.targets.length !== 2 || BigInt(i.automatic_total) === 0n) return '';
-  const targets = i.targets.map(t => g.items.find(x => x.id === t.id));
+  const targets = i.targets.map(t => itemsByGroup.get(g)?.get(t.id));
   if (targets.some(x => !x)) return '';
   const names = targets.map(x => x.bins.filter(b => b.contributing && !(num(b.flags) & 12)).map(b => b.name));
   if (!names[0].length || !names[1].length || names[0].length * names[1].length > 2500) return '';
@@ -919,7 +918,7 @@ function crossMatrix(g, i) {
 }
 
 function viewCovergroup(tid, openItem) {
-  const t = d.functional_types.find(x => x.id === tid);
+  const t = functionalTypes.get(tid);
   if (!t) return '<h1>Unknown covergroup</h1>';
   const scope = scopes.get(t.scope);
   let h = (scope ? `<div class="crumbs"><a href="${scopeHref(scope.name)}">${esc(scope.name)}</a></div>` : '') +

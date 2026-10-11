@@ -50,6 +50,9 @@ config.substitutions.append(
     ("%coverage-fixture", config.obelisk_coverage_fixture_executable)
 )
 config.substitutions.append(
+    ("%coverage-scaling-fixture", config.obelisk_coverage_scaling_fixture_executable)
+)
+config.substitutions.append(
     ("%source-tokens-test", config.obelisk_source_tokens_test_executable)
 )
 config.substitutions.append(

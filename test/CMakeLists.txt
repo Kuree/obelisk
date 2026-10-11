@@ -61,6 +61,13 @@ target_compile_features(obelisk-coverage-fixture PRIVATE cxx_std_17)
 set_target_properties(obelisk-coverage-fixture PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
+add_executable(obelisk-coverage-scaling-fixture EXCLUDE_FROM_ALL
+  ../benchmark/coverage/format-scaling.cpp)
+target_link_libraries(obelisk-coverage-scaling-fixture PRIVATE ObeliskCoverage)
+target_compile_features(obelisk-coverage-scaling-fixture PRIVATE cxx_std_17)
+set_target_properties(obelisk-coverage-scaling-fixture PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+
 add_executable(obelisk-source-tokens-test EXCLUDE_FROM_ALL
   Support/SourceTokensTest.cpp)
 target_link_libraries(obelisk-source-tokens-test PRIVATE ObeliskSourceTokens)
@@ -457,6 +464,7 @@ add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   obelisk-sim-standard-api-test
   obelisk-design-database-dump-test
   obelisk-coverage-fixture
+  obelisk-coverage-scaling-fixture
   obelisk-source-tokens-test
   obelisk-cov
   ${_obelisk_driver_test_dependencies}
