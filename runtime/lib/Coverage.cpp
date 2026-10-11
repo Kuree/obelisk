@@ -385,34 +385,11 @@ uint64_t availableRunCoverage(const CoverageState &coverage) {
       flags |= RunContainsToggle;
       break;
     }
-  if (coverage.schema) {
-    for (const FunctionalBin &bin : coverage.schema->functionalBins) {
-      bool excluded = std::any_of(
-          coverage.schema->exclusions.begin(),
-          coverage.schema->exclusions.end(), [&](const Exclusion &entry) {
-            return entry.metric == MetricKind::Functional &&
-                   entry.entity == bin.id;
-          });
-      if (!excluded) {
-        flags |= RunContainsFunctional;
-        break;
-      }
-    }
-    for (const ResolvedFunctionalBin &bin :
-         coverage.schema->resolvedFunctionalBins) {
-      bool excluded = std::any_of(
-          coverage.schema->exclusions.begin(),
-          coverage.schema->exclusions.end(), [&](const Exclusion &entry) {
-            return entry.metric == MetricKind::Functional &&
-                   (entry.entity == bin.id ||
-                    (bin.templateBin && entry.entity == bin.templateBin));
-          });
-      if (!excluded) {
-        flags |= RunContainsFunctional;
-        break;
-      }
-    }
-  }
+  // A declared coverage model remains functional data even when it has no
+  // bins or every bin is excluded. Its identities and options must survive a
+  // save; contribution to the score is decided by the coverage calculation.
+  if (coverage.schema && !coverage.schema->functionalTypes.empty())
+    flags |= RunContainsFunctional;
   return flags;
 }
 
@@ -6160,9 +6137,6 @@ obelisk_rt_status resolveStaticFunctionalType(
             [](const auto &a, const auto &b) {
               return std::tie(a.cross, a.node) < std::tie(b.cross, b.node);
             });
-  if (resolvedItems.empty())
-    return OBELISK_RT_INVALID_DESIGN;
-
   IndexMap<uint64_t, const ResolvedFunctionalItem *> pendingItems;
   for (const auto &row : resolvedItemRows)
     pendingItems.emplace(row.id, &row);
@@ -7548,8 +7522,6 @@ obelisk_rt_status createResolvedFunctionalType(
     }
     type.crosses.push_back(std::move(cross));
   }
-  if (type.items.empty())
-    return OBELISK_RT_INVALID_DESIGN;
   obelisk_rt_status typeOptionStatus =
       applyFunctionalTypeOptions(coverage, typeID, type, &schema);
   if (typeOptionStatus != OBELISK_RT_OK)
@@ -7573,6 +7545,9 @@ bindResolvedFunctionalType(CoverageState &coverage, uint64_t typeID,
     return OBELISK_RT_OK;
   }
   if (!coverage.schema)
+    return OBELISK_RT_INVALID_DESIGN;
+  indexFunctionalConfigurations(coverage);
+  if (!coverage.configurationKeys.count(key))
     return OBELISK_RT_INVALID_DESIGN;
   FunctionalCoverageTypeState type;
   obelisk_rt_status status = createResolvedFunctionalType(
@@ -10915,6 +10890,10 @@ CoverageResult queryType(const CoverageState &coverage, uint64_t typeID,
   if (totalWeight) {
     result.percentage = weightedPercentage / static_cast<double>(totalWeight);
     result.contributes = true;
+  } else {
+    result.percentage = type.typeWeight ? 0.0 : 100.0;
+    result.covered = 0;
+    result.total = 0;
   }
   if (outInstanceCount)
     *outInstanceCount = instanceCount;
@@ -11009,6 +10988,7 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
       result.percentage = weightedPercentage / static_cast<double>(totalWeight);
       result.contributes = true;
     } else {
+      result.percentage = types.front()->typeWeight ? 0.0 : 100.0;
       result.covered = 0;
       result.total = 0;
     }

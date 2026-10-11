@@ -1935,6 +1935,68 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences) {
+  using namespace obelisk::coverage;
+  Database schema;
+  schema.scopes.push_back({1, 0, "top", 0, "top"});
+  schema.functionalTypes.push_back({10, 1, "empty", 0, 2023, "top.empty"});
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 first = 0, second = 0, invalid = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  EXPECT_NE(first, 0u);
+  EXPECT_NE(first, second);
+  EXPECT_EQ(createFunctional(context, 11, &invalid), OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(invalid, 0u);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, first, nullptr, 0),
+            OBELISK_RT_OK);
+  double percentage = -1.0;
+  int32_t covered = -1, total = -1;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, first, 0, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 0.0);
+  EXPECT_EQ(covered, 0);
+  EXPECT_EQ(total, 0);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, first, 20, &percentage, &covered, &total),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
+                context, 11, 0, &percentage, &covered, &total),
+            OBELISK_RT_INVALID_DESIGN);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+                context, first, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, first, 0, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+                context, 10, 0, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+  EXPECT_EQ(covered, 0);
+  EXPECT_EQ(total, 0);
+  ASSERT_EQ(obelisk_rt_v1_functional_coverage_get(context, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+  Database saved = saveCoverage(context, "empty-groups");
+  ASSERT_EQ(saved.runs.size(), 1u);
+  EXPECT_TRUE(saved.runs.front().flags & RunContainsFunctional);
+  EXPECT_EQ(saved.resolvedInstances.size(), 2u);
+  ASSERT_EQ(saved.functionalConfigurations.size(), 1u);
+  EXPECT_EQ(saved.functionalConfigurations.front().type, 10u);
+  EXPECT_TRUE(saved.resolvedFunctionalItems.empty());
+  EXPECT_TRUE(saved.resolvedFunctionalBins.empty());
+  EXPECT_TRUE(saved.counters.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(CoverageDatabaseTest, AtomicWriteReplacesExistingImageAndCleansTemporary) {
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /

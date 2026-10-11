@@ -138,6 +138,22 @@ packing, configuration reuse, and both execution tiers. The runtime indexes
 remain context-owned and independent of MLIR; existing dialect verification
 and native/bytecode conversion tests exercise the compiler boundary.
 
+Small native and bytecode probes also found that `new()` rejected a covergroup
+with no coverage items. IEEE 19.11 explicitly permits this zero-denominator
+case. Empty groups now retain independent identities, constructor profiles,
+names, and persisted instances without synthesizing items or bins. Their
+queries return zero bin counts, a score of 0 for positive group weight or 100
+for zero group weight, and no contribution to the overall score. Binding
+checks the declared configuration key directly instead of using a nonempty
+item list as a proxy for validity. Functional persistence availability follows
+the declared types rather than scanning bin/exclusion pairs, including when the
+design consists entirely of empty groups. This adds bounded key lookups and
+constant query/availability work. The source regression covers O0/O3 in both
+tiers, load and merge, and JSON/text/HTML/LCOV generation; the runtime unit checks
+invalid references as well as valid empty identities. Existing typed declaration,
+symbol, and payload-batch verification accepts the empty inventories without
+changing the MLIR operation contracts.
+
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime
 code stays independent of MLIR and LLVM. This follows the analysis-lifetime and
