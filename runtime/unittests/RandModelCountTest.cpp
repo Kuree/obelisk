@@ -132,5 +132,32 @@ TEST_F(RandModelCountTest, FullWideCubeAndRejectionSamplingPreservePrecision) {
   EXPECT_EQ(state.state, sameState.state);
 }
 
+TEST_F(RandModelCountTest, ProjectionCountsChoicesIndependentlyOfCompletions) {
+  std::vector<Z3_ast> variables;
+  for (unsigned index = 0; index != 131; ++index)
+    variables.push_back(bit(index));
+  std::vector<Z3_ast> data(variables.begin(), variables.end() - 1);
+  Z3_ast predicate =
+      Z3_mk_implies(context, variables.back(),
+                    Z3_mk_eq(context, packed(data), numeral(0, 130)));
+  std::vector<bool> keep(variables.size(), false);
+  keep.back() = true;
+  for (unsigned selected = 0; selected != 2; ++selected) {
+    ModelCounter counter(context, variables);
+    ASSERT_TRUE(counter.build(predicate));
+    counter.project(keep);
+    ASSERT_EQ(counter.count().compare(ModelCount(2)), 0);
+    auto value = counter.assignment(ModelCount(selected));
+    ASSERT_EQ(value.back(), selected != 0);
+    counter.restrict(value, keep);
+    EXPECT_EQ(counter.count().compare(selected ? ModelCount(1)
+                                               : ModelCount::powerOfTwo(130)),
+              0);
+    auto completion = counter.assignment(ModelCount());
+    EXPECT_EQ(completion.back(), selected != 0);
+    EXPECT_EQ(std::count(completion.begin(), completion.end() - 1, true), 0);
+  }
+}
+
 } // namespace
 #endif

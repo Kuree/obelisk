@@ -17,12 +17,13 @@ enum class SMTCompletion { Unavailable, Satisfiable, Unsatisfiable, Unknown };
 /// by the caller. The result follows the residual's unsigned cyclic order;
 /// SMT_UNIFORM instead samples the complete finite set of legal assignments
 /// with exact cardinalities and updates the supplied object-local stream.
-SMTCompletion
-completeRandomProgram(const uint8_t *program, size_t programSize,
-                      const uint64_t *start, const uint64_t *mutableMask,
-                      size_t assignmentWords, uint64_t constraintMask,
-                      const uint64_t *captures, const uint32_t *captureWidths,
-                      size_t captureCount, uint64_t *assignment,
-                      obelisk_rt_random_state_v1 *randomState = nullptr);
+/// Ordered masks select conditional projections before later fields are solved.
+SMTCompletion completeRandomProgram(
+    const uint8_t *program, size_t programSize, const uint64_t *start,
+    const uint64_t *mutableMask, size_t assignmentWords,
+    uint64_t constraintMask, const uint64_t *captures,
+    const uint32_t *captureWidths, size_t captureCount, uint64_t *assignment,
+    obelisk_rt_random_state_v1 *randomState = nullptr,
+    const uint64_t *orderedMasks = nullptr, size_t orderedLayerCount = 0);
 
 } // namespace obelisk::runtime

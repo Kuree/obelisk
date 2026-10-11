@@ -1316,7 +1316,190 @@ TEST_F(RandSolveTest, RejectsMalformedPrograms) {
             OBELISK_RT_INVALID_ARGUMENT);
 }
 
+TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
+  auto check = [&](unsigned width,
+                   std::initializer_list<EncodedInstruction> instructions,
+                   std::initializer_list<EncodedSolveBeforeEdge> edges,
+                   uint64_t observedMask) {
+    auto bytes = program(width, 0, instructions, false, edges);
+    uint64_t assignment = 0, state = 71;
+    uint32_t success = 0;
+    unsigned selected = 0;
+    for (unsigned iteration = 0; iteration != 6000; ++iteration) {
+      ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                    context, bytes.data(), bytes.size(), 0,
+                    (uint64_t{1} << width) - 1, 0, uint64_t{1} << width, state,
+                    15, nullptr, 0, &assignment, &success, &state),
+                OBELISK_RT_OK);
+      ASSERT_EQ(success, 1u);
+      selected += (assignment & observedMask) != 0;
+    }
+    // The last pair has three legal joint values, so its implication's
+    // antecedent has probability 1/3. Solving it earlier gives probability 1/2.
+    EXPECT_GT(selected, 1800u);
+    EXPECT_LT(selected, 2200u);
 #ifdef OBELISK_RUNTIME_Z3
+    bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+    selected = 0;
+    for (unsigned iteration = 0; iteration != 768; ++iteration) {
+      ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                    context, bytes.data(), bytes.size(), 0,
+                    (uint64_t{1} << width) - 1, 0, 1, state, 15, nullptr, 0,
+                    &assignment, &success, &state),
+                OBELISK_RT_OK);
+      ASSERT_EQ(success, 1u);
+      selected += (assignment & observedMask) != 0;
+    }
+    EXPECT_GT(selected, 200u);
+    EXPECT_LT(selected, 312u);
+#endif
+  };
+  // a before b, a before c, c before d: b is deferred to join d.
+  check(4,
+        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 3},
+         {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+         {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+        {{1, 2}, {1, 4}, {4, 8}}, 2);
+  // a before b, with c unspecified: c joins b instead of following it.
+  check(3,
+        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 1},
+         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 2},
+         {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+         {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+        {{1, 2}}, 2);
+}
+
+#ifdef OBELISK_RUNTIME_Z3
+TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
+  constexpr uint64_t guardMask = uint64_t{1} << 32;
+  std::vector<uint8_t> bytes =
+      program(33, 1,
+              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              false, {{guardMask, UINT32_MAX, 0}});
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  uint64_t assignment = 0, state = 71, endpoint = 7;
+  uint32_t success = 0;
+  auto solve = [&](uint64_t disabled, uint64_t mutableBits, uint64_t start) {
+    return obelisk_rt_v1_random_solve_modes_state(
+        context, bytes.data(), bytes.size(), start, mutableBits, disabled, 1,
+        state, 15, &endpoint, 1, &assignment, &success, &state);
+  };
+  unsigned guardTrue = 0;
+  uint32_t dataOnes = 0, dataZeros = 0;
+  for (unsigned iteration = 0; iteration != 128; ++iteration) {
+    endpoint = iteration & 1 ? 11 : 7;
+    ASSERT_EQ(solve(0, guardMask | UINT32_MAX, 0), OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    if (assignment & guardMask) {
+      EXPECT_EQ(uint32_t(assignment), endpoint);
+      ++guardTrue;
+    } else {
+      dataOnes |= uint32_t(assignment);
+      dataZeros |= ~uint32_t(assignment);
+    }
+  }
+  EXPECT_GT(guardTrue, 32u);
+  EXPECT_LT(guardTrue, 96u);
+  EXPECT_EQ(dataOnes, UINT32_MAX);
+  EXPECT_EQ(dataZeros, UINT32_MAX);
+  // Disabling only the order restores the full joint distribution. A true
+  // guard now has probability 1/(2^32+1) instead of 1/2.
+  for (unsigned iteration = 0; iteration != 32; ++iteration) {
+    ASSERT_EQ(solve(1, guardMask | UINT32_MAX, 0), OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_EQ(assignment & guardMask, 0u);
+  }
+  // A frozen guard is state, not a projected choice. Its unique completion
+  // requires no extra draw and preserves the original upper bits.
+  uint64_t originalState = state;
+  ASSERT_EQ(solve(0, UINT32_MAX, guardMask), OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ(assignment, guardMask | endpoint);
+  EXPECT_EQ(state, originalState);
+}
+
+TEST_F(RandSolveTest, OrderedResidualParsesDomainsAfterSolveEdges) {
+  constexpr uint64_t guardMask = uint64_t{1} << 32;
+  auto bytes = program(33, 1,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+                       false, {{guardMask, UINT32_MAX}}, {},
+                       {{0, 0, 32, UINT32_MAX, 7}, {0, 0, 32, UINT32_MAX, 11}});
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  uint64_t assignment = 0, state = 71, endpoint = 7;
+  uint32_t success = 0;
+  for (unsigned iteration = 0; iteration != 32; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0,
+                  guardMask | UINT32_MAX, 0, 1, state, 15, &endpoint, 1,
+                  &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    EXPECT_TRUE(uint32_t(assignment) == 7 || uint32_t(assignment) == 11);
+    if (assignment & guardMask) {
+      EXPECT_EQ(uint32_t(assignment), 7u);
+    }
+  }
+}
+
+TEST_F(RandSolveTest, OrderedResidualResolvesSoftPrioritiesBeforeProjection) {
+  constexpr uint64_t guardMask = uint64_t{1} << 32;
+  auto bytes = program(33, 2,
+                       {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 32},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
+                        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                         OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+                        {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
+                        {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 1},
+                        {OBELISK_RT_RANDOM_EQ_V1, 1},
+                        {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 1, 0}},
+                       true, {{guardMask, UINT32_MAX}});
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  uint64_t captures[] = {7, 11}, assignment = 0, state = 71;
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, guardMask | UINT32_MAX,
+                0, 1, state, 15, captures, 2, &assignment, &success, &state),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ(assignment, 11u);
+  EXPECT_EQ(state, 71u);
+  unsigned guardTrue = 0;
+  for (unsigned iteration = 0; iteration != 64; ++iteration) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                  context, bytes.data(), bytes.size(), 0,
+                  guardMask | UINT32_MAX, 2, 1, state, 15, captures, 2,
+                  &assignment, &success, &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    if (assignment & guardMask) {
+      EXPECT_EQ(uint32_t(assignment), 7u);
+      ++guardTrue;
+    }
+  }
+  EXPECT_GT(guardTrue, 16u);
+  EXPECT_LT(guardTrue, 48u);
+}
+
 TEST_F(RandSolveTest, UniformResidualUsesWholeJointSetInsteadOfCyclicGaps) {
   std::vector<uint8_t> bytes =
       program(9, 0,

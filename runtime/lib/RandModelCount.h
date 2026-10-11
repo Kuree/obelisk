@@ -124,7 +124,8 @@ public:
   using ID = size_t;
 
   ModelCounter(Z3_context context, const std::vector<Z3_ast> &variables)
-      : context(context), variableCount(variables.size()) {
+      : context(context), variableCount(variables.size()),
+        fixed(variableCount, false), fixedValues(variableCount, false) {
     nodes.push_back({variableCount, 0, 0});
     nodes.push_back({variableCount, 1, 1});
     for (size_t index = 0; index != variables.size(); ++index)
@@ -171,34 +172,80 @@ public:
     if (!valid)
       return false;
 
-    // A node is created after its children. Reduced nodes preserve that order.
-    counts.resize(nodes.size());
-    counts[1] = ModelCount(1);
-    for (ID id = 2; id != nodes.size(); ++id) {
-      const Node &node = nodes[id];
-      counts[id] = counts[node.low].shifted(nodes[node.low].variable -
-                                            node.variable - 1);
-      counts[id].add(counts[node.high].shifted(nodes[node.high].variable -
-                                               node.variable - 1));
-    }
+    project(std::vector<bool>(variableCount, true));
     return true;
   }
 
   ModelCount count() const {
-    return counts[root].shifted(nodes[root].variable);
+    return counts[viewRoot].shifted(levels[nodes[viewRoot].variable]);
+  }
+
+  /// Existentially remove other fields before counting a solve-order layer.
+  /// A legal projected value contributes one choice regardless of how many
+  /// completions it has. Previous choices remain fixed in the original graph.
+  void project(const std::vector<bool> &keep) {
+    sampled.resize(variableCount);
+    levels.assign(variableCount + 1, 0);
+    for (size_t index = 0; index != variableCount; ++index) {
+      sampled[index] = keep[index] && !fixed[index];
+      levels[index + 1] = levels[index] + sampled[index];
+    }
+    auto reached = reachable(root);
+    std::vector<ID> projected(nodes.size());
+    projected[1] = 1;
+    for (ID id = 2; id != reached.size(); ++id) {
+      if (!reached[id])
+        continue;
+      Node node = nodes[id];
+      projected[id] =
+          sampled[node.variable]
+              ? makeNode(node.variable, projected[node.low],
+                         projected[node.high])
+              : disjunction(projected[node.low], projected[node.high]);
+    }
+    viewRoot = projected[root];
+    recount();
+  }
+
+  /// Cofactor the original relation by an accepted layer, preserving its
+  /// constraints on later fields. Projecting this relation again yields the
+  /// next conditional distribution rather than the previous projection.
+  void restrict(const std::vector<bool> &value,
+                const std::vector<bool> &selected) {
+    auto reached = reachable(root);
+    std::vector<ID> reduced(nodes.size());
+    reduced[1] = 1;
+    for (ID id = 2; id != reached.size(); ++id) {
+      if (!reached[id])
+        continue;
+      Node node = nodes[id];
+      reduced[id] =
+          selected[node.variable]
+              ? reduced[value[node.variable] ? node.high : node.low]
+              : makeNode(node.variable, reduced[node.low], reduced[node.high]);
+    }
+    root = reduced[root];
+    for (size_t index = 0; index != variableCount; ++index)
+      if (selected[index]) {
+        fixed[index] = true;
+        fixedValues[index] = value[index];
+      }
+    project(std::vector<bool>(variableCount, true));
   }
 
   /// Each rank names one legal assignment exactly once. Skipped variables
   /// denote a full cube, whose cardinality is included rather than enumerated.
   std::vector<bool> assignment(ModelCount rank) const {
-    std::vector<bool> value(variableCount, false);
-    ID current = root;
+    std::vector<bool> value = fixedValues;
+    ID current = viewRoot;
     for (size_t variable = 0; variable != variableCount; ++variable) {
+      if (!sampled[variable])
+        continue;
       const Node &node = nodes[current];
       bool skipped = variable < node.variable;
       ID low = skipped ? current : node.low;
-      ModelCount lowCount =
-          counts[low].shifted(nodes[low].variable - variable - 1);
+      ModelCount lowCount = counts[low].shifted(levels[nodes[low].variable] -
+                                                levels[variable] - 1);
       bool high = rank.compare(lowCount) >= 0;
       if (high) {
         rank.subtract(lowCount);
@@ -215,6 +262,40 @@ private:
     size_t variable;
     ID low, high;
   };
+
+  std::vector<bool> reachable(ID start) const {
+    std::vector<bool> reached(nodes.size(), false);
+    std::vector<ID> pending{start};
+    while (!pending.empty()) {
+      ID id = pending.back();
+      pending.pop_back();
+      if (reached[id])
+        continue;
+      reached[id] = true;
+      if (id > 1) {
+        pending.push_back(nodes[id].low);
+        pending.push_back(nodes[id].high);
+      }
+    }
+    return reached;
+  }
+
+  void recount() {
+    auto reached = reachable(viewRoot);
+    counts.resize(nodes.size());
+    counts[0] = ModelCount();
+    counts[1] = ModelCount(1);
+    // A node is created after its children. Reduced nodes preserve that order.
+    for (ID id = 2; id != nodes.size(); ++id) {
+      if (!reached[id])
+        continue;
+      const Node &node = nodes[id];
+      counts[id] = counts[node.low].shifted(levels[nodes[node.low].variable] -
+                                            levels[node.variable] - 1);
+      counts[id].add(counts[node.high].shifted(
+          levels[nodes[node.high].variable] - levels[node.variable] - 1));
+    }
+  }
 
   struct Key {
     size_t a, b, c;
@@ -387,6 +468,9 @@ private:
   Z3_context context;
   size_t variableCount;
   ID root = 0;
+  ID viewRoot = 0;
+  std::vector<bool> fixed, fixedValues, sampled;
+  std::vector<size_t> levels;
   std::vector<Node> nodes;
   std::vector<ModelCount> counts;
   std::unordered_map<Key, ID, Hash> unique, cache;

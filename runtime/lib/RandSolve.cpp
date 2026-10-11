@@ -164,18 +164,18 @@ bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
     for (uint64_t node : nodes)
       remaining |= node;
     for (uint64_t node : nodes) {
-      bool hasPredecessor = false;
+      bool hasSuccessor = false;
       for (const SolveBeforeEdge &edge : edges) {
         if (!constraintEnabled(edge.constraintBlock, constraintMask) ||
-            (edge.afterMask & mutableMask & node) == 0)
+            (edge.beforeMask & mutableMask & node) == 0)
           continue;
-        uint64_t before = edge.beforeMask & mutableMask;
-        if ((before & remaining) != 0) {
-          hasPredecessor = true;
+        uint64_t after = edge.afterMask & mutableMask;
+        if ((after & remaining) != 0) {
+          hasSuccessor = true;
           break;
         }
       }
-      if (!hasPredecessor)
+      if (!hasSuccessor)
         layer |= node;
     }
     if (layer == 0)
@@ -185,6 +185,15 @@ bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
         std::remove_if(nodes.begin(), nodes.end(),
                        [&](uint64_t node) { return (node & layer) != 0; }),
         nodes.end());
+  }
+  // IEEE 1800-2023 18.5.9 defers partially ordered variables as late as
+  // possible. Peeling sinks and then reversing gives those latest layers.
+  std::reverse(layers.begin(), layers.end());
+  if (!layers.empty()) {
+    uint64_t orderedMask = 0;
+    for (uint64_t layer : layers)
+      orderedMask |= layer;
+    layers.back() |= mutableMask & ~orderedMask;
   }
   return true;
 }
@@ -859,7 +868,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         domainMutableMask |= group.targetMask;
     }
     if ((programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) &&
-        !encodedSolveBefore && !encodedDist) {
+        !encodedDist) {
       if (!randomState)
         return OBELISK_RT_INVALID_ARGUMENT;
       if (maxAttempts == 0)
@@ -867,7 +876,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       auto result = obelisk::runtime::completeRandomProgram(
           program, static_cast<size_t>(programSize), &start, &mutableMask, 1,
           constraintMask, captures, nullptr, captureCount, outAssignment,
-          randomState);
+          randomState, solveLayers.data(), solveLayers.size());
       if (result == obelisk::runtime::SMTCompletion::Satisfiable)
         *outSuccess = 1;
       return OBELISK_RT_OK;

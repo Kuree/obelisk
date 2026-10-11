@@ -2628,12 +2628,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       for (uint64_t node : nodes)
         remaining |= node;
       for (uint64_t node : nodes) {
-        bool hasPredecessor =
+        bool hasSuccessor =
             llvm::any_of(solveBeforeEdges, [&](const auto &edge) {
-              return (edge.afterMask & node) != 0 &&
-                     (edge.beforeMask & remaining) != 0;
+              return (edge.beforeMask & node) != 0 &&
+                     (edge.afterMask & remaining) != 0;
             });
-        if (!hasPredecessor)
+        if (!hasSuccessor)
           layer |= node;
       }
       if (layer == 0) {
@@ -2642,6 +2642,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       solveBeforeLayerMasks.push_back(layer);
       llvm::erase_if(nodes, [&](uint64_t node) { return (node & layer) != 0; });
+    }
+    // Peel sinks first so partially ordered fields are deferred to their
+    // latest legal layer. Unspecified fields join the final ordered group.
+    std::reverse(solveBeforeLayerMasks.begin(), solveBeforeLayerMasks.end());
+    if (!solveBeforeLayerMasks.empty() && totalWidth <= 64) {
+      uint64_t orderedMask = 0;
+      for (uint64_t layer : solveBeforeLayerMasks)
+        orderedMask |= layer;
+      uint64_t allMask =
+          totalWidth == 64 ? UINT64_MAX : (uint64_t{1} << totalWidth) - 1;
+      solveBeforeLayerMasks.back() |= allMask & ~orderedMask;
     }
   }
   if (hasRuntimeForeachConstraint && hasSolveBefore) {
@@ -4573,7 +4584,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
 #ifdef OBELISK_RUNTIME_Z3
   programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
-  if (!hasSolveBefore && distPlans.empty())
+  if (distPlans.empty())
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
 #endif
   if (hasSolveBefore)
@@ -6028,6 +6039,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             buildSolveBeforeTable(table.assignments, 0));
   }
 
+#ifndef OBELISK_RUNTIME_Z3
   if (solveBeforeRequiresRuntime && !completeFallbackDomain) {
     emitError(location)
         << "solve before residual fallback requires exhaustive traversal of "
@@ -6035,6 +6047,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
            "not preserve the ordered distribution";
     return failure();
   }
+#endif
 
   // An ordered residual solve must start from the single aggregate draw and
   // evaluate the original formula. Do not speculatively consume draws for a

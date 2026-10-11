@@ -513,6 +513,56 @@ public:
     return true;
   }
 
+  bool ordered(unsigned width, const std::vector<Z3_ast> &bits,
+               const std::vector<unsigned> &physicalBits, const uint64_t *start,
+               const uint64_t *mutableMask, obelisk_rt_random_state_v1 &state,
+               const uint64_t *masks, size_t layerCount, uint64_t *output) {
+    Z3_ast_vector assertions = Z3_solver_get_assertions(context, solver);
+    Z3_ast_vector_inc_ref(context, assertions);
+    std::vector<Z3_ast> predicates;
+    for (unsigned index = 0; index != Z3_ast_vector_size(context, assertions);
+         ++index)
+      predicates.push_back(Z3_ast_vector_get(context, assertions, index));
+    Z3_ast predicate = Z3_mk_and(context, predicates.size(), predicates.data());
+    Z3_ast_vector_dec_ref(context, assertions);
+    ModelCounter counter(context, bits);
+    if (!counter.build(predicate))
+      return false;
+    obelisk_rt_random_state_v1 nextState = state;
+    size_t words = (uint64_t(width) + 63) / 64;
+    for (size_t layer = 0; layer != layerCount; ++layer) {
+      std::vector<bool> keep(bits.size(), false);
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        keep[bit] = (masks[layer * words + physicalBits[bit] / 64] >>
+                     (physicalBits[bit] % 64)) &
+                    1;
+      counter.project(keep);
+      ModelCount count = counter.count();
+      if (count.zero())
+        return false;
+      auto value =
+          counter.assignment(ModelCount::randomBelow(count, nextState));
+      counter.restrict(value, keep);
+    }
+    // The unspecified remaining fields retain the ordinary joint distribution
+    // conditional on the accepted earlier-layer values.
+    counter.project(std::vector<bool>(bits.size(), true));
+    ModelCount count = counter.count();
+    if (count.zero())
+      return false;
+    auto value = counter.assignment(ModelCount::randomBelow(count, nextState));
+    for (size_t index = 0; index != words; ++index)
+      output[index] = start[index] & ~mutableMask[index];
+    for (size_t bit = 0; bit != value.size(); ++bit)
+      if (value[bit])
+        output[physicalBits[bit] / 64] |= uint64_t{1}
+                                          << (physicalBits[bit] % 64);
+    if (width % 64)
+      output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
+    state = nextState;
+    return true;
+  }
+
   Z3_context context = nullptr;
   Z3_solver solver = nullptr;
 };
@@ -525,22 +575,23 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
                       size_t assignmentWords, uint64_t constraintMask,
                       const uint64_t *captures, const uint32_t *captureWidths,
                       size_t captureCount, uint64_t *assignment,
-                      obelisk_rt_random_state_v1 *randomState) {
+                      obelisk_rt_random_state_v1 *randomState,
+                      const uint64_t *orderedMasks, size_t orderedLayerCount) {
   bool wide = read16(program + 4) == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
   unsigned header = wide ? OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
                          : OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
   unsigned width = read32(program + 8);
   unsigned instructions = read32(program + 12);
   unsigned flags = read32(program + 20);
-  // Ordered and weighted sampling need their own conditional projection
-  // plans; an arbitrary satisfiable model would change those distributions.
-  if (flags & (OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-               OBELISK_RT_RANDOM_PROGRAM_HAS_DIST))
+  bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) != 0;
+  // Weighted sampling requires its own measure over target projections.
+  // Solve-order projections are sampled only by the uniform stateful policy.
+  if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) ||
+      ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) && !uniform))
     return SMTCompletion::Unavailable;
   if (width == 0 || assignmentWords != (uint64_t(width) + 63) / 64)
     return SMTCompletion::Unavailable;
-  bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) != 0;
-  if (uniform && !randomState)
+  if ((uniform && !randomState) || (orderedLayerCount && !orderedMasks))
     return SMTCompletion::Unavailable;
   Formula f;
   Z3_ast variable = nullptr;
@@ -698,6 +749,10 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   }
   if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) {
     size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);
+    if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE)
+      offset +=
+          OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE +
+          size_t(read32(program + offset)) * OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE;
     if (offset + 8 > programSize)
       return SMTCompletion::Unavailable;
     unsigned groups = read32(program + offset);
@@ -740,8 +795,12 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
       Z3_solver_pop(f.context, f.solver, 1);
   }
   if (uniform)
-    return f.uniform(width, booleanBits, physicalBits, start, mutableMask,
-                     *randomState, assignment)
+    return (orderedLayerCount
+                ? f.ordered(width, booleanBits, physicalBits, start,
+                            mutableMask, *randomState, orderedMasks,
+                            orderedLayerCount, assignment)
+                : f.uniform(width, booleanBits, physicalBits, start,
+                            mutableMask, *randomState, assignment))
                ? SMTCompletion::Satisfiable
                : SMTCompletion::Unknown;
   Z3_solver_push(f.context, f.solver);
@@ -763,7 +822,8 @@ namespace obelisk::runtime {
 SMTCompletion completeRandomProgram(const uint8_t *, size_t, const uint64_t *,
                                     const uint64_t *, size_t, uint64_t,
                                     const uint64_t *, const uint32_t *, size_t,
-                                    uint64_t *, obelisk_rt_random_state_v1 *) {
+                                    uint64_t *, obelisk_rt_random_state_v1 *,
+                                    const uint64_t *, size_t) {
   return SMTCompletion::Unavailable;
 }
 } // namespace obelisk::runtime
