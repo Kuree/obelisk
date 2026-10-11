@@ -29,6 +29,13 @@ open. A failed solve preserves the arrays. Generated proposal draws advance
 the caller's stream independently of whether the assignments are committed;
 the runtime solver's own draws remain transactional.
 
+`unique` expands fixed unpacked arrays and slices to their leaf elements before
+Z3 dependency analysis. Multidimensional operands, singular values, and fixed
+state arrays form the same joint relation in class and scope randomization.
+Overlapping operands retain duplicate references and therefore fail; fewer
+than two leaves add no restriction. Dynamic container operands and real leaves
+remain open.
+
 Integral system functions `$signed`, `$unsigned`, `$clog2`, `$countones`,
 `$countbits`, `$onehot`, and `$onehot0` participate in the bidirectional
 bit-vector constraint relation without introducing user-function priority.

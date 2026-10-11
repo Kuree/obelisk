@@ -523,7 +523,7 @@
         {
           "feature": "Uniqueness constraints",
           "status": "partial",
-          "detail": "Packed operands are lowered to pairwise inequality; general unpacked container forms need expansion."
+          "detail": "Integral singular values and fixed unpacked arrays or slices expand into pairwise leaf inequality before Z3 planning. Multidimensional arrays, ascending and negative bounds, fixed state-array leaves, singleton groups, and duplicate references are covered in class and scope randomization. Duplicate leaves retain their identity and make the solve fail. Real leaves and dynamically sized container operands remain incomplete."
         }
       ],
       "evidence": {
@@ -533,7 +533,8 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -564,7 +565,8 @@
           "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-unique-runtime.mlir"
         ]
       }
     },

@@ -14,6 +14,12 @@ namespace obelisk::simlowering {
 mlir::LogicalResult expandStaticRandomForeachConstraints(
     llvm::MutableArrayRef<mlir::Operation *> roots, mlir::Builder &builder);
 
+/// Replace fixed unpacked array and slice operands of unique constraints with
+/// their leaf selections. Singular operands remain singular; duplicate leaves
+/// retain their identity and consequently make the constraint unsatisfiable.
+mlir::LogicalResult expandStaticRandomUniquenessConstraints(
+    llvm::MutableArrayRef<mlir::Operation *> roots, mlir::Builder &builder);
+
 } // namespace obelisk::simlowering
 
 #endif

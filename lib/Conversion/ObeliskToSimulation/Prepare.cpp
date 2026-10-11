@@ -4885,7 +4885,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         ArrayRef(callChildren).drop_front(argumentStart);
     SmallVector<Operation *> constraintRoots(
         callChildren.begin(), callChildren.begin() + argumentStart);
-    if (failed(expandStaticRandomForeachConstraints(constraintRoots, builder))) {
+    if (failed(
+            expandStaticRandomForeachConstraints(constraintRoots, builder)) ||
+        failed(expandStaticRandomUniquenessConstraints(constraintRoots,
+                                                       builder))) {
       invalid = true;
       return true;
     }
@@ -6877,7 +6880,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       root = cloned;
     }
 
-    if (failed(expandStaticRandomForeachConstraints(constraintRoots, builder))) {
+    if (failed(
+            expandStaticRandomForeachConstraints(constraintRoots, builder)) ||
+        failed(expandStaticRandomUniquenessConstraints(constraintRoots,
+                                                       builder))) {
       invalid = true;
       return true;
     }
