@@ -121,7 +121,17 @@ def ObeliskSimFuseClockedKernelsPass
     statement; reads after the store use a snapshot of the incoming value.
     Requires VPI off and a single worker; invalidates the compute graph when
     it changes the design.
+
+    With `defer`, a kernel may instead resume through `#0`, after every
+    Active event of its pass (IEEE 1800-2023 4.4.2.3, 4.5). Then only what
+    its own updates wake can observe its stores, so same-edge readers and
+    testbench delays no longer keep NBAs. The native eval coordinator does
+    not yet own such an Inactive hop, so this is off by default.
   }];
+  let options = [
+    Option<"defer", "defer", "bool", /*default=*/"false",
+           "Allow kernels that resume through #0 after the Active region">
+  ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "mlir::cf::ControlFlowDialect"

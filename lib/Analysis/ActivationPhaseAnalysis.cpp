@@ -565,6 +565,28 @@ ActivationPhaseAnalysis::getCopies() const {
   return shared->copyRoots;
 }
 
+std::optional<uint64_t>
+ActivationPhaseAnalysis::getRoot(sim::SimFuncOp function, Value handle) const {
+  return shared->rootOf(function, handle);
+}
+
+bool ActivationPhaseAnalysis::isModeledStart(StringAttr function) const {
+  return shared->modeledStarts.contains(function);
+}
+
+bool ActivationPhaseAnalysis::taskSuspends(StringAttr task) const {
+  return shared->suspends(task);
+}
+
+ArrayAttr ActivationPhaseAnalysis::getFragmentEffects(Block *block) const {
+  auto index = shared->blockIndices.find(block);
+  if (index == shared->blockIndices.end())
+    return {};
+  auto function = cast<sim::SimFuncOp>(block->getParentOp());
+  return shared->fragmentEffects.lookup(
+      {function.getSymNameAttr(), index->second});
+}
+
 ActivationPhaseAnalysis::~ActivationPhaseAnalysis() = default;
 ActivationPhaseAnalysis::ActivationPhaseAnalysis(ActivationPhaseAnalysis &&) =
     default;

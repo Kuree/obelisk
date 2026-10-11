@@ -710,7 +710,8 @@ invisible until the NBA region would have applied it (4.3):
   members are ordered so that readers of a root precede its writers where
   the source allows it;
 - the kernel's NBA sites are the root's only writers, apart from static
-  initialization and activations that cannot share the kernel's phase;
+  initialization and activations that cannot share the kernel's phase; a
+  delayed NBA may land in any NBA region and always conflicts;
 - every process waiting on the root, transitively through its writes, is a
   side-effect-free combinational process (glitch insensitivity), so no edge,
   level, event or toggle observer can see the early update;
@@ -726,6 +727,43 @@ phase, an NBA one phase later, and a zero or unknown delay in any phase. Two
 activations can interleave only when their phases meet. Roots that fail a
 condition keep their NBA and its commit; the remaining statements retain their
 source order (4.6) and NBA execution order (4.6(b)).
+
+A kernel must run at most once between NBA regions: a second run in the same
+phase would read its own stores, where the original still reads the values
+its pending NBAs have not updated (4.9.4). A waiting process is scheduled once
+per event (4.5, 9.4.2), so a kernel that runs as soon as its edge wakes it is
+formed only when each phase sees clock changes from one atomic source:
+
+- the NBA region before the phase, whose updates, delayed ones included, are
+  all processed before the evaluations they cause (4.5, 10.4.2); or
+- one activation of a process that suspends only on positive constant delays
+  and therefore runs at most once per slot (9.4.1). Resumable named-block
+  exits (`disable`, 9.6.2) and process control (9.7) are suspensions as well,
+  so another process cannot restart it within a slot.
+
+A clock that rises again through an Inactive (`#0`) event keeps all of its
+NBAs.
+
+A conversion must not split the kernel's own NBA wave. Direct stores wake
+their combinational readers in the kernel's phase, while the NBAs the kernel
+keeps wake theirs after the NBA region. A combinational process both can reach
+would settle twice per slot, so direct roots whose readers reach it keep their
+NBAs as well, until no such process remains (two cone analyses: toward readers
+from the kept roots, then toward sources from what they wake). Converting part
+of a combinationally connected kernel was measured to cost more than
+converting nothing. NBAs of other processes wake their readers whether or not
+the kernel converts, and whether they change value every cycle is a dynamic
+property, so they do not decide the conversion.
+
+The pass option `defer` lets a kernel resume through `#0` instead, after every
+Active event of its pass (4.4.2.3, 4.5). The original may run its members last
+in that pass (4.7), so this is equivalent when no other Inactive event shares
+the phase. Then only activations its own updates wake (blocking writes and
+direct stores, transitively) and other kernels can follow it, which a dense
+forward post-kernel analysis finds. Same-edge samplers, testbench delays and
+asynchronous-reset flops of the slot run before it, which admits clocks
+driven by blocking assignments. The native eval coordinator does not yet own a
+continuation that suspends on `#0`, so the option is off by default.
 
 The kernel never suspends between members; 4.7 permits but does not require
 interleaving other processes there. `$monitor` and `$strobe` print in the

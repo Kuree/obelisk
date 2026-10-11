@@ -102,6 +102,16 @@ public:
                  schedule::ComputeEffectAttr effect) const;
   /// Proven copies, keyed by destination root.
   const Copies &getCopies() const;
+  /// The root a handle in `function` denotes, if it is known.
+  std::optional<uint64_t> getRoot(sim::SimFuncOp function,
+                                  mlir::Value handle) const;
+  /// Whether every start of `function` is a spawn or task call this analysis
+  /// models; other entries may occur in any phase.
+  bool isModeledStart(mlir::StringAttr function) const;
+  /// Whether a task may suspend before it returns.
+  bool taskSuspends(mlir::StringAttr task) const;
+  /// The compute-graph effects of one block, or null without a fragment.
+  mlir::ArrayAttr getFragmentEffects(mlir::Block *block) const;
 
   struct Shared;
 

@@ -22,6 +22,17 @@
 // RUN: %llvm_dist/bin/clang++ %t.retained.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.retained.bc.exe
 // RUN: %t.retained.bc.exe | FileCheck %s --check-prefix=RETAINED
 
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-retained-nba.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels{defer=true},simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.deferred.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.deferred.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.deferred.o3.exe
+// RUN: %t.deferred.o3.exe | FileCheck %s --check-prefix=RETAINED
+
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-clock-source.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' 2>/dev/null | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.source.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.source.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.source.o3.exe
+// RUN: %t.source.o3.exe | FileCheck %s --check-prefix=SOURCE
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-clock-source.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.source.bc.o
+// RUN: %llvm_dist/bin/clang++ %t.source.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.source.bc.exe
+// RUN: %t.source.bc.exe | FileCheck %s --check-prefix=SOURCE
+
 // RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-snapshot-loop.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.loop.o3.o
 // RUN: %llvm_dist/bin/clang++ %t.loop.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.loop.o3.exe
 // RUN: %t.loop.o3.exe | FileCheck %s --check-prefix=LOOP
@@ -35,8 +46,13 @@
 // DIRECT: {{^ *}}5 {{ *}}9{{$}}
 
 // `q` toggles from 0 ten times. `r` and the same-edge sampler both see the
-// old `q` of the tenth edge.
+// old `q` of the tenth edge, also when a deferred kernel stores `q` directly
+// after the sampler has run.
 // RETAINED: {{^}}1 1{{$}}
 
 // `r` counts the edges.
 // LOOP: {{^ *}}10{{$}}
+
+// Two posedges per period, both before the NBA region: `q` advances once per
+// period, ten times by time 100.
+// SOURCE: {{^}}q=10{{$}}

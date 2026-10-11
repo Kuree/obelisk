@@ -17,6 +17,7 @@
 //       root reads a snapshot of the root's incoming value instead;
 //   (b) the kernel's NBA sites are the root's only writers, apart from static
 //       initialization and activations that cannot share the kernel's phase;
+//       a delayed NBA may land in any NBA region and always conflicts;
 //   (c) every process waiting on the root, transitively through its writes,
 //       is a side-effect-free combinational process. 4.5 already lets those
 //       evaluate between individual NBA updates, and they reevaluate from the
@@ -29,6 +30,27 @@
 // nothing reads keeps its NBA, which unread-NBA elimination removes entirely.
 // The stores keep the NBA execution order (4.6(b)); RHS and target operands
 // are still computed at the statement (4.9.4).
+//
+// The kernel must run at most once between NBA regions: a second run in the
+// same phase would read its own stores where the original reads values its
+// NBAs have not updated yet. A kernel that runs as soon as its edge wakes it
+// therefore needs every phase to see clock changes from at most one atomic
+// source: the NBA region before it, or one activation of a process that
+// suspends only on positive constant delays and so runs once per slot. A
+// clock that rises again through an Inactive event keeps every NBA.
+//
+// With `defer`, a kernel may instead resume through `#0`, after every Active
+// event of its pass (4.4.2.3, 4.5). The original may run its members last in
+// that pass (4.7), so this is equivalent when no other Inactive event shares
+// its phase. Then (b) and (d) only concern activations that may follow it,
+// which PostKernelAnalysis finds: what its own blocking writes and stores
+// wake, transitively, and other kernels. Same-edge samplers and testbench
+// delays run before it. No such activation may change its clock.
+//
+// Cost: direct stores wake their combinational readers in the kernel's phase,
+// the NBAs the kernel keeps wake theirs in the next. Logic both reach would
+// settle twice per slot, so direct roots that reach it keep their NBAs too.
+// NBAs of other processes wake their readers with or without the kernel.
 //
 // The kernel never suspends between its members. 4.7 permits interleaving
 // other processes inside an activation but does not require it, so nothing
@@ -118,6 +140,8 @@ struct Member {
   sim::EdgeKind edge = sim::EdgeKind::Change;
   uint32_t order = UINT32_MAX;
   llvm::DenseSet<uint64_t> reads, nbaWrites, writes;
+  /// An update whose root is unresolved.
+  bool unresolvedUpdate = false;
   SmallVector<unsigned> fusedArguments;
 };
 
@@ -342,50 +366,53 @@ private:
   unsigned roots;
 };
 
-/// Whether an activation that may share the kernel's phases can observe a
-/// root, directly or through its combinational cone.
-class ExposedState final : public AnalysisState {
+/// Whether a root is in a combinational cone.
+class ConeState final : public AnalysisState {
 public:
   using AnalysisState::AnalysisState;
-  ChangeResult expose() {
-    if (exposed)
+  ChangeResult reach() {
+    if (reached)
       return ChangeResult::NoChange;
-    exposed = true;
+    reached = true;
     return ChangeResult::Change;
   }
-  void print(raw_ostream &os) const override { os << exposed; }
-  bool exposed = false;
+  void print(raw_ostream &os) const override { os << reached; }
+  bool reached = false;
 };
 
-class ExposureRoot final
-    : public GenericLatticeAnchorBase<ExposureRoot,
+class ConeRoot final
+    : public GenericLatticeAnchorBase<ConeRoot,
                                       std::pair<uint64_t, Operation *>> {
 public:
   using Base::Base;
   Location getLoc() const override { return getValue().second->getLoc(); }
   void print(raw_ostream &os) const override {
-    os << "exposure of root " << getValue().first;
+    os << "cone of root " << getValue().first;
   }
 };
 
-/// Backward propagation through side-effect-free combinational processes:
-/// when one of them writes an exposed root, every root it waits on is
-/// exposed as well (it republishes their changes).
-class ExposureAnalysis final : public DataFlowAnalysis {
+/// Propagation through side-effect-free combinational processes, which
+/// republish the changes of the roots they wait on into the roots they write.
+/// Toward sources, a process that writes a reached root reaches every root it
+/// waits on: they can affect the seeds. Toward readers, a process that waits
+/// on a reached root reaches every root it writes: the seeds wake it.
+class ConeAnalysis final : public DataFlowAnalysis {
 public:
   struct Process {
     sim::SimFuncOp function;
     SmallVector<uint64_t> watched, written;
   };
-  ExposureAnalysis(DataFlowSolver &solver, Operation *design,
-                   ArrayRef<Process> processes, ArrayRef<uint64_t> seeds)
+  enum class Direction { Sources, Readers };
+  ConeAnalysis(DataFlowSolver &solver, Operation *design,
+               ArrayRef<Process> processes, ArrayRef<uint64_t> seeds,
+               Direction direction)
       : DataFlowAnalysis(solver), design(design), processes(processes),
-        seeds(seeds) {
-    registerAnchorKind<ExposureRoot>();
+        seeds(seeds), direction(direction) {
+    registerAnchorKind<ConeRoot>();
   }
   LogicalResult initialize(Operation *) override {
     for (uint64_t root : seeds)
-      propagateIfChanged(state(root), state(root)->expose());
+      propagateIfChanged(state(root), state(root)->reach());
     for (const Process &process : processes)
       if (failed(visit(pointOf(process))))
         return failure();
@@ -396,21 +423,31 @@ public:
     if (found == byPoint.end())
       return success();
     const Process &process = *found->second;
-    if (llvm::none_of(process.written, [&](uint64_t root) {
-          return getOrCreateFor<ExposedState>(point, anchor(root))->exposed;
+    bool toSources = direction == Direction::Sources;
+    ArrayRef<uint64_t> from = toSources ? process.written : process.watched;
+    ArrayRef<uint64_t> to = toSources ? process.watched : process.written;
+    if (llvm::none_of(from, [&](uint64_t root) {
+          return getOrCreateFor<ConeState>(point, anchor(root))->reached;
         }))
       return success();
-    for (uint64_t root : process.watched)
-      propagateIfChanged(state(root), state(root)->expose());
+    for (uint64_t root : to)
+      propagateIfChanged(state(root), state(root)->reach());
     return success();
+  }
+  /// Whether a solved cone contains a root.
+  static bool contains(DataFlowSolver &solver, Operation *design,
+                       uint64_t root) {
+    const auto *state = solver.lookupState<ConeState>(
+        solver.getLatticeAnchor<ConeRoot>(std::make_pair(root, design)));
+    return state && state->reached;
   }
 
 private:
-  ExposureRoot *anchor(uint64_t root) {
-    return getLatticeAnchor<ExposureRoot>(std::make_pair(root, design));
+  ConeRoot *anchor(uint64_t root) {
+    return getLatticeAnchor<ConeRoot>(std::make_pair(root, design));
   }
-  ExposedState *state(uint64_t root) {
-    return getOrCreate<ExposedState>(anchor(root));
+  ConeState *state(uint64_t root) {
+    return getOrCreate<ConeState>(anchor(root));
   }
   ProgramPoint *pointOf(const Process &process) {
     sim::SimFuncOp function = process.function;
@@ -421,7 +458,262 @@ private:
   Operation *design;
   ArrayRef<Process> processes;
   ArrayRef<uint64_t> seeds;
+  Direction direction;
   DenseMap<ProgramPoint *, const Process *> byPoint;
+};
+
+/// Whether a program point may execute after a deferred kernel, within a
+/// phase the kernel runs in and before that phase's NBA region.
+class AfterLattice final : public dataflow::AbstractDenseLattice {
+public:
+  using AbstractDenseLattice::AbstractDenseLattice;
+  ChangeResult join(bool more) {
+    if (after || !more)
+      return ChangeResult::NoChange;
+    after = true;
+    return ChangeResult::Change;
+  }
+  ChangeResult join(const AbstractDenseLattice &rhs) override {
+    return join(static_cast<const AfterLattice &>(rhs).after);
+  }
+  void print(raw_ostream &os) const override { os << after; }
+  bool after = false;
+};
+
+/// Whether a root may change, or a process or task may start or return,
+/// after a deferred kernel within its phase.
+class AfterState final : public AnalysisState {
+public:
+  using AnalysisState::AnalysisState;
+  ChangeResult set() {
+    if (after)
+      return ChangeResult::NoChange;
+    after = true;
+    return ChangeResult::Change;
+  }
+  void print(raw_ostream &os) const override { os << after; }
+  bool after = false;
+};
+
+/// A root changed after the kernel; `anyRoot` stands for an unresolved one.
+class AfterRoot final
+    : public GenericLatticeAnchorBase<AfterRoot,
+                                      std::pair<uint64_t, Operation *>> {
+public:
+  using Base::Base;
+  static constexpr uint64_t anyRoot = ~uint64_t{0};
+  Location getLoc() const override { return getValue().second->getLoc(); }
+  void print(raw_ostream &os) const override {
+    os << "change after kernel of root " << getValue().first;
+  }
+};
+
+/// The start (0) or the return (1) of a process or task.
+class AfterEntry final
+    : public GenericLatticeAnchorBase<AfterEntry,
+                                      std::pair<Operation *, unsigned>> {
+public:
+  using Base::Base;
+  Location getLoc() const override { return getValue().first->getLoc(); }
+  void print(raw_ostream &os) const override {
+    os << (getValue().second ? "return" : "start") << " after kernel";
+  }
+};
+
+/// IEEE 1800-2023 4.4.2.3 and 4.5: a deferred kernel resumes through `#0`,
+/// after every Active event of its pass. Within its phase, what may run after
+/// it is what updates made after it wake: its own blocking writes and direct
+/// stores, and transitively the blocking writes and event triggers of every
+/// activation they wake. NBAs land in the next phase and positive delays in a
+/// later slot. Other kernels of the phase are deferred as well, so they may
+/// run after it. Zero and variable delays, waits on unresolved roots and
+/// waits this analysis does not model are conservatively after it.
+class PostKernelAnalysis final
+    : public dataflow::DenseForwardDataFlowAnalysis<AfterLattice> {
+public:
+  struct Config {
+    Operation *design;
+    const SymbolTable &symbols;
+    const analysis::ActivationPhaseAnalysis &phases;
+    analysis::ActivationPhaseAnalysis::Phases kernel;
+    sim::SimFuncOp rootInitializer;
+    /// The kernel's members, which are the kernel itself.
+    DenseSet<Operation *> members;
+    /// Waits of other kernels' members.
+    DenseSet<Operation *> otherKernelWaits;
+    /// Roots the kernel itself may change in its phase.
+    SmallVector<uint64_t> changed;
+  };
+  PostKernelAnalysis(DataFlowSolver &solver, const Config &config)
+      : DenseForwardDataFlowAnalysis(solver), config(config) {
+    registerAnchorKind<AfterRoot>();
+    registerAnchorKind<AfterEntry>();
+  }
+  LogicalResult initialize(Operation *top) override {
+    for (uint64_t root : config.changed)
+      propagateIfChanged(rootState(root), rootState(root)->set());
+    return DenseForwardDataFlowAnalysis::initialize(top);
+  }
+  LogicalResult visitOperation(Operation *op, const AfterLattice &before,
+                               AfterLattice *after) override {
+    propagateIfChanged(after, after->join(before.after));
+    auto function = op->getParentOfType<sim::SimFuncOp>();
+    if (!before.after || !function || config.members.contains(function))
+      return success();
+    auto mark = [&](AfterState *state) {
+      propagateIfChanged(state, state->set());
+    };
+    if (auto spawn = dyn_cast<sim::SimSpawnOp>(op)) {
+      if (auto callee = lookup(spawn.getCalleeAttr().getAttr()))
+        mark(entryState(callee, /*returns=*/false));
+    } else if (auto call = dyn_cast<sim::SimTaskCallOp>(op)) {
+      if (auto callee = lookup(call.getCalleeAttr().getAttr()))
+        mark(entryState(callee, /*returns=*/false));
+    } else if (isa<sim::SimReturnOp>(op)) {
+      mark(entryState(function, /*returns=*/true));
+    }
+    if (op != op->getBlock()->getTerminator())
+      return success();
+    // Blocking writes and event triggers of this activation, including the
+    // summaries of what it calls, wake waiters in the same phase.
+    ArrayAttr effects = config.phases.getFragmentEffects(op->getBlock());
+    if (!effects)
+      return success();
+    for (auto effect : effects.getAsRange<schedule::ComputeEffectAttr>()) {
+      schedule::ComputeEffectKind kind = effect.getEffect();
+      if (effect.getTarget() == schedule::ComputeTargetKind::Local ||
+          (kind != schedule::ComputeEffectKind::Write &&
+           kind != schedule::ComputeEffectKind::Drive &&
+           kind != schedule::ComputeEffectKind::Trigger))
+        continue;
+      std::optional<SmallVector<uint64_t>> roots =
+          config.phases.getEffectRoots(function.getSymNameAttr(), effect);
+      if (!roots) {
+        mark(rootState(AfterRoot::anyRoot));
+        continue;
+      }
+      for (uint64_t root : *roots)
+        mark(rootState(root));
+    }
+    return success();
+  }
+  void visitBlockTransfer(Block *block, ProgramPoint *point, Block *predecessor,
+                          const AfterLattice &before,
+                          AfterLattice *after) override {
+    auto function = dyn_cast<sim::SimFuncOp>(block->getParentOp());
+    if (!function || config.members.contains(function))
+      return;
+    auto join = [&](bool more) {
+      propagateIfChanged(after, after->join(more));
+    };
+    Operation *terminator = predecessor->getTerminator();
+    if (!sim::isSuspensionOp(terminator)) {
+      join(before.after);
+      return;
+    }
+    if (auto call = dyn_cast<sim::SimTaskCallOp>(terminator)) {
+      StringAttr callee = call.getCalleeAttr().getAttr();
+      if (!config.phases.taskSuspends(callee)) {
+        join(before.after);
+        return;
+      }
+      auto task = lookup(callee);
+      join(!task || getOrCreateFor<AfterState>(
+                        point, getLatticeAnchor<AfterEntry>(
+                                   std::make_pair(task.getOperation(), 1u)))
+                        ->after);
+      return;
+    }
+    if (!config.phases.getPhases(block).meets(config.kernel))
+      return;
+    if (config.otherKernelWaits.contains(terminator)) {
+      join(true);
+      return;
+    }
+    if (auto delay = dyn_cast<sim::SimSuspendDelayOp>(terminator)) {
+      auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+      join(!constant || constant.getValue() == 0);
+      return;
+    }
+    if (isa<sim::SimSuspendForeverOp>(terminator))
+      return;
+    SmallVector<Value> watched;
+    if (auto edge = dyn_cast<sim::SimSuspendEdgeOp>(terminator))
+      watched.push_back(edge.getWatched());
+    else if (auto change = dyn_cast<sim::SimSuspendChangeOp>(terminator))
+      watched.push_back(change.getWatched());
+    else if (auto any = dyn_cast<sim::SimSuspendAnyOp>(terminator))
+      llvm::append_range(watched, any.getWatched());
+    else if (auto edge = dyn_cast<sim::SimSuspendEdgeIffOp>(terminator))
+      watched.push_back(edge.getWatched());
+    else if (auto level = dyn_cast<sim::SimSuspendLevelOp>(terminator))
+      watched.push_back(level.getWatched());
+    else if (auto event = dyn_cast<sim::SimSuspendEventOp>(terminator))
+      watched.push_back(event.getEvent());
+    else {
+      join(true);
+      return;
+    }
+    bool woken = changedFor(point, AfterRoot::anyRoot);
+    for (Value value : watched) {
+      std::optional<uint64_t> root = config.phases.getRoot(function, value);
+      woken |= !root || changedFor(point, *root);
+    }
+    join(woken);
+  }
+  void setToEntryState(AfterLattice *lattice) override {
+    auto *point = dyn_cast_if_present<ProgramPoint *>(lattice->getAnchor());
+    Block *block = point ? point->getBlock() : nullptr;
+    auto function = block ? dyn_cast<sim::SimFuncOp>(block->getParentOp())
+                          : sim::SimFuncOp{};
+    // Plain functions run inside their callers, whose fragments carry their
+    // effects; static initialization precedes every slot.
+    if (!function || function == config.rootInitializer ||
+        config.members.contains(function) ||
+        function.getEntryKind() == sim::EntryKind::Function)
+      return;
+    if (!config.phases.isModeledStart(function.getSymNameAttr())) {
+      propagateIfChanged(
+          lattice,
+          lattice->join(config.phases.getPhases(block).meets(config.kernel)));
+      return;
+    }
+    propagateIfChanged(
+        lattice,
+        lattice->join(getOrCreateFor<AfterState>(
+                          point, getLatticeAnchor<AfterEntry>(std::make_pair(
+                                     function.getOperation(), 0u)))
+                          ->after));
+  }
+  void visitCallControlFlowTransfer(CallOpInterface call,
+                                    dataflow::CallControlFlowAction action,
+                                    const AfterLattice &before,
+                                    AfterLattice *after) override {
+    // Spawns and calls are not interprocedural edges here: process and task
+    // entries are modeled by their anchors, plain calls by fragment effects.
+    (void)action;
+    (void)visitOperation(call, before, after);
+  }
+
+private:
+  sim::SimFuncOp lookup(StringAttr name) {
+    return config.symbols.lookup<sim::SimFuncOp>(name);
+  }
+  AfterState *rootState(uint64_t root) {
+    return getOrCreate<AfterState>(
+        getLatticeAnchor<AfterRoot>(std::make_pair(root, config.design)));
+  }
+  AfterState *entryState(sim::SimFuncOp function, bool returns) {
+    return getOrCreate<AfterState>(getLatticeAnchor<AfterEntry>(
+        std::make_pair(function.getOperation(), unsigned{returns})));
+  }
+  bool changedFor(ProgramPoint *point, uint64_t root) {
+    return getOrCreateFor<AfterState>(
+               point,
+               getLatticeAnchor<AfterRoot>(std::make_pair(root, config.design)))
+        ->after;
+  }
+  const Config &config;
 };
 
 /// Union-find over storage roots connected by clock copies.
@@ -537,12 +829,15 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   if (!phases.isValid())
     return bail("phase analysis");
   using Phases = analysis::ActivationPhaseAnalysis::Phases;
+  using PhaseSet = analysis::ActivationPhaseAnalysis::PhaseSet;
 
   // Writers and watchers of each root from the verified graph.
   struct Writer {
     StringAttr function;
     uint32_t block;
     schedule::ComputeEffectKind kind;
+    /// An intra-assignment delayed NBA, which may land in any NBA region.
+    bool deferred = false;
   };
   DenseMap<uint64_t, SmallVector<Writer>> writers;
   DenseMap<uint64_t, SmallVector<StringAttr>> watchers;
@@ -566,8 +861,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       std::optional<SmallVector<uint64_t>> roots =
           effectRoots(function, effect);
       if (isWrite(effect.getEffect()) && !roots) {
-        unknownWriters.push_back(
-            {function, fragment.getBlock(), effect.getEffect()});
+        unknownWriters.push_back({function, fragment.getBlock(),
+                                  effect.getEffect(), effect.getDeferred()});
         continue;
       }
       bool reads = effect.getEffect() == schedule::ComputeEffectKind::Read ||
@@ -580,8 +875,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         if (reads)
           readRoots.insert(root);
         if (isWrite(effect.getEffect()))
-          writers[root].push_back(
-              {function, fragment.getBlock(), effect.getEffect()});
+          writers[root].push_back({function, fragment.getBlock(),
+                                   effect.getEffect(), effect.getDeferred()});
         if (effect.getEffect() == schedule::ComputeEffectKind::Watch)
           watchers[root].push_back(function);
       }
@@ -709,8 +1004,13 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       for (auto effect :
            fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
         std::optional<uint64_t> root = effectRoot(effect);
-        if (!root)
+        if (!root) {
+          member.unresolvedUpdate |=
+              effect.getTarget() != schedule::ComputeTargetKind::Local &&
+              (isWrite(effect.getEffect()) ||
+               effect.getEffect() == schedule::ComputeEffectKind::Trigger);
           continue;
+        }
         switch (effect.getEffect()) {
         case schedule::ComputeEffectKind::Read:
           member.reads.insert(*root);
@@ -720,6 +1020,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           break;
         case schedule::ComputeEffectKind::Write:
         case schedule::ComputeEffectKind::Drive:
+        case schedule::ComputeEffectKind::Trigger:
           member.writes.insert(*root);
           break;
         default:
@@ -738,7 +1039,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
 
   // Transparent combinational processes: the roots each one waits on and
   // the roots it writes.
-  std::vector<ExposureAnalysis::Process> combinationalProcesses;
+  std::vector<ConeAnalysis::Process> combinationalProcesses;
   {
     DenseMap<StringAttr, unsigned> index;
     for (auto &[root, list] : watchers)
@@ -764,12 +1065,78 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     classMembers[classes.find(copy.source)].push_back(copy.source);
   }
 
+  // A process that suspends only on positive constant delays runs at most
+  // once per time slot (9.4.1): a delay always resumes in a later slot.
+  auto isPeriodic = [&](StringAttr name) {
+    auto function = symbols.lookup<sim::SimFuncOp>(name);
+    if (!function || function.isExternal() || !rootSpawn(function) ||
+        symbolUseCounts.lookup(name) != 1)
+      return false;
+    bool periodic = true;
+    function.walk([&](Operation *operation) {
+      if (!isSuspension(operation))
+        return;
+      auto delay = dyn_cast<sim::SimSuspendDelayOp>(operation);
+      auto constant =
+          delay ? delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>()
+                : sim::SimTimeConstantOp{};
+      periodic &= constant && constant.getValue() > 0;
+    });
+    return periodic;
+  };
+
+  // Cost: a direct store wakes the combinational logic that reads its root
+  // in the kernel's phase, a retained NBA of the same activation wakes its
+  // readers in the next. A process both can wake would settle twice per
+  // slot, so direct roots that reach such a process keep their NBAs, which
+  // may in turn reach more of them. Returns the roots to keep.
+  auto secondWave = [&](SmallVector<uint64_t> later,
+                        DenseSet<uint64_t> direct) -> SmallVector<uint64_t> {
+    SmallVector<uint64_t> kept;
+    while (!later.empty() && !direct.empty()) {
+      DataFlowSolver woken;
+      woken.load<ConeAnalysis>(design.getOperation(), combinationalProcesses,
+                               later, ConeAnalysis::Direction::Readers);
+      SmallVector<uint64_t> shared;
+      bool solved = succeeded(woken.initializeAndRun(design));
+      for (const ConeAnalysis::Process &process : combinationalProcesses)
+        if (!solved || llvm::any_of(process.watched, [&](uint64_t root) {
+              return ConeAnalysis::contains(woken, design.getOperation(), root);
+            }))
+          llvm::append_range(shared, process.watched);
+      DataFlowSolver feeding;
+      feeding.load<ConeAnalysis>(design.getOperation(), combinationalProcesses,
+                                 shared, ConeAnalysis::Direction::Sources);
+      solved &= succeeded(feeding.initializeAndRun(design));
+      SmallVector<uint64_t> twice;
+      for (uint64_t root : direct)
+        if (!solved ||
+            ConeAnalysis::contains(feeding, design.getOperation(), root))
+          twice.push_back(root);
+      if (twice.empty())
+        break;
+      for (uint64_t root : twice) {
+        direct.erase(root);
+        later.push_back(root);
+        kept.push_back(root);
+      }
+    }
+    return kept;
+  };
+
+  // Waits of every planned member, which a deferred kernel resumes after.
+  DenseSet<Operation *> memberWaits;
+  for (auto &[key, members] : groups)
+    for (Member &member : members)
+      memberWaits.insert(member.wait->getTerminator());
+
   // 3. Plan every kernel on the unmodified design: the analyses above
   // describe the original processes and graph, which materialization erases.
   struct Plan {
     GroupKey key;
     std::vector<Member> *members;
     DenseSet<uint64_t> eligibleRoots;
+    bool deferred = false;
     SmallVector<unsigned> sequence;
     unsigned waitMember = 0;
     SmallVector<Value> operands;
@@ -781,8 +1148,11 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   for (auto &[key, members] : groups) {
     uint64_t classRoot = key.first;
     DenseSet<StringAttr> memberNames;
-    for (Member &member : members)
+    DenseSet<Operation *> memberFunctions;
+    for (Member &member : members) {
       memberNames.insert(member.function.getSymNameAttr());
+      memberFunctions.insert(member.function);
+    }
 
     // The phases in which this kernel's clock edges occur. Every alias in the
     // class changes in exactly the phases of the class root.
@@ -790,106 +1160,254 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     auto meetsKernel = [&](StringAttr function, uint32_t blockIndex) {
       return phases.getPhases(function, blockIndex).meets(kernelPhases);
     };
-
-    // (d) Accesses by activations that may run in the kernel's phase, which
-    // the scheduler may order between the kernel and its NBA region.
-    SmallVector<uint64_t> seeds;
-    bool unknownAccess = false;
-    for (Attribute attribute : nodes) {
-      auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
-      if (!fragment)
-        continue;
-      StringAttr name = fragment.getFunction().getAttr();
-      if (memberNames.contains(name) ||
-          name == rootInitializer.getSymNameAttr())
-        continue;
-      if (auto function = symbols.lookup<sim::SimFuncOp>(name))
-        if (function.getEntryKind() == sim::EntryKind::Final)
-          continue;
-      if (!meetsKernel(name, fragment.getBlock()))
-        continue;
-      if (isTransparent(name))
-        continue;
-      for (auto effect :
-           fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
-        if (!isAccess(effect.getEffect()) ||
-            effect.getTarget() == schedule::ComputeTargetKind::Local)
-          continue;
-        std::optional<SmallVector<uint64_t>> roots = effectRoots(name, effect);
-        if (!roots) {
-          unknownAccess = true;
-          break;
-        }
-        llvm::append_range(seeds, *roots);
-      }
-      if (unknownAccess)
-        break;
-    }
-    if (unknownAccess) {
-      reject("unknown event access");
-      continue;
-    }
-    // A root is exposed when anything in its combinational cone is accessed
-    // by such an activation, or feeds this kernel's clock.
-    seeds.push_back(classRoot);
+    SmallVector<uint64_t> clockRoots{classRoot};
+    if (auto found = classMembers.find(classRoot); found != classMembers.end())
+      llvm::append_range(clockRoots, found->second);
     for (Member &member : members)
-      seeds.push_back(member.clock);
-    DataFlowSolver exposure;
-    exposure.load<ExposureAnalysis>(design.getOperation(),
-                                    combinationalProcesses, seeds);
-    if (failed(exposure.initializeAndRun(design))) {
-      reject("exposure analysis");
-      continue;
-    }
-    auto isExposed = [&](uint64_t root) {
-      const auto *state = exposure.lookupState<ExposedState>(
-          exposure.getLatticeAnchor<ExposureRoot>(
-              std::make_pair(root, design.getOperation())));
-      return state && state->exposed;
-    };
+      clockRoots.push_back(member.clock);
+    llvm::sort(clockRoots);
+    clockRoots.erase(std::unique(clockRoots.begin(), clockRoots.end()),
+                     clockRoots.end());
 
-    // (b)/(c)/(d) per root.
-    DenseSet<uint64_t> eligibleRoots;
-    for (Member &member : members)
-      for (uint64_t root : member.nbaWrites) {
-        if (eligibleRoots.contains(root))
+    // The kernel must run at most once between NBA regions. A second run in
+    // the same phase would read its own direct stores, where its NBAs would
+    // still be pending (4.9.4).
+    //
+    // Immediate kernels run as soon as an edge wakes them (4.7). A process
+    // waiting on an event is scheduled once when it occurs (4.5, 9.4.2), so
+    // each phase may see clock changes from at most one atomic source:
+    //   - the NBA region before it. Its updates, delayed ones included, are
+    //     all processed before the evaluations they cause (4.5, 10.4.2);
+    //   - one activation of a periodic process, which suspends only on
+    //     positive constant delays and so runs at most once per slot
+    //     (9.4.1). A resumable named-block exit (9.6.2) or a process-control
+    //     operation (9.7) is a suspension too, so `disable` and handles from
+    //     other processes cannot restart such a process within a slot.
+    // Copies follow their source (23.3.3).
+    bool singleClockSource = [&] {
+      DenseMap<std::pair<unsigned, unsigned>, StringAttr> sources;
+      for (uint64_t root : clockRoots) {
+        if (phases.getCopies().count(root))
           continue;
-        if (root >= ActivationMemoryAnalysis::netRootTag) {
-          reject("root net");
-          continue;
-        }
-        // Nothing reads the root: unread-NBA elimination removes the update
-        // entirely (4.3), which is better than a store.
-        if (!unknownRead && !readRoots.contains(root)) {
-          reject("root unread");
-          continue;
-        }
-        if (!glitchInsensitive.contains(root)) {
-          reject("root observed");
-          continue;
-        }
-        if (isExposed(root)) {
-          reject("root accessed by event activation");
-          continue;
-        }
-        bool writersOk = true;
         for (const Writer &write : writers.lookup(root)) {
           if (write.function == rootInitializer.getSymNameAttr())
             continue;
-          if (memberNames.contains(write.function)) {
-            writersOk &= write.kind == schedule::ComputeEffectKind::NBA;
+          if (write.kind == schedule::ComputeEffectKind::NBA)
+            continue;
+          if (!isPeriodic(write.function))
+            return false;
+          Phases at = phases.getPhases(write.function, write.block);
+          for (auto [slot, set] : {std::pair{0u, at.zero}, {1u, at.later}})
+            for (unsigned bit = 0; bit != 32; ++bit)
+              if (set & (PhaseSet{1} << bit)) {
+                auto [found, inserted] =
+                    sources.try_emplace({slot, bit}, write.function);
+                if (!inserted && found->second != write.function)
+                  return false;
+              }
+        }
+      }
+      return llvm::none_of(unknownWriters, [&](const Writer &write) {
+        return write.kind != schedule::ComputeEffectKind::NBA &&
+               meetsKernel(write.function, write.block);
+      });
+    }();
+
+    // A deferred kernel resumes through `#0`, after every Active event of its
+    // pass (4.4.2.3, 4.5). The original could run its members last in that
+    // pass (4.7), so this is equivalent when no other Inactive event can
+    // share its phase. Then only what its own updates wake runs after it.
+    bool inactiveShared = false;
+    if (defer)
+      design.walk([&](sim::SimSuspendDelayOp delay) {
+        auto function = delay->getParentOfType<sim::SimFuncOp>();
+        if (!function || memberFunctions.contains(function))
+          return;
+        auto constant =
+            delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
+        if (!constant || constant.getValue() == 0)
+          inactiveShared |=
+              phases.getPhases(delay.getContinuation()).meets(kernelPhases);
+      });
+    PostKernelAnalysis::Config windowConfig{
+        design.getOperation(), symbols,         phases, kernelPhases,
+        rootInitializer,       memberFunctions, {},     {}};
+    for (Operation *wait : memberWaits)
+      if (!memberFunctions.contains(wait->getParentOfType<sim::SimFuncOp>()))
+        windowConfig.otherKernelWaits.insert(wait);
+    for (Member &member : members) {
+      llvm::append_range(windowConfig.changed, member.writes);
+      for (uint64_t root : member.nbaWrites)
+        if (glitchInsensitive.contains(root))
+          windowConfig.changed.push_back(root);
+      if (member.unresolvedUpdate)
+        windowConfig.changed.push_back(AfterRoot::anyRoot);
+    }
+    DataFlowSolver window(DataFlowConfig().setInterprocedural(false));
+    window.load<dataflow::DeadCodeAnalysis>();
+    window.load<dataflow::SparseConstantPropagation>();
+    window.load<PostKernelAnalysis>(windowConfig);
+    StringRef deferralBlocker;
+    if (!defer)
+      deferralBlocker = "deferral disabled";
+    else if (inactiveShared)
+      deferralBlocker = "inactive event shares kernel phase";
+    else if (failed(window.initializeAndRun(design)))
+      deferralBlocker = "post-kernel analysis";
+    auto isAfter = [&](StringAttr name, uint32_t index) {
+      auto function = symbols.lookup<sim::SimFuncOp>(name);
+      Block *block = function ? blockAt(function, index) : nullptr;
+      if (!block)
+        return true;
+      const auto *state =
+          window.lookupState<AfterLattice>(window.getProgramPointBefore(block));
+      return state && state->after;
+    };
+    auto changedAfter = [&](uint64_t root) {
+      for (uint64_t key : {root, AfterRoot::anyRoot}) {
+        const auto *state =
+            window.lookupState<AfterState>(window.getLatticeAnchor<AfterRoot>(
+                std::make_pair(key, design.getOperation())));
+        if (state && state->after)
+          return true;
+      }
+      return false;
+    };
+    // A clock change after a deferred kernel would run it again.
+    if (deferralBlocker.empty() && llvm::any_of(clockRoots, changedAfter))
+      deferralBlocker = "clock changes after kernel";
+    bool deferrable = deferralBlocker.empty();
+
+    // The roots one kernel mode may store directly. `mayFollow` holds for
+    // every activation that may run between the kernel and its NBA region.
+    enum class Mode { Immediate, Deferred };
+    auto planRoots = [&](Mode mode, llvm::StringMap<uint64_t> &reasons)
+        -> std::optional<DenseSet<uint64_t>> {
+      auto refuse = [&](StringRef reason) { ++reasons[reason]; };
+      bool deferred = mode == Mode::Deferred;
+      auto mayFollow = [&](StringAttr function, uint32_t block) {
+        return deferred ? isAfter(function, block)
+                        : meetsKernel(function, block);
+      };
+      // (d) Accesses by activations that may follow the kernel.
+      SmallVector<uint64_t> seeds(clockRoots);
+      for (Attribute attribute : nodes) {
+        auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
+        if (!fragment)
+          continue;
+        StringAttr name = fragment.getFunction().getAttr();
+        if (memberNames.contains(name) ||
+            name == rootInitializer.getSymNameAttr())
+          continue;
+        if (auto function = symbols.lookup<sim::SimFuncOp>(name))
+          if (function.getEntryKind() == sim::EntryKind::Final)
+            continue;
+        if (!mayFollow(name, fragment.getBlock()) || isTransparent(name))
+          continue;
+        for (auto effect :
+             fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
+          if (!isAccess(effect.getEffect()) ||
+              effect.getTarget() == schedule::ComputeTargetKind::Local)
+            continue;
+          std::optional<SmallVector<uint64_t>> roots =
+              effectRoots(name, effect);
+          if (!roots) {
+            refuse("unknown event access");
+            return std::nullopt;
+          }
+          llvm::append_range(seeds, *roots);
+        }
+      }
+      // A root is exposed when anything in its combinational cone is accessed
+      // by such an activation, or feeds this kernel's clock.
+      DataFlowSolver exposure;
+      exposure.load<ConeAnalysis>(design.getOperation(), combinationalProcesses,
+                                  seeds, ConeAnalysis::Direction::Sources);
+      if (failed(exposure.initializeAndRun(design))) {
+        refuse("exposure analysis");
+        return std::nullopt;
+      }
+      auto isExposed = [&](uint64_t root) {
+        return ConeAnalysis::contains(exposure, design.getOperation(), root);
+      };
+      // (b) Another NBA of the root that lands in the same NBA region would
+      // now be applied after the store instead of before it (4.6(b)); a
+      // delayed one may land in any region. A blocking write that may follow
+      // the kernel would be overwritten by the NBA but not by the store.
+      auto conflicts = [&](const Writer &write) {
+        if (write.kind == schedule::ComputeEffectKind::NBA)
+          return write.deferred || meetsKernel(write.function, write.block);
+        return mayFollow(write.function, write.block);
+      };
+      DenseSet<uint64_t> eligible;
+      for (Member &member : members)
+        for (uint64_t root : member.nbaWrites) {
+          if (eligible.contains(root))
+            continue;
+          if (root >= ActivationMemoryAnalysis::netRootTag) {
+            refuse("root net");
             continue;
           }
-          writersOk &= !meetsKernel(write.function, write.block);
+          // Nothing reads the root: unread-NBA elimination removes the update
+          // entirely (4.3), which is better than a store.
+          if (!unknownRead && !readRoots.contains(root)) {
+            refuse("root unread");
+            continue;
+          }
+          if (!glitchInsensitive.contains(root)) {
+            refuse("root observed");
+            continue;
+          }
+          if (isExposed(root)) {
+            refuse("root accessed by event activation");
+            continue;
+          }
+          bool writersOk = true;
+          for (const Writer &write : writers.lookup(root)) {
+            if (write.function == rootInitializer.getSymNameAttr())
+              continue;
+            if (memberNames.contains(write.function))
+              writersOk &= write.kind == schedule::ComputeEffectKind::NBA;
+            else
+              writersOk &= !conflicts(write);
+          }
+          writersOk &= llvm::none_of(unknownWriters, conflicts);
+          if (!writersOk) {
+            refuse("root writers");
+            continue;
+          }
+          eligible.insert(root);
         }
-        for (const Writer &write : unknownWriters)
-          writersOk &= !meetsKernel(write.function, write.block);
-        if (!writersOk) {
-          reject("root writers");
-          continue;
-        }
-        eligibleRoots.insert(root);
-      }
+
+      return eligible;
+    };
+
+    // Prefer the immediate kernel, which needs no extra Inactive pass, unless
+    // deferral stores more roots directly.
+    llvm::StringMap<uint64_t> immediateReasons, deferredReasons;
+    std::optional<DenseSet<uint64_t>> immediate, deferred;
+    if (singleClockSource)
+      immediate = planRoots(Mode::Immediate, immediateReasons);
+    if (deferrable)
+      deferred = planRoots(Mode::Deferred, deferredReasons);
+    bool useDeferred =
+        deferred && (!immediate || deferred->size() > immediate->size());
+    if (defer && !deferrable)
+      reject(("deferral: " + deferralBlocker).str());
+    if (!immediate && !deferred) {
+      if (!singleClockSource)
+        reject("clock source");
+      for (llvm::StringMap<uint64_t> *reasons :
+           {&immediateReasons, &deferredReasons})
+        for (auto &[reason, total] : *reasons)
+          rejections[reason] += total;
+      continue;
+    }
+    for (auto &[reason, total] :
+         useDeferred ? deferredReasons : immediateReasons)
+      rejections[reason] += total;
+    DenseSet<uint64_t> eligibleRoots =
+        std::move(useDeferred ? *deferred : *immediate);
 
     // Kernel order: readers of an eligible root before its NBA writers;
     // otherwise keep the existing schedule order, including between writers
@@ -981,12 +1499,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         waitMember = index;
     // A member that accesses any root of its clock class could observe a
     // copy that has not run yet when the kernel starts.
-    DenseSet<uint64_t> aliasRoots;
-    if (auto found = classMembers.find(classRoot); found != classMembers.end())
-      aliasRoots.insert(found->second.begin(), found->second.end());
-    for (Member &member : members)
-      aliasRoots.insert(member.clock);
-    aliasRoots.insert(classRoot);
+    DenseSet<uint64_t> aliasRoots(clockRoots.begin(), clockRoots.end());
     if (llvm::any_of(members, [&](const Member &member) {
           return llvm::any_of(member.reads,
                               [&](uint64_t root) {
@@ -1041,7 +1554,7 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       reject("incompatible captures");
       continue;
     }
-    plans.push_back({key, &members, std::move(eligibleRoots),
+    plans.push_back({key, &members, std::move(eligibleRoots), useDeferred,
                      std::move(sequence), waitMember, std::move(operands),
                      std::move(inputTypes), std::move(argumentAttrs),
                      insertionSpawn});
@@ -1128,7 +1641,19 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         builder.clone(operation, mappings[index]);
     Operation *suspend = builder.clone(
         *members[waitMember].wait->getTerminator(), mappings[waitMember]);
-    suspend->setSuccessor(activation, 0);
+    // A deferred kernel resumes through `#0`, after the Active events of its
+    // pass (4.4.2.3).
+    Block *resume = activation;
+    if (plan.deferred) {
+      resume = new Block;
+      kernel.getBody().getBlocks().insert(Region::iterator(activation), resume);
+      OpBuilder defer = OpBuilder::atBlockEnd(resume);
+      Value zero = sim::SimTimeConstantOp::create(defer, location, 0);
+      sim::SimSuspendDelayOp::create(
+          defer, location, zero, schedule::TimingSiteAttr{}, ValueRange{},
+          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, activation);
+    }
+    suspend->setSuccessor(resume, 0);
     for (unsigned index : sequence) {
       Member &member = members[index];
       for (Block *source : member.bodyBlocks) {
@@ -1363,7 +1888,27 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       }
     }
 
-    // 7. Store at the NBA statements of every remaining root.
+    // 7. Keep the NBAs of roots whose direct store would make shared
+    // combinational logic settle twice (see secondWave).
+    {
+      SmallVector<uint64_t> later;
+      for (Member &member : members)
+        for (uint64_t root : member.nbaWrites)
+          if (!plan.eligibleRoots.contains(root))
+            later.push_back(root);
+      DenseSet<uint64_t> direct;
+      for (auto [index, root] : llvm::enumerate(rootList))
+        if (unsupported.test(index))
+          later.push_back(root);
+        else
+          direct.insert(root);
+      for (uint64_t root : secondWave(std::move(later), std::move(direct))) {
+        unsupported.set(rootIndex.lookup(root));
+        ++rejections["root second wave"];
+      }
+    }
+
+    // 8. Store at the NBA statements of every remaining root.
     for (Block *block : blocks)
       for (const Event &event : events[block]) {
         if (event.kind != EventKind::Enqueue || unsupported.test(event.root))
@@ -1389,7 +1934,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       llvm::errs() << "obelisk clocked kernel: " << kernel.getSymName()
                    << " members=" << count << " eligible=" << rootList.size()
                    << " retained=" << unsupported.count()
-                   << " snapshots=" << snapshots.size() << '\n';
+                   << " snapshots=" << snapshots.size()
+                   << " deferred=" << plan.deferred << '\n';
   }
   if (report)
     for (auto &[reason, total] : rejections)
