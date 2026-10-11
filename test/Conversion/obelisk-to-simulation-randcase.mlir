@@ -48,23 +48,21 @@ module {
   }
 }
 
-// Each signed weight is clamped at zero, so a negative one contributes nothing
-// instead of reappearing as a dominant unsigned magnitude. The running total
-// after each item is that item's upper bound, so the first item's bound is its
-// own clamped weight.
-// CHECK: %[[ZERO:.*]] = arith.constant 0 : i64
-// CHECK: arith.cmpi slt, %{{.*}}, %[[ZERO]]
-// CHECK: %[[BOUND0:.*]] = arith.select
-// CHECK: arith.cmpi slt, %{{.*}}, %[[ZERO]]
-// CHECK: %[[SECOND:.*]] = arith.select
-// CHECK: %[[TOTAL:.*]] = arith.addi %[[BOUND0]], %[[SECOND]]
+// Summands are unsigned, and the total retains maximum weight precision.
+// A signed value's bit pattern must not be clamped before summation.
+// CHECK: %[[ZERO:.*]] = arith.constant 0 : i32
+// CHECK: %[[BOUND0:.*]] = simulation.ref.load
+// CHECK: %[[SECOND:.*]] = simulation.ref.load
+// CHECK: %[[TOTAL:.*]] = arith.addi %[[BOUND0]], %[[SECOND]] : i32
 
 // An all-zero weight list selects no branch at all.
 // CHECK: %[[ANY:.*]] = arith.cmpi ne, %[[TOTAL]], %[[ZERO]]
 // CHECK: cf.cond_br %[[ANY]], ^[[SELECT:[^ ,]*]], ^[[MERGE:[^ ,]*]]
 
 // CHECK: ^[[SELECT]]:
-// CHECK: %[[DRAW:.*]] = simulation.random.bounded %{{.*}}, %[[TOTAL]]
+// CHECK: %[[RANGE:.*]] = arith.extui %[[TOTAL]] : i32 to i64
+// CHECK: %[[RAW:.*]] = simulation.random.bounded %{{.*}}, %[[RANGE]]
+// CHECK: %[[DRAW:.*]] = arith.trunci %[[RAW]] : i64 to i32
 // CHECK: %[[SELECTED:.*]] = arith.cmpi ult, %[[DRAW]], %[[BOUND0]]
 // CHECK: cf.cond_br %[[SELECTED]], ^[[ITEM0:[^ ,]*]], ^[[ITEM1:[^ ,]*]]
 

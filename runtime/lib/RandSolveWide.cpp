@@ -433,6 +433,12 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
           result.captureWidths[instruction.operand], instruction.width);
       ++depth;
       break;
+    case OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1:
+      if (instruction.width != 1 || instruction.flags != 0 ||
+          instruction.operand >= 64 || instruction.auxiliary != 0)
+        return false;
+      ++depth;
+      break;
     case OBELISK_RT_RANDOM_PUSH_LITERAL_V1: {
       uint64_t wordCount = (static_cast<uint64_t>(instruction.width) + 63) / 64;
       if (instruction.auxiliary > literalWordCount ||
@@ -639,6 +645,12 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
       stack.push_back(instruction.literal);
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
+      WideValue enabled(1);
+      enabled.words[0] = ((constraintMask >> instruction.operand) & 1) == 0;
+      stack.push_back(std::move(enabled));
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||

@@ -582,6 +582,18 @@ public:
   void runOnOperation() override {
     MLIRContext &context = getContext();
     SlangTypeConverter converter;
+    // Module metadata can contain semantic types, including the frozen enum
+    // domains needed after the Slang AST has been released.
+    for (NamedAttribute attribute : getOperation()->getAttrs()) {
+      FailureOr<Attribute> converted =
+          converter.convertAttribute(attribute.getValue());
+      if (failed(converted)) {
+        getOperation().emitError("module attribute type conversion failed");
+        signalPassFailure();
+        return;
+      }
+      getOperation()->setAttr(attribute.getName(), *converted);
+    }
     ConversionTarget target(context);
     target.addIllegalDialect<slangir::SlangDialect>();
     target.addDynamicallyLegalDialect<ir::ObeliskDialect>(

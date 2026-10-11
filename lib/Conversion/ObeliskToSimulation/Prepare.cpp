@@ -4565,6 +4565,27 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<RandomDomainPattern> patterns;
   };
   llvm::DenseMap<Type, SmallVector<uint64_t>> enumValues;
+  llvm::DenseMap<Type, ArrayAttr> frozenEnumDomains;
+  llvm::DenseSet<Type> ambiguousFrozenEnumDomains;
+  if (auto domains = module->getAttrOfType<ArrayAttr>("obelisk.enum_domains")) {
+    for (Attribute attribute : domains) {
+      auto domain = dyn_cast<DictionaryAttr>(attribute);
+      auto type = domain ? domain.getAs<TypeAttr>("type") : TypeAttr();
+      auto values = domain ? domain.getAs<ArrayAttr>("values") : ArrayAttr();
+      if (!type || !isa<semantic::EnumType>(type.getValue()) || !values) {
+        module.emitError("invalid frozen enum domain inventory");
+        signalPassFailure();
+        return;
+      }
+      auto [entry, inserted] =
+          frozenEnumDomains.try_emplace(type.getValue(), values);
+      // Semantic display names can collide across compilation units. Do not
+      // reject unrelated non-random enum uses, or select one domain silently.
+      if (!inserted && entry->second != values)
+        ambiguousFrozenEnumDomains.insert(type.getValue());
+    }
+  }
+  module->removeAttr("obelisk.enum_domains");
 
   auto widthMask = [](uint64_t width) {
     return width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
@@ -4579,26 +4600,42 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!width || *width > 64)
       return failure();
     if (auto enumeration = dyn_cast<semantic::EnumType>(type)) {
+      if (ambiguousFrozenEnumDomains.contains(enumeration)) {
+        emitError(location)
+            << "random enum domain has conflicting source type identities";
+        return failure();
+      }
       auto found = enumValues.find(enumeration);
       if (found == enumValues.end()) {
         auto declaration = enumDeclarations.find(enumeration);
-        if (declaration == enumDeclarations.end() || !width || *width == 0) {
+        auto frozen = frozenEnumDomains.find(enumeration);
+        if ((declaration == enumDeclarations.end() &&
+             frozen == frozenEnumDomains.end()) ||
+            *width == 0) {
           emitError(location)
               << "random enum domain has no declaration inventory";
           return failure();
         }
         SmallVector<uint64_t> values;
-        for (Operation *child : getChildren(declaration->second)) {
-          auto value = dyn_cast<semantic::SVEnumValueSymbolOp>(child);
-          if (!value)
-            continue;
-          auto spelling = value->getAttrOfType<StringAttr>("constant_value");
+        SmallVector<std::pair<Attribute, Location>> enumerators;
+        if (frozen != frozenEnumDomains.end()) {
+          for (Attribute value : frozen->second)
+            enumerators.emplace_back(value, location);
+        } else {
+          for (Operation *child : getChildren(declaration->second)) {
+            if (isa<semantic::SVEnumValueSymbolOp>(child))
+              enumerators.emplace_back(child->getAttr("constant_value"),
+                                       getSemanticLocation(child));
+          }
+        }
+        for (auto [attribute, valueLocation] : enumerators) {
+          auto spelling = dyn_cast_or_null<StringAttr>(attribute);
           FailureOr<ParsedConstant> parsed =
-              spelling ? parseSVInteger(spelling.getValue(), *width,
-                                        getSemanticLocation(value))
-                       : FailureOr<ParsedConstant>(failure());
+              spelling
+                  ? parseSVInteger(spelling.getValue(), *width, valueLocation)
+                  : FailureOr<ParsedConstant>(failure());
           if (failed(parsed) || !parsed->unknown.isZero()) {
-            emitError(getSemanticLocation(value))
+            emitError(valueLocation)
                 << "random enum values must be fixed two-state constants";
             return failure();
           }
@@ -4664,7 +4701,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (auto aggregate = dyn_cast<semantic::SourceAggregateType>(type)) {
       if (!aggregate.getIsPacked())
         return failure();
-      if (aggregate.getIsUnion() && !aggregate.getIsTagged())
+      // IEEE 1800-2023 18.4 treats packed structs and untagged unions as
+      // integral variables. In particular, an enum member does not restrict
+      // their random domain to its enumerators. Only a standalone enum (or
+      // an array of enums) has that finite semantic domain.
+      if (!aggregate.getIsTagged())
         return SmallVector<RandomDomainPattern>{{0, 0}};
       if (aggregate.getIsUnion()) {
         uint64_t tagBits = aggregate.getTagBits();
@@ -4712,27 +4753,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         return result;
       }
-      SmallVector<RandomDomainPattern> result{{0, 0}};
-      for (Attribute fieldAttr : aggregate.getFields()) {
-        auto field = dyn_cast<DictionaryAttr>(fieldAttr);
-        auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
-        auto offset =
-            field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
-        if (!typeAttr || !offset || offset.getValue().isNegative() ||
-            offset.getValue().getActiveBits() > 64)
-          return failure();
-        std::optional<uint64_t> fieldWidth =
-            getSemanticBitstreamWidth(typeAttr.getValue());
-        uint64_t fieldOffset = offset.getValue().getZExtValue();
-        if (!fieldWidth || fieldOffset > *width ||
-            *fieldWidth > *width - fieldOffset)
-          return failure();
-        FailureOr<SmallVector<RandomDomainPattern>> nested =
-            buildWholeDomain(typeAttr.getValue(), location);
-        if (failed(nested) || failed(combine(result, *nested, fieldOffset)))
-          return failure();
-      }
-      return result;
+      return SmallVector<RandomDomainPattern>{{0, 0}};
     }
     return SmallVector<RandomDomainPattern>{{0, 0}};
   };
@@ -4790,21 +4811,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         result.push_back({baseOffset, *width, std::move(*patterns)});
         return success();
       }
-      if (aggregate.getIsUnion())
-        return success();
-      for (Attribute fieldAttr : aggregate.getFields()) {
-        auto field = dyn_cast<DictionaryAttr>(fieldAttr);
-        auto typeAttr = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
-        auto offset =
-            field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
-        if (!typeAttr || !offset || offset.getValue().isNegative() ||
-            offset.getValue().getActiveBits() > 64 ||
-            failed(collectRandomSubdomains(typeAttr.getValue(),
-                                           baseOffset +
-                                               offset.getValue().getZExtValue(),
-                                           result, location)))
-          return failure();
-      }
+      // A packed aggregate's full bit representation is a legal rand/randc
+      // value, including unnamed encodings of any nested enum members.
       return success();
     }
     return success();
@@ -4994,6 +5002,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 semantic::SVImplicationConstraintOp,
                 semantic::SVConditionalConstraintOp,
                 semantic::SVUniquenessConstraintOp,
+                semantic::SVDisableSoftConstraintOp,
                 semantic::SVForeachConstraintOp>(nested))
           return;
         if (nested->hasTrait<OpTrait::SemanticDeclarativeNode>() &&
@@ -6546,18 +6555,28 @@ void ObeliskSimPreparePass::runOnOperation() {
     // declarations. Keep those two orderings deliberately separate.
     for (auto [groupIndex, group] : llvm::enumerate(constraintGroups)) {
       for (semantic::SVConstraintBlockSymbolOp constraint : group) {
-        if (constraint.getIsExtern().value_or(false) ||
-            constraint.getIsPure().value_or(false)) {
+        if (constraint.getIsPure().value_or(false)) {
           emitError(getSemanticLocation(constraint))
-              << "extern and pure constraint blocks are not executable yet";
+              << "effective pure constraint block has no concrete "
+                 "implementation";
           invalid = true;
           continue;
         }
+        bool foundBody = false;
         for (Operation *child : getChildren(constraint))
           if (isa<semantic::SVConstraintListOp>(child)) {
+            foundBody = true;
             constraintRoots.push_back(child);
             constraintRootIndices[child].push_back(groupIndex);
           }
+        // IEEE 1800-2023 18.5.1: bound external bodies behave like ordinary
+        // bodies. An undefined implicit prototype is an empty constraint;
+        // an explicit extern prototype must have a resolved body.
+        if (!foundBody && constraint.getIsExplicitExtern().value_or(false)) {
+          emitError(getSemanticLocation(constraint))
+              << "explicit extern constraint block has no resolved body";
+          invalid = true;
+        }
       }
     }
     for (RandomContainerProperty &property : containerProperties) {
@@ -7511,6 +7530,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 semantic::SVImplicationConstraintOp,
                 semantic::SVConditionalConstraintOp,
                 semantic::SVUniquenessConstraintOp,
+                semantic::SVDisableSoftConstraintOp,
                 semantic::SVForeachConstraintOp>(nested))
           return;
         if (nested->hasTrait<OpTrait::SemanticDeclarativeNode>() &&

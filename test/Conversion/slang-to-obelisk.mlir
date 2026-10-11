@@ -6,7 +6,10 @@
 // behind. Operations from other dialects survive untouched when they carry no
 // Slang type.
 
-module {
+module attributes {obelisk.enum_domains = [
+  {type = !slang.enum<"state_t", !slang.integral<2, false, false, 1 : 0, generic>>,
+   values = ["0", "3"]}
+]} {
   // A foreign operation with no Slang type must be preserved verbatim.
   %zero = arith.constant 0 : i32
 
@@ -332,6 +335,7 @@ module {
   }
 }
 
+// CHECK: module attributes {obelisk.enum_domains = [{type = !obelisk.enum<"state_t", !obelisk.integral<2, false, false, 1 : 0, generic>>, values = ["0", "3"]}]}
 // CHECK: %{{.*}} = arith.constant 0 : i32
 // CHECK: obelisk.sv.symbol.root
 // CHECK: obelisk.sv.symbol.definition

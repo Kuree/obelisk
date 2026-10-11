@@ -2614,6 +2614,12 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
       conversion ? getChildren(conversion) : SmallVector<Operation *>{};
   if (!conversion || children.size() != 1)
     return lowerExpression(op);
+  // An explicit cast is self-determined even when it appears as an operand
+  // of a comparison. Its signed result type must not sign-extend an unsigned
+  // packed source (for example int'(a two-bit enum member)).
+  if (auto implicit = op->getAttrOfType<BoolAttr>("is_implicit");
+      implicit && !implicit.getValue())
+    return lowerExpression(op);
   FailureOr<Type> target = getNormalizedSemanticType(op);
   if (failed(target) || !sim::getPackedScalarType(*target))
     return lowerExpression(op);

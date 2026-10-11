@@ -4737,7 +4737,11 @@ typedef enum obelisk_rt_random_opcode_v1 {
   OBELISK_RT_RANDOM_SHIFT_LEFT_V1 = 37,
   OBELISK_RT_RANDOM_SHIFT_RIGHT_V1 = 38,
   OBELISK_RT_RANDOM_SHIFT_RIGHT_ARITH_V1 = 39,
-  OBELISK_RT_RANDOM_POWER_V1 = 40
+  OBELISK_RT_RANDOM_POWER_V1 = 40,
+  // Push a Boolean testing the live constraint-mode mask. Compiler-side
+  // planning assumes every block is enabled; generated proposals are used
+  // only on that all-enabled edge. Used by disable soft across blocks.
+  OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1 = 41
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called

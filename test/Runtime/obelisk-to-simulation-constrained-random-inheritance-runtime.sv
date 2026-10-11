@@ -10,10 +10,15 @@
 // must therefore find x > 0 && x < y instead of keeping x and y correlated.
 // CHECK: inheritance 1 1
 
+// A resolved extern block body enters the same effective inherited constraint
+// inventory as an in-class body, and an implicit prototype without a body is
+// an empty constraint (IEEE 1800-2023 18.5.1 and 18.5.2).
 class B;
   rand int x;
-  constraint positive { x > 0; }
+  constraint empty;
+  extern constraint positive;
 endclass
+constraint B::positive { x > 0; }
 class C extends B;
   rand int y;
 endclass

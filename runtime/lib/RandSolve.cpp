@@ -250,6 +250,12 @@ bool validateInstruction(const Instruction &instruction,
   case OBELISK_RT_RANDOM_PUSH_LITERAL_V1:
     ++depth;
     break;
+  case OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1:
+    if (instruction.width != 1 || instruction.flags != 0 ||
+        instruction.operand >= 64 || instruction.immediate != 0)
+      return false;
+    ++depth;
+    break;
   case OBELISK_RT_RANDOM_END_HARD_V1:
   case OBELISK_RT_RANDOM_END_SOFT_V1:
     if (instruction.width != 1 || depth != 1 ||
@@ -338,6 +344,10 @@ bool evaluate(const std::vector<Instruction> &instructions,
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
       push(instruction.immediate, instruction.width);
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
+      push(((constraintMask >> instruction.operand) & 1) == 0, 1);
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||

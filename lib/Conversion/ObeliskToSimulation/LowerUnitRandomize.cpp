@@ -3477,7 +3477,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return failure();
           }
           if (auto found = weights.find(weight); found != weights.end()) {
-            isSigned = isSignedNode(weight);
+            isSigned = false;
             return found->second;
           }
           FailureOr<Value> lowered = lowerExpression(weight);
@@ -3490,7 +3490,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 << "dist weights must be packed integral values";
             return failure();
           }
-          isSigned = isSignedNode(weight);
+          // IEEE 1800-2023 18.5.3 interprets the self-determined weight
+          // expression as unsigned, including signed negative bit patterns.
+          if (cast<IntegerType>((*scalar).getType()).getWidth() > 64) {
+            emitError(getSemanticLocation(weight))
+                << "dist weights wider than 64 bits are not executable yet";
+            return failure();
+          }
+          isSigned = false;
           FailureOr<Value> extended = convert(
               *scalar, i64, isSigned, getSemanticLocation(weight), false);
           if (failed(extended))
@@ -3728,6 +3735,28 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     if (!dependsOnCandidate(expression))
       return captureExpression();
+
+    if (isa<semantic::SVMemberAccessExpressionOp>(expression)) {
+      auto offset = expression->getAttrOfType<IntegerAttr>("packed_offset");
+      FailureOr<unsigned> baseWidth = nested.size() == 1
+                                          ? expressionWidth(nested.front())
+                                          : FailureOr<unsigned>(failure());
+      if (!offset || offset.getValue().isNegative() ||
+          offset.getValue().getActiveBits() > 32 || failed(baseWidth) ||
+          offset.getValue().getZExtValue() > *baseWidth ||
+          *width > *baseWidth - offset.getValue().getZExtValue()) {
+        emitError(getSemanticLocation(expression))
+            << "random packed member has no valid fixed bit range";
+        return failure();
+      }
+      if (failed(emitProgramExpression(nested.front())))
+        return failure();
+      literalInstruction(*baseWidth, false,
+                         APInt(*baseWidth, offset.getValue().getZExtValue()));
+      instruction(OBELISK_RT_RANDOM_SHIFT_RIGHT_V1, *baseWidth);
+      instruction(OBELISK_RT_RANDOM_CAST_V1, *width, false);
+      return success();
+    }
 
     if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression)) {
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
@@ -4055,7 +4084,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       return success();
     }
-    if (isa<semantic::SVSolveBeforeConstraintOp>(constraint)) {
+    if (isa<semantic::SVSolveBeforeConstraintOp,
+            semantic::SVDisableSoftConstraintOp>(constraint)) {
       emitLiteral(true);
       return success();
     }
@@ -4149,7 +4179,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool emittedHard = false;
   bool emittedSoft = false;
   llvm::DenseMap<Operation *, uint64_t> softPriorities;
+  llvm::DenseMap<Operation *, uint64_t> softDeclarationOrder;
+  struct SoftDisable {
+    Operation *source;
+    uint64_t declarationOrder;
+    uint32_t block;
+    SmallVector<std::pair<Operation *, bool>> guards;
+  };
+  SmallVector<SoftDisable> softDisables;
   uint64_t nextSoftPriority = 0;
+  uint64_t nextDeclarationOrder = 0;
   auto assignSoftPriorities = [&](bool inlineConstraints) {
     for (auto [index, root] : llvm::enumerate(children)) {
       if (isReceiverChild(index) ||
@@ -4159,9 +4198,32 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                            ? getChildren(root)
                                            : SmallVector<Operation *>{root};
       for (Operation *item : items)
-        item->walk([&](semantic::SVExpressionConstraintOp expression) {
-          if (expression.getIsSoft())
-            softPriorities[expression] = nextSoftPriority++;
+        item->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+          if (auto expression =
+                  dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
+            if (expression.getIsSoft()) {
+              softPriorities[expression] = nextSoftPriority++;
+              softDeclarationOrder[expression] = nextDeclarationOrder++;
+            }
+          } else if (isa<semantic::SVDisableSoftConstraintOp>(nested)) {
+            uint32_t block = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
+            if (auto index = root->getAttrOfType<IntegerAttr>(
+                    randomConstraintBlockAttrName))
+              block = static_cast<uint32_t>(index.getInt());
+            SoftDisable disable{nested, nextDeclarationOrder++, block, {}};
+            for (Operation *child = nested; child != root;) {
+              Operation *parent = child->getParentOp();
+              SmallVector<Operation *> branches = getChildren(parent);
+              if (isa<semantic::SVImplicationConstraintOp>(parent)) {
+                disable.guards.push_back({branches.front(), true});
+              } else if (isa<semantic::SVConditionalConstraintOp>(parent)) {
+                disable.guards.push_back(
+                    {branches.front(), child == branches[1]});
+              }
+              child = parent;
+            }
+            softDisables.push_back(std::move(disable));
+          }
         });
     }
   };
@@ -4175,6 +4237,99 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         << "random fallback supports at most 64 soft constraint priorities";
     return failure();
   }
+
+  // Only references inside the soft expression count. An enclosing
+  // implication/if guard does not make its variables targets of disable soft
+  // (IEEE 1800-2023 18.5.13.2). Stop at a precise packed selection so a
+  // reference to x[0] does not accidentally become a reference to all of x.
+  struct SoftReference {
+    uint64_t offset;
+    uint64_t width;
+    SymbolRefAttr symbol;
+  };
+  auto collectSoftReferences = [&](Operation *expression) {
+    SmallVector<SoftReference> references;
+    expression->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      // Reads introduced by expanding a constraint function's body are
+      // indirect references, not references written in the soft expression.
+      if (nested->hasAttr(randomFunctionStateAttrName))
+        return WalkResult::skip();
+      if (auto offset = nested->getAttrOfType<IntegerAttr>(
+              randomVariableBitOffsetAttrName)) {
+        auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
+        std::optional<uint64_t> width =
+            type ? getSemanticBitstreamWidth(type.getValue()) : std::nullopt;
+        if (width) {
+          references.push_back({offset.getValue().getZExtValue(), *width, {}});
+          return WalkResult::skip();
+        }
+      }
+      if (auto variable =
+              nested->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+        uint64_t index = variable.getValue().getZExtValue();
+        if (index < planned.size()) {
+          uint64_t offset = 0;
+          for (unsigned property = 0; property != index; ++property)
+            offset += planned[property].width;
+          references.push_back({offset, planned[index].width, {}});
+          return WalkResult::skip();
+        }
+      }
+      if (auto symbol =
+              nested->getAttrOfType<SymbolRefAttr>("referenced_symbol"))
+        references.push_back({0, 0, symbol});
+      return WalkResult::advance();
+    });
+    return references;
+  };
+  llvm::DenseMap<Operation *, SmallVector<const SoftDisable *>> softDisablers;
+  for (const SoftDisable &disable : softDisables) {
+    SmallVector<Operation *> targets = getChildren(disable.source);
+    if (targets.size() != 1) {
+      emitError(getSemanticLocation(disable.source))
+          << "disable soft requires one variable target";
+      return failure();
+    }
+    SmallVector<SoftReference> targetReferences =
+        collectSoftReferences(targets.front());
+    if (targetReferences.size() != 1) {
+      emitError(getSemanticLocation(disable.source))
+          << "disable soft requires a direct variable or fixed packed path";
+      return failure();
+    }
+    const SoftReference &target = targetReferences.front();
+    for (auto [soft, order] : softDeclarationOrder) {
+      if (order >= disable.declarationOrder)
+        continue;
+      SmallVector<SoftReference> references = collectSoftReferences(soft);
+      if (llvm::any_of(references, [&](const SoftReference &reference) {
+            if (target.symbol || reference.symbol)
+              return target.symbol && target.symbol == reference.symbol;
+            return target.offset < reference.offset + reference.width &&
+                   reference.offset < target.offset + target.width;
+          }))
+        softDisablers[soft].push_back(&disable);
+    }
+  }
+
+  auto emitSoftDisablers = [&](Operation *soft) -> LogicalResult {
+    for (const SoftDisable *disable : softDisablers.lookup(soft)) {
+      if (disable->block == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1)
+        emitLiteral(true);
+      else
+        instruction(OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, false,
+                    disable->block);
+      for (auto [guard, positive] : disable->guards) {
+        if (failed(emitProgramExpression(guard)))
+          return failure();
+        if (!positive)
+          instruction(OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1);
+        instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+      }
+      instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+    }
+    return success();
+  };
   if (constraintTemplate) {
     for (auto [index, root] : llvm::enumerate(children)) {
       if (!isReceiverChild(index) && isa<semantic::SVConstraintListOp>(root)) {
@@ -4249,7 +4404,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         }
         activeProgramConstraintBlock = constraintBlock;
-        if (failed(emitProgramConstraint(item, soft)))
+        if (failed(emitProgramConstraint(item, soft)) ||
+            failed(emitSoftDisablers(soft)))
           return failure();
         instruction(OBELISK_RT_RANDOM_END_SOFT_V1, 1, false, constraintBlock,
                     softPriorities.lookup(soft));
@@ -6295,7 +6451,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         return result;
       }
-      if (isa<semantic::SVSolveBeforeConstraintOp>(constraint))
+      if (isa<semantic::SVSolveBeforeConstraintOp,
+              semantic::SVDisableSoftConstraintOp>(constraint))
         return arith::ConstantOp::create(
                    builder, getSemanticLocation(constraint),
                    builder.getI1Type(), builder.getBoolAttr(true))
@@ -6386,7 +6543,43 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             truthValue(*value, getSemanticLocation(constraint));
         if (failed(predicate))
           return failure();
-        return *predicate;
+        Value result = *predicate;
+        if (softTarget)
+          for (const SoftDisable *disable : softDisablers.lookup(softTarget)) {
+            Value enabled = arith::ConstantOp::create(
+                builder, location, builder.getI1Type(),
+                builder.getBoolAttr(true));
+            if (disable->block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1) {
+              Value selected = arith::AndIOp::create(
+                  builder, location, relevantConstraintMode,
+                  constant64(uint64_t{1} << disable->block));
+              enabled = arith::CmpIOp::create(builder, location,
+                                              arith::CmpIPredicate::eq,
+                                              selected, constant64(0));
+            }
+            for (auto [guard, positive] : disable->guards) {
+              FailureOr<Value> value = lowerExpression(guard);
+              if (failed(value))
+                return failure();
+              FailureOr<Value> condition =
+                  truthValue(*value, getSemanticLocation(guard));
+              if (failed(condition))
+                return failure();
+              Value guardValue = *condition;
+              if (!positive) {
+                Value falseValue = arith::ConstantOp::create(
+                    builder, location, builder.getI1Type(),
+                    builder.getBoolAttr(false));
+                guardValue = arith::CmpIOp::create(builder, location,
+                                                   arith::CmpIPredicate::eq,
+                                                   guardValue, falseValue);
+              }
+              enabled =
+                  arith::AndIOp::create(builder, location, enabled, guardValue);
+            }
+            result = arith::OrIOp::create(builder, location, result, enabled);
+          }
+        return result;
       }
       if (isa<semantic::SVImplicationConstraintOp>(constraint)) {
         if (nested.size() != 2) {

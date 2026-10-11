@@ -1444,12 +1444,25 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
       ArrayRef<Operation *>(children).take_back(itemCount);
 
   auto i64 = builder.getI64Type();
-  Value zero = arith::ConstantOp::create(builder, location, i64,
-                                         builder.getI64IntegerAttr(0));
+  unsigned sumWidth = 0;
+  for (Operation *node : weights) {
+    FailureOr<Type> type = getNormalizedSemanticType(node);
+    std::optional<unsigned> width =
+        succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+    if (!width || *width == 0 || *width > 64) {
+      emitError(getSemanticLocation(node))
+          << "randcase weights require integral values no wider than 64 bits";
+      return failure();
+    }
+    sumWidth = std::max(sumWidth, *width);
+  }
+  Type sumType = builder.getIntegerType(sumWidth);
+  Value zero = arith::ConstantOp::create(builder, location, sumType,
+                                         builder.getIntegerAttr(sumType, 0));
 
-  // IEEE 1800-2017 18.16 evaluates every weight exactly once, in source order.
-  // Accumulate the running total alongside so each item keeps the upper bound
-  // of its own share of the distribution.
+  // IEEE 1800-2023 18.16 evaluates self-determined weights at most once.
+  // Summands are unsigned and their sum has the maximum operand precision.
+  // Preserve that precision (including overflow) before widening for the RNG.
   SmallVector<Value> bounds;
   bounds.reserve(itemCount);
   Value total = zero;
@@ -1458,19 +1471,10 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
     FailureOr<Value> value = lowerExpression(node);
     if (failed(value))
       return failure();
-    bool isSigned = isSignedNode(node);
-    FailureOr<Value> weight = convert(*value, i64, isSigned, weightLocation);
+    FailureOr<Value> weight =
+        convert(*value, sumType, false, weightLocation, false);
     if (failed(weight))
       return failure();
-    // A weight is a count, so a negative one contributes nothing. Clamping
-    // keeps it from reappearing as a dominant unsigned magnitude.
-    if (isSigned) {
-      Value negative = arith::CmpIOp::create(
-          builder, weightLocation, arith::CmpIPredicate::slt, *weight, zero);
-      weight = arith::SelectOp::create(builder, weightLocation, negative, zero,
-                                       *weight)
-                   .getResult();
-    }
     total = arith::AddIOp::create(builder, weightLocation, total, *weight);
     bounds.push_back(total);
   }
@@ -1488,8 +1492,16 @@ LogicalResult UnitLowering::lowerRandCase(semantic::SVRandCaseStatementOp op) {
   // lands in [0, total), so it always falls inside the final item's bound and
   // that item needs no test of its own.
   Value context = function.getBody().front().getArgument(0);
-  Value draw =
-      sim::SimRandomBoundedOp::create(builder, location, i64, context, total);
+  FailureOr<Value> range = convert(total, i64, false, location, false);
+  if (failed(range))
+    return failure();
+  Value rawDraw =
+      sim::SimRandomBoundedOp::create(builder, location, i64, context, *range);
+  FailureOr<Value> convertedDraw =
+      convert(rawDraw, sumType, false, location, false);
+  if (failed(convertedDraw))
+    return failure();
+  Value draw = *convertedDraw;
   for (size_t item = 0; item + 1 < itemCount; ++item) {
     Block *itemBlock = addBlock();
     Block *nextItemBlock = addBlock();

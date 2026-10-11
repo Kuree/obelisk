@@ -770,6 +770,16 @@ public:
         name = ("$anon.enum." + std::to_string(enumeration.systemId));
       result = slangir::EnumType::get(context, StringAttr::get(context, name),
                                       convert(enumeration.baseType));
+      SmallVector<Attribute> values;
+      for (const slang::ast::EnumValueSymbol &value :
+           enumeration.membersOfType<slang::ast::EnumValueSymbol>())
+        values.push_back(
+            StringAttr::get(context, formatConstant(value.getValue())));
+      enumDomains.push_back(DictionaryAttr::get(
+          context, {NamedAttribute(StringAttr::get(context, "type"),
+                                   TypeAttr::get(result)),
+                    NamedAttribute(StringAttr::get(context, "values"),
+                                   ArrayAttr::get(context, values))}));
       break;
     }
     case SK::PackedArrayType: {
@@ -971,10 +981,15 @@ public:
     return identity;
   }
 
+  ArrayAttr getEnumDomains() const {
+    return ArrayAttr::get(context, enumDomains);
+  }
+
 private:
   MLIRContext *context;
   SymbolReferenceBuilder buildSymbolReference;
   llvm::DenseMap<const slang::ast::Type *, Type> cache;
+  SmallVector<Attribute> enumDomains;
   SmallVector<std::pair<const slang::ast::InstanceBodySymbol *, SymbolRefAttr>>
       virtualInterfaceIdentities;
 };
@@ -1002,6 +1017,8 @@ public:
   }
 
   [[nodiscard]] bool succeeded() const { return !sawInvalidNode; }
+
+  ArrayAttr getEnumDomains() const { return typeConverter.getEnumDomains(); }
 
   void markDPIExport(const slang::ast::SubroutineSymbol &subroutine,
                      StringRef cIdentifier,
@@ -6319,6 +6336,11 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     importer.markDPIExport(*entry.subroutine, entry.cIdentifier, entry.syntax);
   if (!importer.succeeded())
     return failure();
+
+  // Anonymous and typedef enums need not have an imported declaration node.
+  // Preserve their exact domains before releasing the elaborated AST.
+  if (ArrayAttr domains = importer.getEnumDomains(); !domains.empty())
+    (*module)->setAttr("obelisk.enum_domains", domains);
 
   if (verifyIR && failed(verify(*module))) {
     emitError(UnknownLoc::get(&context))

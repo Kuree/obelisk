@@ -1,5 +1,5 @@
 // RUN: obelisk -emit-slang %s | FileCheck %s
-// RUN: not obelisk -emit-sim %s 2>&1 | FileCheck %s --check-prefix=RANDOMIZE
+// RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=RANDOMIZE
 
 // A constraint prototype declares no body of its own: a `pure` constraint never
 // has one, and an implicit extern prototype leaves it out of block. slang models
@@ -45,6 +45,7 @@ endmodule
 // CHECK-SAME: hierarchical_name = "implicit_extern::d"
 // CHECK-NOT: slang.constraint.list
 
-// Reaching such a block from an executable randomize() is diagnosed where the
-// constraint would be solved, not as an invalid AST node during import.
-// RANDOMIZE: error: extern and pure constraint blocks are not executable yet
+// IEEE 1800-2023 18.5.1 gives an undefined implicit prototype the semantics of
+// an empty constraint. It does not prevent executable randomization.
+// RANDOMIZE: simulation.class.decl
+// RANDOMIZE: simulation.func

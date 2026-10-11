@@ -907,6 +907,55 @@ TEST_F(RandSolveTest, GuardedSoftPredicatesAreVacuouslySatisfied) {
   EXPECT_EQ(assignment, 2u);
 }
 
+TEST_F(RandSolveTest, DisableSoftUsesLiveConstraintMask) {
+  std::vector<uint8_t> bytes =
+      program(2, 0,
+              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 2},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 2, 0, 0, 1},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 63},
+               {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
+               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
+              true);
+  for (uint64_t disabled : {UINT64_C(0), UINT64_C(1) << 63}) {
+    uint64_t assignment = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes(
+                  context, bytes.data(), bytes.size(), 2, 3, disabled, 4,
+                  nullptr, 0, &assignment, &success),
+              OBELISK_RT_OK);
+    EXPECT_EQ(success, 1u);
+    EXPECT_EQ(assignment, disabled == 0 ? 2u : 1u);
+  }
+}
+
+TEST_F(RandSolveTest, RejectsMalformedConstraintEnabledInstructions) {
+  for (EncodedInstruction instruction :
+       {EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},
+        EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1,
+                           OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+        EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0,
+                           64},
+        EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0,
+                           0, 1}}) {
+    std::vector<uint8_t> bytes =
+        program(2, 0,
+                {instruction,
+                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                  OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+    uint64_t assignment = 7;
+    uint32_t success = 1;
+    EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
+                                         4, nullptr, 0, &assignment, &success),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(success, 0u);
+  }
+}
+
 TEST_F(RandSolveTest, RejectsNoncontiguousSoftPriorities) {
   std::vector<uint8_t> bytes =
       program(1, 0,

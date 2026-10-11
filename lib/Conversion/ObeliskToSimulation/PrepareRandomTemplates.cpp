@@ -95,7 +95,6 @@ public:
     for (semantic::SVConstraintBlockSymbolOp constraint : ordered) {
       auto block = constraintIndices.find(constraint);
       if (block == constraintIndices.end() ||
-          constraint.getIsExtern().value_or(false) ||
           constraint.getIsPure().value_or(false))
         return failure();
       bool foundBody = false;
@@ -107,7 +106,8 @@ public:
         if (failed(compileConstraintList(list, block->second)))
           return failure();
       }
-      if (!foundBody)
+      if (!foundBody && (!constraint.getIsExtern().value_or(false) ||
+                         constraint.getIsExplicitExtern().value_or(false)))
         return failure();
     }
     if (constraintCount == 0)

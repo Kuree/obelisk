@@ -492,6 +492,63 @@ TEST_F(RandSolveWideTest, SelectsBestSoftPriorityAfterCompleteTraversal) {
   EXPECT_EQ(assignment[1], 0u);
 }
 
+TEST_F(RandSolveWideTest, DisableSoftUsesLiveConstraintMask) {
+  std::vector<uint8_t> bytes =
+      program(65, 0,
+              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1},
+               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 65},
+               {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 65, 0, 0, 0, {1, 0}},
+               {OBELISK_RT_RANDOM_EQ_V1, 1},
+               {OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 63},
+               {OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1},
+               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1, 0}},
+              OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT);
+  for (uint64_t disabled : {UINT64_C(0), UINT64_C(1) << 63}) {
+    uint64_t start[] = {2, 0};
+    uint64_t mutableMask[] = {3, 0};
+    uint64_t assignment[] = {0, 0};
+    uint32_t success = 0;
+    uint64_t nextState = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 2,
+                  disabled, 4, 67, 13, nullptr, 0, nullptr, 0, assignment,
+                  &success, &nextState),
+              OBELISK_RT_OK);
+    EXPECT_EQ(success, 1u);
+    EXPECT_EQ(assignment[0], disabled == 0 ? 2u : 1u);
+    EXPECT_EQ(assignment[1], 0u);
+    EXPECT_EQ(nextState, 67u);
+  }
+}
+
+TEST_F(RandSolveWideTest, RejectsMalformedConstraintEnabledInstructions) {
+  for (Instruction instruction :
+       {Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},
+        Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1,
+                    OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+        Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 64},
+        Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 1, 0, 0,
+                    1}}) {
+    std::vector<uint8_t> bytes =
+        program(65, 0,
+                {instruction,
+                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                  OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+    uint64_t start[] = {0, 0}, mutableMask[] = {3, 0}, assignment[] = {0, 0};
+    uint32_t success = 1;
+    uint64_t nextState = 0;
+    EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                  4, 67, 13, nullptr, 0, nullptr, 0, assignment, &success,
+                  &nextState),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(success, 0u);
+  }
+}
+
 TEST_F(RandSolveWideTest, RejectsNonCanonicalLiteralPadding) {
   std::vector<uint8_t> bytes =
       program(65, 0,

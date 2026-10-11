@@ -594,6 +594,15 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
            width, std::nullopt, std::nullopt, index});
       continue;
     }
+    if (opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
+      if (width != 1 || flags != 0 || operand >= 64 || immediate != 0)
+        return std::nullopt;
+      // This formula plans only the all-enabled proposal. The runtime uses
+      // the live block mask, and disabling any block bypasses that proposal.
+      stack.push_back({constant(builder, location, llvm::APInt(1, 1)), 1,
+                       std::nullopt, std::nullopt, index});
+      continue;
+    }
     if (opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
       if (!decoded->literal)
         return std::nullopt;

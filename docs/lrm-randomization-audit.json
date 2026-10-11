@@ -1,0 +1,1960 @@
+{
+  "standard": "IEEE 1800-2023",
+  "clause": 18,
+  "method": "Manual normative review, compiler/runtime inspection, and MLIR regression evidence. This inventory is not a full conformance certification.",
+  "z3": "Compiler-side in-process Z3 4.13.4 bit-vector planning; no Z3 dependency in generated simulator runtime.",
+  "sections": [
+    {
+      "section": "18.1",
+      "title": "General",
+      "features": [
+        {
+          "feature": "Clause inventory",
+          "status": "overview",
+          "detail": "Every numbered subsection is represented; open implementation items remain explicit."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.2",
+      "title": "Overview",
+      "features": [
+        {
+          "feature": "Object and scope randomization model",
+          "status": "overview",
+          "detail": "Reviewed against compiler preparation, generated checkers, and runtime search."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.3",
+      "title": "Concepts and usage",
+      "features": [
+        {
+          "feature": "Complete solution discovery",
+          "status": "partial",
+          "detail": "Z3 proves compile-time plans; runtime residual traversal is bounded to 2^20 assignments and can miss a valid large-domain solution."
+        },
+        {
+          "feature": "Failure leaves random properties unchanged",
+          "status": "supported",
+          "detail": "Commit occurs only on a successful solve; pre_randomize side effects are independently observable."
+        },
+        {
+          "feature": "Uniform joint sampling",
+          "status": "partial",
+          "detail": "Exact Z3 structural plans and complete tables are sampled uniformly; arbitrary bounded residual traversal does not establish full uniformity."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.4",
+      "title": "Random variables",
+      "features": [
+        {
+          "feature": "Two-state integral random domains",
+          "status": "supported",
+          "detail": "Packed integer domains and arbitrary-width rand bit vectors are executable."
+        },
+        {
+          "feature": "Standalone enum domains",
+          "status": "partial",
+          "detail": "Named enumerators, anonymous and typedef inventories are frozen before AST disposal. Representations through 64 bits are admitted; colliding semantic display names with different source domains are diagnosed rather than conflated."
+        },
+        {
+          "feature": "Packed structs and untagged unions",
+          "status": "supported",
+          "detail": "Entire packed bit patterns are legal; nested enum members do not restrict the aggregate domain."
+        },
+        {
+          "feature": "Packed tagged union random declarations",
+          "status": "illegal",
+          "detail": "The LRM disallows rand and randc packed tagged unions; frontend validation applies to source declarations. Legacy synthetic IR domain support is not a language feature."
+        },
+        {
+          "feature": "Unpacked arrays, queues, and associative arrays",
+          "status": "partial",
+          "detail": "One-dimensional dynamic arrays and queues have specialized plans; fixed, associative, multidimensional, and non-packed elements remain incomplete."
+        },
+        {
+          "feature": "Unpacked structs with member rand qualifiers",
+          "status": "missing",
+          "detail": "The executable property planner currently requires packed values or admitted dynamic containers and class handles."
+        },
+        {
+          "feature": "Real random variables",
+          "status": "missing",
+          "detail": "1800-2023 real constraints require real-valued solver domains; current serialized solver is bit-vector only."
+        },
+        {
+          "feature": "Rand object handles",
+          "status": "partial",
+          "detail": "Finite acyclic type graphs, polymorphism, aliases, nulls, and descendant constraints are supported; recursive type graphs remain incomplete."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-domains.mlir",
+          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.4.1",
+      "title": "Rand modifier",
+      "features": [
+        {
+          "feature": "Ordinary rand draws",
+          "status": "supported",
+          "detail": "Values may repeat; enabled properties are committed together."
+        },
+        {
+          "feature": "Static rand properties",
+          "status": "supported",
+          "detail": "Shared class storage and shared mode state are planned."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-domains.mlir",
+          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.4.2",
+      "title": "Randc modifier",
+      "features": [
+        {
+          "feature": "Cyclic permutation",
+          "status": "partial",
+          "detail": "Integral semantic domains up to 2^32 values and 32-bit representation use a keyed bijection."
+        },
+        {
+          "feature": "Constrained randc cycle restart",
+          "status": "partial",
+          "detail": "A single randc property skips rejected values and restarts cycles; joint randc and rand properties need further cycle-domain review."
+        },
+        {
+          "feature": "Multiple randc variables",
+          "status": "partial",
+          "detail": "Each property has cycle state; the full LRM joint solvability and restart behavior needs dedicated coverage."
+        },
+        {
+          "feature": "Randc real and dist on randc",
+          "status": "illegal",
+          "detail": "Forbidden by the language; existing diagnostics cover dist and width restrictions."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-dist-randc.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5",
+      "title": "Constraint blocks",
+      "features": [
+        {
+          "feature": "Hard boolean expression constraints",
+          "status": "supported",
+          "detail": "Total packed expressions, arithmetic, bitwise operators, inside, concatenation, constant replication, and conditional expressions are compiled to MLIR and solver programs."
+        },
+        {
+          "feature": "Division, exponentiation, and system calls",
+          "status": "partial",
+          "detail": "Division needs a known nonzero divisor; dynamic signed exponents and general system functions are not admitted."
+        },
+        {
+          "feature": "Named and multiple constraint blocks",
+          "status": "supported",
+          "detail": "Effective block inventories and individual mode bits are preserved."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.1",
+      "title": "External constraint blocks",
+      "features": [
+        {
+          "feature": "Resolved external constraint bodies",
+          "status": "supported",
+          "detail": "Resolved extern bodies participate in Z3 planning, reusable templates, effective inherited constraints, and generated native/bytecode checking."
+        },
+        {
+          "feature": "Undefined implicit constraint prototypes",
+          "status": "supported",
+          "detail": "An implicit prototype without a body is treated as an empty constraint, as required by 18.5.1."
+        },
+        {
+          "feature": "Unresolved explicit extern prototype",
+          "status": "illegal",
+          "detail": "An explicit extern block without a resolved body is diagnosed. Effective pure declarations require a concrete implementation."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-extern-constraint-invalid.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.2",
+      "title": "Constraint inheritance",
+      "features": [
+        {
+          "feature": "Inherited blocks and name overrides",
+          "status": "supported",
+          "detail": "Base-first class inventories apply effective overrides and the 2023 extends marker."
+        },
+        {
+          "feature": "Soft priorities across inherited and contained objects",
+          "status": "partial",
+          "detail": "Derived and inline priorities are handled; all cross-object ordering cases need verification."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.3",
+      "title": "Distribution",
+      "features": [
+        {
+          "feature": "Singleton and range dist syntax",
+          "status": "supported",
+          "detail": "Constant integral endpoints, explicit weights, default ranges, and additive overlapping items have executable plans."
+        },
+        {
+          "feature": "Unsigned weight interpretation",
+          "status": "supported",
+          "detail": "Self-determined integral weights are zero-extended, including negative signed bit patterns."
+        },
+        {
+          "feature": "Per-range and per-value probability",
+          "status": "partial",
+          "detail": "Unconstrained normalization is exact within 64-bit mass limits; preserving an item's original mass when other constraints remove range values remains open."
+        },
+        {
+          "feature": "Nonzero weights never make an otherwise legal solve fail",
+          "status": "partial",
+          "detail": "Normalization overflow and large residual spaces still fail; arbitrary precision or a solver-backed sampling strategy is required."
+        },
+        {
+          "feature": "Soft dist and dist with solve before",
+          "status": "missing",
+          "detail": "Currently diagnosed rather than implemented."
+        },
+        {
+          "feature": "Multiple active distributions on one target",
+          "status": "missing",
+          "detail": "Currently diagnosed rather than combined."
+        },
+        {
+          "feature": "Dynamic endpoints, candidate weights, and real ranges",
+          "status": "missing",
+          "detail": "Require a generalized distribution planner and real domains."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
+          "test/Conversion/obelisk-to-simulation-random-domains.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.4",
+      "title": "Uniqueness constraints",
+      "features": [
+        {
+          "feature": "Uniqueness constraints",
+          "status": "partial",
+          "detail": "Packed operands are lowered to pairwise inequality; general unpacked container forms need expansion."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.5",
+      "title": "Implication",
+      "features": [
+        {
+          "feature": "Implication",
+          "status": "supported",
+          "detail": "Packed two-state implication is present in Z3 and residual programs, including soft guards."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.6",
+      "title": "if\u2013else constraints",
+      "features": [
+        {
+          "feature": "If and if-else constraints",
+          "status": "supported",
+          "detail": "Hard and guarded soft constraints retain conditional semantics."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.7",
+      "title": "Iterative constraints",
+      "features": [
+        {
+          "feature": "Iterative constraint family",
+          "status": "partial",
+          "detail": "Executable support is specialized to admitted dynamic arrays and queues."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
+          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.7.1",
+      "title": "foreach iterative constraints",
+      "features": [
+        {
+          "feature": "One-dimensional dynamic foreach",
+          "status": "supported",
+          "detail": "Live size, declared iterator type, universal conjunction, and empty-array identity are implemented."
+        },
+        {
+          "feature": "Fixed, associative, string, and multidimensional foreach",
+          "status": "missing",
+          "detail": "Not admitted by the current constraint inventory."
+        },
+        {
+          "feature": "Index-dependent guards",
+          "status": "partial",
+          "detail": "Ordinary iterator predicates work; error-suppressing guards on invalid accesses need the full ERROR/RANDOM guard model."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
+          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.7.2",
+      "title": "Array reduction iterative constraints",
+      "features": [
+        {
+          "feature": "Array reductions",
+          "status": "partial",
+          "detail": "Selected dynamic array and queue reductions are lowered; all containers, methods, and with expressions are not covered."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
+          "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.8",
+      "title": "Global constraints",
+      "features": [
+        {
+          "feature": "Global object constraints",
+          "status": "partial",
+          "detail": "Finite acyclic object graphs solve together with alias deduplication; arbitrary recursive graphs and object arrays remain open."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.9",
+      "title": "Variable ordering",
+      "features": [
+        {
+          "feature": "Solve-before DAG validation",
+          "status": "supported",
+          "detail": "Self edges and cycles are diagnosed; aliases and packed paths retain precise ordering masks."
+        },
+        {
+          "feature": "Conditional ordered probabilities",
+          "status": "partial",
+          "detail": "Z3 tables and structural plans, or exhaustive residual domains through 2^20 assignments, preserve ordering; larger residual spaces are diagnosed."
+        },
+        {
+          "feature": "Randc implicit priority",
+          "status": "partial",
+          "detail": "Randc candidates are fixed before ordinary rand solving; combined cyclic solvability needs broader coverage."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.10",
+      "title": "Static constraint blocks",
+      "features": [
+        {
+          "feature": "Static constraint modes",
+          "status": "supported",
+          "detail": "Class-wide storage is shared by every instance and inherited plans use the same storage."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
+          "test/Conversion/obelisk-to-simulation-static-rand-checker.mlir",
+          "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir",
+          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.11",
+      "title": "Functions in constraints",
+      "features": [
+        {
+          "feature": "Side-effect-free user functions",
+          "status": "partial",
+          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported; procedural control flow and other receivers are incomplete."
+        },
+        {
+          "feature": "Function body state reads",
+          "status": "supported",
+          "detail": "Random properties read only inside a function are frozen as pre-solve state; argument paths remain solver variables."
+        },
+        {
+          "feature": "Implicit function priority can shrink solution space",
+          "status": "missing",
+          "detail": "Implicit function edges currently use explicit solve-before machinery, which conditions higher-priority values on the complete lower-priority relation. The LRM requires solving higher-priority-only constraints first and permits subsequent failure; that separate solve stage is not implemented."
+        },
+        {
+          "feature": "System functions and scope-randomization functions",
+          "status": "missing",
+          "detail": "The current constraint validators reject these forms."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-functions.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.12",
+      "title": "Constraint guards",
+      "features": [
+        {
+          "feature": "State-only guards",
+          "status": "partial",
+          "detail": "Packed state predicates are captured before solving; ordinary total predicates are supported."
+        },
+        {
+          "feature": "FALSE/TRUE/ERROR/RANDOM guard algebra",
+          "status": "missing",
+          "detail": "Full evaluation-error suppression and guarded null or out-of-range accesses are not encoded by the two-state residual stack."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.13",
+      "title": "Soft constraints",
+      "features": [
+        {
+          "feature": "Soft preferences and hard constraints",
+          "status": "supported",
+          "detail": "Up to 64 preferences use lexicographic satisfiability in Z3 and residual evaluation."
+        },
+        {
+          "feature": "Conditional and implication soft preferences",
+          "status": "supported",
+          "detail": "Guards belong to the predicate while target reference collection examines the soft expression itself."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.13.1",
+      "title": "Soft constraint priorities",
+      "features": [
+        {
+          "feature": "Declaration, inheritance, and inline priority",
+          "status": "supported",
+          "detail": "Later declaration, derived class, and inline preferences receive higher priority."
+        },
+        {
+          "feature": "Contained objects and foreach priority",
+          "status": "partial",
+          "detail": "All object-containment and runtime-iteration priority relationships need dedicated verification."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.5.13.2",
+      "title": "Disabling soft constraints",
+      "features": [
+        {
+          "feature": "Disable earlier direct-variable soft preferences",
+          "status": "supported",
+          "detail": "Direct identifiers and fixed packed paths discard only earlier directly referencing preferences."
+        },
+        {
+          "feature": "Live block modes and conditional disable",
+          "status": "supported",
+          "detail": "The generated checker and narrow/wide runtime programs honor block masks and if/implication guards; Z3 uses the all-enabled planning state."
+        },
+        {
+          "feature": "Later soft preferences survive",
+          "status": "supported",
+          "detail": "Derived and inline preferences after a disable remain active."
+        },
+        {
+          "feature": "General variable paths and iteration",
+          "status": "partial",
+          "detail": "Dynamic selections, unpacked paths, and foreach disable targets are not covered by the fixed path matcher."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.6",
+      "title": "Randomization methods",
+      "features": [
+        {
+          "feature": "Object-local method dispatch",
+          "status": "supported",
+          "detail": "Randomize and hook plans dispatch through the concrete class selected for a handle."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
+          "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.6.1",
+      "title": "Randomize()",
+      "features": [
+        {
+          "feature": "Randomize return status and atomic property commit",
+          "status": "supported",
+          "detail": "Successful solves return one; failed or null-receiver calls return zero without property commits."
+        },
+        {
+          "feature": "All constraints disabled",
+          "status": "partial",
+          "detail": "Ordinary draws work; randc behavior with arbitrary cycle-domain changes needs additional tests."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
+          "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.6.2",
+      "title": "Pre_randomize() and post_randomize()",
+      "features": [
+        {
+          "feature": "Pre and post hooks",
+          "status": "supported",
+          "detail": "Pre runs before state capture; post runs after a successful commit and is skipped on failure; graph aliases invoke hooks once."
+        },
+        {
+          "feature": "Hooks on arbitrary graphs",
+          "status": "partial",
+          "detail": "Finite graphs are supported; recursive and generalized container graphs are incomplete."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
+          "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.6.3",
+      "title": "Behavior of randomization methods",
+      "features": [
+        {
+          "feature": "Inherited randomization behavior",
+          "status": "supported",
+          "detail": "Effective constraints, properties, and hooks are resolved against the selected concrete class."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
+          "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.7",
+      "title": "Inline constraints\u2014randomize() with",
+      "features": [
+        {
+          "feature": "Inline constraints merge with class constraints",
+          "status": "supported",
+          "detail": "Inline hard constraints intersect the effective class formula; inline soft preferences have higher priority."
+        },
+        {
+          "feature": "Restricted lookup list",
+          "status": "supported",
+          "detail": "Frozen lookup inventories distinguish randomized receiver members from enclosing scope captures."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-inline-constraint-enclosing-scope.mlir",
+          "test/Conversion/obelisk-to-simulation-randomize-restricted-lookup.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.7.1",
+      "title": "local:: scope resolution",
+      "features": [
+        {
+          "feature": "Local scope resolution",
+          "status": "supported",
+          "detail": "Frontend bindings preserve local:: and enclosing lexical scope through constraint preparation."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-random-inline-constraint-enclosing-scope.mlir",
+          "test/Conversion/obelisk-to-simulation-randomize-restricted-lookup.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.8",
+      "title": "Disabling random variables with rand_mode()",
+      "features": [
+        {
+          "feature": "Object, property, and static rand_mode",
+          "status": "supported",
+          "detail": "Queries and setters retain mode state; disabled variables are fixed and not committed."
+        },
+        {
+          "feature": "Per-element unpacked array rand_mode",
+          "status": "missing",
+          "detail": "Requires an element-level mode inventory rather than one property mask."
+        },
+        {
+          "feature": "Large-domain partial selection solving",
+          "status": "partial",
+          "detail": "Masked runtime fallback remains bounded; sparse wide constraints can fail when the all-enabled Z3 proposal is bypassed."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.9",
+      "title": "Controlling constraints with constraint_mode()",
+      "features": [
+        {
+          "feature": "Block, object, and static constraint_mode",
+          "status": "supported",
+          "detail": "Masks control hard/soft predicates and ordering edges; disable-soft uses the live mask too."
+        },
+        {
+          "feature": "Solver plans after mode changes",
+          "status": "partial",
+          "detail": "Mode-sensitive residual checks are correct within their bounded domain, but capture-free proofs do not remove general runtime completeness limits."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
+          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.10",
+      "title": "Dynamic constraint modification",
+      "features": [
+        {
+          "feature": "Dynamic state and mode changes",
+          "status": "supported",
+          "detail": "State captures are evaluated for each call; mode masks select the live formula."
+        },
+        {
+          "feature": "Randc domain changes",
+          "status": "partial",
+          "detail": "General joint cycle-domain invalidation remains open."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-64.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-expression.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain-signed.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-capture-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-capture.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-replication-invalid.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-bounded.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table-residual.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.11",
+      "title": "Inline random variable control",
+      "features": [
+        {
+          "feature": "Explicit object property argument selection",
+          "status": "supported",
+          "detail": "Listed non-rand values become random temporarily; unlisted properties remain state; persistent mode state is preserved."
+        },
+        {
+          "feature": "General selected property types",
+          "status": "partial",
+          "detail": "Packed values and static fields work; non-packed selected values retain planner restrictions."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randomize-properties.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.11.1",
+      "title": "Inline constraint checker",
+      "features": [
+        {
+          "feature": "Randomize(null) checker",
+          "status": "supported",
+          "detail": "Hooks and constraint checks run on current values, with no random draws or property writes; post runs only on success."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randomize-properties.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.12",
+      "title": "Randomization of scope variables\u2014std::randomize()",
+      "features": [
+        {
+          "feature": "Direct scope variable arguments",
+          "status": "supported",
+          "detail": "Up to 64 automatic, formal, static, package, and design values can be selected."
+        },
+        {
+          "feature": "Scope variable types",
+          "status": "partial",
+          "detail": "Packed integral, enum, and packed aggregates work; dynamic containers, class handles, and non-packed types remain incomplete."
+        },
+        {
+          "feature": "Scope failure commit behavior",
+          "status": "supported",
+          "detail": "Variables and the process stream are committed only when the solve succeeds."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
+          "test/Conversion/obelisk-to-simulation-std-randomize.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.12.1",
+      "title": "Adding constraints to scope variables\u2014std::randomize() with",
+      "features": [
+        {
+          "feature": "Scope with constraints and zero arguments",
+          "status": "supported",
+          "detail": "State captures, hard/soft constraints, disable-soft, and current-state checking use the same solver plan."
+        },
+        {
+          "feature": "Packed member expressions",
+          "status": "supported",
+          "detail": "Fixed member offsets are encoded as logical extraction in Z3 and the residual program."
+        },
+        {
+          "feature": "Scope solve-before and functions",
+          "status": "partial",
+          "detail": "Direct ordering works within finite limits; user function plans and general selected paths are incomplete."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRandomize.cpp",
+          "lib/Solver/RandomProgramSMT.cpp",
+          "lib/Solver/SolverZ3.cpp",
+          "runtime/lib/RandSolve.cpp",
+          "runtime/lib/RandSolveWide.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
+          "test/Conversion/obelisk-to-simulation-std-randomize.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.13",
+      "title": "Random number system functions and methods",
+      "features": [
+        {
+          "feature": "Process and object random API family",
+          "status": "supported",
+          "detail": "PCG state and bounded draws have native and bytecode implementations."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir",
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.13.1",
+      "title": "$urandom",
+      "features": [
+        {
+          "feature": "Urandom unsigned return and optional seed",
+          "status": "supported",
+          "detail": "$urandom supports zero arguments and a seed argument and uses the active process stream."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir",
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.13.2",
+      "title": "$urandom_range()",
+      "features": [
+        {
+          "feature": "Inclusive urandom_range",
+          "status": "supported",
+          "detail": "One or two bounds, reversed bounds, and full-width endpoints use rejection debiasing."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir",
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.13.3",
+      "title": "srandom()",
+      "features": [
+        {
+          "feature": "Object and process srandom",
+          "status": "supported",
+          "detail": "Manual reseeding preserves stream independence and does not draw a value."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir",
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.13.4",
+      "title": "get_randstate()",
+      "features": [
+        {
+          "feature": "Get randstate",
+          "status": "supported",
+          "detail": "Exact object and process RNG snapshots are serialized."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir",
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.13.5",
+      "title": "set_randstate()",
+      "features": [
+        {
+          "feature": "Set randstate",
+          "status": "supported",
+          "detail": "Restores exact snapshots and future stream output."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir",
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.14",
+      "title": "Random stability",
+      "features": [
+        {
+          "feature": "Random stability across hierarchy",
+          "status": "partial",
+          "detail": "Process, dynamic thread, and object streams are separate; initialization stream ownership remains open."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.14.1",
+      "title": "Random stability properties",
+      "features": [
+        {
+          "feature": "Independent initialization RNG for each scope instance",
+          "status": "missing",
+          "detail": "Root process streams currently split from the context stream instead of one default-seeded generator per module/interface/program/package."
+        },
+        {
+          "feature": "Independent non-initialization RNG state",
+          "status": "supported",
+          "detail": "Processes and objects have explicit independent state."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.14.2",
+      "title": "Thread stability",
+      "features": [
+        {
+          "feature": "Dynamic thread hierarchical seeding",
+          "status": "supported",
+          "detail": "Forked processes and bytecode tasks split the parent stream in lexical creation order."
+        },
+        {
+          "feature": "Static thread hierarchical seeding",
+          "status": "partial",
+          "detail": "Needs per-scope initialization generators to preserve unrelated instance stability."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.14.3",
+      "title": "Object stability",
+      "features": [
+        {
+          "feature": "Object hierarchical seeding and copy",
+          "status": "supported",
+          "detail": "New objects split the creator stream; object copying creates a reseeded stream."
+        },
+        {
+          "feature": "Static-initializer object seeding",
+          "status": "partial",
+          "detail": "Requires the missing per-scope initialization RNG."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-process-random-state.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.15",
+      "title": "Manually seeding randomize",
+      "features": [
+        {
+          "feature": "Manual subsystem seeding",
+          "status": "supported",
+          "detail": "Object and process srandom plus snapshots allow deterministic replay."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "runtime/lib/Random.cpp",
+          "runtime/lib/Process.cpp",
+          "runtime/lib/Runtime.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+        ],
+        "tests": [
+          "test/Conversion/simulation-lower-random-seed.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.16",
+      "title": "Random weighted case\u2014randcase",
+      "features": [
+        {
+          "feature": "Unsigned self-determined randcase weights",
+          "status": "supported",
+          "detail": "Each weight is evaluated once; summation uses maximum operand precision with modular overflow."
+        },
+        {
+          "feature": "Zero-total randcase",
+          "status": "supported",
+          "detail": "No branch and no RNG draw occur when the total is zero."
+        },
+        {
+          "feature": "Wide randcase weights",
+          "status": "partial",
+          "detail": "Weights through 64 bits are executable; arbitrary-width bounded sampling is not implemented."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randcase.mlir",
+          "test/Runtime/obelisk-to-simulation-randcase-weight-precision-runtime.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17",
+      "title": "Random sequence generation\u2014randsequence",
+      "features": [
+        {
+          "feature": "Randsequence grammar execution",
+          "status": "partial",
+          "detail": "Finite void grammars are frozen into MLIR; recursive grammars and value passing remain incomplete."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.1",
+      "title": "Random production weights",
+      "features": [
+        {
+          "feature": "Default and dynamic production weights",
+          "status": "supported",
+          "detail": "Unspecified weights are one and explicit integral weights are evaluated on production entry."
+        },
+        {
+          "feature": "Weight overflow and invalid weights",
+          "status": "partial",
+          "detail": "Current finite grammar arithmetic requires further overflow and negative-weight diagnostic review."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.2",
+      "title": "if\u2013else production statements",
+      "features": [
+        {
+          "feature": "If-else production selection",
+          "status": "supported",
+          "detail": "Finite grammar production conditionals lower to control flow."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.3",
+      "title": "Case production statements",
+      "features": [
+        {
+          "feature": "Case production selection",
+          "status": "supported",
+          "detail": "First matching case and default rules are represented in finite production control flow."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.4",
+      "title": "Repeat production statements",
+      "features": [
+        {
+          "feature": "Repeat production selection",
+          "status": "supported",
+          "detail": "Repeat counts and loop control are represented in the frozen grammar."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.5",
+      "title": "Interleaving productions\u2014rand join",
+      "features": [
+        {
+          "feature": "Rand join interleaving and bias",
+          "status": "partial",
+          "detail": "Current support covers shallow finite production items; generalized nested interleaving and bias remain incomplete."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.6",
+      "title": "Aborting productions\u2014break and return",
+      "features": [
+        {
+          "feature": "Break and return production abort",
+          "status": "partial",
+          "detail": "Void grammar abort control is supported; value-returning production aborts require value-passing support."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    },
+    {
+      "section": "18.17.7",
+      "title": "Value passing between productions",
+      "features": [
+        {
+          "feature": "Production arguments and return values",
+          "status": "missing",
+          "detail": "The runtime grammar slice only admits void, parameter-free productions."
+        }
+      ],
+      "evidence": {
+        "sources": [
+          "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp",
+          "runtime/lib/Random.cpp"
+        ],
+        "tests": [
+          "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
+          "test/Conversion/simulation-lower-randsequence-invalid.mlir",
+          "test/Conversion/simulation-lower-randsequence.mlir"
+        ]
+      }
+    }
+  ]
+}
