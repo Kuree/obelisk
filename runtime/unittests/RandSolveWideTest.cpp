@@ -524,6 +524,47 @@ TEST_F(RandSolveWideTest, DisableSoftUsesLiveConstraintMask) {
   }
 }
 
+TEST_F(RandSolveWideTest, IntegralSystemFunctionsCountAcrossWordBoundaries) {
+  struct Case {
+    uint64_t low;
+    uint64_t high;
+    uint64_t ones;
+    uint64_t logarithm;
+  };
+  for (Case test : {Case{0, 0, 0, 0}, Case{1, 0, 1, 0}, Case{0, 1, 1, 64},
+                    Case{1, 1, 2, 65}, Case{0, UINT64_C(1) << 63, 1, 127},
+                    Case{1, UINT64_C(1) << 63, 2, 128},
+                    Case{UINT64_MAX, UINT64_MAX, 128, 128}}) {
+    std::vector<uint8_t> bytes = program(
+        128, 0,
+        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+         {OBELISK_RT_RANDOM_COUNT_ONES_V1, 32},
+         {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {test.ones}},
+         {OBELISK_RT_RANDOM_EQ_V1, 1},
+         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
+         {OBELISK_RT_RANDOM_CLOG2_V1, 32},
+         {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, 0, {test.logarithm}},
+         {OBELISK_RT_RANDOM_EQ_V1, 1},
+         {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+    uint64_t start[] = {test.low, test.high};
+    uint64_t mutableMask[] = {0, 0};
+    uint64_t assignment[] = {0, 0};
+    uint32_t success = 0;
+    uint64_t nextState = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                  1, 67, 13, nullptr, 0, nullptr, 0, assignment, &success,
+                  &nextState),
+              OBELISK_RT_OK);
+    EXPECT_EQ(success, 1u);
+    EXPECT_EQ(assignment[0], test.low);
+    EXPECT_EQ(assignment[1], test.high);
+    EXPECT_EQ(nextState, 67u);
+  }
+}
+
 TEST_F(RandSolveWideTest, RejectsMalformedConstraintEnabledInstructions) {
   for (Instruction instruction :
        {Instruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},

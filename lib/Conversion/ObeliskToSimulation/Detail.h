@@ -301,6 +301,15 @@ inline constexpr ::mlir::StringLiteral randomFunctionStateAttrName =
 inline constexpr ::mlir::StringLiteral randomFunctionOrderAttrName =
     "simulation.random_function_order";
 
+/// Total, side-effect-free integral system functions encoded by the random
+/// program. Unlike user functions, these do not introduce implicit solve
+/// priority (IEEE 1800-2023 18.5.11).
+inline bool isIntegralRandomSystemFunction(::llvm::StringRef name) {
+  return name == "$signed" || name == "$unsigned" || name == "$clog2" ||
+         name == "$countbits" || name == "$countones" || name == "$onehot" ||
+         name == "$onehot0" || name == "$isunknown";
+}
+
 /// Result representation frozen by prepare for computed timing observers.
 /// Keep this strongly typed at both ends of the private pass boundary so a
 /// malformed integer attribute cannot silently select value semantics.

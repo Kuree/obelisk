@@ -333,8 +333,10 @@ WideValue power(WideValue base, const WideValue &exponent, uint32_t width) {
 }
 
 bool isUnary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
+  return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
+          opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
+         opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
+         opcode == OBELISK_RT_RANDOM_CLOG2_V1;
 }
 
 bool isBinary(uint8_t opcode) {
@@ -721,6 +723,29 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
         for (size_t index = 0; all && index + 1 < input.words.size(); ++index)
           all = input.words[index] == UINT64_MAX;
         result = booleanValue(!all, instruction.width);
+        break;
+      }
+      case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
+        uint64_t count = 0;
+        for (uint64_t word : input.words)
+          count += static_cast<uint64_t>(__builtin_popcountll(word));
+        result = WideValue(instruction.width);
+        result.words[0] = count;
+        normalize(result);
+        break;
+      }
+      case OBELISK_RT_RANDOM_CLOG2_V1: {
+        uint64_t highest = 0;
+        uint64_t count = 0;
+        for (size_t index = 0; index != input.words.size(); ++index) {
+          uint64_t word = input.words[index];
+          count += static_cast<uint64_t>(__builtin_popcountll(word));
+          if (word != 0)
+            highest = index * 64 + 63 - __builtin_clzll(word);
+        }
+        result = WideValue(instruction.width);
+        result.words[0] = highest + (count > 1);
+        normalize(result);
         break;
       }
       default:

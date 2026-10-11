@@ -886,9 +886,14 @@
           "detail": "Implicit function edges currently use explicit solve-before machinery, which conditions higher-priority values on the complete lower-priority relation. The LRM requires solving higher-priority-only constraints first and permits subsequent failure; that separate solve stage is not implemented."
         },
         {
-          "feature": "System functions and scope-randomization functions",
+          "feature": "Integral system functions",
+          "status": "partial",
+          "detail": "Signedness casts, clog2, countones, onehot, onehot0, and countbits lower to the same unsigned bit-vector operations in Z3, native, WASM, and narrow/wide residual programs. Candidate bits are two-state; mixed unknown-plane captures and other system functions remain open."
+        },
+        {
+          "feature": "Scope-randomization user functions",
           "status": "missing",
-          "detail": "The current constraint validators reject these forms."
+          "detail": "Scope system functions are executable; user functions still require a shared frozen function plan."
         }
       ],
       "evidence": {
@@ -901,7 +906,9 @@
           "runtime/lib/RandSolveWide.cpp"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-random-functions.mlir"
+          "test/Conversion/obelisk-to-simulation-random-functions.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-wide-runtime.mlir"
         ]
       }
     },

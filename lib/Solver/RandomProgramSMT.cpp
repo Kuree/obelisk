@@ -157,8 +157,10 @@ bool containsValue(mlir::Value expression, mlir::Value target) {
 }
 
 bool isUnary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
+  return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
+          opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
+         opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
+         opcode == OBELISK_RT_RANDOM_CLOG2_V1;
 }
 
 bool isBinary(uint8_t opcode) {
@@ -669,6 +671,66 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       StackValue input = stack.back();
       stack.pop_back();
       switch (opcode) {
+      case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
+        unsigned countWidth = std::min(
+            width, static_cast<unsigned>(llvm::Log2_64(input.width) + 1));
+        llvm::SmallVector<mlir::Value> terms;
+        for (unsigned bit = 0; bit != input.width; ++bit) {
+          StackValue selected{
+              mlir::smt::ExtractOp::create(builder, location, bitVectorType(1),
+                                           bit, input.bits),
+              1, std::nullopt, std::nullopt, input.instructionBegin};
+          terms.push_back(
+              resize(builder, location, selected, countWidth, false));
+        }
+        // A balanced sum at the minimum count precision avoids needlessly
+        // bit-blasting one 32-bit adder for every source bit.
+        while (terms.size() > 1) {
+          llvm::SmallVector<mlir::Value> next;
+          for (unsigned term = 0; term < terms.size(); term += 2)
+            next.push_back(term + 1 == terms.size()
+                               ? terms[term]
+                               : mlir::smt::BVAddOp::create(builder, location,
+                                                            terms[term],
+                                                            terms[term + 1])
+                                     .getResult());
+          terms = std::move(next);
+        }
+        StackValue count{terms.front(), countWidth, std::nullopt, std::nullopt,
+                         input.instructionBegin};
+        stack.push_back({resize(builder, location, count, width, false), width,
+                         std::nullopt, std::nullopt, input.instructionBegin});
+        break;
+      }
+      case OBELISK_RT_RANDOM_CLOG2_V1: {
+        unsigned resultWidth = std::min(
+            width, static_cast<unsigned>(llvm::Log2_64(input.width) + 1));
+        mlir::Value result = constant(builder, location, 0, resultWidth);
+        mlir::Value predecessor = mlir::smt::BVAddOp::create(
+            builder, location, input.bits,
+            constant(builder, location, llvm::APInt::getAllOnes(input.width)));
+        // ceil(log2(x)) is the bit length of x-1, with zero handled
+        // separately. This uses one subtractor rather than width-linear
+        // full-width comparisons; signed source bits are still unsigned.
+        for (unsigned bit = 0; bit != input.width; ++bit) {
+          mlir::Value selected = mlir::smt::ExtractOp::create(
+              builder, location, bitVectorType(1), bit, predecessor);
+          mlir::Value present = mlir::smt::EqOp::create(
+              builder, location, selected, constant(builder, location, 1, 1));
+          result = mlir::smt::IteOp::create(
+              builder, location, present,
+              constant(builder, location, bit + 1, resultWidth), result);
+        }
+        result = mlir::smt::IteOp::create(
+            builder, location, truth(builder, location, input), result,
+            constant(builder, location, 0, resultWidth));
+        StackValue logarithm{result, resultWidth, std::nullopt, std::nullopt,
+                             input.instructionBegin};
+        stack.push_back({resize(builder, location, logarithm, width, false),
+                         width, std::nullopt, std::nullopt,
+                         input.instructionBegin});
+        break;
+      }
       case OBELISK_RT_RANDOM_CAST_V1:
       case OBELISK_RT_RANDOM_POS_V1:
         stack.push_back(

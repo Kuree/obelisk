@@ -197,8 +197,10 @@ uint64_t extendSigned(uint64_t value, unsigned sourceWidth,
 }
 
 bool isUnary(uint8_t opcode) {
-  return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-         opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
+  return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
+          opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
+         opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
+         opcode == OBELISK_RT_RANDOM_CLOG2_V1;
 }
 
 bool isBinary(uint8_t opcode) {
@@ -423,6 +425,12 @@ bool evaluate(const std::vector<Instruction> &instructions,
         break;
       case OBELISK_RT_RANDOM_LOGICAL_NOT_V1:
         result = input.bits == 0;
+        break;
+      case OBELISK_RT_RANDOM_COUNT_ONES_V1:
+        result = static_cast<uint64_t>(__builtin_popcountll(input.bits));
+        break;
+      case OBELISK_RT_RANDOM_CLOG2_V1:
+        result = input.bits <= 1 ? 0 : 64 - __builtin_clzll(input.bits - 1);
         break;
       default:
         return false;

@@ -356,6 +356,9 @@ static bool isStatefulResolutionSystemCall(StringRef name) {
 /// encoder can apply its operand-sensitive legality checks; shifts have total
 /// lowering that cannot introduce poison during exhaustive search.
 static bool isSupportedRandomConstraintExpression(Operation *op) {
+  if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op))
+    return call.getIsSystemCall() &&
+           isIntegralRandomSystemFunction(call.getCalleeName());
   if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(op)) {
     using Unary = semantic::SVUnaryOperator;
     switch (unary.getOperatorKind()) {
@@ -4965,7 +4968,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         return true;
       }
       root->walk([&](Operation *nested) {
-        if (isa<semantic::SVCallExpressionOp>(nested)) {
+        if (auto function = dyn_cast<semantic::SVCallExpressionOp>(nested);
+            function &&
+            !(function.getIsSystemCall() &&
+              isIntegralRandomSystemFunction(function.getCalleeName()))) {
           emitError(getSemanticLocation(nested))
               << "constraint functions in std::randomize require a frozen "
                  "scope-function plan";
@@ -7367,7 +7373,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
 
       if (auto callExpression = dyn_cast<semantic::SVCallExpressionOp>(source);
-          callExpression && !isRandomContainerSizeCall(callExpression)) {
+          callExpression && !isRandomContainerSizeCall(callExpression) &&
+          !(callExpression.getIsSystemCall() &&
+            isIntegralRandomSystemFunction(callExpression.getCalleeName()))) {
         FailureOr<semantic::SVSubroutineSymbolOp> function =
             resolveConstraintFunction(callExpression);
         if (failed(function))

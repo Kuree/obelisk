@@ -933,6 +933,40 @@ TEST_F(RandSolveTest, DisableSoftUsesLiveConstraintMask) {
   }
 }
 
+TEST_F(RandSolveTest, IntegralSystemFunctionsKeepUnsignedSourcePrecision) {
+  struct Case {
+    uint64_t value;
+    uint64_t ones;
+    uint64_t logarithm;
+  };
+  for (Case test : {Case{0, 0, 0}, Case{1, 1, 0}, Case{2, 1, 1}, Case{3, 2, 2},
+                    Case{UINT64_C(1) << 63, 1, 63}, Case{UINT64_MAX, 64, 64}}) {
+    std::vector<uint8_t> bytes =
+        program(64, 0,
+                {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64,
+                  OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+                 {OBELISK_RT_RANDOM_COUNT_ONES_V1, 32},
+                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, test.ones},
+                 {OBELISK_RT_RANDOM_EQ_V1, 1},
+                 {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 64,
+                  OBELISK_RT_RANDOM_INSTRUCTION_SIGNED},
+                 {OBELISK_RT_RANDOM_CLOG2_V1, 32},
+                 {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 32, 0, 0, test.logarithm},
+                 {OBELISK_RT_RANDOM_EQ_V1, 1},
+                 {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
+                 {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                  OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
+    uint64_t assignment = 0;
+    uint32_t success = 0;
+    ASSERT_EQ(obelisk_rt_v1_random_solve_modes(
+                  context, bytes.data(), bytes.size(), test.value, 0, 0, 1,
+                  nullptr, 0, &assignment, &success),
+              OBELISK_RT_OK);
+    EXPECT_EQ(success, 1u);
+    EXPECT_EQ(assignment, test.value);
+  }
+}
+
 TEST_F(RandSolveTest, RejectsMalformedConstraintEnabledInstructions) {
   for (EncodedInstruction instruction :
        {EncodedInstruction{OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1, 2},

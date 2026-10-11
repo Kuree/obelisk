@@ -3736,6 +3736,108 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (!dependsOnCandidate(expression))
       return captureExpression();
 
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
+        call && call.getIsSystemCall() &&
+        isIntegralRandomSystemFunction(call.getCalleeName())) {
+      StringRef name = call.getCalleeName();
+      if ((name == "$countbits" && nested.size() < 2) ||
+          (name != "$countbits" && nested.size() != 1)) {
+        emitError(getSemanticLocation(expression))
+            << "malformed integral constraint system function arguments";
+        return failure();
+      }
+      FailureOr<unsigned> inputWidth = expressionWidth(nested.front());
+      if (failed(inputWidth))
+        return failure();
+      if (name == "$signed" || name == "$unsigned") {
+        if (failed(emitProgramExpression(nested.front())))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_CAST_V1, *width, false);
+        return success();
+      }
+      if (name == "$isunknown") {
+        // Random variables contain two-state candidates. State-only calls
+        // are captured above; mixed four-state state inputs need their
+        // unknown plane rather than silently returning a false result.
+        bool unknownState = false;
+        nested.front()->walk([&](Operation *node) {
+          if (!dependsOnCandidate(node)) {
+            auto type = node->getAttrOfType<TypeAttr>("semantic_type");
+            FailureOr<Type> normalized = type ? getNormalizedSemanticType(node)
+                                              : FailureOr<Type>(failure());
+            unknownState |=
+                succeeded(normalized) && isa<sim::LogicType>(*normalized);
+          }
+        });
+        if (unknownState) {
+          emitError(getSemanticLocation(expression))
+              << "$isunknown with mixed four-state state inputs requires "
+                 "an unknown-plane constraint capture";
+          return failure();
+        }
+        literalInstruction(*width, false, APInt(*width, 0));
+        return success();
+      }
+      if (name == "$countbits") {
+        // Each distinct control state contributes at most once. X and Z
+        // controls cannot match a two-state candidate; controls are reduced
+        // to their low bit as required by 20.9.
+        auto emitControlSet = [&](bool state) -> LogicalResult {
+          emitLiteral(false);
+          for (Operation *control : ArrayRef(nested).drop_front()) {
+            if (auto spelling = getConstantSpelling(control)) {
+              FailureOr<ParsedConstant> parsed =
+                  parseSVInteger(*spelling, 1, getSemanticLocation(control));
+              if (failed(parsed))
+                return failure();
+              emitLiteral(parsed->unknown.isZero() &&
+                          parsed->value.getBoolValue() == state);
+            } else {
+              if (failed(emitProgramExpression(control)))
+                return failure();
+              instruction(OBELISK_RT_RANDOM_CAST_V1, 1, false);
+              emitLiteral(state);
+              instruction(OBELISK_RT_RANDOM_EQ_V1, 1);
+            }
+            instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
+          }
+          instruction(OBELISK_RT_RANDOM_CAST_V1, *width, false);
+          return success();
+        };
+        if (failed(emitProgramExpression(nested.front())))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_COUNT_ONES_V1, *width);
+        if (failed(emitControlSet(true)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_MUL_V1, *width);
+        literalInstruction(*width, false, APInt(*width, *inputWidth));
+        if (failed(emitProgramExpression(nested.front())))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_COUNT_ONES_V1, *width);
+        instruction(OBELISK_RT_RANDOM_SUB_V1, *width);
+        if (failed(emitControlSet(false)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_MUL_V1, *width);
+        instruction(OBELISK_RT_RANDOM_ADD_V1, *width);
+        return success();
+      }
+      if (failed(emitProgramExpression(nested.front())))
+        return failure();
+      if (name == "$clog2") {
+        instruction(OBELISK_RT_RANDOM_CLOG2_V1, *width);
+        return success();
+      }
+      unsigned countWidth = name == "$countones" ? *width : 32;
+      instruction(OBELISK_RT_RANDOM_COUNT_ONES_V1, countWidth);
+      if (name != "$countones") {
+        literalInstruction(countWidth, false, APInt(countWidth, 1));
+        instruction(name == "$onehot" ? OBELISK_RT_RANDOM_EQ_V1
+                                      : OBELISK_RT_RANDOM_LE_V1,
+                    *width);
+      }
+      return success();
+    }
+
     if (isa<semantic::SVMemberAccessExpressionOp>(expression)) {
       auto offset = expression->getAttrOfType<IntegerAttr>("packed_offset");
       FailureOr<unsigned> baseWidth = nested.size() == 1
@@ -4998,8 +5100,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
 
   auto isDefinitionUnary = [](uint8_t opcode) {
-    return opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
-           opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1;
+    return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
+            opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
+           opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
+           opcode == OBELISK_RT_RANDOM_CLOG2_V1;
   };
   auto isDefinitionBinary = [](uint8_t opcode) {
     return (opcode >= OBELISK_RT_RANDOM_ADD_V1 &&
@@ -5378,6 +5482,36 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                   builder.getI1Type(),
                                                   builder.getBoolAttr(true))
                             .getResult());
+          } else if (encoded.opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
+                     encoded.opcode == OBELISK_RT_RANDOM_CLOG2_V1) {
+            // Use the same unsigned bit-vector meaning as the SMT and
+            // residual interpreters. Arithmetic shifts are unnecessary here.
+            bits = definitionConstant(encoded.width, APInt(encoded.width, 0));
+            for (unsigned bit = 0; bit != input.width; ++bit) {
+              Value current = input.bits;
+              if (encoded.opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1) {
+                if (bit != 0)
+                  current = arith::ShRUIOp::create(builder, location, current,
+                                                   constantLike(current, bit));
+                current = arith::AndIOp::create(builder, location, current,
+                                                constantLike(current, 1));
+                bits = arith::AddIOp::create(
+                    builder, location, bits,
+                    resizeDefinitionValue({maskDefinitionValue(current, 1), 1},
+                                          encoded.width, false));
+              } else {
+                Value threshold = definitionConstant(
+                    input.width, APInt::getOneBitSet(input.width, bit));
+                Value above = arith::CmpIOp::create(builder, location,
+                                                    arith::CmpIPredicate::ugt,
+                                                    current, threshold);
+                bits = arith::SelectOp::create(
+                    builder, location, above,
+                    definitionConstant(encoded.width,
+                                       APInt(encoded.width, bit + 1)),
+                    bits);
+              }
+            }
           } else if (encoded.opcode == OBELISK_RT_RANDOM_REDUCE_NOR_V1 ||
                      encoded.opcode == OBELISK_RT_RANDOM_LOGICAL_NOT_V1) {
             bits = definitionBooleanBits(arith::CmpIOp::create(
