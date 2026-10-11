@@ -11195,16 +11195,12 @@ bool selectFunctionalItem(const CoverageState &coverage, uint64_t typeID,
 CoverageResult
 queryFunctionalItemInstance(const FunctionalCoverageInstanceState &instance,
                             const FunctionalCoverageTypeState &type,
-                            bool projectedLiveInstance = true,
                             std::optional<uint64_t> cumulativeAtLeast =
                                 std::nullopt) {
   if (type.items.size() != 1 || type.itemGoals.size() != 1 ||
       type.itemWeights.size() != 1 || instance.bins.size() != type.bins.size())
     return {};
-  const size_t profileIndex = projectedLiveInstance
-                                  ? type.projectedItemIndex
-                                  : size_t{0};
-  return queryInstanceItem(instance, type, 0, false, profileIndex,
+  return queryInstanceItem(instance, type, 0, false, type.projectedItemIndex,
                            cumulativeAtLeast);
 }
 
@@ -11217,21 +11213,31 @@ queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
   result = {};
   uint64_t totalWeight = 0;
   double weightedPercentage = 0.0;
-  auto accumulate = [&](const FunctionalCoverageInstanceState &instance) {
-    CoverageResult current = queryFunctionalItemInstance(
-        instance, type, true, cumulativeAtLeast);
-    if (current.contributes && type.instanceWeight) {
-      weightedPercentage +=
-          current.percentage * static_cast<double>(type.instanceWeight);
-      totalWeight = saturatingAdd(totalWeight, type.instanceWeight);
+  auto accumulate = [&](const FunctionalCoverageInstanceState &instance)
+      -> obelisk_rt_status {
+    if (type.projectedItemIndex >= instance.itemWeights.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    // IEEE 19.11.3 weights each point/cross instance by its own option.weight,
+    // including procedural changes. The enclosing group and the constructor's
+    // default item profile do not determine this item's averaging weight.
+    const uint32_t weight = instance.itemWeights[type.projectedItemIndex];
+    CoverageResult current =
+        queryFunctionalItemInstance(instance, type, cumulativeAtLeast);
+    if (current.contributes && weight) {
+      weightedPercentage += current.percentage * static_cast<double>(weight);
+      totalWeight = saturatingAdd(totalWeight, weight);
     }
     result.covered = saturatingAdd(result.covered, current.covered);
     result.total = saturatingAdd(result.total, current.total);
+    return OBELISK_RT_OK;
   };
   for (uint64_t handle : type.instances) {
     auto instance = coverage.instances.find(handle);
-    if (instance != coverage.instances.end())
-      accumulate(instance->second);
+    if (instance != coverage.instances.end()) {
+      obelisk_rt_status status = accumulate(instance->second);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
   }
   for (const auto &loaded :
        collectLoadedFunctionalInstances(coverage, typeID, type)) {
@@ -11240,15 +11246,9 @@ queryFunctionalItemType(const CoverageState &coverage, uint64_t typeID,
         materializeLoadedFunctionalInstance(coverage, loaded, type, instance);
     if (materialize != OBELISK_RT_OK)
       return materialize;
-    CoverageResult current =
-        queryFunctionalItemInstance(*instance, type, true, cumulativeAtLeast);
-    if (current.contributes && type.instanceWeight) {
-      weightedPercentage +=
-          current.percentage * static_cast<double>(type.instanceWeight);
-      totalWeight = saturatingAdd(totalWeight, type.instanceWeight);
-    }
-    result.covered = saturatingAdd(result.covered, current.covered);
-    result.total = saturatingAdd(result.total, current.total);
+    obelisk_rt_status status = accumulate(*instance);
+    if (status != OBELISK_RT_OK)
+      return status;
   }
   if (totalWeight) {
     result.percentage = weightedPercentage / static_cast<double>(totalWeight);

@@ -178,6 +178,16 @@ loaded and merged type/item queries in both tiers. A small MLIR conversion test
 checks empty constructor batches, absence of synthesized schema items/bins,
 the three query results, both backend ABIs, and LLVM IR verification.
 
+An item-query probe against 19.11.3 found that point/cross `option.weight`
+changes were persisted but ignored by item-level type queries. Averaging now
+reads each contributing instance's original item-profile ordinal, for both
+live and loaded profiles. It adds one bounds check and scalar read per
+contributor and shares the same aggregation path for both. The two-instance
+regression covers distinct group/item weights, live changes, automatic cross
+tuples after load, zero weights, and consistent optional method counts. MLIR
+checks preserve the owning point/cross ID through assignment, query, and both
+backends; the compiler operation contracts remain unchanged.
+
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime
 code stays independent of MLIR and LLVM. This follows the analysis-lifetime and

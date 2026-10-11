@@ -9,7 +9,6 @@ Conversion/obelisk-to-simulation-covergroup-constructor-batch.mlir
 Conversion/obelisk-to-simulation-covergroup-cross-set.mlir
 Conversion/obelisk-to-simulation-covergroup-cross-with.mlir
 Conversion/obelisk-to-simulation-covergroup-cross.mlir
-Conversion/obelisk-to-simulation-covergroup-procedural-options.mlir
 Conversion/obelisk-to-simulation-coverpoint-control.mlir
 Conversion/obelisk-to-simulation-coverpoint-query.mlir
 Conversion/obelisk-to-simulation-functional-insertion-stability.mlir

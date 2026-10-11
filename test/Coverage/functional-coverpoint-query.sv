@@ -21,6 +21,12 @@ module top;
     }
   endgroup
 
+  covergroup owner_weights with function sample(input bit x, input bit y);
+    cp: coverpoint x { bins one = {1}; }
+    other: coverpoint y { bins one = {1}; }
+    cx: cross cp, other;
+  endgroup
+
   covergroup merged(input int low, input int high,
                     input bit track_instance);
     type_option.merge_instances = 1;
@@ -35,6 +41,8 @@ module top;
   averaged weightless;
   merged cumulative;
   merged tracked;
+  owner_weights hit;
+  owner_weights miss;
   int covered;
   int total;
   real percentage;
@@ -71,6 +79,19 @@ module top;
     $display("merged local %.6f %0d %0d", percentage, covered, total);
     percentage = merged::cp::get_coverage(covered, total);
     $display("merged type %.6f %0d %0d", percentage, covered, total);
+    hit = new();
+    miss = new();
+    hit.option.weight = 11;
+    miss.option.weight = 17;
+    hit.cp.option.weight = 3;
+    miss.cp.option.weight = 1;
+    hit.cx.option.weight = 5;
+    miss.cx.option.weight = 1;
+    hit.sample(1, 1);
+    percentage = owner_weights::cp::get_coverage(covered, total);
+    $display("procedural point %.6f %0d %0d", percentage, covered, total);
+    percentage = owner_weights::cx::get_coverage(covered, total);
+    $display("procedural cross %.6f", percentage);
     $finish;
   end
 endmodule
@@ -83,3 +104,5 @@ endmodule
 // CHECK-NEXT: merged cumulative 66.666667 2 3
 // CHECK-NEXT: merged local 50.000000 1 2
 // CHECK-NEXT: merged type 66.666667 2 3
+// CHECK-NEXT: procedural point 75.000000 3 4
+// CHECK-NEXT: procedural cross 83.333333

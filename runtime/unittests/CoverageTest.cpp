@@ -2092,6 +2092,98 @@ TEST(CoverageRuntimeDesignTest,
   std::filesystem::remove(path, ignored);
 }
 
+TEST(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalItems.push_back({22, 10, "product",
+                                    FunctionalItemKind::Cross, 0, 100, 1, 2,
+                                    "top.cg.product"});
+  schema.crossPlans.push_back(
+      {22, 0, 2, 0, 0, CrossRetainAutoPolicy::Retain, 0, 0, 220, 4, 0});
+  schema.crossTargets = {
+      {22, 20, 0, 0, 2, FunctionalExpressionResultKind::Integral,
+       CoverageSignedness::Unsigned, 0},
+      {22, 21, 1, 2, 2, FunctionalExpressionResultKind::Integral,
+       CoverageSignedness::Unsigned, 0}};
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  ASSERT_EQ(validate(schema), Status::Ok);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  obelisk_rt_context *loaded = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_NE(loaded, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(loaded, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 hit = 0, miss = 0;
+  ASSERT_EQ(createFunctional(context, 10, &hit), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &miss), OBELISK_RT_OK);
+  auto weight = [&](obelisk_rt_covergroup_v1 handle, uint64_t item, int value) {
+    ASSERT_EQ(
+        obelisk_rt_v1_covergroup_set_integer_option(
+            context, handle, item, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, value),
+        OBELISK_RT_OK);
+  };
+  weight(hit, 0, 11);
+  weight(miss, 0, 17); // Group weights must not affect item averages.
+  weight(hit, 20, 3);
+  weight(miss, 20, 1);
+  weight(hit, 22, 5);
+  weight(miss, 22, 1);
+  ASSERT_EQ(sampleFunctional(context, hit, 0, 2), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, hit, 1, 2), OBELISK_RT_OK);
+  auto query = [&](obelisk_rt_context *where, uint64_t item, double expected,
+                   bool empty = false) {
+    double percentage = -1.0;
+    int32_t covered = -1, total = -1;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(where, 10, item, &percentage,
+                                                  &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_NEAR(percentage, expected, 1.0e-9);
+    if (empty) {
+      EXPECT_EQ(covered, 0);
+      EXPECT_EQ(total, 0);
+    } else {
+      ASSERT_GT(total, 0);
+      EXPECT_NEAR(100.0 * covered / total, expected, 1.0e-6);
+    }
+  };
+  query(context, 20, 75.0);
+  query(context, 22, 500.0 / 6.0);
+  std::filesystem::path path =
+      std::filesystem::temp_directory_path() /
+      ("obelisk-item-weights-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()) +
+       ".obcov");
+  const std::string pathText = path.string();
+  ASSERT_EQ(
+      writeFileAtomically(pathText, saveCoverage(context, "item-weights")),
+      Status::Ok);
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_load(loaded, pathText.data(), pathText.size()),
+      OBELISK_RT_OK);
+  query(loaded, 20, 75.0);
+  query(loaded, 22, 500.0 / 6.0);
+  weight(hit, 20, 0);
+  weight(hit, 22, 0);
+  query(context, 20, 0.0);
+  query(context, 22, 0.0);
+  query(loaded, 20, 75.0); // A persisted profile is independent of live edits.
+  weight(miss, 20, 0);
+  weight(miss, 22, 0);
+  query(context, 20, 0.0, true);
+  query(context, 22, 0.0, true);
+  for (uint64_t item : {uint64_t{20}, uint64_t{22}}) {
+    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, item, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
+              OBELISK_RT_OK);
+    query(context, item, 100.0, true);
+  }
+  obelisk_rt_v1_context_destroy(loaded);
+  obelisk_rt_v1_context_destroy(context);
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
+}
+
 TEST(CoverageDatabaseTest, AtomicWriteReplacesExistingImageAndCleansTemporary) {
   std::filesystem::path path =
       std::filesystem::temp_directory_path() /
