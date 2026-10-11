@@ -21,6 +21,10 @@ inline uint32_t getRuntimeEventRegion(sim::EventRegion region) {
   switch (region) {
   case sim::EventRegion::Active:
     return OBELISK_RT_REGION_ACTIVE;
+  case sim::EventRegion::Inactive:
+    return OBELISK_RT_REGION_INACTIVE;
+  case sim::EventRegion::ReInactive:
+    return OBELISK_RT_REGION_RE_INACTIVE;
   case sim::EventRegion::Observed:
     return OBELISK_RT_REGION_OBSERVED;
   case sim::EventRegion::Reactive:

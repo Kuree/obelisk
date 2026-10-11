@@ -400,7 +400,9 @@ materializeNativeRankedGroups(ModuleOp module,
                    << " continuation=" << record.continuation
                    << " compute_node=" << record.compute_node << " group="
                    << (executors[index].empty() ? "-" : executors[index])
-                   << " executor=" << plan.fourStateExecutors[index] << '\n';
+                   << " executor=" << plan.fourStateExecutors[index]
+                   << (record.bit >= plan.firstDeferredBit ? " deferred" : "")
+                   << '\n';
     for (const auto &node : plan.rankedNodes) {
       llvm::errs() << (node.boundary ? "obelisk eval boundary: owner="
                                      : "obelisk eval dependency: owner=")

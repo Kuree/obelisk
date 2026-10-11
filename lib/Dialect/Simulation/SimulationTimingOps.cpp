@@ -283,10 +283,18 @@ LogicalResult verifyContinuation(Operation *op, ValueRange continuationOperands,
   if (auto resume =
           op->template getAttrOfType<EventRegionAttr>("resume_region")) {
     EventRegion region = resume.getValue();
-    if (region != EventRegion::Active && region != EventRegion::Observed &&
-        region != EventRegion::Reactive && region != EventRegion::Postponed)
+    // IEEE 1800-2023 4.4.2.3: the Inactive (Re-Inactive) region of the home
+    // iteration is where `#0` would resume the process.
+    EventRegion home = function.getHomeRegion();
+    bool inactive =
+        (region == EventRegion::Inactive && home == EventRegion::Active) ||
+        (region == EventRegion::ReInactive && home == EventRegion::Reactive);
+    if (!inactive && region != EventRegion::Active &&
+        region != EventRegion::Observed && region != EventRegion::Reactive &&
+        region != EventRegion::Postponed)
       return op->emitOpError(
-          "resume region must be an executable process home region");
+          "resume region must be an executable process home region or the "
+          "Inactive region of the process home");
   }
   return success();
 }

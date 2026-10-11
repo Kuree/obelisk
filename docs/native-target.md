@@ -755,15 +755,55 @@ converting nothing. NBAs of other processes wake their readers whether or not
 the kernel converts, and whether they change value every cycle is a dynamic
 property, so they do not decide the conversion.
 
-The pass option `defer` lets a kernel resume through `#0` instead, after every
-Active event of its pass (4.4.2.3, 4.5). The original may run its members last
-in that pass (4.7), so this is equivalent when no other Inactive event shares
-the phase. Then only activations its own updates wake (blocking writes and
-direct stores, transitively) and other kernels can follow it, which a dense
-forward post-kernel analysis finds. Same-edge samplers, testbench delays and
-asynchronous-reset flops of the slot run before it, which admits clocks
-driven by blocking assignments. The native eval coordinator does not yet own a
-continuation that suspends on `#0`, so the option is off by default.
+A simulation can also end within a slot. `$finish`, `$fatal`, `$exit` and a
+batch `$stop` (20.2, 24.7) stop the remaining events, so final procedures
+(9.2.3) read the values from before any NBA still pending. A bottom-up
+analysis over calls finds the functions that may end the simulation. If one of
+them may run after a kernel in that kernel's slot, the roots final procedures
+read keep their NBAs. If a final procedure's accesses are unknown, the kernel
+is not formed.
+
+A kernel may instead be deferred: its wait carries `resume_region = inactive`
+and resumes it in the Inactive region of its iteration, as `@(edge) #0` would,
+after every Active event of its pass (4.4.2.3, 4.5). The original may run its
+members last in that pass (4.7). Then only activations its own updates wake
+(blocking writes and direct stores, transitively), other kernels, and other
+Inactive events of the phase with what they wake can follow it, which a dense
+forward post-kernel analysis finds. Those Inactive events may also run before
+it, where the original members could not see their writes, so a deferred
+kernel must read nothing they write; a second run of the same analysis,
+seeded only by them, checks this. Same-edge samplers, testbench delays and
+asynchronous-reset flops of the slot run before it, which admits clocks driven
+by blocking assignments. A testbench `$finish` of the pass also runs first,
+and no deferred kernel runs after a finish, so final procedures need no NBAs
+for it. The pass prefers an immediate kernel and defers one only when that
+stores more roots directly. The driver selects the mode with
+`--clocked-kernels=off|immediate|deferred` (default `deferred`).
+
+Every executor honors the Inactive resumption:
+
+- The runtime queues a process whose wait names the Inactive successor of its
+  home region there, exactly like a `#0` resumption, in the generic, AOT and
+  bytecode paths.
+- The generated eval coordinator gives deferred owners the highest ready bits.
+  It selects the lowest pending bit, so a deferred owner runs only when no
+  Active owner is pending. With a runtime calendar, a pending deferred owner
+  first takes the NBA cut, which drains runtime Active and Inactive work, and
+  runs once that cut finds no Active ingress. Deferred owners never join a
+  ranked sweep or the periodic loop's direct clock sequence, and never share an
+  executor.
+- No deferred owner runs after `$finish` in its slot (9.2.3, 20.2). Before it
+  runs one, the coordinator reads the runtime's termination latch. It cannot
+  use the NBA cut's region for this, because the cut also reports
+  `UINT32_MAX` when no barrier is pending.
+- An `initial` process that waits on a signal and reads state stays a runtime
+  owner whenever the design has an NBA or a deferred kernel. It is therefore
+  drained by that cut, not run after the kernel.
+
+On a blocking-clock pipeline of 32 registers, deferral reduced the instruction
+count from about 1300 to 250 per cycle. Outputs are unchanged, apart from races
+the LRM leaves open: testbench code at a clock edge now always runs before the
+edge's kernels.
 
 The kernel never suspends between members; 4.7 permits but does not require
 interleaving other processes there. `$monitor` and `$strobe` print in the

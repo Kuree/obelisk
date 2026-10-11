@@ -1,5 +1,5 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/fused-four-state.sv -o %t/fused-four-state.mlir
+// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/fused-four-state.sv -o %t/fused-four-state.mlir
 // RUN: FileCheck %s --check-prefix=FOUR-STATE < %t/fused-four-state.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-four-state.test.

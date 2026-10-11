@@ -297,11 +297,63 @@ materializeNativeEvalDispatch(ModuleOp module,
   builder.setInsertionPointToStart(select);
   Value localBit = LLVM::CountTrailingZerosOp::create(builder, location, i64,
                                                       selectedReady, true);
-  Value bit = arith::AddIOp::create(
+  Value selectedBit = arith::AddIOp::create(
       builder, location, localBit,
       arith::MulIOp::create(builder, location, selectedWord,
                             llvmConstant(builder, location, i64, 64)));
+  // Owners at or above firstDeferredBit resume in the Inactive region (IEEE
+  // 1800-2023 4.4.2.3). Planning gives them the highest bits, so the lowest
+  // pending bit is deferred only when no Active owner is pending: this
+  // closure is quiescent. With a runtime calendar, runtime-owned Active and
+  // Inactive work must also drain first, which the NBA cut below performs.
+  bool runtimeCalendar =
+      ::obelisk::schedule::has<::obelisk::schedule::Field::EvalRuntimeCalendar>(
+          module);
+  bool hasDeferred = plan.firstDeferredBit < mergedFragments.size();
+  APInt deferredOwnerMask(ownerCount, 0);
+  if (hasDeferred)
+    deferredOwnerMask.setBits(plan.firstDeferredBit, mergedFragments.size());
+  // A finish request ends the simulation before any remaining scheduled
+  // event, deferred owners included (IEEE 1800-2023 9.2.3, 20.2). The NBA cut
+  // reports no barrier the same way, so read the termination latch itself.
+  auto terminationRequested = [&]() -> Value {
+    getOrDeclareLLVMFunction(module,
+                             "obelisk_rt_v1_scheduler_termination_requested",
+                             i32, {pointer});
+    Value latch =
+        LLVM::CallOp::create(builder, location, TypeRange{i32},
+                             "obelisk_rt_v1_scheduler_termination_requested",
+                             ValueRange{fastEntry->getArgument(1)})
+            .getResult();
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                 latch,
+                                 llvmConstant(builder, location, i32, 0));
+  };
   Block *switchBlock = select;
+  Value bit = selectedBit;
+  if (hasDeferred) {
+    switchBlock = new Block;
+    bit = switchBlock->addArgument(i64, location);
+    fastCoordinator.getBody().push_back(switchBlock);
+    Value deferred = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::uge, selectedBit,
+        llvmConstant(builder, location, i64, plan.firstDeferredBit));
+    if (runtimeCalendar) {
+      cf::CondBranchOp::create(builder, location, deferred, commit,
+                               ValueRange{}, switchBlock,
+                               ValueRange{selectedBit});
+    } else {
+      Block *checkTermination = new Block;
+      fastCoordinator.getBody().push_back(checkTermination);
+      cf::CondBranchOp::create(builder, location, deferred, checkTermination,
+                               ValueRange{}, switchBlock,
+                               ValueRange{selectedBit});
+      builder.setInsertionPointToStart(checkTermination);
+      cf::CondBranchOp::create(builder, location, terminationRequested(),
+                               stopped, ValueRange{}, switchBlock,
+                               ValueRange{selectedBit});
+    }
+  }
   SmallVector<APInt> cases;
   SmallVector<Block *> destinations;
   SmallVector<ValueRange> destinationOperands;
@@ -677,12 +729,55 @@ materializeNativeEvalDispatch(ModuleOp module,
     cf::CondBranchOp::create(builder, location, prepareOK, prepared,
                              ValueRange{}, failed, ValueRange{prepareStatus});
     builder.setInsertionPointToStart(prepared);
-    Value ingress = combinedIngress();
+    Value ingress = maskedOwnerWords(builder, location, ingressAddress(),
+                                     allOwners & ~deferredOwnerMask);
     Value hasIngress = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::ne, ingress,
         llvmConstant(builder, location, ingress.getType(), 0));
+    Block *quiescent = performCommit;
+    if (hasDeferred) {
+      // Every Active and Inactive event of this pass has run. Execute the
+      // lowest pending deferred owner, then settle what it wakes before the
+      // cut is taken again.
+      quiescent = new Block;
+      fastCoordinator.getBody().push_back(quiescent);
+    }
     cf::CondBranchOp::create(builder, location, hasIngress, dispatch,
-                             ValueRange{}, performCommit, ValueRange{});
+                             ValueRange{}, quiescent, ValueRange{});
+    if (hasDeferred) {
+      builder.setInsertionPointToStart(quiescent);
+      Block *runDeferred = new Block;
+      fastCoordinator.getBody().push_back(runDeferred);
+      cf::CondBranchOp::create(builder, location, terminationRequested(),
+                               performCommit, ValueRange{}, runDeferred,
+                               ValueRange{});
+      builder.setInsertionPointToStart(runDeferred);
+      for (unsigned word = plan.firstDeferredBit / 64;
+           word * 64 < mergedFragments.size(); ++word) {
+        Value pending = arith::AndIOp::create(
+            builder, location,
+            loadOwnerWord(builder, location, ingressAddress(), word),
+            llvmConstant(builder, location, i64,
+                         ownerMaskWord(deferredOwnerMask, word)));
+        Value found = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ne, pending,
+            llvmConstant(builder, location, i64, 0));
+        Block *execute = new Block, *next = new Block;
+        fastCoordinator.getBody().push_back(execute);
+        fastCoordinator.getBody().push_back(next);
+        cf::CondBranchOp::create(builder, location, found, execute,
+                                 ValueRange{}, next, ValueRange{});
+        builder.setInsertionPointToStart(execute);
+        Value owner = arith::AddIOp::create(
+            builder, location,
+            LLVM::CountTrailingZerosOp::create(builder, location, i64, pending,
+                                               true),
+            llvmConstant(builder, location, i64, uint64_t{word} * 64));
+        cf::BranchOp::create(builder, location, switchBlock, ValueRange{owner});
+        builder.setInsertionPointToStart(next);
+      }
+      cf::BranchOp::create(builder, location, performCommit);
+    }
     builder.setInsertionPointToStart(performCommit);
     Value barrier = LLVM::LoadOp::create(builder, location, i32, region, 4);
     Value isNBA = arith::CmpIOp::create(

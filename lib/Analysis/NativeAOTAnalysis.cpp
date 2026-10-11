@@ -1269,12 +1269,21 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
   // An initial signal waiter belongs to the Active queue even if every one
   // of its operations can compile natively. It is not part of the periodic
   // model closure; that closure must not drain NBA before the waiter reads
-  // pre-NBA state (IEEE 1800-2023 4.4.2, 4.5, 10.4.2).
+  // pre-NBA state (IEEE 1800-2023 4.4.2, 4.5, 10.4.2). Nor may it run an
+  // activation that resumes in the Inactive region, such as a deferred
+  // clocked kernel, before the waiter's Active read (4.4.2.3).
   auto scheduler = schedule::get<schedule::Field::NativeScheduler>(module);
-  bool hasNBA = llvm::any_of(nodes, [](Attribute node) {
+  bool hasPostActiveWork = llvm::any_of(nodes, [](Attribute node) {
     return isa<schedule::ComputeNBACommitAttr>(node);
   });
-  if (hasNBA && result.reasons.empty() && scheduler &&
+  module.walk([&](Operation *operation) {
+    auto region =
+        operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
+    hasPostActiveWork |= region &&
+                         region.getValue() == sim::EventRegion::Inactive &&
+                         sim::isSuspensionOp(operation);
+  });
+  if (hasPostActiveWork && result.reasons.empty() && scheduler &&
       (scheduler.getValue() == schedule::NativeSchedulerMode::Eval ||
        scheduler.getValue() == schedule::NativeSchedulerMode::Auto)) {
     module.walk([&](sim::SimFuncOp function) {

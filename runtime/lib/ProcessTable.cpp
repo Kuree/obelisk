@@ -41,7 +41,7 @@ validateTableProcess(const obelisk_rt_process_descriptor_v1 &descriptor) {
         ((wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) &&
          !(wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_VALID)) ||
         ((wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) &&
-         !obelisk_rt_is_process_home_region(region)) ||
+         !obelisk_rt_is_process_resume_region(region)) ||
         record.version != OBELISK_RT_VERSION ||
         (record.kind != OBELISK_RT_SUSPEND_CHANGE &&
          record.kind != OBELISK_RT_SUSPEND_EDGE) ||

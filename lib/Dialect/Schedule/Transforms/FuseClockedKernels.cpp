@@ -39,13 +39,23 @@
 // suspends only on positive constant delays and so runs once per slot. A
 // clock that rises again through an Inactive event keeps every NBA.
 //
-// With `defer`, a kernel may instead resume through `#0`, after every Active
-// event of its pass (4.4.2.3, 4.5). The original may run its members last in
-// that pass (4.7), so this is equivalent when no other Inactive event shares
-// its phase. Then (b) and (d) only concern activations that may follow it,
-// which PostKernelAnalysis finds: what its own blocking writes and stores
-// wake, transitively, and other kernels. Same-edge samplers and testbench
-// delays run before it. No such activation may change its clock.
+// With `defer`, a kernel's wait may instead resume it in the Inactive region,
+// as `@(edge) #0` would: after every Active event of its pass (4.4.2.3, 4.5).
+// The original may run its members last in that pass (4.7). Then (b) and (d)
+// only concern activations that may follow it, which PostKernelAnalysis finds:
+// what its own blocking writes and stores wake, transitively, other kernels,
+// and other Inactive events of its phase with what they wake. Those Inactive
+// events may also run before it, where the original members cannot see their
+// writes, so they must not write what it reads. Same-edge samplers and
+// testbench delays run before it. No activation after it may change its
+// clock.
+//
+// A simulation may also end within a slot: `$finish` and its kind stop the
+// remaining events, and final procedures read the values from before every
+// pending NBA (9.2.3, 20.2). Where something that may end the simulation can
+// follow the kernel, the roots final procedures read count as accessed by it.
+// Every executor skips a deferred kernel once a finish is requested, so an
+// Active finisher of its pass needs nothing.
 //
 // Cost: direct stores wake their combinational readers in the kernel's phase,
 // the NBAs the kernel keeps wake theirs in the next. Logic both reach would
@@ -142,6 +152,8 @@ struct Member {
   llvm::DenseSet<uint64_t> reads, nbaWrites, writes;
   /// An update whose root is unresolved.
   bool unresolvedUpdate = false;
+  /// A read whose root is unresolved.
+  bool unresolvedRead = false;
   SmallVector<unsigned> fusedArguments;
 };
 
@@ -462,6 +474,92 @@ private:
   DenseMap<ProgramPoint *, const Process *> byPoint;
 };
 
+/// Whether an operation may end the simulation (IEEE 1800-2023 20.2, 24.7):
+/// `$finish`, `$stop` (batch), `$fatal` and `$exit`, or a call that may.
+/// Task calls and spawns start separate activations, whose own blocks are
+/// checked where they run; other calls without a known body are opaque.
+bool endsSimulation(Operation *operation, const SymbolTable &symbols,
+                    function_ref<bool(sim::SimFuncOp)> calleeEnds) {
+  if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
+          sim::SimProgramExitOp>(operation))
+    return true;
+  if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
+    auto callee = symbols.lookup<sim::SimFuncOp>(call.getCallee());
+    return !callee || callee.isExternal() || calleeEnds(callee);
+  }
+  return isa<CallOpInterface>(operation) &&
+         !isa<sim::SimSpawnOp, sim::SimTaskCallOp>(operation);
+}
+
+/// Whether a function may end the simulation.
+class EndsSimulationState final : public AnalysisState {
+public:
+  using AnalysisState::AnalysisState;
+  ChangeResult set() {
+    if (ends)
+      return ChangeResult::NoChange;
+    ends = true;
+    return ChangeResult::Change;
+  }
+  void print(raw_ostream &os) const override { os << ends; }
+  bool ends = false;
+};
+
+/// Bottom-up over plain calls: a function may end the simulation when one of
+/// its operations may (see endsSimulation). States are anchored at function
+/// entries.
+class EndsSimulationAnalysis final : public DataFlowAnalysis {
+public:
+  EndsSimulationAnalysis(DataFlowSolver &solver, const SymbolTable &symbols)
+      : DataFlowAnalysis(solver), symbols(symbols) {}
+  LogicalResult initialize(Operation *top) override {
+    top->walk([&](sim::SimFuncOp function) {
+      if (!function.isExternal())
+        (void)visit(getProgramPointBefore(&function.getBody().front()));
+    });
+    return success();
+  }
+  LogicalResult visit(ProgramPoint *point) override {
+    Block *entry = point->getBlock();
+    auto function = entry ? dyn_cast<sim::SimFuncOp>(entry->getParentOp())
+                          : sim::SimFuncOp{};
+    if (!function || entry != &function.getBody().front())
+      return success();
+    bool ends = function
+                    .walk([&](Operation *operation) {
+                      return endsSimulation(
+                                 operation, symbols,
+                                 [&](sim::SimFuncOp callee) {
+                                   return getOrCreateFor<EndsSimulationState>(
+                                              point, entryOf(callee))
+                                       ->ends;
+                                 })
+                                 ? WalkResult::interrupt()
+                                 : WalkResult::advance();
+                    })
+                    .wasInterrupted();
+    if (ends) {
+      auto *state = getOrCreate<EndsSimulationState>(point);
+      propagateIfChanged(state, state->set());
+    }
+    return success();
+  }
+  /// Whether a solved function may end the simulation.
+  static bool ends(DataFlowSolver &solver, sim::SimFuncOp function) {
+    if (function.isExternal())
+      return true;
+    const auto *state = solver.lookupState<EndsSimulationState>(
+        solver.getProgramPointBefore(&function.getBody().front()));
+    return state && state->ends;
+  }
+
+private:
+  ProgramPoint *entryOf(sim::SimFuncOp function) {
+    return getProgramPointBefore(&function.getBody().front());
+  }
+  const SymbolTable &symbols;
+};
+
 /// Whether a program point may execute after a deferred kernel, within a
 /// phase the kernel runs in and before that phase's NBA region.
 class AfterLattice final : public dataflow::AbstractDenseLattice {
@@ -520,13 +618,13 @@ public:
   }
 };
 
-/// IEEE 1800-2023 4.4.2.3 and 4.5: a deferred kernel resumes through `#0`,
-/// after every Active event of its pass. Within its phase, what may run after
-/// it is what updates made after it wake: its own blocking writes and direct
-/// stores, and transitively the blocking writes and event triggers of every
-/// activation they wake. NBAs land in the next phase and positive delays in a
-/// later slot. Other kernels of the phase are deferred as well, so they may
-/// run after it. Zero and variable delays, waits on unresolved roots and
+/// IEEE 1800-2023 4.4.2.3 and 4.5: a deferred kernel resumes in the Inactive
+/// region, after every Active event of its pass. Within its phase, what may run
+/// after it is what updates made after it wake: its own blocking writes and
+/// direct stores, and transitively the blocking writes and event triggers of
+/// every activation they wake. NBAs land in the next phase and positive delays
+/// in a later slot. Other kernels of the phase are deferred as well, so they
+/// may run after it. Zero and variable delays, waits on unresolved roots and
 /// waits this analysis does not model are conservatively after it.
 class PostKernelAnalysis final
     : public dataflow::DenseForwardDataFlowAnalysis<AfterLattice> {
@@ -1005,10 +1103,14 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
            fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
         std::optional<uint64_t> root = effectRoot(effect);
         if (!root) {
+          bool shared =
+              effect.getTarget() != schedule::ComputeTargetKind::Local;
           member.unresolvedUpdate |=
-              effect.getTarget() != schedule::ComputeTargetKind::Local &&
+              shared &&
               (isWrite(effect.getEffect()) ||
                effect.getEffect() == schedule::ComputeEffectKind::Trigger);
+          member.unresolvedRead |=
+              shared && effect.getEffect() == schedule::ComputeEffectKind::Read;
           continue;
         }
         switch (effect.getEffect()) {
@@ -1056,6 +1158,56 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       for (const Writer &write : list)
         if (auto found = index.find(write.function); found != index.end())
           combinationalProcesses[found->second].written.push_back(root);
+  }
+
+  // IEEE 1800-2023 20.2 and 9.2.3: `$finish` ends the simulation at once,
+  // and final procedures then read the state with no remaining scheduled
+  // event executed, including NBAs still pending. Find the activations that
+  // may end the simulation and the roots final procedures read.
+  DataFlowSolver ending;
+  ending.load<EndsSimulationAnalysis>(symbols);
+  if (failed(ending.initializeAndRun(design)))
+    return bail("end-of-simulation analysis");
+  DenseSet<std::pair<StringAttr, uint32_t>> endingFragments;
+  SmallVector<uint64_t> finalReads;
+  bool unknownFinalRead = false;
+  for (Attribute attribute : nodes) {
+    auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);
+    if (!fragment)
+      continue;
+    StringAttr name = fragment.getFunction().getAttr();
+    auto function = symbols.lookup<sim::SimFuncOp>(name);
+    if (!function || function.isExternal())
+      continue;
+    if (function.getEntryKind() == sim::EntryKind::Final) {
+      for (auto effect :
+           fragment.getEffects().getAsRange<schedule::ComputeEffectAttr>()) {
+        if (effect.getEffect() != schedule::ComputeEffectKind::Read ||
+            effect.getTarget() == schedule::ComputeTargetKind::Local)
+          continue;
+        if (std::optional<SmallVector<uint64_t>> roots =
+                phases.getEffectRoots(name, effect))
+          llvm::append_range(finalReads, *roots);
+        else
+          unknownFinalRead = true;
+      }
+      continue;
+    }
+    Block *block = blockAt(function, fragment.getBlock());
+    if (block && llvm::any_of(*block, [&](Operation &operation) {
+          return operation
+              .walk([&](Operation *nested) {
+                return endsSimulation(nested, symbols,
+                                      [&](sim::SimFuncOp callee) {
+                                        return EndsSimulationAnalysis::ends(
+                                            ending, callee);
+                                      })
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
+              })
+              .wasInterrupted();
+        }))
+      endingFragments.insert({name, fragment.getBlock()});
   }
 
   // Every root of each clock alias class.
@@ -1213,12 +1365,44 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       });
     }();
 
-    // A deferred kernel resumes through `#0`, after every Active event of its
-    // pass (4.4.2.3, 4.5). The original could run its members last in that
-    // pass (4.7), so this is equivalent when no other Inactive event can
-    // share its phase. Then only what its own updates wake runs after it.
-    bool inactiveShared = false;
-    if (defer)
+    // A deferred kernel resumes in the Inactive region, after every Active
+    // event of its pass (4.4.2.3, 4.5). The original could run its members
+    // last in that pass (4.7). Then only what its own updates wake, other
+    // kernels, and other Inactive events of its phase with what they wake can
+    // run after it. The window analysis covers the whole design, so it runs
+    // only when deferral could store more roots (see below).
+    PostKernelAnalysis::Config windowConfig{
+        design.getOperation(), symbols,         phases, kernelPhases,
+        rootInitializer,       memberFunctions, {},     {}};
+    DataFlowSolver window(DataFlowConfig().setInterprocedural(false));
+    auto isAfter = [&](StringAttr name, uint32_t index) {
+      auto function = symbols.lookup<sim::SimFuncOp>(name);
+      Block *block = function ? blockAt(function, index) : nullptr;
+      if (!block)
+        return true;
+      const auto *state =
+          window.lookupState<AfterLattice>(window.getProgramPointBefore(block));
+      return state && state->after;
+    };
+    auto changedIn = [&](DataFlowSolver &solver, uint64_t root) {
+      for (uint64_t key : {root, AfterRoot::anyRoot}) {
+        const auto *state =
+            solver.lookupState<AfterState>(solver.getLatticeAnchor<AfterRoot>(
+                std::make_pair(key, design.getOperation())));
+        if (state && state->after)
+          return true;
+      }
+      return false;
+    };
+    auto changedAfter = [&](uint64_t root) { return changedIn(window, root); };
+    // Returns why this kernel cannot be deferred, or an empty string.
+    auto analyzeDeferral = [&]() -> StringRef {
+      // An Inactive event of the phase (a zero or variable delay) and what it
+      // wakes run in a later iteration than the original members, so they
+      // may run before the deferred kernel only if it reads nothing they
+      // write. The window below places them after it as well, which covers
+      // their accesses, writers and finishes.
+      bool inactiveShared = false;
       design.walk([&](sim::SimSuspendDelayOp delay) {
         auto function = delay->getParentOfType<sim::SimFuncOp>();
         if (!function || memberFunctions.contains(function))
@@ -1229,54 +1413,49 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           inactiveShared |=
               phases.getPhases(delay.getContinuation()).meets(kernelPhases);
       });
-    PostKernelAnalysis::Config windowConfig{
-        design.getOperation(), symbols,         phases, kernelPhases,
-        rootInitializer,       memberFunctions, {},     {}};
-    for (Operation *wait : memberWaits)
-      if (!memberFunctions.contains(wait->getParentOfType<sim::SimFuncOp>()))
-        windowConfig.otherKernelWaits.insert(wait);
-    for (Member &member : members) {
-      llvm::append_range(windowConfig.changed, member.writes);
-      for (uint64_t root : member.nbaWrites)
-        if (glitchInsensitive.contains(root))
-          windowConfig.changed.push_back(root);
-      if (member.unresolvedUpdate)
-        windowConfig.changed.push_back(AfterRoot::anyRoot);
-    }
-    DataFlowSolver window(DataFlowConfig().setInterprocedural(false));
-    window.load<dataflow::DeadCodeAnalysis>();
-    window.load<dataflow::SparseConstantPropagation>();
-    window.load<PostKernelAnalysis>(windowConfig);
-    StringRef deferralBlocker;
-    if (!defer)
-      deferralBlocker = "deferral disabled";
-    else if (inactiveShared)
-      deferralBlocker = "inactive event shares kernel phase";
-    else if (failed(window.initializeAndRun(design)))
-      deferralBlocker = "post-kernel analysis";
-    auto isAfter = [&](StringAttr name, uint32_t index) {
-      auto function = symbols.lookup<sim::SimFuncOp>(name);
-      Block *block = function ? blockAt(function, index) : nullptr;
-      if (!block)
-        return true;
-      const auto *state =
-          window.lookupState<AfterLattice>(window.getProgramPointBefore(block));
-      return state && state->after;
-    };
-    auto changedAfter = [&](uint64_t root) {
-      for (uint64_t key : {root, AfterRoot::anyRoot}) {
-        const auto *state =
-            window.lookupState<AfterState>(window.getLatticeAnchor<AfterRoot>(
-                std::make_pair(key, design.getOperation())));
-        if (state && state->after)
-          return true;
+      if (inactiveShared) {
+        if (llvm::any_of(members, [](const Member &member) {
+              return member.unresolvedRead;
+            }))
+          return "inactive event writes kernel input";
+        // Without kernel updates, the window holds exactly what Inactive
+        // events start or wake in the phase, plus what it cannot model.
+        PostKernelAnalysis::Config inactiveConfig{
+            design.getOperation(), symbols,         phases, kernelPhases,
+            rootInitializer,       memberFunctions, {},     {}};
+        DataFlowSolver inactive(DataFlowConfig().setInterprocedural(false));
+        inactive.load<dataflow::DeadCodeAnalysis>();
+        inactive.load<dataflow::SparseConstantPropagation>();
+        inactive.load<PostKernelAnalysis>(inactiveConfig);
+        if (failed(inactive.initializeAndRun(design)))
+          return "post-kernel analysis";
+        for (const Member &member : members)
+          if (llvm::any_of(member.reads, [&](uint64_t root) {
+                return changedIn(inactive, root);
+              }))
+            return "inactive event writes kernel input";
       }
-      return false;
+      for (Operation *wait : memberWaits)
+        if (!memberFunctions.contains(wait->getParentOfType<sim::SimFuncOp>()))
+          windowConfig.otherKernelWaits.insert(wait);
+      for (Member &member : members) {
+        llvm::append_range(windowConfig.changed, member.writes);
+        for (uint64_t root : member.nbaWrites)
+          if (glitchInsensitive.contains(root))
+            windowConfig.changed.push_back(root);
+        if (member.unresolvedUpdate)
+          windowConfig.changed.push_back(AfterRoot::anyRoot);
+      }
+      window.load<dataflow::DeadCodeAnalysis>();
+      window.load<dataflow::SparseConstantPropagation>();
+      window.load<PostKernelAnalysis>(windowConfig);
+      if (failed(window.initializeAndRun(design)))
+        return "post-kernel analysis";
+      // A clock change after a deferred kernel would run it again.
+      if (llvm::any_of(clockRoots, changedAfter))
+        return "clock changes after kernel";
+      return {};
     };
-    // A clock change after a deferred kernel would run it again.
-    if (deferralBlocker.empty() && llvm::any_of(clockRoots, changedAfter))
-      deferralBlocker = "clock changes after kernel";
-    bool deferrable = deferralBlocker.empty();
 
     // The roots one kernel mode may store directly. `mayFollow` holds for
     // every activation that may run between the kernel and its NBA region.
@@ -1317,6 +1496,20 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           }
           llvm::append_range(seeds, *roots);
         }
+      }
+      // An activation that may follow the kernel and end the simulation lets
+      // final procedures read a direct store before its NBA would apply.
+      // Members cannot end it: body fusion admits no finish, fatal or stop.
+      if (llvm::any_of(endingFragments, [&](const auto &fragment) {
+            return !memberNames.contains(fragment.first) &&
+                   fragment.first != rootInitializer.getSymNameAttr() &&
+                   mayFollow(fragment.first, fragment.second);
+          })) {
+        if (unknownFinalRead) {
+          refuse("unknown final procedure access");
+          return std::nullopt;
+        }
+        llvm::append_range(seeds, finalReads);
       }
       // A root is exposed when anything in its combinational cone is accessed
       // by such an activation, or feeds this kernel's clock.
@@ -1383,17 +1576,24 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
     };
 
     // Prefer the immediate kernel, which needs no extra Inactive pass, unless
-    // deferral stores more roots directly.
+    // deferral stores more roots directly. Deferral only changes which
+    // activations may follow the kernel, so it can add only roots the
+    // immediate kernel refuses for them ((b), (d)), or rescue a clock that
+    // could run an immediate kernel twice per phase.
     llvm::StringMap<uint64_t> immediateReasons, deferredReasons;
     std::optional<DenseSet<uint64_t>> immediate, deferred;
     if (singleClockSource)
       immediate = planRoots(Mode::Immediate, immediateReasons);
-    if (deferrable)
-      deferred = planRoots(Mode::Deferred, deferredReasons);
+    if (defer && (!immediate ||
+                  immediateReasons.count("root accessed by event activation") ||
+                  immediateReasons.count("root writers"))) {
+      if (StringRef blocker = analyzeDeferral(); !blocker.empty())
+        reject(("deferral: " + blocker).str());
+      else
+        deferred = planRoots(Mode::Deferred, deferredReasons);
+    }
     bool useDeferred =
         deferred && (!immediate || deferred->size() > immediate->size());
-    if (defer && !deferrable)
-      reject(("deferral: " + deferralBlocker).str());
     if (!immediate && !deferred) {
       if (!singleClockSource)
         reject("clock source");
@@ -1641,19 +1841,13 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         builder.clone(operation, mappings[index]);
     Operation *suspend = builder.clone(
         *members[waitMember].wait->getTerminator(), mappings[waitMember]);
-    // A deferred kernel resumes through `#0`, after the Active events of its
-    // pass (4.4.2.3).
-    Block *resume = activation;
-    if (plan.deferred) {
-      resume = new Block;
-      kernel.getBody().getBlocks().insert(Region::iterator(activation), resume);
-      OpBuilder defer = OpBuilder::atBlockEnd(resume);
-      Value zero = sim::SimTimeConstantOp::create(defer, location, 0);
-      sim::SimSuspendDelayOp::create(
-          defer, location, zero, schedule::TimingSiteAttr{}, ValueRange{},
-          schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, activation);
-    }
-    suspend->setSuccessor(resume, 0);
+    suspend->setSuccessor(activation, 0);
+    // A deferred kernel resumes in the Inactive region of its iteration, as
+    // `@(edge) #0` would (4.4.2.3): after every Active event of its pass.
+    if (plan.deferred)
+      suspend->setAttr("resume_region",
+                       sim::EventRegionAttr::get(design.getContext(),
+                                                 sim::EventRegion::Inactive));
     for (unsigned index : sequence) {
       Member &member = members[index];
       for (Block *source : member.bodyBlocks) {

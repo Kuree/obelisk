@@ -3262,7 +3262,7 @@ bool validateImage(const Image &image) {
                  0) ||
             ((instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_VALID) !=
                  0 &&
-             !obelisk_rt_is_process_home_region(resumeRegion)) ||
+             !obelisk_rt_is_process_resume_region(resumeRegion)) ||
             !numeric(instruction.source0) ||
             layoutAt(image, function, instruction.source0).width != 64 ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||

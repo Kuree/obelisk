@@ -297,7 +297,7 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
       ((action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0 &&
        (action.flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) == 0) ||
       ((action.flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0 &&
-       !obelisk_rt_is_process_home_region(resumeRegion)) ||
+       !obelisk_rt_is_process_resume_region(resumeRegion)) ||
       action.auxiliary != field->size ||
       addOverflow(action.payload, action.auxiliary, end) ||
       end > instance.frame_size || action.payload % field->alignment != 0)

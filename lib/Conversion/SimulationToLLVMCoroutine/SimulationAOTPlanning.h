@@ -105,6 +105,10 @@ struct NativeDirectFragment {
   bool initialActivation = false;
   bool tier2Convergence = false;
   bool runtimeCheckpoint = false;
+  /// The source wait resumes in the Inactive region (IEEE 1800-2023
+  /// 4.4.2.3), so the coordinator runs this body only after every Active
+  /// event of its pass.
+  bool deferred = false;
 };
 
 enum class NativeEvalFanoutOwnerKind : uint8_t {
@@ -226,6 +230,9 @@ struct ResolvedNativeEvalPlan {
   uint32_t nbaTaintWordCount = 0;
   llvm::SmallVector<llvm::SmallVector<uint64_t>> recordNBATaintMasks;
   llvm::BitVector nbaTaintedRecords;
+  /// For each merged owner, whether it resumes in the Inactive region.
+  /// Deferred owners hold the highest ready bits.
+  llvm::SmallVector<bool> deferredOwners;
 };
 
 /// Immutable inputs shared by the generated coordinator variants.  Keeping
@@ -253,6 +260,9 @@ struct NativeEvalCoordinatorPlan {
   bool writableVPI = false;
   mlir::ArrayRef<llvm::SmallVector<uint32_t>> ownerStaticStates;
   mlir::ArrayRef<llvm::APInt> ownerFineIngress;
+  /// Owners at or above this bit resume in the Inactive region. The lowest
+  /// pending bit is one of them only when every other owner is idle.
+  uint32_t firstDeferredBit = UINT32_MAX;
 };
 
 struct NativeThreeTierKernelPlan {

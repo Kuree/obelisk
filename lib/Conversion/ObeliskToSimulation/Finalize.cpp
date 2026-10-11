@@ -53,6 +53,10 @@ struct ObeliskToSimulationPipelineOptions
       *this, "static-specialization",
       llvm::cl::desc("static state/NBA specialization: auto, off, or on"),
       llvm::cl::init("auto")};
+  Option<std::string> clockedKernels{
+      *this, "clocked-kernels",
+      llvm::cl::desc("clocked kernels: off, immediate, or deferred"),
+      llvm::cl::init("deferred")};
 };
 
 /// The executable boundary is defined by the operations that may remain, not
@@ -307,7 +311,8 @@ void ObeliskSimFinalizePass::runOnOperation() {
 void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef vpiMode, uint32_t optLevel,
                                       StringRef staticSpecialization,
-                                      bool earlySymbolDCE) {
+                                      bool earlySymbolDCE,
+                                      StringRef clockedKernels) {
   ObeliskSimPreparePassOptions prepareOptions;
   prepareOptions.pruneUnusedCoverage = earlySymbolDCE && vpiMode == "off";
   manager.addPass(createObeliskSimPreparePass(std::move(prepareOptions)));
@@ -518,10 +523,13 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
         std::move(primitiveGraphOptions)));
   }
   if (optLevel > 0) {
-    if (vpiMode == "off") {
+    if (vpiMode == "off" && clockedKernels != "off") {
       // IEEE 1800-2023 4.3/4.5/4.7: run each clock edge's processes as one
       // activation and store NBAs that nothing can observe early directly.
-      designManager.addPass(createObeliskSimFuseClockedKernelsPass());
+      ObeliskSimFuseClockedKernelsPassOptions kernelOptions;
+      kernelOptions.defer = clockedKernels == "deferred";
+      designManager.addPass(
+          createObeliskSimFuseClockedKernelsPass(std::move(kernelOptions)));
       ObeliskSimBuildComputeGraphPassOptions clockedGraphOptions;
       clockedGraphOptions.workers = workers;
       clockedGraphOptions.vpi = vpiMode.str();
@@ -613,7 +621,8 @@ void registerObeliskToSimulationPipeline() {
             manager, options.workers.getValue(), options.vpi.getValue(),
             options.optLevel.getValue(),
             options.staticSpecialization.getValue(),
-            options.earlySymbolDCE.getValue());
+            options.earlySymbolDCE.getValue(),
+            options.clockedKernels.getValue());
       });
 }
 

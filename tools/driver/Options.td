@@ -99,6 +99,10 @@ def static_specialization_EQ : Joined<["--"], "static-specialization=">,
   Group<Compilation_Group>, MetaVarName<"<auto|off|on>">,
   Values<"auto,off,on">,
   HelpText<"Select direct static-state and narrow-NBA specialization">;
+def clocked_kernels_EQ : Joined<["--"], "clocked-kernels=">,
+  Group<Compilation_Group>, MetaVarName<"<off|immediate|deferred>">,
+  Values<"off,immediate,deferred">,
+  HelpText<"Select clocked kernels with direct NBA stores (default: deferred)">;
 def coverage : Flag<["--"], "coverage">, Group<Compilation_Group>,
   HelpText<"Instrument line, toggle, and functional coverage">;
 def coverage_EQ : Joined<["--"], "coverage=">, Group<Compilation_Group>,

@@ -1,5 +1,5 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/materialize.sv -o %t/materialized.mlir
+// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/materialize.sv -o %t/materialized.mlir
 // RUN: FileCheck %s --check-prefix=MATERIALIZED < %t/materialized.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-materialize.test.

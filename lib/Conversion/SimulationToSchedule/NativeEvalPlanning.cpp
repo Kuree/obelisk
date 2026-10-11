@@ -12,6 +12,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 
+#include <algorithm>
 #include <numeric>
 
 using namespace mlir;
@@ -42,6 +43,7 @@ void reorderOwners(ResolvedNativeEvalPlan &plan, ArrayRef<uint32_t> order) {
   reorder(plan.mergedTwoStateExecutors);
   reorder(plan.mergedPromotionRanges);
   reorder(plan.ownerSubsumptionMasks);
+  reorder(plan.deferredOwners);
   for (auto [rank, fragment] : llvm::enumerate(plan.mergedFragments))
     fragment.bit = rank;
   for (auto &mask : plan.ownerSubsumptionMasks) {
@@ -197,8 +199,14 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     });
     if (clocked && (!clocks[record.bit] || multipleClocks.contains(record.bit)))
       continue;
+    // An owner that resumes in the Inactive region must not join a sweep:
+    // it runs only after every Active owner of its pass. It still orders its
+    // producers and consumers as a boundary.
+    bool deferred =
+        owner < plan.deferredOwners.size() && plan.deferredOwners[owner];
+    clocked &= !deferred;
     DenseSet<StringAttr> summarizedActivations;
-    bool safe = llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
+    bool safe = !deferred && llvm::all_of(direct.fragmentIDs, [&](uint32_t id) {
       auto fragment = fragments.find(id);
       if (fragment == fragments.end() ||
           fragment->second.getRegion() != schedule::ComputeRegionKind::Active)
@@ -709,6 +717,7 @@ resolveNativeEvalPlan(ModuleOp module,
     result.mergedFragments.push_back({direct.actorSlot, direct.continuation,
                                       entry.kernel, bit, entry.compute_node, 0,
                                       nullptr});
+    result.deferredOwners.push_back(direct.deferred);
     result.mergedExecutors.push_back(direct.wrapper);
     result.mergedTwoStateExecutors.push_back(direct.twoStateWrapper);
     result.mergedPromotionRanges.emplace_back();
@@ -1045,6 +1054,31 @@ resolveNativeEvalPlan(ModuleOp module,
   for (auto [slot, owner] : llvm::zip_equal(slots, ranked))
     order[slot] = owner;
   reorderOwners(result, order);
+
+  // Owners that resume in the Inactive region (IEEE 1800-2023 4.4.2.3) take
+  // the highest bits, in their existing relative order. The lowest pending
+  // bit is then deferred only when no Active owner is pending. They execute
+  // alone: no executor may consume another owner's deferred activation.
+  if (llvm::is_contained(result.deferredOwners, true)) {
+    for (auto [owner, deferred] : llvm::enumerate(result.deferredOwners)) {
+      if (!deferred)
+        continue;
+      uint32_t bit = result.mergedFragments[owner].bit;
+      bool shared = !result.ownerSubsumptionMasks[owner].isZero() ||
+                    llvm::any_of(result.ownerSubsumptionMasks,
+                                 [&](const APInt &mask) { return mask[bit]; });
+      if (shared)
+        return module.emitError(
+                   "a deferred eval owner cannot share an executor"),
+               failure();
+    }
+    SmallVector<uint32_t> partition(result.mergedFragments.size());
+    std::iota(partition.begin(), partition.end(), 0u);
+    std::stable_partition(
+        partition.begin(), partition.end(),
+        [&](uint32_t owner) { return !result.deferredOwners[owner]; });
+    reorderOwners(result, partition);
+  }
 
   // Project graph-level NBA reachability onto exclusive generated owners.
   ArrayRef<obelisk_rt_static_nba_root> nbaRoots = staticNBAPlan.roots;

@@ -1,5 +1,5 @@
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.eval.out

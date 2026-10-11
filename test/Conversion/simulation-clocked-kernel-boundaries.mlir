@@ -878,3 +878,83 @@ module attributes {obelisk.debug.native_timing} {
     }
   }
 }
+
+// -----
+
+// IEEE 1800-2023 20.2 and 9.2.3: `stop` calls `$finish` in the kernel's
+// phase, which ends the simulation at once, before the NBA region. The final
+// procedure then reads `q` without its pending update, so `q` keeps its NBA:
+// a direct store would be visible to it early.
+
+!bit = !simulation.logic<1>
+!byte = !simulation.logic<8>
+!bitref = !simulation.ref<!bit>
+!byteref = !simulation.ref<!byte>
+module attributes {obelisk.debug.native_timing} {
+  simulation.design @finish_in_phase {
+    simulation.scope.decl 0
+    simulation.storage.decl 0 in 0 : !bit design
+    simulation.storage.decl 1 in 0 : !byte design
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.code_unit.decl 2 in 0 initial hierarchy "clock"
+    simulation.code_unit.decl 3 in 0 always_ff hierarchy "count"
+    simulation.code_unit.decl 4 in 0 initial hierarchy "stop"
+    simulation.code_unit.decl 5 in 0 final hierarchy "last"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %clk = simulation.context.storage %ctx[0] : !bitref
+      %q = simulation.context.storage %ctx[1] : !byteref
+      %p0 = simulation.spawn @clock(%ctx, %clk) : !simulation.context, !bitref -> !simulation.process
+      %p1 = simulation.spawn @count(%ctx, %clk, %q) : !simulation.context, !bitref, !byteref -> !simulation.process
+      %p2 = simulation.spawn @stop(%ctx) : !simulation.context -> !simulation.process
+      %p3 = simulation.spawn @last(%ctx) : !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @clock(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}) attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %delay = simulation.time.constant 5
+      %one = simulation.logic.constant true, false : !bit
+      %zero = simulation.logic.constant false, false : !bit
+      cf.br ^low
+    ^low:
+      simulation.suspend.delay %delay to ^rise
+    ^rise:
+      simulation.ref.store %one to %clk : !bit, !bitref
+      simulation.suspend.delay %delay to ^fall
+    ^fall:
+      simulation.ref.store %zero to %clk : !bit, !bitref
+      cf.br ^low
+    }
+    // CHECK-LABEL: simulation.design @finish_in_phase
+    // CHECK-NOT: __obelisk_clocked
+    // CHECK: simulation.func private @count
+    // CHECK: simulation.nba.enqueue
+    // REPORT-NOT: obelisk clocked kernel:
+    // REPORT: obelisk clocked kernel rejection: root accessed by event activation = 1
+    simulation.func private @count(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !byteref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
+      %one = simulation.logic.constant 1 : i8, 0 : i8 : !byte
+      cf.br ^wait
+    ^wait:
+      simulation.suspend.edge posedge %clk to ^body : !bitref
+    ^body:
+      %old = simulation.ref.load %q : !byteref -> !byte
+      %next = simulation.logic.binary add %old, %one : !byte
+      simulation.nba.enqueue %next to %q : (!byte, !byteref) -> ()
+      cf.br ^wait
+    }
+    simulation.func @stop(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 1 : i32, code_unit_id = 4 : i64} {
+      %delay = simulation.time.constant 25
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      %zero = arith.constant 0 : i32
+      simulation.finish %ctx, %zero
+      simulation.return
+    }
+    simulation.func @last(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 2 : i32, code_unit_id = 5 : i64} {
+      %q = simulation.context.storage %ctx[1] : !byteref
+      %qv = simulation.ref.load %q : !byteref -> !byte
+      %stdout = arith.constant -2147483647 : i32
+      %format = simulation.bytes.constant "%d"
+      simulation.display %ctx to %stdout(%format, %qv) newline = true radix = <decimal> flags = [0, 0] : !simulation.bytes, !byte
+      simulation.return
+    }
+  }
+}

@@ -1159,6 +1159,14 @@ static int executeCompilation(
                     staticSpecialization + "'; expected auto, off, or on");
     valid = false;
   }
+  StringRef clockedKernels =
+      args.getLastArgValue(OPT_clocked_kernels_EQ, "deferred");
+  if (clockedKernels != "off" && clockedKernels != "immediate" &&
+      clockedKernels != "deferred") {
+    emitDriverError(Twine("unsupported clocked kernels '") + clockedKernels +
+                    "'; expected off, immediate, or deferred");
+    valid = false;
+  }
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     if (coverage->getOption().matches(OPT_coverage_EQ)) {
       SmallVector<StringRef> metrics;
@@ -1453,7 +1461,8 @@ static int executeCompilation(
           staticSpecialization == "auto" && nativeScheduler == "eval" &&
                   executionTier != "bytecode"
               ? "on"
-              : staticSpecialization);
+              : staticSpecialization,
+          /*earlySymbolDCE=*/true, clockedKernels);
     if (failed(passManager.run(*module)) || failed(verify(*module)))
       return 1;
   }

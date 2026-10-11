@@ -81,11 +81,12 @@ void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
 
 /// Populate the lowering pipeline with explicit static-state specialization.
 /// `staticSpecialization` is auto, off, or on. Auto enables the pass at O2/O3.
-void buildObeliskToSimulationPipeline(mlir::OpPassManager &manager,
-                                      uint32_t workers, llvm::StringRef vpiMode,
-                                      uint32_t optLevel,
-                                      llvm::StringRef staticSpecialization,
-                                      bool earlySymbolDCE = true);
+/// `clockedKernels` is off, immediate, or deferred (see
+/// obelisk-sim-fuse-clocked-kernels); kernels form at O1 and above.
+void buildObeliskToSimulationPipeline(
+    mlir::OpPassManager &manager, uint32_t workers, llvm::StringRef vpiMode,
+    uint32_t optLevel, llvm::StringRef staticSpecialization,
+    bool earlySymbolDCE = true, llvm::StringRef clockedKernels = "deferred");
 
 /// Register the aggregate serial/parallel/serial lowering pipeline.
 void registerObeliskToSimulationPipeline();

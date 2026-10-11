@@ -1040,6 +1040,10 @@ FailureOr<bool> makeNativeEvalPlan(
       std::move(resolved->periodicOwnerBits);
   SmallVector<APInt> ownerSubsumptionMasks =
       std::move(resolved->ownerSubsumptionMasks);
+  // Planning gives deferred owners the highest bits.
+  uint32_t firstDeferredBit =
+      static_cast<uint32_t>(llvm::find(resolved->deferredOwners, true) -
+                            resolved->deferredOwners.begin());
   uint32_t nbaTaintWordCount = resolved->nbaTaintWordCount;
   SmallVector<SmallVector<uint64_t>> recordNBATaintMasks =
       std::move(resolved->recordNBATaintMasks);
@@ -3731,7 +3735,9 @@ FailureOr<bool> makeNativeEvalPlan(
       if (record == mergedFragments.end())
         return false;
       size_t index = static_cast<size_t>(record - mergedFragments.begin());
-      if (mergedExecutors[index].empty())
+      // A deferred owner runs only after every Active owner of its pass; the
+      // dispatcher selects it once nothing else is pending.
+      if (mergedExecutors[index].empty() || bit >= firstDeferredBit)
         return false;
       LLVM::LLVMFuncOp executor =
           executorSymbols.lookup<LLVM::LLVMFuncOp>(mergedExecutors[index]);
@@ -5182,6 +5188,7 @@ FailureOr<bool> makeNativeEvalPlan(
       recordNBATaintMasks,   nbaTaintedRecords,
       nbaTaintWordCount,     prioritySignalHandoff,
       dynamicNBAValidNames,  hasOrderedNBA};
+  coordinatorPlan.firstDeferredBit = firstDeferredBit;
   SmallVector<SmallVector<uint32_t>> ownerStaticStates;
   SmallVector<APInt> ownerFineIngress;
   if (vpi.allowsWrite()) {

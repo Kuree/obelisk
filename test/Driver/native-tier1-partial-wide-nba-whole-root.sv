@@ -1,10 +1,10 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s \
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s \
 // RUN:   -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=GENERATED < %t.auto.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.auto.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.auto.out

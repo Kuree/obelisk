@@ -1,30 +1,30 @@
-// RUN: obelisk -O0 --native-scheduler=aot -emit-llvm %s -o %t.aot.ll
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=aot -emit-llvm %s -o %t.aot.ll
 // RUN: FileCheck %s --check-prefix=AOT < %t.aot.ll
-// RUN: obelisk -O0 --native-scheduler=generic -emit-llvm %s -o %t.generic.ll
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=generic -emit-llvm %s -o %t.generic.ll
 // RUN: FileCheck %s --check-prefix=GENERIC < %t.generic.ll
-// RUN: obelisk -O2 --native-scheduler=aot --static-specialization=off \
+// RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=aot --static-specialization=off \
 // RUN:   -emit-llvm %s -o %t.specialization-off.ll
 // RUN: FileCheck %s --check-prefix=SPECIALIZATION-OFF \
 // RUN:   < %t.specialization-off.ll
-// RUN: obelisk -O0 --native-scheduler=aot --static-specialization=on \
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=aot --static-specialization=on \
 // RUN:   -emit-llvm %s -o %t.specialization-on.ll
 // RUN: FileCheck %s --check-prefix=SPECIALIZATION-ON \
 // RUN:   < %t.specialization-on.ll
-// RUN: obelisk -O0 --vpi=full --native-scheduler=aot -emit-llvm %s \
+// RUN: obelisk --clocked-kernels=immediate -O0 --vpi=full --native-scheduler=aot -emit-llvm %s \
 // RUN:   -o %t.vpi.ll
 // RUN: FileCheck %s --check-prefix=AOT < %t.vpi.ll
-// RUN: obelisk --native-scheduler=aot %s -o %t.native
-// RUN: obelisk --native-scheduler=aot --execution-tier=bytecode %s \
+// RUN: obelisk --clocked-kernels=immediate --native-scheduler=aot %s -o %t.native
+// RUN: obelisk --clocked-kernels=immediate --native-scheduler=aot --execution-tier=bytecode %s \
 // RUN:   -o %t.bytecode
 // RUN: %t.native > %t.native.out
 // RUN: %t.bytecode > %t.bytecode.out
 // RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: obelisk -O0 --native-scheduler=eval -emit-llvm %s -o %t.eval.ll
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=eval -emit-llvm %s -o %t.eval.ll
 // RUN: FileCheck %s --check-prefix=EVAL < %t.eval.ll
-// RUN: obelisk -O0 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval > %t.eval.out
 // RUN: diff -u %t.bytecode.out %t.eval.out
-// RUN: not obelisk -O0 --native-scheduler=eval --static-specialization=off \
+// RUN: not obelisk --clocked-kernels=immediate -O0 --native-scheduler=eval --static-specialization=off \
 // RUN:   -emit-llvm %s -o %t.eval-off.ll \
 // RUN:   2>&1 | FileCheck %s --check-prefix=EVAL-DIAG
 

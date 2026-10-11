@@ -122,15 +122,17 @@ def ObeliskSimFuseClockedKernelsPass
     Requires VPI off and a single worker; invalidates the compute graph when
     it changes the design.
 
-    With `defer`, a kernel may instead resume through `#0`, after every
+    With `defer`, a kernel's wait may instead resume it in the Inactive
+    region (`resume_region = inactive`, as `@(edge) #0` would), after every
     Active event of its pass (IEEE 1800-2023 4.4.2.3, 4.5). Then only what
-    its own updates wake can observe its stores, so same-edge readers and
-    testbench delays no longer keep NBAs. The native eval coordinator does
-    not yet own such an Inactive hop, so this is off by default.
+    its own updates wake, other kernels and other Inactive events of its
+    phase can observe its stores, so same-edge readers, testbench delays and
+    their `$finish` no longer keep NBAs. The driver pipeline enables it
+    (`--clocked-kernels=deferred`, the default).
   }];
   let options = [
     Option<"defer", "defer", "bool", /*default=*/"false",
-           "Allow kernels that resume through #0 after the Active region">
+           "Allow kernels that resume in the Inactive region">
   ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",

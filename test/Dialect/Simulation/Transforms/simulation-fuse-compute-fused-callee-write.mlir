@@ -1,5 +1,5 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/fused-callee-write.sv -o %t/fused-callee-write.mlir
+// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/fused-callee-write.sv -o %t/fused-callee-write.mlir
 // RUN: FileCheck %s --check-prefix=CALLEE-WRITE-IR < %t/fused-callee-write.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-callee-write.test.

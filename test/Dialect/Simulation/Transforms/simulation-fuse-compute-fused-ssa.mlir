@@ -1,7 +1,7 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -O3 -emit-sim %t/fused-ssa.sv -o %t/fused-ssa.mlir
+// RUN: obelisk --clocked-kernels=immediate -O3 -emit-sim %t/fused-ssa.sv -o %t/fused-ssa.mlir
 // RUN: FileCheck %s --check-prefix=FUSED-SSA < %t/fused-ssa.mlir
-// RUN: obelisk -O3 --vpi=read -emit-sim %t/fused-ssa.sv -o %t/fused-ssa-read.mlir
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read -emit-sim %t/fused-ssa.sv -o %t/fused-ssa-read.mlir
 // RUN: FileCheck %s --check-prefix=READ-FUSED-SSA < %t/fused-ssa-read.mlir
 
 // Runtime behavior is checked in ../Runtime/simulation-fuse-compute-fused-ssa.test.

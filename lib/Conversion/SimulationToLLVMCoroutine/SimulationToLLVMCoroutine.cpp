@@ -365,6 +365,24 @@ LogicalResult verifyGeneratedEvalCallClosures(ModuleOp module) {
   return success();
 }
 
+/// The (actor, continuation) pairs whose wait schedules the resumption into
+/// the Inactive region (IEEE 1800-2023 4.4.2.3).
+DenseSet<std::pair<Operation *, uint32_t>>
+collectInactiveResumptions(ModuleOp module) {
+  DenseSet<std::pair<Operation *, uint32_t>> resumptions;
+  module.walk([&](Operation *operation) {
+    auto site =
+        operation->getAttrOfType<schedule::ContinuationSiteAttr>("site");
+    auto region =
+        operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
+    if (site && region && region.getValue() == sim::EventRegion::Inactive &&
+        sim::isSuspensionOp(operation))
+      if (auto actor = operation->getParentOfType<sim::SimFuncOp>())
+        resumptions.insert({actor.getOperation(), site.getId()});
+  });
+  return resumptions;
+}
+
 FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     ModuleOp module, sim::SimDesignOp design,
     const DenseMap<uint64_t, uint32_t> &actorSlotsByCodeUnit,
@@ -377,6 +395,8 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
     SmallVectorImpl<detail::DeferredDirectFragmentWrapper> &deferredWrappers,
     bool enabled) {
   SmallVector<NativeDirectFragment> result;
+  DenseSet<std::pair<Operation *, uint32_t>> inactiveResumptions =
+      collectInactiveResumptions(module);
   struct PendingEvalWrapper {
     sim::SimFuncOp body;
     sim::SimFuncOp twoStateBody;
@@ -1099,7 +1119,9 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
          ::obelisk::schedule::has<
              ::obelisk::schedule::Field::EvalInstanceCoordinator>(pending.body),
          initialActivation, /*tier2Convergence=*/false,
-         pending.runtimeCheckpoint});
+         pending.runtimeCheckpoint,
+         inactiveResumptions.contains(
+             {pending.actor.getOperation(), pending.continuation})});
   }
   if (!checkpointRoutes.empty())
     ::obelisk::schedule::set<schedule::metadata::evalCheckpointRoutes>(

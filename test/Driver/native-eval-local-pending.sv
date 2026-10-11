@@ -1,10 +1,10 @@
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval -emit-llvm %s -o %t.ll
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LIBRARY < %t.ll
-// RUN: obelisk -O0 --vpi=off --native-scheduler=eval %s -o %t.o0
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.o3 2> %t.timing
+// RUN: obelisk --clocked-kernels=immediate -O0 --vpi=off --native-scheduler=eval %s -o %t.o0
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.o3 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
-// RUN: obelisk -O3 --vpi=read --native-scheduler=eval %s -o %t.read
-// RUN: obelisk -O3 --vpi=full --native-scheduler=eval --mlir-timing %s -o %t.full 2> %t.full.timing
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read --native-scheduler=eval %s -o %t.read
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full --native-scheduler=eval --mlir-timing %s -o %t.full 2> %t.full.timing
 // RUN: FileCheck %s --check-prefix=FULL-PLAN < %t.full.timing
 // RUN: %t.o3 --execution-tier=bytecode > %t.reference
 // RUN: %t.o0 > %t.o0.out

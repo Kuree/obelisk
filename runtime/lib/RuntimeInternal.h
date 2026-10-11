@@ -506,6 +506,15 @@ inline bool obelisk_rt_is_mutable_home_region(uint32_t region) {
          region == OBELISK_RT_REGION_REACTIVE;
 }
 
+/// A region a suspension may resume in: a home region, or the Inactive
+/// (Re-Inactive) region that follows a mutable home. The latter is checked
+/// against the actual home when the process suspends.
+inline bool obelisk_rt_is_process_resume_region(uint32_t region) {
+  return obelisk_rt_is_process_home_region(region) ||
+         region == OBELISK_RT_REGION_INACTIVE ||
+         region == OBELISK_RT_REGION_RE_INACTIVE;
+}
+
 inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
                                              uint32_t &homeRegion) {
   constexpr uint32_t known =
@@ -535,6 +544,11 @@ inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
   if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0) {
     queuedRegion = (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
                    OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
+    // IEEE 1800-2023 4.4.2.3: resuming in the Inactive region of the home
+    // iteration is the resumption `@(event) #0` would make, in one step.
+    if (obelisk_rt_is_mutable_home_region(homeRegion) &&
+        queuedRegion == homeRegion + 1)
+      return true;
     return obelisk_rt_is_process_home_region(queuedRegion);
   }
   if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0)

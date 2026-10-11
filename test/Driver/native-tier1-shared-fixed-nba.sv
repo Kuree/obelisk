@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s \
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s \
 // RUN:   -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=SLOTS < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-QUEUE < %t.ll
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval %s -o %t.eval
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
 // RUN: %t.generic > %t.generic.out
 // RUN: diff -u %t.generic.out %t.eval.out

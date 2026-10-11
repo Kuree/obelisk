@@ -1,9 +1,9 @@
-// RUN: obelisk -O3 --vpi=off --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=COHORT < %t.timing
-// RUN: obelisk -O3 --vpi=off %s -o %t.native
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off %s -o %t.native
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=generic %s -o %t.reference
+// RUN: obelisk --clocked-kernels=immediate -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.native > %t.native.out
 // RUN: %t.reference > %t.reference.out
 // RUN: %t.bytecode > %t.bytecode.out

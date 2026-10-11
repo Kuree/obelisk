@@ -1,9 +1,9 @@
 // RUN: %python %S/Inputs/gen-native-eval-many-pending.py > %t.sv
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval --mlir-timing %t.sv -o %t.eval 2> %t.plan
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval --mlir-timing %t.sv -o %t.eval 2> %t.plan
 // RUN: FileCheck %s --check-prefix=PLAN < %t.plan
-// RUN: obelisk -O0 --vpi=off --native-scheduler=eval %t.sv -o %t.o0
-// RUN: obelisk -O3 --vpi=read --native-scheduler=eval %t.sv -o %t.read
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %t.sv -o %t.bytecode
+// RUN: obelisk --clocked-kernels=immediate -O0 --vpi=off --native-scheduler=eval %t.sv -o %t.o0
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read --native-scheduler=eval %t.sv -o %t.read
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --execution-tier=bytecode %t.sv -o %t.bytecode
 // RUN: %t.bytecode > %t.reference
 // RUN: %t.eval > %t.eval.out
 // RUN: %t.o0 > %t.o0.out
