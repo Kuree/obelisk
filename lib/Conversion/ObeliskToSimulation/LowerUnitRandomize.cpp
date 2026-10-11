@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -607,6 +608,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     unsigned elementWidth = 0;
     Value disabledElements{};
     Value originalScalar{};
+    Value currentValue{};
   };
   SmallVector<Property, 0> planned;
   uint64_t plannedWidth = 0;
@@ -2297,6 +2299,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }();
     if (failed(current))
       return failure();
+    property.currentValue = *current;
     FailureOr<Value> scalar = toRandomScalar(*current, location);
     if (succeeded(scalar))
       property.originalScalar = *scalar;
@@ -2506,6 +2509,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       bits = mergedBits;
       property.nextRandcKey = mergedKey;
       property.nextRandcPosition = mergedPosition;
+      FailureOr<Value> cyclic = convert(bits, property.type, false, location);
+      if (failed(cyclic))
+        return failure();
+      property.currentValue = arith::SelectOp::create(
+          builder, location, enabled, *cyclic, property.currentValue);
     }
     APInt aggregateMask = valueMask;
     if (currentOffset != 0) {
@@ -2549,6 +2557,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, anyActive,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
+  }
+  Value activeGuardBits = mutableMask;
+  for (auto [index, property] : llvm::enumerate(planned)) {
+    if (!property.isRandC)
+      continue;
+    APInt propertyMask =
+        APInt::getBitsSet(assignmentWidth, propertyOffsets[index],
+                          propertyOffsets[index] + property.width);
+    activeGuardBits = arith::OrIOp::create(
+        builder, location, activeGuardBits,
+        arith::SelectOp::create(builder, location, propertyEnabled[index],
+                                constantAssignment(propertyMask),
+                                constantAssignment64(0)));
   }
   struct AliasEquality {
     uint32_t leftOffset;
@@ -3357,8 +3378,32 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     instruction(opcode, width, signedOperation);
     return success();
   };
+  struct SafeConstraintValue {
+    Value value;
+    Value valid;
+    Value random;
+    Value inputs;
+    Value arguments;
+  };
+  std::function<FailureOr<SafeConstraintValue>(Operation *)>
+      safeConstraintValue;
+  std::function<FailureOr<Value>(Operation *)> constraintCreationValid;
   std::function<LogicalResult(Operation *)> emitProgramExpression;
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
+    if (auto inputs = expression->getAttrOfType<IntegerAttr>(
+            randomEvaluationInputsAttrName)) {
+      auto nested = getChildren(expression);
+      if (inputs.getValue().isNegative() ||
+          inputs.getValue().getActiveBits() > 64 ||
+          inputs.getValue().getZExtValue() + 1 != nested.size())
+        return failure();
+      FailureOr<unsigned> width = expressionWidth(expression);
+      if (failed(width) || failed(emitProgramExpression(nested.back())))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
+                  isSignedNode(nested.back()));
+      return success();
+    }
     if (auto dist = dyn_cast<semantic::SVDistExpressionOp>(expression)) {
       if (llvm::is_contained(
               llvm::map_range(distPlans,
@@ -3726,7 +3771,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             isSigned = false;
             return found->second;
           }
-          FailureOr<Value> lowered = lowerExpression(weight);
+          FailureOr<SafeConstraintValue> safe = safeConstraintValue(weight);
+          FailureOr<Value> lowered = succeeded(safe)
+                                         ? FailureOr<Value>(safe->value)
+                                         : FailureOr<Value>(failure());
           FailureOr<Value> scalar =
               succeeded(lowered)
                   ? toPackedScalar(*lowered, getSemanticLocation(weight))
@@ -3884,6 +3932,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FailureOr<unsigned> width = expressionWidth(expression);
     if (failed(width))
       return failure();
+    if (expression->hasAttr(randomEvaluationErrorAttrName)) {
+      // Creation validity carries ERROR separately. The solver must never
+      // read an invalid slice, including one eliminated by a state guard.
+      literalInstruction(*width, false, APInt::getZero(*width));
+      return success();
+    }
     if (auto bitOffset = expression->getAttrOfType<IntegerAttr>(
             randomVariableBitOffsetAttrName)) {
       const APInt &offsetValue = bitOffset.getValue();
@@ -3941,11 +3995,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return emitProgramExpression(nested[selected.getValue().getZExtValue()]);
     }
     auto captureExpression = [&]() -> LogicalResult {
-      FailureOr<Value> value = lowerExpression(expression);
+      FailureOr<SafeConstraintValue> safe = safeConstraintValue(expression);
+      FailureOr<Value> value = succeeded(safe) ? FailureOr<Value>(safe->value)
+                                               : FailureOr<Value>(failure());
       FailureOr<Value> scalar =
           succeeded(value)
               ? toRandomScalar(*value, getSemanticLocation(expression))
               : FailureOr<Value>(failure());
+      if (succeeded(scalar) && isa<sim::LogicType>((*scalar).getType()) &&
+          *width == 1)
+        scalar = truthValue(*scalar, getSemanticLocation(expression));
       if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
         emitError(getSemanticLocation(expression))
             << "four-state and non-integral runtime constraint captures are "
@@ -4547,6 +4606,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     enclosingThisObject = programSavedThis;
     thisObject = receiver;
   }
+  for (const Property &property : planned)
+    randomizeCandidateValues.push_back(property.currentValue);
   bool emittedHard = false;
   bool emittedSoft = false;
   llvm::DenseMap<Operation *, uint64_t> softPriorities;
@@ -4621,6 +4682,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto collectSoftReferences = [&](Operation *expression) {
     SmallVector<SoftReference> references;
     expression->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      if (auto inputs =
+              nested->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName)) {
+        APInt mask = inputs.getValue().zextOrTrunc(assignmentWidth);
+        while (!mask.isZero()) {
+          unsigned offset = mask.countTrailingZeros();
+          unsigned width = mask.lshr(offset).countTrailingOnes();
+          references.push_back({offset, width, {}});
+          mask.clearBits(offset, offset + width);
+        }
+        // The retained input inventory also carries direct non-rand symbol
+        // references used by disable soft. Expanded body reads are marked
+        // indirect separately below.
+        return WalkResult::advance();
+      }
       // Reads introduced by expanding a constraint function's body are
       // indirect references, not references written in the soft expression.
       if (nested->hasAttr(randomFunctionStateAttrName))
@@ -4656,12 +4731,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   struct PriorityInputRecord {
     uint32_t index;
     APInt references, arguments;
+    uint32_t maskCapture = 0;
   };
   SmallVector<PriorityInputRecord> priorityInputRecords;
-  auto priorityInputs = [&](Operation *source) {
-    if (auto inputs =
-            source->getAttrOfType<IntegerAttr>(randomPriorityInputsAttrName))
-      return inputs.getValue().zextOrTrunc(assignmentWidth);
+  auto sourceReferences = [&](Operation *source) {
     APInt inputs = APInt::getZero(assignmentWidth);
     for (const SoftReference &reference : collectSoftReferences(source))
       if (!reference.symbol)
@@ -4669,17 +4742,501 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                       .shl(reference.offset);
     return inputs;
   };
+  auto sourceFunctionArguments = [&](Operation *source) {
+    APInt inputs = APInt::getZero(assignmentWidth);
+    source->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      if (auto mask =
+              nested->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName)) {
+        inputs |= mask.getValue().zextOrTrunc(assignmentWidth);
+        return WalkResult::skip();
+      }
+      if (nested->hasAttr(randomFunctionStateAttrName))
+        return WalkResult::skip();
+      return WalkResult::advance();
+    });
+    return inputs;
+  };
+  auto priorityInputs = [&](Operation *source) {
+    if (auto inputs =
+            source->getAttrOfType<IntegerAttr>(randomPriorityInputsAttrName))
+      return inputs.getValue().zextOrTrunc(assignmentWidth);
+    return sourceReferences(source);
+  };
   auto priorityArguments = [&](Operation *source) {
     if (auto inputs =
             source->getAttrOfType<IntegerAttr>(randomPriorityArgumentsAttrName))
       return inputs.getValue().zextOrTrunc(assignmentWidth);
     return APInt::getZero(assignmentWidth);
   };
-  auto recordPriorityInputs = [&](APInt inputs, APInt arguments) {
-    if (hasFunctionPriority)
+
+  // IEEE 1800-2023 18.5.12 evaluates guards before forming the relation.
+  // An active rand reference is RANDOM even when a proposed value happens to
+  // make its predicate true. Only state TRUE/FALSE can absorb an ERROR.
+  auto guardConstant = [&](bool value) -> Value {
+    return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                     builder.getBoolAttr(value));
+  };
+  auto guardNot = [&](Value value) -> Value {
+    if (matchPattern(value, m_One()))
+      return guardConstant(false);
+    if (matchPattern(value, m_Zero()))
+      return guardConstant(true);
+    return arith::XOrIOp::create(builder, location, value, guardConstant(true));
+  };
+  auto guardAnd = [&](Value lhs, Value rhs) -> Value {
+    if (matchPattern(lhs, m_Zero()) || matchPattern(rhs, m_Zero()))
+      return guardConstant(false);
+    if (matchPattern(lhs, m_One()))
+      return rhs;
+    if (matchPattern(rhs, m_One()))
+      return lhs;
+    return arith::AndIOp::create(builder, location, lhs, rhs);
+  };
+  auto guardOr = [&](Value lhs, Value rhs) -> Value {
+    if (matchPattern(lhs, m_One()) || matchPattern(rhs, m_One()))
+      return guardConstant(true);
+    if (matchPattern(lhs, m_Zero()))
+      return rhs;
+    if (matchPattern(rhs, m_Zero()))
+      return lhs;
+    return arith::OrIOp::create(builder, location, lhs, rhs);
+  };
+  auto unionGuardInputs = [&](Value lhs, Value rhs) -> Value {
+    if (matchPattern(lhs, m_Zero()))
+      return rhs;
+    if (matchPattern(rhs, m_Zero()))
+      return lhs;
+    APInt left, right;
+    if (matchPattern(lhs, m_ConstantInt(&left)) &&
+        matchPattern(rhs, m_ConstantInt(&right)))
+      return constantAssignment(left | right);
+    return arith::OrIOp::create(builder, location, lhs, rhs);
+  };
+  auto selectGuardInputs = [&](Value condition, Value inputs) -> Value {
+    if (matchPattern(condition, m_One()))
+      return inputs;
+    if (matchPattern(condition, m_Zero()))
+      return constantAssignment64(0);
+    return arith::SelectOp::create(builder, location, condition, inputs,
+                                   constantAssignment64(0));
+  };
+  auto stateGuard = [&](const SafeConstraintValue &value,
+                        bool positive) -> FailureOr<Value> {
+    FailureOr<Value> predicate = truthValue(value.value, location);
+    if (failed(predicate))
+      return failure();
+    return guardAnd(guardAnd(value.valid, guardNot(value.random)),
+                    positive ? *predicate : guardNot(*predicate));
+  };
+  llvm::DenseMap<Operation *, SafeConstraintValue> safeStateValues;
+  bool freezeSafeStateValues = true;
+  llvm::SmallDenseSet<Value> nonNullReceivers;
+  for (Value object = receiver; object;) {
+    nonNullReceivers.insert(object);
+    auto cast = object.getDefiningOp<sim::SimClassCastOp>();
+    object = cast ? cast.getObject() : Value{};
+  }
+  safeConstraintValue =
+      [&](Operation *expression) -> FailureOr<SafeConstraintValue> {
+    bool candidate = dependsOnCandidate(expression);
+    if (!candidate)
+      if (auto found = safeStateValues.find(expression);
+          found != safeStateValues.end())
+        return found->second;
+    FailureOr<Type> resultType = getNormalizedSemanticType(expression);
+    if (failed(resultType))
+      return failure();
+    SmallVector<Operation *> operands = getChildren(expression);
+    SmallVector<Operation *> inputs;
+    for (Operation *operand : operands) {
+      if (isa<semantic::SVNullLiteralOp>(operand)) {
+        // Handle comparisons materialize null in the type of the other
+        // operand. It has no independent runtime type or evaluation error.
+        continue;
+      } else if (isa<semantic::SVValueRangeExpressionOp>(operand)) {
+        auto endpoints = getChildren(operand);
+        llvm::append_range(inputs, endpoints);
+      } else {
+        inputs.push_back(operand);
+      }
+    }
+    SmallVector<SafeConstraintValue> values;
+    Value valid = guardConstant(true);
+    for (Operation *input : inputs) {
+      FailureOr<SafeConstraintValue> value = safeConstraintValue(input);
+      if (failed(value))
+        return failure();
+      values.push_back(*value);
+      valid = guardAnd(valid, value->valid);
+    }
+    APInt inputMask = priorityInputs(expression);
+    Value guardInputs = constantAssignment(inputMask);
+    Value guardArguments =
+        constantAssignment(sourceFunctionArguments(expression));
+    Value random =
+        inputMask.isZero()
+            ? guardConstant(false)
+            : arith::CmpIOp::create(
+                  builder, location, arith::CmpIPredicate::ne,
+                  arith::AndIOp::create(builder, location, activeGuardBits,
+                                        constantAssignment(inputMask)),
+                  constantAssignment64(0))
+                  .getResult();
+
+    Value result;
+    auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(expression);
+    auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression);
+    if (expression->hasAttr(randomEvaluationInputsAttrName)) {
+      auto count = expression->getAttrOfType<IntegerAttr>(
+          randomEvaluationInputsAttrName);
+      if (count.getValue().isNegative() ||
+          count.getValue().getActiveBits() > 64 ||
+          count.getValue().getZExtValue() + 1 != values.size())
+        return failure();
+      FailureOr<Value> converted =
+          convert(values.back().value, *resultType, isSignedNode(inputs.back()),
+                  location);
+      if (failed(converted))
+        return failure();
+      result = *converted;
+    } else if (binary && (binary.getOperatorKind() ==
+                              semantic::SVBinaryOperator::LogicalAnd ||
+                          binary.getOperatorKind() ==
+                              semantic::SVBinaryOperator::LogicalOr)) {
+      if (values.size() != 2)
+        return failure();
+      bool conjunction =
+          binary.getOperatorKind() == semantic::SVBinaryOperator::LogicalAnd;
+      FailureOr<Value> lhsAbsorbs = stateGuard(values[0], !conjunction);
+      FailureOr<Value> rhsAbsorbs = stateGuard(values[1], !conjunction);
+      FailureOr<Value> lhs = truthValue(values[0].value, location);
+      FailureOr<Value> rhs = truthValue(values[1].value, location);
+      if (failed(lhsAbsorbs) || failed(rhsAbsorbs) || failed(lhs) ||
+          failed(rhs))
+        return failure();
+      Value absorbs = guardOr(*lhsAbsorbs, *rhsAbsorbs);
+      valid = guardOr(absorbs, valid);
+      random = guardAnd(
+          guardNot(absorbs),
+          guardAnd(valid, guardOr(values[0].random, values[1].random)));
+      guardInputs = selectGuardInputs(
+          guardNot(absorbs),
+          unionGuardInputs(values[0].inputs, values[1].inputs));
+      guardArguments = selectGuardInputs(
+          guardNot(absorbs),
+          unionGuardInputs(values[0].arguments, values[1].arguments));
+      Value predicate =
+          conjunction ? guardAnd(*lhs, *rhs) : guardOr(*lhs, *rhs);
+      if (isa<sim::LogicType>(*resultType)) {
+        FailureOr<Value> left = conditionalPredicate(values[0].value, location);
+        FailureOr<Value> right =
+            conditionalPredicate(values[1].value, location);
+        if (failed(left) || failed(right))
+          return failure();
+        predicate = sim::SimLogicLogicalOp::create(
+            builder, location, sim::LogicType::get(function.getContext(), 1),
+            conjunction ? sim::LogicalKind::And : sim::LogicalKind::Or, *left,
+            *right);
+      }
+      FailureOr<Value> converted =
+          convert(predicate, *resultType, false, location);
+      if (failed(converted))
+        return failure();
+      result = *converted;
+    } else if (unary && unary.getOperatorKind() ==
+                            semantic::SVUnaryOperator::LogicalNot) {
+      if (values.size() != 1)
+        return failure();
+      FailureOr<Value> predicate = truthValue(values[0].value, location);
+      if (failed(predicate))
+        return failure();
+      random = values[0].random;
+      guardInputs = values[0].inputs;
+      guardArguments = values[0].arguments;
+      Value negated = guardNot(*predicate);
+      if (isa<sim::LogicType>(*resultType)) {
+        FailureOr<Value> logical =
+            conditionalPredicate(values[0].value, location);
+        if (failed(logical))
+          return failure();
+        negated = sim::SimLogicUnaryOp::create(
+            builder, location, sim::LogicType::get(function.getContext(), 1),
+            sim::UnaryKind::LogicalNot, *logical);
+      }
+      FailureOr<Value> converted =
+          convert(negated, *resultType, false, location);
+      if (failed(converted))
+        return failure();
+      result = *converted;
+    } else {
+      // Capture each address operand once. Runtime reads of a null member or
+      // an invalid element occur only on the valid edge; the other edge carries
+      // a typed dummy and ERROR, allowing the guard algebra to sift it safely.
+      if (expression->hasAttr(randomEvaluationErrorAttrName))
+        valid = guardConstant(false);
+      if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
+          !values.empty() && expression->hasAttr("simulation.class_field") &&
+          isa<sim::ClassHandleType>(values.front().value.getType()) &&
+          !nonNullReceivers.contains(values.front().value)) {
+        Value isNull = sim::SimManagedIsNullOp::create(
+            builder, location, builder.getI1Type(), values.front().value);
+        valid = guardAnd(valid, guardNot(isNull));
+      }
+      if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
+          !values.empty() && !dependsOnCandidate(inputs.front())) {
+        Type aggregate = values.front().value.getType();
+        bool tagged = (isa<sim::PackedUnionType>(aggregate) &&
+                       cast<sim::PackedUnionType>(aggregate).getIsTagged()) ||
+                      (isa<sim::UnpackedUnionType>(aggregate) &&
+                       cast<sim::UnpackedUnionType>(aggregate).getIsTagged());
+        if (tagged) {
+          auto ordinal =
+              expression->getAttrOfType<IntegerAttr>("field_ordinal");
+          if (!ordinal || ordinal.getValue().getActiveBits() > 32)
+            return failure();
+          valid = guardAnd(valid, sim::SimUnionIsActiveOp::create(
+                                      builder, location, builder.getI1Type(),
+                                      values.front().value,
+                                      ordinal.getValue().getZExtValue()));
+        }
+      }
+      if (isa<semantic::SVElementSelectExpressionOp>(expression) &&
+          values.size() == 2) {
+        Type baseType = values[0].value.getType();
+        Value left, right;
+        if (auto array = dyn_cast<sim::UnpackedArrayType>(baseType)) {
+          left = constant64(array.getLeft());
+          right = constant64(array.getRight());
+        } else if (auto array = dyn_cast<sim::PackedArrayType>(baseType)) {
+          left = constant64(array.getLeft());
+          right = constant64(array.getRight());
+        } else if (isa<sim::DynamicArrayType, sim::QueueType>(baseType)) {
+          left = constant64(0);
+          Value size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                       values[0].value);
+          right = arith::SubIOp::create(builder, location, size, constant64(1));
+        } else if (auto width = sim::getPackedWidth(baseType)) {
+          left = constant64(*width - 1);
+          right = constant64(0);
+        }
+        if (left && right) {
+          auto sourceType = inputs[1]->getAttrOfType<TypeAttr>("semantic_type");
+          FailureOr<Value> index = toArrayIndex(
+              values[1].value,
+              sourceType && isSignedSemanticType(sourceType.getValue()),
+              location);
+          if (failed(index))
+            return failure();
+          Value known = guardConstant(true);
+          if (auto logic = dyn_cast<sim::LogicType>((*index).getType())) {
+            Value bits = sim::SimLogicToBitsOp::create(
+                builder, location, builder.getIntegerType(logic.getWidth()),
+                *index);
+            Value restored =
+                sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+            known = sim::SimLogicCompareOp::create(
+                builder, location, builder.getI1Type(),
+                sim::CompareKind::CaseEq, *index, restored);
+            index = bits;
+          }
+          FailureOr<Value> lower =
+              convert(left, (*index).getType(), true, location);
+          FailureOr<Value> upper =
+              convert(right, (*index).getType(), true, location);
+          if (failed(lower) || failed(upper))
+            return failure();
+          Value ascending = arith::CmpIOp::create(
+              builder, location, arith::CmpIPredicate::sle, *lower, *upper);
+          Value min = arith::SelectOp::create(builder, location, ascending,
+                                              *lower, *upper);
+          Value max = arith::SelectOp::create(builder, location, ascending,
+                                              *upper, *lower);
+          Value inRange = guardAnd(
+              arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::sge, *index, min),
+              arith::CmpIOp::create(builder, location,
+                                    arith::CmpIPredicate::sle, *index, max));
+          if (isa<sim::DynamicArrayType, sim::QueueType>(baseType))
+            inRange = guardAnd(inRange,
+                               arith::CmpIOp::create(builder, location,
+                                                     arith::CmpIPredicate::sge,
+                                                     right, constant64(0)));
+          valid = guardAnd(valid, guardAnd(known, inRange));
+        }
+      }
+      SmallVector<std::pair<Operation *, Value>> previous;
+      for (auto [input, value] : llvm::zip_equal(inputs, values)) {
+        previous.push_back({input, expressionCaptures.lookup(input)});
+        expressionCaptures[input] = value.value;
+      }
+      llvm::scope_exit restore([&] {
+        for (auto [input, value] : llvm::reverse(previous)) {
+          if (value)
+            expressionCaptures[input] = value;
+          else
+            expressionCaptures.erase(input);
+        }
+      });
+      if (matchPattern(valid, m_One())) {
+        FailureOr<Value> lowered = lowerExpression(expression);
+        if (failed(lowered))
+          return failure();
+        result = *lowered;
+      } else {
+        Block *read = addBlock();
+        Block *invalid = addBlock();
+        Block *done = addBlock();
+        result = done->addArgument(*resultType, location);
+        cf::CondBranchOp::create(builder, location, valid, read, ValueRange{},
+                                 invalid, ValueRange{});
+        setCurrent(invalid);
+        Value dummy = createDefaultValue(builder, location, *resultType);
+        cf::BranchOp::create(builder, location, done, ValueRange{dummy});
+        setCurrent(read);
+        FailureOr<Value> lowered = lowerExpression(expression);
+        if (failed(lowered))
+          return failure();
+        cf::BranchOp::create(builder, location, done, ValueRange{*lowered});
+        setCurrent(done);
+      }
+    }
+    SafeConstraintValue safe{result, valid, random, guardInputs,
+                             guardArguments};
+    if (!candidate && freezeSafeStateValues)
+      safeStateValues[expression] = safe;
+    return safe;
+  };
+  constraintCreationValid = [&](Operation *constraint) -> FailureOr<Value> {
+    SmallVector<Operation *> nested = getChildren(constraint);
+    if (isa<semantic::SVSolveBeforeConstraintOp,
+            semantic::SVDisableSoftConstraintOp,
+            semantic::SVForeachConstraintOp>(constraint))
+      return guardConstant(true);
+    if (auto expression =
+            dyn_cast<semantic::SVExpressionConstraintOp>(constraint)) {
+      if (nested.size() != 1)
+        return failure();
+      if (isa<semantic::SVDistExpressionOp>(nested.front())) {
+        Value valid = guardConstant(true);
+        for (Operation *item : getChildren(nested.front())) {
+          auto inputs = isa<semantic::SVValueRangeExpressionOp>(item)
+                            ? getChildren(item)
+                            : SmallVector<Operation *>{item};
+          for (Operation *input : inputs) {
+            FailureOr<SafeConstraintValue> safe = safeConstraintValue(input);
+            if (failed(safe))
+              return failure();
+            valid = guardAnd(valid, safe->valid);
+          }
+        }
+        return valid;
+      }
+      FailureOr<SafeConstraintValue> safe = safeConstraintValue(nested.front());
+      return succeeded(safe) ? FailureOr<Value>(safe->valid)
+                             : FailureOr<Value>(failure());
+    }
+    if (isa<semantic::SVImplicationConstraintOp,
+            semantic::SVConditionalConstraintOp>(constraint)) {
+      bool implication = isa<semantic::SVImplicationConstraintOp>(constraint);
+      auto conditional =
+          dyn_cast<semantic::SVConditionalConstraintOp>(constraint);
+      if (nested.size() != (implication || !conditional.getHasElse() ? 2u : 3u))
+        return failure();
+      FailureOr<SafeConstraintValue> guard =
+          safeConstraintValue(nested.front());
+      FailureOr<Value> body = constraintCreationValid(nested[1]);
+      if (failed(guard) || failed(body))
+        return failure();
+      FailureOr<Value> falseGuard = stateGuard(*guard, false);
+      if (failed(falseGuard))
+        return failure();
+      Value valid = guardAnd(guard->valid, guardOr(*falseGuard, *body));
+      if (!implication && conditional.getHasElse()) {
+        FailureOr<Value> other = constraintCreationValid(nested[2]);
+        FailureOr<Value> trueGuard = stateGuard(*guard, true);
+        if (failed(other) || failed(trueGuard))
+          return failure();
+        valid = guardAnd(valid, guardOr(*trueGuard, *other));
+      }
+      return valid;
+    }
+    Value valid = guardConstant(true);
+    if (isa<semantic::SVUniquenessConstraintOp>(constraint)) {
+      for (Operation *input : nested) {
+        FailureOr<SafeConstraintValue> safe = safeConstraintValue(input);
+        if (failed(safe))
+          return failure();
+        valid = guardAnd(valid, safe->valid);
+      }
+    } else {
+      for (Operation *item : nested) {
+        FailureOr<Value> next = constraintCreationValid(item);
+        if (failed(next))
+          return failure();
+        valid = guardAnd(valid, *next);
+      }
+    }
+    return valid;
+  };
+  struct CreationCheck {
+    Value valid;
+    uint32_t block;
+  };
+  SmallVector<CreationCheck> creationChecks;
+  bool hasDynamicGuardInputs = false;
+  auto recordPriorityInputs = [&](APInt inputs, APInt arguments,
+                                  Operation *source =
+                                      nullptr) -> LogicalResult {
+    if (hasFunctionPriority) {
+      uint32_t maskCapture = 0;
+      if (source) {
+        Value mask = constantAssignment(sourceReferences(source));
+        Value argumentMask =
+            constantAssignment(sourceFunctionArguments(source));
+        Value enabled = guardConstant(true);
+        for (Operation *child = source, *parent = child->getParentOp();
+             parent && parent != op->getParentOp();
+             child = parent, parent = parent->getParentOp()) {
+          bool implication = isa<semantic::SVImplicationConstraintOp>(parent);
+          if (!implication && !isa<semantic::SVConditionalConstraintOp>(parent))
+            continue;
+          SmallVector<Operation *> parts = getChildren(parent);
+          FailureOr<SafeConstraintValue> guard =
+              safeConstraintValue(parts.front());
+          if (failed(guard))
+            return failure();
+          bool positive = implication || child == parts[1];
+          FailureOr<Value> eliminated = stateGuard(*guard, !positive);
+          if (failed(eliminated))
+            return failure();
+          enabled =
+              guardAnd(enabled, guardAnd(guard->valid, guardNot(*eliminated)));
+          mask = unionGuardInputs(mask, guard->inputs);
+          argumentMask = unionGuardInputs(argumentMask, guard->arguments);
+        }
+        mask = unionGuardInputs(
+            mask, constantAssignment(inputs & ~priorityInputs(source)));
+        mask = selectGuardInputs(enabled, mask);
+        argumentMask = unionGuardInputs(
+            argumentMask,
+            constantAssignment(arguments & ~priorityArguments(source)));
+        argumentMask = selectGuardInputs(enabled, argumentMask);
+        APInt constant, constantArguments;
+        if (!matchPattern(mask, m_ConstantInt(&constant)) ||
+            constant.zextOrTrunc(assignmentWidth) != inputs ||
+            !matchPattern(argumentMask, m_ConstantInt(&constantArguments)) ||
+            constantArguments.zextOrTrunc(assignmentWidth) != arguments) {
+          maskCapture = static_cast<uint32_t>(programCaptures.size() + 1);
+          programCaptures.push_back(mask);
+          programCaptures.push_back(argumentMask);
+          hasDynamicGuardInputs = true;
+        }
+      }
       priorityInputRecords.push_back(
           {static_cast<uint32_t>(programInstructions.size() - 1),
-           std::move(inputs), std::move(arguments)});
+           std::move(inputs), std::move(arguments), maskCapture});
+    }
+    return success();
   };
   llvm::DenseMap<Operation *, SmallVector<const SoftDisable *>> softDisablers;
   for (const SoftDisable &disable : softDisables) {
@@ -4774,6 +5331,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                          ? getChildren(root)
                                          : SmallVector<Operation *>{root};
     for (Operation *item : items) {
+      FailureOr<Value> valid = constraintCreationValid(item);
+      if (failed(valid))
+        return failure();
+      if (!matchPattern(*valid, m_One())) {
+        creationChecks.push_back({*valid, constraintBlock});
+        uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+        programCaptures.push_back(
+            arith::ExtUIOp::create(builder, location, i64, *valid));
+        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 1, false, capture);
+        instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false, constraintBlock);
+        if (failed(recordPriorityInputs(APInt::getZero(assignmentWidth),
+                                        APInt::getZero(assignmentWidth))))
+          return failure();
+        emittedHard = true;
+      }
       bool hasHard = false;
       SmallVector<Operation *> hardConstraints;
       SmallVector<semantic::SVExpressionConstraintOp> softConstraints;
@@ -4802,7 +5374,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (failed(emitProgramConstraint(item, /*softTarget=*/nullptr)))
             return failure();
           instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false, constraintBlock);
-          recordPriorityInputs(priorityInputs(hard), priorityArguments(hard));
+          if (failed(recordPriorityInputs(priorityInputs(hard),
+                                          priorityArguments(hard), hard)))
+            return failure();
         }
         priorityHardTarget = nullptr;
         emittedHard = true;
@@ -4828,7 +5402,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           inputs |= priorityInputs(disable->source);
           arguments |= priorityArguments(disable->source);
         }
-        recordPriorityInputs(std::move(inputs), std::move(arguments));
+        if (failed(recordPriorityInputs(std::move(inputs), std::move(arguments),
+                                        soft)))
+          return failure();
         emittedSoft = true;
         activeSoftDistSource = nullptr;
       }
@@ -4858,8 +5434,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     emitLiteral(true);
     instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
-    recordPriorityInputs(APInt::getZero(assignmentWidth),
-                         APInt::getZero(assignmentWidth));
+    if (failed(recordPriorityInputs(APInt::getZero(assignmentWidth),
+                                    APInt::getZero(assignmentWidth))))
+      return failure();
   }
   if (!rawDistWeights && !distPlans.empty() && hasSolveBefore) {
     emitError(location)
@@ -4983,6 +5560,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;
   if (hasFunctionPriority)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY;
+  if (hasDynamicGuardInputs)
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS;
   if (!distPlans.empty())
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DIST;
   bool hasFiniteDomains = llvm::any_of(planned, [](const Property &property) {
@@ -5081,7 +5660,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     append32(static_cast<uint32_t>(priorityInputRecords.size()));
     for (const auto &record : priorityInputRecords) {
       append32(record.index);
-      append32(0);
+      append32(record.maskCapture);
       for (const APInt *inputs : {&record.references, &record.arguments})
         for (unsigned word = 0; word != inputs->getNumWords(); ++word)
           append64(inputs->getRawData()[word]);
@@ -6998,6 +7577,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value hard;
     Value preferred;
   };
+  // The captures above dominate every candidate checker. State values first
+  // encountered inside a runtime foreach must remain local to that checker.
+  freezeSafeStateValues = false;
   auto materializeConstraintCheck =
       [&](Value assignment) -> FailureOr<ConstraintCheck> {
     FailureOr<SmallVector<Value>> candidates =
@@ -7126,11 +7708,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           }
           return supported;
         }
-        FailureOr<Value> value = lowerExpression(nested.front());
+        FailureOr<SafeConstraintValue> value =
+            safeConstraintValue(nested.front());
         if (failed(value))
           return failure();
         FailureOr<Value> predicate =
-            truthValue(*value, getSemanticLocation(constraint));
+            truthValue(value->value, getSemanticLocation(constraint));
         if (failed(predicate))
           return failure();
         Value result = *predicate;
@@ -7148,11 +7731,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                               selected, constant64(0));
             }
             for (auto [guard, positive] : disable->guards) {
-              FailureOr<Value> value = lowerExpression(guard);
+              FailureOr<SafeConstraintValue> value = safeConstraintValue(guard);
               if (failed(value))
                 return failure();
               FailureOr<Value> condition =
-                  truthValue(*value, getSemanticLocation(guard));
+                  truthValue(value->value, getSemanticLocation(guard));
               if (failed(condition))
                 return failure();
               Value guardValue = *condition;
@@ -7177,12 +7760,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               << "implication constraint does not contain a predicate and body";
           return failure();
         }
-        FailureOr<Value> predicateValue = lowerExpression(nested.front());
+        FailureOr<SafeConstraintValue> predicateValue =
+            safeConstraintValue(nested.front());
         FailureOr<Value> body = lowerConstraint(nested.back(), softTarget);
         if (failed(predicateValue) || failed(body))
           return failure();
-        FailureOr<Value> predicate =
-            truthValue(*predicateValue, getSemanticLocation(nested.front()));
+        FailureOr<Value> predicate = truthValue(
+            predicateValue->value, getSemanticLocation(nested.front()));
         if (failed(predicate))
           return failure();
         Value falseValue = arith::ConstantOp::create(
@@ -7203,12 +7787,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               << "conditional constraint has inconsistent branch inventory";
           return failure();
         }
-        FailureOr<Value> predicateValue = lowerExpression(nested[0]);
+        FailureOr<SafeConstraintValue> predicateValue =
+            safeConstraintValue(nested[0]);
         FailureOr<Value> thenValue = lowerConstraint(nested[1], softTarget);
         if (failed(predicateValue) || failed(thenValue))
           return failure();
         FailureOr<Value> predicate =
-            truthValue(*predicateValue, getSemanticLocation(nested[0]));
+            truthValue(predicateValue->value, getSemanticLocation(nested[0]));
         if (failed(predicate))
           return failure();
         Value elseValue;
@@ -7234,10 +7819,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               .getResult();
         SmallVector<Value> values;
         for (Operation *item : nested) {
-          FailureOr<Value> value = lowerExpression(item);
+          FailureOr<SafeConstraintValue> value = safeConstraintValue(item);
           if (failed(value))
             return failure();
-          values.push_back(*value);
+          values.push_back(value->value);
         }
         Value result = arith::ConstantOp::create(
             builder, getSemanticLocation(constraint), builder.getI1Type(),
@@ -7353,12 +7938,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         values[iteratorPath.getValue()] = *iterator;
         FailureOr<Value> item = lowerConstraint(nested.back(), softTarget);
+        FailureOr<Value> valid = constraintCreationValid(nested.back());
         if (hadPrevious)
           values[iteratorPath.getValue()] = saved;
         else
           values.erase(iteratorPath.getValue());
-        if (failed(item))
+        if (failed(item) || failed(valid))
           return failure();
+        item = guardAnd(*item, *valid);
         Value nextResult =
             arith::AndIOp::create(builder, foreachLocation, accumulated, *item);
         Value nextOrdinal = arith::AddIOp::create(builder, foreachLocation,
@@ -7375,6 +7962,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
     Value satisfied = arith::ConstantOp::create(
         builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+    for (const CreationCheck &check : creationChecks) {
+      Value valid = check.valid;
+      if (check.block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1) {
+        Value selected =
+            arith::AndIOp::create(builder, location, relevantConstraintMode,
+                                  constant64(uint64_t{1} << check.block));
+        Value disabled =
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                  selected, constant64(0));
+        valid = guardOr(disabled, valid);
+      }
+      satisfied = guardAnd(satisfied, valid);
+    }
     uint64_t domainPropertyOffset = 0;
     for (const Property &property : planned) {
       for (const PropertyDomain &domain : property.domains) {

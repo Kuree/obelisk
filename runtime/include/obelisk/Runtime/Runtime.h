@@ -4712,6 +4712,13 @@ struct obelisk_rt_random_state_v1 {
 // and nonzero-weight support. END_DIST_GUARD supplies optional activation;
 // its operand is a group index, and omitting it means unconditional activation.
 #define OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED UINT32_C(128)
+// Priority source records may mask their references and arguments by a live
+// capture. Guards removed by 18.5.12 contribute no solve-stage dependency.
+// Requires HAS_FUNCTION_PRIORITY; a nonzero reserved record word is one plus
+// the first of two consecutive captures (references, arguments). Each row is
+// masked independently, including overlapping body and guard references.
+// Zero retains the static source masks.
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS UINT32_C(256)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 // V2 edges contain ceil(aggregate_width/64) little-endian words for each
@@ -4722,7 +4729,7 @@ struct obelisk_rt_random_state_v1 {
 // being reserved. Explicit ordering edges use zero; argument edges use one.
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY UINT32_C(1)
 // Priority programs follow their solve edges with a count and optional source
-// input records: end-instruction index, zero reserved word, and two assignment
+// input records: end-instruction index, reserved word, and two assignment
 // mask rows for referenced variables and function argument variables. Count
 // zero infers dependencies from the Boolean program; otherwise
 // every hard/soft end has exactly one record, preserving source references

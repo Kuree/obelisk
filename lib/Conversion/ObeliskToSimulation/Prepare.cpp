@@ -421,7 +421,7 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
   return isa<
       semantic::SVNamedValueExpressionOp,
       semantic::SVHierarchicalValueExpressionOp, semantic::SVIntegerLiteralOp,
-      semantic::SVUnbasedUnsizedIntegerLiteralOp,
+      semantic::SVNullLiteralOp, semantic::SVUnbasedUnsizedIntegerLiteralOp,
       semantic::SVUnboundedLiteralOp, semantic::SVConversionExpressionOp,
       semantic::SVConditionalExpressionOp, semantic::SVMinTypMaxExpressionOp,
       semantic::SVConcatenationExpressionOp,

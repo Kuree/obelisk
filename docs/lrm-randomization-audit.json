@@ -727,7 +727,7 @@
         {
           "feature": "Index-dependent guards",
           "status": "partial",
-          "detail": "Ordinary iterator predicates work; error-suppressing guards on invalid accesses need the full ERROR/RANDOM guard model."
+          "detail": "Fixed foreach is expanded before planning, and state FALSE/TRUE guards suppress known invalid array accesses through the full Figure 18-3 algebra. Runtime state bounds include signed, wide and unknown indices. Complete runtime-sized candidate solving remains open."
         }
       ],
       "evidence": {
@@ -965,12 +965,12 @@
         {
           "feature": "State-only guards",
           "status": "partial",
-          "detail": "Packed state predicates are captured before solving; ordinary total predicates are supported."
+          "detail": "Integral state predicates and handle comparisons are evaluated safely before solving, including null and bounds checks. Mixed unknown-plane predicates and non-integral solving remain open."
         },
         {
           "feature": "FALSE/TRUE/ERROR/RANDOM guard algebra",
-          "status": "missing",
-          "detail": "Full evaluation-error suppression and guarded null or out-of-range accesses are not encoded by the two-state residual stack."
+          "status": "partial",
+          "detail": "The complete Figure 18-3 truth tables are implemented with safe compiler captures and hard creation-validity predicates in native and WASM solving. Only state TRUE/FALSE suppress errors; RANDOM cannot hide them. Null handles, handle comparisons, fixed/state dynamic array and queue bounds, known invalid random-array slices, state tagged-union arms, guarded body errors, disabled blocks and frozen variables are covered. Unused function inputs retain evaluation errors and source RANDOM classification. Live guard reference and argument masks preserve independent Z3 function-priority stages after sifting. General candidate-dependent accesses, unknown-plane mixtures and complete runtime-sized foreach encoding remain open."
         }
       ],
       "evidence": {
@@ -1011,7 +1011,8 @@
           "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir"
         ]
       }
     },
@@ -1091,7 +1092,7 @@
         {
           "feature": "Disable earlier direct-variable soft preferences",
           "status": "supported",
-          "detail": "Direct identifiers and fixed packed paths discard only earlier directly referencing preferences."
+          "detail": "Direct identifiers and fixed integral paths discard only earlier directly referencing preferences, including unused function inputs. Enclosing guards and indirect function body reads do not trigger a disable."
         },
         {
           "feature": "Live block modes and conditional disable",
@@ -1116,10 +1117,12 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
-          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir"
         ]
       }
     },

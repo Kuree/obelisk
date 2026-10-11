@@ -91,6 +91,19 @@ including wide integral scope assignments. Validation rejects output, inout and
 mutable ref formals, recursion and cyclic priority dependencies. General
 procedural functions and scope calls through instance receivers remain open.
 
+Constraint guards use the FALSE/TRUE/ERROR/RANDOM algebra from 18.5.12.
+Safe captures check null handles, array and queue bounds, and state tagged-union
+arms before reading them. Only state TRUE/FALSE can suppress an error; a
+proposed random value cannot hide it. Guarded body errors, frozen variables,
+disabled blocks and unused function input evaluation follow the same rules.
+Hard creation-validity predicates reach both the generated checker and Z3.
+Live reference and argument masks independently remove sifted guard dependencies
+from function-priority stages, including overlapping guard and body variables.
+The versioned runtime records accept two consecutive mask captures when flag
+`HAS_GUARD_INPUT_MASKS` is set. Native and WASM support these masks at arbitrary
+integral width. General candidate-dependent accesses, mixed unknown-plane
+predicates and complete runtime-sized foreach solving remain open.
+
 Both target runtimes statically link the pinned Z3 source, using the native
 target libc++ ABI and Emscripten's JavaScript exception ABI respectively.
 The browser host initializes static constructors and implements exception

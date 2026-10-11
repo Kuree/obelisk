@@ -1039,6 +1039,8 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   bool exact = uniform || weighted;
   bool functionPriority =
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+  bool dynamicMasks =
+      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
   if (((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) && !weighted) ||
       (weighted &&
        (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) || functionPriority)) ||
@@ -1128,8 +1130,31 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
   PriorityInputs sourceInputs;
   if (functionPriority &&
       !readPriorityInputs(program, programSize, header, instructions, width,
-                          domainsOffset, sourceInputs))
+                          domainsOffset, sourceInputs, captureCount,
+                          dynamicMasks))
     return SMTCompletion::Unavailable;
+  for (auto &entry : sourceInputs) {
+    PriorityInput &input = entry.second;
+    if (!input.maskCapture)
+      continue;
+    size_t capture = input.maskCapture - 1;
+    for (OrderMask *row : {&input.references, &input.arguments}) {
+      size_t captureOffset = wide ? captureOffsets[capture] : capture;
+      unsigned captureWidth = wide ? captureWidths[capture] : 64;
+      size_t captureWords = (uint64_t(captureWidth) + 63) / 64;
+      for (size_t word = 0; word != assignmentWords; ++word) {
+        uint64_t mask =
+            word < captureWords ? captures[captureOffset + word] : 0;
+        if (word + 1 == captureWords && captureWidth % 64)
+          mask &= (uint64_t{1} << (captureWidth % 64)) - 1;
+        (*row)[word] &= mask;
+      }
+      ++capture;
+    }
+    for (size_t word = 0; word != assignmentWords; ++word)
+      if (input.arguments[word] & ~input.references[word])
+        return SMTCompletion::Unavailable;
+  }
   std::vector<WeightedGroup> weightedGroups;
   if (weighted) {
     if (domainsOffset > programSize ||
@@ -1301,6 +1326,29 @@ completeRandomProgram(const uint8_t *program, size_t programSize,
           (read32(cursor + 4) &
            OBELISK_RT_RANDOM_SOLVE_EDGE_FUNCTION_PRIORITY) != 0;
       cursor += 8;
+      if (dynamicMasks && edge.functionPriority) {
+        bool live = false;
+        for (const auto &entry : sourceInputs) {
+          const PriorityInput &input = entry.second;
+          // The same enabled atom must retain both endpoints of an implicit
+          // edge. A different call with the same argument does not activate
+          // an edge whose guarded constraint was eliminated.
+          uint32_t block =
+              read32(program + header + size_t(entry.first) * 16 + 4);
+          if (block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+              ((constraintMask >> block) & 1))
+            continue;
+          bool before = false, after = false;
+          for (size_t word = 0; word != assignmentWords; ++word) {
+            before |= (input.arguments[word] & edge.before[word]) != 0;
+            after |= (input.references[word] & ~input.arguments[word] &
+                      edge.after[word]) != 0;
+          }
+          live |= before && after;
+        }
+        if (!live)
+          continue;
+      }
       edges.push_back(std::move(edge));
     }
     return f.prioritized(booleanBits, physicalBits, priorityHard, soft,

@@ -2641,9 +2641,30 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (lvalue)
     if (Value captured = lvalueExpressionCaptures.lookup(op))
       return captured;
-  if (!lvalue)
+  if (!lvalue) {
     if (Value captured = expressionCaptures.lookup(op))
       return captured;
+    if (auto count =
+            op->getAttrOfType<IntegerAttr>(randomEvaluationInputsAttrName)) {
+      // Constraint creation has already evaluated the retained input
+      // inventory and checked its validity. Structural proposal definitions
+      // consume the expanded return value, just as the residual encoder does.
+      auto children = getChildren(op);
+      if (count.getValue().isNegative() ||
+          count.getValue().getActiveBits() > 64 ||
+          count.getValue().getZExtValue() + 1 != children.size())
+        return failure();
+      FailureOr<Type> type = getNormalizedSemanticType(op);
+      FailureOr<Value> value = lowerExpression(children.back());
+      if (failed(type) || failed(value))
+        return failure();
+      auto sourceType =
+          children.back()->getAttrOfType<TypeAttr>("semantic_type");
+      return convert(*value, *type,
+                     sourceType && isSignedSemanticType(sourceType.getValue()),
+                     getSemanticLocation(op));
+    }
+  }
   if (auto variable = op->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
     const APInt &indexValue = variable.getValue();
     if (lvalue || indexValue.isNegative() || indexValue.getActiveBits() > 64 ||

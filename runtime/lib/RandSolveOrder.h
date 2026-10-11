@@ -16,6 +16,7 @@ namespace obelisk::runtime {
 using OrderMask = std::vector<uint64_t>;
 struct PriorityInput {
   OrderMask references, arguments;
+  uint32_t maskCapture = 0;
 };
 using PriorityInputs = std::unordered_map<uint32_t, PriorityInput>;
 
@@ -36,7 +37,8 @@ inline uint64_t orderRead64(const uint8_t *p) {
 inline bool readPriorityInputs(const uint8_t *program, size_t size,
                                size_t header, uint32_t instructionCount,
                                uint32_t width, size_t &offset,
-                               PriorityInputs &inputs) {
+                               PriorityInputs &inputs, size_t captureCount = 0,
+                               bool dynamicMasks = false) {
   if (offset > size ||
       size - offset < OBELISK_RT_RANDOM_PRIORITY_INPUT_HEADER_SIZE)
     return false;
@@ -47,15 +49,20 @@ inline bool readPriorityInputs(const uint8_t *program, size_t size,
                     uint64_t(words) * 16;
   if (count > (size - offset) / stride)
     return false;
+  bool sawDynamicMask = false;
   for (uint32_t record = 0; record != count; ++record) {
     uint32_t index = orderRead32(program + offset);
-    if (index >= instructionCount || orderRead32(program + offset + 4) != 0)
+    uint32_t maskCapture = orderRead32(program + offset + 4);
+    if (index >= instructionCount ||
+        (maskCapture && (!dynamicMasks || maskCapture >= captureCount)))
       return false;
     uint8_t opcode = program[header + size_t(index) * 16];
     if (opcode != OBELISK_RT_RANDOM_END_HARD_V1 &&
         opcode != OBELISK_RT_RANDOM_END_SOFT_V1)
       return false;
     PriorityInput input;
+    input.maskCapture = maskCapture;
+    sawDynamicMask |= maskCapture != 0;
     size_t cursor = offset + 8;
     for (OrderMask *mask : {&input.references, &input.arguments}) {
       for (size_t word = 0; word != words; ++word) {
@@ -72,6 +79,8 @@ inline bool readPriorityInputs(const uint8_t *program, size_t size,
       return false;
     offset += stride;
   }
+  if (dynamicMasks && !sawDynamicMask)
+    return false;
   if (count != 0)
     for (uint32_t index = 0; index != instructionCount; ++index) {
       uint8_t opcode = program[header + size_t(index) * 16];

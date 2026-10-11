@@ -402,6 +402,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   bool encodedOrder = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
   bool encodedPriority =
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+  std::vector<uint32_t> maskCaptures;
   bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
   bool encodedDist = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
@@ -413,9 +414,14 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                  OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
     return false;
   if ((encodedDist != weighted) || (weighted && encodedPriority))
+    return false;
+  bool dynamicMasks =
+      (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
+  if (dynamicMasks && !encodedPriority)
     return false;
   if (encodedOrder && !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
                                  OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)))
@@ -458,13 +464,19 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     obelisk::runtime::PriorityInputs inputs;
     if (!obelisk::runtime::readPriorityInputs(
             bytes, size, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2,
-            instructionCount, result.aggregateWidth, offset, inputs))
+            instructionCount, result.aggregateWidth, offset, inputs,
+            captureCount, dynamicMasks))
       return false;
     expectedSize = offset;
     for (const auto &input : inputs)
       sourceFunctionArguments |= std::any_of(
           input.second.arguments.begin(), input.second.arguments.end(),
           [](uint64_t word) { return word != 0; });
+    for (const auto &input : inputs)
+      if (input.second.maskCapture) {
+        maskCaptures.push_back(input.second.maskCapture - 1);
+        maskCaptures.push_back(input.second.maskCapture);
+      }
   }
   std::vector<obelisk::runtime::WeightedGroup> weightedGroups;
   if (weighted) {
@@ -505,6 +517,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
 
   result.captureWidths.assign(encodedCaptureCount, 0);
   result.captureOffsets.assign(encodedCaptureCount, 0);
+  for (uint32_t capture : maskCaptures)
+    result.captureWidths[capture] = result.aggregateWidth;
   result.instructions.reserve(instructionCount);
   std::vector<uint8_t> literalUse(literalWordCount, 0);
   size_t depth = 0;

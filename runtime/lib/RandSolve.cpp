@@ -557,6 +557,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                           OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
                           OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
                           OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) !=
             0)
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -567,6 +568,10 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
     bool encodedPriority =
         (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
+    bool dynamicMasks =
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
+    if (dynamicMasks && !encodedPriority)
+      return OBELISK_RT_INVALID_ARGUMENT;
     if (encodedPriority &&
         (!encodedSolveBefore ||
          !(programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) ||
@@ -590,7 +595,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       obelisk::runtime::PriorityInputs inputs;
       if (!obelisk::runtime::readPriorityInputs(
               program, programSize, OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE,
-              instructionCount, aggregateWidth, offset, inputs))
+              instructionCount, aggregateWidth, offset, inputs, captureCount,
+              dynamicMasks))
         return OBELISK_RT_INVALID_ARGUMENT;
       instructionEnd = offset;
       for (const auto &input : inputs)

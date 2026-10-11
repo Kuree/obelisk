@@ -13,7 +13,8 @@
 // CHECK-NOT: arith.constant -100
 // CHECK: arith.constant {simulation.rematerialized} 1 : i64
 // CHECK: arith.constant {simulation.rematerialized} 9 : i64
-// CHECK: simulation.random.solve {{.*}} captures(%c1_i64_{{[0-9]+}}, %c9_i64_{{[0-9]+}})
+// The receiver's evaluation validity accompanies each captured bound.
+// CHECK: simulation.random.solve {{.*}} captures(%{{[^,]+}}, %c1_i64_{{[0-9]+}}, %{{[^,]+}}, %c9_i64_{{[0-9]+}})
 
 module {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {

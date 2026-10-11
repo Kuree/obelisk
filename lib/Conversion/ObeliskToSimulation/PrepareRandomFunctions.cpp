@@ -62,6 +62,14 @@ getRandomConstraintPath(Operation *expression,
       children.front(), propertyWidths, propertyForExpression);
   if (failed(base) || !*base)
     return base;
+  auto evaluationError = [&]() {
+    expression->setAttr(randomEvaluationErrorAttrName,
+                        UnitAttr::get(expression->getContext()));
+    (**base).precise = false;
+    return base;
+  };
+  if (children.front()->hasAttr(randomEvaluationErrorAttrName))
+    return evaluationError();
   if (!(**base).precise)
     return base;
   FailureOr<Type> resultType = getNormalizedSemanticType(expression);
@@ -97,13 +105,28 @@ getRandomConstraintPath(Operation *expression,
       std::optional<StringRef> spelling = getConstantSpelling(index);
       if (!spelling)
         return std::optional<int64_t>{};
+      auto sourceType = index->getAttrOfType<TypeAttr>("semantic_type");
+      auto sourceWidth = sourceType
+                             ? getSemanticPackedWidth(sourceType.getValue())
+                             : std::nullopt;
+      unsigned parseWidth =
+          sourceWidth ? static_cast<unsigned>(*sourceWidth) : 64;
       FailureOr<ParsedConstant> parsed =
-          parseSVInteger(*spelling, 64, getSemanticLocation(index));
+          parseSVInteger(*spelling, parseWidth, getSemanticLocation(index));
       if (failed(parsed))
         return failure();
-      if (!parsed->unknown.isZero())
+      bool signedIndex =
+          sourceType && isSignedSemanticType(sourceType.getValue());
+      if (!parsed->unknown.isZero() ||
+          (signedIndex ? !parsed->value.isSignedIntN(64)
+                       : parsed->value.getActiveBits() > 63)) {
+        expression->setAttr(randomEvaluationErrorAttrName,
+                            UnitAttr::get(expression->getContext()));
         return std::optional<int64_t>{};
-      return std::optional<int64_t>(parsed->value.getSExtValue());
+      }
+      return std::optional<int64_t>(
+          signedIndex ? parsed->value.getSExtValue()
+                      : static_cast<int64_t>(parsed->value.getZExtValue()));
     };
     FailureOr<std::optional<int64_t>> first = parseKnownIndex(children[1]);
     if (failed(first))
@@ -175,11 +198,8 @@ getRandomConstraintPath(Operation *expression,
       return scaled.getZExtValue();
     };
     std::optional<uint64_t> low = physicalOffset(**first);
-    if (!low) {
-      emitError(getSemanticLocation(expression))
-          << "constraint function ordering selection is out of range";
-      return failure();
-    }
+    if (!low)
+      return evaluationError();
     if (element) {
       if (*resultWidth != elementWidth) {
         emitError(getSemanticLocation(expression))
@@ -197,11 +217,8 @@ getRandomConstraintPath(Operation *expression,
           return base;
         }
         std::optional<uint64_t> other = physicalOffset(**second);
-        if (!other) {
-          emitError(getSemanticLocation(expression))
-              << "constraint function ordering selection is out of range";
-          return failure();
-        }
+        if (!other)
+          return evaluationError();
         uint64_t high = std::max(*low, *other);
         *low = std::min(*low, *other);
         uint64_t selectedWidth = high - *low + elementWidth;
@@ -234,10 +251,7 @@ getRandomConstraintPath(Operation *expression,
         if (baseNamesHighBit && *resultWidth > elementWidth) {
           uint64_t adjustment = *resultWidth - elementWidth;
           if (*low < adjustment) {
-            emitError(getSemanticLocation(expression))
-                << "constraint function ordering selection is out of "
-                   "range";
-            return failure();
+            return evaluationError();
           }
           *low -= adjustment;
         }
@@ -246,11 +260,8 @@ getRandomConstraintPath(Operation *expression,
     relativeOffset = *low;
   }
   if (relativeOffset > (*base)->width ||
-      *resultWidth > (*base)->width - relativeOffset) {
-    emitError(getSemanticLocation(expression))
-        << "constraint function ordering path is out of range";
-    return failure();
-  }
+      *resultWidth > (*base)->width - relativeOffset)
+    return evaluationError();
   (*base)->offset += relativeOffset;
   (*base)->width = *resultWidth;
   return base;
@@ -265,6 +276,49 @@ LogicalResult freezeRandomConstraintPriorityInputs(
   unsigned orderingWidth =
       static_cast<unsigned>(std::max<uint64_t>(64, randomPropertyOffset));
   bool invalid = false;
+  // Function expansion can replace a call by a constant or eliminate an
+  // unused argument. Guards still classify the source call as RANDOM when
+  // one of its input arguments names an active random variable (18.5.12).
+  std::function<FailureOr<APInt>(Operation *)> guardInputs =
+      [&](Operation *expression) -> FailureOr<APInt> {
+    APInt inputs = APInt::getZero(orderingWidth);
+    auto function = dyn_cast<semantic::SVCallExpressionOp>(expression);
+    SmallVector<Operation *> children = getChildren(expression);
+    if (function && !function.getIsSystemCall()) {
+      if (function.getArgumentCount() > children.size())
+        return failure();
+      children.erase(children.begin(),
+                     children.end() - function.getArgumentCount());
+    } else {
+      FailureOr<std::optional<RandomConstraintPath>> path =
+          getRandomConstraintPath(expression);
+      if (failed(path))
+        return failure();
+      if (*path) {
+        inputs |= APInt::getLowBitsSet(orderingWidth, (*path)->width)
+                      .shl(randomPropertyOffsets[(*path)->property] +
+                           (*path)->offset);
+        if (isa<semantic::SVElementSelectExpressionOp,
+                semantic::SVRangeSelectExpressionOp>(expression))
+          children.erase(children.begin());
+        else
+          children.clear();
+      }
+    }
+    for (Operation *child : children) {
+      FailureOr<APInt> childInputs = guardInputs(child);
+      if (failed(childInputs))
+        return failure();
+      inputs |= *childInputs;
+    }
+    if (function && !function.getIsSystemCall())
+      expression->setAttr(randomGuardInputsAttrName,
+                          builder.getIntegerAttr(
+                              builder.getIntegerType(orderingWidth), inputs));
+    return inputs;
+  };
+  if (failed(guardInputs(root)))
+    return failure();
   SmallVector<std::pair<APInt, APInt>> functionOrder;
   bool functionArgumentsPresent = false;
   root->walk([&](Operation *expression) {
@@ -479,7 +533,7 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
 LogicalResult expandRandomConstraintFunctions(
     MutableArrayRef<Operation *> constraintRoots,
     const llvm::StringMap<Operation *> &semanticSymbols, Builder &builder,
-    const llvm::DenseMap<Operation *, unsigned> &randomIndices,
+    const llvm::DenseMap<Operation *, unsigned> &,
     llvm::function_ref<bool(semantic::SVCallExpressionOp)> isAdmittedCall,
     llvm::function_ref<
         FailureOr<semantic::SVSubroutineSymbolOp>(semantic::SVCallExpressionOp)>
@@ -560,6 +614,35 @@ LogicalResult expandRandomConstraintFunctions(
       FailureOr<Operation *> cloned = cloneConstraintExpression(
           *result, functionSubstitutions, true, callStack);
       callStack.pop_back();
+      if (succeeded(cloned)) {
+        // Evaluate every input even when the return expression ignores it.
+        // Guard creation propagates ERROR; unused input values add no solver
+        // dependence to the expanded return expression.
+        OperationState state(
+            callExpression.getLoc(),
+            semantic::SVConversionExpressionOp::getOperationName());
+        state.addAttribute("semantic_type", source->getAttr("semantic_type"));
+        state.addAttribute("node_id", source->getAttr("node_id"));
+        state.addAttribute("is_implicit", builder.getBoolAttr(true));
+        state.addAttribute(randomEvaluationInputsAttrName,
+                           builder.getI64IntegerAttr(argumentCount));
+        auto *region = state.addRegion();
+        region->push_back(new Block());
+        for (Operation &argument : templates->getOperations())
+          region->front().push_back(argument.clone());
+        region->front().push_back(*cloned);
+        cloned = Operation::create(state);
+      }
+      if (succeeded(cloned))
+        if (auto inputs =
+                source->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName)) {
+          APInt mask = inputs.getValue();
+          if (auto existing = (*cloned)->getAttrOfType<IntegerAttr>(
+                  randomGuardInputsAttrName))
+            mask |= existing.getValue().zextOrTrunc(mask.getBitWidth());
+          (*cloned)->setAttr(randomGuardInputsAttrName,
+                             builder.getIntegerAttr(inputs.getType(), mask));
+        }
       return cloned;
     }
 
@@ -568,8 +651,7 @@ LogicalResult expandRandomConstraintFunctions(
       if (auto reference =
               source->getAttrOfType<SymbolRefAttr>("referenced_symbol")) {
         auto symbol = semanticSymbols.find(reference.getLeafReference());
-        if (symbol != semanticSymbols.end() &&
-            randomIndices.contains(symbol->second))
+        if (symbol != semanticSymbols.end())
           cloned->setAttr(randomFunctionStateAttrName, builder.getUnitAttr());
       }
     }
