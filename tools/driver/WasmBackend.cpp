@@ -117,7 +117,7 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
 
   for (StringRef filename :
        {"libstubs.a", "libnoexit.a", "libc.a", "libdlmalloc.a",
-        "libclang_rt.builtins.a", "libc++.a", "libc++abi.a"}) {
+        "libcompiler_rt.a", "libc++.a", "libc++abi.a", "libunwind.a"}) {
     SmallString<256> path(libraryDirectory);
     sys::path::append(path, filename);
     if (!sys::fs::exists(path)) {
@@ -145,16 +145,6 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   // the caller's UTF-8 argv into module-owned memory before calling main.
   owned.push_back("--export=malloc");
   owned.push_back("--export=free");
-  owned.push_back("--export=__wasm_call_ctors");
-  // Target Z3 uses Emscripten's JavaScript exception ABI. The browser host
-  // needs these helpers for unwinding, RTTI catch matching and ownership.
-  owned.push_back("--export-table");
-  for (StringRef helper :
-       {"setThrew", "emscripten_stack_get_current", "_emscripten_stack_restore",
-        "_emscripten_tempret_set", "setTempRet0", "__cxa_get_exception_ptr",
-        "__cxa_can_catch", "__cxa_increment_exception_refcount",
-        "__cxa_decrement_exception_refcount"})
-    owned.push_back((Twine("--export-if-defined=") + helper).str());
   // The host reads the design's final simulation time after main returns.
   // Both accessors are optional to a host, but wasm-ld drops anything not
   // reachable from an explicit export.
@@ -172,9 +162,10 @@ LogicalResult linkWasmModule(StringRef modulePath, StringRef outputPath,
   owned.push_back(runtimeArchive.str().str());
   owned.push_back((Twine("-L") + libraryDirectory).str());
   // wasm-ld rescans archives to resolve cyclic static-library references.
-  // The target solver uses JavaScript exceptions, matching em++ -fexceptions.
+  // These stable names are aliases for the ABI-suffixed archives selected by
+  // Emscripten for wasm exceptions.
   for (StringRef library : {"-lstubs", "-lnoexit", "-lc", "-ldlmalloc",
-                            "-lclang_rt.builtins", "-lc++", "-lc++abi"})
+                            "-lcompiler_rt", "-lc++", "-lc++abi", "-lunwind"})
     owned.push_back(library.str());
 
   SmallVector<const char *> arguments;

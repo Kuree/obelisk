@@ -18,7 +18,7 @@
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.opt.exe
 // RUN: %t.opt.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.opt.exe --execution-tier=bytecode --seed=13 | FileCheck %s --check-prefix=RUNTIME
-// REQUIRES: runtime-z3
+// REQUIRES: compiled-sampler
 
 // IEEE 1800-2023 18.5.11 and 18.12: scope function arguments establish
 // independent priority stages, with the same failure and rollback as objects.

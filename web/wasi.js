@@ -108,145 +108,6 @@ export class WasiExit extends Error {
   }
 }
 
-// Emscripten's -fexceptions ABI unwinds through JavaScript calls rather than
-// WebAssembly exception instructions. Keep ownership and catch matching in
-// sync with libc++abi; WasmExceptionABI.cpp checks the metadata layout at build
-// time. Each simulation instance owns its own exception state.
-class CppException extends Error {
-  constructor(pointer) {
-    super('C++ exception in simulation');
-    this.pointer = pointer;
-  }
-}
-
-class WasmExceptions {
-  constructor(wasi) {
-    this.wasi = wasi;
-    this.last = null;
-    this.caught = [];
-    this.uncaught = 0;
-  }
-
-  get exports() { return this.wasi.instance.exports; }
-  get view() { return this.wasi.view; }
-  header(pointer) { return (Number(pointer) >>> 0) - 24; }
-
-  temporary(value) {
-    const set = this.exports._emscripten_tempret_set ?? this.exports.setTempRet0;
-    set(value);
-  }
-
-  throwException(pointer, type, destructor) {
-    const header = this.header(pointer);
-    this.view.setUint32(header + 4, type, true);
-    this.view.setUint32(header + 8, destructor, true);
-    this.view.setUint32(header + 16, 0, true);
-    this.exports.__cxa_increment_exception_refcount(pointer);
-    this.uncaught++;
-    this.last = new CppException(pointer);
-    throw this.last;
-  }
-
-  beginCatch(pointer) {
-    const header = this.header(pointer);
-    if (!this.view.getUint8(header + 12)) {
-      this.view.setUint8(header + 12, 1);
-      this.uncaught--;
-    }
-    this.view.setUint8(header + 13, 0);
-    this.caught.push(pointer);
-    return this.exports.__cxa_get_exception_ptr(pointer);
-  }
-
-  endCatch() {
-    this.exports.setThrew(0, 0);
-    const pointer = this.caught.pop();
-    if (pointer === undefined) throw new Error('C++ catch stack is empty');
-    this.exports.__cxa_decrement_exception_refcount(pointer);
-    this.last = null;
-  }
-
-  rethrow(pointer = this.caught.at(-1)) {
-    if (pointer === undefined) throw new Error('C++ catch stack is empty');
-    if (!pointer) return;
-    const header = this.header(pointer);
-    this.view.setUint8(header + 13, 1);
-    this.view.setUint8(header + 12, 0);
-    this.exports.__cxa_increment_exception_refcount(pointer);
-    this.uncaught++;
-    this.last = new CppException(pointer);
-    throw this.last;
-  }
-
-  findCatch(types) {
-    const pointer = this.last?.pointer ?? 0;
-    if (!pointer) {
-      this.temporary(0);
-      return 0;
-    }
-    const header = this.header(pointer);
-    this.view.setUint32(header + 16, pointer, true);
-    const thrownType = this.view.getUint32(header + 4, true);
-    if (!thrownType) {
-      this.temporary(0);
-      return pointer;
-    }
-    for (const type of types) {
-      if (!type || type === thrownType) break;
-      if (this.exports.__cxa_can_catch(type, thrownType, header + 16)) {
-        this.temporary(type);
-        return pointer;
-      }
-    }
-    this.temporary(thrownType);
-    return pointer;
-  }
-
-  import(name) {
-    const functions = {
-      __cxa_throw: (...args) => this.throwException(...args),
-      __cxa_begin_catch: (pointer) => this.beginCatch(pointer),
-      __cxa_end_catch: () => this.endCatch(),
-      __cxa_rethrow: () => this.rethrow(),
-      __cxa_uncaught_exceptions: () => this.uncaught,
-      __cxa_uncaught_exception: () => Number(this.uncaught !== 0),
-      llvm_eh_typeid_for: (type) => type,
-      __resumeException: (pointer) => {
-        this.last ??= new CppException(pointer);
-        throw this.last;
-      },
-      __cxa_current_primary_exception: () => {
-        const pointer = this.caught.at(-1) ?? 0;
-        this.exports.__cxa_increment_exception_refcount(pointer);
-        return pointer;
-      },
-      __cxa_current_exception_type: () => {
-        const pointer = this.caught.at(-1) ?? 0;
-        return pointer ? this.view.getUint32(this.header(pointer) + 4, true) : 0;
-      },
-      __cxa_rethrow_primary_exception: (pointer) => this.rethrow(pointer),
-      __cxa_call_unexpected: () => {
-        throw new WebAssembly.RuntimeError('unexpected C++ exception');
-      },
-    };
-    if (Object.hasOwn(functions, name)) return functions[name];
-    if (/^__cxa_find_matching_catch_[0-9]+$/.test(name))
-      return (...types) => this.findCatch(types);
-    if (!/^invoke_[vijfd]+$/.test(name)) return undefined;
-    return (index, ...args) => {
-      const stack = this.exports.emscripten_stack_get_current();
-      try {
-        return this.exports.__indirect_function_table.get(index)(...args);
-      } catch (error) {
-        this.exports._emscripten_stack_restore(stack);
-        if (!(error instanceof CppException)) throw error;
-        this.exports.setThrew(1, 0);
-        return name[7] === 'j' ? 0n : name[7] === 'v' ? undefined : 0;
-      }
-    };
-  }
-}
-
 export class Wasi {
   /**
    * @param {object} options
@@ -268,8 +129,6 @@ export class Wasi {
     this.onOutput = onOutput;
     this.onFile = onFile;
     this.memory = null;
-    this.instance = null;
-    this.exceptions = new WasmExceptions(this);
     this.exitCode = null;
     this.decoder = new TextDecoder('utf-8', { fatal: false });
     // stdout/stderr are line-buffered so partial writes do not fragment the
@@ -301,11 +160,6 @@ export class Wasi {
 
   bindMemory(memory) {
     this.memory = memory;
-  }
-
-  bindInstance(instance) {
-    this.instance = instance;
-    this.bindMemory(instance.exports.memory);
   }
 
   get view() {
@@ -438,12 +292,7 @@ export class Wasi {
   get imports() {
     const self = this;
     return {
-      env: new Proxy({
-        exit(code) { throw new WasiExit(code); },
-        _emscripten_runtime_keepalive_clear() {},
-        __call_sighandler(index, signal) {
-          self.instance.exports.__indirect_function_table.get(index)(signal);
-        },
+      env: {
         __assert_fail() {
           throw new WebAssembly.RuntimeError('assertion failed in simulation runtime');
         },
@@ -547,11 +396,7 @@ export class Wasi {
             return 0;
           }
         },
-      }, {
-        get(target, name) {
-          return target[name] ?? self.exceptions.import(String(name));
-        },
-      }),
+      },
       wasi_snapshot_preview1: {
         fd_write(fd, iovsPtr, iovsLen, nwrittenPtr) {
           const view = self.view;
@@ -689,7 +534,7 @@ export async function runSimulation(
 ) {
   const wasi = new Wasi({ args, files, onOutput, onFile });
   const { instance } = await WebAssembly.instantiate(wasmBinary, wasi.imports);
-  wasi.bindInstance(instance);
+  wasi.bindMemory(instance.exports.memory);
 
   // Reported through a callback rather than the return value so the exit code
   // stays the thing runSimulation resolves to. A module built before these
@@ -713,7 +558,6 @@ export async function runSimulation(
     if (typeof instance.exports._start === 'function') {
       instance.exports._start();
     } else if (typeof instance.exports.main === 'function') {
-      instance.exports.__wasm_call_ctors?.();
       const allocate = instance.exports.malloc;
       const release = instance.exports.free;
       if (typeof allocate !== 'function' || typeof release !== 'function') {

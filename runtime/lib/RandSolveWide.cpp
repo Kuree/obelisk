@@ -1,9 +1,10 @@
 //===- RandSolveWide.cpp - Wide constrained-random fallback --------------===//
 
 #include "ExceptionSupport.h"
+#include "RandSamplePlan.h"
 #include "RandSolveOrder.h"
-#include "RandSolveSMT.h"
 #include "RandSolveWeighted.h"
+#include "obelisk/Runtime/RandomSamplerPlan.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -397,6 +398,16 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   uint32_t instructionCount = read32(bytes + 12);
   uint32_t encodedCaptureCount = read32(bytes + 16);
   uint32_t flags = read32(bytes + 20);
+  // The plan validator reads widths indexed by the encoded capture inventory.
+  // Establish that the caller supplied that inventory before inspecting it.
+  if (encodedCaptureCount != captureCount)
+    return false;
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) {
+    obelisk::random::SamplerPlanView plan;
+    if (!obelisk::random::readSamplerPlan(bytes, size, captureWidths, plan))
+      return false;
+    size = plan.coreSize;
+  }
   uint32_t literalWordCount = read32(bytes + 24);
   bool encodedDomains = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) != 0;
   bool encodedOrder = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) != 0;
@@ -415,6 +426,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                  OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
     return false;
   if ((encodedDist != weighted) || (weighted && encodedPriority))
@@ -1138,12 +1150,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
       for (const WideValue &layer : solveLayers)
         orderedMasks.insert(orderedMasks.end(), layer.words.begin(),
                             layer.words.end());
-      auto result = obelisk::runtime::completeRandomProgram(
+      auto result = obelisk::runtime::sampleRandomPlan(
           programBytes, static_cast<size_t>(programSize), startWords,
           mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
           captureWidths, captureCount, outAssignmentWords, &randomState,
           orderedMasks.data(), solveLayers.size());
-      if (result == obelisk::runtime::SMTCompletion::Satisfiable)
+      if (result == obelisk::runtime::SamplerResult::Satisfiable)
         *outSuccess = 1;
       else
         std::fill_n(outAssignmentWords,
@@ -1280,11 +1292,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     if (!complete && maxAttempts != 0 &&
         (read32(programBytes + 20) &
          OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) {
-      auto result = obelisk::runtime::completeRandomProgram(
+      auto result = obelisk::runtime::sampleRandomPlan(
           programBytes, static_cast<size_t>(programSize), startWords,
           mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
           captureWidths, captureCount, outAssignmentWords);
-      if (result == obelisk::runtime::SMTCompletion::Satisfiable)
+      if (result == obelisk::runtime::SamplerResult::Satisfiable)
         *outSuccess = 1;
       else
         std::fill_n(outAssignmentWords,

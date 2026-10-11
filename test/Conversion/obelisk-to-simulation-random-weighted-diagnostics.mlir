@@ -2,7 +2,7 @@
 // RUN: not obelisk-opt %t/guard.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=GUARD
 // RUN: not obelisk-opt %t/partial.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=PARTIAL
 // RUN: not obelisk-opt %t/default.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=DEFAULT
-// REQUIRES: runtime-z3
+// REQUIRES: compiled-sampler
 // GUARD: candidate-dependent dist activation requires its inputs to be solved before the complete distributed target
 // PARTIAL: dist target split by selected solve before paths requires a conditional weight measure across those paths
 // DEFAULT: a default dist specification must use the :/ operator

@@ -1,70 +1,67 @@
-#ifdef OBELISK_RUNTIME_Z3
 #include "../lib/RandModelCount.h"
 
 #include "gtest/gtest.h"
 
 #include <set>
 
+using obelisk::random::BooleanCircuit;
+using obelisk::random::PlanOpcode;
 using obelisk::runtime::ModelCount;
 using obelisk::runtime::ModelCounter;
+using ID = BooleanCircuit::ID;
 
 namespace {
 
 class RandModelCountTest : public ::testing::Test {
 protected:
-  void SetUp() override {
-    Z3_config config = Z3_mk_config();
-    context = Z3_mk_context(config);
-    Z3_del_config(config);
+  ID bit(unsigned index) {
+    return context.input(PlanOpcode::RandomBit, index, index);
   }
 
-  void TearDown() override { Z3_del_context(context); }
-
-  Z3_ast bit(unsigned index) {
-    return Z3_mk_const(context, Z3_mk_int_symbol(context, index),
-                       Z3_mk_bool_sort(context));
-  }
-
-  Z3_ast numeral(uint64_t value, unsigned width) {
-    return Z3_mk_unsigned_int64(context, value, Z3_mk_bv_sort(context, width));
-  }
-
-  Z3_ast packed(const std::vector<Z3_ast> &bits) {
-    Z3_ast result = nullptr;
-    for (size_t index = bits.size(); index-- != 0;) {
-      Z3_ast value =
-          Z3_mk_ite(context, bits[index], numeral(1, 1), numeral(0, 1));
-      result = result ? Z3_mk_concat(context, result, value) : value;
-    }
+  std::vector<ID> numeral(uint64_t value, unsigned width) {
+    std::vector<ID> result(width);
+    for (unsigned bit = 0; bit != width; ++bit)
+      result[bit] = bit < 64 && ((value >> bit) & 1);
     return result;
   }
 
-  Z3_context context = nullptr;
+  const std::vector<ID> &packed(const std::vector<ID> &bits) { return bits; }
+
+  ID equal(const std::vector<ID> &bits, const std::vector<ID> &value) {
+    ID match = 1;
+    for (unsigned bit = 0; bit != bits.size(); ++bit)
+      match = context.conjunction(
+          match, context.exclusiveOr(bits[bit], value[bit]) ^ 1);
+    return match;
+  }
+
+  BooleanCircuit context;
 };
 
 TEST_F(RandModelCountTest, CountsAndRanksMatchExhaustiveIntegerArithmetic) {
-  std::vector<Z3_ast> variables, xBits, yBits;
+  std::vector<ID> variables, xBits, yBits;
   for (unsigned index = 0; index != 4; ++index) {
     xBits.push_back(bit(index * 2));
     yBits.push_back(bit(index * 2 + 1));
     variables.push_back(xBits.back());
     variables.push_back(yBits.back());
   }
-  Z3_ast x = packed(xBits), y = packed(yBits);
-  Z3_ast product = Z3_mk_bvmul(context, x, y);
-  Z3_ast predicates[] = {Z3_mk_eq(context,
-                                  Z3_mk_bvurem(context, product, numeral(7, 4)),
-                                  numeral(3, 4)),
-                         Z3_mk_bvuge(context, x, numeral(2, 4)),
-                         Z3_mk_bvult(context, y, numeral(14, 4)),
-                         Z3_mk_not(context, Z3_mk_eq(context, x, y))};
+  // The fixture's small nonlinear relation is independently enumerated
+  // into Boolean cubes, preserving the original exact rank/count comparison.
+  ID predicate = 0;
+  for (unsigned a = 0; a != 16; ++a)
+    for (unsigned b = 0; b != 16; ++b)
+      if (((a * b) & 15) % 7 == 3 && a >= 2 && b < 14 && a != b)
+        predicate = context.disjunction(
+            predicate, context.conjunction(equal(xBits, numeral(a, 4)),
+                                           equal(yBits, numeral(b, 4))));
   std::set<unsigned> expected;
   for (unsigned a = 0; a != 16; ++a)
     for (unsigned b = 0; b != 16; ++b)
       if (((a * b) & 15) % 7 == 3 && a >= 2 && b < 14 && a != b)
         expected.insert(a | (b << 4));
   ModelCounter counter(context, variables);
-  ASSERT_TRUE(counter.build(Z3_mk_and(context, 4, predicates)));
+  ASSERT_TRUE(counter.build(predicate));
   ASSERT_EQ(counter.count().compare(ModelCount(expected.size())), 0);
   std::set<unsigned> actual;
   for (unsigned rank = 0; rank != expected.size(); ++rank) {
@@ -82,13 +79,13 @@ TEST_F(RandModelCountTest, CountsAndRanksMatchExhaustiveIntegerArithmetic) {
 TEST_F(RandModelCountTest, CountsWideImplicationIncludingItsSingleton) {
   // The LRM 18.5.9 example widened beyond two words: 2^130 unconstrained
   // guard-false combinations and exactly one guard-true combination.
-  std::vector<Z3_ast> variables;
+  std::vector<ID> variables;
   for (unsigned index = 0; index != 131; ++index)
     variables.push_back(bit(index));
-  Z3_ast guard = variables.back();
-  std::vector<Z3_ast> data(variables.begin(), variables.end() - 1);
-  Z3_ast predicate = Z3_mk_implies(
-      context, guard, Z3_mk_eq(context, packed(data), numeral(0, 130)));
+  ID guard = variables.back();
+  std::vector<ID> data(variables.begin(), variables.end() - 1);
+  ID predicate =
+      context.disjunction(guard ^ 1, equal(packed(data), numeral(0, 130)));
   ModelCounter counter(context, variables);
   ASSERT_TRUE(counter.build(predicate));
   ModelCount expected = ModelCount::powerOfTwo(130);
@@ -105,11 +102,11 @@ TEST_F(RandModelCountTest, CountsWideImplicationIncludingItsSingleton) {
 }
 
 TEST_F(RandModelCountTest, FullWideCubeAndRejectionSamplingPreservePrecision) {
-  std::vector<Z3_ast> variables;
+  std::vector<ID> variables;
   for (unsigned index = 0; index != 4096; ++index)
     variables.push_back(bit(index));
   ModelCounter counter(context, variables);
-  ASSERT_TRUE(counter.build(Z3_mk_true(context)));
+  ASSERT_TRUE(counter.build(1));
   ModelCount count = ModelCount::powerOfTwo(4096);
   ASSERT_EQ(counter.count().compare(count), 0);
   ModelCount maximum = count;
@@ -133,13 +130,12 @@ TEST_F(RandModelCountTest, FullWideCubeAndRejectionSamplingPreservePrecision) {
 }
 
 TEST_F(RandModelCountTest, ProjectionCountsChoicesIndependentlyOfCompletions) {
-  std::vector<Z3_ast> variables;
+  std::vector<ID> variables;
   for (unsigned index = 0; index != 131; ++index)
     variables.push_back(bit(index));
-  std::vector<Z3_ast> data(variables.begin(), variables.end() - 1);
-  Z3_ast predicate =
-      Z3_mk_implies(context, variables.back(),
-                    Z3_mk_eq(context, packed(data), numeral(0, 130)));
+  std::vector<ID> data(variables.begin(), variables.end() - 1);
+  ID predicate = context.disjunction(variables.back() ^ 1,
+                                     equal(packed(data), numeral(0, 130)));
   std::vector<bool> keep(variables.size(), false);
   keep.back() = true;
   for (unsigned selected = 0; selected != 2; ++selected) {
@@ -160,4 +156,3 @@ TEST_F(RandModelCountTest, ProjectionCountsChoicesIndependentlyOfCompletions) {
 }
 
 } // namespace
-#endif

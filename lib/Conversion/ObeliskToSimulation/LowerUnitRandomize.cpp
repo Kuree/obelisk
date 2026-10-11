@@ -2962,10 +2962,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       solveBeforeLayerMasks.back() |= randomAssignmentMask & ~orderedMask;
     }
   }
-#ifndef OBELISK_RUNTIME_Z3
+#ifndef OBELISK_ENABLE_Z3
   if (hasFunctionPriority) {
-    emitError(location)
-        << "constraint function priority subdivision requires runtime Z3";
+    emitError(location) << "constraint function priority subdivision requires "
+                           "compiler Z3 sampling plans";
     return failure();
   }
 #endif
@@ -3033,7 +3033,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     });
     return dependent;
   };
-#ifdef OBELISK_RUNTIME_Z3
+#ifdef OBELISK_ENABLE_Z3
   constexpr bool rawDistWeights = true;
 #else
   constexpr bool rawDistWeights = false;
@@ -3768,7 +3768,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (capturedIntervals) {
         if (!rawDistWeights) {
           emitError(getSemanticLocation(expression))
-              << "dynamic or clipped dist intervals require runtime Z3";
+              << "dynamic or clipped dist intervals require compiler Z3 "
+                 "sampling plans";
           return failure();
         }
         if (defaultWeight && defaultWeightKind.getInt() == 0) {
@@ -5979,7 +5980,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       program.push_back(static_cast<uint8_t>(value >> (index * 8)));
   };
   uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
-#ifdef OBELISK_RUNTIME_Z3
+#ifdef OBELISK_ENABLE_Z3
   programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
   if (distPlans.empty())
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
@@ -7343,9 +7344,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       llvm::all_of(proposalDefinitions, isClosedDefinition);
   exactProposal |= closedDefinitionProposal;
   // Mode changes can reach residuals even when the default proposal is exact.
-  // Wide ordered metadata requires target Z3 for conditional projections.
+  // Wide ordered metadata requires compiler-generated sampling plans.
   bool unsupportedWideOrder = false;
-#ifndef OBELISK_RUNTIME_Z3
+#ifndef OBELISK_ENABLE_Z3
   unsupportedWideOrder = hasSolveBefore;
 #endif
   if (wideProgram &&
@@ -7473,7 +7474,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             buildSolveBeforeTable(table.assignments, 0));
   }
 
-#ifndef OBELISK_RUNTIME_Z3
+#ifndef OBELISK_ENABLE_Z3
   if (solveBeforeRequiresRuntime && !completeFallbackDomain) {
     emitError(location)
         << "solve before residual fallback requires exhaustive traversal of "
@@ -7495,6 +7496,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     proposalDomains.clear();
     proposalCaptureDomains.clear();
   }
+
+#ifdef OBELISK_ENABLE_Z3
+  std::vector<uint32_t> samplerCaptureWidths;
+  for (Value capture : programCaptures)
+    samplerCaptureWidths.push_back(
+        cast<IntegerType>(capture.getType()).getWidth());
+  auto samplerPlan = solver::compileRandomSamplerPlan(
+      program.data(), program.size(), samplerCaptureWidths);
+  if (!samplerPlan) {
+    emitError(location) << "could not compile an exact random sampling plan";
+    return failure();
+  }
+  program.append(samplerPlan->begin(), samplerPlan->end());
+  programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN;
+  for (unsigned byte = 0; byte != 4; ++byte)
+    program[20 + byte] = static_cast<uint8_t>(programFlags >> (byte * 8));
+#endif
 
   // The compiler plan is proven for the all-enabled constraint set. If a
   // block is disabled at runtime, bypass plan-specific bounds, tables, and

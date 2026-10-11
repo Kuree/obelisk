@@ -18,7 +18,7 @@
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.opt.exe
 // RUN: %t.opt.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.opt.exe --execution-tier=bytecode --seed=13 | FileCheck %s --check-prefix=RUNTIME
-// REQUIRES: runtime-z3
+// REQUIRES: compiled-sampler
 
 // IEEE 1800-2023 18.5.9: defer partially ordered fields as late as
 // possible, and solve unordered fields jointly with the last ordered group.

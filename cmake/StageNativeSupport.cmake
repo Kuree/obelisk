@@ -33,7 +33,6 @@ foreach(path IN ITEMS
     "${SOURCE_DIR}/cmake/StageNativeSupport.cmake"
     "${SOURCE_DIR}/LICENSE"
     "${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
-    "${SOURCE_DIR}/docs/third-party/licenses/MIT.txt"
     "${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt")
   file(SHA256 "${path}" digest)
   string(APPEND stage_material "input=${digest};")
@@ -47,7 +46,6 @@ set(stage "${published}.tmp-${nonce}")
 file(REMOVE_RECURSE "${stage}")
 file(MAKE_DIRECTORY
   "${stage}/licenses/obelisk"
-  "${stage}/licenses/z3"
   "${stage}/licenses/llvm")
 
 file(COPY "${RUNTIME_ARCHIVE}" "${RUNTIME_LTO_ARCHIVE}"
@@ -65,8 +63,6 @@ file(COPY "${LLVM_DIST}/include/llvm/Support/LICENSE.TXT"
   DESTINATION "${stage}/licenses/llvm")
 configure_file("${SOURCE_DIR}/LICENSE"
                "${stage}/licenses/obelisk/LICENSE" COPYONLY)
-configure_file("${SOURCE_DIR}/docs/third-party/licenses/MIT.txt"
-               "${stage}/licenses/z3/LICENSE" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/Apache-2.0.txt"
                "${stage}/licenses/llvm/Apache-2.0.txt" COPYONLY)
 configure_file("${SOURCE_DIR}/docs/third-party/licenses/LLVM-exception.txt"
@@ -101,7 +97,6 @@ file(WRITE "${stage}/README.txt"
   "Local Obelisk native-link support for ${TARGET_TRIPLE}.\n"
   "libobelisk_rt.a contains native ELF objects for -O0 links.\n"
   "libobelisk_rt_lto.a contains unified LLVM bitcode for Full-LTO links.\n"
-  "When enabled, target Z3 is merged statically into the runtime archives.\n"
   "libobelisk_rt_prelinked.a contains a Full-LTO-optimized ELF runtime for ThinLTO links.\n"
   "Host C-runtime inputs are discovered in-process when an executable is linked.\n"
   "Generated executables require the glibc version provided by the build host.\n"

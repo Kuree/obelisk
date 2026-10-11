@@ -1,5 +1,5 @@
-// RUN: %if z3 || runtime-z3 %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE %}
-// RUN: %if !z3 && !runtime-z3 %{ not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE-FALLBACK %}
+// RUN: %if z3 || compiled-sampler %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE %}
+// RUN: %if !z3 && !compiled-sampler %{ not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SOLVE-BEFORE-WIDE-FALLBACK %}
 
 // A capture-free soft equality is resolved before solve-order planning. The
 // exact all-enabled plan therefore remains executable even though the 21-bit

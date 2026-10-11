@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "llvm/ADT/APInt.h"
@@ -157,6 +158,16 @@ RandomProgramAnalysis
 analyzeRandomProgram(const uint8_t *program, size_t programSize,
                      uint64_t resourceLimit = 100000,
                      bool preferGlobalAssignmentTable = false);
+
+/// Compile the residual's exact arithmetic into a parameterized Boolean plan.
+/// Z3 bit blasting preserves the explicitly named random/capture/mode inputs;
+/// no solver or arithmetic interpreter is needed to specialize and sample it.
+/// The returned bytes are appended to the unmodified residual, including a
+/// trailer identifying its core byte count. A missing result diagnoses an
+/// unsupported plan rather than silently reducing the sampling search space.
+std::optional<std::vector<uint8_t>>
+compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
+                         const std::vector<uint32_t> &captureWidths);
 
 } // namespace obelisk::solver
 

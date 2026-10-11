@@ -156,7 +156,7 @@ native_members = [
     "ProcessValidation.o",
     "Random.o",
     "RandSolve.o",
-    "RandSolveSMT.o",
+    "RandSamplePlan.o",
     "RandSolveWide.o",
     "Runtime.o",
     "Sampled.o",

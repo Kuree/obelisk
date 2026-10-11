@@ -18,7 +18,7 @@
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.opt.exe
 // RUN: %t.opt.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.opt.exe --execution-tier=bytecode --seed=13 | FileCheck %s --check-prefix=RUNTIME
-// REQUIRES: runtime-z3
+// REQUIRES: compiled-sampler
 
 // IEEE 1800-2023 18.5.9: each projected guard value has probability 1/2.
 // A live capture controls the guard-true singleton, while guard-false admits

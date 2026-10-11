@@ -155,12 +155,6 @@ set(_obelisk_target_runtime_coverage_headers
 set(_obelisk_target_runtime_objects)
 set(_obelisk_target_runtime_lto_objects)
 set(_obelisk_target_runtime_definitions)
-if(OBELISK_ENABLE_RUNTIME_Z3)
-  include("${_obelisk_source_dir}/cmake/RuntimeZ3.cmake")
-  obelisk_build_runtime_z3(native)
-  list(APPEND _obelisk_target_runtime_definitions
-    -DOBELISK_RUNTIME_Z3=1 -I "${OBELISK_TARGET_Z3_INCLUDE_DIR}")
-endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   list(APPEND _obelisk_target_runtime_definitions
     -DOBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS=1)
@@ -171,7 +165,7 @@ set(_obelisk_target_runtime_common_sources
     DesignBytecodeObservers DesignBytecodeRoots DesignDatabase DPI FileIO
     Format ManagedHeap Plusargs Process ProcessAllocation ProcessAOT
     ProcessNativeState ProcessNBA ProcessObservers ProcessSignals ProcessState
-    ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSolveSMT RandSolveWide Runtime
+    ProcessTable ProcessTransitions ProcessValidation Random RandSolve RandSamplePlan RandSolveWide Runtime
     Sampled StochasticQueue System VCD VPI)
 set(_obelisk_target_runtime_cold_tail_sources
     ScanFormat DynamicScanBytecode ContainerBitstream RecursiveBitstream
@@ -183,9 +177,6 @@ foreach(source IN LISTS _obelisk_target_runtime_common_sources
   set(lto_object "${_obelisk_target_runtime_dir}/${source}.bc")
   set(source_dependencies
       "${_obelisk_runtime_source_dir}/lib/${source}.cpp")
-  if(source STREQUAL "RandSolveSMT" AND OBELISK_ENABLE_RUNTIME_Z3)
-    list(APPEND source_dependencies ${OBELISK_TARGET_Z3_PROJECT})
-  endif()
   if(source STREQUAL "CoverageDatabase")
     list(APPEND source_dependencies
       "${_obelisk_source_dir}/lib/Coverage/CoverageFileSupport.h"
@@ -250,13 +241,7 @@ add_custom_command(
           ${_obelisk_target_runtime_objects}
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
           "${OBELISK_TARGET_RUNTIME_ARCHIVE}"
-  COMMAND "${CMAKE_COMMAND}"
-    "-DARCHIVER=${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar"
-    "-DRUNTIME=${OBELISK_TARGET_RUNTIME_ARCHIVE}"
-    "-DZ3=${OBELISK_TARGET_Z3_ARCHIVE}"
-    -P "${_obelisk_source_dir}/cmake/MergeRuntimeZ3.cmake"
-  DEPENDS ${_obelisk_target_runtime_objects} ${OBELISK_TARGET_Z3_ARCHIVE}
-    "${_obelisk_source_dir}/cmake/MergeRuntimeZ3.cmake"
+  DEPENDS ${_obelisk_target_runtime_objects}
   COMMENT "Archiving target libobelisk_rt.a with llvm-ar"
   VERBATIM)
 add_custom_command(
@@ -268,13 +253,7 @@ add_custom_command(
           ${_obelisk_target_runtime_lto_objects}
   COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/llvm-ranlib"
           "${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-  COMMAND "${CMAKE_COMMAND}"
-    "-DARCHIVER=${OBELISK_LLVM_DIST_DIR}/bin/llvm-ar"
-    "-DRUNTIME=${OBELISK_TARGET_RUNTIME_LTO_ARCHIVE}"
-    "-DZ3=${OBELISK_TARGET_Z3_ARCHIVE}"
-    -P "${_obelisk_source_dir}/cmake/MergeRuntimeZ3.cmake"
-  DEPENDS ${_obelisk_target_runtime_lto_objects} ${OBELISK_TARGET_Z3_ARCHIVE}
-    "${_obelisk_source_dir}/cmake/MergeRuntimeZ3.cmake"
+  DEPENDS ${_obelisk_target_runtime_lto_objects}
   COMMENT "Archiving target libobelisk_rt_lto.a with llvm-ar"
   VERBATIM)
 add_custom_command(
@@ -322,7 +301,6 @@ set(_obelisk_native_support_byproducts
   "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_lto.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/libobelisk_rt_prelinked.a"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/obelisk/LICENSE"
-  "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/z3/LICENSE"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/LICENSE.TXT"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/Apache-2.0.txt"
   "${OBELISK_NATIVE_SUPPORT_DIR}/licenses/llvm/LLVM-exception.txt")
@@ -348,7 +326,6 @@ add_custom_command(
     "${_obelisk_source_dir}/cmake/StageNativeSupport.cmake"
     "${_obelisk_source_dir}/LICENSE"
     "${_obelisk_source_dir}/docs/third-party/licenses/Apache-2.0.txt"
-    "${_obelisk_source_dir}/docs/third-party/licenses/MIT.txt"
     "${_obelisk_source_dir}/docs/third-party/licenses/LLVM-exception.txt"
   COMMENT "Staging local Obelisk native-link support"
   VERBATIM)

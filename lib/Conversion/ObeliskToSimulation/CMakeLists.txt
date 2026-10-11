@@ -1,5 +1,5 @@
-if(OBELISK_ENABLE_RUNTIME_Z3)
-  add_compile_definitions(OBELISK_RUNTIME_Z3=1)
+if(OBELISK_ENABLE_Z3)
+  add_compile_definitions(OBELISK_ENABLE_Z3=1)
 endif()
 
 add_mlir_library(ObeliskToSimulation

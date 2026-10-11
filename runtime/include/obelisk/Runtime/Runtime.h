@@ -4688,22 +4688,24 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DIST UINT32_C(4)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS UINT32_C(8)
-// Permit target Z3 to complete an unfinished ordinary residual traversal.
-// max_attempts then bounds the enumeration fast path rather than the solver.
+// Permit a compiled sampling plan to complete an unfinished ordinary traversal.
+// max_attempts then bounds the enumeration fast path rather than completion.
 // This flag does not alter ordered or weighted sampling.
 #define OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION UINT32_C(16)
 // Sample integral residuals uniformly over legal assignments or each enabled
 // solve-order projection, conditional on the accepted preceding layers.
-// Requires a stateful entry point and target Z3; a nonzero max_attempts enables
-// solving without bounding the exact finite count. Legacy flags retain their
-// traversal order. Weighted programs retain their separate policy.
+// Requires a stateful entry point and a compiler-generated sampling plan; a
+// nonzero max_attempts enables sampling without bounding the exact finite
+// count. Legacy flags retain their traversal order. Weighted programs retain
+// their separate policy.
 #define OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM UINT32_C(32)
 // Function arguments subdivide the constraints into priority stages. Higher
 // stages ignore lower-stage constraints and become state for later stages.
 // Requires SMT_UNIFORM; failed later stages commit no assignment or RNG state.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY UINT32_C(64)
 // Exact weighted target projections with arbitrary-precision unsigned masses.
-// Requires target Z3 and stateful solving. Dist records use RAW_WEIGHT; their
+// Requires a compiled sampling plan and stateful sampling. Dist records use
+// RAW_WEIGHT; their
 // coefficient field is an item identity and the reserved u16 is zero for hard
 // distributions or one plus the owning soft priority. Split intervals sharing
 // an item identity form one range item, including the default complement.
@@ -4719,6 +4721,10 @@ struct obelisk_rt_random_state_v1 {
 // masked independently, including overlapping body and guard references.
 // Zero retains the static source masks.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS UINT32_C(256)
+// A compiler-generated Boolean sampling plan follows the residual metadata.
+// Arithmetic is bit-blasted by compiler Z3; the target needs no Z3 dependency.
+// A versioned trailer bounds the original residual and the plan independently.
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN UINT32_C(512)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 // V2 edges contain ceil(aggregate_width/64) little-endian words for each
@@ -5153,8 +5159,8 @@ obelisk_rt_status obelisk_rt_v1_random_cycle_next(uint64_t key,
 // the first aggregate assignment and `max_attempts` is a deterministic work
 // bound. A successful solve writes both outputs. Exhaustion is reported by
 // out_success == 0 and is not a runtime API error.
-// SMT_COMPLETION programs additionally ask target Z3 to finish an exhausted
-// nonzero traversal. Legacy programs retain the deterministic work bound.
+// SMT_COMPLETION programs with a compiled plan additionally complete an
+// exhausted nonzero traversal. Legacy programs retain their work bound.
 obelisk_rt_status obelisk_rt_v1_random_solve(
     obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
     uint64_t start, uint64_t max_attempts, const uint64_t *captures,

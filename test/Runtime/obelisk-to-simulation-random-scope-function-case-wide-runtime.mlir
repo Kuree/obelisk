@@ -18,7 +18,7 @@
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.opt.exe
 // RUN: %t.opt.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.opt.exe --execution-tier=bytecode --seed=13 | FileCheck %s --check-prefix=RUNTIME
-// REQUIRES: runtime-z3
+// REQUIRES: compiled-sampler
 
 // LRM 18.5.11 and 12.5: a scope function case returns a 130-bit local
 // initialized above bit 100. A nonmatching case falls through to a compound

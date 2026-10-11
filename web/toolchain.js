@@ -12,7 +12,8 @@
     ['libdlmalloc.a', '/sysroot/lib/wasm32-emscripten/libdlmalloc.a'],
     ['libc++.a', '/sysroot/lib/wasm32-emscripten/libc++.a'],
     ['libc++abi.a', '/sysroot/lib/wasm32-emscripten/libc++abi.a'],
-    ['libclang_rt.builtins.a', '/sysroot/lib/wasm32-emscripten/libclang_rt.builtins.a'],
+    ['libcompiler_rt.a', '/sysroot/lib/wasm32-emscripten/libcompiler_rt.a'],
+    ['libunwind.a', '/sysroot/lib/wasm32-emscripten/libunwind.a'],
   ];
 
   function ensureDirectory(FS, path) {

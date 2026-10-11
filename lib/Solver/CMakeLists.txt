@@ -2,6 +2,7 @@ set(OBELISK_SOLVER_SOURCES
   BitVectorProof.cpp
   BooleanDNF.cpp
   RandomProgramSMT.cpp
+  RandomSamplerZ3.cpp
   SolverHeuristic.cpp
   SolverZ3.cpp
 )

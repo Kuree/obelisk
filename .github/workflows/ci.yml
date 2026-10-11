@@ -225,21 +225,19 @@ jobs:
             cp build-wasm/tools/obelisk-cov/obelisk-cov.wasm site/
             cp build-wasm/tools/obelisk-cov/obelisk-cov.js site/
             cp build-wasm/target-runtime/libobelisk_rt.a site/toolchain/
-            # Populate the JavaScript exception ABI used by runtime Z3.
+            # Populate Emscripten cache entries for the no-exception ABI, then
+            # publish exactly those libc++ variants for simulation links.
             em++ /emsdk/upstream/emscripten/test/hello_world.cpp -O3 \
-              -fexceptions -o /tmp/hello.js
+              -fno-exceptions -o /tmp/hello.js
             LIB=/emsdk/upstream/emscripten/cache/sysroot/lib/wasm32-emscripten
             cp "$LIB/libstubs.a" site/toolchain/libstubs.a
             cp "$LIB/libnoexit.a" site/toolchain/libnoexit.a
             cp "$LIB/libc.a" site/toolchain/libc.a
             cp "$LIB/libdlmalloc.a" site/toolchain/libdlmalloc.a
-            cp "$LIB/libclang_rt.builtins.a" site/toolchain/libclang_rt.builtins.a
-            # Runtime Z3 uses the JavaScript exception ABI selected by
-            # em++ -fexceptions, with web/wasi.js providing its imports.
-            cp "$LIB/libc++.a" site/toolchain/libc++.a
-            cp "$LIB/libc++abi.a" site/toolchain/libc++abi.a
-            mkdir -p site/toolchain/licenses/z3
-            cp docs/third-party/licenses/MIT.txt site/toolchain/licenses/z3/LICENSE
+            cp "$LIB/libclang_rt.builtins.a" site/toolchain/libcompiler_rt.a
+            cp "$LIB/libc++-noexcept.a" site/toolchain/libc++.a
+            cp "$LIB/libc++abi-noexcept.a" site/toolchain/libc++abi.a
+            cp "$LIB/libunwind-noexcept.a" site/toolchain/libunwind.a
             du -sh site
             test "$(du -sm site | cut -f1)" -lt 1000
           '

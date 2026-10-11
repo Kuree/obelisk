@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "RandomSamplerTestSupport.h"
+
 namespace {
 
 void append16(std::vector<uint8_t> &bytes, uint16_t value) {
@@ -145,6 +147,7 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
       append64(bytes, domain.value);
     }
   }
+  appendTestSamplerPlan(bytes);
   return bytes;
 }
 
@@ -732,7 +735,7 @@ TEST_F(RandSolveWideTest, RejectsNonContiguousSoftPriorities) {
   EXPECT_EQ(nextState, 71u);
 }
 
-#ifdef OBELISK_RUNTIME_Z3
+#ifdef OBELISK_TEST_COMPILED_SAMPLER
 TEST_F(RandSolveWideTest, FunctionArgumentStagesPreserveWideFailureSemantics) {
   auto bytes = program(131, 0,
                        {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},

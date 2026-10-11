@@ -24,7 +24,6 @@ config.cmake_executable = r"@CMAKE_COMMAND@"
 config.real_uvm_dir = r"@OBELISK_REAL_UVM_DIR@"
 config.enable_real_uvm_tests = "@OBELISK_ENABLE_REAL_UVM_TESTS@" == "ON"
 config.enable_z3 = "@OBELISK_ENABLE_Z3@" == "ON"
-config.enable_runtime_z3 = "@OBELISK_ENABLE_RUNTIME_Z3@" == "ON"
 
 import lit.llvm
 lit.llvm.initialize(lit_config, config)

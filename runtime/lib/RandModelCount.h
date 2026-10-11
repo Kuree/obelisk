@@ -4,7 +4,7 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
-#include <z3.h>
+#include "obelisk/Runtime/RandomSamplerPlan.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -177,90 +177,71 @@ private:
   std::vector<uint64_t> words;
 };
 
-/// Simplify exact bit-vector semantics to Boolean input circuits. The caller
-/// owns a non-reference-counted Z3 context, so returned ASTs remain alive.
-inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
-                              std::vector<Z3_ast> &formulas) {
-  Z3_goal goal = Z3_mk_goal(context, false, false, false);
-  Z3_goal_inc_ref(context, goal);
-  Z3_goal_assert(context, goal, predicate);
-  Z3_tactic simplify = Z3_mk_tactic(context, "simplify");
-  Z3_tactic_inc_ref(context, simplify);
-  Z3_tactic blast = Z3_mk_tactic(context, "bit-blast");
-  Z3_tactic_inc_ref(context, blast);
-  Z3_tactic first = Z3_tactic_and_then(context, simplify, blast);
-  Z3_tactic_inc_ref(context, first);
-  Z3_tactic tactic = Z3_tactic_and_then(context, first, simplify);
-  Z3_tactic_inc_ref(context, tactic);
-  Z3_apply_result result = Z3_tactic_apply(context, tactic, goal);
-  bool valid = result && Z3_get_error_code(context) == Z3_OK;
-  if (result)
-    Z3_apply_result_inc_ref(context, result);
-  valid = valid && Z3_apply_result_get_num_subgoals(context, result) == 1;
-  formulas.clear();
-  if (valid) {
-    Z3_goal output = Z3_apply_result_get_subgoal(context, result, 0);
-    for (unsigned index = 0; index != Z3_goal_size(context, output); ++index)
-      formulas.push_back(Z3_goal_formula(context, output, index));
-  }
-  if (result)
-    Z3_apply_result_dec_ref(context, result);
-  Z3_tactic_dec_ref(context, tactic);
-  Z3_tactic_dec_ref(context, first);
-  Z3_tactic_dec_ref(context, blast);
-  Z3_tactic_dec_ref(context, simplify);
-  Z3_goal_dec_ref(context, goal);
-  return valid;
-}
-
-/// Count a Z3 Boolean circuit with a reduced ordered decision diagram. Z3
-/// provides the bit-vector semantics and bit blasting; the diagram supplies
-/// exact counts, which a satisfiability model alone cannot provide. Only the
-/// caller's active assignment bits are variables, so auxiliary bits and frozen
-/// state never multiply the count. Iterative graph walks avoid WASM stack
-/// limits.
+/// Exact counts, projections and ranks for a compiler-produced Boolean plan.
+/// Shared with bounded compiler preparation; target counting has no budget.
+/// Iterative graph walks also avoid a bit-width-dependent WASM call stack.
 class ModelCounter {
 public:
   using ID = size_t;
 
-  ModelCounter(Z3_context context, const std::vector<Z3_ast> &variables)
-      : context(context), variableCount(variables.size()),
+  ModelCounter(random::BooleanCircuit &circuit,
+               const std::vector<random::BooleanCircuit::ID> &variables)
+      : circuit(&circuit), variableCount(variables.size()),
         fixed(variableCount, false), fixedValues(variableCount, false) {
     nodes.push_back({variableCount, 0, 0});
     nodes.push_back({variableCount, 1, 1});
-    for (size_t index = 0; index != variables.size(); ++index)
-      inputs.emplace(variables[index], makeNode(index, 0, 1));
+    circuits.emplace(0, 0);
+    circuits.emplace(1, 1);
   }
 
-  bool build(Z3_ast predicate) {
+  bool build(random::BooleanCircuit::ID predicate) {
     root = 1;
     return constrain(predicate);
   }
 
-  /// Add a predicate to the current relation, respecting previously accepted
-  /// values. Copies can thus count a range projection without changing the
-  /// relation used for subsequent conditional sampling.
-  bool constrain(Z3_ast predicate) {
-    // The bit-blast tactic preserves the existing Boolean input symbols and
-    // does not introduce Tseitin variables requiring projected counting.
-    std::vector<Z3_ast> formulas;
-    if (!bitBlastPredicate(context, predicate, formulas))
+  /// Compiler-only preparation can stop optimizing at a resource budget and
+  /// retain the exact Boolean plan. Runtime sampling never truncates a count.
+  bool prepareDiagram(random::BooleanCircuit::ID predicate, size_t budget,
+                      size_t circuitBudget) {
+    return convert(predicate, root, budget, circuitBudget);
+  }
+
+  /// Re-encode a completed decision diagram using the original named inputs.
+  /// This is an equivalence-preserving compiler optimization; dead arithmetic
+  /// gates can then be omitted from the serialized sampling plan.
+  random::BooleanCircuit::ID
+  exportDiagram(random::BooleanCircuit &output,
+                const std::vector<random::BooleanCircuit::ID> &inputs) const {
+    auto reached = reachable(root);
+    std::vector<random::BooleanCircuit::ID> exported(nodes.size());
+    exported[1] = 1;
+    for (ID id = 2; id != reached.size(); ++id)
+      if (reached[id]) {
+        const Node &node = nodes[id];
+        exported[id] = output.conditional(
+            inputs[node.variable], exported[node.high], exported[node.low]);
+      }
+    return exported[root];
+  }
+
+  /// Cofactor fixed inputs before constructing the relation's diagram. Only
+  /// random inputs are counted; compiler parameters were already substituted.
+  bool constrain(random::BooleanCircuit::ID predicate) {
+    if (std::find(fixed.begin(), fixed.end(), true) != fixed.end())
+      predicate = circuit->restrict(predicate, fixedValues, fixed);
+    ID relation = 0;
+    if (!convert(predicate, relation))
       return false;
-    for (Z3_ast formula : formulas) {
-      ID circuit = 0;
-      if (!convert(formula, circuit))
-        return false;
-      root = conjunction(root, circuit);
-    }
+    root = conjunction(root, relation);
     restrict(fixedValues, fixed);
     return true;
   }
 
-  /// Reuse a relation already bit-blasted by Z3. Weighted item combinations
-  /// share the same input inventory and accepted prefix; importing their
-  /// diagrams avoids invoking the tactic again for every Cartesian term.
+  /// Reuse a relation from the same compiled sampling plan. Weighted item
+  /// combinations share the same input inventory and accepted prefix; importing
+  /// their diagrams avoids constructing them again for every Cartesian term.
   bool intersect(const ModelCounter &other) {
-    if (context != other.context || inputs != other.inputs ||
+    if (circuit != other.circuit || variableCount != other.variableCount ||
         fixed != other.fixed || fixedValues != other.fixedValues)
       return false;
     auto reached = other.reachable(other.root);
@@ -482,91 +463,46 @@ private:
   ID negate(ID a) { return conditional(a, 0, 1); }
   ID exclusiveOr(ID a, ID b) { return conditional(a, negate(b), b); }
 
-  bool convert(Z3_ast predicate, ID &result) {
-    std::vector<Z3_ast> pending{predicate};
+  // Shannon-expand the final predicate, simplifying each cofactor in the
+  // compiler's AND graph. Constructing arithmetic BDDs one gate at a time can
+  // explode even when a modular product equality has only a handful of roots.
+  // This walk prunes impossible prefixes before materializing their children.
+  bool convert(random::BooleanCircuit::ID predicate, ID &result,
+               size_t budget = 0, size_t circuitBudget = 0) {
+    using CircuitID = random::BooleanCircuit::ID;
+    std::vector<CircuitID> pending{predicate};
     while (!pending.empty()) {
-      Z3_ast value = pending.back();
-      if (circuits.count(value)) {
+      if ((budget && --budget == 0) ||
+          (circuitBudget && circuit->getNodes().size() > circuitBudget))
+        return false;
+      CircuitID id = pending.back();
+      auto found = circuits.find(id);
+      if (found != circuits.end()) {
         pending.pop_back();
         continue;
       }
-      auto input = inputs.find(value);
-      if (input != inputs.end()) {
-        circuits.emplace(value, input->second);
-        pending.pop_back();
+      size_t variable = circuit->firstVariable(id);
+      if (variable >= variableCount)
+        return false;
+      CircuitID low = circuit->cofactor(id, variable, false);
+      CircuitID high = circuit->cofactor(id, variable, true);
+      if (!circuits.count(low)) {
+        pending.push_back(low);
         continue;
       }
-      if (Z3_get_ast_kind(context, value) != Z3_APP_AST)
-        return false;
-      Z3_app app = Z3_to_app(context, value);
-      unsigned arity = Z3_get_app_num_args(context, app);
-      bool ready = true;
-      for (unsigned index = 0; index != arity; ++index) {
-        Z3_ast child = Z3_get_app_arg(context, app, index);
-        if (!circuits.count(child)) {
-          pending.push_back(child);
-          ready = false;
-          break;
-        }
-      }
-      if (!ready)
+      if (!circuits.count(high)) {
+        pending.push_back(high);
         continue;
-      auto argument = [&](unsigned index) {
-        return circuits.at(Z3_get_app_arg(context, app, index));
-      };
-      Z3_decl_kind kind =
-          Z3_get_decl_kind(context, Z3_get_app_decl(context, app));
-      ID circuit = 0;
-      switch (kind) {
-      case Z3_OP_TRUE:
-        circuit = 1;
-        break;
-      case Z3_OP_FALSE:
-        break;
-      case Z3_OP_AND:
-      case Z3_OP_OR:
-      case Z3_OP_XOR:
-      case Z3_OP_XOR3:
-        circuit = kind == Z3_OP_AND ? 1 : 0;
-        for (unsigned index = 0; index != arity; ++index)
-          circuit = kind == Z3_OP_AND  ? conjunction(circuit, argument(index))
-                    : kind == Z3_OP_OR ? disjunction(circuit, argument(index))
-                                       : exclusiveOr(circuit, argument(index));
-        break;
-      case Z3_OP_NOT:
-        circuit = negate(argument(0));
-        break;
-      case Z3_OP_EQ:
-      case Z3_OP_IFF:
-        circuit = negate(exclusiveOr(argument(0), argument(1)));
-        break;
-      case Z3_OP_DISTINCT:
-        if (arity != 2)
-          return false;
-        circuit = exclusiveOr(argument(0), argument(1));
-        break;
-      case Z3_OP_IMPLIES:
-        circuit = conditional(argument(0), argument(1), 1);
-        break;
-      case Z3_OP_ITE:
-        circuit = conditional(argument(0), argument(1), argument(2));
-        break;
-      case Z3_OP_CARRY:
-        circuit = disjunction(
-            conjunction(argument(0), argument(1)),
-            conjunction(argument(2), disjunction(argument(0), argument(1))));
-        break;
-      default:
-        return false;
       }
-      circuits.emplace(value, circuit);
+      circuits.emplace(id,
+                       makeNode(variable, circuits.at(low), circuits.at(high)));
       pending.pop_back();
     }
     result = circuits.at(predicate);
     return true;
   }
 
-  Z3_context context;
+  random::BooleanCircuit *circuit;
   size_t variableCount;
   ID root = 0;
   ID viewRoot = 0;
@@ -575,7 +511,7 @@ private:
   std::vector<Node> nodes;
   std::vector<ModelCount> counts;
   std::unordered_map<Key, ID, Hash> unique, cache;
-  std::unordered_map<Z3_ast, ID> inputs, circuits;
+  std::unordered_map<random::BooleanCircuit::ID, ID> circuits;
 };
 
 } // namespace obelisk::runtime

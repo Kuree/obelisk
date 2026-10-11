@@ -45,9 +45,6 @@ option(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS
   "Report failed bytecode image validation checks" OFF)
 option(OBELISK_ENABLE_Z3
   "Use compiler-side Z3 analysis for constrained-random planning" ON)
-option(OBELISK_ENABLE_RUNTIME_Z3
-  "Statically link target Z3 for complete runtime constraint solving"
-  ${OBELISK_ENABLE_Z3})
 set(OBELISK_Z3_SOURCE_DIR "" CACHE PATH
   "Extracted Z3 source tree used instead of the pinned archive")
 set(OBELISK_Z3_INSTALL_DIR "" CACHE PATH
@@ -266,12 +263,11 @@ set(OBELISK_SLANG_ARCHIVE_SHA256
 set(OBELISK_SLANG_SOURCE_DIR "" CACHE PATH
     "Extracted slang v${OBELISK_SLANG_VERSION} source tree (offline builds)")
 
-# Build a pinned static compiler-side Z3 library
+# Z3 is a host-side compiler dependency only. Build a pinned static library
 # from source so the compiler does not inherit the glibc floor of Z3's release
-# binaries. Target runtimes build their own ABI-compatible static libraries.
-# The source override supports
+# binaries, and keep the runtime dependency-free. The source override supports
 # fully offline builds without weakening the archive checksum path.
-if(OBELISK_ENABLE_Z3 OR OBELISK_ENABLE_RUNTIME_Z3)
+if(OBELISK_ENABLE_Z3)
   include(ExternalProject)
   set(OBELISK_Z3_VERSION "4.13.4")
   set(OBELISK_Z3_ARCHIVE_SHA256

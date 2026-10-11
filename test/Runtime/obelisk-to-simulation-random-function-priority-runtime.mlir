@@ -18,7 +18,7 @@
 // RUN:   %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.opt.exe
 // RUN: %t.opt.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // RUN: %t.opt.exe --execution-tier=bytecode --seed=13 | FileCheck %s --check-prefix=RUNTIME
-// REQUIRES: runtime-z3
+// REQUIRES: compiled-sampler
 
 // IEEE 1800-2023 18.5.11: x == id(y), x == 0 must solve y independently.
 // Half the y choices cause the lower stage to fail, leaving both fields intact.

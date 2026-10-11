@@ -77,12 +77,12 @@ SSA and compact monitor state.  The runtime performs scheduling, Preponed
 snapshot reads, bounded history access, and report dispatch; it does not parse
 properties or run a temporal interpreter.
 
-Z3 is an optional dependency used by constrained-random planning, runtime
-randomization, and bounded-SVA trace minimization. SVA lowering uses it only to
+Z3 is an optional compiler dependency used by constrained-random planning and
+bounded-SVA trace minimization. SVA lowering uses it only to
 remove equivalent generated Boolean work; a direct conservative monitor is
 emitted when `OBELISK_ENABLE_Z3=OFF` or a proof is unavailable.
-Randomization can statically link target Z3 through
-`OBELISK_ENABLE_RUNTIME_Z3`; temporal monitor execution does not call it.
+Randomization uses compiler Z3 to generate Boolean sampling plans. Target
+runtimes contain no Z3 dependency; temporal monitors do not call a solver.
 An unavailable SVA proof must only select a
 conservative generated monitor, never change assertion semantics.
 

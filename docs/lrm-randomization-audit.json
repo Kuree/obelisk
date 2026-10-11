@@ -2,7 +2,7 @@
   "standard": "IEEE 1800-2023",
   "clause": 18,
   "method": "Manual normative review, compiler/runtime inspection, and MLIR regression evidence. This inventory is not a full conformance certification.",
-  "z3": "Pinned in-process Z3 4.13.4 for compiler bit-vector planning, ordinary runtime residual completion and exact integral sampling; native and WASM target libraries are statically merged into simulator runtime archives.",
+  "z3": "Pinned in-process Z3 4.13.4 for compiler bit-vector analysis and parameterized Boolean sampling plans; native and WASM runtimes bind parameters and sample exact ranks without linking or calling Z3.",
   "sections": [
     {
       "section": "18.1",
@@ -21,7 +21,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -73,7 +76,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -115,7 +121,7 @@
         {
           "feature": "Complete solution discovery",
           "status": "partial",
-          "detail": "Compiler Z3 proves static plans. Native and WASM runtime Z3 complete ordinary and explicitly ordered packed integral residuals of arbitrary aggregate width with live captures, frozen bits, domains, block masks and optimal soft priorities. Weighted and runtime-foreach paths retain limits; non-integral forms remain incomplete."
+          "detail": "Compiler Z3 proves static plans. Native and WASM compiled-plan samplers complete ordinary and explicitly ordered packed integral residuals of arbitrary aggregate width with live captures, frozen bits, domains, block masks and optimal soft priorities. Weighted and runtime-foreach paths retain limits; non-integral forms remain incomplete."
         },
         {
           "feature": "Failure leaves random properties unchanged",
@@ -125,7 +131,7 @@
         {
           "feature": "Uniform joint sampling",
           "status": "partial",
-          "detail": "Exact compiler Z3 plans and tables are uniform. Ordinary native/WASM integral residuals now use Z3-proven sparse component tables or exact Boolean model counts and arbitrary-precision rejection-sampled ranks, including live captures, frozen bits, domains, block masks and optimal soft priorities. Runtime foreach, non-integral forms and other explicitly partial paths remain open."
+          "detail": "Exact compiler Z3 plans and tables are uniform. Ordinary native/WASM integral residuals use compiler-generated Boolean plans, exact model counts and arbitrary-precision rejection-sampled ranks, including live captures, frozen bits, domains, block masks and optimal soft priorities. Runtime foreach, non-integral forms and other explicitly partial paths remain open."
         }
       ],
       "evidence": {
@@ -136,8 +142,10 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp",
-          "runtime/lib/RandModelCount.h"
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/lib/RandModelCount.h",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -169,8 +177,11 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir",
-          "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.mlir",
+          "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
+          "test/Runtime/random-sampler-plan-validation.mlir",
+          "test/Build/runtime-compiled-sampler.test"
         ]
       }
     },
@@ -227,7 +238,10 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -263,7 +277,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -303,7 +320,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.mlir"
@@ -337,7 +357,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -368,7 +391,10 @@
           "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
+          "test/Runtime/random-sampler-plan-validation.mlir",
+          "test/Build/runtime-compiled-sampler.test"
         ]
       }
     },
@@ -399,7 +425,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
@@ -429,7 +458,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -481,22 +513,22 @@
         {
           "feature": "Per-range and per-value probability",
           "status": "partial",
-          "detail": "Runtime Z3 preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Expression targets, candidate-dependent endpoints and real ranges remain open."
+          "detail": "The compiled-plan sampler preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Expression targets, candidate-dependent endpoints and real ranges remain open."
         },
         {
           "feature": "Nonzero weights never make an otherwise legal solve fail",
           "status": "partial",
-          "detail": "The runtime Z3 policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. General expression targets, unresolved activation and function-priority stage combinations remain diagnosed."
+          "detail": "The compiled-plan samplers policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. General expression targets, unresolved activation and function-priority stage combinations remain diagnosed."
         },
         {
           "feature": "Soft dist and dist with solve before",
           "status": "partial",
-          "detail": "Runtime Z3 retains or discards soft distributions in global soft-priority order and samples whole distributed targets conditionally on earlier solve-before layers. State guards and earlier candidate guards are supported. Split-target ordering, unresolved candidate activation and independent function-priority stage combinations remain open."
+          "detail": "The compiled-plan sampler retains or discards soft distributions in global soft-priority order and samples whole distributed targets conditionally on earlier solve-before layers. State guards and earlier candidate guards are supported. Split-target ordering, unresolved candidate activation and independent function-priority stage combinations remain open."
         },
         {
           "feature": "Multiple active distributions on one target",
           "status": "partial",
-          "detail": "Runtime Z3 combines per-value masses from every enabled distribution on admitted direct integral targets, preserving legal intersections even for incompatible requested marginals. General expression targets and real distributions remain open."
+          "detail": "The compiled-plan sampler combines per-value masses from every enabled distribution on admitted direct integral targets, preserving legal intersections even for incompatible requested marginals. General expression targets and real distributions remain open."
         },
         {
           "feature": "Dynamic endpoints, candidate weights, and real ranges",
@@ -512,9 +544,11 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
           "runtime/lib/RandSolveWeighted.h",
-          "runtime/lib/RandModelCount.h"
+          "runtime/lib/RandModelCount.h",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
@@ -546,7 +580,10 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -599,7 +636,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -651,7 +691,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -705,7 +748,10 @@
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
           "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
@@ -743,7 +789,10 @@
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
           "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
@@ -770,7 +819,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
@@ -795,7 +847,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -842,7 +897,7 @@
         {
           "feature": "Conditional ordered probabilities",
           "status": "partial",
-          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM runtime Z3 count exact existential projections for integral bitstreams, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Fixed integral array elements use the same exact masks and conditional probabilities; whole unpacked arrays and randc operands are diagnosed. Real ordering and state-dependent selected paths remain incomplete."
+          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM compiled-plan samplers count exact existential projections for integral bitstreams, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Fixed integral array elements use the same exact masks and conditional probabilities; whole unpacked arrays and randc operands are diagnosed. Real ordering and state-dependent selected paths remain incomplete."
         },
         {
           "feature": "Randc implicit priority",
@@ -858,8 +913,10 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp",
-          "runtime/lib/RandModelCount.h"
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/lib/RandModelCount.h",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
@@ -873,7 +930,10 @@
           "test/Runtime/obelisk-to-simulation-random-ordered-wide-z3-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-ordered-wide-table-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir"
+          "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
+          "test/Runtime/random-sampler-plan-validation.mlir",
+          "test/Build/runtime-compiled-sampler.test"
         ]
       }
     },
@@ -894,7 +954,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
@@ -921,7 +984,7 @@
         {
           "feature": "Implicit function priority can shrink solution space",
           "status": "partial",
-          "detail": "Native and WASM target Z3 solve higher-only integral constraint sets independently, freeze accepted arguments, and allow lower stages to fail without committing assignments or solver RNG. Source path masks preserve syntactic dependencies through simplification; guarded atoms retain separate stages. Explicit solve-before uses conditional projections within each function stage. Wide packed paths, soft priorities, live modes, frozen arguments and semantic domains are covered. Staged randc histories, aliased object identity, dynamic foreach and general procedural function evaluation remain open and are diagnosed."
+          "detail": "Native and WASM compiled-plan samplers sample higher-only integral constraint sets independently, freeze accepted arguments, and allow lower stages to fail without committing assignments or sampler RNG. Source path masks preserve syntactic dependencies through simplification; guarded atoms retain separate stages. Explicit solve-before uses conditional projections within each function stage. Wide packed paths, soft priorities, live modes, frozen arguments and semantic domains are covered. Staged randc histories, aliased object identity, dynamic foreach and general procedural function evaluation remain open and are diagnosed."
         },
         {
           "feature": "Integral system functions",
@@ -931,7 +994,7 @@
         {
           "feature": "Scope-randomization user functions",
           "status": "partial",
-          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and target Z3 stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Ordinary packed case statements share class first-match expansion, typed comparisons, state error guards and 130-bit return handling. Instance receiver plans, general loops, wildcard/pattern cases, case qualifier reports and other general function bodies remain incomplete."
+          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and compiled-plan stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Ordinary packed case statements share class first-match expansion, typed comparisons, state error guards and 130-bit return handling. Instance receiver plans, general loops, wildcard/pattern cases, case qualifier reports and other general function bodies remain incomplete."
         }
       ],
       "evidence": {
@@ -942,9 +1005,11 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
           "runtime/lib/RandSolveOrder.h",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-functions.mlir",
@@ -999,7 +1064,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -1059,13 +1127,15 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp"
+          "runtime/lib/RandSamplePlan.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir"
+          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.mlir"
         ]
       }
     },
@@ -1092,15 +1162,17 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "runtime/lib/RandSolveSMT.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
           "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-runtime-z3-completion.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.mlir",
           "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
         ]
       }
@@ -1138,7 +1210,10 @@
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
           "runtime/lib/RandSolveWide.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
@@ -1163,7 +1238,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
@@ -1193,7 +1271,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
@@ -1223,7 +1304,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
@@ -1248,7 +1332,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
@@ -1278,7 +1365,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-inline-constraint-enclosing-scope.mlir",
@@ -1303,7 +1393,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-inline-constraint-enclosing-scope.mlir",
@@ -1328,7 +1421,7 @@
         {
           "feature": "Large-domain partial selection solving",
           "status": "partial",
-          "detail": "With runtime Z3, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. The optional no-runtime-Z3 fallback remains bounded; non-integral and dynamic-container relations remain open."
+          "detail": "With compiled-plan samplers, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. The optional no-runtime-Z3 fallback remains bounded; non-integral and dynamic-container relations remain open."
         }
       ],
       "evidence": {
@@ -1342,7 +1435,10 @@
           "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
           "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp",
           "lib/Conversion/ObeliskToSimulation/PrepareTopology.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
@@ -1376,7 +1472,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
@@ -1406,7 +1505,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -1463,7 +1565,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randomize-properties.mlir"
@@ -1487,7 +1592,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randomize-properties.mlir"
@@ -1521,7 +1629,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
@@ -1556,7 +1667,10 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Solver/RandomSamplerZ3.cpp",
+          "runtime/lib/RandSamplePlan.cpp",
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",

@@ -1,9 +1,10 @@
 //===- RandSolve.cpp - Constrained-random residual solver -----------------===//
 
 #include "ExceptionSupport.h"
+#include "RandSamplePlan.h"
 #include "RandSolveOrder.h"
-#include "RandSolveSMT.h"
 #include "RandSolveWeighted.h"
+#include "obelisk/Runtime/RandomSamplerPlan.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include <algorithm>
@@ -558,9 +559,17 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                           OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
                           OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) !=
             0)
       return OBELISK_RT_INVALID_ARGUMENT;
+    size_t bundleSize = static_cast<size_t>(programSize);
+    if (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) {
+      obelisk::random::SamplerPlanView plan;
+      if (!obelisk::random::readSamplerPlan(program, bundleSize, nullptr, plan))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      programSize = plan.coreSize;
+    }
     uint64_t instructionEnd = OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE +
                               static_cast<uint64_t>(instructionCount) *
                                   OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
@@ -904,11 +913,11 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
       if (maxAttempts == 0)
         return OBELISK_RT_OK;
-      auto result = obelisk::runtime::completeRandomProgram(
-          program, static_cast<size_t>(programSize), &start, &mutableMask, 1,
-          constraintMask, captures, nullptr, captureCount, outAssignment,
-          randomState, solveLayers.data(), solveLayers.size());
-      if (result == obelisk::runtime::SMTCompletion::Satisfiable)
+      auto result = obelisk::runtime::sampleRandomPlan(
+          program, bundleSize, &start, &mutableMask, 1, constraintMask,
+          captures, nullptr, captureCount, outAssignment, randomState,
+          solveLayers.data(), solveLayers.size());
+      if (result == obelisk::runtime::SamplerResult::Satisfiable)
         *outSuccess = 1;
       return OBELISK_RT_OK;
     }
@@ -1227,10 +1236,10 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     if (!complete && maxAttempts != 0 &&
         (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) {
       uint64_t assignment = 0;
-      auto result = obelisk::runtime::completeRandomProgram(
-          program, static_cast<size_t>(programSize), &start, &mutableMask, 1,
-          constraintMask, captures, nullptr, captureCount, &assignment);
-      if (result == obelisk::runtime::SMTCompletion::Satisfiable) {
+      auto result = obelisk::runtime::sampleRandomPlan(
+          program, bundleSize, &start, &mutableMask, 1, constraintMask,
+          captures, nullptr, captureCount, &assignment);
+      if (result == obelisk::runtime::SamplerResult::Satisfiable) {
         *outAssignment = assignment;
         *outSuccess = 1;
       }

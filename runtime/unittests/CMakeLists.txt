@@ -76,8 +76,14 @@ target_include_directories(ObeliskRuntimeTests SYSTEM PRIVATE
   ${OBELISK_SLANG_SOURCE_DIR}/external/ieee1800
 )
 target_compile_features(ObeliskRuntimeTests PRIVATE cxx_std_17)
-if(OBELISK_ENABLE_RUNTIME_Z3)
-  target_compile_definitions(ObeliskRuntimeTests PRIVATE OBELISK_RUNTIME_Z3=1)
+if(OBELISK_ENABLE_Z3)
+  # Existing residual-completion fixtures generate their plans with the
+  # compiler backend inside the test process, then exercise the target sampler.
+  target_compile_definitions(ObeliskRuntimeTests PRIVATE
+    OBELISK_TEST_COMPILED_SAMPLER=1)
+  target_link_libraries(ObeliskRuntimeTests PRIVATE ObeliskSolver)
+  target_include_directories(ObeliskRuntimeTests PRIVATE
+    "${PROJECT_SOURCE_DIR}/include")
 endif()
 if(OBELISK_RT_BYTECODE_VALIDATION_DIAGNOSTICS)
   target_compile_definitions(ObeliskRuntimeTests PRIVATE
