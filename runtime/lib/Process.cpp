@@ -1387,6 +1387,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_add_planned(
     if (process.parent != 0)
       context->logicalProcessParentsWithChildren.insert(process.parent);
     process.programOwner = context->activeProgramOwner;
+    process.initializationRandomScope =
+        obelisk_rt_random_initialization_scope_unlocked(context);
     obelisk_rt_random_split_unlocked(context, process.random);
     if ((flags & OBELISK_RT_SCHEDULE_DETACHED_CONTROLS) == 0)
       process.controls = context->activeControls;

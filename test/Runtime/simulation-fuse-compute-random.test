@@ -8,4 +8,4 @@
 // RUN: diff %t/random.unfused.out %t/random.optimized.out
 // RUN: FileCheck %s --check-prefix=RANDOM < %t/random.optimized.out
 
-// RANDOM: 1202223563 1622423293
+// RANDOM: 2097979473 204305839

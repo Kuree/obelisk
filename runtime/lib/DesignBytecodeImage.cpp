@@ -1065,6 +1065,13 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && twoStateBits(input(0), 64) &&
+           twoStateBits(output(0), 64);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64);
   case OBELISK_RT_INTRINSIC_V1_RANDOM_LEGACY:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && twoStateBits(output(0), 32);

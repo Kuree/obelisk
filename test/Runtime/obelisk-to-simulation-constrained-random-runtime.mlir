@@ -15,7 +15,7 @@
 // inline hard constraint instead discards the range preference. The 32-bit
 // property makes rejection from the full type domain impractical and therefore
 // exercises the compiler-derived preferred domain.
-// RUNTIME: preferred 1 10
+// RUNTIME: preferred 1 5
 // RUNTIME-NEXT: fallback 1 12
 
 module attributes {

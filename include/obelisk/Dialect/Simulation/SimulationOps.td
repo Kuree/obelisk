@@ -1883,6 +1883,30 @@ def SimSemaphoreTryGetOp : SimOp<"semaphore.try_get", [
   let results = (outs I1:$success);
 }
 
+def SimRandomInitializationEnterOp : SimOp<"random.initialization_enter", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "bind a lexical scope's initialization random stream";
+  let description = [{
+    Startup declarations and static process creation use the IEEE 18.14.1
+    initialization RNG of their module, interface, program, or package.
+    The nonzero scope ID identifies that elaborated owner. Enter resumes its
+    stream and returns an activation token; leave restores the prior binding.
+    Initialization bindings contain synchronous, zero-time work only.
+  }];
+  let arguments = (ins SimContextType:$context, I64Attr:$scope);
+  let results = (outs I64:$activation);
+}
+
+def SimRandomInitializationLeaveOp : SimOp<"random.initialization_leave", [
+    MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>,
+                   MemRead<SimProcessResource>, MemWrite<SimProcessResource>]>
+  ]> {
+  let summary = "restore the binding preceding initialization RNG entry";
+  let arguments = (ins SimContextType:$context, I64:$activation);
+}
+
 def SimRandomNextOp : SimOp<"random.next", [
     MemoryEffects<[MemRead<SimRNGResource>, MemWrite<SimRNGResource>]>
   ]> {

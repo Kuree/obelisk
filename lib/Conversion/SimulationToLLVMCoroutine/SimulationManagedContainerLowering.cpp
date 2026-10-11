@@ -1151,6 +1151,60 @@ public:
   }
 };
 
+class RandomInitializationEnterConversion final
+    : public OpConversionPattern<sim::SimRandomInitializationEnterOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomInitializationEnterOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1)
+      return failure();
+    Value context = adaptor.getContext().front();
+    Value output =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
+    Value scope = llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(),
+                               op.getScope());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_random_initialization_enter"),
+            ValueRange{context, scope, output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(op,
+                       LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                            rewriter.getI64Type(), output, 8));
+    return success();
+  }
+};
+
+class RandomInitializationLeaveConversion final
+    : public OpConversionPattern<sim::SimRandomInitializationLeaveOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomInitializationLeaveOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getContext().size() != 1 || adaptor.getActivation().size() != 1)
+      return failure();
+    Value context = adaptor.getContext().front();
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_random_initialization_leave"),
+            ValueRange{context, adaptor.getActivation().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class RandomNextConversion final
     : public OpConversionPattern<sim::SimRandomNextOp> {
 public:
@@ -2014,9 +2068,10 @@ void populateManagedContainerToLLVMConversionPatterns(
       MailboxTryReadConversion<sim::SimMailboxTryGetOp, true>,
       BoxCastConversion<sim::SimBoxPackOp>,
       BoxCastConversion<sim::SimBoxCastOp>, BoxIsTypeConversion,
-      ContainerReadConversion, ContainerWriteConversion, RandomNextConversion,
-      LegacyRandomConversion, RandomStateConversion, RandomSetStateConversion,
-      RandomSeedConversion, RandomBoundedConversion,
+      ContainerReadConversion, ContainerWriteConversion,
+      RandomInitializationEnterConversion, RandomInitializationLeaveConversion,
+      RandomNextConversion, LegacyRandomConversion, RandomStateConversion,
+      RandomSetStateConversion, RandomSeedConversion, RandomBoundedConversion,
       RandomDistributionConversion, StochasticQueueConversion,
       RandomCycleNextConversion, RandomSolveConversion>(converter, context);
   patterns.add<ContainerImportFixedConversion, ContainerExportFixedConversion>(

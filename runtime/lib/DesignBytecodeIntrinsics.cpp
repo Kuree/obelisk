@@ -1153,6 +1153,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return seed ? obelisk_rt_v1_random_seed(context, *seed)
                 : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER: {
+    auto scope = scalar(0);
+    if (!scope)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t activation = 0;
+    auto status =
+        obelisk_rt_v1_random_initialization_enter(context, *scope, &activation);
+    return status == OBELISK_RT_OK ? sentinel(0, activation) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE: {
+    auto activation = scalar(0);
+    return activation
+               ? obelisk_rt_v1_random_initialization_leave(context, *activation)
+               : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_GET_STATE: {
     obelisk_rt_random_state_v1 state{};
     obelisk_rt_status status = obelisk_rt_v1_random_get_state(context, &state);
@@ -3071,6 +3086,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         return OBELISK_RT_INVALID_BYTECODE;
       task.programOwner = *owner;
     }
+    task.initializationRandomScope =
+        obelisk_rt_random_initialization_scope_unlocked(context);
     obelisk_rt_random_split_unlocked(context, task.random);
     task.function = function;
     task.startupProcess =

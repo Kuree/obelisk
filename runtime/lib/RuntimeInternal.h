@@ -605,6 +605,7 @@ struct ScheduledProcess {
   uint64_t token = 0;
   uint64_t parent = 0;
   uint64_t programOwner = 0;
+  uint64_t initializationRandomScope = 0;
   uint64_t observedEpoch = 0;
   uint64_t wakeTime = 0;
   uint64_t waitOffset = 0;
@@ -960,6 +961,7 @@ struct ScheduledDesignTask {
   uint64_t id = 0;
   uint64_t parent = 0;
   uint64_t programOwner = 0;
+  uint64_t initializationRandomScope = 0;
   uint32_t function = 0;
   uint32_t continuation = 0;
   std::vector<DesignActivation> callers;
@@ -993,6 +995,22 @@ struct ScheduledDesignTask {
   bool prioritySignal = false;
   bool explicitlySuspended = false;
   bool computedObserverWaitRegistered = false;
+};
+
+// IEEE 18.14.1 startup streams, allocated only when a compiled lexical scope
+// is entered. The synthetic root process retains its separate legacy stream.
+struct InitializationRandomScopes {
+  struct Activation {
+    uint64_t token;
+    uint64_t previousScope;
+    uint64_t previousProcess;
+    obelisk_rt_random_state_v1 *previousRandom;
+  };
+  // Map nodes keep saved stream pointers stable across nested scope entries.
+  std::map<uint64_t, obelisk_rt_random_state_v1> streams;
+  std::vector<Activation> activations;
+  uint64_t activeScope = 0;
+  uint64_t nextToken = 1;
 };
 
 // Cold, bytecode-only scheduler state for a large direct-signal publication
@@ -2574,6 +2592,7 @@ struct obelisk_rt_context {
   // Allocated only for write-capable eval plans with complete source roots.
   // Tail placement retains all existing context offsets for off/read models.
   std::unique_ptr<NativeScopedWriteState> nativeScopedWrite;
+  std::unique_ptr<InitializationRandomScopes> initializationRandomScopes;
 
   obelisk_rt_context();
   ~obelisk_rt_context();
@@ -2903,6 +2922,11 @@ obelisk_rt_random_state_v1 *
 obelisk_rt_random_active_state_unlocked(obelisk_rt_context *context);
 void obelisk_rt_random_split_unlocked(obelisk_rt_context *context,
                                       obelisk_rt_random_state_v1 &child);
+uint64_t
+obelisk_rt_random_initialization_scope_unlocked(obelisk_rt_context *context);
+void obelisk_rt_random_split_initialization_unlocked(
+    obelisk_rt_context *context, uint64_t scope,
+    obelisk_rt_random_state_v1 &child);
 void obelisk_rt_random_seed_context_unlocked(obelisk_rt_context *context,
                                              uint64_t seed);
 bool obelisk_rt_managed_object_belongs_to(

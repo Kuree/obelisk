@@ -258,6 +258,13 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimSemaphoreTryGetOp>(operation))
     return emitIntrinsic(plan, kIntrinsicSemaphoreTryGet,
                          {op.getSemaphore(), op.getKeys()}, {op.getSuccess()});
+  if (auto op = dyn_cast<sim::SimRandomInitializationEnterOp>(operation))
+    return emitIntrinsicRegisters(plan, kIntrinsicRandomInitializationEnter,
+                                  {emitU64Constant(plan, op.getScope())},
+                                  {reg(plan, op.getActivation())});
+  if (auto op = dyn_cast<sim::SimRandomInitializationLeaveOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicRandomInitializationLeave,
+                         {op.getActivation()}, {});
   if (auto op = dyn_cast<sim::SimRandomNextOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomNext, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimLegacyRandomOp>(operation))

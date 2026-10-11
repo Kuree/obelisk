@@ -12441,9 +12441,17 @@ void ObeliskSimPreparePass::runOnOperation() {
     FailureOr<SmallVector<Value>> operands = materializeRootOperands(unit);
     if (failed(operands))
       return abort();
+    Value initializationActivation =
+        sim::SimRandomInitializationEnterOp::create(
+            rootBuilder, unit.function.getLoc(), simContext,
+            rootBuilder.getI64IntegerAttr(
+                scopes->lookupInitializationRandomScope(unit.source)));
     sim::SimCallOp::create(rootBuilder, unit.function.getLoc(), TypeRange{},
                            FlatSymbolRefAttr::get(context, unit.symbol),
                            *operands, ArrayAttr{}, ArrayAttr{});
+    sim::SimRandomInitializationLeaveOp::create(
+        rootBuilder, unit.function.getLoc(), simContext,
+        initializationActivation);
   }
 
   // Initialize every implicit delayed copy after static variable
@@ -12484,10 +12492,18 @@ void ObeliskSimPreparePass::runOnOperation() {
     FailureOr<SmallVector<Value>> operands = materializeRootOperands(unit);
     if (failed(operands))
       return failure();
+    Value initializationActivation =
+        sim::SimRandomInitializationEnterOp::create(
+            rootBuilder, unit.function.getLoc(), simContext,
+            rootBuilder.getI64IntegerAttr(
+                scopes->lookupInitializationRandomScope(unit.source)));
     sim::SimSpawnOp::create(rootBuilder, unit.function.getLoc(),
                             sim::ProcessType::get(context),
                             FlatSymbolRefAttr::get(context, unit.symbol),
                             *operands, ArrayAttr{}, ArrayAttr{});
+    sim::SimRandomInitializationLeaveOp::create(
+        rootBuilder, unit.function.getLoc(), simContext,
+        initializationActivation);
     return success();
   };
   auto isRootSpawned = [](const PreparedUnit &unit) {

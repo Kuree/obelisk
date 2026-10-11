@@ -1127,6 +1127,10 @@ ABI_FUNCTION(obelisk_rt_v1_context_seed,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_random_next,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_initialization_enter,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_initialization_leave,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_random_legacy,
              obelisk_rt_status (*)(obelisk_rt_context *, int32_t *));
 ABI_FUNCTION(obelisk_rt_v1_random_seed,

@@ -5,6 +5,7 @@
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Simulation/SimulationResources.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -21,6 +22,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringSet.h"
 
+#include <memory>
 #include <string>
 
 using namespace mlir;
@@ -33,6 +35,57 @@ namespace obelisk {
 namespace {
 
 using namespace obelisk::simlowering;
+
+// Initialization bindings have no observable effect in a closed design that
+// neither uses its random streams nor observes logical process identity.
+// Inspect lowered effects after pruning: direct calls/spawns are represented
+// by the complete sibling function inventory, while foreign calls and external
+// function declarations keep the bindings conservatively.
+struct PruneUnusedInitializationBindingsPass
+    : PassWrapper<PruneUnusedInitializationBindingsPass,
+                  OperationPass<sim::SimDesignOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
+      PruneUnusedInitializationBindingsPass)
+
+  void runOnOperation() override {
+    bool observable = false;
+    SmallVector<sim::SimRandomInitializationEnterOp> entries;
+    SmallVector<sim::SimRandomInitializationLeaveOp> exits;
+    getOperation().walk([&](Operation *operation) {
+      if (auto enter =
+              dyn_cast<sim::SimRandomInitializationEnterOp>(operation)) {
+        entries.push_back(enter);
+        return;
+      }
+      if (auto leave =
+              dyn_cast<sim::SimRandomInitializationLeaveOp>(operation)) {
+        exits.push_back(leave);
+        return;
+      }
+      if (isa<sim::SimCallOp, sim::SimTaskCallOp, sim::SimSpawnOp,
+              sim::SimLegacyRandomOp>(operation))
+        return;
+      if (auto function = dyn_cast<sim::SimFuncOp>(operation))
+        observable |= function.isExternal();
+      observable |=
+          isa<sim::SimDPICallOp, sim::SimProcessCurrentOp,
+              sim::SimProcessRandomStateOp, sim::SimProcessSetRandomStateOp,
+              sim::SimProcessControlOp>(operation);
+      if (auto interface = dyn_cast<MemoryEffectOpInterface>(operation)) {
+        SmallVector<MemoryEffects::EffectInstance> effects;
+        interface.getEffects(effects);
+        for (const auto &effect : effects)
+          observable |= effect.getResource() == sim::RNGResource::get();
+      }
+    });
+    if (observable)
+      return;
+    for (auto leave : exits)
+      leave.erase();
+    for (auto enter : entries)
+      enter.erase();
+  }
+};
 
 struct ObeliskToSimulationPipelineOptions
     : PassPipelineOptions<ObeliskToSimulationPipelineOptions> {
@@ -357,6 +410,8 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   // symbol pruning before graph construction so its nested references can
   // never become stale.
   designManager.addPass(createSymbolDCEPass());
+  designManager.addPass(
+      std::make_unique<PruneUnusedInitializationBindingsPass>());
   ObeliskSimSCCPPassOptions firstSCCPOptions;
   firstSCCPOptions.vpi = vpiMode.str();
   designManager.addPass(createObeliskSimSCCPPass(std::move(firstSCCPOptions)));

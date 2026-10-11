@@ -1362,6 +1362,8 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES = UINT32_C(0x0001047f),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION = UINT32_C(0x00010480),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH = UINT32_C(0x00010481),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER = UINT32_C(0x00010482),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE = UINT32_C(0x00010483),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -5172,6 +5174,15 @@ obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);
+// Compiler startup bindings for IEEE 18.14.1. Scope IDs are nonzero opaque
+// lexical identities. Every scope starts with the configured default seed;
+// entering resumes its stream and suppresses the synthetic startup process
+// identity. Leave requires the matching, most recent activation token.
+obelisk_rt_status obelisk_rt_v1_random_initialization_enter(
+    obelisk_rt_context *context, uint64_t scope, uint64_t *out_activation);
+obelisk_rt_status
+obelisk_rt_v1_random_initialization_leave(obelisk_rt_context *context,
+                                          uint64_t activation);
 obelisk_rt_status
 obelisk_rt_v1_random_set_state(obelisk_rt_context *context,
                                const obelisk_rt_random_state_v1 *state);

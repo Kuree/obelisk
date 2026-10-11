@@ -156,6 +156,79 @@ void obelisk_rt_random_split_unlocked(obelisk_rt_context *context,
   obelisk_rt_v1_random_state_seed(&child, seed, sequence);
 }
 
+uint64_t
+obelisk_rt_random_initialization_scope_unlocked(obelisk_rt_context *context) {
+  return context->activeLogicalProcessToken == 0 &&
+                 context->initializationRandomScopes
+             ? context->initializationRandomScopes->activeScope
+             : 0;
+}
+
+void obelisk_rt_random_split_initialization_unlocked(
+    obelisk_rt_context *context, uint64_t scope,
+    obelisk_rt_random_state_v1 &child) {
+  auto &parent = scope ? context->initializationRandomScopes->streams.at(scope)
+                       : context->random;
+  uint64_t seed = next64(parent);
+  uint64_t sequence = next64(parent);
+  obelisk_rt_v1_random_state_seed(&child, seed, sequence);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_initialization_enter(
+    obelisk_rt_context *context, uint64_t scope, uint64_t *outActivation) {
+  if (!context || scope == 0 || !outActivation)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (!context->initializationRandomScopes)
+      context->initializationRandomScopes =
+          std::make_unique<InitializationRandomScopes>();
+    auto &scopes = *context->initializationRandomScopes;
+    if (scopes.nextToken == 0)
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    // Allocate before publishing any binding or consuming the stream.
+    scopes.activations.reserve(scopes.activations.size() + 1);
+    auto [stream, inserted] = scopes.streams.try_emplace(scope);
+    if (inserted)
+      obelisk_rt_v1_random_state_seed(&stream->second, context->configuredSeed,
+                                      kDefaultSequence);
+    uint64_t token = scopes.nextToken++;
+    scopes.activations.push_back({token, scopes.activeScope,
+                                  context->activeLogicalProcessToken,
+                                  context->activeRandom});
+    scopes.activeScope = scope;
+    context->activeLogicalProcessToken = 0;
+    context->activeRandom = &stream->second;
+    *outActivation = token;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_MEMORY; }
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_random_initialization_leave(obelisk_rt_context *context,
+                                          uint64_t activation) {
+  if (!context || activation == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (!context->initializationRandomScopes)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    auto &scopes = *context->initializationRandomScopes;
+    if (scopes.activations.empty() ||
+        scopes.activations.back().token != activation ||
+        context->activeLogicalProcessToken != 0)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    auto previous = scopes.activations.back();
+    context->activeRandom = previous.previousRandom;
+    context->activeLogicalProcessToken = previous.previousProcess;
+    scopes.activeScope = previous.previousScope;
+    scopes.activations.pop_back();
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
+
 void obelisk_rt_random_seed_context_unlocked(obelisk_rt_context *context,
                                              uint64_t seed) {
   obelisk_rt_v1_random_state_seed(&context->random, seed, kDefaultSequence);

@@ -1220,11 +1220,32 @@ uint64_t PreparedScopeDeclarations::lookup(Operation *operation) const {
   return 0;
 }
 
+uint64_t PreparedScopeDeclarations::lookupInitializationRandomScope(
+    Operation *operation) const {
+  for (Operation *cursor = operation; cursor; cursor = cursor->getParentOp())
+    if (auto found = initializationRandomIds.find(cursor);
+        found != initializationRandomIds.end())
+      return found->second;
+  return 1;
+}
+
 FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     semantic::SVRootSymbolOp semanticRoot, ArrayRef<Operation *> units,
     uint64_t designPrecisionFemtoseconds, OpBuilder &builder,
     const llvm::StringMap<Operation *> &semanticSymbols) {
   PreparedScopeDeclarations result;
+  // RNG ownership follows lexical semantic identity. Physical scope IDs
+  // collapse packages and compilation units into the root, so they cannot
+  // distinguish all IEEE 18.14.1 initialization streams.
+  result.initializationRandomIds[semanticRoot] = 1;
+  uint64_t nextInitializationRandomId = 2;
+  semanticRoot->walk<WalkOrder::PreOrder>([&](Operation *operation) {
+    if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
+            operation) ||
+        (isa<semantic::SVInstanceBodySymbolOp>(operation) &&
+         !isCompileTimeOnlyInstanceMember(operation)))
+      result.initializationRandomIds[operation] = nextInitializationRandomId++;
+  });
   bool invalid = false;
   uint64_t nextScopeId = 0;
   result.ids[semanticRoot] = nextScopeId;

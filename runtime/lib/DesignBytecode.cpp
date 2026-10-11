@@ -3396,6 +3396,8 @@ obelisk_rt_status obelisk_rt_execute_design_export_task(
     if (task.parent != 0)
       context->logicalProcessParentsWithChildren.insert(task.parent);
     task.programOwner = context->activeProgramOwner;
+    task.initializationRandomScope =
+        obelisk_rt_random_initialization_scope_unlocked(context);
     obelisk_rt_random_split_unlocked(context, task.random);
     task.function = functionIndex;
     task.scheduleRank = static_cast<uint32_t>(function.initialScheduleRank);

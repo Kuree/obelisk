@@ -1650,8 +1650,8 @@
       "features": [
         {
           "feature": "Random stability across hierarchy",
-          "status": "partial",
-          "detail": "Process, dynamic thread, and object streams are separate; initialization stream ownership remains open."
+          "status": "supported",
+          "detail": "Scope initialization streams, static and dynamic process streams, and object streams are independent. Lexical module/interface/program/package ownership is preserved through native and bytecode startup."
         }
       ],
       "evidence": {
@@ -1659,10 +1659,14 @@
           "runtime/lib/Random.cpp",
           "runtime/lib/Process.cpp",
           "runtime/lib/Runtime.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp"
         ],
         "tests": [
-          "test/Conversion/simulation-process-random-state.mlir"
+          "test/Conversion/simulation-process-random-state.mlir",
+          "runtime/unittests/InitializationRandomTest.cpp",
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
         ]
       }
     },
@@ -1672,8 +1676,8 @@
       "features": [
         {
           "feature": "Independent initialization RNG for each scope instance",
-          "status": "missing",
-          "detail": "Root process streams currently split from the context stream instead of one default-seeded generator per module/interface/program/package."
+          "status": "supported",
+          "detail": "Each module/interface/program/package semantic owner has a distinct RNG seeded with the configured default. Static initializers and process registration resume that stream; optional $urandom(seed) arguments remain supported."
         },
         {
           "feature": "Independent non-initialization RNG state",
@@ -1686,10 +1690,14 @@
           "runtime/lib/Random.cpp",
           "runtime/lib/Process.cpp",
           "runtime/lib/Runtime.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp"
         ],
         "tests": [
-          "test/Conversion/simulation-process-random-state.mlir"
+          "test/Conversion/simulation-process-random-state.mlir",
+          "runtime/unittests/InitializationRandomTest.cpp",
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
         ]
       }
     },
@@ -1704,8 +1712,8 @@
         },
         {
           "feature": "Static thread hierarchical seeding",
-          "status": "partial",
-          "detail": "Needs per-scope initialization generators to preserve unrelated instance stability."
+          "status": "supported",
+          "detail": "Root-spawned static processes split their declaring scope initialization RNG independently of unrelated scopes; dynamic children still split their running parent."
         }
       ],
       "evidence": {
@@ -1713,10 +1721,14 @@
           "runtime/lib/Random.cpp",
           "runtime/lib/Process.cpp",
           "runtime/lib/Runtime.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp"
         ],
         "tests": [
-          "test/Conversion/simulation-process-random-state.mlir"
+          "test/Conversion/simulation-process-random-state.mlir",
+          "runtime/unittests/InitializationRandomTest.cpp",
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
         ]
       }
     },
@@ -1731,8 +1743,8 @@
         },
         {
           "feature": "Static-initializer object seeding",
-          "status": "partial",
-          "detail": "Requires the missing per-scope initialization RNG."
+          "status": "supported",
+          "detail": "Synchronous static declaration initializers bind their lexical initialization RNG with no active logical thread. Class creation consumes that stream directly before static processes are created."
         }
       ],
       "evidence": {
@@ -1740,10 +1752,14 @@
           "runtime/lib/Random.cpp",
           "runtime/lib/Process.cpp",
           "runtime/lib/Runtime.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
+          "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp"
         ],
         "tests": [
-          "test/Conversion/simulation-process-random-state.mlir"
+          "test/Conversion/simulation-process-random-state.mlir",
+          "runtime/unittests/InitializationRandomTest.cpp",
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
         ]
       }
     },

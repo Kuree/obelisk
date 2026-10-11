@@ -199,6 +199,7 @@ void seedContextUnlocked(obelisk_rt_context *context, uint64_t seed) {
   // makes reseeding transactional even when allocation fails.
   struct RootStream {
     uint64_t sequence;
+    uint64_t initializationScope;
     obelisk_rt_random_state_v1 *state;
   };
   std::vector<RootStream> roots;
@@ -206,10 +207,12 @@ void seedContextUnlocked(obelisk_rt_context *context, uint64_t seed) {
                 context->scheduledDesignTasks.size());
   for (ScheduledProcess &process : context->scheduledProcesses)
     if (process.parent == 0 && !process.started)
-      roots.push_back({process.insertionSequence, &process.random});
+      roots.push_back({process.insertionSequence,
+                       process.initializationRandomScope, &process.random});
   for (ScheduledDesignTask &task : context->scheduledDesignTasks)
     if (task.parent == 0 && !task.started)
-      roots.push_back({task.insertionSequence, &task.random});
+      roots.push_back({task.insertionSequence, task.initializationRandomScope,
+                       &task.random});
   std::sort(roots.begin(), roots.end(),
             [](const RootStream &left, const RootStream &right) {
               return left.sequence < right.sequence;
@@ -217,8 +220,13 @@ void seedContextUnlocked(obelisk_rt_context *context, uint64_t seed) {
 
   obelisk_rt_random_seed_context_unlocked(context, seed);
   context->configuredSeed = seed;
+  if (context->initializationRandomScopes)
+    for (auto &[scope, state] : context->initializationRandomScopes->streams)
+      obelisk_rt_v1_random_state_seed(&state, seed,
+                                      OBELISK_RT_RANDOM_DEFAULT_INCREMENT >> 1);
   for (RootStream root : roots)
-    obelisk_rt_random_split_unlocked(context, *root.state);
+    obelisk_rt_random_split_initialization_unlocked(
+        context, root.initializationScope, *root.state);
 }
 
 obelisk_rt_status mapCoverageStatus(obelisk::coverage::Status status) {

@@ -19,6 +19,6 @@ module native_random;
   end
 endmodule
 
-// CHECK: 2432729949
+// CHECK: 3141403713
 // CHECK-NEXT: 8
-// CHECK-NEXT: 457780463
+// CHECK-NEXT: 197838551
