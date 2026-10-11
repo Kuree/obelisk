@@ -92,6 +92,18 @@ counts, writes native and bytecode databases, reports them, and merges them.
 The change uses the existing typed storage layout contract and keeps native and
 bytecode representation consistent.
 
+Subsequent probes found the same omission in variable-size containers. Dynamic
+arrays (7.5), queues (7.10), associative arrays (7.8), and typed mailboxes (15.4)
+now describe a covergroup element as an ordinary two-state 64-bit identity,
+without managed-heap trace entries. The existing container operations copy that
+identity; they do not construct another coverage instance. The regression checks
+resize preservation, independent container copies, queue endpoints, sparse
+keys, deletion, mailbox transfer, and exact persisted counters in both execution
+tiers at O0 and O3. Type-level coverage retains all constructed instances (19.8).
+Container, mailbox, and associative-array verifiers reject truncated, four-state,
+or managed-heap representations. Descriptor construction and scalar handle
+transfers add constant work; bulk copies retain their existing linear traversal.
+
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime
 code stays independent of MLIR and LLVM. This follows the analysis-lifetime and

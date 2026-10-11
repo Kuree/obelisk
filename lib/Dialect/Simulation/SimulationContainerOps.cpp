@@ -1187,10 +1187,11 @@ LogicalResult SimContainerCreateOp::verify() {
   } else if (isa<EventType>(element)) {
     expectedKind = ElementKind::Event;
     expectedSize = sizeof(uint64_t);
-  } else if (isa<ProcessType>(element)) {
+  } else if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType,
+                 ChandleType>(element)) {
     expectedKind = ElementKind::Bits;
-    expectedSize = sizeof(uint64_t);
-    expectedWidth = 64;
+    expectedSize = simulationHandleBitWidth / 8;
+    expectedWidth = simulationHandleBitWidth;
   } else if (Type scalar = getPackedScalarType(element)) {
     std::optional<unsigned> width = getPackedWidth(element);
     if (!width || *width == 0)
@@ -1406,10 +1407,11 @@ LogicalResult SimMailboxCreateOp::verify() {
   } else if (isa<EventType>(element)) {
     expectedKind = ElementKind::Event;
     expectedSize = sizeof(uint64_t);
-  } else if (isa<ProcessType>(element)) {
+  } else if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType,
+                 ChandleType>(element)) {
     expectedKind = ElementKind::Bits;
-    expectedSize = sizeof(uint64_t);
-    expectedWidth = 64;
+    expectedSize = simulationHandleBitWidth / 8;
+    expectedWidth = simulationHandleBitWidth;
   } else if (Type scalar = getPackedScalarType(element)) {
     std::optional<unsigned> width = getPackedWidth(element);
     if (!width || *width == 0)
@@ -1528,6 +1530,11 @@ LogicalResult SimAssocCreateOp::verify() {
   } else if (isa<EventType>(element)) {
     expectedKind = ElementKind::Event;
     expectedSize = sizeof(uint64_t);
+  } else if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType,
+                 ChandleType>(element)) {
+    expectedKind = ElementKind::Bits;
+    expectedSize = simulationHandleBitWidth / 8;
+    expectedWidth = simulationHandleBitWidth;
   } else if (Type scalar = getPackedScalarType(element)) {
     std::optional<unsigned> width = getPackedWidth(element);
     if (!width || *width == 0)

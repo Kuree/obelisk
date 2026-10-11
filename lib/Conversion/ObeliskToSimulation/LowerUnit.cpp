@@ -235,25 +235,14 @@ describeContainerElementImpl(Type type, Location location) {
     result.valueSize = sizeof(uint64_t);
     return result;
   }
-  if (isa<sim::ProcessType>(type)) {
+  // These handles are context-owned identities or opaque foreign pointers,
+  // rather than managed-heap roots. In particular, covergroup instances stay
+  // in the coverage model when a container drops its last handle (19.3, 19.8).
+  if (isa<sim::ProcessType, sim::CovergroupHandleType,
+          sim::VirtualInterfaceType, sim::ChandleType>(type)) {
     result.kind = sim::ElementKind::Bits;
-    result.valueSize = sizeof(uint64_t);
-    result.bitWidth = 64;
-    return result;
-  }
-  // Virtual-interface handles are nullable 64-bit elaborated scope IDs. They
-  // contain no managed pointer and therefore use the ordinary bits container
-  // ABI, just like process IDs.
-  if (isa<sim::VirtualInterfaceType>(type)) {
-    result.kind = sim::ElementKind::Bits;
-    result.valueSize = sizeof(uint64_t);
-    result.bitWidth = 64;
-    return result;
-  }
-  if (isa<sim::ChandleType>(type)) {
-    result.kind = sim::ElementKind::Bits;
-    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
-    result.bitWidth = sizeof(obelisk_rt_managed_word_v1) * 8;
+    result.valueSize = sim::simulationHandleBitWidth / 8;
+    result.bitWidth = sim::simulationHandleBitWidth;
     return result;
   }
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType, sim::BoxType,
