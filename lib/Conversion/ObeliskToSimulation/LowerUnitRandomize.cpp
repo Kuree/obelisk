@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerUnit.h"
+#include "PrepareRandomFunctions.h"
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -737,7 +738,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     }
     Type type = typeAttr.getValue();
-    std::optional<unsigned> typeWidth = sim::getPackedWidth(type);
+    std::optional<unsigned> typeWidth = getIntegralRandomWidth(type);
     if (!typeWidth || *typeWidth != width) {
       emitError(location) << "randomize property type width is inconsistent";
       return failure();
@@ -2102,6 +2103,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     return field;
   };
+  auto toRandomScalar = [&](Value value,
+                            Location valueLocation) -> FailureOr<Value> {
+    if (!isa<sim::UnpackedArrayType>(value.getType()))
+      return toPackedScalar(value, valueLocation);
+    auto width = getIntegralRandomWidth(value.getType());
+    if (!width || *width == 0)
+      return failure();
+    Type scalar = streamContainsFourState(value.getType())
+                      ? Type(sim::LogicType::get(function.getContext(), *width))
+                      : Type(builder.getIntegerType(*width));
+    return convertFixedAggregateBitstream(value, scalar, scalar, valueLocation);
+  };
   Value currentAssignment = constantAssignment64(0);
   Value mutableMask = constantAssignment64(0);
   SmallVector<Value> propertyEnabled;
@@ -2235,7 +2248,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }();
     if (failed(current))
       return failure();
-    FailureOr<Value> scalar = toPackedScalar(*current, location);
+    FailureOr<Value> scalar = toRandomScalar(*current, location);
     FailureOr<Value> extended =
         succeeded(scalar) ? convert(*scalar, assignmentType, property.isSigned,
                                     location, false)
@@ -2490,6 +2503,33 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool hasSolveBefore = false;
   bool hasFunctionPriority = false;
   auto randomPropertyMask = [&](Operation *expression) -> FailureOr<APInt> {
+    FailureOr<Type> type = getNormalizedSemanticType(expression);
+    auto width = succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+    if (!width || *width == 0) {
+      emitError(getSemanticLocation(expression))
+          << "solve before operands must be integral random values";
+      return failure();
+    }
+    if (auto offset = expression->getAttrOfType<IntegerAttr>(
+            randomVariableBitOffsetAttrName)) {
+      const APInt &value = offset.getValue();
+      if (value.isNegative() || value.getActiveBits() > 32 ||
+          value.getZExtValue() > totalWidth ||
+          *width > totalWidth - value.getZExtValue()) {
+        emitError(getSemanticLocation(expression))
+            << "solve before selected path is out of range";
+        return failure();
+      }
+      APInt mask = APInt::getLowBitsSet(assignmentWidth, *width)
+                       .shl(value.getZExtValue());
+      for (auto [index, property] : llvm::enumerate(planned))
+        if (property.isRandC && !(mask & propertyMasks[index]).isZero()) {
+          emitError(getSemanticLocation(expression))
+              << "solve before cannot order randc values";
+          return failure();
+        }
+      return mask;
+    }
     auto indexAttr =
         expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
     if (!indexAttr || indexAttr.getValue().isNegative() ||
@@ -2499,7 +2539,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           << "solve before currently requires direct rand properties";
       return failure();
     }
-    return propertyMasks[indexAttr.getValue().getZExtValue()];
+    unsigned index = indexAttr.getValue().getZExtValue();
+    if (planned[index].isRandC) {
+      emitError(getSemanticLocation(expression))
+          << "solve before cannot order randc values";
+      return failure();
+    }
+    return propertyMasks[index];
   };
   for (auto [index, root] : llvm::enumerate(children)) {
     if (isReceiverChild(index))
@@ -2720,10 +2766,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto expressionWidth = [&](Operation *expression) -> FailureOr<unsigned> {
     FailureOr<Type> type = getNormalizedSemanticType(expression);
     std::optional<unsigned> width =
-        succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+        succeeded(type) ? getIntegralRandomWidth(*type) : std::nullopt;
     if (!width || *width == 0) {
       emitError(getSemanticLocation(expression))
-          << "runtime random constraint values must be packed";
+          << "runtime random constraint values must have fixed integral "
+             "bitstreams";
       return failure();
     }
     return *width;
@@ -3724,7 +3771,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       FailureOr<Value> value = lowerExpression(expression);
       FailureOr<Value> scalar =
           succeeded(value)
-              ? toPackedScalar(*value, getSemanticLocation(expression))
+              ? toRandomScalar(*value, getSemanticLocation(expression))
               : FailureOr<Value>(failure());
       if (failed(scalar) || !isa<IntegerType>((*scalar).getType())) {
         emitError(getSemanticLocation(expression))
@@ -3880,11 +3927,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
     if (isa<semantic::SVMemberAccessExpressionOp>(expression)) {
       auto offset = expression->getAttrOfType<IntegerAttr>("packed_offset");
-      FailureOr<unsigned> baseWidth = nested.size() == 1
-                                          ? expressionWidth(nested.front())
-                                          : FailureOr<unsigned>(failure());
+      if (nested.size() != 1) {
+        emitError(getSemanticLocation(expression))
+            << "random packed member has no valid fixed bit range";
+        return failure();
+      }
+      FailureOr<unsigned> baseWidth = expressionWidth(nested.front());
+      if (failed(baseWidth))
+        return failure();
       if (!offset || offset.getValue().isNegative() ||
-          offset.getValue().getActiveBits() > 32 || failed(baseWidth) ||
+          offset.getValue().getActiveBits() > 32 ||
           offset.getValue().getZExtValue() > *baseWidth ||
           *width > *baseWidth - offset.getValue().getZExtValue()) {
         emitError(getSemanticLocation(expression))
@@ -6657,7 +6709,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (property.width != assignmentWidth)
         bits = arith::TruncIOp::create(builder, location, integerType, bits);
       FailureOr<Value> converted =
-          convert(bits, property.type, false, location, property.isSigned);
+          isa<sim::UnpackedArrayType>(property.type)
+              ? convertFixedBitstreamTarget(bits, property.type, location)
+              : convert(bits, property.type, false, location,
+                        property.isSigned);
       if (failed(converted))
         return failure();
       candidates.push_back(*converted);

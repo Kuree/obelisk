@@ -6,11 +6,27 @@
 #include "llvm/ADT/STLExtras.h"
 
 #include <functional>
+#include <limits>
 #include <memory>
 
 using namespace mlir;
 
 namespace obelisk::simlowering {
+
+std::optional<unsigned> getIntegralRandomWidth(Type type) {
+  if (auto width = sim::getPackedWidth(type))
+    return width;
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+    auto elementWidth = getIntegralRandomWidth(array.getElementType());
+    if (!elementWidth)
+      return std::nullopt;
+    uint64_t width =
+        uint64_t{*elementWidth} * sim::getAggregateNumElements(array);
+    if (width <= std::numeric_limits<unsigned>::max())
+      return static_cast<unsigned>(width);
+  }
+  return std::nullopt;
+}
 
 FailureOr<std::optional<RandomConstraintPath>>
 getRandomConstraintPath(Operation *expression,
@@ -37,10 +53,11 @@ getRandomConstraintPath(Operation *expression,
     return base;
   FailureOr<Type> resultType = getNormalizedSemanticType(expression);
   std::optional<unsigned> resultWidth =
-      succeeded(resultType) ? sim::getPackedWidth(*resultType) : std::nullopt;
+      succeeded(resultType) ? getIntegralRandomWidth(*resultType)
+                            : std::nullopt;
   if (!resultWidth || *resultWidth == 0) {
     emitError(getSemanticLocation(expression))
-        << "constraint function ordering path has no packed width";
+        << "constraint function ordering path has no fixed integral width";
     return failure();
   }
 
@@ -99,10 +116,22 @@ getRandomConstraintPath(Operation *expression,
     if (auto integral = dyn_cast<semantic::IntegralType>(sourceType)) {
       left = integral.getLeft();
       right = integral.getRight();
-    } else if (auto packed =
-                   dyn_cast<semantic::RangedPackedArrayType>(sourceType)) {
-      left = packed.getLeft();
-      right = packed.getRight();
+    } else if (isa<semantic::RangedPackedArrayType,
+                   semantic::RangedUnpackedArrayType,
+                   semantic::UnpackedArrayType>(sourceType)) {
+      if (auto packed = dyn_cast<semantic::RangedPackedArrayType>(sourceType)) {
+        left = packed.getLeft();
+        right = packed.getRight();
+      } else if (auto unpacked =
+                     dyn_cast<semantic::RangedUnpackedArrayType>(sourceType)) {
+        left = unpacked.getLeft();
+        right = unpacked.getRight();
+      } else {
+        left = 0;
+        right = static_cast<int64_t>(
+                    cast<semantic::UnpackedArrayType>(sourceType).getSize()) -
+                1;
+      }
       APInt leftBound(65, static_cast<uint64_t>(left), true);
       APInt rightBound(65, static_cast<uint64_t>(right), true);
       APInt elementCount = leftBound - rightBound;

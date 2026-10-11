@@ -18,6 +18,17 @@ arrays of enums retain enumerator membership. Packed tagged-union random
 declarations are illegal under 18.4; legacy synthetic IR domain tests do not
 make them supported source declarations.
 
+Fixed unpacked arrays of integral elements use their logical element bitstream
+for class and scope randomization, including multidimensional arrays and
+ascending or negative bounds. Explicit import and export preserve declaration
+order; enum domains apply independently to each element. Integral selected
+elements support `solve before`, with exact Z3 projection sampling. Whole
+unpacked arrays are not legal ordering operands. Per-element cyclic histories,
+per-element `rand_mode`, non-integral leaves, and state-dependent indices remain
+open. A failed solve preserves the arrays. Generated proposal draws advance
+the caller's stream independently of whether the assignments are committed;
+the runtime solver's own draws remain transactional.
+
 Integral system functions `$signed`, `$unsigned`, `$clog2`, `$countones`,
 `$countbits`, `$onehot`, and `$onehot0` participate in the bidirectional
 bit-vector constraint relation without introducing user-function priority.
@@ -41,7 +52,7 @@ The compiler opts in through `SMT_UNIFORM` in the versioned program header.
 A nonzero work bound enables exact solving; zero still requests no solve.
 Existing bounded C ABI clients retain their work limit and cyclic ordering;
 `SMT_COMPLETION` clients can separately opt into complete cyclic discovery.
-For packed integral aggregates of arbitrary width, ordered runtime residuals
+For integral bitstreams of arbitrary width, ordered runtime residuals
 count existential projections of each enabled solve-order layer, sample its
 legal values uniformly, and cofactor the original relation before solving
 later layers. This works with live captures, semantic domains, frozen properties,
@@ -97,9 +108,9 @@ Both Z3 planning and the generated/runtime checkers preserve the same rules.
 the maximum operand precision, including modular overflow and zero-total cases.
 
 Fixed `foreach` constraints expand into ordinary Z3 predicates before random
-dependency analysis in both class and scope randomization. Packed dimensions
-can be multidimensional, descending, negative, or omitted; fixed unpacked state
-arrays supply per-element captures. Typed iterator constants preserve selected
+dependency analysis in both class and scope randomization. Fixed packed and
+unpacked dimensions can be multidimensional, descending, negative, or omitted;
+fixed state arrays supply per-element captures. Typed iterator constants preserve selected
 bit paths, and later iterations receive higher soft priority. An all-omitted
 loop contributes an empty conjunction. Explicit ordering and live modes use the
 ordinary exact runtime solver after expansion.
@@ -107,8 +118,8 @@ ordinary exact runtime solver after expansion.
 Constraint execution also includes IEEE 1800-2023 18.5.7.1 universal `foreach`
 predicates over one-dimensional dynamic arrays and queues. The live container
 size is sampled for each candidate, the declared iterator type is respected,
-and an empty container contributes the identity value `true`. Random fixed unpacked properties, generalized runtime
-dimensions, associative arrays, and strings remain explicit boundaries.
+and an empty container contributes the identity value `true`. Generalized
+runtime dimensions, associative arrays, and strings remain explicit boundaries.
 The current dynamic-`foreach` solver path accepts ordinary packed random
 domains without `solve before`; finite semantic domains require a future
 domain-index traversal. It checks a complete aggregate domain through 2^20

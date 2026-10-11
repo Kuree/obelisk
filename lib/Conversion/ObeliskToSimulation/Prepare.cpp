@@ -4781,25 +4781,37 @@ void ObeliskSimPreparePass::runOnOperation() {
       result.push_back({baseOffset, *width, std::move(*patterns)});
       return success();
     }
-    if (auto array = dyn_cast<semantic::RangedPackedArrayType>(type)) {
+    if (isa<semantic::RangedPackedArrayType, semantic::RangedUnpackedArrayType>(
+            type)) {
+      Type elementType =
+          isa<semantic::RangedPackedArrayType>(type)
+              ? cast<semantic::RangedPackedArrayType>(type).getElementType()
+              : cast<semantic::RangedUnpackedArrayType>(type).getElementType();
       std::optional<uint64_t> elementWidth =
-          getSemanticBitstreamWidth(array.getElementType());
+          getSemanticBitstreamWidth(elementType);
       if (!elementWidth || *elementWidth == 0 || *width % *elementWidth != 0)
         return failure();
       for (uint64_t index = 0; index != *width / *elementWidth; ++index)
-        if (failed(collectRandomSubdomains(array.getElementType(),
+        if (failed(collectRandomSubdomains(elementType,
                                            baseOffset + index * *elementWidth,
                                            result, location)))
           return failure();
       return success();
     }
-    if (auto array = dyn_cast<semantic::PackedArrayType>(type)) {
+    if (isa<semantic::PackedArrayType, semantic::UnpackedArrayType>(type)) {
+      Type elementType =
+          isa<semantic::PackedArrayType>(type)
+              ? cast<semantic::PackedArrayType>(type).getElementType()
+              : cast<semantic::UnpackedArrayType>(type).getElementType();
+      uint64_t count = isa<semantic::PackedArrayType>(type)
+                           ? cast<semantic::PackedArrayType>(type).getSize()
+                           : cast<semantic::UnpackedArrayType>(type).getSize();
       std::optional<uint64_t> elementWidth =
-          getSemanticBitstreamWidth(array.getElementType());
+          getSemanticBitstreamWidth(elementType);
       if (!elementWidth || *elementWidth == 0)
         return failure();
-      for (uint64_t index = 0; index != array.getSize(); ++index)
-        if (failed(collectRandomSubdomains(array.getElementType(),
+      for (uint64_t index = 0; index != count; ++index)
+        if (failed(collectRandomSubdomains(elementType,
                                            baseOffset + index * *elementWidth,
                                            result, location)))
           return failure();
@@ -4927,10 +4939,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       FailureOr<Type> type = getNormalizedSemanticType(variable);
       std::optional<unsigned> width =
-          succeeded(type) ? sim::getPackedWidth(*type) : std::nullopt;
+          succeeded(type) ? getIntegralRandomWidth(*type) : std::nullopt;
       if (failed(type) || !width || *width == 0) {
         emitError(getSemanticLocation(variable))
-            << "std::randomize variables must have fixed packed types";
+            << "std::randomize variables must have fixed integral bitstreams";
         invalid = true;
         return true;
       }
@@ -6503,14 +6515,20 @@ void ObeliskSimPreparePass::runOnOperation() {
               invalid = true;
             continue;
           }
-          std::optional<unsigned> width = sim::getPackedWidth(*type);
+          std::optional<unsigned> width = getIntegralRandomWidth(*type);
           if (!width || *width == 0 || (!field && !referencePath)) {
             emitError(getSemanticLocation(property))
-                << "random properties must be packed integral values";
+                << "random properties must have fixed integral bitstreams";
             invalid = true;
             continue;
           }
           bool isRandC = property.getRandMode() == semantic::SVRandMode::RandC;
+          if (isRandC && isa<sim::UnpackedArrayType>(*type)) {
+            emitError(getSemanticLocation(property))
+                << "randc fixed arrays require per-element cyclic state";
+            invalid = true;
+            continue;
+          }
           FlatSymbolRefAttr randcKeyField =
               randcKeyFieldSymbols.lookup(property);
           FlatSymbolRefAttr randcPositionField =

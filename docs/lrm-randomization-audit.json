@@ -201,7 +201,7 @@
         {
           "feature": "Unpacked arrays, queues, and associative arrays",
           "status": "partial",
-          "detail": "One-dimensional dynamic arrays and queues have specialized plans; fixed, associative, multidimensional, and non-packed elements remain incomplete."
+          "detail": "Fixed unpacked arrays of packed integral elements use exact logical bitstreams for class and scope randomization, including multidimensional, descending, ascending and negative ranges. Enum domains apply independently to each element. One-dimensional dynamic arrays and queues retain specialized plans. Per-element randc histories and modes, non-integral leaves, general indexed constraints and associative arrays remain incomplete."
         },
         {
           "feature": "Unpacked structs with member rand qualifiers",
@@ -226,11 +226,15 @@
           "lib/Solver/RandomProgramSMT.cpp",
           "lib/Solver/SolverZ3.cpp",
           "runtime/lib/RandSolve.cpp",
-          "runtime/lib/RandSolveWide.cpp"
+          "runtime/lib/RandSolveWide.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
-          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir"
         ]
       }
     },
@@ -708,7 +712,7 @@
         {
           "feature": "Fixed, associative, string, and multidimensional foreach",
           "status": "partial",
-          "detail": "Fixed packed dimensions, including multidimensional arrays, descending or negative bounds and omitted iterators, expand into typed constant-index predicates for class and scope randomization. Fixed unpacked state-array elements are captured per predicate. Z3 handles the resulting ordinary relation, live modes, soft preferences and explicit solve-before. Random fixed unpacked properties and associative, string and generalized runtime dimensions remain incomplete."
+          "detail": "Fixed packed and unpacked dimensions, including multidimensional arrays, descending or negative bounds and omitted iterators, expand into typed constant-index predicates for class and scope randomization. Fixed state-array elements are captured per predicate. Z3 handles the resulting ordinary relation, live modes, soft preferences and explicit solve-before on integral elements. Associative, string, non-integral leaves and generalized runtime dimensions remain incomplete."
         },
         {
           "feature": "Index-dependent guards",
@@ -730,7 +734,8 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
           "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
-          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir"
         ]
       }
     },
@@ -823,7 +828,7 @@
         {
           "feature": "Conditional ordered probabilities",
           "status": "partial",
-          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM runtime Z3 count exact existential projections for packed integral aggregates, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Real ordering and general selected paths remain incomplete."
+          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM runtime Z3 count exact existential projections for integral bitstreams, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Fixed integral array elements use the same exact masks and conditional probabilities; whole unpacked arrays and randc operands are diagnosed. Real ordering and state-dependent selected paths remain incomplete."
         },
         {
           "feature": "Randc implicit priority",
@@ -852,7 +857,9 @@
           "test/Runtime/obelisk-to-simulation-random-ordered-z3-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-order-latest-layer-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-ordered-wide-z3-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-ordered-wide-table-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-ordered-wide-table-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir"
         ]
       }
     },

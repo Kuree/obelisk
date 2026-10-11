@@ -21,6 +21,10 @@ struct RandomConstraintPath {
   bool isState;
 };
 
+/// Logical bit-stream width of packed integral values and fixed unpacked
+/// arrays of those values. Non-integral leaves require a different solver.
+std::optional<unsigned> getIntegralRandomWidth(mlir::Type type);
+
 mlir::FailureOr<std::optional<RandomConstraintPath>> getRandomConstraintPath(
     mlir::Operation *expression, llvm::ArrayRef<uint64_t> propertyWidths,
     llvm::function_ref<std::optional<unsigned>(mlir::Operation *)>
