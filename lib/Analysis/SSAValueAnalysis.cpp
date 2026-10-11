@@ -373,4 +373,36 @@ ConstantTimeAnalysis::ConstantTimeAnalysis(sim::SimFuncOp function) {
           record(value);
   });
 }
+bool ValueLiveness::isLiveIn(Value value, Block *block) {
+  auto [found, inserted] = liveIns.try_emplace(value);
+  DenseSet<Block *> &live = found->second;
+  if (inserted) {
+    // A block defines the value when it contains its definition, possibly
+    // nested. Every other block containing a use has the value live in, and
+    // so does each block from which such a block is reached without passing
+    // a defining one. This is the least solution of mlir::Liveness's
+    // equations, restricted to one value.
+    SmallPtrSet<Block *, 8> defining;
+    auto parentBlock = [](Block *child) -> Block * {
+      Operation *parent = child->getParentOp();
+      return parent ? parent->getBlock() : nullptr;
+    };
+    for (Block *ancestor = value.getParentBlock(); ancestor;
+         ancestor = parentBlock(ancestor))
+      defining.insert(ancestor);
+    SmallVector<Block *> worklist;
+    for (Operation *user : value.getUsers())
+      for (Block *ancestor = user->getBlock();
+           ancestor && !defining.contains(ancestor);
+           ancestor = parentBlock(ancestor))
+        worklist.push_back(ancestor);
+    while (!worklist.empty()) {
+      Block *current = worklist.pop_back_val();
+      if (defining.contains(current) || !live.insert(current).second)
+        continue;
+      llvm::append_range(worklist, current->getPredecessors());
+    }
+  }
+  return live.contains(block);
+}
 } // namespace obelisk::analysis

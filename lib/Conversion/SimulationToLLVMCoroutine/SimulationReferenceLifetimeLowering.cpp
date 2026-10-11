@@ -2,12 +2,12 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
 
-#include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -222,7 +222,7 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
   // use. Plan all exits against one immutable CFG, then split shared edges
   // once, forwarding every departing owner into the same cleanup block.
   DominanceInfo dominance(function);
-  Liveness liveness(function);
+  analysis::ValueLiveness liveness;
   struct Release {
     sim::SimRefAllocOp allocation;
     Value representative;
@@ -277,7 +277,7 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
 
     auto isLiveInto = [&](Block *block) {
       for (Value reference : family) {
-        if (liveness.getLiveIn(block).contains(reference))
+        if (liveness.isLiveIn(reference, block))
           return true;
         if (auto argument = dyn_cast<BlockArgument>(reference);
             argument && argument.getOwner() == block)

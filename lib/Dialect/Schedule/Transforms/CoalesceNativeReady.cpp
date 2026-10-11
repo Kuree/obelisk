@@ -64,25 +64,29 @@ public:
                                ReadyLattice *after) override {
     if (!before.reachable)
       return success();
-    Pending next = before.pending;
-    if (auto update = dyn_cast<NativeReadyUpdateOp>(op)) {
-      auto key = keys.lookup(update);
-      auto [base, global, capacity, word] = key;
-      // Distinct globals cannot alias. Opaque pointers and inconsistent
-      // layouts require materialization rather than a guessed disjoint range.
-      if (llvm::any_of(next, [&](const auto &entry) {
-            auto [otherBase, otherGlobal, otherCapacity, otherWord] =
-                entry.first;
-            if (global && otherGlobal && global != otherGlobal)
-              return false;
-            return base != otherBase || global != otherGlobal ||
-                   capacity != otherCapacity;
-          }))
-        next.clear();
-      next[key] = op;
-    } else if (!isMemoryEffectFree(op) || !isSpeculatable(op)) {
-      next.clear();
+    auto update = dyn_cast<NativeReadyUpdateOp>(op);
+    // Most operations pass the pending updates through unchanged; merge them
+    // without copying the map at every program point.
+    if (!update) {
+      bool barrier = !isMemoryEffectFree(op) || !isSpeculatable(op);
+      propagateIfChanged(after,
+                         after->merge(barrier ? Pending{} : before.pending));
+      return success();
     }
+    Pending next = before.pending;
+    auto key = keys.lookup(update);
+    auto [base, global, capacity, word] = key;
+    // Distinct globals cannot alias. Opaque pointers and inconsistent layouts
+    // require materialization rather than a guessed disjoint range.
+    if (llvm::any_of(next, [&](const auto &entry) {
+          auto [otherBase, otherGlobal, otherCapacity, otherWord] = entry.first;
+          if (global && otherGlobal && global != otherGlobal)
+            return false;
+          return base != otherBase || global != otherGlobal ||
+                 capacity != otherCapacity;
+        }))
+      next.clear();
+    next[key] = op;
     propagateIfChanged(after, after->merge(next));
     return success();
   }
@@ -149,13 +153,14 @@ static void formReadyRegion(Operation *operation) {
 }
 /// Ready updates of one function and their symbol-resolved keys.
 struct FunctionReadyUpdates {
-  Operation *function;
+  Operation *function = nullptr;
   SmallVector<NativeReadyUpdateOp> updates;
   DenseMap<Operation *, Key> keys;
 };
 static FunctionReadyUpdates
 collectReadyUpdates(Operation *operation, SymbolTableCollection &symbols) {
-  FunctionReadyUpdates result{operation, {}, {}};
+  FunctionReadyUpdates result;
+  result.function = operation;
   operation->walk(
       [&](NativeReadyUpdateOp op) { result.updates.push_back(op); });
   if (result.updates.size() >= 2)

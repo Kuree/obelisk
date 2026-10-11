@@ -44,6 +44,194 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
+/// Promotes generated scalar slots to SSA. mlir::tryToPromoteMemorySlots
+/// promotes one slot at a time and walks every operation of the region for
+/// each, which on a fused group body costs its whole size per state word.
+/// When every slot is an entry alloca used only by plain loads and stores of
+/// its element type, this computes the same pruned merge points (live-in
+/// blocks and iterated dominance frontiers), appends block arguments and
+/// successor operands in slot order, and renames all slots in a single
+/// dominator-tree walk, producing the IR mem2reg would. Other slots fall back
+/// to mem2reg itself.
+LogicalResult
+promoteScalarSlots(ArrayRef<PromotableAllocationOpInterface> allocations,
+                   OpBuilder &builder, const DataLayout &layout,
+                   DominanceInfo &dominance) {
+  SmallVector<LLVM::AllocaOp> slots;
+  Region *region = nullptr;
+  auto isPlain = [](auto access) {
+    return !access.getVolatile_() &&
+           access.getOrdering() == LLVM::AtomicOrdering::not_atomic;
+  };
+  bool direct = llvm::all_of(allocations, [&](PromotableAllocationOpInterface
+                                                  allocation) {
+    auto alloca = dyn_cast<LLVM::AllocaOp>(allocation.getOperation());
+    if (!alloca || !matchPattern(alloca.getArraySize(), m_One()) ||
+        (region && alloca->getParentRegion() != region) ||
+        alloca->getBlock() != &alloca->getParentRegion()->front())
+      return false;
+    region = alloca->getParentRegion();
+    Type type = alloca.getElemType();
+    for (OpOperand &use : alloca.getResult().getUses()) {
+      Operation *user = use.getOwner();
+      if (user->getParentRegion() != region)
+        return false;
+      if (auto load = dyn_cast<LLVM::LoadOp>(user)) {
+        if (load.getType() != type || !isPlain(load))
+          return false;
+      } else if (auto store = dyn_cast<LLVM::StoreOp>(user)) {
+        if (store.getAddr() != alloca.getResult() ||
+            store.getValue() == alloca.getResult() ||
+            store.getValue().getType() != type || !isPlain(store))
+          return false;
+      } else {
+        return false;
+      }
+    }
+    // mem2reg leaves an unused slot untouched.
+    if (!alloca.getResult().use_empty())
+      slots.push_back(alloca);
+    return true;
+  });
+  if (!direct)
+    return tryToPromoteMemorySlots(allocations, builder, layout, dominance);
+  if (slots.empty())
+    return failure();
+
+  DenseMap<Value, unsigned> slotOf;
+  for (auto [index, alloca] : llvm::enumerate(slots))
+    slotOf.try_emplace(alloca.getResult(), index);
+  // The slot an operation loads (true) or stores (false), if any.
+  auto access =
+      [&](Operation &op) -> std::optional<std::pair<unsigned, bool>> {
+    Value address;
+    bool load = isa<LLVM::LoadOp>(op);
+    if (load)
+      address = cast<LLVM::LoadOp>(op).getAddr();
+    else if (auto store = dyn_cast<LLVM::StoreOp>(op))
+      address = store.getAddr();
+    else
+      return std::nullopt;
+    auto found = slotOf.find(address);
+    if (found == slotOf.end())
+      return std::nullopt;
+    return std::make_pair(found->second, load);
+  };
+
+  // One pass finds, per slot, the blocks whose first access loads it (the
+  // value is live-in there) and the blocks that store it.
+  SmallVector<SmallVector<Block *>> upwardLoads(slots.size());
+  SmallVector<SmallPtrSet<Block *, 16>> definitions(slots.size());
+  DenseSet<std::pair<Block *, unsigned>> accessed;
+  for (Block &block : *region)
+    for (Operation &op : block)
+      if (auto found = access(op)) {
+        auto [slot, load] = *found;
+        if (accessed.insert({&block, slot}).second && load)
+          upwardLoads[slot].push_back(&block);
+        if (!load)
+          definitions[slot].insert(&block);
+      }
+
+  // Merge points exactly as MemorySlotPromotionAnalyzer computes them.
+  DenseMap<Block *, SmallVector<unsigned>> mergeSlots;
+  if (!region->hasOneBlock()) {
+    auto &domTree = dominance.getDomTree(region);
+    for (unsigned slot = 0; slot != slots.size(); ++slot) {
+      SmallPtrSet<Block *, 16> liveIn;
+      SmallVector<Block *> worklist(upwardLoads[slot]);
+      while (!worklist.empty()) {
+        Block *block = worklist.pop_back_val();
+        if (!liveIn.insert(block).second)
+          continue;
+        for (Block *predecessor : block->getPredecessors())
+          if (!definitions[slot].contains(predecessor))
+            worklist.push_back(predecessor);
+      }
+      llvm::IDFCalculatorBase<Block, false> idf(domTree);
+      idf.setLiveInBlocks(liveIn);
+      idf.setDefiningBlocks(definitions[slot]);
+      SmallVector<Block *> merges;
+      idf.calculate(merges);
+      for (Block *merge : merges)
+        mergeSlots[merge].push_back(slot);
+    }
+  }
+
+  // mem2reg creates each slot's default value at the start of the entry
+  // block before promoting it, and erases it if nothing reads it.
+  SmallVector<Value> defaults;
+  for (LLVM::AllocaOp alloca : slots) {
+    builder.setInsertionPointToStart(alloca->getBlock());
+    MemorySlot slot{alloca.getResult(), alloca.getElemType()};
+    defaults.push_back(
+        cast<PromotableAllocationOpInterface>(alloca.getOperation())
+            .getDefaultValue(slot, builder));
+  }
+
+  SmallVector<Operation *> accesses;
+  auto renameBlock = [&](Block *block, SmallVectorImpl<Value> &reaching) {
+    if (auto merges = mergeSlots.find(block); merges != mergeSlots.end())
+      for (unsigned slot : merges->second)
+        reaching[slot] = block->addArgument(slots[slot].getElemType(),
+                                            slots[slot].getLoc());
+    for (Operation &op : *block) {
+      auto found = access(op);
+      if (!found)
+        continue;
+      auto [slot, load] = *found;
+      if (load)
+        op.getResult(0).replaceAllUsesWith(reaching[slot]);
+      else
+        reaching[slot] = cast<LLVM::StoreOp>(op).getValue();
+      accesses.push_back(&op);
+    }
+    if (auto terminator = dyn_cast<BranchOpInterface>(block->getTerminator()))
+      for (BlockOperand &successor : terminator->getBlockOperands())
+        if (auto merges = mergeSlots.find(successor.get());
+            merges != mergeSlots.end())
+          for (unsigned slot : merges->second)
+            terminator.getSuccessorOperands(successor.getOperandNumber())
+                .append(reaching[slot]);
+  };
+  if (region->hasOneBlock()) {
+    SmallVector<Value> reaching(defaults);
+    renameBlock(&region->front(), reaching);
+  } else {
+    struct Job {
+      llvm::DomTreeNodeBase<Block> *node;
+      SmallVector<Value> reaching;
+    };
+    SmallVector<Job> stack;
+    stack.push_back(
+        {dominance.getDomTree(region).getNode(&region->front()), defaults});
+    while (!stack.empty()) {
+      Job job = stack.pop_back_val();
+      renameBlock(job.node->getBlock(), job.reaching);
+      for (auto *child : job.node->children())
+        stack.push_back({child, job.reaching});
+    }
+  }
+  // Accesses in unreachable blocks lie outside every definition and read the
+  // default value, as in mem2reg.
+  DenseSet<Operation *> renamed(accesses.begin(), accesses.end());
+  for (Block &block : *region)
+    for (Operation &op : block)
+      if (auto found = access(op); found && !renamed.contains(&op)) {
+        if (found->second)
+          op.getResult(0).replaceAllUsesWith(defaults[found->first]);
+        accesses.push_back(&op);
+      }
+  for (Operation *op : accesses)
+    op->erase();
+  for (auto [alloca, initial] : llvm::zip_equal(slots, defaults)) {
+    if (initial.use_empty())
+      initial.getDefiningOp()->erase();
+    alloca.erase();
+  }
+  return success();
+}
+
 uint64_t nativeOperationCost(Operation *operation) {
   uint64_t capacity = 0;
   if (auto update = dyn_cast<schedule::NativeReadyUpdateOp>(operation))
@@ -332,8 +520,8 @@ LogicalResult promoteGroupReadyWords(LLVM::LLVMFuncOp function,
                             word.slot, 8);
   }
   DominanceInfo dominance(function);
-  if (failed(tryToPromoteMemorySlots(allocations, builder,
-                                     DataLayout::closest(function), dominance)))
+  if (failed(promoteScalarSlots(allocations, builder,
+                                DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group ready words in SSA");
   ::obelisk::schedule::set<::obelisk::schedule::Field::EvalSsaReadyWords>(
       function, builder.getI64IntegerAttr(words.size()));
@@ -775,8 +963,8 @@ promoteGroupState(LLVM::LLVMFuncOp function,
                             slot.local, 1);
     }
   }
-  if (failed(tryToPromoteMemorySlots(allocations, builder,
-                                     DataLayout::closest(function), dominance)))
+  if (failed(promoteScalarSlots(allocations, builder,
+                                DataLayout::closest(function), dominance)))
     return function.emitError("could not materialize group state in SSA");
   auto attribute = name == "__obelisk_state_value"
                        ? ::obelisk::schedule::Field::EvalSsaValueRanges
@@ -947,8 +1135,8 @@ materializeNativeEvalValueInterface(LLVM::LLVMFuncOp function,
     ret.erase();
   }
   DominanceInfo dominance(body);
-  if (failed(tryToPromoteMemorySlots(allocations, builder,
-                                     DataLayout::closest(body), dominance)))
+  if (failed(promoteScalarSlots(allocations, builder,
+                                DataLayout::closest(body), dominance)))
     return body.emitError("could not promote eval value interface");
 
   // Old callers (fine Tier 2/3 execution, guards and function pointers) keep

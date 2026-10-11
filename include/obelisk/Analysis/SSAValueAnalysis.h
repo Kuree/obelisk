@@ -51,6 +51,19 @@ private:
 /// CFG arguments remain intact; only dominated uses are replaced.
 bool propagateActivationValueRoots(sim::SimFuncOp function);
 
+/// Live-in blocks of individual SSA values, each computed from the value's
+/// uses on first query. isLiveIn(value, block) answers exactly what
+/// mlir::Liveness(op).getLiveIn(block).contains(value) does for blocks nested
+/// in `op`, without building every block's live set. Rebuild after changing
+/// the IR.
+class ValueLiveness {
+public:
+  bool isLiveIn(mlir::Value value, mlir::Block *block);
+
+private:
+  llvm::DenseMap<mlir::Value, llvm::DenseSet<mlir::Block *>> liveIns;
+};
+
 class ConstantTimeAnalysis {
 public:
   explicit ConstantTimeAnalysis(sim::SimFuncOp function);

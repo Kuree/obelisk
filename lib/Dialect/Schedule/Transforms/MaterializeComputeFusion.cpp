@@ -1263,38 +1263,47 @@ uint64_t localizeActivationStorage(
   SmallVector<uint64_t> candidates;
   DenseSet<uint64_t> shared;
   DenseMap<uint64_t, SmallVector<Value>> references;
-  auto collect = [&](Value reference) {
-    auto root = resolveStorageRoot(reference);
-    if (!root || !isa<sim::RefType>(reference.getType()))
-      return;
-    auto declaration = accessIndex.declarations.lookup(*root);
-    if (!declaration ||
-        (declaration.getLifetime() != sim::Lifetime::Static &&
+  // A root has many references, and its eligibility depends only on its
+  // declaration and accessors. Decide it once.
+  DenseMap<uint64_t, bool> eligibleRoots;
+  auto isEligibleRoot = [&](uint64_t root, sim::SimStorageDeclOp declaration) {
+    if ((declaration.getLifetime() != sim::Lifetime::Static &&
          declaration.getLifetime() != sim::Lifetime::Design) ||
         declaration.getObservability() !=
             schedule::ComputeObservabilityKind::Invisible ||
-        declaration->hasAttr(sim::metadata::coverageToggleObservable) ||
-        cast<sim::RefType>(reference.getType()).getElementType() !=
-            declaration.getType())
-      return;
-    if (!accessIndex.isPrivateTo(*root, function, canonical, true)) {
+        declaration->hasAttr(sim::metadata::coverageToggleObservable))
+      return false;
+    if (!accessIndex.isPrivateTo(root, function, canonical, true)) {
       // The native evaluator executes synchronously. Coalescing publications
       // is allowed only when no event, identity or external observer can see
       // an intermediate value (LRM 4.6/4.7, 9.4.2, 10.6 and 21.7).
-      if (accessIndex.unsupportedUses.contains(*root) ||
-          accessIndex.watches.contains(*root))
-        return;
-      shared.insert(*root);
+      if (accessIndex.unsupportedUses.contains(root) ||
+          accessIndex.watches.contains(root))
+        return false;
+      shared.insert(root);
     }
     auto width = sim::getProvenanceSpan(declaration.getType());
     SmallVector<sim::ManagedHandleSlot> managed;
     // Scalars take a known initializer below. Other non-aggregate value
     // kinds (strings, reals, handles) keep canonical storage.
-    if (!(sim::isAggregateType(declaration.getType()) ||
-          isa<sim::LogicType, IntegerType>(declaration.getType())) ||
-        !width || !*width || *width > 32768 ||
-        !sim::getManagedHandleSlots(declaration.getType(), managed) ||
-        !managed.empty())
+    return (sim::isAggregateType(declaration.getType()) ||
+            isa<sim::LogicType, IntegerType>(declaration.getType())) &&
+           width && *width && *width <= 32768 &&
+           sim::getManagedHandleSlots(declaration.getType(), managed) &&
+           managed.empty();
+  };
+  auto collect = [&](Value reference) {
+    auto root = resolveStorageRoot(reference);
+    if (!root || !isa<sim::RefType>(reference.getType()))
+      return;
+    auto declaration = accessIndex.declarations.lookup(*root);
+    if (!declaration || cast<sim::RefType>(reference.getType()).getElementType() !=
+                            declaration.getType())
+      return;
+    auto [eligible, inserted] = eligibleRoots.try_emplace(*root, false);
+    if (inserted)
+      eligible->second = isEligibleRoot(*root, declaration);
+    if (!eligible->second)
       return;
     if (!references.contains(*root))
       candidates.push_back(*root);
@@ -1457,8 +1466,7 @@ uint64_t localizeActivationStorage(
     // Use the lowering's reference-family proof as well as the memory proof.
     // A tagged-union view or clipped dynamic slice may require runtime-owned
     // storage even when the value is activation-private.
-    analysis::LocalStorageAnalysis locals(function);
-    if (!locals.lookup(local.getResult())) {
+    if (!analysis::LocalStorageAnalysis::isLocal(local)) {
       for (auto [use, original] : uses)
         use->set(original);
       local.erase();

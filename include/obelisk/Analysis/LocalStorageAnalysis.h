@@ -18,6 +18,11 @@ public:
   enum class Lifetime { Invocation, Coroutine };
   explicit LocalStorageAnalysis(sim::SimFuncOp function,
                                 Lifetime lifetime = Lifetime::Invocation);
+  /// Classifies one allocation exactly as a fresh analysis of its function
+  /// would, without classifying every other allocation. Forwarding facts are
+  /// built only if its reference family crosses a branch.
+  static bool isLocal(sim::SimRefAllocOp allocation,
+                      Lifetime lifetime = Lifetime::Invocation);
   /// Prove that every read of these recreated allocations follows a complete
   /// definition in this invocation. Dense must-dataflow intersects definitions
   /// across executable CFG and region edges, including loop backedges.

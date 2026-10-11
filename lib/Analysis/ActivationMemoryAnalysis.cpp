@@ -10,6 +10,7 @@
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
 #include "obelisk/Analysis/SimulationEffectAnalysis.h"
+#include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
@@ -1562,7 +1563,7 @@ public:
                      const HandleDataflowAnalysis &provenance,
                      unsigned maximumPartitions, ActivationValueGraph *values,
                      Operation *symbols, bool inputsOnly,
-                     const Liveness &liveness)
+                     ValueLiveness &liveness)
       : DataFlowAnalysis(solver), function(function), liveness(liveness),
         handleResult(handleResult), handles(handleResult.facts),
         provenance(provenance), maximumPartitions(maximumPartitions),
@@ -1597,7 +1598,7 @@ public:
     if (!controlValues.empty()) {
       for (Block &block : function.getBody())
         for (Value value : controlValues)
-          if (liveness.getLiveIn(&block).contains(value))
+          if (liveness.isLiveIn(value, &block))
             liveControlValues[&block].push_back(value);
     }
     if (values) {
@@ -1794,7 +1795,6 @@ private:
     // is live. Carrying every earlier loop's constants and projected handles
     // through a large fused activation makes the dense state quadratic in
     // body size. Static handle facts already live in the immutable summary.
-    const auto &live = liveness.getLiveIn(target);
     DenseSet<Value> induction;
     for (unsigned index : blockLoops.lookup(target)) {
       const auto &loop = loops[index];
@@ -1807,7 +1807,7 @@ private:
     auto needed = [&](Value value) {
       auto argument = dyn_cast<BlockArgument>(value);
       return (argument && argument.getOwner() == target) ||
-             live.contains(value) || induction.contains(value);
+             liveness.isLiveIn(value, target) || induction.contains(value);
     };
     for (auto it = state.constants.begin(); it != state.constants.end();) {
       if (!needed(it->first))
@@ -2322,7 +2322,7 @@ private:
     normalize(cell.links);
   }
   sim::SimFuncOp function;
-  const Liveness &liveness;
+  ValueLiveness &liveness;
   LogicalLanes logical;
   const HandleDataflowResult &handleResult;
   const HandleFacts &handles;
@@ -2396,21 +2396,25 @@ ActivationMemoryAnalysis::ActivationMemoryAnalysis(
     ranges = std::move(filtered);
     normalize(ranges);
   };
-  // Dense memory and sparse value transfer inspect the same unchanged CFG.
-  // Sharing liveness avoids two large capture-by-block inventories.
-  Liveness liveness(function);
+  // The value graph enumerates every value live into a block. The dense
+  // memory transfer only asks whether particular values are live, so it
+  // computes liveness per value on demand.
+  std::optional<Liveness> blockLiveness;
   std::unique_ptr<ActivationValueGraph> values;
   if (mode != DependencyMode::Accesses) {
-    values = std::make_unique<ActivationValueGraph>(function, rootLanes, liveness);
+    blockLiveness.emplace(function);
+    values = std::make_unique<ActivationValueGraph>(function, rootLanes,
+                                                    *blockLiveness);
     if (failed(values->initialize())) {
       dependencyFailure = "control flow";
       values.reset();
     }
   }
+  ValueLiveness valueLiveness;
   auto solver = std::make_unique<DataFlowSolver>();
   auto *analysis = solver->load<ActivationDataflow>(
       function, handleResult, handleAnalysis, maximumPartitions, values.get(),
-      symbols, mode == DependencyMode::Inputs, liveness);
+      symbols, mode == DependencyMode::Inputs, valueLiveness);
   if (failed(solver->initializeAndRun(function)) || !analysis->exit) {
     unsupported = analysis->unsupported;
     return;
