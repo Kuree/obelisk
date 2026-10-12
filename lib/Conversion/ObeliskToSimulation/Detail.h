@@ -647,6 +647,17 @@ struct SemanticDimension {
 /// a value-dependent query as if it were a fixed range.
 ::mlir::SmallVector<SemanticDimension> getSemanticDimensions(::mlir::Type type);
 
+struct SemanticSelectionLayout {
+  int64_t left;
+  int64_t right;
+  unsigned elementWidth;
+};
+
+/// Declared coordinates and logical element width of a fixed integral select.
+/// The rightmost declared element occupies the least-significant bits.
+std::optional<SemanticSelectionLayout>
+getSemanticSelectionLayout(::mlir::Type type);
+
 /// Normalized type of a semantic node's `semantic_type` attribute.
 ::mlir::FailureOr<::mlir::Type>
 getNormalizedSemanticType(::mlir::Operation *op);

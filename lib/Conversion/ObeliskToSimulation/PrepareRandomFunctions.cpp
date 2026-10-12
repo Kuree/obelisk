@@ -198,48 +198,15 @@ getRandomConstraintPath(Operation *expression,
           << "constraint function ordering selection has no source type";
       return failure();
     }
-    Type sourceType = sourceTypeAttr.getValue();
-    if (auto enumeration = dyn_cast<semantic::EnumType>(sourceType))
-      sourceType = enumeration.getBaseType();
-    int64_t left = static_cast<int64_t>((*base)->width) - 1;
-    int64_t right = 0;
-    unsigned elementWidth = 1;
-    if (auto integral = dyn_cast<semantic::IntegralType>(sourceType)) {
-      left = integral.getLeft();
-      right = integral.getRight();
-    } else if (isa<semantic::RangedPackedArrayType,
-                   semantic::RangedUnpackedArrayType,
-                   semantic::UnpackedArrayType>(sourceType)) {
-      if (auto packed = dyn_cast<semantic::RangedPackedArrayType>(sourceType)) {
-        left = packed.getLeft();
-        right = packed.getRight();
-      } else if (auto unpacked =
-                     dyn_cast<semantic::RangedUnpackedArrayType>(sourceType)) {
-        left = unpacked.getLeft();
-        right = unpacked.getRight();
-      } else {
-        left = 0;
-        right = static_cast<int64_t>(
-                    cast<semantic::UnpackedArrayType>(sourceType).getSize()) -
-                1;
-      }
-      APInt leftBound(65, static_cast<uint64_t>(left), true);
-      APInt rightBound(65, static_cast<uint64_t>(right), true);
-      APInt elementCount = leftBound - rightBound;
-      if (elementCount.isNegative())
-        elementCount = -elementCount;
-      ++elementCount;
-      if (elementCount.getActiveBits() > 64 ||
-          elementCount.getZExtValue() == 0 ||
-          elementCount.getZExtValue() > (**base).width ||
-          (**base).width % elementCount.getZExtValue() != 0) {
-        emitError(getSemanticLocation(expression))
-            << "constraint function ordering selection has malformed "
-               "element width";
-        return failure();
-      }
-      elementWidth = (**base).width / elementCount.getZExtValue();
+    auto layout = getSemanticSelectionLayout(sourceTypeAttr.getValue());
+    if (!layout) {
+      emitError(getSemanticLocation(expression))
+          << "constraint function ordering selection has no fixed integral "
+             "dimension";
+      return failure();
     }
+    int64_t left = layout->left, right = layout->right;
+    unsigned elementWidth = layout->elementWidth;
     bool descending = left >= right;
     auto physicalOffset = [&](int64_t index) -> std::optional<uint64_t> {
       APInt selected(65, static_cast<uint64_t>(index), true);

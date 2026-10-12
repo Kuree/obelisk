@@ -5752,8 +5752,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                        values[0].value);
           right = arith::SubIOp::create(builder, location, size, constant64(1));
         } else if (auto width = sim::getPackedWidth(baseType)) {
-          left = constant64(*width - 1);
-          right = constant64(0);
+          auto source = inputs[0]->getAttrOfType<TypeAttr>("semantic_type");
+          auto layout = source ? getSemanticSelectionLayout(source.getValue())
+                               : std::nullopt;
+          left = constant64(layout ? layout->left : *width - 1);
+          right = constant64(layout ? layout->right : 0);
         }
         if (left && right) {
           auto sourceType = inputs[1]->getAttrOfType<TypeAttr>("semantic_type");
@@ -5798,6 +5801,63 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                      arith::CmpIPredicate::sge,
                                                      right, constant64(0)));
           requireSafeRead(guardAnd(known, inRange));
+        }
+      }
+      if (isa<semantic::SVRangeSelectExpressionOp>(expression) &&
+          values.size() == 3 &&
+          !expression->hasAttr(randomEvaluationErrorAttrName)) {
+        auto sourceWidth = sim::getPackedWidth(values[0].value.getType());
+        auto selectedWidth = sim::getPackedWidth(*resultType);
+        if (sourceWidth && selectedWidth) {
+          if (*selectedWidth > *sourceWidth) {
+            requireSafeRead(guardConstant(false));
+          } else {
+            // The ordinary selection lowering already normalizes declared
+            // coordinates, directions, element widths and indexed bases in
+            // a widened arithmetic type. Reuse that exact address for bounds
+            // validation, retaining X/Z from the original index operands.
+            SmallVector<std::pair<Operation *, Value>> previous;
+            for (unsigned index = 1; index < inputs.size(); ++index) {
+              previous.push_back(
+                  {inputs[index], expressionCaptures.lookup(inputs[index])});
+              expressionCaptures[inputs[index]] = values[index].value;
+            }
+            auto restore = llvm::scope_exit([&] {
+              for (auto [input, value] : llvm::reverse(previous)) {
+                if (value)
+                  expressionCaptures[input] = value;
+                else
+                  expressionCaptures.erase(input);
+              }
+            });
+            auto address = lowerPackedSelectionAddress(
+                expression, values[0].value.getType(), *resultType);
+            if (failed(address))
+              return failure();
+            if (!address->constant) {
+              Value low = address->dynamicLow;
+              Value known = guardConstant(true);
+              if (auto logic = dyn_cast<sim::LogicType>(low.getType())) {
+                Value bits = sim::SimLogicToBitsOp::create(
+                    builder, location, builder.getIntegerType(logic.getWidth()),
+                    low);
+                Value restored = sim::SimLogicFromBitsOp::create(
+                    builder, location, logic, bits);
+                known = sim::SimLogicCompareOp::create(
+                    builder, location, builder.getI1Type(),
+                    sim::CompareKind::CaseEq, low, restored);
+                low = bits;
+              }
+              Value inRange = guardAnd(
+                  arith::CmpIOp::create(builder, location,
+                                        arith::CmpIPredicate::sge, low,
+                                        constantLike(low, 0)),
+                  arith::CmpIOp::create(
+                      builder, location, arith::CmpIPredicate::sle, low,
+                      constantLike(low, *sourceWidth - *selectedWidth)));
+              requireSafeRead(guardAnd(known, inRange));
+            }
+          }
         }
       }
       if (binary && values.size() == 2 &&

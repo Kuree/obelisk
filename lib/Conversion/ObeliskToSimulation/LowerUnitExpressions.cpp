@@ -4659,12 +4659,11 @@ UnitLowering::lowerPackedSelectionAddress(Operation *op, Type sourceValueType,
   }
   auto sourceTypeAttr =
       children.front()->getAttrOfType<TypeAttr>("semantic_type");
-  auto sourceRange =
-      sourceTypeAttr
-          ? dyn_cast<semantic::RangedPackedArrayType>(sourceTypeAttr.getValue())
-          : semantic::RangedPackedArrayType{};
-  int64_t sourceRight = sourceRange ? sourceRange.getRight() : 0;
-  bool descending = !sourceRange || sourceRange.getLeft() >= sourceRight;
+  auto sourceLayout =
+      sourceTypeAttr ? getSemanticSelectionLayout(sourceTypeAttr.getValue())
+                     : std::nullopt;
+  int64_t sourceRight = sourceLayout ? sourceLayout->right : 0;
+  bool descending = !sourceLayout || sourceLayout->left >= sourceRight;
   semantic::SVRangeSelectionKind selectionKind =
       element
           ? semantic::SVRangeSelectionKind::Simple

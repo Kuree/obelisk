@@ -257,7 +257,9 @@
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "runtime/include/obelisk/Runtime/RandomDomain.h",
-          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp"
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -277,7 +279,11 @@
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
         ]
       }
     },
@@ -368,7 +374,7 @@
         {
           "feature": "Division, exponentiation, and system calls",
           "status": "partial",
-          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. Disabled four-state scalar properties, fixed-array elements and qualified structure leaves bind their stored unknown symbols through compiler captures masked by the live active-bit inventory. Candidate checks use the pre-solve snapshot; active random candidates remain two-state. General system functions and mixed unknown-plane selections remain open."
+          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. Disabled four-state scalar properties, fixed-array elements and qualified structure leaves bind their stored unknown symbols through compiler captures masked by the live active-bit inventory. Candidate checks use the pre-solve snapshot; active random candidates remain two-state. Packed bit-selects and constant or variable indexed part-selects preserve separate value, X and Z planes, including computed operands from admitted functions, concatenation and undefined arithmetic. Widened signed address arithmetic retains declared coordinates and both indexed directions without truncation. General system functions and non-integral selections remain open."
         },
         {
           "feature": "Named and multiple constraint blocks",
@@ -389,7 +395,9 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
-          "runtime/lib/RandModelCount.h"
+          "runtime/lib/RandModelCount.h",
+          "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -432,7 +440,11 @@
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
         ]
       }
     },
@@ -1031,7 +1043,7 @@
         {
           "feature": "Integral system functions",
           "status": "partial",
-          "detail": "Signedness casts, clog2, countones, onehot, onehot0, isunknown and countbits participate in compiler Z3 plans and native/WASM execution. Value, unknown and high-impedance planes distinguish X from Z in admitted packed operands. Countbits combines distinct control LSBs as a set of 0/1/X/Z selectors, including live four-state controls. Casts, shifts, concatenation, replication and conditional merging preserve Z as required; undefined arithmetic and unary arithmetic on X/Z operands produce X. Clog2 consumes unsigned value bits after X/Z-to-zero conversion, including active four-state random declarations. Snapshot captures preserve frozen symbols through mode changes and checker-only calls. Scalar, 130-bit and bidirectional 32-bit MLIR regressions cover these cases. General mixed unknown selections and non-integral bitstreams remain open."
+          "detail": "Signedness casts, clog2, countones, onehot, onehot0, isunknown and countbits participate in compiler Z3 plans and native/WASM execution. Value, unknown and high-impedance planes distinguish X from Z in admitted packed operands. Countbits combines distinct control LSBs as a set of 0/1/X/Z selectors, including live four-state controls. Casts, shifts, concatenation, replication and conditional merging preserve Z as required; undefined arithmetic and unary arithmetic on X/Z operands produce X. Clog2 consumes unsigned value bits after X/Z-to-zero conversion, including active four-state random declarations. Snapshot captures preserve frozen symbols through mode changes and checker-only calls. Scalar, 130-bit and bidirectional 32-bit MLIR regressions cover these cases. Computed packed bit-selects and constant or variable indexed part-selects retain exact X/Z counts after expanded function argument stages, concatenation, bitwise operations and undefined arithmetic. Non-integral bitstreams and system functions outside the admitted integral set remain open."
         },
         {
           "feature": "Scope-randomization user functions",
@@ -1054,7 +1066,9 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
-          "runtime/lib/RandModelCount.h"
+          "runtime/lib/RandModelCount.h",
+          "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-functions.mlir",
@@ -1090,7 +1104,11 @@
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
         ]
       }
     },
@@ -1106,7 +1124,7 @@
         {
           "feature": "FALSE/TRUE/ERROR/RANDOM guard algebra",
           "status": "partial",
-          "detail": "The complete Figure 18-3 truth tables are implemented with safe compiler captures and hard creation-validity predicates in native and WASM solving. Only state TRUE/FALSE suppress errors; RANDOM cannot hide them. Null handles, handle comparisons, fixed/state dynamic array and queue bounds, known invalid random-array slices, state-selected fixed random-array elements with exact live dependency masks, state tagged-union arms, guarded body errors, disabled blocks and frozen variables are covered. Unused function inputs retain evaluation errors and source RANDOM classification. Live guard reference and argument masks preserve independent Z3 function-priority stages after sifting. General candidate-dependent accesses and computed operand selections, unknown-plane mixtures and complete runtime-sized foreach encoding remain open."
+          "detail": "The complete Figure 18-3 truth tables are implemented with safe compiler captures and hard creation-validity predicates in native and WASM solving. Only state TRUE/FALSE suppress errors; RANDOM cannot hide them. Null handles, handle comparisons, fixed/state dynamic array and queue bounds, known invalid random-array slices, state-selected fixed random-array elements with exact live dependency masks, state tagged-union arms, guarded body errors, disabled blocks and frozen variables are covered. Unused function inputs retain evaluation errors and source RANDOM classification. Live guard reference and argument masks preserve independent Z3 function-priority stages after sifting. Computed packed selections and variable indexed part-selects preserve unknown address errors across consuming casts; partial out-of-range selections fail unless a state guard or disabled block discards them. General candidate-dependent accesses, other mixed unknown-plane predicates and complete runtime-sized foreach encoding remain open."
         }
       ],
       "evidence": {
@@ -1123,7 +1141,9 @@
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
           "runtime/lib/RandModelCount.h",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -1163,7 +1183,11 @@
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
         ]
       }
     },
@@ -1503,7 +1527,9 @@
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "runtime/include/obelisk/Runtime/RandomDomain.h",
-          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp"
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
@@ -1518,7 +1544,11 @@
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
         ]
       }
     },
@@ -1711,14 +1741,20 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "runtime/include/obelisk/Runtime/RandomDomain.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
           "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
         ]
       }
     },

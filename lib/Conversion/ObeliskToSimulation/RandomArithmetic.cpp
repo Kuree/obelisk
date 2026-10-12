@@ -377,12 +377,28 @@ struct RandomArithmetic::Impl {
   /// Z3 compiles these conditionals; no selection solver runs on the target.
   FailureOr<std::optional<RandomArithmeticPlanes>>
   fixedSelection(Operation *expression, unsigned precision) {
+    Operation *root = expression;
+    while (!root->hasAttr(randomVariableAttrName) &&
+           !root->hasAttr(randomVariableBitOffsetAttrName)) {
+      auto operands = getChildren(root);
+      if (!isa<semantic::SVElementSelectExpressionOp,
+               semantic::SVRangeSelectExpressionOp,
+               semantic::SVMemberAccessExpressionOp>(root) ||
+          operands.empty())
+        return std::optional<RandomArithmeticPlanes>{};
+      root = operands.front();
+    }
     Operation *selection = expression;
     SmallVector<unsigned> path;
     while (true) {
       auto operands = getChildren(selection);
       if (isa<semantic::SVElementSelectExpressionOp>(selection) &&
           operands.size() == 2 && !constant(operands[1]))
+        break;
+      if (auto range = dyn_cast<semantic::SVRangeSelectExpressionOp>(selection);
+          range && operands.size() == 3 &&
+          range.getSelectionKind() != semantic::SVRangeSelectionKind::Simple &&
+          !constant(operands[1]))
         break;
       if (!isa<semantic::SVElementSelectExpressionOp,
                semantic::SVRangeSelectExpressionOp,
@@ -397,20 +413,10 @@ struct RandomArithmetic::Impl {
         selectedOperands.front()->getAttrOfType<TypeAttr>("semantic_type");
     if (!sourceType)
       return failure();
-    int64_t left, right;
-    Type source = sourceType.getValue();
-    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(source)) {
-      left = array.getLeft();
-      right = array.getRight();
-    } else if (auto array = dyn_cast<semantic::UnpackedArrayType>(source)) {
-      left = 0;
-      right = array.getSize() - 1;
-    } else if (auto array = dyn_cast<semantic::RangedPackedArrayType>(source)) {
-      left = array.getLeft();
-      right = array.getRight();
-    } else {
+    auto layout = getSemanticSelectionLayout(sourceType.getValue());
+    if (!layout)
       return std::optional<RandomArithmeticPlanes>{};
-    }
+    int64_t left = layout->left, right = layout->right;
     auto sourceWidth = width(selectedOperands.front());
     APInt extent(65, static_cast<uint64_t>(left), true);
     extent -= APInt(65, static_cast<uint64_t>(right), true);
@@ -541,6 +547,129 @@ struct RandomArithmetic::Impl {
     return std::optional<RandomArithmeticPlanes>(result);
   }
 
+  FailureOr<RandomArithmeticPlanes> packedSelection(Operation *expression,
+                                                    unsigned precision) {
+    auto operands = getChildren(expression);
+    bool element = isa<semantic::SVElementSelectExpressionOp>(expression);
+    if (operands.size() != (element ? 2u : 3u))
+      return failure();
+    auto sourceType = operands[0]->getAttrOfType<TypeAttr>("semantic_type");
+    auto sourceWidth = sourceType
+                           ? getSemanticPackedWidth(sourceType.getValue())
+                           : std::nullopt;
+    auto layout = sourceType ? getSemanticSelectionLayout(sourceType.getValue())
+                             : std::nullopt;
+    if (!sourceWidth || !layout)
+      return failure();
+    auto source = get(operands[0]), first = get(operands[1]);
+    auto firstWidth = width(operands[1]);
+    if (failed(source) || failed(first) || failed(firstWidth))
+      return failure();
+    unsigned scaleBits = APInt(64, layout->elementWidth - 1).getActiveBits();
+    unsigned indexWidth = std::max(64u, *firstWidth);
+    auto range = dyn_cast<semantic::SVRangeSelectExpressionOp>(expression);
+    bool simple = range && range.getSelectionKind() ==
+                               semantic::SVRangeSelectionKind::Simple;
+    if (simple) {
+      auto secondWidth = width(operands[2]);
+      if (failed(secondWidth) || !constant(operands[1]) ||
+          !constant(operands[2]))
+        return failure();
+      indexWidth = std::max(indexWidth, *secondWidth);
+    } else if (range) {
+      auto count = constant(operands[2]);
+      if (!count || count->isZero() ||
+          (sign(operands[2]) && count->isNegative()) ||
+          count->getActiveBits() > 32 ||
+          uint64_t(count->getZExtValue()) * layout->elementWidth != precision)
+        return failure();
+    }
+    if (indexWidth > std::numeric_limits<unsigned>::max() - 2 - scaleBits)
+      return failure();
+    unsigned arithmeticWidth = indexWidth + 2 + scaleBits;
+    auto number = [&](int64_t value) {
+      return literal(expression,
+                     APInt(arithmeticWidth, static_cast<uint64_t>(value), true),
+                     true);
+    };
+    auto offset = [&](Operation *indexSource,
+                      RandomArithmeticPlanes index) -> Operation * {
+      auto widened =
+          resize(expression, index, arithmeticWidth, sign(indexSource));
+      Operation *selected =
+          cast(expression, widened.value, arithmeticWidth, true);
+      Operation *right = number(layout->right);
+      Operation *ordinal =
+          binary(expression, Binary::Subtract,
+                 layout->left >= layout->right ? selected : right,
+                 layout->left >= layout->right ? right : selected,
+                 arithmeticWidth, true);
+      if (layout->elementWidth == 1)
+        return ordinal;
+      return binary(expression, Binary::Multiply, ordinal,
+                    number(layout->elementWidth), arithmeticWidth, true);
+    };
+    Operation *low = offset(operands[1], *first);
+    if (simple) {
+      auto second = get(operands[2]);
+      if (failed(second))
+        return failure();
+      Operation *other = offset(operands[2], *second);
+      low = select(expression,
+                   binary(expression, Binary::LessThan, low, other, 1), low,
+                   other, arithmeticWidth, true);
+    } else if (range) {
+      bool high = (layout->left >= layout->right &&
+                   range.getSelectionKind() ==
+                       semantic::SVRangeSelectionKind::IndexedDown) ||
+                  (layout->left < layout->right &&
+                   range.getSelectionKind() ==
+                       semantic::SVRangeSelectionKind::IndexedUp);
+      if (high && precision > layout->elementWidth)
+        low = binary(expression, Binary::Subtract, low,
+                     number(precision - layout->elementWidth), arithmeticWidth,
+                     true);
+    }
+    Operation *inRange =
+        precision > *sourceWidth
+            ? zero(expression, 1)
+            : bitAnd(expression,
+                     binary(expression, Binary::GreaterThanEqual, low,
+                            number(0), 1),
+                     binary(expression, Binary::LessThanEqual, low,
+                            number(*sourceWidth - precision), 1),
+                     1);
+    if (first->unknown)
+      inRange = bitAnd(
+          expression, inRange,
+          notBool(expression, nonzero(expression, first->unknown, *firstWidth)),
+          1);
+    auto extract = [&](Operation *plane) -> Operation * {
+      return plane ? cast(expression,
+                          binary(expression, Binary::LogicalShiftRight, plane,
+                                 low, *sourceWidth),
+                          precision)
+                   : nullptr;
+    };
+    Operation *value = extract(source->value);
+    Operation *unknown = extract(source->unknown);
+    Operation *highImpedance = extract(source->highImpedance);
+    value = select(expression, inRange, value, zero(expression, precision),
+                   precision, sign(expression));
+    if (unknown || fourState(expression))
+      unknown = select(expression, inRange,
+                       unknown ? unknown : zero(expression, precision),
+                       fourState(expression) ? ones(expression, precision)
+                                             : zero(expression, precision),
+                       precision);
+    if (highImpedance)
+      highImpedance = select(expression, inRange, highImpedance,
+                             zero(expression, precision), precision);
+    return RandomArithmeticPlanes{
+        mask(expression, value, unknown, precision, sign(expression)), unknown,
+        highImpedance};
+  }
+
   FailureOr<RandomArithmeticPlanes> build(Operation *expression) {
     auto precisionResult = width(expression);
     if (failed(precisionResult))
@@ -604,6 +733,14 @@ struct RandomArithmetic::Impl {
         return failure();
       if (*selection)
         return **selection;
+    }
+    if (isa<semantic::SVElementSelectExpressionOp,
+            semantic::SVRangeSelectExpressionOp>(expression)) {
+      auto source = children.empty()
+                        ? TypeAttr{}
+                        : children[0]->getAttrOfType<TypeAttr>("semantic_type");
+      if (source && getSemanticPackedWidth(source.getValue()))
+        return packedSelection(expression, precision);
     }
     if (isa<semantic::SVNamedValueExpressionOp,
             semantic::SVHierarchicalValueExpressionOp,

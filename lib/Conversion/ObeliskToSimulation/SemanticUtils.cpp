@@ -751,6 +751,35 @@ SmallVector<SemanticDimension> getSemanticDimensions(Type type) {
   return dimensions;
 }
 
+std::optional<SemanticSelectionLayout> getSemanticSelectionLayout(Type type) {
+  if (auto enumeration = dyn_cast<semantic::EnumType>(type))
+    type = enumeration.getBaseType();
+  std::optional<uint64_t> width = getSemanticBitstreamWidth(type);
+  if (!width || *width == 0 || *width > std::numeric_limits<unsigned>::max())
+    return std::nullopt;
+  int64_t left, right;
+  if (auto integral = dyn_cast<semantic::IntegralType>(type)) {
+    left = integral.getLeft();
+    right = integral.getRight();
+  } else {
+    auto dimensions = getSemanticDimensions(type);
+    if (dimensions.empty() && getSemanticPackedWidth(type)) {
+      left = *width - 1;
+      right = 0;
+    } else if (dimensions.empty() || !dimensions.front().isFixed()) {
+      return std::nullopt;
+    } else {
+      left = dimensions.front().left;
+      right = dimensions.front().right;
+    }
+  }
+  auto count = getRangeExtent(left, right);
+  if (!count || *count == 0 || *count > *width || *width % *count != 0)
+    return std::nullopt;
+  return SemanticSelectionLayout{left, right,
+                                 static_cast<unsigned>(*width / *count)};
+}
+
 std::optional<uint64_t> getSemanticPackedWidth(Type type) {
   if (auto integral = dyn_cast<semantic::IntegralType>(type))
     return integral.getWidth();
