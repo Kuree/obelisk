@@ -4827,7 +4827,10 @@ enum {
   // other payload field zero. Set and TupleQueue expressions are consumed
   // synchronously. Container constructor formals retain captured array and
   // queue values using their shared schema type descriptor.
-  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER = 6
+  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER = 6,
+  // An owned fixed aggregate snapshot in a managed reference path. All other
+  // fields are zero; the shared aggregate layout identifies its typed storage.
+  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE = 7
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

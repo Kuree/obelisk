@@ -645,6 +645,8 @@ private:
                                               ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toLogic(::mlir::Value value,
                                            ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  captureCoverageAggregate(::mlir::Value value, ::mlir::Location location);
   ::mlir::Value cloneSequentialValue(::mlir::Value value,
                                      ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>

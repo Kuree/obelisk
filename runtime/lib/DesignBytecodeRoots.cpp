@@ -140,8 +140,10 @@ void obelisk_rt_enumerate_design_managed_roots(
           if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING)
             visitManagedWord(reinterpret_cast<const uint8_t *>(&formal.payload),
                              visit, visitorEnvironment);
-          else if (formal.kind ==
-                       OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER &&
+          else if ((formal.kind ==
+                        OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
+                    formal.kind ==
+                        OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) &&
                    formal.owner)
             visit(visitorEnvironment, &formal.owner);
           else if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&

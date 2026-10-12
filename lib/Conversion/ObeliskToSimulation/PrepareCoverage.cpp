@@ -1988,6 +1988,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     llvm::DenseMap<uint64_t, Operation *> binOwners;
     llvm::DenseMap<uint64_t, Operation *> expressionOwners;
     llvm::DenseMap<uint64_t, Operation *> formalOwners;
+    llvm::DenseMap<Type, std::pair<uint64_t, uint32_t>> aggregateTypeIDs;
+    llvm::DenseMap<uint64_t, Type> aggregateTypesByID;
     llvm::DenseMap<Type, uint64_t> containerTypeIDs;
     llvm::DenseMap<uint64_t, Type> containerTypesByID;
     llvm::DenseMap<uint64_t, Operation *> selectorOwners;
@@ -2267,12 +2269,17 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           }
           if (forcedBitWidth || forcedSignedness) {
             if (!forcedBitWidth || !*forcedBitWidth || !forcedSignedness ||
-                *forcedSignedness ==
-                    coverage::CoverageSignedness::NotApplicable ||
-                descriptor.resultKind !=
-                    coverage::FunctionalExpressionResultKind::Integral)
+                (descriptor.resultKind ==
+                         coverage::FunctionalExpressionResultKind::Aggregate
+                     ? *forcedSignedness !=
+                           coverage::CoverageSignedness::NotApplicable
+                     : *forcedSignedness ==
+                               coverage::CoverageSignedness::NotApplicable ||
+                           descriptor.resultKind !=
+                               coverage::FunctionalExpressionResultKind::
+                                   Integral))
               return expression->emitError(
-                  "functional expression has an invalid forced integral "
+                  "functional expression has an invalid forced "
                   "result type");
             descriptor.bitWidth = *forcedBitWidth;
             descriptor.signedness = *forcedSignedness;
@@ -2589,6 +2596,42 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
               schema.functionalContainerTypes.push_back(layout);
             }
             descriptor.valueType = entry->second;
+          } else if (sim::isAggregateType(*normalized) &&
+                     !sim::getPackedScalarType(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::Aggregate;
+            descriptor.signedness = coverage::CoverageSignedness::NotApplicable;
+            auto [entry, inserted] = aggregateTypeIDs.try_emplace(
+                *normalized, std::pair<uint64_t, uint32_t>{});
+            if (inserted) {
+              auto element = simlowering::describeContainerElement(
+                  *normalized, simlowering::getSemanticLocation(formal));
+              auto width = sim::getProvenanceSpan(*normalized);
+              if (failed(element) || !width || !*width || *width > UINT32_MAX) {
+                formal.emitError(
+                    "functional aggregate formal has no fixed layout");
+                signalPassFailure();
+                return;
+              }
+              coverage::FunctionalAggregateType layout{
+                  sim::getStableStorageTypeID(*normalized),
+                  element->typeID,
+                  element->valueSize,
+                  element->alignment,
+                  static_cast<uint32_t>(*width),
+                  static_cast<uint32_t>(element->flags)};
+              auto [previousType, unique] =
+                  aggregateTypesByID.try_emplace(layout.id, *normalized);
+              if (!unique && previousType->second != *normalized) {
+                formal.emitError("functional aggregate type ID collision");
+                signalPassFailure();
+                return;
+              }
+              entry->second = {layout.id, layout.bitWidth};
+              schema.functionalAggregateTypes.push_back(layout);
+            }
+            descriptor.valueType = entry->second.first;
+            descriptor.bitWidth = entry->second.second;
           } else if (isa<sim::StringType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::String;
@@ -4684,6 +4727,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       return coverageOrderKey(entry.id);
     });
     sortCoverageRecords(schema.functionalContainerTypes, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
+    });
+    sortCoverageRecords(schema.functionalAggregateTypes, [](const auto &entry) {
       return coverageOrderKey(entry.id);
     });
     sortCoverageRecords(schema.functionalFormals, [](const auto &entry) {

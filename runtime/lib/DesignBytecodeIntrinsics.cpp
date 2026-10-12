@@ -306,7 +306,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       result.owner = obelisk_rt_object_from_managed_word(word);
       if (obelisk_rt_managed_word_from_object(result.owner) != word)
         return false;
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+      result.kind =
+          result.owner && obelisk_rt_managed_object_kind(result.owner) ==
+                              OBELISK_RT_MANAGED_REFERENCE_PATH
+              ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
+              : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
       result.bit_width = 0;
       result.value_size = 0;
       return true;
@@ -2341,21 +2345,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto index = scalar(1);
     if (!index)
       return OBELISK_RT_INVALID_BYTECODE;
-    Layout ownerReference = layoutAt(image, frame.function, inputRegister(2));
-    if (ownerReference.kind != OBELISK_RT_DBREG_ARGUMENT_REF ||
-        ownerReference.size != 24)
+    bool watching = site.inputCount == 3;
+    if (!watching && site.inputCount != 2)
       return OBELISK_RT_INVALID_BYTECODE;
     uint64_t ownerPayload = 0;
     uint32_t ownerManaged = 0;
     obelisk_rt_object_v1 *watchOwner = nullptr;
-    obelisk_rt_managed_word_v1 ownerWord = 0;
-    std::memcpy(&ownerWord, frame.data + ownerReference.offset,
-                sizeof(ownerWord));
-    watchOwner = obelisk_rt_object_from_managed_word(ownerWord);
-    std::memcpy(&ownerPayload, frame.data + ownerReference.offset + 8,
-                sizeof(ownerPayload));
-    std::memcpy(&ownerManaged, frame.data + ownerReference.offset + 16,
-                sizeof(ownerManaged));
+    if (watching && !readArgumentRef(inputRegister(2), watchOwner, ownerPayload,
+                                     ownerManaged))
+      return OBELISK_RT_INVALID_BYTECODE;
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
@@ -2370,8 +2368,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             : reinterpret_cast<uint8_t *>(context->stateUnknown.data());
     obelisk_rt_status status = obelisk_rt_v1_reference_path_index_create(
         lane, readManaged(inputRegister(0)), static_cast<int64_t>(*index),
-        watchOwner, ownerPayload, ownerManaged, stateValue, stateUnknown,
-        image.stateBitCount, &path);
+        watchOwner, ownerPayload, ownerManaged, watching ? stateValue : nullptr,
+        watching ? stateUnknown : nullptr, watching ? image.stateBitCount : 0,
+        &path);
     if (status != OBELISK_RT_OK)
       return status;
     return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK

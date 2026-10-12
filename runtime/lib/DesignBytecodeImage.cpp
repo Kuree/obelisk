@@ -881,9 +881,11 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && managedRef(input(0)) &&
            argumentRef(output(0));
   case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_INDEX:
-    return signature.flags == 0 && site.inputCount == 3 &&
+    return signature.flags == 0 &&
+           (site.inputCount == 2 || site.inputCount == 3) &&
            site.outputCount == 1 && managed(input(0)) &&
-           twoStateBits(input(1), 64) && argumentRef(input(2)) &&
+           twoStateBits(input(1), 64) &&
+           (site.inputCount == 2 || argumentRef(input(2))) &&
            managed(output(0));
   case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER:
     return signature.flags == 0 && site.inputCount == 3 &&

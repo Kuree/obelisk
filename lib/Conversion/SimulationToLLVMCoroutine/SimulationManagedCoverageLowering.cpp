@@ -101,6 +101,11 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
     if (element.isF64() || isa<sim::StringType, sim::DynamicArrayType,
                                sim::QueueType, sim::AssocArrayType>(element))
       packedWidth = 64;
+    if (!packedWidth && sim::isAggregateType(element)) {
+      auto span = sim::getProvenanceSpan(element);
+      if (span && *span <= UINT32_MAX)
+        packedWidth = static_cast<unsigned>(*span);
+    }
     if (!packedWidth)
       return failure();
     width = *packedWidth;
@@ -117,6 +122,11 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         rewriter, location, packed,
         llvmConstant(rewriter, location, packed.getType(), 128));
     referenceKind = LLVM::TruncOp::create(rewriter, location, i32, shiftedTag);
+  } else if (isa<sim::ReferencePathType>(sourceType)) {
+    if (converted.size() != 1 || !converted.front().getType().isInteger(64))
+      return failure();
+    kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE;
+    ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
                  sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))

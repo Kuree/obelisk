@@ -316,6 +316,18 @@ struct FunctionalContainerType {
   uint64_t bound = 0;
 };
 
+/// Shared physical layout for fixed unpacked aggregate formals. The element
+/// identity includes storage flags and identifies the canonical runtime trace
+/// descriptor. Owned input snapshots retain that descriptor through a path.
+struct FunctionalAggregateType {
+  uint64_t id = 0;
+  uint64_t elementType = 0;
+  uint64_t valueSize = 0;
+  uint64_t alignment = 0;
+  uint32_t bitWidth = 0;
+  uint32_t flags = 0;
+};
+
 struct TransitionProgram {
   uint64_t bin = 0;
   uint64_t item = 0;
@@ -860,6 +872,7 @@ struct Database {
   std::vector<FunctionalExpression> functionalExpressions;
   std::vector<FunctionalFormal> functionalFormals;
   std::vector<FunctionalContainerType> functionalContainerTypes;
+  std::vector<FunctionalAggregateType> functionalAggregateTypes;
   std::vector<FunctionalBinPlan> functionalBinPlans;
   std::vector<FunctionalTupleSet> functionalTupleSets;
   std::vector<FunctionalTuple> functionalTupleSetTuples;

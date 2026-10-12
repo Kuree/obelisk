@@ -2109,6 +2109,31 @@ TEST_F(ManagedValueTest, EqualAssociativeKeysShareOnlyTheLiveCapture) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedValueTest, AggregateReferencesAcceptPartialFinalBytes) {
+  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
+                                           OBELISK_RT_ELEMENT_AGGREGATE,
+                                           9400,
+                                           OBELISK_RT_ELEMENT_FOUR_STATE,
+                                           0,
+                                           6,
+                                           1,
+                                           48,
+                                           nullptr};
+  obelisk_rt_object_v1 *array = nullptr, *path = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &array),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                lane, array, 0, nullptr, 0, 0, nullptr, nullptr, 0, &path),
+            OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_reference_path_shape(path, 6, 42, 1, 0), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_reference_path_shape(path, 6, 40, 1, 0),
+            OBELISK_RT_ARGUMENT_MISMATCH);
+  EXPECT_EQ(obelisk_rt_reference_path_shape(path, 6, 49, 1, 0),
+            OBELISK_RT_ARGUMENT_MISMATCH);
+  EXPECT_EQ(obelisk_rt_reference_path_shape(path, 6, 42, 0, 0),
+            OBELISK_RT_ARGUMENT_MISMATCH);
+}
+
 TEST_F(ManagedValueTest, AggregateWindowsPreservePlanesAndDetachedAliases) {
   const obelisk_rt_element_type_v1 recordElement{OBELISK_RT_VERSION,
                                                  OBELISK_RT_ELEMENT_AGGREGATE,

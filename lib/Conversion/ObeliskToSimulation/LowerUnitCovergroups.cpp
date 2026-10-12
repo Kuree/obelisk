@@ -707,14 +707,31 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
               : FailureOr<Value>(failure());
       if (failed(converted))
         return failure();
+      const bool aggregate =
+          sim::isAggregateType(*type) && !sim::getPackedScalarType(*type);
       FailureOr<Value> snapshot =
-          cloneSequentialValue(*converted, getSemanticLocation(actual));
+          aggregate ? FailureOr<Value>(*converted)
+                    : FailureOr<Value>(cloneSequentialValue(
+                          *converted, getSemanticLocation(actual)));
       if (failed(snapshot))
         return failure();
-      arguments.push_back(*snapshot);
-      values[path] = *snapshot;
-      lvalues.erase(path);
-      coverageInputs[path] = {formal, builder.getInsertionBlock()};
+      if (sim::isAggregateType(*type) && !sim::getPackedScalarType(*type)) {
+        auto captured =
+            captureCoverageAggregate(*snapshot, getSemanticLocation(actual));
+        if (failed(captured))
+          return failure();
+        arguments.push_back(*captured);
+        // Constructor inputs are read-only (19.3). Bind the owned snapshot
+        // directly so member reads and const-ref actuals need no second copy.
+        values[path] = *captured;
+        lvalues[path] = *captured;
+        coverageInputs.erase(path);
+      } else {
+        arguments.push_back(*snapshot);
+        values[path] = *snapshot;
+        lvalues.erase(path);
+        coverageInputs[path] = {formal, builder.getInsertionBlock()};
+      }
     }
     bindInheritedFormalAliases(formal, path);
     formalIDs.push_back(static_cast<int64_t>(id.getValue().getZExtValue()));
@@ -738,6 +755,17 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       if (formal.getDirection() == semantic::SVArgumentDirection::Ref)
         defaultValue = sim::SimArgumentRefLoadOp::create(
             builder, getSemanticLocation(actual), *type, defaultValue);
+      if (sim::isAggregateType(*type) && !sim::getPackedScalarType(*type)) {
+        if (formal.getDirection() == semantic::SVArgumentDirection::Ref) {
+          auto captured = captureCoverageAggregate(defaultValue,
+                                                   getSemanticLocation(actual));
+          if (failed(captured))
+            return failure();
+          defaultValue = *captured;
+        } else {
+          defaultValue = arguments.back();
+        }
+      }
       defaultValues.push_back(defaultValue);
       defaultExpressionIDs.push_back(
           static_cast<int64_t>(defaultID.getValue().getZExtValue()));
@@ -2234,13 +2262,27 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
               : FailureOr<Value>(failure());
       if (failed(converted))
         return failure();
+      const bool aggregate =
+          sim::isAggregateType(*type) && !sim::getPackedScalarType(*type);
       FailureOr<Value> snapshot =
-          cloneSequentialValue(*converted, getSemanticLocation(actual));
+          aggregate ? FailureOr<Value>(*converted)
+                    : FailureOr<Value>(cloneSequentialValue(
+                          *converted, getSemanticLocation(actual)));
       if (failed(snapshot))
         return failure();
-      boundValue = *snapshot;
-      lvalues.erase(path);
-      coverageInputs[path] = {formal, builder.getInsertionBlock()};
+      if (aggregate) {
+        auto captured =
+            captureCoverageAggregate(*snapshot, getSemanticLocation(actual));
+        if (failed(captured))
+          return failure();
+        boundValue = *captured;
+        lvalues[path] = boundValue;
+        coverageInputs.erase(path);
+      } else {
+        boundValue = *snapshot;
+        lvalues.erase(path);
+        coverageInputs[path] = {formal, builder.getInsertionBlock()};
+      }
     }
     values[path] = boundValue;
     bindInheritedFormalAliases(formal, path, boundValue);
@@ -2263,6 +2305,20 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
       if (formal.getDirection() == semantic::SVArgumentDirection::Ref)
         defaultValue = sim::SimArgumentRefLoadOp::create(
             builder, getSemanticLocation(actual), *type, boundValue);
+      if (sim::isAggregateType(*type) && !sim::getPackedScalarType(*type)) {
+        if (getReferenceElementType(defaultValue)) {
+          auto loaded =
+              loadReference(defaultValue, getSemanticLocation(actual));
+          if (failed(loaded))
+            return failure();
+          defaultValue = *loaded;
+        }
+        auto captured =
+            captureCoverageAggregate(defaultValue, getSemanticLocation(actual));
+        if (failed(captured))
+          return failure();
+        defaultValue = *captured;
+      }
       defaultValues.push_back(defaultValue);
       defaultExpressionIDs.push_back(
           static_cast<int64_t>(defaultID.getValue().getZExtValue()));
@@ -2353,7 +2409,9 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
                                        lvalues.lookup(path),
                                        coverageInputs.lookup(path)});
     values[path] = value;
-    if (formal.getDirection() == semantic::SVArgumentDirection::Ref) {
+    if (formal.getDirection() == semantic::SVArgumentDirection::Ref ||
+        (getReferenceElementType(value) &&
+         sim::isAggregateType(getReferenceElementType(value)))) {
       lvalues[path] = value;
       coverageInputs.erase(path);
     } else {
@@ -2378,8 +2436,11 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
     // IEEE 19.3: a constructor ref is a read-only storage alias. Keep the
     // reference addressable for const-ref helper actuals and load at each read.
     bool ref = formal.getDirection() == semantic::SVArgumentDirection::Ref;
-    Type result =
-        ref ? sim::ArgumentRefType::get(builder.getContext(), *type) : *type;
+    const bool aggregate =
+        sim::isAggregateType(*type) && !sim::getPackedScalarType(*type);
+    Type result = (ref || aggregate)
+                      ? sim::ArgumentRefType::get(builder.getContext(), *type)
+                      : *type;
     Value value = sim::SimCovergroupFormalReadOp::create(
         builder, getSemanticLocation(formal), result, context, handle, id);
     bindConstructorFormal(path, value, formal);

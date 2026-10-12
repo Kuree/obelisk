@@ -7,7 +7,7 @@ module {
     obelisk.sv.symbol.instance @i attributes {hierarchical_name = "m", is_uninstantiated = false, name = "m", node_id = 3 : i64, referenced_path = "m", referenced_symbol = @m} {
       obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "m", name = "m", node_id = 4 : i64} {
         obelisk.sv.type.covergroup_type @cg attributes {constructor_argument_count = 0 : i64, constructor_formals = [], coverage_event_kind = 2 : i32, has_coverage_event = false, hierarchical_name = "m.cg", name = "cg", node_id = 8 : i64, sample_formal_count = 1 : i64, sample_formals = [@samples], semantic_type = !obelisk.covergroup_handle<@root::@body::@cg>} {
-          obelisk.sv.symbol.formal_argument @samples attributes {direction = 0 : i32, hierarchical_name = "m.cg::samples", is_coverage_sample_formal, name = "samples", node_id = 9 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.integral<32, true, false, 31 : 0, int>>} {
+          obelisk.sv.symbol.formal_argument @samples attributes {direction = 1 : i32, hierarchical_name = "m.cg::samples", is_coverage_sample_formal, name = "samples", node_id = 9 : i64, semantic_type = !obelisk.ranged_unpacked_array<0 : 1 x !obelisk.integral<32, true, false, 31 : 0, int>>} {
           }
         }
       }
@@ -15,4 +15,4 @@ module {
   }
 }
 
-// CHECK: coverage formals must be input or ref values with signless integer, four-state logic, real, string, or container type
+// CHECK: coverage formals must be input or ref values with signless integer, four-state logic, real, string, container, or fixed aggregate type

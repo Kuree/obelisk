@@ -18,6 +18,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <optional>
+
 using namespace mlir;
 namespace coverage = obelisk::coverage;
 
@@ -250,6 +252,14 @@ private:
          << " element_type=" << container.elementType
          << " key_width=" << container.keyWidth
          << " bound=" << container.bound << '\n';
+    for (const coverage::FunctionalAggregateType &aggregate :
+         db.functionalAggregateTypes)
+      os << "functional_aggregate_type id=" << aggregate.id
+         << " element_type=" << aggregate.elementType
+         << " value_size=" << aggregate.valueSize
+         << " alignment=" << aggregate.alignment
+         << " width=" << aggregate.bitWidth << " flags=" << aggregate.flags
+         << '\n';
     for (const coverage::FunctionalValueSet &set : db.functionalValueSets)
       os << "functional_value_set id=" << set.id << " item=" << set.item
          << " atoms=" << set.atomCount << " width=" << set.bitWidth
@@ -321,8 +331,10 @@ private:
     ArrayRef<int64_t> ids = sample.getExpressionIds();
     if (ids.size() != sample.getValues().size())
       return sample.emitError("sample ID/type cardinality mismatch");
-    for (auto [ordinal, id, value] :
-         llvm::enumerate(ids, sample.getValues())) {
+    // Omitted defaults leave holes in the sample result ordinals; the
+    // production verifier checks which defaults may be omitted.
+    std::optional<uint32_t> previousOrdinal;
+    for (auto [id, value] : llvm::zip_equal(ids, sample.getValues())) {
       auto found = expressions.find(static_cast<uint64_t>(id));
       if (found == expressions.end())
         return sample.emitError()
@@ -330,9 +342,10 @@ private:
       const coverage::FunctionalExpression &expression = found->second;
       if (expression.evaluationPhase !=
               coverage::FunctionalExpressionEvaluationPhase::Sample ||
-          expression.resultOrdinal != ordinal)
+          (previousOrdinal && expression.resultOrdinal <= *previousOrdinal))
         return sample.emitError() << "sample FunctionalExpression " << id
                                   << " has wrong phase/ordinal";
+      previousOrdinal = expression.resultOrdinal;
       Type type = value.getType();
       unsigned width = 0;
       if (auto integer = dyn_cast<IntegerType>(type))
@@ -349,6 +362,9 @@ private:
         break;
       case coverage::FunctionalExpressionResultKind::Real:
         matches = type.isF64();
+        break;
+      case coverage::FunctionalExpressionResultKind::Aggregate:
+        matches = isa<obelisk::sim::ReferencePathType>(type);
         break;
       default:
         break;

@@ -1539,6 +1539,8 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
   if (auto ref = dyn_cast<ArgumentRefType>(result))
     result = ref.getElementType();
   if (!getPackedWidth(result) && !result.isF64() &&
+      !(isa<ArgumentRefType>(getResult().getType()) &&
+        isAggregateType(result)) &&
       !isa<StringType, DynamicArrayType, QueueType, AssocArrayType>(result))
     return emitOpError(
         "requires an integral, real, string, or container formal value or "
@@ -1572,6 +1574,10 @@ LogicalResult SimCovergroupSampleOp::verify() {
     if (!type.isSignlessIntOrIndex() || isa<IndexType>(type)) {
       if (isa<LogicType, StringType, DynamicArrayType, QueueType,
               AssocArrayType>(type) ||
+          (isa<ReferencePathType>(type) &&
+           isAggregateType(cast<ReferencePathType>(type).getElementType()) &&
+           !getPackedScalarType(
+               cast<ReferencePathType>(type).getElementType())) ||
           type.isF64())
         continue;
       return emitOpError()
@@ -2459,7 +2465,8 @@ LogicalResult SimReferencePathIndexOp::verify() {
     return emitOpError("container must be a dynamic array or queue");
   if (elementType != getResult().getType().getElementType())
     return emitOpError("result element must match the container element");
-  if (getOwnerReference().getType().getElementType() != containerType)
+  if (getOwnerReference() &&
+      getOwnerReference().getType().getElementType() != containerType)
     return emitOpError("owner reference must refer to the container type");
   return success();
 }

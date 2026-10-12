@@ -2358,6 +2358,145 @@ TEST(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalAggregateTypes = {{800, 99, 24, 1, 192, 0}};
+  schema.functionalFormals = {
+      {70, 10, "snapshot", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Input,
+       FunctionalExpressionResultKind::Aggregate, 0, 192,
+       CoverageSignedness::NotApplicable, 0, 0, 800},
+      {71, 10, "live", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Ref,
+       FunctionalExpressionResultKind::Aggregate, 0, 192,
+       CoverageSignedness::NotApplicable, 1, 0, 800}};
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  struct Record {
+    uint64_t number;
+    obelisk_rt_string_v1 label;
+    obelisk_rt_managed_word_v1 array;
+  } record{3, 0, 0};
+  std::array<obelisk_rt_trace_entry_v1, 2> traceEntries{
+      {{8, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
+        nullptr},
+       {16, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CONTAINER,
+        nullptr}}};
+  const obelisk_rt_trace_layout_v1 trace{
+      OBELISK_RT_VERSION, 0, 24, 1, traceEntries.data(), traceEntries.size()};
+  const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
+                                           OBELISK_RT_ELEMENT_AGGREGATE,
+                                           99,
+                                           0,
+                                           0,
+                                           24,
+                                           1,
+                                           192,
+                                           &trace};
+  const obelisk_rt_element_type_v1 nestedElement{OBELISK_RT_VERSION,
+                                                 OBELISK_RT_ELEMENT_BITS,
+                                                 100,
+                                                 0,
+                                                 0,
+                                                 4,
+                                                 1,
+                                                 32,
+                                                 nullptr};
+  obelisk_rt_gc_managed_root_range_v1 recordRoots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &recordRoots,
+                                                     &record.label, 2),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "before", 6, &record.label),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *nested = nullptr, *array = nullptr, *snapshot = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_dynamic_array_create(lane, &nestedElement, 1, &nested),
+      OBELISK_RT_OK);
+  uint32_t initial = 11;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, nested, 0, &initial, nullptr),
+            OBELISK_RT_OK);
+  record.array = obelisk_rt_managed_word_from_object(nested);
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &array),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &record, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                lane, array, 0, nullptr, 0, 0, nullptr, nullptr, 0, &snapshot),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 snapshotRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &snapshotRoot, &snapshot),
+            OBELISK_RT_OK);
+  const obelisk_rt_managed_root_slot_v1 roots[] = {
+      {64, OBELISK_RT_MANAGED_ROOT_KIND_STRING, 0},
+      {128, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0}};
+  uint64_t storage = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+                context, 192, reinterpret_cast<const uint8_t *>(&record),
+                nullptr, roots, 2, &storage),
+            OBELISK_RT_OK);
+  obelisk_rt_functional_value_v1 formals[] = {
+      {70, 0, 0, nullptr, nullptr, snapshot, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE, 0},
+      {71, 192, 24, nullptr, nullptr, nullptr, storage,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 2, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &snapshotRoot), OBELISK_RT_OK);
+  record.number = 7;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "after", 5, &record.label),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_dynamic_array_create(lane, &nestedElement, 1, &nested),
+      OBELISK_RT_OK);
+  initial = 22;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, nested, 0, &initial, nullptr),
+            OBELISK_RT_OK);
+  record.array = obelisk_rt_managed_word_from_object(nested);
+  uint8_t dummy = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, storage, 0, 192, 24, 0,
+                OBELISK_RT_ARGUMENT_VALUE_BITS, &record, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &recordRoots),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (auto [id, expected] : {std::pair{uint64_t{70}, uint64_t{3}},
+                              std::pair{uint64_t{71}, uint64_t{7}}}) {
+    std::array<uint64_t, 3> reference{};
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+                  192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
+              OBELISK_RT_OK);
+    Record actual{};
+    ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+                  context, &dummy, &dummy, 8,
+                  obelisk_rt_object_from_managed_word(reference[0]),
+                  reference[1], reference[2], 192, 24, 0,
+                  OBELISK_RT_ARGUMENT_VALUE_BITS, &actual, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(actual.number, expected);
+    EXPECT_EQ(obelisk_rt_validate_string(context, actual.label), OBELISK_RT_OK);
+    uint32_t value = 0;
+    ASSERT_EQ(obelisk_rt_v1_container_read(
+                  obelisk_rt_object_from_managed_word(actual.array), 0, &value,
+                  nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, id == 70 ? 11u : 22u);
+  }
+  obelisk_rt_managed_execution_leave(lane, entered);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(CoverageRuntimeDesignTest,
      ConflictingTypeProfileDoesNotPublishConfiguration) {
   using namespace obelisk::coverage;

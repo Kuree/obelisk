@@ -693,6 +693,41 @@ Type UnitLowering::getReferenceElementType(Value reference) const {
   return {};
 }
 
+FailureOr<Value> UnitLowering::captureCoverageAggregate(Value value,
+                                                        Location location) {
+  auto descriptor = describeContainerElement(value.getType(), location);
+  if (failed(descriptor))
+    return failure();
+  Type arrayType =
+      sim::DynamicArrayType::get(builder.getContext(), value.getType());
+  Value one = arith::ConstantIntOp::create(builder, location, 1, 64);
+  Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+  Value array = sim::SimContainerCreateOp::create(
+      builder, location, arrayType, one, descriptor->typeID, descriptor->kind,
+      descriptor->flags, descriptor->valueSize, descriptor->alignment,
+      descriptor->bitWidth,
+      builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+      builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+      sim::ContainerKind::DynamicArray, 0);
+  sim::SimContainerWriteOp::create(builder, location, array, zero, value);
+  bool nestedContainers = false;
+  value.getType().walk([&](Type nested) {
+    nestedContainers |=
+        isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(nested);
+  });
+  // The runtime walks the canonical trace descriptor and recursively copies
+  // sequential values. Class handles and immutable strings retain identity.
+  // This also covers containers nested in tagged union payloads.
+  if (nestedContainers)
+    array =
+        sim::SimContainerCloneOp::create(builder, location, arrayType, array);
+  return sim::SimReferencePathIndexOp::create(
+             builder, location,
+             sim::ReferencePathType::get(builder.getContext(), value.getType()),
+             function.getBody().front().getArgument(0), array, zero, Value{})
+      .getResult();
+}
+
 Value UnitLowering::cloneSequentialValue(Value value, Location location) {
   Type type = value.getType();
   if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type))

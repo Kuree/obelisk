@@ -113,6 +113,8 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
           width = 64;
         else if (packed)
           width = *packed;
+        else if (auto span = sim::getProvenanceSpan(element))
+          width = *span;
         else
           return op.emitOpError("has no executable reference formal geometry");
       }

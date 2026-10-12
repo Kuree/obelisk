@@ -128,7 +128,7 @@ public:
   matchAndRewrite(sim::SimReferencePathIndexOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getContainer().size() != 1 || adaptor.getIndex().size() != 1 ||
-        adaptor.getOwnerReference().size() != 1)
+        adaptor.getOwnerReference().size() > 1)
       return failure();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
@@ -136,12 +136,21 @@ public:
     LLVM::StoreOp::create(rewriter, op.getLoc(),
                           LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer),
                           output, 8);
-    UnpackedArgumentReference ownerReference = unpackArgumentReference(
-        rewriter, op.getLoc(), adaptor.getOwnerReference().front());
-    Value valueState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
-                                                 "__obelisk_state_value");
-    Value unknownState = LLVM::AddressOfOp::create(
-        rewriter, op.getLoc(), pointer, "__obelisk_state_unknown");
+    bool watching = !adaptor.getOwnerReference().empty();
+    UnpackedArgumentReference ownerReference{
+        llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), 0),
+        llvmConstant(rewriter, op.getLoc(), rewriter.getI64Type(), 0),
+        llvmConstant(rewriter, op.getLoc(), rewriter.getI32Type(), 0)};
+    Value valueState = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    Value unknownState = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    if (watching) {
+      ownerReference = unpackArgumentReference(
+          rewriter, op.getLoc(), adaptor.getOwnerReference().front());
+      valueState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                             "__obelisk_state_value");
+      unknownState = LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                               "__obelisk_state_unknown");
+    }
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
@@ -156,7 +165,8 @@ public:
                        ownerReference.payload, ownerReference.managed,
                        valueState, unknownState,
                        llvmConstant(rewriter, op.getLoc(),
-                                    rewriter.getI64Type(), stateBitCount),
+                                    rewriter.getI64Type(),
+                                    watching ? stateBitCount : 0),
                        output})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);

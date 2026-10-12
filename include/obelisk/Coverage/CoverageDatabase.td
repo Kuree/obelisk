@@ -146,6 +146,7 @@ def ExpressionTupleSet : CoverageExpressionResultKind<"TupleSet", 5>;
 def ExpressionString   : CoverageExpressionResultKind<"String", 6>;
 def ExpressionTupleQueue : CoverageExpressionResultKind<"TupleQueue", 7>;
 def ExpressionContainer : CoverageExpressionResultKind<"Container", 8>;
+def ExpressionAggregate : CoverageExpressionResultKind<"Aggregate", 9>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -318,6 +319,7 @@ def ResolvedCrossAutomaticEdges : CoverageSection<"ResolvedCrossAutomaticEdges",
 def FunctionalFormals          : CoverageSection<"FunctionalFormals", 56, 64, 0, 1>;
 def ResolvedInstanceOptions    : CoverageSection<"ResolvedInstanceOptions", 57, 64>;
 def FunctionalContainerTypes : CoverageSection<"FunctionalContainerTypes", 58, 40, 0, 1>;
+def FunctionalAggregateTypes : CoverageSection<"FunctionalAggregateTypes", 59, 40, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -385,7 +387,7 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
     "FunctionalExpressionResultKind", "Enum",
     [ExpressionBoolean, ExpressionIntegral, ExpressionReal, ExpressionSet,
      ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
-     ExpressionContainer]>;
+     ExpressionContainer, ExpressionAggregate]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
     [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;
@@ -459,6 +461,7 @@ def DomainFunctionalBins : CoverageFieldDomain<"FunctionalBins", "StableRef", []
 def DomainFunctionalExpressions : CoverageFieldDomain<"FunctionalExpressions", "StableRef", [], 30>;
 def DomainFunctionalFormals : CoverageFieldDomain<"FunctionalFormals", "StableRef", [], 56>;
 def DomainFunctionalContainerTypes : CoverageFieldDomain<"FunctionalContainerTypes", "StableRef", [], 58>;
+def DomainFunctionalAggregateTypes : CoverageFieldDomain<"FunctionalAggregateTypes", "StableRef", [], 59>;
 def DomainFunctionalValueSets : CoverageFieldDomain<"FunctionalValueSets", "StableRef", [], 27>;
 def DomainFunctionalValueAtoms : CoverageFieldDomain<"FunctionalValueAtoms", "Range", [], 28>;
 def DomainFunctionalValueLimbs : CoverageFieldDomain<"FunctionalValueLimbs", "Range", [], 29>;
@@ -494,6 +497,7 @@ def DomainRuns : CoverageFieldDomain<"Runs", "UUIDRef", [], 13>;
 
 // Relational union/owner domains are deliberately typed but validated by the
 // handwritten semantic layer rather than a single section lookup.
+def DomainFunctionalValueTypes : CoverageFieldDomain<"FunctionalValueTypes", "Relational">;
 def DomainFunctionalExpressionOwners : CoverageFieldDomain<"FunctionalExpressionOwners", "Relational">;
 def DomainFunctionalOptionOwners : CoverageFieldDomain<"FunctionalOptionOwners", "Relational">;
 def DomainResolvedFunctionalOptionOwners : CoverageFieldDomain<"ResolvedFunctionalOptionOwners", "Relational">;
@@ -1336,7 +1340,8 @@ def FFDefaultExpression : CoverageField<"DefaultExpression", "default_expression
   let nullable = 1;
 }
 def FFValueType : CoverageField<"ValueType", "value_type", 56, CovU64> {
-  let semantic = "StableIDRef"; let domain = DomainFunctionalContainerTypes;
+  // The result kind selects the container or aggregate layout table.
+  let semantic = "StableIDRef"; let domain = DomainFunctionalValueTypes;
   let nullable = 1;
 }
 def FunctionalFormalRecord : CoverageRecord<"FunctionalFormalRecord",
@@ -1359,6 +1364,18 @@ def FCTBound : CoverageField<"Bound", "bound", 32, CovU64>;
 def FunctionalContainerTypeRecord : CoverageRecord<"FunctionalContainerTypeRecord",
     FunctionalContainerTypes,
     [FCTId, FCTKind, FCTKeyKind, FCTElementType, FCTKeyWidth, FCTBound]>;
+
+def FATId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainFunctionalAggregateTypes;
+}
+def FATElementType : CoverageField<"ElementType", "element_type", 8, CovU64>;
+def FATValueSize : CoverageField<"ValueSize", "value_size", 16, CovU64>;
+def FATAlignment : CoverageField<"Alignment", "alignment", 24, CovU64>;
+def FATBitWidth : CoverageField<"BitWidth", "bit_width", 32, CovU32>;
+def FATFlags : CoverageField<"Flags", "flags", 36, CovU32>;
+def FunctionalAggregateTypeRecord : CoverageRecord<"FunctionalAggregateTypeRecord",
+    FunctionalAggregateTypes,
+    [FATId, FATElementType, FATValueSize, FATAlignment, FATBitWidth, FATFlags]>;
 
 def FCType      : CoverageField<"Type", "type", 0, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainFunctionalTypes;

@@ -1130,7 +1130,8 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                        Variadic<AnyTypeOf<[AnySignlessInteger,
                                            SimLogicType, SimStringType,
                                            SimDynamicArrayType, SimQueueType,
-                                           SimAssocArrayType, F64]>>:$values,
+                                           SimAssocArrayType,
+                                           SimReferencePathType, F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
     $context `,` $handle
@@ -1592,7 +1593,8 @@ def SimContainerCreateLikeOp : SimOp<"container.create_like", [
 
 def SimContainerCreateOp : SimOp<"container.create", [
     SimAllocatesManagedStorage,
-    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+    MemoryEffects<[MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a sequential container from stable type metadata";
   let arguments = (ins
@@ -2550,14 +2552,15 @@ def SimArgumentRefRetypeOp : SimOp<"argument_ref.retype", [Pure]> {
 
 def SimReferencePathIndexOp : SimOp<"reference_path.index", [
     SimAllocatesManagedStorage,
-    MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+    MemoryEffects<[MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
   ]> {
   let summary = "capture an escaping dynamic-array or queue element lvalue";
   let arguments = (ins SimContextType:$context, AnyType:$container, I64:$index,
-                       SimArgumentRefType:$owner_reference);
+                       Optional<SimArgumentRefType>:$owner_reference);
   let results = (outs SimReferencePathType:$result);
   let assemblyFormat =
-      "$context `,` $container `[` $index `]` `watching` $owner_reference attr-dict `:` functional-type(operands, results)";
+      "$context `,` $container `[` $index `]` (`watching` $owner_reference^)? attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
 }
 

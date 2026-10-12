@@ -27,11 +27,13 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
           constant});
     return success();
   }
-  if (auto op = dyn_cast<sim::SimReferencePathIndexOp>(operation))
-    return emitIntrinsic(
-        plan, kIntrinsicReferencePathIndex,
-        {op.getContainer(), op.getIndex(), op.getOwnerReference()},
-        {op.getResult()});
+  if (auto op = dyn_cast<sim::SimReferencePathIndexOp>(operation)) {
+    SmallVector<Value> inputs{op.getContainer(), op.getIndex()};
+    if (op.getOwnerReference())
+      inputs.push_back(op.getOwnerReference());
+    return emitIntrinsic(plan, kIntrinsicReferencePathIndex, inputs,
+                         {op.getResult()});
+  }
   if (auto op = dyn_cast<sim::SimReferencePathStringCharacterOp>(operation))
     return emitIntrinsic(
         plan, kIntrinsicReferencePathStringCharacter,

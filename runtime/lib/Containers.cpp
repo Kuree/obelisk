@@ -6357,7 +6357,10 @@ obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
     widthMatches = bitWidth == sizeof(obelisk_rt_managed_word_v1) * 8;
     break;
   case OBELISK_RT_ELEMENT_AGGREGATE:
-    widthMatches = bitWidth == snapshot.element->value_size * 8;
+    // Fixed aggregate descriptors store byte capacity; typed references carry
+    // the exact provenance span, which may end in a partial byte.
+    widthMatches = bitWidth && bitWidth / 8 + (bitWidth % 8 != 0) ==
+                                   snapshot.element->value_size;
     break;
   default:
     return OBELISK_RT_INVALID_DESIGN;

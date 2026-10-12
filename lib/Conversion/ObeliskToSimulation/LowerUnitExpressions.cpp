@@ -619,10 +619,24 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
         builder.setInsertionPoint(&input.block->back());
       else
         builder.setInsertionPointToEnd(input.block);
-      reference = sim::SimRefAllocOp::create(
-          builder, location,
-          sim::RefType::get(function.getContext(), snapshot.getType()),
-          snapshot);
+      if (Type element = getReferenceElementType(snapshot)) {
+        auto loaded = loadReference(snapshot, location);
+        if (failed(loaded))
+          return failure();
+        snapshot = *loaded;
+      }
+      if (sim::isAggregateType(snapshot.getType()) &&
+          !sim::getPackedScalarType(snapshot.getType())) {
+        auto captured = captureCoverageAggregate(snapshot, location);
+        if (failed(captured))
+          return failure();
+        reference = *captured;
+      } else {
+        reference = sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), snapshot.getType()),
+            snapshot);
+      }
       lvalues[canonicalPath] = reference;
     }
     // A sample input is its own variable: helpers may modify that copy through
@@ -681,6 +695,8 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
     return sim::SimArgumentRefLoadOp::create(builder, location,
                                              ref.getElementType(), value)
         .getResult();
+  if (isa<sim::ReferencePathType>(value.getType()))
+    return loadReference(value, location);
   if (auto net = dyn_cast<sim::NetType>(value.getType())) {
     recordSensitivity(value);
     if (sampleAssertionValues) {
@@ -3648,8 +3664,17 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
   }
   unsigned ordinal = ordinalAttr.getValue().getZExtValue();
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
-  FailureOr<Value> input =
-      lowerExpression(children.front(), lvalue || sampleAssertionValues);
+  // Only a borrowed base is classified: normalizing an arbitrary receiver
+  // would diagnose one without a value type, such as a coverpoint.
+  bool structMember = false;
+  if (isBorrowedAggregate(children.front()) &&
+      !getConstantSpelling(children.front())) {
+    FailureOr<Type> baseType = getNormalizedSemanticType(children.front());
+    structMember =
+        succeeded(baseType) && isa<sim::UnpackedStructType>(*baseType);
+  }
+  FailureOr<Value> input = lowerExpression(
+      children.front(), lvalue || sampleAssertionValues || structMember);
   if (failed(resultType) || failed(input))
     return failure();
   Type inputValueType = (*input).getType();
@@ -5105,8 +5130,17 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     return failure();
   }
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
-  FailureOr<Value> input =
-      lowerExpression(children.front(), lvalue || sampleAssertionValues);
+  // Borrowed fixed arrays are addressed in place below; ordinary storage and
+  // nets keep reading the selected element from the aggregate value.
+  bool fixedArrayElement = false;
+  if (element && isBorrowedAggregate(children.front()) &&
+      !getConstantSpelling(children.front())) {
+    FailureOr<Type> baseType = getNormalizedSemanticType(children.front());
+    fixedArrayElement =
+        succeeded(baseType) && isa<sim::UnpackedArrayType>(*baseType);
+  }
+  FailureOr<Value> input = lowerExpression(
+      children.front(), lvalue || sampleAssertionValues || fixedArrayElement);
   if (failed(resultType) || failed(input))
     return failure();
 
@@ -5116,7 +5150,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     // Ordinary simulation references have first-class subreference
     // operations below. Managed, formal, and escaping references do not;
     // read their aggregate value before applying an rvalue selection.
-    if (!lvalue && !isa<sim::RefType>((*input).getType())) {
+    if (!lvalue && !isa<sim::RefType>((*input).getType()) &&
+        !(fixedArrayElement && !sampleAssertionValues)) {
       input = loadReference(*input, location);
       if (failed(input))
         return failure();
@@ -5125,6 +5160,64 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     sourceValueType = net.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
+
+  // Select the physical window of a borrowed fixed array without loading or
+  // replacing the entire aggregate for each field access. The path retains
+  // the root alias and handles invalid indices using the array's defaults.
+  if (element && (lvalue || !sampleAssertionValues) &&
+      isBorrowedAggregate(children.front()) &&
+      isa<sim::ManagedRefType, sim::ArgumentRefType, sim::ReferencePathType>(
+          (*input).getType())) {
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(sourceValueType)) {
+      auto owner = toArgumentReference(*input, sourceValueType, location);
+      auto descriptor =
+          describeContainerElement(array.getElementType(), location);
+      auto stride = sim::getArrayElementStorageStride(array);
+      auto index = lowerExpression(children[1]);
+      if (failed(owner) || failed(descriptor) || !stride || failed(index))
+        return failure();
+      auto normalized =
+          toArrayIndex(*index, isSignedNode(children[1]), location);
+      if (failed(normalized))
+        return failure();
+      // Array-index normalization keeps an extra bit for unsigned indices.
+      // Check the declared bounds before narrowing, so overflow cannot turn an
+      // invalid index into a valid element of the borrowed array.
+      int64_t low = std::min(array.getLeft(), array.getRight());
+      int64_t high = std::max(array.getLeft(), array.getRight());
+      unsigned indexWidth =
+          cast<IntegerType>((*normalized).getType()).getWidth();
+      Value lowValue =
+          arith::ConstantIntOp::create(builder, location, low, indexWidth);
+      Value highValue =
+          arith::ConstantIntOp::create(builder, location, high, indexWidth);
+      Value valid = arith::AndIOp::create(
+          builder, location,
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sge,
+                                *normalized, lowValue),
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sle,
+                                *normalized, highValue));
+      auto narrowed =
+          convert(*normalized, builder.getI64Type(), true, location);
+      if (failed(narrowed))
+        return failure();
+      Value invalid = arith::ConstantIntOp::create(
+          builder, location, low == INT64_MIN ? INT64_MAX : INT64_MIN, 64);
+      Value pathIndex =
+          arith::SelectOp::create(builder, location, valid, *narrowed, invalid);
+      Value selected = sim::SimReferencePathAggregateElementOp::create(
+          builder, location,
+          sim::ReferencePathType::get(builder.getContext(), *resultType),
+          function.getBody().front().getArgument(0), *owner, pathIndex,
+          array.getLeft(), array.getRight(), *stride, descriptor->typeID,
+          descriptor->kind, descriptor->flags, descriptor->valueSize,
+          descriptor->alignment, descriptor->bitWidth,
+          builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+          builder.getDenseI32ArrayAttr(descriptor->traceKinds));
+      return lvalue ? FailureOr<Value>(selected)
+                    : loadReference(selected, location);
+    }
+  }
 
   if (!element && isa<sim::QueueType>(sourceValueType) &&
       isa<sim::QueueType>(*resultType)) {

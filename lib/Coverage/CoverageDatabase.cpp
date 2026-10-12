@@ -607,6 +607,8 @@ Status planSections(const Database &db, const StringTable &strings,
                         db.resolvedInstanceOptions.size());
   OBELISK_COVERAGE_PLAN(FunctionalContainerTypes,
                         db.functionalContainerTypes.size());
+  OBELISK_COVERAGE_PLAN(FunctionalAggregateTypes,
+                        db.functionalAggregateTypes.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1555,6 +1557,17 @@ Status encodeSections(const Database &db, const StringTable &strings,
       FunctionalContainerTypeRecord::setKeyWidth(p, v.keyWidth);
       FunctionalContainerTypeRecord::setBound(p, v.bound);
     });
+  Bytes &aggregateTypes = add(SectionKind::FunctionalAggregateTypes,
+                              db.functionalAggregateTypes.size());
+  for (const auto &v : db.functionalAggregateTypes)
+    aggregateTypes.record<FunctionalAggregateTypeRecord>([&](uint8_t *p) {
+      FunctionalAggregateTypeRecord::setId(p, v.id);
+      FunctionalAggregateTypeRecord::setElementType(p, v.elementType);
+      FunctionalAggregateTypeRecord::setValueSize(p, v.valueSize);
+      FunctionalAggregateTypeRecord::setAlignment(p, v.alignment);
+      FunctionalAggregateTypeRecord::setBitWidth(p, v.bitWidth);
+      FunctionalAggregateTypeRecord::setFlags(p, v.flags);
+    });
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -2013,6 +2026,15 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.elementType);
     hashScalar(h, v.keyWidth);
     hashScalar(h, v.bound);
+  }
+  for (const auto &v : db.functionalAggregateTypes) {
+    hashScalar(h, uint32_t(59));
+    hashScalar(h, v.id);
+    hashScalar(h, v.elementType);
+    hashScalar(h, v.valueSize);
+    hashScalar(h, v.alignment);
+    hashScalar(h, v.bitWidth);
+    hashScalar(h, v.flags);
   }
   return h.finish();
 }
@@ -3445,6 +3467,21 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     containerTypesByID.emplace(type.id, &type);
   }
 
+  IndexMap<uint64_t, const FunctionalAggregateType *> aggregateTypesByID;
+  uint64_t previousAggregateType = 0;
+  for (const auto &type : db.functionalAggregateTypes) {
+    if (!type.id || type.id <= previousAggregateType)
+      return fail(Status::UnsortedOrDuplicate,
+                  "functional_aggregate_type_order");
+    previousAggregateType = type.id;
+    if (!type.elementType || !type.bitWidth ||
+        type.valueSize != (uint64_t{type.bitWidth} + 7) / 8 ||
+        !type.alignment || (type.alignment & (type.alignment - 1)) ||
+        (type.flags & ~uint32_t{1}))
+      return fail(Status::InvalidReference, "functional_aggregate_type");
+    aggregateTypesByID.emplace(type.id, &type);
+  }
+
   if (!uniqueNonzero(db.functionalFormals,
                      [](const auto &v) { return v.id; }) ||
       !std::is_sorted(db.functionalFormals.begin(), db.functionalFormals.end(),
@@ -3463,7 +3500,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   for (const auto &formal : db.functionalFormals) {
     const bool integral =
         formal.resultKind == FunctionalExpressionResultKind::Integral;
+    const bool aggregate =
+        formal.resultKind == FunctionalExpressionResultKind::Aggregate;
     const bool scalar =
+        aggregate ||
         formal.resultKind == FunctionalExpressionResultKind::Boolean ||
         formal.resultKind == FunctionalExpressionResultKind::Integral ||
         formal.resultKind == FunctionalExpressionResultKind::Real ||
@@ -3479,14 +3519,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !scalar ||
         (formal.resultKind == FunctionalExpressionResultKind::Container
              ? !containerTypesByID.count(formal.valueType)
-             : bool(formal.valueType)) ||
+         : aggregate ? !aggregateTypesByID.count(formal.valueType)
+                     : bool(formal.valueType)) ||
+        (aggregate && aggregateTypesByID.at(formal.valueType)->bitWidth !=
+                          formal.bitWidth) ||
         !enumBetween(formal.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         (integral &&
          (!formal.bitWidth ||
           formal.signedness == CoverageSignedness::NotApplicable)) ||
         (!integral &&
-         (formal.bitWidth ||
+         ((!aggregate && formal.bitWidth) ||
           formal.signedness != CoverageSignedness::NotApplicable)) ||
         (formal.flags & ~FunctionalFormalHasDefault) ||
         (bool(formal.flags & FunctionalFormalHasDefault) !=
@@ -3692,6 +3735,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     const bool scalarResult =
         expression.resultKind == FunctionalExpressionResultKind::Integral;
+    const bool aggregateResult =
+        expression.resultKind == FunctionalExpressionResultKind::Aggregate;
     const bool setResult =
         expression.resultKind == FunctionalExpressionResultKind::Set;
     const bool validSetType =
@@ -3712,13 +3757,16 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           (!(expression.flags & FunctionalExpressionSamplingEventEnd) ||
            (expression.flags & FunctionalExpressionSamplingEventBlock));
     }
-    if (!ownerExists || !validFlags || !validContract || !ownerType ||
+    if ((aggregateResult &&
+         (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
+          expression.role != FunctionalExpressionRole::FormalDefault)) ||
+        !ownerExists || !validFlags || !validContract || !ownerType ||
         (scalarResult &&
          (!expression.bitWidth ||
           expression.signedness == CoverageSignedness::NotApplicable)) ||
         !validSetType ||
         (!scalarResult && !setResult &&
-         (expression.bitWidth ||
+         ((!aggregateResult && expression.bitWidth) ||
           expression.signedness != CoverageSignedness::NotApplicable)) ||
         !enumBetween(expression.ownerKind, FunctionalExpressionOwnerKind::Type,
                      FunctionalExpressionOwnerKind::Formal) ||
@@ -3726,7 +3774,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Container) ||
+                     FunctionalExpressionResultKind::Aggregate) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -7042,6 +7090,22 @@ Status parse(const uint8_t *data, size_t size, Database &output,
               [&](const FieldDescriptor &field, uint64_t value,
                   const uint8_t *fieldData) {
                 const DomainDescriptor *domain = ParserFindDomain(field.domain);
+                if (field.domain == CoverageFieldDomain::FunctionalValueTypes) {
+                  const uint8_t *recordData = fieldData - field.offset;
+                  auto resultKind = static_cast<FunctionalExpressionResultKind>(
+                      FunctionalFormalRecord::getResultKind(recordData));
+                  SectionKind targetKind;
+                  if (resultKind == FunctionalExpressionResultKind::Container)
+                    targetKind = SectionKind::FunctionalContainerTypes;
+                  else if (resultKind ==
+                           FunctionalExpressionResultKind::Aggregate)
+                    targetKind = SectionKind::FunctionalAggregateTypes;
+                  else
+                    return value == 0;
+                  auto identities = stableIdentities.find(targetKind);
+                  return value && identities != stableIdentities.end() &&
+                         identities->second.count(value);
+                }
                 if (field.semantic == CoverageFieldSemantic::StringIndex)
                   return value < strings.size();
                 if (field.semantic == CoverageFieldSemantic::RangeStart &&
@@ -7868,6 +7932,19 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                       FunctionalContainerTypeRecord::getElementType(p),
                       FunctionalContainerTypeRecord::getKeyWidth(p),
                       FunctionalContainerTypeRecord::getBound(p)});
+                 return Status::Ok;
+               });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::FunctionalAggregateTypes,
+               [&](const auto &, uint64_t, const uint8_t *p) {
+                 result.functionalAggregateTypes.push_back(
+                     {FunctionalAggregateTypeRecord::getId(p),
+                      FunctionalAggregateTypeRecord::getElementType(p),
+                      FunctionalAggregateTypeRecord::getValueSize(p),
+                      FunctionalAggregateTypeRecord::getAlignment(p),
+                      FunctionalAggregateTypeRecord::getBitWidth(p),
+                      FunctionalAggregateTypeRecord::getFlags(p)});
                  return Status::Ok;
                });
     if (st != Status::Ok)

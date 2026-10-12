@@ -20,6 +20,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 
+#include <array>
+
 namespace obelisk {
 
 inline mlir::LogicalResult
@@ -118,6 +120,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   };
   llvm::DenseMap<Type, uint64_t> storageTypeIDs;
   auto storageTypeMatches = [&](Type type, uint64_t expected) {
+    if (auto path = dyn_cast<sim::ReferencePathType>(type))
+      type = path.getElementType();
     if (!expected)
       return true;
     auto [entry, inserted] = storageTypeIDs.try_emplace(type, 0);
@@ -125,10 +129,24 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       entry->second = sim::getStableStorageTypeID(type);
     return entry->second == expected;
   };
-  auto valueMatches = [](Type type,
-                         coverage::FunctionalExpressionResultKind kind,
-                         uint32_t width, uint32_t flags = 0) {
+  llvm::DenseMap<Type, std::optional<uint64_t>> aggregateSpans;
+  auto valueMatches = [&](Type type,
+                          coverage::FunctionalExpressionResultKind kind,
+                          uint32_t width, uint32_t flags = 0) {
+    if (auto path = dyn_cast<sim::ReferencePathType>(type)) {
+      if (kind != coverage::FunctionalExpressionResultKind::Aggregate)
+        return false;
+      type = path.getElementType();
+    }
     switch (kind) {
+    case coverage::FunctionalExpressionResultKind::Aggregate: {
+      if (!sim::isAggregateType(type) || sim::getPackedScalarType(type))
+        return false;
+      auto [entry, inserted] = aggregateSpans.try_emplace(type);
+      if (inserted)
+        entry->second = sim::getProvenanceSpan(type);
+      return entry->second == width;
+    }
     case coverage::FunctionalExpressionResultKind::Boolean:
       return type.isSignlessInteger(1);
     case coverage::FunctionalExpressionResultKind::Integral:
@@ -213,10 +231,6 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   for (const coverage::FunctionalFormal &formal : schema.functionalFormals)
     if (formal.kind == coverage::FunctionalFormalKind::Constructor)
       constructorFormalsByType[formal.type].push_back(&formal);
-  for (auto &entry : constructorFormalsByType)
-    llvm::sort(entry.second, [](const auto *lhs, const auto *rhs) {
-      return lhs->ordinal < rhs->ordinal;
-    });
 
   using Phase = coverage::FunctionalExpressionEvaluationPhase;
   llvm::DenseMap<uint64_t, SmallVector<const coverage::FunctionalExpression *>>
@@ -233,13 +247,23 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       sampleExpressionsByType[type].push_back(&expression);
   }
   auto sortExpressions = [](auto &map, bool phaseOrdered) {
-    for (auto &entry : map)
-      llvm::sort(
-          entry.second, [phaseOrdered](const auto *lhs, const auto *rhs) {
-            if (phaseOrdered && lhs->evaluationPhase != rhs->evaluationPhase)
-              return lhs->evaluationPhase < rhs->evaluationPhase;
-            return lhs->resultOrdinal < rhs->resultOrdinal;
-          });
+    for (auto &entry : map) {
+      // The codec validates dense ordinals within each phase. Place pointers
+      // directly in that order, using fixed-size phase counts rather than a
+      // comparison sort or an allocation indexed by an unvalidated ordinal.
+      std::array<size_t, 5> counts{}, offsets{};
+      for (const auto *row : entry.second)
+        ++counts[phaseOrdered ? static_cast<size_t>(row->evaluationPhase) : 0];
+      for (size_t phase = 1; phase != counts.size(); ++phase)
+        offsets[phase] = offsets[phase - 1] + counts[phase - 1];
+      auto ordered = entry.second;
+      for (const auto *row : entry.second) {
+        size_t phase =
+            phaseOrdered ? static_cast<size_t>(row->evaluationPhase) : 0;
+        ordered[offsets[phase] + row->resultOrdinal] = row;
+      }
+      entry.second = std::move(ordered);
+    }
   };
   sortExpressions(constructorExpressionsByType, true);
   sortExpressions(sampleExpressionsByType, false);
@@ -274,10 +298,15 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
             << " at result ordinal " << expression->resultOrdinal;
         return failure();
       }
-      if (!valueMatches(values[supplied].getType(), expression->resultKind,
+      if ((expression->resultKind ==
+               coverage::FunctionalExpressionResultKind::Aggregate &&
+           !isa<sim::ReferencePathType>(values[supplied].getType())) ||
+          !valueMatches(values[supplied].getType(), expression->resultKind,
                         expression->bitWidth, expression->flags) ||
-          (expression->resultKind ==
-               coverage::FunctionalExpressionResultKind::Container &&
+          ((expression->resultKind ==
+                coverage::FunctionalExpressionResultKind::Container ||
+            expression->resultKind ==
+                coverage::FunctionalExpressionResultKind::Aggregate) &&
            !storageTypeMatches(values[supplied].getType(),
                                formals.lookup(expression->owner)->valueType))) {
         operation->emitError()
@@ -331,7 +360,12 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
               formal->direction == coverage::FunctionalFormalDirection::Ref
                   ? referenceElement(arguments[index].getType())
                   : arguments[index].getType();
-          if (rawID <= 0 || static_cast<uint64_t>(rawID) != formal->id ||
+          if ((formal->resultKind ==
+                   coverage::FunctionalExpressionResultKind::Aggregate &&
+               formal->direction ==
+                   coverage::FunctionalFormalDirection::Input &&
+               !isa<sim::ReferencePathType>(argumentType)) ||
+              rawID <= 0 || static_cast<uint64_t>(rawID) != formal->id ||
               !valueMatches(argumentType, formal->resultKind,
                             formal->bitWidth) ||
               !storageTypeMatches(argumentType, formal->valueType)) {
@@ -359,8 +393,14 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
         result = reference.getElementType();
       if (found == formals.end() || found->second->type != type ||
           found->second->kind != coverage::FunctionalFormalKind::Constructor ||
-          (reference && found->second->direction !=
-                            coverage::FunctionalFormalDirection::Ref) ||
+          (found->second->resultKind ==
+               coverage::FunctionalExpressionResultKind::Aggregate &&
+           !reference) ||
+          (reference &&
+           found->second->direction !=
+               coverage::FunctionalFormalDirection::Ref &&
+           found->second->resultKind !=
+               coverage::FunctionalExpressionResultKind::Aggregate) ||
           !valueMatches(result, found->second->resultKind,
                         found->second->bitWidth) ||
           !storageTypeMatches(result, found->second->valueType)) {

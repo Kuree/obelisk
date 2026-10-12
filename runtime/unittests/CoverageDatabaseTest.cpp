@@ -3144,4 +3144,55 @@ TEST(CoverageDatabaseTest, ContainerFormalLayoutsRoundTripAndValidate) {
   EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
 }
 
+TEST(CoverageDatabaseTest, AggregateFormalLayoutsRoundTripAndValidate) {
+  Database db = makeTypedDatabase();
+  db.functionalAggregateTypes = {{1000, 99, 6, 1, 42, 1}};
+  auto &formal = db.functionalFormals.front();
+  formal.resultKind = FunctionalExpressionResultKind::Aggregate;
+  formal.bitWidth = 42;
+  formal.signedness = CoverageSignedness::NotApplicable;
+  formal.valueType = 1000;
+  for (auto &expression : db.functionalExpressions)
+    if (expression.id == formal.defaultExpression) {
+      expression.resultKind = formal.resultKind;
+      expression.bitWidth = formal.bitWidth;
+      expression.signedness = formal.signedness;
+    }
+  db.schemaFingerprint = {};
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image), Status::Ok);
+  Database decoded;
+  ASSERT_EQ(parse(image.data(), image.size(), decoded), Status::Ok);
+  ASSERT_EQ(decoded.functionalAggregateTypes.size(), 1u);
+  EXPECT_EQ(decoded.functionalAggregateTypes[0].valueSize, 6u);
+  EXPECT_EQ(decoded.functionalAggregateTypes[0].bitWidth, 42u);
+  EXPECT_EQ(decoded.functionalAggregateTypes[0].flags, 1u);
+  EXPECT_EQ(decoded.functionalFormals[0].valueType, 1000u);
+  EXPECT_EQ(computeSchemaFingerprint(decoded), computeSchemaFingerprint(db));
+  auto bad = db;
+  bad.functionalFormals[0].valueType = 999;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalFormals[0].bitWidth = 48;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalAggregateTypes[0].valueSize = 7;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalAggregateTypes[0].alignment = 3;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalAggregateTypes[0].flags = 2;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalAggregateTypes[0].elementType = 0;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalAggregateTypes.push_back(bad.functionalAggregateTypes.front());
+  EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
+  bad = db;
+  bad.functionalAggregateTypes[0].flags = 0;
+  EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
+}
+
 } // namespace

@@ -35,6 +35,9 @@ struct FunctionalCoverageConstructionSchemas {
   obelisk::coverage::detail::IndexMap<
       uint64_t, obelisk::coverage::FunctionalContainerType>
       containerTypes;
+  obelisk::coverage::detail::IndexMap<
+      uint64_t, obelisk::coverage::FunctionalAggregateType>
+      aggregateTypes;
   obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> formalValueTypes;
   obelisk::coverage::detail::IndexSet<uint64_t> itemIDs, binIDs, valueSetIDs;
   obelisk::coverage::detail::IndexMap<uint64_t,
@@ -2297,6 +2300,11 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     prepared->containerTypes.emplace(row.id, row);
     for (uint64_t type : containerTypeUsers[row.id])
       schemaFor(type).functionalContainerTypes.push_back(row);
+  }
+  for (const auto &row : source.functionalAggregateTypes) {
+    prepared->aggregateTypes.emplace(row.id, row);
+    for (uint64_t type : containerTypeUsers[row.id])
+      schemaFor(type).functionalAggregateTypes.push_back(row);
   }
   auto appendSpan = [](auto &destination, const auto &rows, uint32_t first,
                        uint32_t count) {
@@ -8118,6 +8126,40 @@ functionalDefaultContainerType(const CoverageState &coverage,
              : functionalContainerType(coverage, found->second);
 }
 
+const obelisk::coverage::FunctionalAggregateType *
+functionalAggregateType(const CoverageState &coverage, uint64_t id) {
+  if (!coverage.constructionSchemas)
+    return nullptr;
+  auto found = coverage.constructionSchemas->aggregateTypes.find(id);
+  return found == coverage.constructionSchemas->aggregateTypes.end()
+             ? nullptr
+             : &found->second;
+}
+
+const obelisk::coverage::FunctionalAggregateType *
+functionalDefaultAggregateType(const CoverageState &coverage, uint64_t formal) {
+  if (!coverage.constructionSchemas)
+    return nullptr;
+  auto found = coverage.constructionSchemas->formalValueTypes.find(formal);
+  return found == coverage.constructionSchemas->formalValueTypes.end()
+             ? nullptr
+             : functionalAggregateType(coverage, found->second);
+}
+
+bool validateAggregateFormal(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *object,
+    const obelisk::coverage::FunctionalAggregateType *type) {
+  if (!type || !object ||
+      !obelisk_rt_managed_object_belongs_to(context, object))
+    return false;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  return obelisk_rt_reference_path_element(object, &element) == OBELISK_RT_OK &&
+         element->kind == OBELISK_RT_ELEMENT_AGGREGATE &&
+         element->type_id == type->elementType &&
+         element->value_size == type->valueSize &&
+         element->alignment == type->alignment && element->flags == type->flags;
+}
+
 bool validateContainerFormal(
     obelisk_rt_context *context, obelisk_rt_object_v1 *object,
     const obelisk::coverage::FunctionalContainerType *type) {
@@ -8162,7 +8204,8 @@ bool validateValue(
     obelisk_rt_context *context, const obelisk_rt_functional_value_v1 &value,
     obelisk::coverage::FunctionalExpressionResultKind result, uint64_t width,
     bool reference,
-    const obelisk::coverage::FunctionalContainerType *containerType = nullptr) {
+    const obelisk::coverage::FunctionalContainerType *containerType = nullptr,
+    const obelisk::coverage::FunctionalAggregateType *aggregateType = nullptr) {
   using Result = obelisk::coverage::FunctionalExpressionResultKind;
   // Boolean schema descriptors have no integral type width, but their helper
   // ABI representation is the canonical one-bit logic value.
@@ -8179,6 +8222,10 @@ bool validateValue(
           !value.value && !value.unknown && value.argument_ref_kind <= 2 &&
           (value.argument_ref_kind == 0 || value.owner)))
       return false;
+    if (result == Result::Aggregate)
+      return aggregateType &&
+             (value.argument_ref_kind != 2 ||
+              validateAggregateFormal(context, value.owner, aggregateType));
     if (result != Result::Container)
       return true;
     const uint8_t *stateValue =
@@ -8202,6 +8249,11 @@ bool validateValue(
     return obelisk_rt_managed_word_from_object(object) == word &&
            validateContainerFormal(context, object, containerType);
   }
+  if (result == Result::Aggregate)
+    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE &&
+           !value.bit_width && !value.value_size && !value.value &&
+           !value.unknown && !value.payload && !value.argument_ref_kind &&
+           validateAggregateFormal(context, value.owner, aggregateType);
   if (result == Result::Container)
     return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER &&
            !value.bit_width && !value.value_size && !value.value &&
@@ -8255,7 +8307,8 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
   destination.owner = source.owner;
   destination.payload = source.payload;
   if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER)
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE)
     return;
   // Strings are immutable values. The context's service-root enumerator
   // retains this captured managed word independently of the caller's storage.
@@ -11748,7 +11801,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
                       obelisk::coverage::FunctionalExpressionResultKind::Real
                   ? 64
                   : formal.bitWidth,
-              reference, functionalContainerType(*coverage, formal.valueType)))
+              reference, functionalContainerType(*coverage, formal.valueType),
+              functionalAggregateType(*coverage, formal.valueType)))
         return OBELISK_RT_INVALID_DESIGN;
       if (reference && formals[index].argument_ref_kind != 0) {
         if (obelisk_rt_managed_object_context(formals[index].owner) != context)
@@ -11779,7 +11833,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
                   ? 64
                   : expression->bitWidth,
               false,
-              functionalDefaultContainerType(*coverage, expression->owner)))
+              functionalDefaultContainerType(*coverage, expression->owner),
+              functionalDefaultAggregateType(*coverage, expression->owner)))
         return OBELISK_RT_INVALID_DESIGN;
       ++supplied;
     }
@@ -12525,7 +12580,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
                       obelisk::coverage::FunctionalExpressionResultKind::Real
                   ? 64
                   : entry->bitWidth,
-              false, functionalDefaultContainerType(*coverage, entry->owner)))
+              false, functionalDefaultContainerType(*coverage, entry->owner),
+              functionalDefaultAggregateType(*coverage, entry->owner)))
         return OBELISK_RT_INVALID_DESIGN;
       expected.push_back(entry);
       ++supplied;
@@ -13153,12 +13209,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       return OBELISK_RT_INVALID_DESIGN;
     const FunctionalCoverageValue &formal = position->second;
     if (kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
-      if (formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
+      if ((formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
+           formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
           bitWidth != 192 || valueSize != 24 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
       std::array<uint64_t, 3> reference{
           obelisk_rt_managed_word_from_object(formal.owner), formal.payload,
-          formal.argumentRefKind};
+          formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
+              ? uint64_t{2}
+              : formal.argumentRefKind};
       std::memcpy(outValue, reference.data(), sizeof(reference));
       return OBELISK_RT_OK;
     }
