@@ -421,7 +421,8 @@ static bool isSupportedRandomConstraintExpression(Operation *op) {
   return isa<
       semantic::SVNamedValueExpressionOp,
       semantic::SVHierarchicalValueExpressionOp, semantic::SVIntegerLiteralOp,
-      semantic::SVNullLiteralOp, semantic::SVUnbasedUnsizedIntegerLiteralOp,
+      semantic::SVRealLiteralOp, semantic::SVNullLiteralOp,
+      semantic::SVUnbasedUnsizedIntegerLiteralOp,
       semantic::SVUnboundedLiteralOp, semantic::SVConversionExpressionOp,
       semantic::SVConditionalExpressionOp, semantic::SVMinTypMaxExpressionOp,
       semantic::SVConcatenationExpressionOp,
@@ -5006,10 +5007,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       FailureOr<Type> type = getNormalizedSemanticType(variable);
       std::optional<unsigned> width =
-          succeeded(type) ? getIntegralRandomWidth(*type) : std::nullopt;
+          succeeded(type) ? getRandomPropertyWidth(*type) : std::nullopt;
       if (failed(type) || !width || *width == 0) {
         emitError(getSemanticLocation(variable))
-            << "std::randomize variables must have fixed integral bitstreams";
+            << "std::randomize variables must have fixed integral bitstreams "
+               "or IEEE real types";
         invalid = true;
         return true;
       }
@@ -5716,7 +5718,7 @@ void ObeliskSimPreparePass::runOnOperation() {
               Type memberType = member.getAs<TypeAttr>("type").getValue();
               Type semanticType =
                   member.getAs<TypeAttr>("semantic_type").getValue();
-              auto width = getIntegralRandomWidth(memberType);
+              auto width = getRandomPropertyWidth(memberType);
               bool randc = member.getAs<BoolAttr>("is_randc").getValue();
               unsigned memberMode =
                   member.getAs<IntegerAttr>("mode_index").getInt();
@@ -5725,7 +5727,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                    (!sim::getPackedWidth(memberType) || *width > 32))) {
                 emitError(getSemanticLocation(property))
                     << "random structure members currently require fixed "
-                       "integral values or rand arrays; randc members require "
+                       "integral values, IEEE real values or rand integral "
+                       "arrays; randc members require "
                        "packed values no wider than 32 bits";
                 invalid = true;
                 continue;
@@ -6411,11 +6414,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                     continue;
                   }
                   std::optional<unsigned> width =
-                      sim::getPackedWidth(*recursiveType);
+                      isa<FloatType>(*recursiveType)
+                          ? getRandomPropertyWidth(*recursiveType)
+                          : sim::getPackedWidth(*recursiveType);
                   if (!width || *width == 0) {
                     emitError(getSemanticLocation(recursiveProperty))
                         << "recursive rand object leaves must be packed "
-                           "integral values";
+                           "integral values or IEEE real values";
                     return failure();
                   }
                   SmallVector<RandomSubdomain> domains;
@@ -6599,8 +6604,11 @@ void ObeliskSimPreparePass::runOnOperation() {
                   continue;
                 }
                 std::optional<unsigned> nestedWidth =
-                    succeeded(nestedType) ? sim::getPackedWidth(*nestedType)
-                                          : std::nullopt;
+                    succeeded(nestedType)
+                        ? (isa<FloatType>(*nestedType)
+                               ? getRandomPropertyWidth(*nestedType)
+                               : sim::getPackedWidth(*nestedType))
+                        : std::nullopt;
                 if (failed(nestedType) || !semanticNestedType || !nestedWidth ||
                     *nestedWidth == 0 ||
                     nestedProperty.getRandMode() ==
@@ -6609,7 +6617,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                         semantic::SVVariableLifetime::Static) {
                   emitError(getSemanticLocation(nestedProperty))
                       << "nested rand object properties must be non-static "
-                         "packed rand values";
+                         "packed integral or IEEE real rand values";
                   unsupportedNestedSemantics = true;
                   continue;
                 }
@@ -6675,10 +6683,11 @@ void ObeliskSimPreparePass::runOnOperation() {
               invalid = true;
             continue;
           }
-          std::optional<unsigned> width = getIntegralRandomWidth(*type);
+          std::optional<unsigned> width = getRandomPropertyWidth(*type);
           if (!width || *width == 0 || (!field && !referencePath)) {
             emitError(getSemanticLocation(property))
-                << "random properties must have fixed integral bitstreams";
+                << "random properties must have fixed integral bitstreams "
+                   "or IEEE real types";
             invalid = true;
             continue;
           }
@@ -6800,13 +6809,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                           randomPostHookSourceAttrName)))
       invalid = true;
     collectEffectiveConstraints(hierarchy, constraintGroups);
-    llvm::SmallPtrSet<Operation *, 16> nestedConstraintSources;
     for (NestedObjectPlan &plan : nestedObjectPlans) {
       for (const EffectiveConstraintGroup &group : plan.constraintGroups) {
         plan.globalConstraintIndices.push_back(constraintGroups.size());
         constraintGroups.push_back(group);
-        for (semantic::SVConstraintBlockSymbolOp constraint : group)
-          nestedConstraintSources.insert(constraint);
       }
     }
     if (constraintGroups.size() > 64) {
@@ -6950,35 +6956,6 @@ void ObeliskSimPreparePass::runOnOperation() {
                               property.nestedObjectPath});
       }
     }
-    for (const RandomProperty &property : properties) {
-      if (!property.nestedObjectField)
-        continue;
-      bool referenced = llvm::any_of(constraintRoots, [&](Operation *root) {
-        auto block =
-            root->getParentOfType<semantic::SVConstraintBlockSymbolOp>();
-        // A child declaration is shared by every member of that type. Its
-        // own constraint roots therefore reference the same declaration
-        // symbols for each instance and are resolved after cloning.
-        if (block && nestedConstraintSources.contains(block))
-          return false;
-        bool found = false;
-        root->walk([&](Operation *nested) {
-          auto reference =
-              nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-          if (reference && reference.getLeafReference() ==
-                               property.source->getAttrOfType<StringAttr>(
-                                   SymbolTable::getSymbolAttrName()))
-            found = true;
-        });
-        return found;
-      });
-      if (referenced) {
-        emitError(getSemanticLocation(property.source))
-            << "constraints that dereference rand object handles require "
-               "error-aware recursive constraint composition";
-        invalid = true;
-      }
-    }
     llvm::DenseMap<Operation *, unsigned> randomIndices;
     for (auto [index, property] : llvm::enumerate(properties))
       if (!property.storagePath)
@@ -7002,7 +6979,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         llvm::all_of(properties, [](const RandomProperty &property) {
           return property.field && !property.referencePath &&
                  !property.isContainerSize && !property.nestedObjectField &&
-                 !property.storagePath;
+                 !property.storagePath && !isa<FloatType>(property.type);
         });
     if (templateEligible) {
       call->setAttr(randomizeConstraintTemplateAttrName, constraintTemplate);
@@ -7071,21 +7048,129 @@ void ObeliskSimPreparePass::runOnOperation() {
                          });
     };
     NestedObjectPlan *randomValueOwner = nullptr;
+    auto getObjectFieldPath = [&](FlatSymbolRefAttr field,
+                                  ArrayRef<RandomObjectPathElement> path) {
+      SmallVector<Attribute> fields;
+      if (field)
+        fields.push_back(field);
+      for (const RandomObjectPathElement &element : path)
+        fields.push_back(element.field);
+      return builder.getArrayAttr(fields);
+    };
+    ArrayAttr rootObjectPath = builder.getArrayAttr({});
+    llvm::DenseMap<NestedObjectPlan *, ArrayAttr> randomOwnerPaths;
+    for (NestedObjectPlan &plan : nestedObjectPlans)
+      randomOwnerPaths[&plan] =
+          getObjectFieldPath(plan.field, plan.nestedObjectPath);
+    llvm::DenseMap<std::pair<Operation *, ArrayAttr>, unsigned>
+        randomValueIndices;
+    llvm::SmallPtrSet<Operation *, 16> nestedRandomSources;
+    for (auto [index, property] : llvm::enumerate(properties)) {
+      if (!property.storagePath)
+        randomValueIndices[{property.source,
+                            getObjectFieldPath(property.nestedObjectField,
+                                               property.nestedObjectPath)}] =
+            index;
+      if (property.nestedObjectField)
+        nestedRandomSources.insert(property.source);
+    }
     auto getRandomPropertyIndex =
         [&](Operation *source) -> std::optional<unsigned> {
-      for (auto [index, property] : llvm::enumerate(properties)) {
-        if (property.source != source || property.storagePath)
-          continue;
-        if (randomValueOwner) {
-          if (property.nestedObjectField == randomValueOwner->field &&
-              objectPathsEqual(property.nestedObjectPath,
-                               randomValueOwner->nestedObjectPath))
-            return index;
-        } else if (!property.nestedObjectField) {
-          return index;
+      auto found = randomValueIndices.find(
+          {source, randomValueOwner ? randomOwnerPaths.lookup(randomValueOwner)
+                                    : rootObjectPath});
+      return found != randomValueIndices.end()
+                 ? std::optional<unsigned>(found->second)
+                 : std::nullopt;
+    };
+    // A global member reference selects a leaf by its receiver path, not by
+    // the shared declaration of that leaf. Runtime object-identity equations
+    // still unify aliases. Keep the receiver expression intact so creation
+    // validity evaluates each null dereference under the normal guard algebra.
+    auto getNestedMemberIndex =
+        [&](Operation *expression) -> std::optional<unsigned> {
+      if (!isa<semantic::SVMemberAccessExpressionOp>(expression))
+        return std::nullopt;
+      auto operands = getChildren(expression);
+      auto receiverType =
+          operands.size() == 1
+              ? operands.front()->getAttrOfType<TypeAttr>("semantic_type")
+              : TypeAttr{};
+      if (!receiverType ||
+          !isa<semantic::ClassHandleType>(receiverType.getValue()))
+        return std::nullopt;
+      auto leafReference =
+          expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto leaf = leafReference
+                      ? semanticSymbols.find(leafReference.getLeafReference())
+                      : semanticSymbols.end();
+      if (leaf == semanticSymbols.end())
+        return std::nullopt;
+      SmallVector<Attribute> reversedFields;
+      Operation *address = operands.front();
+      Operation *rootSource = nullptr;
+      bool rootReceiver = false;
+      while (address) {
+        auto reference =
+            address->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        auto symbol = reference
+                          ? semanticSymbols.find(reference.getLeafReference())
+                          : semanticSymbols.end();
+        if (symbol == semanticSymbols.end())
+          return std::nullopt;
+        // Inline constraints can spell the randomized receiver explicitly,
+        // including a class-handle formal. It is the root occurrence even
+        // though its declaration is outside the receiver's class hierarchy.
+        if (isa<semantic::SVNamedValueExpressionOp>(address) &&
+            isa<semantic::SVNamedValueExpressionOp>(
+                callChildren[receiverIndex]) &&
+            reference ==
+                callChildren[receiverIndex]->getAttrOfType<SymbolRefAttr>(
+                    "referenced_symbol") &&
+            !(randomValueOwner &&
+              symbol->second->getAttrOfType<StringAttr>("name") ==
+                  builder.getStringAttr("this"))) {
+          rootReceiver = true;
+          break;
         }
+        auto property =
+            dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
+        if (!property) {
+          auto name = symbol->second->getAttrOfType<StringAttr>("name");
+          if (!name || name.getValue() != "this" ||
+              !isa<semantic::SVVariableSymbolOp>(symbol->second))
+            return std::nullopt;
+          rootSource = symbol->second;
+          break;
+        }
+        if (property.getLifetime() == semantic::SVVariableLifetime::Static)
+          return std::nullopt;
+        FlatSymbolRefAttr field = classFieldSymbols.lookup(property);
+        if (!field)
+          return std::nullopt;
+        reversedFields.push_back(field);
+        rootSource = property;
+        if (!isa<semantic::SVMemberAccessExpressionOp>(address))
+          break;
+        auto parents = getChildren(address);
+        if (parents.size() != 1)
+          return std::nullopt;
+        address = parents.front();
       }
-      return std::nullopt;
+      SmallVector<Attribute> fields;
+      if (!rootReceiver && randomValueOwner &&
+          llvm::is_contained(randomValueOwner->hierarchy,
+                             getOwningClass(rootSource)))
+        llvm::append_range(fields, randomOwnerPaths.lookup(randomValueOwner));
+      else if (!rootReceiver &&
+               !llvm::is_contained(hierarchy, getOwningClass(rootSource)))
+        return std::nullopt;
+      llvm::append_range(fields, llvm::reverse(reversedFields));
+      auto found =
+          randomValueIndices.find({leaf->second, builder.getArrayAttr(fields)});
+      return found != randomValueIndices.end()
+                 ? std::optional<unsigned>(found->second)
+                 : std::nullopt;
     };
 
     SmallVector<uint64_t> randomPropertyWidths;
@@ -7157,6 +7242,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       return obelisk::simlowering::getRandomConstraintPath(
           expression, randomPropertyWidths,
           [&](Operation *value) -> std::optional<unsigned> {
+            if (auto index = getNestedMemberIndex(value))
+              return index;
             if (auto index = getStructureMemberIndex(value))
               return index;
             auto reference =
@@ -7164,11 +7251,39 @@ void ObeliskSimPreparePass::runOnOperation() {
             auto symbol =
                 reference ? semanticSymbols.find(reference.getLeafReference())
                           : semanticSymbols.end();
+            if (symbol != semanticSymbols.end() &&
+                isa<semantic::SVMemberAccessExpressionOp>(value) &&
+                isa<semantic::SVClassPropertySymbolOp>(symbol->second))
+              return std::nullopt;
             return symbol == semanticSymbols.end()
                        ? std::nullopt
                        : getRandomPropertyIndex(symbol->second);
           });
     };
+
+    for (Operation *root : constraintRoots) {
+      randomValueOwner = getNestedConstraintOwner(root);
+      if (randomValueOwner)
+        continue;
+      root->walk([&](Operation *expression) {
+        auto reference =
+            expression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        auto source = reference
+                          ? semanticSymbols.find(reference.getLeafReference())
+                          : semanticSymbols.end();
+        if (source == semanticSymbols.end() ||
+            !nestedRandomSources.contains(source->second) ||
+            getNestedMemberIndex(expression) ||
+            (!isa<semantic::SVMemberAccessExpressionOp>(expression) &&
+             getRandomPropertyIndex(source->second)))
+          return;
+        emitError(getSemanticLocation(expression))
+            << "global random object constraint requires a statically "
+               "resolved active-object path";
+        invalid = true;
+      });
+    }
+    randomValueOwner = nullptr;
 
     SmallVector<uint64_t> randomPropertyOffsets;
     uint64_t randomPropertyOffset = 0;
@@ -7808,7 +7923,10 @@ void ObeliskSimPreparePass::runOnOperation() {
               nested->setAttr("simulation.covergroup_field_storage_type",
                               TypeAttr::get(storageType));
           }
-        std::optional<unsigned> index = getRandomPropertyIndex(symbol->second);
+        std::optional<unsigned> index =
+            isa<semantic::SVMemberAccessExpressionOp>(nested)
+                ? getNestedMemberIndex(nested)
+                : getRandomPropertyIndex(symbol->second);
         if (index && !nested->hasAttr(randomFunctionStateAttrName)) {
           if (properties[*index].isContainerSize) {
             auto sizeCall = dyn_cast_or_null<semantic::SVCallExpressionOp>(
@@ -7863,6 +7981,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (auto index = getStructureMemberIndex(nested))
             nested->setAttr(randomVariableAttrName,
                             builder.getI32IntegerAttr(*index));
+        if (nested->hasAttr(randomVariableAttrName))
+          return;
         if (!isa<semantic::SVMemberAccessExpressionOp,
                  semantic::SVElementSelectExpressionOp,
                  semantic::SVRangeSelectExpressionOp>(nested))

@@ -613,15 +613,20 @@ sampleRandomPlan(const uint8_t *program, size_t programSize,
     case PlanOpcode::Real32FirstBit:
     case PlanOpcode::Real32LastBit:
     case PlanOpcode::Real64FirstBit:
-    case PlanOpcode::Real64LastBit: {
+    case PlanOpcode::Real64LastBit:
+    case PlanOpcode::Real32From64FirstBit:
+    case PlanOpcode::Real32From64LastBit: {
       unsigned precision =
           random::realCellPrecision(static_cast<PlanOpcode>(read32(p)));
-      uint64_t key = (uint64_t(a) << 1) | (precision == 64);
+      bool narrowed =
+          random::realCellNarrowed(static_cast<PlanOpcode>(read32(p)));
+      uint64_t key = (uint64_t(a) << 2) | (narrowed ? 2 : precision == 64);
       auto [entry, inserted] = realCells.try_emplace(key);
       if (inserted) {
         uint64_t payload = captures[captureOffsets[a]];
         if (precision == 32) {
-          uint32_t word = static_cast<uint32_t>(payload);
+          uint32_t word = narrowed ? narrowReal64Payload(payload)
+                                   : static_cast<uint32_t>(payload);
           float value;
           std::memcpy(&value, &word, sizeof(value));
           RealCoordinates<float>::cell(value, entry->second.first.data(),
@@ -635,6 +640,8 @@ sampleRandomPlan(const uint8_t *program, size_t programSize,
       }
       bool first =
           static_cast<PlanOpcode>(read32(p)) == PlanOpcode::Real32FirstBit ||
+          static_cast<PlanOpcode>(read32(p)) ==
+              PlanOpcode::Real32From64FirstBit ||
           static_cast<PlanOpcode>(read32(p)) == PlanOpcode::Real64FirstBit;
       const auto &words = first ? entry->second.first : entry->second.last;
       specialized[index] = (words[b / 64] >> (b % 64)) & 1;

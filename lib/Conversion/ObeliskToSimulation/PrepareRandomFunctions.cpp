@@ -1,8 +1,9 @@
 //===- PrepareRandomFunctions.cpp - Frozen constraint functions -----------===//
 
 #include "PrepareRandomFunctions.h"
-#include "PrepareRandomIteration.h"
 #include "Detail.h"
+#include "PrepareRandomIteration.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -29,6 +30,14 @@ std::optional<unsigned> getIntegralRandomWidth(Type type) {
       return static_cast<unsigned>(width);
   }
   return std::nullopt;
+}
+
+std::optional<unsigned> getRandomPropertyWidth(Type type) {
+  if (type.isF32())
+    return OBELISK_RT_REAL32_RANK_BITS;
+  if (type.isF64())
+    return OBELISK_RT_REAL64_RANK_BITS;
+  return getIntegralRandomWidth(type);
 }
 
 std::optional<FixedRandomArrayLayout> getFixedRandomArrayLayout(Type type) {

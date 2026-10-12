@@ -25,6 +25,10 @@ struct RandomConstraintPath {
 /// arrays of those values. Non-integral leaves require a different solver.
 std::optional<unsigned> getIntegralRandomWidth(mlir::Type type);
 
+/// Width of a property's sampling coordinates. IEEE properties use numeric
+/// ranks; their expression types and stored values retain IEEE precision.
+std::optional<unsigned> getRandomPropertyWidth(mlir::Type type);
+
 struct FixedRandomArrayLayout {
   unsigned elementWidth;
   unsigned elementCount;

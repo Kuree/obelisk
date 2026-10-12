@@ -204,7 +204,9 @@
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-source-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
         ]
       }
     },
@@ -240,12 +242,12 @@
         {
           "feature": "Unpacked structs with member rand qualifiers",
           "status": "partial",
-          "detail": "Instance and static unpacked structure properties contribute only explicitly rand/randc qualified fixed integral leaves and rand fixed integral arrays, recursively through qualified structures. Ordinary members retain strings, nested state and X/Z symbols. Packed randc leaves through 32 bits have independent persistent cycles; static cycles and modes are shared across instances. Whole-structure, leaf, nested-structure, array-element and class mode operations compose with temporary explicit property selection. Dynamic container, class-handle, real and randc-array members, and structures in recursively randomized objects remain incomplete."
+          "detail": "Instance and static unpacked structure properties contribute only explicitly rand/randc qualified fixed integral leaves and rand fixed integral arrays, recursively through qualified structures. Ordinary members retain strings, nested state and X/Z symbols. Packed randc leaves through 32 bits have independent persistent cycles; static cycles and modes are shared across instances. Whole-structure, leaf, nested-structure, array-element and class mode operations compose with temporary explicit property selection. Qualified scalar real members use numeric-coordinate plans and preserve ordinary shortreal state. Dynamic container, class-handle and randc-array members, and structures in recursively randomized objects remain incomplete."
         },
         {
           "feature": "Real random variables",
-          "status": "missing",
-          "detail": "Source real and shortreal constraint lowering remains missing. Native and WASM targets provide finite numeric rank conversions and interval sampling leaves, with spacing-weighted cells, subnormals, signed zero, finite endpoint clipping and transactional failures. Compiler Z3 additionally compiles typed IEEE comparisons, arithmetic, integral conversions, logical operations, selection and numeric-rank decoders into parameterized Boolean plans. Ill-typed operations and computed arithmetic payload bitcasts are diagnosed; targets require exact uniform plans and never interpret IEEE constraints as integers. MLIR tests cover both precisions at O0/O3, the 18.4.1 numeric-density example, live captures, modes, frozen inputs, soft priorities and malformed wire formats. Full-width coordinate comparisons against retained IEEE bounds use signed numeric-cell predicates, with deterministic captured-cell inputs rather than sampled solver witnesses. Native and bytecode Simulation adapters preserve canonical coordinates and report nonfinite placeholders. MLIR coverage includes all six comparisons in both operand orders, frozen masks, disabled blocks, NaN/infinity captures and the complete finite endpoint cells. Source property admission, general full-coordinate arithmetic, joint real/integral distributions and complete real probability semantics remain open."
+          "status": "partial",
+          "detail": "Source class and scope plans admit scalar real and shortreal properties, qualified real structure leaves, and real leaves in finite active object graphs. Compiler Z3 emits finite numeric-coordinate relations with spacing-weighted cells, subnormals, signed zero and clipped finite extremes. Live IEEE bounds, promoted shortreal comparisons, soft preferences, constraint/rand modes, explicit property lists, checker-only calls and transactional failures execute in native and WASM at O0/O3, in native and bytecode tiers. Frozen properties retain original NaN/infinity payloads rather than decoding coordinate placeholders. Captured binary64 bounds use deterministic round-to-nearest, ties-to-even binary32 cell parameters; targets validate their full source precision and never link or call Z3. Typed backend arithmetic, integral-to-real conversions, selection and rank decoders remain available. Candidate real-to-integral conversions and computed arithmetic payload bitcasts are diagnosed. MLIR covers the 18.4.1 numeric-density example, every comparison in both operand orders, malformed wire formats, aliases, parent/descendant global constraints and null guard sifting. General full-coordinate arithmetic efficiency, real arrays, joint real/integral distributions and complete real probability semantics remain open."
         },
         {
           "feature": "Rand object handles",
@@ -310,7 +312,9 @@
           "test/Runtime/simulation-random-real-plan-runtime.mlir",
           "test/Runtime/random-real-plan-validation.mlir",
           "test/Dialect/Simulation/random-real-rank-invalid.mlir",
-          "test/Runtime/simulation-random-real-coordinate-runtime.mlir"
+          "test/Runtime/simulation-random-real-coordinate-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-source-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
         ]
       }
     },
@@ -940,7 +944,7 @@
         {
           "feature": "Global object constraints",
           "status": "partial",
-          "detail": "Finite acyclic object graphs solve together with alias deduplication; arbitrary recursive graphs and object arrays remain open."
+          "detail": "Finite acyclic object graphs solve together with alias identity equations. Parent and descendant-owned constraints bind integral or IEEE scalar leaves by their static receiver paths, preserving frozen child state, null guard algebra, disabled blocks and transactional failure. Arbitrary recursive graphs, object arrays, non-rand receiver aliases and general unresolved access paths remain open."
         }
       ],
       "evidence": {
@@ -984,7 +988,8 @@
           "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
         ]
       }
     },
@@ -1265,7 +1270,8 @@
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
         ]
       }
     },

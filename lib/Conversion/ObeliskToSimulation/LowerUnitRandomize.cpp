@@ -777,7 +777,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     }
     Type type = typeAttr.getValue();
-    std::optional<unsigned> typeWidth = getIntegralRandomWidth(type);
+    std::optional<unsigned> typeWidth = getRandomPropertyWidth(type);
     if (!typeWidth || *typeWidth != width) {
       emitError(location) << "randomize property type width is inconsistent";
       return failure();
@@ -1084,6 +1084,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     emitError(location) << "randomize property plan width is inconsistent";
     return failure();
   }
+  bool hasRealProperties = llvm::any_of(planned, [](const Property &property) {
+    return isa<FloatType>(property.type);
+  });
+#ifndef OBELISK_ENABLE_Z3
+  if (hasRealProperties) {
+    emitError(location) << "IEEE real randomization requires compiler Z3 plans";
+    return failure();
+  }
+#endif
   struct ContainerProperty {
     Type type;
     Type elementType;
@@ -2366,8 +2375,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(current))
       return failure();
     property.currentValue = *current;
-    FailureOr<Value> scalar = toRandomScalar(*current, location);
-    if (succeeded(scalar))
+    FailureOr<Value> scalar = [&]() -> FailureOr<Value> {
+      if (isa<FloatType>(property.type)) {
+        property.originalScalar = *current;
+        auto rank = sim::SimRandomRealToRankOp::create(
+            builder, location, builder.getIntegerType(property.width),
+            builder.getI1Type(), *current);
+        return rank.getRank();
+      }
+      return toRandomScalar(*current, location);
+    }();
+    if (succeeded(scalar) && !isa<FloatType>(property.type))
       property.originalScalar = *scalar;
     FailureOr<Value> extended =
         succeeded(scalar) ? convert(*scalar, assignmentType, property.isSigned,
@@ -3042,6 +3060,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   SmallVector<EncodedInstruction> programInstructions;
   SmallVector<Value> programCaptures;
   llvm::DenseMap<Operation *, uint32_t> programExpressionCaptures;
+  llvm::DenseMap<unsigned, std::pair<uint32_t, uint32_t>> realPropertyCaptures;
+  llvm::DenseMap<uint32_t, unsigned> realPropertyOffsets;
+  for (auto [index, property] : llvm::enumerate(planned))
+    if (isa<FloatType>(property.type))
+      realPropertyOffsets[propertyOffsets[index]] = index;
+  bool hasRealProgram = hasRealProperties;
   auto instruction = [&](uint8_t opcode, unsigned width, bool isSigned = false,
                          uint32_t operand = 0, uint64_t immediate = 0) {
     programInstructions.push_back(
@@ -3060,12 +3084,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   auto expressionWidth = [&](Operation *expression) -> FailureOr<unsigned> {
     FailureOr<Type> type = getNormalizedSemanticType(expression);
-    std::optional<unsigned> width =
-        succeeded(type) ? getIntegralRandomWidth(*type) : std::nullopt;
+    std::optional<unsigned> width;
+    if (succeeded(type)) {
+      if (auto floating = dyn_cast<FloatType>(*type)) {
+        width = floating.getWidth();
+        hasRealProgram = true;
+      } else
+        width = getIntegralRandomWidth(*type);
+    }
     if (!width || *width == 0) {
       emitError(getSemanticLocation(expression))
-          << "runtime random constraint values must have fixed integral "
-             "bitstreams";
+          << "random constraint values must have fixed integral bitstreams "
+             "or IEEE real types";
       return failure();
     }
     return *width;
@@ -4538,6 +4568,44 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       literalInstruction(*width, false, APInt::getZero(*width));
       return success();
     }
+    auto normalizedType = getNormalizedSemanticType(expression);
+    bool floating =
+        succeeded(normalizedType) && isa<FloatType>(*normalizedType);
+    auto emitRealProperty = [&](unsigned index) -> LogicalResult {
+      if (index >= planned.size() || !isa<FloatType>(planned[index].type))
+        return failure();
+      auto found = realPropertyCaptures.find(index);
+      if (found == realPropertyCaptures.end()) {
+        unsigned precision = cast<FloatType>(planned[index].type).getWidth();
+        Value payload = arith::BitcastOp::create(
+            builder, location, builder.getIntegerType(precision),
+            planned[index].currentValue);
+        if (precision != 64)
+          payload = arith::ExtUIOp::create(builder, location, i64, payload);
+        uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+        programCaptures.push_back(payload);
+        programCaptures.push_back(arith::ExtUIOp::create(
+            builder, location, i64, propertyEnabled[index]));
+        found =
+            realPropertyCaptures.insert({index, {capture, capture + 1}}).first;
+      }
+      // Active candidates decode numeric coordinates. Inactive properties
+      // retain their complete original IEEE payload, including NaN/infinity.
+      instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 1, false,
+                  found->second.second);
+      instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, planned[index].width,
+                  false, propertyOffsets[index]);
+      instruction(*width == 32 ? OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1
+                               : OBELISK_RT_RANDOM_REAL64_FROM_RANK_V1,
+                  *width);
+      instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width, false,
+                  found->second.first);
+      instruction(*width == 32 ? OBELISK_RT_RANDOM_REAL32_BITS_V1
+                               : OBELISK_RT_RANDOM_REAL64_BITS_V1,
+                  *width);
+      instruction(OBELISK_RT_RANDOM_SELECT_V1, *width);
+      return success();
+    };
     if (auto bitOffset = expression->getAttrOfType<IntegerAttr>(
             randomVariableBitOffsetAttrName)) {
       const APInt &offsetValue = bitOffset.getValue();
@@ -4547,6 +4615,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         emitError(getSemanticLocation(expression))
             << "random constraint value-path binding is invalid";
         return failure();
+      }
+      if (floating) {
+        auto found = realPropertyOffsets.find(offsetValue.getZExtValue());
+        return found == realPropertyOffsets.end()
+                   ? failure()
+                   : emitRealProperty(found->second);
       }
       instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, *width,
                   isSignedNode(expression),
@@ -4563,11 +4637,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
       unsigned index = static_cast<unsigned>(indexValue.getZExtValue());
+      if (floating)
+        return emitRealProperty(index);
       instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, planned[index].width,
                   planned[index].isSigned, propertyOffsets[index]);
       return success();
     }
     if (std::optional<StringRef> spelling = getConstantSpelling(expression)) {
+      if (floating) {
+        double value;
+        if (spelling->getAsDouble(value)) {
+          emitError(getSemanticLocation(expression))
+              << "invalid IEEE real literal";
+          return failure();
+        }
+        auto payload = builder.getFloatAttr(*normalizedType, value);
+        literalInstruction(*width, false, payload.getValue().bitcastToAPInt());
+        instruction(*width == 32 ? OBELISK_RT_RANDOM_REAL32_BITS_V1
+                                 : OBELISK_RT_RANDOM_REAL64_BITS_V1,
+                    *width);
+        return success();
+      }
       FailureOr<ParsedConstant> parsed =
           parseSVInteger(*spelling, *width, getSemanticLocation(expression));
       if (failed(parsed) || !parsed->unknown.isZero()) {
@@ -4600,6 +4690,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           found != programExpressionCaptures.end()) {
         instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
                     isSignedNode(expression), found->second);
+        if (floating)
+          instruction(*width == 32 ? OBELISK_RT_RANDOM_REAL32_BITS_V1
+                                   : OBELISK_RT_RANDOM_REAL64_BITS_V1,
+                      *width);
         return success();
       }
       FailureOr<SafeConstraintValue> safe = safeConstraintValue(expression);
@@ -4607,7 +4701,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                                : FailureOr<Value>(failure());
       FailureOr<Value> scalar =
           succeeded(value)
-              ? toRandomScalar(*value, getSemanticLocation(expression))
+              ? (floating
+                     ? FailureOr<Value>(
+                           arith::BitcastOp::create(
+                               builder, getSemanticLocation(expression),
+                               builder.getIntegerType(*width), *value)
+                               .getResult())
+                     : toRandomScalar(*value, getSemanticLocation(expression)))
               : FailureOr<Value>(failure());
       if (succeeded(scalar) && isa<sim::LogicType>((*scalar).getType()) &&
           *width == 1)
@@ -4637,6 +4737,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       programExpressionCaptures[key] = capture;
       instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
                   isSignedNode(expression), capture);
+      if (floating)
+        instruction(*width == 32 ? OBELISK_RT_RANDOM_REAL32_BITS_V1
+                                 : OBELISK_RT_RANDOM_REAL64_BITS_V1,
+                    *width);
       return success();
     };
     // Raw value/unknown projections are parameters even when their source
@@ -4656,8 +4760,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return captureExpression();
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
         return failure();
-      instruction(OBELISK_RT_RANDOM_CAST_V1, *width,
-                  isSignedNode(nested.front()));
+      auto sourceType = getNormalizedSemanticType(nested.front());
+      if (!floating && succeeded(sourceType) && isa<FloatType>(*sourceType)) {
+        emitError(getSemanticLocation(expression))
+            << "real-to-integral constraint conversion requires IEEE rounding";
+        return failure();
+      }
+      instruction(floating ? OBELISK_RT_RANDOM_REAL_CAST_V1
+                           : OBELISK_RT_RANDOM_CAST_V1,
+                  *width, isSignedNode(nested.front()));
       return success();
     }
     // Compiler arithmetic nodes remain structural even when their operands
@@ -6153,7 +6264,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           }
         }
       }
-      if (binary && values.size() == 2 &&
+      if (binary && values.size() == 2 && !isa<FloatType>(*resultType) &&
           (binary.getOperatorKind() == semantic::SVBinaryOperator::Divide ||
            binary.getOperatorKind() == semantic::SVBinaryOperator::Mod)) {
         auto right = convert(values[1].value, *resultType,
@@ -6608,6 +6719,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     }
   }
+  for (auto [index, property] : llvm::enumerate(planned)) {
+    if (!isa<FloatType>(property.type))
+      continue;
+    instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, property.width, false,
+                propertyOffsets[index]);
+    instruction(OBELISK_RT_RANDOM_REAL_RANK_VALID_V1, 1);
+    instruction(OBELISK_RT_RANDOM_END_HARD_V1, 1, false,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1);
+    if (failed(recordPriorityInputs(propertyMasks[index],
+                                    APInt::getZero(assignmentWidth))))
+      return failure();
+    emittedHard = true;
+  }
   // A statically distinct path can reach the same active random object. The
   // flattened solver gives each occurrence its own bit slice, so identify the
   // owner at runtime and make corresponding fields equal exactly when both
@@ -6747,6 +6871,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       program.push_back(static_cast<uint8_t>(value >> (index * 8)));
   };
   uint32_t programFlags = emittedSoft ? OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT : 0;
+  if (hasRealProgram)
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_REAL;
 #ifdef OBELISK_ENABLE_Z3
   programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
   if (distPlans.empty())
@@ -6976,9 +7102,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
            "fallback traversal of at most 2^20 aggregate assignments";
     return failure();
   }
-  solver::RandomProgramAnalysis analysis = solver::analyzeRandomProgram(
-      program.data(), program.size(), /*resourceLimit=*/100000,
-      /*preferGlobalAssignmentTable=*/hasSolveBefore);
+  solver::RandomProgramAnalysis analysis;
+  if (!hasRealProgram)
+    analysis = solver::analyzeRandomProgram(
+        program.data(), program.size(), /*resourceLimit=*/100000,
+        /*preferGlobalAssignmentTable=*/hasSolveBefore);
   bool softProposalExact =
       !hasSoftConstraint || analysis.softPreferencesResolved;
 
@@ -8256,7 +8384,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
 
   bool weightedRequiresRuntime = rawDistWeights && !distPlans.empty();
-  bool solveBeforeRequiresRuntime = weightedRequiresRuntime ||
+  bool solveBeforeRequiresRuntime = hasRealProgram || weightedRequiresRuntime ||
                                     hasFunctionPriority ||
                                     (hasSolveBefore && !softProposalExact);
   if (hasSolveBefore && !solveBeforeTableRoot &&
@@ -8334,7 +8462,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            disabledCheckBlock, ValueRange{},
                            enabledSamplingBlock, ValueRange{});
   setCurrent(enabledSamplingBlock);
-  Value randomDraw = nextAssignment(state);
+  Value randomDraw = hasRealProgram ? currentAssignment : nextAssignment(state);
   Value start = arith::OrIOp::create(
       builder, location,
       arith::AndIOp::create(builder, location, randomDraw, mutableMask),
@@ -8818,11 +8946,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           IntegerType::get(function.getContext(), property.width);
       if (property.width != assignmentWidth)
         bits = arith::TruncIOp::create(builder, location, integerType, bits);
-      FailureOr<Value> converted =
-          isa<sim::UnpackedArrayType>(property.type)
-              ? convertFixedBitstreamTarget(bits, property.type, location)
-              : convert(bits, property.type, false, location,
-                        property.isSigned);
+      FailureOr<Value> converted = [&]() -> FailureOr<Value> {
+        if (isa<FloatType>(property.type)) {
+          Value value = sim::SimRandomRealFromRankOp::create(
+              builder, location, property.type, bits);
+          return arith::SelectOp::create(builder, location,
+                                         propertyEnabled[candidates.size()],
+                                         value, property.currentValue)
+              .getResult();
+        }
+        return isa<sim::UnpackedArrayType>(property.type)
+                   ? convertFixedBitstreamTarget(bits, property.type, location)
+                   : convert(bits, property.type, false, location,
+                             property.isSigned);
+      }();
       if (failed(converted))
         return failure();
       candidates.push_back(*converted);
@@ -9774,7 +9911,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   setCurrent(modeSamplingDispatchBlock);
   storeRandomState(modeState);
   if (!hasRuntimeForeachConstraint &&
-      (weightedRequiresRuntime || hasSolveBefore || hasFiniteDomains))
+      (hasRealProgram || weightedRequiresRuntime || hasSolveBefore ||
+       hasFiniteDomains))
     cf::BranchOp::create(builder, location, modeFallbackBlock,
                          ValueRange{modeStart});
   else

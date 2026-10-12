@@ -11,6 +11,39 @@
 
 namespace obelisk::runtime {
 
+/// Deterministic binary64-to-binary32 round-to-nearest, ties-to-even. Cell
+/// specialization uses integer payloads so host floating rounding modes cannot
+/// change the compiler's IEEE boundary relation. NaNs retain their class.
+inline uint32_t narrowReal64Payload(uint64_t payload) {
+  uint32_t sign = static_cast<uint32_t>(payload >> 32) & UINT32_C(0x80000000);
+  unsigned exponent = (payload >> 52) & 2047;
+  uint64_t significand = payload & ((uint64_t{1} << 52) - 1);
+  if (exponent == 2047)
+    return sign | (significand ? UINT32_C(0x7fc00000) : UINT32_C(0x7f800000));
+  int power = exponent ? int(exponent) - 1023 : -1022;
+  if (exponent)
+    significand |= uint64_t{1} << 52;
+  auto rounded = [&](unsigned shift) -> uint64_t {
+    if (shift >= 64)
+      return 0; // A binary64 significand has at most 53 bits.
+    uint64_t value = significand >> shift;
+    uint64_t tail = significand & ((uint64_t{1} << shift) - 1);
+    uint64_t half = uint64_t{1} << (shift - 1);
+    return value + (tail > half || (tail == half && (value & 1)));
+  };
+  if (power < -126)
+    return sign | static_cast<uint32_t>(rounded(unsigned(-power - 97)));
+  uint64_t value = rounded(29);
+  unsigned storedExponent = unsigned(power + 127);
+  if (value == (uint64_t{1} << 24)) {
+    value >>= 1;
+    ++storedExponent;
+  }
+  if (storedExponent >= 255)
+    return sign | UINT32_C(0x7f800000);
+  return sign | (storedExponent << 23) | (uint32_t(value) & UINT32_C(0x7fffff));
+}
+
 /// The coordinate quantum is half the least positive subnormal. Converting
 /// a coordinate towards zero gives each floating value a cell whose mass is
 /// proportional to its numeric spacing, rather than one mass per encoding.

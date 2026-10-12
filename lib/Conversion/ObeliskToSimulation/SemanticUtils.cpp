@@ -279,6 +279,8 @@ bool storageDecidesTruth(Operation *expression) {
 std::optional<StringRef> getConstantSpelling(Operation *operation) {
   if (auto literal = dyn_cast<semantic::SVIntegerLiteralOp>(operation))
     return literal.getConstantValue();
+  if (auto literal = dyn_cast<semantic::SVRealLiteralOp>(operation))
+    return literal.getConstantValue();
   if (auto literal =
           dyn_cast<semantic::SVUnbasedUnsizedIntegerLiteralOp>(operation))
     return literal.getConstantValue();

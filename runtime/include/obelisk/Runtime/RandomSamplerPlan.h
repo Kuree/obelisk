@@ -64,12 +64,17 @@ enum class PlanOpcode : uint32_t {
   Real32LastBit = 6,
   Real64FirstBit = 7,
   Real64LastBit = 8,
+  // Binary64 state rounded to binary32, for promoted shortreal comparisons.
+  Real32From64FirstBit = 9,
+  Real32From64LastBit = 10,
 };
 
 inline unsigned realCellPrecision(PlanOpcode opcode) {
   switch (opcode) {
   case PlanOpcode::Real32FirstBit:
   case PlanOpcode::Real32LastBit:
+  case PlanOpcode::Real32From64FirstBit:
+  case PlanOpcode::Real32From64LastBit:
     return 32;
   case PlanOpcode::Real64FirstBit:
   case PlanOpcode::Real64LastBit:
@@ -77,6 +82,11 @@ inline unsigned realCellPrecision(PlanOpcode opcode) {
   default:
     return 0;
   }
+}
+
+inline bool realCellNarrowed(PlanOpcode opcode) {
+  return opcode == PlanOpcode::Real32From64FirstBit ||
+         opcode == PlanOpcode::Real32From64LastBit;
 }
 
 struct PlanNode {
@@ -339,14 +349,17 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
     case PlanOpcode::Real32FirstBit:
     case PlanOpcode::Real32LastBit:
     case PlanOpcode::Real64FirstBit:
-    case PlanOpcode::Real64LastBit: {
+    case PlanOpcode::Real64LastBit:
+    case PlanOpcode::Real32From64FirstBit:
+    case PlanOpcode::Real32From64LastBit: {
       unsigned precision = realCellPrecision(opcode);
       unsigned coordinateWidth = precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
                                                  : OBELISK_RT_REAL64_RANK_BITS;
       // These are deterministic state parameters, never sampled witnesses.
       // The low IEEE payload bits of the declared capture name their cell.
       if (!index || a >= captures || b >= coordinateWidth ||
-          (captureWidths ? captureWidths[a] : 64) < precision ||
+          (captureWidths ? captureWidths[a] : 64) <
+              (realCellNarrowed(opcode) ? 64u : precision) ||
           !(planRead32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL))
         return false;
       break;

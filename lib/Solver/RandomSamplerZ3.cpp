@@ -40,6 +40,10 @@ struct Bits {
   bool real = false;
   Z3_ast representation = nullptr;
   Z3_ast coordinate = nullptr;
+  // A mixed active/frozen selection retains coordinates only on this guard.
+  // Its other arm is IEEE state and must never decode a NaN/Inf placeholder.
+  Z3_ast coordinateGuard = nullptr;
+  Z3_ast coordinateState = nullptr;
 };
 
 class BitVectorFormula {
@@ -136,9 +140,18 @@ public:
           representation =
               Z3_mk_bvxor(context, representation,
                           constant(uint64_t{1} << (width - 1), width));
-        return {value, width, true, representation,
+        return {value,
+                width,
+                true,
+                representation,
                 opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
                     ? input.coordinate
+                    : nullptr,
+                opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                    ? input.coordinateGuard
+                    : nullptr,
+                opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                    ? input.coordinateState
                     : nullptr};
       }
       return {nullptr, width};
@@ -428,16 +441,25 @@ public:
       return {nullptr, width};
     hasReal = true;
     if (opcode == OBELISK_RT_RANDOM_REAL_CAST_V1) {
+      bool retainsCoordinate =
+          input.real &&
+          (input.width == width || (input.width == 32 && width == 64));
       Z3_ast value =
           input.real ? resize(input, width)
           : sign ? Z3_mk_fpa_to_fp_signed(context, rounding(), input.value,
                                           realSort(width))
                  : Z3_mk_fpa_to_fp_unsigned(context, rounding(), input.value,
                                             realSort(width));
-      return {value, width, true,
+      return {value,
+              width,
+              true,
               input.real && input.width == width ? input.representation
                                                  : nullptr,
-              input.real && input.width == width ? input.coordinate : nullptr};
+              retainsCoordinate ? input.coordinate : nullptr,
+              retainsCoordinate ? input.coordinateGuard : nullptr,
+              retainsCoordinate && input.coordinateState
+                  ? resize({input.coordinateState, input.width, true}, width)
+                  : nullptr};
     }
     if (opcode == OBELISK_RT_RANDOM_REAL_TO_BITS_V1) {
       if (!input.real || input.width != width || sign)
@@ -544,7 +566,73 @@ public:
   /// payload's complete preimage cell, rather than the property's barrel shift
   /// and highest-bit decoder. Each endpoint takes a fixed number of Z3 nodes.
   Z3_ast compareCoordinate(uint8_t opcode, Bits rank, Z3_ast payload,
-                           unsigned precision) {
+                           unsigned precision,
+                           std::pair<Z3_ast, Z3_ast> capturedCell = {nullptr,
+                                                                     nullptr}) {
+    if (rank.width == OBELISK_RT_REAL32_RANK_BITS && precision == 64) {
+      // Widening shortreal is exact. Its order against a real endpoint is
+      // determined by that endpoint's nearest shortreal and which side the
+      // endpoint lies on. No candidate coordinate decoder is needed.
+      Z3_ast target = Z3_mk_fpa_to_fp_bv(context, payload, realSort(64));
+      Z3_ast nearest =
+          Z3_mk_fpa_to_fp_float(context, rounding(), target, realSort(32));
+      Z3_ast widened =
+          Z3_mk_fpa_to_fp_float(context, rounding(), nearest, realSort(64));
+      auto cell = captureCell ? captureCell(payload, 32)
+                              : std::pair<Z3_ast, Z3_ast>{nullptr, nullptr};
+      Z3_ast nearestPayload;
+      if (cell.first) {
+        // Cell parameters supply the numeric endpoints. Only classification
+        // and sign remain in this payload, avoiding arbitrary NaN witnesses.
+        Z3_ast sign =
+            Z3_mk_ite(context,
+                      Z3_mk_eq(context, Z3_mk_extract(context, 63, 63, payload),
+                               constant(1, 1)),
+                      constant(UINT64_C(0x80000000), 32), constant(0, 32));
+        nearestPayload = Z3_mk_ite(
+            context, Z3_mk_fpa_is_nan(context, nearest),
+            constant(UINT64_C(0x7fc00000), 32),
+            Z3_mk_bvor(context, sign,
+                       Z3_mk_ite(context,
+                                 Z3_mk_fpa_is_infinite(context, nearest),
+                                 constant(UINT64_C(0x7f800000), 32),
+                                 constant(1, 32))));
+      } else {
+        nearestPayload = Z3_mk_ite(context, Z3_mk_fpa_is_nan(context, nearest),
+                                   constant(UINT64_C(0x7fc00000), 32),
+                                   Z3_mk_fpa_to_ieee_bv(context, nearest));
+      }
+      auto compare = [&](uint8_t kind) {
+        return compareCoordinate(kind, rank, nearestPayload, 32, cell);
+      };
+      switch (opcode) {
+      case OBELISK_RT_RANDOM_EQ_V1:
+      case OBELISK_RT_RANDOM_NE_V1: {
+        Z3_ast equal = conjunction(Z3_mk_fpa_eq(context, widened, target),
+                                   compare(OBELISK_RT_RANDOM_EQ_V1));
+        return opcode == OBELISK_RT_RANDOM_EQ_V1 ? equal
+                                                 : Z3_mk_not(context, equal);
+      }
+      case OBELISK_RT_RANDOM_LT_V1:
+        return Z3_mk_ite(context, Z3_mk_fpa_lt(context, widened, target),
+                         compare(OBELISK_RT_RANDOM_LE_V1),
+                         compare(OBELISK_RT_RANDOM_LT_V1));
+      case OBELISK_RT_RANDOM_LE_V1:
+        return Z3_mk_ite(context, Z3_mk_fpa_leq(context, widened, target),
+                         compare(OBELISK_RT_RANDOM_LE_V1),
+                         compare(OBELISK_RT_RANDOM_LT_V1));
+      case OBELISK_RT_RANDOM_GT_V1:
+        return Z3_mk_ite(context, Z3_mk_fpa_gt(context, widened, target),
+                         compare(OBELISK_RT_RANDOM_GE_V1),
+                         compare(OBELISK_RT_RANDOM_GT_V1));
+      case OBELISK_RT_RANDOM_GE_V1:
+        return Z3_mk_ite(context, Z3_mk_fpa_geq(context, widened, target),
+                         compare(OBELISK_RT_RANDOM_GE_V1),
+                         compare(OBELISK_RT_RANDOM_GT_V1));
+      default:
+        return nullptr;
+      }
+    }
     unsigned fraction = precision == 32 ? 23 : 52;
     unsigned exponent = precision == 32 ? 8 : 11;
     Z3_ast exponentBits =
@@ -581,8 +669,9 @@ public:
         Z3_mk_ite(context, zero, constant(1, rank.width),
                   Z3_mk_ite(context, negative, Z3_mk_bvneg(context, magnitude),
                             lastMagnitude));
-    if (captureCell) {
-      auto cell = captureCell(payload, precision);
+    if (capturedCell.first || captureCell) {
+      auto cell =
+          capturedCell.first ? capturedCell : captureCell(payload, precision);
       if (cell.first) {
         first = cell.first;
         last = cell.second;
@@ -656,14 +745,28 @@ public:
       return {nullptr, width};
     if (lhs.width == rhs.width && opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
         opcode <= OBELISK_RT_RANDOM_LT_V1) {
-      unsigned rankWidth = lhs.width == 32 ? OBELISK_RT_REAL32_RANK_BITS
-                                           : OBELISK_RT_REAL64_RANK_BITS;
       if (lhs.coordinate && rhs.representation && !rhs.coordinate) {
+        unsigned rankWidth =
+            Z3_get_bv_sort_size(context, Z3_get_sort(context, lhs.coordinate));
         if (Z3_ast predicate =
                 compareCoordinate(opcode, {lhs.coordinate, rankWidth},
-                                  rhs.representation, lhs.width))
+                                  rhs.representation, lhs.width)) {
+          if (lhs.coordinateGuard) {
+            Bits state = lhs;
+            state.value = lhs.coordinateState;
+            state.coordinate = state.coordinateGuard = state.coordinateState =
+                nullptr;
+            Bits frozen = realBinary(opcode, state, rhs, width);
+            if (!frozen.value)
+              return {nullptr, width};
+            predicate = Z3_mk_ite(context, lhs.coordinateGuard, predicate,
+                                  truth(frozen));
+          }
           return boolean(predicate, width);
+        }
       } else if (rhs.coordinate && lhs.representation && !lhs.coordinate) {
+        unsigned rankWidth =
+            Z3_get_bv_sort_size(context, Z3_get_sort(context, rhs.coordinate));
         uint8_t reversed = opcode;
         switch (opcode) {
         case OBELISK_RT_RANDOM_GE_V1:
@@ -681,8 +784,20 @@ public:
         }
         if (Z3_ast predicate =
                 compareCoordinate(reversed, {rhs.coordinate, rankWidth},
-                                  lhs.representation, lhs.width))
+                                  lhs.representation, lhs.width)) {
+          if (rhs.coordinateGuard) {
+            Bits state = rhs;
+            state.value = rhs.coordinateState;
+            state.coordinate = state.coordinateGuard = state.coordinateState =
+                nullptr;
+            Bits frozen = realBinary(opcode, lhs, state, width);
+            if (!frozen.value)
+              return {nullptr, width};
+            predicate = Z3_mk_ite(context, rhs.coordinateGuard, predicate,
+                                  truth(frozen));
+          }
           return boolean(predicate, width);
+        }
       }
     }
     unsigned precision = std::max(lhs.width, rhs.width);
@@ -768,11 +883,14 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   Z3_tactic_inc_ref(context, cardFirst);
   Z3_tactic first = Z3_tactic_and_then(context, cardFirst, blast);
   Z3_tactic_inc_ref(context, first);
-  Z3_tactic floating = nullptr, floatingFirst = nullptr;
+  Z3_tactic floating = nullptr, floatingSimplified = nullptr,
+            floatingFirst = nullptr;
   if (real) {
     floating = Z3_mk_tactic(context, "fpa2bv");
     Z3_tactic_inc_ref(context, floating);
-    floatingFirst = Z3_tactic_and_then(context, floating, first);
+    floatingSimplified = Z3_tactic_and_then(context, simplify, floating);
+    Z3_tactic_inc_ref(context, floatingSimplified);
+    floatingFirst = Z3_tactic_and_then(context, floatingSimplified, first);
     Z3_tactic_inc_ref(context, floatingFirst);
   }
   Z3_tactic tactic =
@@ -794,6 +912,7 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   Z3_tactic_dec_ref(context, tactic);
   if (real) {
     Z3_tactic_dec_ref(context, floatingFirst);
+    Z3_tactic_dec_ref(context, floatingSimplified);
     Z3_tactic_dec_ref(context, floating);
   }
   Z3_tactic_dec_ref(context, first);
@@ -817,19 +936,24 @@ public:
     formula.captureCell = [this](Z3_ast payload, unsigned precision) {
       auto source = realCaptureSources.find(payload);
       if (source == realCaptureSources.end() ||
-          source->second.second != precision)
+          (source->second.second != precision &&
+           !(precision == 32 && source->second.second == 64)))
         return std::pair<Z3_ast, Z3_ast>{nullptr, nullptr};
       unsigned capture = source->second.first;
-      uint64_t key = (uint64_t(capture) << 1) | (precision == 64);
+      bool narrowed = precision == 32 && source->second.second == 64;
+      uint64_t key =
+          (uint64_t(capture) << 2) | (narrowed ? 2 : precision == 64);
       auto found = realCaptureCells.find(key);
       if (found != realCaptureCells.end())
         return found->second;
       unsigned width = precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
                                        : OBELISK_RT_REAL64_RANK_BITS;
-      PlanOpcode first = precision == 32 ? PlanOpcode::Real32FirstBit
-                                         : PlanOpcode::Real64FirstBit;
-      PlanOpcode last = precision == 32 ? PlanOpcode::Real32LastBit
-                                        : PlanOpcode::Real64LastBit;
+      PlanOpcode first = narrowed          ? PlanOpcode::Real32From64FirstBit
+                         : precision == 32 ? PlanOpcode::Real32FirstBit
+                                           : PlanOpcode::Real64FirstBit;
+      PlanOpcode last = narrowed          ? PlanOpcode::Real32From64LastBit
+                        : precision == 32 ? PlanOpcode::Real32LastBit
+                                          : PlanOpcode::Real64LastBit;
       std::vector<Z3_ast> firstBits, lastBits;
       for (unsigned bit = 0; bit != width; ++bit) {
         firstBits.push_back(input(first, capture, bit));
@@ -1246,14 +1370,48 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
               ? Z3_mk_ite(f.context, f.truth(condition), yes.representation,
                           no.representation)
               : nullptr;
-      Z3_ast coordinate = yes.real && yes.coordinate && no.coordinate &&
-                                  yes.width == bits && no.width == bits
-                              ? Z3_mk_ite(f.context, f.truth(condition),
-                                          yes.coordinate, no.coordinate)
-                              : nullptr;
+      bool sameCoordinates =
+          yes.coordinate && no.coordinate &&
+          Z3_is_eq_sort(f.context, Z3_get_sort(f.context, yes.coordinate),
+                        Z3_get_sort(f.context, no.coordinate));
+      Z3_ast coordinate =
+          yes.real && sameCoordinates && yes.width == bits && no.width == bits
+              ? Z3_mk_ite(f.context, f.truth(condition), yes.coordinate,
+                          no.coordinate)
+              : nullptr;
+      Z3_ast coordinateGuard = nullptr, coordinateState = nullptr;
+      if (yes.real && yes.width == bits && no.width == bits &&
+          (yes.coordinate || no.coordinate) &&
+          (!yes.coordinate || !no.coordinate || sameCoordinates) &&
+          (!coordinate || yes.coordinateGuard || no.coordinateGuard)) {
+        Z3_ast conditionValue = f.truth(condition);
+        unsigned rankWidth = Z3_get_bv_sort_size(
+            f.context, Z3_get_sort(f.context, yes.coordinate ? yes.coordinate
+                                                             : no.coordinate));
+        coordinate = Z3_mk_ite(
+            f.context, conditionValue,
+            yes.coordinate ? yes.coordinate : f.constant(0, rankWidth),
+            no.coordinate ? no.coordinate : f.constant(0, rankWidth));
+        auto guard = [&](Bits input) {
+          return input.coordinateGuard ? input.coordinateGuard
+                 : input.coordinate    ? Z3_mk_true(f.context)
+                                       : Z3_mk_false(f.context);
+        };
+        auto state = [&](Bits input) {
+          return input.coordinateState ? input.coordinateState
+                 : input.coordinate
+                     ? Z3_mk_fpa_zero(f.context, f.realSort(bits), false)
+                     : input.value;
+        };
+        coordinateGuard =
+            Z3_mk_ite(f.context, conditionValue, guard(yes), guard(no));
+        coordinateState =
+            Z3_mk_ite(f.context, conditionValue, state(yes), state(no));
+      }
       stack.push_back(
           {Z3_mk_ite(f.context, f.truth(condition), yesValue, noValue), bits,
-           yes.real, representation, coordinate});
+           yes.real, representation, coordinate, coordinateGuard,
+           coordinateState});
     } else if ((opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
                 opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
                opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
