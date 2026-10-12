@@ -97,6 +97,9 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
       return failure();
     std::optional<unsigned> packedWidth =
         sim::getPackedWidth(argumentRef.getElementType());
+    Type element = argumentRef.getElementType();
+    if (element.isF64() || isa<sim::StringType>(element))
+      packedWidth = 64;
     if (!packedWidth)
       return failure();
     width = *packedWidth;
@@ -1113,7 +1116,9 @@ private:
 class CovergroupFormalReadConversion final
     : public OpConversionPattern<sim::SimCovergroupFormalReadOp> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  CovergroupFormalReadConversion(const TypeConverter &converter,
+                                 MLIRContext *context, uint64_t stateBitCount)
+      : OpConversionPattern(converter, context), stateBitCount(stateBitCount) {}
   LogicalResult
   matchAndRewrite(sim::SimCovergroupFormalReadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
@@ -1126,8 +1131,9 @@ public:
       return failure();
     std::optional<unsigned> width =
         sim::getPackedWidth(op.getResult().getType());
+    bool string = isa<sim::StringType>(op.getResult().getType());
     uint64_t bitWidth =
-        op.getResult().getType().isF64() ? 64 : width.value_or(0);
+        op.getResult().getType().isF64() || string ? 64 : width.value_or(0);
     if (!bitWidth)
       return failure();
     uint64_t size = (bitWidth + 7) / 8;
@@ -1137,7 +1143,8 @@ public:
     if (convertedTypes.size() == 2)
       unknown = entryAlloca(rewriter, op.getLoc(), convertedTypes[1], 1, 8);
     uint64_t kind =
-        op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
+        string                             ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
+        : op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
         : convertedTypes.size() == 2 ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
                                      : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
     auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
@@ -1156,6 +1163,12 @@ public:
                                     rewriter.getI64Type(), bitWidth),
                        llvmConstant(rewriter, op.getLoc(),
                                     rewriter.getI64Type(), size),
+                       LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                                 "__obelisk_state_value"),
+                       LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer,
+                                                 "__obelisk_state_unknown"),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), stateBitCount),
                        value, unknown})
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
@@ -1170,6 +1183,9 @@ public:
     rewriter.replaceOpWithMultiple(op, std::move(replacements));
     return success();
   }
+
+private:
+  uint64_t stateBitCount;
 };
 
 template <typename Op, bool IsType>
@@ -1229,11 +1245,13 @@ public:
 
 void populateManagedCoverageToLLVMConversionPatterns(
     RewritePatternSet &patterns, TypeConverter &converter,
-    const llvm::DataLayout &dataLayout) {
+    const llvm::DataLayout &dataLayout, uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
   FunctionalValueLayout layout = getFunctionalValueLayout(dataLayout);
   patterns.add<CovergroupCreateConversion, CovergroupSampleConversion>(
       converter, context, layout);
+  patterns.add<CovergroupFormalReadConversion>(converter, context,
+                                               stateBitCount);
   patterns.add<
       CoveragePointHitConversion,
       CoverageControlConversion<sim::SimCoverageControlDefinitionOp>,
@@ -1254,7 +1272,7 @@ void populateManagedCoverageToLLVMConversionPatterns(
       CovergroupGetIntegerOptionConversion, CovergroupGetStringOptionConversion,
       CovergroupSetStringOptionConversion,
       CovergroupSetTypeIntegerOptionConversion,
-      CovergroupSetTypeStringOptionConversion, CovergroupFormalReadConversion,
+      CovergroupSetTypeStringOptionConversion,
       CovergroupControlConversion<sim::SimCovergroupStartOp, true>,
       CovergroupControlConversion<sim::SimCovergroupStopOp, false>,
       CovergroupQueryConversion<sim::SimCovergroupInstanceQueryOp, false>,

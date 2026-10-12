@@ -1281,9 +1281,8 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
             !isStaticallyAllocatedOverrideTarget(value) &&
             !attrs.contains("simulation.automatic_reference_capture")) {
           SmallVector<NamedAttribute> entries(attrs.begin(), attrs.end());
-          entries.push_back(
-              builder.getNamedAttr("simulation.automatic_reference_capture",
-                                   builder.getUnitAttr()));
+          entries.push_back(builder.getNamedAttr(
+              "simulation.automatic_reference_capture", builder.getUnitAttr()));
           attrs = builder.getDictionaryAttr(entries);
         }
         argumentAttrs.push_back(attrs);
@@ -2268,11 +2267,6 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
                        "v1 FunctionalFormal plan");
       return failure();
     }
-    // String constructor formals are intentionally constructor-only. The
-    // preparation verifier rejects their use by sample-time expressions, so
-    // no long-lived managed String word is rooted in functional state.
-    if (isa<sim::StringType>(*type))
-      continue;
     std::string path = getHierarchyName(formal).str();
     savedConstructorFormals.emplace_back(path, values.lookup(path));
     values[path] = sim::SimCovergroupFormalReadOp::create(

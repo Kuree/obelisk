@@ -100,6 +100,22 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
       inputs.push_back(emitU64Constant(plan, static_cast<uint64_t>(id)));
     for (int64_t id : op.getExpressionIds())
       inputs.push_back(emitU64Constant(plan, static_cast<uint64_t>(id)));
+    // Carry reference geometry from the typed operand. Decoding one formal
+    // must not search the complete schema for its descriptor.
+    for (Value formal : op.getPayloads().take_front(op.getArgumentCount())) {
+      uint64_t width = 0;
+      if (auto reference = dyn_cast<sim::ArgumentRefType>(formal.getType())) {
+        Type element = reference.getElementType();
+        auto packed = sim::getPackedWidth(element);
+        if (element.isF64() || isa<sim::StringType>(element))
+          width = 64;
+        else if (packed)
+          width = *packed;
+        else
+          return op.emitOpError("has no executable reference formal geometry");
+      }
+      inputs.push_back(emitU64Constant(plan, width));
+    }
     llvm::append_range(
         inputs, llvm::map_range(op.getPayloads(),
                                 [&](Value value) { return reg(plan, value); }));

@@ -336,18 +336,10 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       auto found = read.getFormalId() > 0
                        ? formals.find(static_cast<uint64_t>(read.getFormalId()))
                        : formals.end();
-      if (found != formals.end() &&
-          found->second->resultKind ==
-              coverage::FunctionalExpressionResultKind::String) {
-        read.emitError("String constructor FunctionalFormal values are "
-                       "constructor-only and cannot be read while sampling");
-        invalid = true;
-      } else if (found == formals.end() || found->second->type != type ||
-                 found->second->kind !=
-                     coverage::FunctionalFormalKind::Constructor ||
-                 !valueMatches(read.getResult().getType(),
-                               found->second->resultKind,
-                               found->second->bitWidth)) {
+      if (found == formals.end() || found->second->type != type ||
+          found->second->kind != coverage::FunctionalFormalKind::Constructor ||
+          !valueMatches(read.getResult().getType(), found->second->resultKind,
+                        found->second->bitWidth)) {
         read.emitError("has a nonexistent, wrong-owner, or type-mismatched "
                        "constructor FunctionalFormal ID");
         invalid = true;

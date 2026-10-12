@@ -2097,14 +2097,109 @@ TEST(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
   uint8_t actual = 0;
   ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
                 context, handle, 70, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 8, 1,
-                &actual, nullptr),
+                nullptr, nullptr, 0, &actual, nullptr),
             OBELISK_RT_OK);
   EXPECT_EQ(actual, 3);
   ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
                 context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 8, 1,
-                &actual, nullptr),
+                nullptr, nullptr, 0, &actual, nullptr),
             OBELISK_RT_OK);
   EXPECT_EQ(actual, 7);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalFormals.push_back(
+      {90, 10, "snapshot", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Input, FunctionalExpressionResultKind::String,
+       0, 0, CoverageSignedness::NotApplicable, 0, 0});
+  schema.functionalFormals.push_back(
+      {71, 10, "live", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Ref, FunctionalExpressionResultKind::String,
+       0, 0, CoverageSignedness::NotApplicable, 1, 0});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  std::array<obelisk_rt_string_v1, 2> strings{};
+  obelisk_rt_gc_managed_root_range_v1 stringRoots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(
+                lane, &stringRoots, strings.data(), strings.size()),
+            OBELISK_RT_OK);
+  const std::string frozenText = "an independently captured constructor string";
+  const std::string initialText = "an initial live constructor string";
+  const std::string updatedText = "the updated live constructor string";
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, frozenText.data(),
+                                        frozenText.size(), &strings[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, initialText.data(),
+                                        initialText.size(), &strings[1]),
+            OBELISK_RT_OK);
+  const obelisk_rt_trace_entry_v1 entry{
+      0,      0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING,
+      nullptr};
+  const obelisk_rt_trace_layout_v1 trace{
+      OBELISK_RT_VERSION, 0, 8, 8, &entry, 1};
+  const obelisk_rt_element_type_v1 element{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_STRING, 99, 0, 0, 8, 8, 0, &trace};
+  obelisk_rt_object_v1 *array = nullptr;
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &array),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &strings[1], nullptr),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *path = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                lane, array, 0, nullptr, 0, 0, nullptr, nullptr, 0, &path),
+            OBELISK_RT_OK);
+  const std::array<obelisk_rt_functional_value_v1, 2> formals{
+      {{90, 0, 0, nullptr, nullptr, nullptr, strings[0],
+        OBELISK_RT_FUNCTIONAL_VALUE_STRING, 0},
+       {71, 64, 8, nullptr, nullptr, path, 0,
+        OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 2}}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+                                            formals.size(), nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  strings[0] = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, updatedText.data(),
+                                        updatedText.size(), &strings[1]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &strings[1], nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &stringRoots),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (auto [id, expected] : {std::pair{uint64_t{90}, frozenText},
+                              std::pair{uint64_t{71}, updatedText}}) {
+    obelisk_rt_string_v1 value = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_STRING, 64,
+                  8, nullptr, nullptr, 0, &value, nullptr),
+              OBELISK_RT_OK);
+    char scratch[8];
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(value, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string(bytes, size), expected);
+    value = UINT64_MAX;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
+                  8, nullptr, nullptr, 0, &value, nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(value, UINT64_MAX);
+  }
+  obelisk_rt_managed_execution_leave(lane, entered);
   obelisk_rt_v1_context_destroy(context);
 }
 

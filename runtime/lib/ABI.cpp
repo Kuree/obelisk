@@ -1099,7 +1099,8 @@ ABI_FUNCTION(obelisk_rt_v1_covergroup_formal_read,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_covergroup_v1, uint64_t,
                                    obelisk_rt_functional_value_kind_v1,
-                                   uint64_t, uint64_t, void *, void *));
+                                   uint64_t, uint64_t, const uint8_t *,
+                                   const uint8_t *, uint64_t, void *, void *));
 ABI_FUNCTION(obelisk_rt_v1_covergroup_instance_query,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_covergroup_v1, uint64_t, double *,

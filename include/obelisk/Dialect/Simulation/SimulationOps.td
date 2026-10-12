@@ -1075,7 +1075,10 @@ def SimCovergroupSampleEnabledOp : SimOp<"covergroup.sample_enabled", [
 }
 
 def SimCovergroupFormalReadOp : SimOp<"covergroup.formal_read", [
-    MemoryEffects<[MemRead<SimCoverageResource>]>
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimCoverageResource>, MemRead<SimStorageResource>,
+                   MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
   ]> {
   let summary = "read a constructor formal captured by a covergroup instance";
   let description = [{
@@ -1083,6 +1086,9 @@ def SimCovergroupFormalReadOp : SimOp<"covergroup.formal_read", [
     a live `ref` constructor formal, from the instance configuration. The
     positive stable ID names a `FunctionalFormal` record in the embedded v1
     schema; it is not a physical table index.
+    Input strings retain immutable managed values; references load the current
+    typed storage. A reference path may detach its selected element or obtain
+    a managed string snapshot, so reading can allocate and update the heap.
   }];
   let arguments = (ins SimContextType:$context,
                        SimCovergroupHandleType:$handle,

@@ -1227,36 +1227,22 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto type = scalar(0), formalCount = scalar(1), expressionCount = scalar(2);
     if (!type || !formalCount || !expressionCount ||
         *formalCount > UINT32_MAX || *expressionCount > UINT32_MAX ||
-        site.inputCount != 3 + 2 * (*formalCount + *expressionCount))
+        site.inputCount != 3 + 3 * *formalCount + 2 * *expressionCount)
       return OBELISK_RT_INVALID_BYTECODE;
     std::vector<obelisk_rt_functional_value_v1> formals, expressions;
     OBELISK_RT_TRY {
       formals.resize(static_cast<size_t>(*formalCount));
       expressions.resize(static_cast<size_t>(*expressionCount));
       uint32_t idBase = 3;
-      uint32_t valueBase =
+      uint32_t widthBase =
           idBase + static_cast<uint32_t>(*formalCount + *expressionCount);
+      uint32_t valueBase = widthBase + static_cast<uint32_t>(*formalCount);
       for (uint32_t index = 0; index != *formalCount; ++index) {
         auto id = scalar(idBase + index);
-        uint64_t referenceWidth = 0;
-        if (context->coverage && context->coverage->schema && id) {
-          auto formal =
-              std::find_if(context->coverage->schema->functionalFormals.begin(),
-                           context->coverage->schema->functionalFormals.end(),
-                           [&](const auto &entry) { return entry.id == *id; });
-          if (formal != context->coverage->schema->functionalFormals.end()) {
-            using ResultKind =
-                obelisk::coverage::FunctionalExpressionResultKind;
-            if (formal->resultKind == ResultKind::Real)
-              referenceWidth = 64;
-            else if (formal->resultKind == ResultKind::Boolean)
-              referenceWidth = 1;
-            else
-              referenceWidth = formal->bitWidth;
-          }
-        }
-        if (!id || !functionalValue(inputRegister(valueBase + index), *id,
-                                    formals[index], referenceWidth))
+        auto referenceWidth = scalar(widthBase + index);
+        if (!id || !referenceWidth ||
+            !functionalValue(inputRegister(valueBase + index), *id,
+                             formals[index], *referenceWidth))
           return OBELISK_RT_INVALID_BYTECODE;
       }
       for (uint32_t index = 0; index != *expressionCount; ++index) {
@@ -1759,12 +1745,15 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     uint32_t kind = output.kind == OBELISK_RT_DBREG_REAL64
                         ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
+                    : output.kind == OBELISK_RT_DBREG_STRING
+                        ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
                     : output.kind == OBELISK_RT_DBREG_LOGIC
                         ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
                         : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
     if (output.kind != OBELISK_RT_DBREG_BITS &&
         output.kind != OBELISK_RT_DBREG_LOGIC &&
-        output.kind != OBELISK_RT_DBREG_REAL64)
+        output.kind != OBELISK_RT_DBREG_REAL64 &&
+        output.kind != OBELISK_RT_DBREG_STRING)
       return OBELISK_RT_INVALID_BYTECODE;
     uint64_t size = output.kind == OBELISK_RT_DBREG_REAL64
                         ? sizeof(double)
@@ -1781,8 +1770,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       std::memset(unknown, 0, static_cast<size_t>(output.size / 2));
     return obelisk_rt_v1_covergroup_formal_read(
         context, *handle, *formal, kind,
-        output.kind == OBELISK_RT_DBREG_REAL64 ? 64 : output.width, size, value,
-        unknown);
+        output.kind == OBELISK_RT_DBREG_REAL64 ? 64 : output.width, size,
+        nullptr, nullptr, 0, value, unknown);
   }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE: {
     auto handle = scalar(0), count = scalar(1);

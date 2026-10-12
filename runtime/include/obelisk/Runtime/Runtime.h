@@ -4939,10 +4939,16 @@ obelisk_rt_status obelisk_rt_v1_covergroup_block_event_fire(
     obelisk_rt_context *context, uint64_t target_id,
     obelisk_rt_covergroup_block_event_kind_v1 event_kind,
     obelisk_rt_object_v1 *receiver);
+// String reads use a 64-bit managed String value (value_size == 8) and no
+// unknown plane. Input formals return their immutable captured value; ref
+// formals load the current typed value from their retained storage binding.
+// Generated native callers provide their global state planes. Null planes
+// select the context's canonical state for bytecode and runtime-only callers.
 obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
     uint64_t formal_id, obelisk_rt_functional_value_kind_v1 kind,
-    uint64_t bit_width, uint64_t value_size, void *out_value,
+    uint64_t bit_width, uint64_t value_size, const uint8_t *state_value,
+    const uint8_t *state_unknown, uint64_t state_bit_count, void *out_value,
     void *out_unknown);
 obelisk_rt_status obelisk_rt_v1_covergroup_instance_query(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,

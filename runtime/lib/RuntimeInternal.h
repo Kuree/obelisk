@@ -1667,6 +1667,8 @@ struct FunctionalCoverageValue {
   uint64_t valueSize = 0;
   uint32_t kind = 0;
   uint32_t argumentRefKind = 0;
+  obelisk::coverage::FunctionalExpressionResultKind resultKind =
+      obelisk::coverage::FunctionalExpressionResultKind::Integral;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
   obelisk_rt_object_v1 *owner = nullptr;
@@ -1868,7 +1870,8 @@ struct FunctionalCoverageInstanceState {
   /// Mutable comments keyed by zero for the group or by template item ID.
   obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
   std::unordered_set<uint64_t> disabledItems;
-  std::vector<FunctionalCoverageValue> formals;
+  obelisk::coverage::detail::IndexMap<uint64_t, FunctionalCoverageValue>
+      formals;
   std::vector<FunctionalCoverageBinState> bins;
   /// Live overlapping matches keyed by resolved transition alternative. A
   /// zero repeat count means the step has not matched yet. For a successor or

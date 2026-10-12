@@ -3426,9 +3426,6 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !enumBetween(formal.direction, FunctionalFormalDirection::Input,
                      FunctionalFormalDirection::Ref) ||
         !scalar ||
-        (formal.resultKind == FunctionalExpressionResultKind::String &&
-         formal.kind == FunctionalFormalKind::Constructor &&
-         formal.direction != FunctionalFormalDirection::Input) ||
         !enumBetween(formal.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         (integral &&

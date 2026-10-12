@@ -856,7 +856,6 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
       }
       llvm::StringMap<Operation *> formalNames;
       llvm::DenseSet<Operation *> sampleFormals;
-      llvm::DenseSet<Operation *> constructorStringFormals;
       for (Operation *child : getChildren(covergroup)) {
         auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
         if (!formal)
@@ -879,22 +878,13 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         Type scalar =
             succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
         const bool string = succeeded(type) && isa<sim::StringType>(*type);
-        const bool supportedString =
-            string &&
-            (formal.getDirection() == semantic::SVArgumentDirection::In ||
-             (isSampleFormal &&
-              formal.getDirection() == semantic::SVArgumentDirection::Ref));
-        if (supportedString && !isSampleFormal)
-          constructorStringFormals.insert(formal);
         if ((formal.getDirection() != semantic::SVArgumentDirection::In &&
              formal.getDirection() != semantic::SVArgumentDirection::Ref) ||
-            (!scalar && !(succeeded(type) && (*type).isF64()) &&
-             !supportedString) ||
+            (!scalar && !(succeeded(type) && (*type).isF64()) && !string) ||
             (scalar && !isa<IntegerType, sim::LogicType>(scalar))) {
           emitError(getSemanticLocation(formal))
               << "coverage formals must be input or ref values with signless "
-                 "integer, four-state logic, or real type, input string "
-                 "constructor values, or input/ref string sample values";
+                 "integer, four-state logic, real, or string type";
           invalid = true;
         }
       }
@@ -947,13 +937,6 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
           emitError(getSemanticLocation(nested))
               << "IEEE 1800-2017 19.8.1 permits a covergroup sample formal "
                  "only in a coverpoint expression or conditional guard";
-          invalid = true;
-        }
-        if (constructorStringFormals.contains(target->second) &&
-            sampleEvaluationUses.contains(nested)) {
-          emitError(getSemanticLocation(nested))
-              << "String covergroup constructor formals are supported only "
-                 "by constructor-time expressions and coverage options";
           invalid = true;
         }
       });

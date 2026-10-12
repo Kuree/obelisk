@@ -400,7 +400,7 @@ void populateManagedAssociativeToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedCoverageToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
-    const llvm::DataLayout &dataLayout);
+    const llvm::DataLayout &dataLayout, uint64_t stateBitCount);
 void populateManagedReferenceToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount);

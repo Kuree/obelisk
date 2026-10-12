@@ -18,6 +18,7 @@ parser.add_argument(
         "constructor-formal-string-type-mismatch",
         "formal-reorder",
         "insert-string-formal-read",
+        "insert-string-formal-read-wrong-type",
         "instance-query-nonexistent",
         "instance-query-wrong-owner",
         "sample-reorder",
@@ -139,7 +140,7 @@ elif args.mode == "formal-read-zero":
             + match.group(3)
         )
 
-elif args.mode == "insert-string-formal-read":
+elif args.mode in ("insert-string-formal-read", "insert-string-formal-read-wrong-type"):
     pattern = re.compile(
         r"(?m)^(\s*)((%\S+) = simulation\.covergroup\.create\s+(%\S+)\s+"
         r"from\s+\S+[^\n]*formal_ids\s*\[([1-9][0-9]*)[^]]*\][^\n]*"
@@ -161,7 +162,7 @@ elif args.mode == "insert-string-formal-read":
             + match.group(5)
             + "] : !simulation.context, "
             + match.group(6)
-            + " -> !simulation.string"
+            + (" -> i32" if args.mode.endswith("wrong-type") else " -> !simulation.string")
         )
 
 elif args.mode in (

@@ -8089,6 +8089,8 @@ bool validateValue(obelisk_rt_context *context,
   // ABI representation is the canonical one-bit logic value.
   if (result == Result::Boolean)
     width = 1;
+  else if (result == Result::String && reference)
+    width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
     return false;
   if (reference) {
@@ -8147,13 +8149,10 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
   if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER)
     return;
-  // String constructor inputs are consumed by constructor/option helpers and
-  // are not readable sample formals. Do not retain an unrooted managed word in
-  // the long-lived coverage service after construction.
-  if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING) {
-    destination.payload = 0;
+  // Strings are immutable values. The context's service-root enumerator
+  // retains this captured managed word independently of the caller's storage.
+  if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING)
     return;
-  }
   auto *value = static_cast<const uint8_t *>(source.value);
   destination.value.assign(value, value + source.value_size);
   if (source.unknown) {
@@ -11760,9 +11759,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
       instance.name = "$auto$" + std::to_string(handle);
       instance.generatedName = true;
     }
-    instance.formals.resize(expectedFormals.size());
-    for (size_t index = 0; index != expectedFormals.size(); ++index)
-      snapshotValue(formals[index], instance.formals[index]);
+    for (size_t index = 0; index != expectedFormals.size(); ++index) {
+      FunctionalCoverageValue value;
+      snapshotValue(formals[index], value);
+      value.resultKind = expectedFormals[index]->resultKind;
+      instance.formals.emplace(value.id, std::move(value));
+    }
     if (type->instances.size() == type->instances.max_size())
       return OBELISK_RT_OUT_OF_RESOURCES;
     if (type->instances.size() == type->instances.capacity())
@@ -11775,7 +11777,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     auto insertion = coverage->instances.emplace(handle, std::move(instance));
     if (!insertion.second)
       return OBELISK_RT_OUT_OF_RESOURCES;
-    for (const auto &formal : insertion.first->second.formals) {
+    for (const auto &[id, formal] : insertion.first->second.formals) {
+      (void)id;
       if (formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
           formal.argumentRefKind != 0)
         continue;
@@ -13023,55 +13026,85 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
 extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
     uint64_t formalID, obelisk_rt_functional_value_kind_v1 kind,
-    uint64_t bitWidth, uint64_t valueSize, void *outValue, void *outUnknown) {
+    uint64_t bitWidth, uint64_t valueSize, const uint8_t *globalValue,
+    const uint8_t *globalUnknown, uint64_t globalBitCount, void *outValue,
+    void *outUnknown) {
   if (!context || !formalID || !outValue)
     return OBELISK_RT_INVALID_ARGUMENT;
-  std::lock_guard<std::recursive_mutex> lock(context->mutex);
-  CoverageState *coverage = coverageState(context, false);
-  if (!coverage || !coverage->schema)
-    return OBELISK_RT_INVALID_HANDLE;
-  auto found = coverage->instances.find(handle);
-  if (!handle || found == coverage->instances.end())
-    return OBELISK_RT_INVALID_HANDLE;
-  auto formal =
-      std::find_if(found->second.formals.begin(), found->second.formals.end(),
-                   [&](const auto &entry) { return entry.id == formalID; });
-  if (formal == found->second.formals.end() || formal->bitWidth != bitWidth ||
-      formal->valueSize != valueSize)
-    return OBELISK_RT_INVALID_DESIGN;
-  uint32_t storedKind = formal->kind;
-  if (storedKind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
-    uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
-    if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
-        kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL)
-      return OBELISK_RT_INVALID_ARGUMENT;
-    const uint8_t *stateValue =
-        context->nativeStateValue
-            ? context->nativeStateValue
-            : reinterpret_cast<const uint8_t *>(context->stateValue.data());
-    const uint8_t *stateUnknown =
-        context->nativeStateUnknown
-            ? context->nativeStateUnknown
-            : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
-    uint64_t stateBits = context->nativeStateValue
-                             ? context->nativeStateBitCount
-                             : context->stateValue.size() * uint64_t{64};
-    return obelisk_rt_v1_argument_ref_load(
-        context, stateValue, stateUnknown, stateBits, formal->owner,
-        formal->payload, formal->argumentRefKind, bitWidth, valueSize,
-        fourState, OBELISK_RT_ARGUMENT_VALUE_BITS, outValue, outUnknown);
-  }
-  if (storedKind != kind ||
-      (kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
-    return OBELISK_RT_INVALID_DESIGN;
-  std::memcpy(outValue, formal->value.data(), static_cast<size_t>(valueSize));
-  if (outUnknown) {
-    std::memset(outUnknown, 0, static_cast<size_t>(valueSize));
-    if (!formal->unknown.empty())
-      std::memcpy(outUnknown, formal->unknown.data(),
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *coverage = coverageState(context, false);
+    if (!coverage || !coverage->schema)
+      return OBELISK_RT_INVALID_HANDLE;
+    auto found = coverage->instances.find(handle);
+    if (!handle || found == coverage->instances.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    auto position = found->second.formals.find(formalID);
+    if (position == found->second.formals.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    const FunctionalCoverageValue &formal = position->second;
+    bool string = formal.resultKind ==
+                  obelisk::coverage::FunctionalExpressionResultKind::String;
+    if (string) {
+      if (kind != OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
+          bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
+          valueSize != sizeof(obelisk_rt_string_v1) || outUnknown)
+        return OBELISK_RT_INVALID_DESIGN;
+    } else if (kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
+               formal.bitWidth != bitWidth || formal.valueSize != valueSize)
+      return OBELISK_RT_INVALID_DESIGN;
+    uint32_t storedKind = formal.kind;
+    if (storedKind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
+      uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
+      if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
+          kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      const uint8_t *stateValue =
+          globalValue ? globalValue
+          : context->nativeStateValue
+              ? context->nativeStateValue
+              : reinterpret_cast<const uint8_t *>(context->stateValue.data());
+      const uint8_t *stateUnknown =
+          globalValue ? globalUnknown
+          : context->nativeStateUnknown
+              ? context->nativeStateUnknown
+              : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
+      uint64_t stateBits = globalValue ? globalBitCount
+                           : context->nativeStateValue
+                               ? context->nativeStateBitCount
+                               : context->stateValue.size() * uint64_t{64};
+      return obelisk_rt_v1_argument_ref_load(
+          context, stateValue, stateUnknown, stateBits, formal.owner,
+          formal.payload, formal.argumentRefKind, bitWidth, valueSize,
+          fourState,
+          string ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                 : OBELISK_RT_ARGUMENT_VALUE_BITS,
+          outValue, outUnknown);
+    }
+    if (storedKind != kind ||
+        (kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
+      return OBELISK_RT_INVALID_DESIGN;
+    if (string) {
+      obelisk_rt_status status =
+          obelisk_rt_validate_string(context, formal.payload);
+      if (status != OBELISK_RT_OK)
+        return status;
+      std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
+    } else
+      std::memcpy(outValue, formal.value.data(),
                   static_cast<size_t>(valueSize));
+    if (outUnknown) {
+      std::memset(outUnknown, 0, static_cast<size_t>(valueSize));
+      if (!formal.unknown.empty())
+        std::memcpy(outUnknown, formal.unknown.data(),
+                    static_cast<size_t>(valueSize));
+    }
+    return OBELISK_RT_OK;
   }
-  return OBELISK_RT_OK;
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_instance_query(

@@ -1675,6 +1675,7 @@ TEST(CoverageDatabaseTest, GeneratedFixedReferencesAreValidatedBeforeDecode) {
   constructorDefault->resultKind = FunctionalExpressionResultKind::String;
   constructorDefault->bitWidth = 0;
   constructorDefault->signedness = CoverageSignedness::NotApplicable;
+  db.functionalFormals.front().direction = FunctionalFormalDirection::Ref;
   db.schemaFingerprint = computeSchemaFingerprint(db);
   ASSERT_EQ(serialize(db, image, &diagnostic), Status::Ok)
       << diagnostic.field << " record " << diagnostic.record << " "
@@ -1682,13 +1683,16 @@ TEST(CoverageDatabaseTest, GeneratedFixedReferencesAreValidatedBeforeDecode) {
   const size_t stringConstructorFormals =
       sectionOffset(image, SectionKind::FunctionalFormals);
   ASSERT_NE(stringConstructorFormals, std::string::npos);
-  put32(image, stringConstructorFormals + 24,
-        static_cast<uint32_t>(FunctionalFormalDirection::Ref));
+  ASSERT_EQ(parse(image.data(), image.size(), output, {}, &diagnostic),
+            Status::Ok);
+  EXPECT_EQ(output.functionalFormals.front().direction,
+            FunctionalFormalDirection::Ref);
+  put32(image, stringConstructorFormals + 24, UINT32_MAX);
   refreshChecksum(image);
   EXPECT_EQ(parse(image.data(), image.size(), output, {}, &diagnostic),
-            Status::InvalidReference);
-  EXPECT_EQ(diagnostic.section, SectionKind::Strings);
-  EXPECT_STREQ(diagnostic.field, "functional_formal");
+            Status::InvalidEnum);
+  EXPECT_EQ(diagnostic.section, SectionKind::FunctionalFormals);
+  EXPECT_STREQ(diagnostic.field, "direction");
 }
 
 TEST(CoverageDatabaseTest, RejectsCyclicScopeParents) {
@@ -1846,8 +1850,8 @@ TEST(CoverageDatabaseTest, RejectsMalformedFunctionalFormals) {
   constructorDefault->bitWidth = 0;
   constructorDefault->signedness = CoverageSignedness::NotApplicable;
   db.functionalFormals.front().direction = FunctionalFormalDirection::Ref;
-  EXPECT_EQ(validate(db, &diagnostic), Status::InvalidReference);
-  EXPECT_STREQ(diagnostic.field, "functional_formal");
+  db.schemaFingerprint = computeSchemaFingerprint(db);
+  EXPECT_EQ(validate(db, &diagnostic), Status::Ok);
 
   db.functionalFormals.front().direction = FunctionalFormalDirection::Input;
   db.schemaFingerprint = computeSchemaFingerprint(db);

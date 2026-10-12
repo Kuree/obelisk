@@ -394,6 +394,40 @@ LCOV preserve the existing option rows and agree across native and bytecode.
 The bounded update-count probe in `benchmark/coverage` is outside unit/lit
 tests; it varies writes and deadlines in one configuration.
 
+A 19.3 constructor probe found that input strings were restricted to
+construction-time expressions and `ref string` was rejected. Both now follow
+the ordinary captured-formal contract: inputs retain immutable managed values,
+and references retain typed storage bindings. The context's GC service roots
+visit captured string words and managed reference owners; automatic references
+keep their existing storage retain. Sampling reads the captured input or the
+current reference value without copying string bytes. Defaults still evaluate
+once at construction, and sample-formal scope restrictions in 19.8.1 remain.
+
+Each instance stores formals in a bounded ID index. Building and enumerating
+F formals cost O(F); an ordinary scalar/string formal lookup costs O(1), plus
+work performed by its selected reference path. The bytecode constructor carries
+typed reference widths in one additional scalar per formal. Its decoder visits
+the batch once rather than scanning all schema formals for every descriptor.
+String and real references use 64-bit storage in both backends. The codec's
+existing formal direction/result fields represent these declarations, so no
+wire columns or report schema changes are necessary.
+The native formal-read ABI receives the generated state planes explicitly;
+an unbound canonical shadow is not a valid substitute for a live native real
+reference. Bytecode and runtime-only calls use their canonical context state.
+
+The existing typed formal-read operation models storage/heap reads and the
+allocation/write effects possible through a reference path, and both backends
+treat it as a potential GC collection point. Its result and schema-owner
+verification follow [MLIR ODS](https://mlir.llvm.org/docs/DefiningDialects/Operations/)
+and [side-effect modeling](https://mlir.llvm.org/docs/Rationale/SideEffectsAndSpeculation/).
+Small MLIR regressions cover input/ref string and real reads, construction
+ordering, repeated reads around mutation, canonicalization/CSE, GC roots,
+malformed types/owners, both backend ABIs and LLVM verification. One short
+runtime unit forces GC after the caller drops its captured strings and
+reference-path roots. A five-instance, two-configuration execution fixture
+checks defaults, independent inputs, class/automatic references, live guards,
+exact counters, and native/bytecode parity for text, JSON, HTML and LCOV.
+
 Constructor probes of 19.5.1 and 19.5.3 also exposed repeated table scans and
 middle-vector insertion for automatic bins and late default arrays. Resolution
 now indexes sample expressions, bin plans, transition programs, value sets,

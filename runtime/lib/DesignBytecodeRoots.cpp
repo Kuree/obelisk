@@ -135,10 +135,15 @@ void obelisk_rt_enumerate_design_managed_roots(
     if (context->coverage) {
       for (auto &[handle, instance] : context->coverage->instances) {
         (void)handle;
-        for (FunctionalCoverageValue &formal : instance.formals)
-          if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
-              formal.argumentRefKind != 0 && formal.owner)
+        for (auto &[id, formal] : instance.formals) {
+          (void)id;
+          if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING)
+            visitManagedWord(reinterpret_cast<const uint8_t *>(&formal.payload),
+                             visit, visitorEnvironment);
+          else if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
+                   formal.argumentRefKind != 0 && formal.owner)
             visit(visitorEnvironment, &formal.owner);
+        }
       }
       if (context->coverage->blockEvents)
         for (auto &[id, registration] :

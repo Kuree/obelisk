@@ -61,7 +61,7 @@
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_covergroup_set_type_string_option
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_covergroup_type_query
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_covergroup_create
-// BYTECODE-DAG: intrinsic {{.*}}id=0x00010450 inputs=29 outputs=1 flags=0
+// BYTECODE-DAG: intrinsic {{.*}}id=0x00010450 inputs=30 outputs=1 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x00010455 inputs=2 outputs=3 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x00010478 inputs=4 outputs=0 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x00010479 inputs=4 outputs=0 flags=0

@@ -39,6 +39,7 @@ module attributes {
     simulation.code_unit.decl 4 in 0 function hierarchy "option_snapshot"
     simulation.code_unit.decl 5 in 0 function hierarchy "option_reference"
     simulation.code_unit.decl 6 in 0 function hierarchy "type_option_reference"
+    simulation.code_unit.decl 7 in 0 function hierarchy "formal_read"
     simulation.class.decl @Object id 1 {
       is_abstract = false, is_final = true, is_interface = false
     }
@@ -118,6 +119,15 @@ module attributes {
       %path = simulation.covergroup.type_option_reference %ctx, %ref type 1 item 0 option weight mask %mask index %zero character false : !simulation.context, !simulation.argument_ref<i32> -> !simulation.reference_path<i64>
       simulation.return %live : !simulation.string
     }
+
+    simulation.func @formal_read(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %handle: !simulation.covergroup_handle<@cg> {simulation.capture_kind = 1 : i32},
+        %live: !simulation.string {simulation.capture_kind = 1 : i32}) -> !simulation.string
+        attributes {code_unit_id = 7 : i64, entry_kind = 8 : i32} {
+      %value = simulation.covergroup.formal_read %ctx, %handle[1] : !simulation.context, !simulation.covergroup_handle<@cg> -> !simulation.string
+      simulation.return %live : !simulation.string
+    }
   }
 }
 
@@ -189,3 +199,6 @@ module attributes {
 // CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 2
 // CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 9
 // CHECK: %{{.*}} = simulation.covergroup.type_option_reference
+// CHECK-LABEL: simulation.func @formal_read
+// CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 2
+// CHECK-NEXT: %{{.*}} = simulation.covergroup.formal_read

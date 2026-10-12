@@ -914,7 +914,7 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
   populateManagedContainerToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout);
   populateManagedCoverageToLLVMConversionPatterns(patterns, converter,
-                                                  dataLayout);
+                                                  dataLayout, stateBitCount);
   populateManagedReferenceToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout, stateBitCount);
   populateManagedStringToLLVMConversionPatterns(patterns, converter);

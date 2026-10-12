@@ -21,14 +21,17 @@
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-STRING-EXPRESSION
 // RUN: %python %S/Inputs/mutate-functional-batch.py insert-string-formal-read \
+// RUN:   < %t/lowered.mlir > %t/string-read.mlir
+// RUN: obelisk-opt %t/string-read.mlir '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
+// RUN: obelisk-opt %t/string-read.mlir --convert-obelisk-sim-processes-to-llvm-coroutines > /dev/null
+// RUN: %python %S/Inputs/mutate-functional-batch.py insert-string-formal-read-wrong-type \
 // RUN:   < %t/lowered.mlir > %t/bad-string-read.mlir
 // RUN: not obelisk-opt %t/bad-string-read.mlir \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-STRING-READ
-// RUN: obelisk -emit-obelisk %t/bad-string-sample.sv -o %t/bad-string-sample.mlir
-// RUN: not obelisk-opt %t/bad-string-sample.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=BAD-STRING-SAMPLE
+// RUN: obelisk -emit-obelisk %t/string-sample.sv -o %t/string-sample.mlir
+// RUN: obelisk-opt %t/string-sample.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   | FileCheck %s --check-prefix=STRING-SAMPLE
 
 // The exact-v1 schema is embedded before either backend boundary. Both
 // backends consume the schema-ordered FunctionalExpression batch; native
@@ -38,8 +41,8 @@
 // NATIVE: llvm.call @obelisk_rt_v1_covergroup_sample
 // BAD-STRING-FORMAL: error: constructor FunctionalFormal batch is reordered, wrong-owner, or type-mismatched
 // BAD-STRING-EXPRESSION: error: has a type-mismatched constructor FunctionalExpression
-// BAD-STRING-READ: error: String constructor FunctionalFormal values are constructor-only and cannot be read while sampling
-// BAD-STRING-SAMPLE: error: String covergroup constructor formals are supported only by constructor-time expressions and coverage options
+// BAD-STRING-READ: error: has a nonexistent, wrong-owner, or type-mismatched constructor FunctionalFormal ID
+// STRING-SAMPLE: simulation.covergroup.formal_read {{.*}} -> !simulation.string
 
 //--- input.sv
 module functional_sample_backend;
@@ -56,9 +59,14 @@ module functional_sample_backend;
   end
 endmodule
 
-//--- bad-string-sample.sv
-module bad_string_sample;
+//--- string-sample.sv
+module string_sample;
   covergroup cg(input string configured_name);
     cp: coverpoint configured_name.len();
   endgroup
+  cg cov;
+  initial begin
+    cov = new("sampled string constructor");
+    cov.sample();
+  end
 endmodule
