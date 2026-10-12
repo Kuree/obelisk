@@ -125,8 +125,8 @@ FailureOr<Value> UnitLowering::lowerUnary(semantic::SVUnaryExpressionOp op) {
   }
   if (kind == semantic::SVUnaryOperator::LogicalNot &&
       isa<sim::ChandleType, sim::ProcessType, sim::ClassHandleType,
-          sim::CovergroupHandleType, sim::EventType, sim::VirtualInterfaceType>(
-          (*input).getType())) {
+          sim::CovergroupHandleType, sim::EventType, sim::VirtualInterfaceType,
+          sim::SemaphoreType>((*input).getType())) {
     // A handle has no packed value to reduce; IEEE 1800-2017 12.4's reading of
     // a condition against zero becomes a comparison with null.
     FailureOr<Value> truth = truthValue(*input, location);
@@ -477,6 +477,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
                   .getResult();
       else if (isa<sim::ChandleType>((*rhs).getType()))
         lhs = sim::SimChandleNullOp::create(builder, location).getResult();
+      else if (isa<sim::SemaphoreType>((*rhs).getType()))
+        lhs = sim::SimManagedNullOp::create(builder, location, (*rhs).getType())
+                  .getResult();
     }
   } else if (isa<semantic::SVNullLiteralOp>(children[1])) {
     lhs = lowerExpression(children[0]);
@@ -499,6 +502,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
                   .getResult();
       else if (isa<sim::ChandleType>((*lhs).getType()))
         rhs = sim::SimChandleNullOp::create(builder, location).getResult();
+      else if (isa<sim::SemaphoreType>((*lhs).getType()))
+        rhs = sim::SimManagedNullOp::create(builder, location, (*lhs).getType())
+                  .getResult();
     }
   } else {
     lhs = lowerContextDeterminedExpression(children[0]);
@@ -724,6 +730,23 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
     }
     Value equal =
         sim::SimVirtualInterfaceEqualOp::create(builder, location, *lhs, *rhs);
+    if (handleInequality())
+      equal = arith::XOrIOp::create(
+          builder, location, equal,
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+    return convert(equal, *resultType, false, location);
+  }
+  if (isa<sim::SemaphoreType>((*lhs).getType()) ||
+      isa<sim::SemaphoreType>((*rhs).getType())) {
+    if (!isa<sim::SemaphoreType>((*lhs).getType()) ||
+        !isa<sim::SemaphoreType>((*rhs).getType()) ||
+        (!handleEquality() && !handleInequality())) {
+      unsupported(op) << " (semaphore-handle operator)";
+      return failure();
+    }
+    Value equal =
+        sim::SimSemaphoreEqualOp::create(builder, location, *lhs, *rhs);
     if (handleInequality())
       equal = arith::XOrIOp::create(
           builder, location, equal,
@@ -1367,6 +1390,9 @@ FailureOr<Value> UnitLowering::conditionalEqual(Value lhs, Value rhs, Type type,
   if (isa<sim::ProcessType>(type))
     return sim::SimProcessEqualOp::create(builder, location, lhs, rhs)
         .getResult();
+  if (isa<sim::SemaphoreType>(type))
+    return sim::SimSemaphoreEqualOp::create(builder, location, lhs, rhs)
+        .getResult();
   if (isa<sim::CovergroupHandleType>(type))
     return sim::SimCovergroupEqualOp::create(builder, location, lhs, rhs)
         .getResult();
@@ -1636,7 +1662,8 @@ FailureOr<Value> UnitLowering::logicalEqual(Value lhs, Value rhs, Type type,
     return fromBits(equal);
   }
   if (isa<FloatType, sim::StringType, sim::ClassHandleType, sim::ProcessType,
-          sim::CovergroupHandleType, sim::EventType>(type)) {
+          sim::CovergroupHandleType, sim::EventType, sim::SemaphoreType>(
+          type)) {
     FailureOr<Value> equal = conditionalEqual(lhs, rhs, type, location);
     if (failed(equal))
       return failure();

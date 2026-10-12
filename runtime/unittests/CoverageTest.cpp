@@ -2648,6 +2648,169 @@ TEST_F(CoverageRuntimeDesignTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       SemaphoreFormalsRetainSharedBucketsAndValidateLiveRefs) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  for (uint64_t id : {70, 71, 72})
+    schema.functionalFormals.push_back(
+        {id, 10, "semaphore" + std::to_string(id),
+         FunctionalFormalKind::Constructor,
+         id == 71 ? FunctionalFormalDirection::Ref
+                  : FunctionalFormalDirection::Input,
+         FunctionalExpressionResultKind::Semaphore, 0, 0,
+         CoverageSignedness::NotApplicable, static_cast<uint32_t>(id - 70), 0,
+         0});
+  schema.functionalFormals.push_back(
+      {73, 10, "sample_default", FunctionalFormalKind::Sample,
+       FunctionalFormalDirection::Input,
+       FunctionalExpressionResultKind::Semaphore, FunctionalFormalHasDefault, 0,
+       CoverageSignedness::NotApplicable, 0, 74, 0});
+  FunctionalExpression defaultValue;
+  defaultValue.id = 74;
+  defaultValue.owner = 73;
+  defaultValue.ownerKind = FunctionalExpressionOwnerKind::Formal;
+  defaultValue.role = FunctionalExpressionRole::FormalDefault;
+  defaultValue.resultKind = FunctionalExpressionResultKind::Semaphore;
+  defaultValue.signedness = CoverageSignedness::NotApplicable;
+  defaultValue.evaluationPhase = FunctionalExpressionEvaluationPhase::Sample;
+  defaultValue.resultOrdinal = 2;
+  schema.functionalExpressions.push_back(defaultValue);
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *first = nullptr, *second = nullptr,
+                       *unrelated = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 2, &first), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 3, &second), OBELISK_RT_OK);
+  obelisk_rt_element_type_v1 element{};
+  element.version = OBELISK_RT_VERSION;
+  element.type_id = 99;
+  element.kind = OBELISK_RT_ELEMENT_BITS;
+  element.value_size = 4;
+  element.alignment = 4;
+  element.bit_width = 32;
+  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &unrelated),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 unrelatedRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &unrelatedRoot, &unrelated),
+            OBELISK_RT_OK);
+  const uint64_t firstWord = obelisk_rt_managed_word_from_object(first);
+  const uint64_t secondWord = obelisk_rt_managed_word_from_object(second);
+  uint64_t word = firstWord, storage = 0;
+  const obelisk_rt_managed_root_slot_v1 root{
+      0, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+                context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
+                &root, 1, &storage),
+            OBELISK_RT_OK);
+  obelisk_rt_functional_value_v1 formals[] = {
+      {70, 0, 0, nullptr, nullptr, first, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0},
+      {71, 64, 8, nullptr, nullptr, nullptr, storage,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+      {72, 0, 0, nullptr, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE;
+  formals[0].bit_width = 64;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0].bit_width = 0;
+  formals[0].owner = unrelated;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(handle, 0u);
+  formals[0].owner = first;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  uint8_t sampled = 0;
+  obelisk_rt_functional_value_v1 expressions[] = {
+      {60, 2, 1, &sampled, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {61, 2, 1, &sampled, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {74, 0, 0, nullptr, nullptr, first, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 0}};
+  for (auto *identity :
+       {first, second, static_cast<obelisk_rt_object_v1 *>(nullptr)}) {
+    expressions[2].owner = identity;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
+              OBELISK_RT_OK);
+  }
+  expressions[2].owner = unrelated;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            OBELISK_RT_INVALID_DESIGN);
+  uint32_t acquired = 0;
+  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(first, 1, &acquired),
+            OBELISK_RT_OK);
+  ASSERT_EQ(acquired, 1u);
+  word = secondWord;
+  uint8_t dummy = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (uint64_t id : {70, 71, 72}) {
+    uint64_t captured = 42;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE,
+                  64, 8, nullptr, nullptr, 0, &captured, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(captured, id == 70 ? firstWord : id == 71 ? secondWord : 0);
+    captured = 42;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id,
+                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
+                  nullptr, 0, &captured, nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(captured, 42u);
+  }
+  // The copied input still observes the original bucket's acquired key.
+  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(
+                obelisk_rt_object_from_managed_word(firstWord), 2, &acquired),
+            OBELISK_RT_OK);
+  EXPECT_EQ(acquired, 0u);
+  ASSERT_EQ(obelisk_rt_v1_semaphore_try_get(
+                obelisk_rt_object_from_managed_word(firstWord), 1, &acquired),
+            OBELISK_RT_OK);
+  EXPECT_EQ(acquired, 1u);
+  uint64_t invalid = obelisk_rt_managed_word_from_object(unrelated);
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_CLASS, &invalid, nullptr),
+            OBELISK_RT_OK);
+  uint64_t captured = 42;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE, 64,
+                8, nullptr, nullptr, 0, &captured, nullptr),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(captured, 42u);
+  std::array<uint64_t, 3> reference{7, 8, 9};
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+                192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &unrelatedRoot), OBELISK_RT_OK);
+  obelisk_rt_managed_execution_leave(lane, entered);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
        ProcessFormalsCopyIdentitiesAndRetainLiveAliases) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

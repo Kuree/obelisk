@@ -8203,6 +8203,18 @@ bool validateProcessFormal(obelisk_rt_context *context, uint64_t handle) {
   return obelisk_rt_v1_process_status(context, handle, &state) == OBELISK_RT_OK;
 }
 
+bool validateSemaphoreFormal(obelisk_rt_context *context,
+                             obelisk_rt_object_v1 *object) {
+  if (!object)
+    return true;
+  if (!obelisk_rt_managed_object_belongs_to(context, object))
+    return false;
+  // A zero-key readiness query checks the private bucket descriptor without
+  // acquiring keys or disturbing queued waiters.
+  bool ready = false;
+  return obelisk_rt_semaphore_keys_ready(object, 0, ready) == OBELISK_RT_OK;
+}
+
 bool validateVirtualInterfaceFormal(obelisk_rt_context *context,
                                     uint64_t handle, uint64_t valueType) {
   if (!handle)
@@ -8302,7 +8314,8 @@ bool validateValue(
   else if ((result == Result::String || result == Result::Container ||
             result == Result::ClassHandle || result == Result::Chandle ||
             result == Result::Event || result == Result::Covergroup ||
-            result == Result::Process || result == Result::VirtualInterface) &&
+            result == Result::Process || result == Result::VirtualInterface ||
+            result == Result::Semaphore) &&
            reference)
     width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
@@ -8319,7 +8332,7 @@ bool validateValue(
               validateAggregateFormal(context, value.owner, aggregateType));
     if (result != Result::Container && result != Result::ClassHandle &&
         result != Result::Covergroup && result != Result::Process &&
-        result != Result::VirtualInterface)
+        result != Result::VirtualInterface && result != Result::Semaphore)
       return true;
     const uint8_t *stateValue =
         context->nativeStateValue
@@ -8350,7 +8363,9 @@ bool validateValue(
       return validateVirtualInterfaceFormal(context, word, valueType);
     auto *object = obelisk_rt_object_from_managed_word(word);
     return obelisk_rt_managed_word_from_object(object) == word &&
-           (result == Result::ClassHandle
+           (result == Result::Semaphore
+                ? validateSemaphoreFormal(context, object)
+            : result == Result::ClassHandle
                 ? validateClassFormal(context, object, classType)
                 : validateContainerFormal(context, object, containerType));
   }
@@ -8375,6 +8390,11 @@ bool validateValue(
                               : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.owner && !value.argument_ref_kind;
+  if (result == Result::Semaphore)
+    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE &&
+           !value.bit_width && !value.value_size && !value.value &&
+           !value.unknown && !value.payload && !value.argument_ref_kind &&
+           validateSemaphoreFormal(context, value.owner);
   if (result == Result::ClassHandle)
     return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE &&
            !value.bit_width && !value.value_size && !value.value &&
@@ -8441,6 +8461,7 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
@@ -13359,7 +13380,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     bool virtualInterface =
         formal.resultKind ==
         obelisk::coverage::FunctionalExpressionResultKind::VirtualInterface;
-    auto validOpaqueHandle = [&](uint64_t word) {
+    bool semaphore =
+        formal.resultKind ==
+        obelisk::coverage::FunctionalExpressionResultKind::Semaphore;
+    auto validHandle = [&](uint64_t word) {
+      if (semaphore) {
+        auto *object = obelisk_rt_object_from_managed_word(word);
+        return obelisk_rt_managed_word_from_object(object) == word &&
+               validateSemaphoreFormal(context, object);
+      }
       return process ? validateProcessFormal(context, word)
              : virtualInterface
                  ? validateVirtualInterfaceFormal(
@@ -13393,13 +13422,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
            formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
           bitWidth != 192 || valueSize != 24 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
-      if (covergroup || process || virtualInterface) {
+      if (covergroup || process || virtualInterface || semaphore) {
         uint64_t word = 0;
-        obelisk_rt_status status = loadReference(
-            64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr);
+        obelisk_rt_status status =
+            loadReference(64, 8, 0,
+                          semaphore ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                                    : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                          &word, nullptr);
         if (status != OBELISK_RT_OK)
           return status;
-        if (!validOpaqueHandle(word))
+        if (!validHandle(word))
           return OBELISK_RT_INVALID_HANDLE;
       }
       std::array<uint64_t, 3> reference{
@@ -13431,8 +13463,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                                 : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
           bitWidth != 64 || valueSize != 8 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
-    } else if (container || classHandle) {
-      uint32_t expected = classHandle
+    } else if (container || classHandle || semaphore) {
+      uint32_t expected = semaphore ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
+                          : classHandle
                               ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
                               : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
       if (kind != expected || bitWidth != 64 || valueSize != 8 || outUnknown)
@@ -13445,6 +13478,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     } else if (kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
@@ -13458,15 +13492,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
           !classHandle && !chandle && !event && !covergroup && !process &&
-          !virtualInterface)
+          !virtualInterface && !semaphore)
         return OBELISK_RT_INVALID_ARGUMENT;
-      if (covergroup || process || virtualInterface) {
+      if (covergroup || process || virtualInterface || semaphore) {
         uint64_t word = 0;
-        obelisk_rt_status status = loadReference(
-            64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr);
+        obelisk_rt_status status =
+            loadReference(64, 8, 0,
+                          semaphore ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                                    : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                          &word, nullptr);
         if (status != OBELISK_RT_OK)
           return status;
-        if (!validOpaqueHandle(word))
+        if (!validHandle(word))
           return OBELISK_RT_INVALID_HANDLE;
         std::memcpy(outValue, &word, sizeof(word));
         return OBELISK_RT_OK;
@@ -13481,7 +13518,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     if (storedKind != kind ||
         (kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
       return OBELISK_RT_INVALID_DESIGN;
-    if (container || classHandle) {
+    if (container || classHandle || semaphore) {
       uint64_t word = obelisk_rt_managed_word_from_object(formal.owner);
       std::memcpy(outValue, &word, sizeof(word));
     } else if (string) {

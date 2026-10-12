@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --canonicalize | FileCheck %s
-// LRM 6.14, 6.17, 9.7, 25.9: compare object identity, including null.
+// LRM 6.14, 6.17, 9.7, 15.3, 25.9: compare object identity, including null.
 // These folds do not infer object status or contents from its handle.
 
 // CHECK-LABEL: func.func @chandle_self(
@@ -86,5 +86,33 @@ func.func @change_modport(%a: !simulation.virtual_interface<"bus", "">) -> !simu
 func.func @managed_null() -> i1 {
   %n = simulation.managed.null : !simulation.dynamic_array<i8>
   %r = simulation.managed.is_null %n : (!simulation.dynamic_array<i8>) -> i1
+  return %r : i1
+}
+
+// CHECK-LABEL: func.func @semaphore_self(
+// CHECK: arith.constant true
+// CHECK-NOT: simulation.semaphore.equal
+// CHECK: return
+func.func @semaphore_self(%a: !simulation.semaphore) -> i1 {
+  %r = simulation.semaphore.equal %a, %a
+  return %r : i1
+}
+
+// CHECK-LABEL: func.func @semaphore_different(
+// CHECK: simulation.semaphore.equal
+// CHECK: return
+func.func @semaphore_different(%a: !simulation.semaphore, %b: !simulation.semaphore) -> i1 {
+  %r = simulation.semaphore.equal %a, %b
+  return %r : i1
+}
+
+// CHECK-LABEL: func.func @semaphore_nulls(
+// CHECK: arith.constant true
+// CHECK-NOT: simulation.semaphore.equal
+// CHECK: return
+func.func @semaphore_nulls() -> i1 {
+  %a = simulation.managed.null : !simulation.semaphore
+  %b = simulation.managed.null : !simulation.semaphore
+  %r = simulation.semaphore.equal %a, %b
   return %r : i1
 }

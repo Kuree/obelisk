@@ -153,6 +153,7 @@ def ExpressionEvent : CoverageExpressionResultKind<"Event", 12>;
 def ExpressionCovergroup : CoverageExpressionResultKind<"Covergroup", 13>;
 def ExpressionProcess : CoverageExpressionResultKind<"Process", 14>;
 def ExpressionVirtualInterface : CoverageExpressionResultKind<"VirtualInterface", 15>;
+def ExpressionSemaphore : CoverageExpressionResultKind<"Semaphore", 16>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -398,7 +399,7 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
      ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
      ExpressionContainer, ExpressionAggregate, ExpressionClassHandle,
      ExpressionChandle, ExpressionEvent, ExpressionCovergroup,
-     ExpressionProcess, ExpressionVirtualInterface]>;
+     ExpressionProcess, ExpressionVirtualInterface, ExpressionSemaphore]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
     [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;

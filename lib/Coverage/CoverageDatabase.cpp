@@ -3604,7 +3604,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Event ||
         formal.resultKind == FunctionalExpressionResultKind::Covergroup ||
         formal.resultKind == FunctionalExpressionResultKind::Process ||
-        formal.resultKind == FunctionalExpressionResultKind::VirtualInterface;
+        formal.resultKind == FunctionalExpressionResultKind::VirtualInterface ||
+        formal.resultKind == FunctionalExpressionResultKind::Semaphore;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3867,7 +3868,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           expression.resultKind == FunctionalExpressionResultKind::Covergroup ||
           expression.resultKind == FunctionalExpressionResultKind::Process ||
           expression.resultKind ==
-              FunctionalExpressionResultKind::VirtualInterface) &&
+              FunctionalExpressionResultKind::VirtualInterface ||
+          expression.resultKind == FunctionalExpressionResultKind::Semaphore) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3884,7 +3886,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::VirtualInterface) ||
+                     FunctionalExpressionResultKind::Semaphore) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,

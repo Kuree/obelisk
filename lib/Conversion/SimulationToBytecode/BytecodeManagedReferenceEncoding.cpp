@@ -27,6 +27,11 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
           constant});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimSemaphoreEqualOp>(operation)) {
+    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getEqual()),
+          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
+    return success();
+  }
   if (auto op = dyn_cast<sim::SimReferencePathIndexOp>(operation)) {
     SmallVector<Value> inputs{op.getContainer(), op.getIndex()};
     if (op.getOwnerReference())

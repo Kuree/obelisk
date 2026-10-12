@@ -1,5 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -25,6 +27,10 @@ module attributes {
       %one = arith.constant 1 : i32
       %semaphore = simulation.semaphore.create %zero :
           (i32) -> !simulation.semaphore
+      %null = simulation.managed.null : !simulation.semaphore
+      %is_null = simulation.semaphore.equal %semaphore, %null
+      cf.cond_br %is_null, ^done, ^put
+    ^put:
       simulation.semaphore.put %semaphore, %one :
           (!simulation.semaphore, i32) -> ()
       cf.br ^attempt(%semaphore : !simulation.semaphore)
@@ -46,6 +52,7 @@ module attributes {
 // NATIVE-DAG: llvm.func @obelisk_rt_v1_semaphore_try_get
 // NATIVE-LABEL: llvm.func @worker
 // NATIVE: llvm.call @obelisk_rt_v1_semaphore_create
+// NATIVE: llvm.icmp "eq" {{.*}} : i64
 // NATIVE: llvm.call @obelisk_rt_v1_semaphore_put
 // NATIVE: llvm.call @obelisk_rt_v1_semaphore_try_get
 // NATIVE: llvm.store {{.*}} : i32, !llvm.ptr

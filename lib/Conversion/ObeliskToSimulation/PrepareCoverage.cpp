@@ -2574,7 +2574,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   ? coverage::FunctionalFormalDirection::Ref
                   : coverage::FunctionalFormalDirection::Input;
           descriptor.ordinal = ordinal;
-          if (auto handle = dyn_cast<sim::VirtualInterfaceType>(*normalized)) {
+          if (isa<sim::SemaphoreType>(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::Semaphore;
+          } else if (auto handle =
+                         dyn_cast<sim::VirtualInterfaceType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::VirtualInterface;
             auto [entry, inserted] = virtualTypeIDs.try_emplace(*normalized, 0);

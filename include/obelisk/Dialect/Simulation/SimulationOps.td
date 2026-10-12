@@ -1140,6 +1140,7 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                                            SimCovergroupHandleType,
                                            SimProcessType,
                                            SimVirtualInterfaceType,
+                                           SimSemaphoreType,
                                            F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
@@ -1780,6 +1781,14 @@ def SimSemaphoreCreateOp : SimOp<"semaphore.create", [
   let summary = "create a semaphore with an initial signed key count";
   let arguments = (ins I32:$keys);
   let results = (outs SimSemaphoreType:$result);
+}
+
+def SimSemaphoreEqualOp : SimOp<"semaphore.equal", [Pure, Commutative]> {
+  let summary = "compare nullable shared semaphore bucket identities";
+  let arguments = (ins SimSemaphoreType:$lhs, SimSemaphoreType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict";
+  let hasFolder = 1;
 }
 
 def SimSemaphorePutOp : SimOp<"semaphore.put", [

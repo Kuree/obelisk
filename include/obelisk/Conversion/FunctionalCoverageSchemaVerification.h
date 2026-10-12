@@ -226,6 +226,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return isa<sim::ProcessType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::VirtualInterface:
       return isa<sim::VirtualInterfaceType>(type) && width == 0;
+    case coverage::FunctionalExpressionResultKind::Semaphore:
+      return isa<sim::SemaphoreType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Container:
       return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           type);

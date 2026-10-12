@@ -102,7 +102,7 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
             sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
             sim::EventType, sim::CovergroupHandleType, sim::ProcessType,
-            sim::VirtualInterfaceType>(element))
+            sim::VirtualInterfaceType, sim::SemaphoreType>(element))
       packedWidth = 64;
     if (!packedWidth && sim::isAggregateType(element)) {
       auto span = sim::getProvenanceSpan(element);
@@ -125,6 +125,11 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         rewriter, location, packed,
         llvmConstant(rewriter, location, packed.getType(), 128));
     referenceKind = LLVM::TruncOp::create(rewriter, location, i32, shiftedTag);
+  } else if (isa<sim::SemaphoreType>(sourceType)) {
+    if (converted.size() != 1 || !converted.front().getType().isInteger(64))
+      return failure();
+    kind = OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE;
+    ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::VirtualInterfaceType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
@@ -1178,6 +1183,7 @@ public:
         sim::getPackedWidth(op.getResult().getType());
     bool string = isa<sim::StringType>(op.getResult().getType());
     bool classHandle = isa<sim::ClassHandleType>(op.getResult().getType());
+    bool semaphore = isa<sim::SemaphoreType>(op.getResult().getType());
     bool chandle = isa<sim::ChandleType>(op.getResult().getType());
     bool process = isa<sim::ProcessType>(op.getResult().getType());
     bool virtualInterface =
@@ -1192,7 +1198,7 @@ public:
                         : op.getResult().getType().isF64() || string ||
                                 container || classHandle || chandle ||
                                 process || event || covergroup ||
-                                virtualInterface
+                                virtualInterface || semaphore
                             ? 64
                             : width.value_or(0);
     if (!bitWidth)
@@ -1207,6 +1213,7 @@ public:
         reference          ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
         : virtualInterface ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
         : classHandle      ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+        : semaphore        ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
         : chandle          ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
         : process          ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
         : event            ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT

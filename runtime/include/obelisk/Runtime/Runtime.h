@@ -909,6 +909,8 @@ enum {
 #define OBELISK_RT_DBREG_PROCESS (UINT8_C(1) << 5)
 // Bits64 elaborated interface scope identity; zero is null.
 #define OBELISK_RT_DBREG_VIRTUAL_INTERFACE (UINT8_C(1) << 6)
+// Managed64 semaphore identity, distinct from classes and other containers.
+#define OBELISK_RT_DBREG_SEMAPHORE (UINT8_C(1) << 7)
 
 typedef uint16_t obelisk_rt_design_bytecode_opcode;
 enum {
@@ -4868,7 +4870,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_PROCESS = 12,
   // Elaborated interface scope identity in payload; zero is null. All other
   // value fields are zero. The formal's value_type includes its modport view.
-  OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE = 13
+  OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE = 13,
+  // Managed semaphore handle in owner; null is allowed. All other value
+  // fields are zero. Inputs preserve the shared bucket's identity.
+  OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE = 14
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;
