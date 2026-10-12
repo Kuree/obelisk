@@ -38,6 +38,7 @@ add_mlir_library(ObeliskSimulationAnalysis
   SSAValueAnalysis.cpp
   SourceMemoryAnalysis.cpp
   StateDomainAnalysis.cpp
+  KnownVersioningAnalysis.cpp
   StorageWriteAnalysis.cpp
 
   DEPENDS

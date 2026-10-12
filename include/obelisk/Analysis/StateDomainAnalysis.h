@@ -11,14 +11,17 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
+#include "mlir/IR/Types.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <optional>
 #include <utility>
 
 namespace obelisk::sim {
@@ -64,6 +67,7 @@ enum class StateDomainReason {
   LogicExtract,
   LogicInsert,
   PackedView,
+  Aggregate,
   DynamicExtract,
   DynamicExtractIndex,
   DivisionDivisor,
@@ -99,6 +103,38 @@ struct InductiveStateRoot {
 };
 
 llvm::StringRef stringifyStateDomain(StateDomain domain);
+
+/// The IEEE 1800-2023 value-domain transfer of one non-call operation, shared
+/// by the whole-design solve and by function-local clients. `operandFact`
+/// supplies the current fact of a logic operand. Loads and net reads are
+/// four-state unless `isKnownRead` certifies the value they observe. Dynamic
+/// selections (`logic.dyn_extract`, `array.extract_dynamic`) are four-state
+/// unless `isInRangeSelection` proves the whole selection valid. The result
+/// applies to every tracked result of `op`.
+StateDomainFact transferStateDomain(
+    mlir::Operation *op,
+    llvm::function_ref<StateDomainFact(mlir::Value)> operandFact,
+    llvm::function_ref<bool(mlir::Operation *)> isKnownRead,
+    llvm::function_ref<bool(mlir::Operation *)> isInRangeSelection);
+
+/// Whether a value of `type` carries an unknown plane: a four-state scalar or
+/// an aggregate with a four-state member. Handles name storage and carry none.
+bool hasUnknownPlane(mlir::Type type);
+
+/// Whether a dynamic selection has a constant index selecting only bits or
+/// elements inside its input.
+bool isConstantInRangeSelection(mlir::Operation *op);
+
+/// The inclusive [low, high] index range of a fixed packed or unpacked array.
+std::optional<std::pair<int64_t, int64_t>>
+getArraySelectionBounds(mlir::Type arrayType);
+
+/// The most defined functions a design may have for native compilation to
+/// run optional whole-design state-domain solves on it: 4096 at O3, unbounded
+/// below, or `obelisk.native.max_state_domain_functions` on `module`. Fails
+/// with an error for a negative limit.
+mlir::FailureOr<uint64_t>
+getNativeStateDomainFunctionLimit(mlir::Operation *module);
 llvm::StringRef stringifyStateDomainReason(StateDomainReason reason);
 
 /// A read-only snapshot of state-domain facts for one simulation design.

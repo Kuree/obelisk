@@ -39,6 +39,7 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   SpecializeNativeCaptures.cpp
   CoalesceNativeReady.cpp
   CachePureCones.cpp
+  VersionKnownRegions.cpp
   DEPENDS
   ObeliskSchedulePassIncGen
   LINK_LIBS PUBLIC

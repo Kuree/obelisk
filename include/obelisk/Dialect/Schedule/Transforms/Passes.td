@@ -360,6 +360,23 @@ def MarkCleanNativeNBAPass : Pass<"schedule-mark-clean-native-nba", "mlir::Modul
     "mlir::math::MathDialect", "mlir::scf::SCFDialect"
   ];
 }
+def VersionKnownRegionsPass
+    : Pass<"schedule-version-known-regions", "mlir::ModuleOp"> {
+  let summary = "Run loops and straight-line regions on value planes when known";
+  let description = [{
+    Gives each profitable region of a native activation body a two-state copy,
+    entered after one check finds the region's four-state inputs known: its
+    logic live-ins and the locations its reads observe. A loop switches copies
+    at every header visit, so four-state iterations last only while an X/Z
+    input is live. Copies preserve every effect and its order, and an X/Z input
+    keeps the canonical four-state code (IEEE 1800-2023 6.3.1, 11.4).
+  }];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect",
+                           "obelisk::schedule::ScheduleDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
 def SpecializeNativeEvalPass : Pass<"schedule-specialize-native-eval", "mlir::ModuleOp"> {
   let summary = "schedule specialize native eval";
   let description = [{

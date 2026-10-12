@@ -306,18 +306,10 @@ LogicalResult lowerPackedSimulationOperations(
   DenseMap<Operation *, NativeStateAccessInfo> stateAccesses;
   DenseSet<Operation *> inBoundsSelections;
   DenseSet<Value> byteAddressableState;
-  uint64_t stateDomainFunctionLimit = std::numeric_limits<uint64_t>::max();
-  auto optimizationLevel =
-      module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
-  if (optimizationLevel && optimizationLevel.getInt() >= 3)
-    stateDomainFunctionLimit = 4096;
-  if (auto limit = module->getAttrOfType<IntegerAttr>(
-          "obelisk.native.max_state_domain_functions")) {
-    if (limit.getInt() < 0)
-      return module.emitError(
-          "native state-domain function limit cannot be negative");
-    stateDomainFunctionLimit = limit.getUInt();
-  }
+  FailureOr<uint64_t> stateDomainFunctionLimit =
+      getNativeStateDomainFunctionLimit(module);
+  if (failed(stateDomainFunctionLimit))
+    return failure();
   // Selector safety is independent of optional whole-design X/Z propagation.
   // Freeze design normalization once, then solve each function in isolation
   // against the already-published interprocedural integer summaries.
@@ -447,7 +439,7 @@ LogicalResult lowerPackedSimulationOperations(
     // proving local unknown planes dead. Guarded native variants still require
     // their proof and are never skipped.
     if (!needsInductiveFacts && !needsKnownStateFacts &&
-        functionCount > stateDomainFunctionLimit)
+        functionCount > *stateDomainFunctionLimit)
       return WalkResult::advance();
     FailureOr<StateDomainAnalysis> stateDomains = failure();
     std::optional<StateDomainAnalysis> knownStateDomains;

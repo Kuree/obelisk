@@ -3,6 +3,7 @@
 #include "AnalysisTestPasses.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 
+#include "obelisk/Analysis/KnownVersioningAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -158,12 +159,66 @@ public:
   }
 };
 
+/// Print the regions admitted for known-state versioning. Blocks are named by
+/// their position in the function, operations by their name.
+class KnownVersioningTestPass
+    : public PassWrapper<KnownVersioningTestPass, OperationPass<ModuleOp>> {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(KnownVersioningTestPass)
+  StringRef getArgument() const final {
+    return "test-obelisk-sim-known-versioning";
+  }
+  StringRef getDescription() const final {
+    return "print regions admitted for known-state versioning";
+  }
+
+  void runOnOperation() final {
+    getOperation().walk([](obelisk::sim::SimFuncOp function) {
+      obelisk::analysis::KnownVersioningAnalysis analysis(function);
+      if (analysis.getRegions().empty() && analysis.getRejected().empty())
+        return;
+      DenseMap<Block *, unsigned> blockIndex;
+      for (auto [index, block] : llvm::enumerate(function.getBody()))
+        blockIndex[&block] = index;
+      auto kind = [](obelisk::analysis::KnownRegionKind value) {
+        return value == obelisk::analysis::KnownRegionKind::Loop ? "loop"
+                                                                 : "run";
+      };
+      auto name = [](Operation *op) -> std::string {
+        return op ? op->getName().getStringRef().str() : "<none>";
+      };
+      llvm::errs() << "known-versioning @" << function.getSymName() << "\n";
+      for (const auto &region : analysis.getRegions()) {
+        Block *block = region.header ? region.header : region.begin->getBlock();
+        llvm::errs() << "  admit " << kind(region.kind) << " bb"
+                     << blockIndex.lookup(block);
+        if (region.begin)
+          llvm::errs() << " from " << name(region.begin) << " to "
+                       << name(region.end);
+        llvm::errs() << " operations=" << region.operations
+                     << " benefit=" << region.benefit
+                     << " check=" << region.checkCost
+                     << " live-ins=" << region.liveIns.size()
+                     << " checked=" << region.checkedReads.size()
+                     << " owned=" << region.ownedReads.size()
+                     << " ranged=" << region.rangeProved.size() << "\n";
+      }
+      for (const auto &region : analysis.getRejected())
+        llvm::errs() << "  reject " << kind(region.kind) << " bb"
+                     << blockIndex.lookup(region.block) << ": " << region.reason
+                     << " (" << name(region.operation) << ")\n";
+    });
+    markAllAnalysesPreserved();
+  }
+};
+
 } // namespace
 
 namespace obelisk {
 
 void registerStateDomainTestPasses() {
   PassRegistration<StateDomainTestPass>();
+  PassRegistration<KnownVersioningTestPass>();
   PassRegistration<EraseMarkedSimulationFunctionTestPass>();
 }
 

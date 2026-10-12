@@ -28,9 +28,11 @@ module {
 
 // CHECK-LABEL: state-domain @aggregate_domain
 // CHECK-LABEL: func @rules
+// Static construction and selection move known bits without creating X/Z;
+// the default value of a four-state member is X (IEEE 1800-2023 6.8).
 // CHECK: bb0.op{{[0-9]+}}.result0: two-state (logic-from-bits)
-// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unsupported-producer)
-// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unsupported-producer)
-// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unsupported-producer)
+// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: two-state (aggregate)
+// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: may-four-state (unknown-constant)
+// CHECK-NEXT: bb0.op{{[0-9]+}}.result0: two-state (aggregate)
 // CHECK-NEXT: bb0.op{{[0-9]+}}.result0: two-state (packed-view)
 // CHECK-NEXT: bb0.op{{[0-9]+}}.result0: two-state (packed-view)

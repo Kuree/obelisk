@@ -65,6 +65,14 @@ bool useTwoStateSpecialization(Operation *operation, bool moduleWide) {
       ::obelisk::schedule::Field::EvalInductiveTwoStateAccess>(operation);
 }
 
+/// A read whose location is known on its executing path observes a zero
+/// unknown plane; only its value plane needs to be loaded.
+bool readsKnownLocation(Operation *operation, bool moduleWide) {
+  return useTwoStateSpecialization(operation, moduleWide) ||
+         ::obelisk::schedule::has<::obelisk::schedule::Field::NativeKnownRead>(
+             operation);
+}
+
 Value allocateBulkPlane(ConversionPatternRewriter &rewriter, Location location,
                         uint64_t width) {
   return entryAlloca(rewriter, location, rewriter.getI8Type(), (width + 7) / 8,
@@ -333,7 +341,7 @@ public:
   matchAndRewrite(sim::SimRefLoadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = op.getResult().getType();
-    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
+    bool twoState = readsKnownLocation(op, experimentalTwoState);
     auto proof = stateAccesses.find(op);
     const NativeStateAccessInfo *access =
         proof == stateAccesses.end() ? nullptr : &proof->second;
@@ -739,7 +747,7 @@ public:
   matchAndRewrite(sim::SimNetReadOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Type resultType = op.getResult().getType();
-    bool twoState = useTwoStateSpecialization(op, experimentalTwoState);
+    bool twoState = readsKnownLocation(op, experimentalTwoState);
     std::optional<unsigned> width = nativeStateWidth(resultType);
     if (!width || adaptor.getNet().size() != 1)
       return failure();

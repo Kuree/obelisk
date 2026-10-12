@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <optional>
 #include <tuple>
 
@@ -52,17 +53,6 @@ constexpr StateDomainFact mayFourState(StateDomainReason reason) {
   return {StateDomain::MayFourState, reason};
 }
 
-bool isLogic(Type type) {
-  if (isa<sim::LogicType>(type))
-    return true;
-  if (!sim::isAggregateType(type))
-    return false;
-  for (unsigned index = 0; index < sim::getAggregateNumElements(type); ++index)
-    if (isLogic(sim::getAggregateElementType(type, index)))
-      return true;
-  return false;
-}
-
 /// Count all references to a symbol on one operation.  A direct invocation is
 /// only a closed-world use when its canonical callee attribute is the sole
 /// reference; an additional reference can represent an address-taken or other
@@ -89,20 +79,17 @@ StateDomainFact joinAlternatives(StateDomainFact lhs, StateDomainFact rhs,
 
 /// Combine dependencies of one transfer. Unlike a control-flow join, every
 /// operand must be resolved before a normal operation result can be resolved.
-StateDomainFact combineValues(ValueRange operands,
-                              const DenseMap<Value, StateDomainFact> &facts,
-                              StateDomainReason reason) {
+StateDomainFact
+combineValues(ValueRange operands,
+              llvm::function_ref<StateDomainFact(Value)> operandFact,
+              StateDomainReason reason) {
   bool sawLogic = false;
   bool sawBottom = false;
   for (Value operand : operands) {
-    if (!isLogic(operand.getType()))
+    if (!hasUnknownPlane(operand.getType()))
       continue;
     sawLogic = true;
-    auto found = facts.find(operand);
-    StateDomainFact fact =
-        found == facts.end()
-            ? mayFourState(StateDomainReason::UnsupportedProducer)
-            : found->second;
+    StateDomainFact fact = operandFact(operand);
     if (fact.domain == StateDomain::MayFourState)
       return mayFourState(reason);
     if (fact.domain == StateDomain::Bottom)
@@ -113,10 +100,11 @@ StateDomainFact combineValues(ValueRange operands,
   return sawBottom ? bottomFact() : twoState(reason);
 }
 
-StateDomainFact combineOperands(Operation *op,
-                                const DenseMap<Value, StateDomainFact> &facts,
-                                StateDomainReason reason) {
-  return combineValues(op->getOperands(), facts, reason);
+StateDomainFact
+combineOperands(Operation *op,
+                llvm::function_ref<StateDomainFact(Value)> operandFact,
+                StateDomainReason reason) {
+  return combineValues(op->getOperands(), operandFact, reason);
 }
 
 bool updateFact(DenseMap<Value, StateDomainFact> &facts, Value value,
@@ -175,46 +163,114 @@ bool isKnownNonzero(Value value) {
   return constant && !constant->isZero();
 }
 
-bool hasInRangeConstantIndex(sim::SimLogicDynExtractOp op) {
-  std::optional<APInt> index = getConstantInteger(op.getLowBit());
-  if (!index || index->isNegative() || index->getActiveBits() > 64)
-    return false;
-  uint64_t low = index->getZExtValue();
-  uint64_t inputWidth = op.getInput().getType().getWidth();
-  uint64_t resultWidth = op.getResult().getType().getWidth();
-  return low <= inputWidth && resultWidth <= inputWidth - low;
-}
-
 StateDomainFact transferOperation(
     Operation *op, const DenseMap<Value, StateDomainFact> &facts,
     const analysis::HandleFacts &provenance,
     const DenseMap<Value, analysis::HandleCertificate> &certificates,
     const RootSet &assumedKnownRoots) {
+  auto operandFact = [&](Value operand) {
+    auto found = facts.find(operand);
+    return found == facts.end()
+               ? mayFourState(StateDomainReason::UnsupportedProducer)
+               : found->second;
+  };
+  auto isKnownRead = [&](Operation *read) {
+    Value handle;
+    if (auto load = dyn_cast<sim::SimRefLoadOp>(read))
+      handle = load.getReference();
+    else
+      handle = cast<sim::SimNetReadOp>(read).getNet();
+    auto root = provenance.find(handle);
+    if (root == provenance.end() || !root->second.descriptor)
+      return false;
+    if (isa<sim::SimRefLoadOp>(read) && root->second.dynamic) {
+      auto certificate = certificates.find(handle);
+      if (certificate == certificates.end() || !certificate->second.inBounds)
+        return false;
+    }
+    return assumedKnownRoots.contains(
+        getRootKey(root->second.resource, *root->second.descriptor));
+  };
+  return transferStateDomain(op, operandFact, isKnownRead,
+                             isConstantInRangeSelection);
+}
+} // namespace
+
+bool hasUnknownPlane(Type type) {
+  if (isa<sim::LogicType>(type))
+    return true;
+  if (!sim::isAggregateType(type))
+    return false;
+  for (unsigned index = 0; index < sim::getAggregateNumElements(type); ++index)
+    if (hasUnknownPlane(sim::getAggregateElementType(type, index)))
+      return true;
+  return false;
+}
+
+bool isConstantInRangeSelection(Operation *op) {
+  if (auto extract = dyn_cast<sim::SimLogicDynExtractOp>(op)) {
+    std::optional<APInt> index = getConstantInteger(extract.getLowBit());
+    if (!index || index->isNegative() || index->getActiveBits() > 64)
+      return false;
+    uint64_t low = index->getZExtValue();
+    uint64_t inputWidth = extract.getInput().getType().getWidth();
+    uint64_t resultWidth = extract.getResult().getType().getWidth();
+    return low <= inputWidth && resultWidth <= inputWidth - low;
+  }
+  if (auto extract = dyn_cast<sim::SimArrayDynExtractOp>(op)) {
+    std::optional<APInt> index = getConstantInteger(extract.getIndex());
+    auto bounds = getArraySelectionBounds(extract.getInput().getType());
+    return index && bounds && index->getSignificantBits() <= 64 &&
+           index->getSExtValue() >= bounds->first &&
+           index->getSExtValue() <= bounds->second;
+  }
+  return false;
+}
+
+FailureOr<uint64_t> getNativeStateDomainFunctionLimit(Operation *module) {
+  if (auto limit = module->getAttrOfType<IntegerAttr>(
+          "obelisk.native.max_state_domain_functions")) {
+    if (limit.getInt() < 0)
+      return module->emitError(
+          "native state-domain function limit cannot be negative");
+    return limit.getUInt();
+  }
+  auto level =
+      module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
+  if (level && level.getInt() >= 3)
+    return 4096;
+  return std::numeric_limits<uint64_t>::max();
+}
+
+std::optional<std::pair<int64_t, int64_t>>
+getArraySelectionBounds(Type arrayType) {
+  auto bounds = [](int64_t left, int64_t right) {
+    return std::make_pair(std::min(left, right), std::max(left, right));
+  };
+  if (auto packed = dyn_cast<sim::PackedArrayType>(arrayType))
+    return bounds(packed.getLeft(), packed.getRight());
+  if (auto unpacked = dyn_cast<sim::UnpackedArrayType>(arrayType))
+    return bounds(unpacked.getLeft(), unpacked.getRight());
+  return std::nullopt;
+}
+
+StateDomainFact
+transferStateDomain(Operation *op,
+                    llvm::function_ref<StateDomainFact(Value)> operandFact,
+                    llvm::function_ref<bool(Operation *)> isKnownRead,
+                    llvm::function_ref<bool(Operation *)> isInRangeSelection) {
   if (auto constant = dyn_cast<sim::SimLogicConstantOp>(op))
     return constant.getUnknown().isZero()
                ? twoState(StateDomainReason::LogicConstant)
                : mayFourState(StateDomainReason::UnknownConstant);
   if (isa<sim::SimLogicFromBitsOp>(op))
     return twoState(StateDomainReason::LogicFromBits);
-  if (auto load = dyn_cast<sim::SimRefLoadOp>(op)) {
-    auto root = provenance.find(load.getReference());
-    auto certificate = certificates.find(load.getReference());
-    if (root != provenance.end() && root->second.descriptor &&
-        (!root->second.dynamic ||
-         (certificate != certificates.end() && certificate->second.inBounds)) &&
-        assumedKnownRoots.contains(
-            getRootKey(root->second.resource, *root->second.descriptor)))
-      return twoState(StateDomainReason::InductiveRootRead);
-    return mayFourState(StateDomainReason::RefLoad);
-  }
-  if (auto read = dyn_cast<sim::SimNetReadOp>(op)) {
-    auto root = provenance.find(read.getNet());
-    if (root != provenance.end() && root->second.descriptor &&
-        assumedKnownRoots.contains(
-            getRootKey(root->second.resource, *root->second.descriptor)))
-      return twoState(StateDomainReason::InductiveRootRead);
-    return mayFourState(StateDomainReason::NetRead);
-  }
+  if (isa<sim::SimRefLoadOp>(op))
+    return isKnownRead(op) ? twoState(StateDomainReason::InductiveRootRead)
+                           : mayFourState(StateDomainReason::RefLoad);
+  if (isa<sim::SimNetReadOp>(op))
+    return isKnownRead(op) ? twoState(StateDomainReason::InductiveRootRead)
+                           : mayFourState(StateDomainReason::NetRead);
 
   if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
     if ((binary.getKind() == sim::BinaryKind::And &&
@@ -223,7 +279,7 @@ StateDomainFact transferOperation(
          (isKnownAllOnes(binary.getLhs()) || isKnownAllOnes(binary.getRhs()))))
       return twoState(StateDomainReason::AbsorbingConstant);
     StateDomainFact operands =
-        combineOperands(op, facts, StateDomainReason::LogicBinary);
+        combineOperands(op, operandFact, StateDomainReason::LogicBinary);
     if (operands.domain != StateDomain::TwoState)
       return operands;
     switch (binary.getKind()) {
@@ -246,7 +302,7 @@ StateDomainFact transferOperation(
          (isKnownAllOnes(logical.getLhs()) ||
           isKnownAllOnes(logical.getRhs()))))
       return twoState(StateDomainReason::AbsorbingConstant);
-    return combineOperands(op, facts, StateDomainReason::LogicLogical);
+    return combineOperands(op, operandFact, StateDomainReason::LogicLogical);
   }
 
   if (auto compare = dyn_cast<sim::SimLogicCompareOp>(op)) {
@@ -255,57 +311,86 @@ StateDomainFact transferOperation(
         compare.getKind() == sim::CompareKind::CaseZEq ||
         compare.getKind() == sim::CompareKind::CaseXZEq)
       return twoState(StateDomainReason::CaseComparison);
-    return combineOperands(op, facts, StateDomainReason::LogicCompare);
+    return combineOperands(op, operandFact, StateDomainReason::LogicCompare);
   }
 
-  if (auto extract = dyn_cast<sim::SimLogicDynExtractOp>(op)) {
-    if (!hasInRangeConstantIndex(extract))
+  // An invalid selection yields X bits for a packed slice and the element
+  // default for an array (IEEE 1800-2023 7.4.6, 11.5.1); a known selection
+  // only moves bits. An invalid insertion performs no write, so the index
+  // never affects an insertion's domain.
+  if (isa<sim::SimLogicDynExtractOp, sim::SimArrayDynExtractOp>(op)) {
+    if (!hasUnknownPlane(op->getResult(0).getType()))
+      return twoState(StateDomainReason::NonLogic);
+    if (!isInRangeSelection(op))
       return mayFourState(StateDomainReason::DynamicExtractIndex);
-    return combineOperands(op, facts, StateDomainReason::DynamicExtract);
+    return combineOperands(op, operandFact, StateDomainReason::DynamicExtract);
   }
+  if (auto insert = dyn_cast<sim::SimLogicDynInsertOp>(op))
+    return combineValues({insert.getInput(), insert.getReplacement()},
+                         operandFact, StateDomainReason::DynamicExtract);
+  if (auto insert = dyn_cast<sim::SimArrayDynInsertOp>(op))
+    return combineValues({insert.getInput(), insert.getReplacement()},
+                         operandFact, StateDomainReason::DynamicExtract);
 
   return llvm::TypeSwitch<Operation *, StateDomainFact>(op)
       .Case<sim::SimLogicResizeOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicResize);
+        return combineOperands(op, operandFact, StateDomainReason::LogicResize);
       })
       .Case<sim::SimLogicUnaryOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicUnary);
+        return combineOperands(op, operandFact, StateDomainReason::LogicUnary);
       })
       .Case<sim::SimLogicReductionOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicReduction);
+        return combineOperands(op, operandFact,
+                               StateDomainReason::LogicReduction);
       })
       .Case<sim::SimLogicMuxOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicMux);
+        return combineOperands(op, operandFact, StateDomainReason::LogicMux);
       })
       .Case<SelectLikeOpInterface>([&](auto select) {
         return combineValues({select.getTrueValue(), select.getFalseValue()},
-                             facts, StateDomainReason::Select);
+                             operandFact, StateDomainReason::Select);
       })
       .Case<sim::SimLogicShiftOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicShift);
+        return combineOperands(op, operandFact, StateDomainReason::LogicShift);
       })
       .Case<sim::SimLogicConcatOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicConcat);
+        return combineOperands(op, operandFact, StateDomainReason::LogicConcat);
       })
       .Case<sim::SimLogicReplicateOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicReplicate);
+        return combineOperands(op, operandFact,
+                               StateDomainReason::LogicReplicate);
       })
       .Case<sim::SimLogicExtractOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicExtract);
+        return combineOperands(op, operandFact,
+                               StateDomainReason::LogicExtract);
       })
       .Case<sim::SimLogicInsertOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::LogicInsert);
+        return combineOperands(op, operandFact, StateDomainReason::LogicInsert);
       })
       // Flatten and unflatten are representation-only views of the same
       // packed value.  They neither synthesize nor discard unknown bits, so
       // their state domain is exactly the domain of the input value.
       .Case<sim::SimPackedFlattenOp, sim::SimPackedUnflattenOp>([&](auto) {
-        return combineOperands(op, facts, StateDomainReason::PackedView);
+        return combineOperands(op, operandFact, StateDomainReason::PackedView);
+      })
+      // Static subelement selection and whole-aggregate construction move
+      // bits without creating X/Z; an aggregate default value is X for every
+      // four-state member (IEEE 1800-2023 6.8, Table 6-7).
+      .Case<sim::SimAggregateExtractOp, sim::SimAggregateInsertOp,
+            sim::SimAggregateConstructOp, sim::SimAggregateSplatOp>([&](auto) {
+        return combineOperands(op, operandFact, StateDomainReason::Aggregate);
+      })
+      .Case<sim::SimAggregateDefaultOp>([&](auto) {
+        return hasUnknownPlane(op->getResult(0).getType())
+                   ? mayFourState(StateDomainReason::UnknownConstant)
+                   : twoState(StateDomainReason::Aggregate);
       })
       .Default([&](Operation *) {
         return mayFourState(StateDomainReason::UnsupportedProducer);
       });
 }
+
+namespace {
 
 struct InvocationSummary {
   Operation *operation = nullptr;
@@ -376,7 +461,7 @@ buildSummary(sim::SimFuncOp function,
   Block *entry = &function.getBody().front();
   for (Block *block : summary.blocks) {
     for (BlockArgument argument : block->getArguments()) {
-      if (block == entry || !isLogic(argument.getType()))
+      if (block == entry || !hasUnknownPlane(argument.getType()))
         continue;
       argumentIndex[argument] = summary.blockArguments.size();
       summary.blockArguments.push_back({argument, {}});
@@ -434,13 +519,15 @@ buildSummary(sim::SimFuncOp function,
               !operands.isOperandProduced(argumentNumber))
             incoming = operands[argumentNumber];
         }
-        StateDomainReason reason = incoming && isLogic(incoming.getType())
-                                       ? (isSuspensionTerminator(terminator)
-                                              ? StateDomainReason::Continuation
-                                              : StateDomainReason::CFGJoin)
-                                       : StateDomainReason::UnsupportedProducer;
+        StateDomainReason reason =
+            incoming && hasUnknownPlane(incoming.getType())
+                ? (isSuspensionTerminator(terminator)
+                       ? StateDomainReason::Continuation
+                       : StateDomainReason::CFGJoin)
+                : StateDomainReason::UnsupportedProducer;
         summary.blockArguments[found->second].incoming.push_back(
-            {incoming && isLogic(incoming.getType()) ? incoming : Value(),
+            {incoming && hasUnknownPlane(incoming.getType()) ? incoming
+                                                             : Value(),
              reason, terminator, successorIndex});
       }
     }
@@ -476,8 +563,9 @@ struct LocalFacts {
 };
 
 bool shouldTrackResult(Operation *operation, Value result) {
-  return isLogic(result.getType()) || (isa<sim::SimLogicCompareOp>(operation) &&
-                                       result.getType().isSignlessInteger(1));
+  return hasUnknownPlane(result.getType()) ||
+         (isa<sim::SimLogicCompareOp>(operation) &&
+          result.getType().isSignlessInteger(1));
 }
 
 StateDomainFact lookupLocalFact(const DenseMap<Value, StateDomainFact> &facts,
@@ -485,7 +573,7 @@ StateDomainFact lookupLocalFact(const DenseMap<Value, StateDomainFact> &facts,
   auto found = facts.find(value);
   if (found != facts.end())
     return found->second;
-  if (!isLogic(value.getType()))
+  if (!hasUnknownPlane(value.getType()))
     return twoState(StateDomainReason::NonLogic);
   return mayFourState(StateDomainReason::UnsupportedProducer);
 }
@@ -500,7 +588,7 @@ LocalFacts initializeLocalFacts(const FunctionSummary &summary) {
 
   for (Block *block : summary.blocks) {
     for (BlockArgument argument : block->getArguments()) {
-      if (!isLogic(argument.getType()))
+      if (!hasUnknownPlane(argument.getType()))
         continue;
       local.values[argument] = bottomFact();
     }
@@ -636,7 +724,7 @@ void propagateFunction(const FunctionSummary &summary,
   Block &entry = function.getBody().front();
   const auto &bitAnalysis = summary.bitAnalysis;
   for (BlockArgument argument : entry.getArguments())
-    if (isLogic(argument.getType()) &&
+    if (hasUnknownPlane(argument.getType()) &&
         argument.getArgNumber() < formalBoundaries.size())
       updateFact(local.values, argument,
                  formalBoundaries[argument.getArgNumber()]);
@@ -714,7 +802,7 @@ void propagateFunction(const FunctionSummary &summary,
       if (auto call = dyn_cast<sim::SimCallOp>(operation)) {
         auto callee = calleeIndex.find(operation);
         for (auto [index, result] : llvm::enumerate(call.getResults())) {
-          if (!isLogic(result.getType()))
+          if (!hasUnknownPlane(result.getType()))
             continue;
           StateDomainFact next =
               callee == calleeIndex.end() ||
@@ -756,7 +844,7 @@ void propagateFunction(const FunctionSummary &summary,
   LocalFacts pruned = initializeLocalFacts(summary);
   std::swap(local.values, pruned.values);
   for (BlockArgument argument : entry.getArguments())
-    if (isLogic(argument.getType()) &&
+    if (hasUnknownPlane(argument.getType()) &&
         argument.getArgNumber() < formalBoundaries.size())
       updateFact(local.values, argument,
                  formalBoundaries[argument.getArgNumber()]);
@@ -764,7 +852,7 @@ void propagateFunction(const FunctionSummary &summary,
 
   for (sim::SimReturnOp returnOp : summary.returns)
     for (auto [index, operand] : llvm::enumerate(returnOp.getOperands())) {
-      if (!isLogic(operand.getType()) || index >= local.results.size())
+      if (!hasUnknownPlane(operand.getType()) || index >= local.results.size())
         continue;
       StateDomainFact fact = lookupLocalFact(local.values, operand);
       local.results[index] =
@@ -838,6 +926,8 @@ StringRef stringifyStateDomainReason(StateDomainReason reason) {
     return "logic-insert";
   case StateDomainReason::PackedView:
     return "packed-view";
+  case StateDomainReason::Aggregate:
+    return "aggregate";
   case StateDomainReason::DynamicExtract:
     return "dynamic-extract";
   case StateDomainReason::DynamicExtractIndex:
@@ -939,7 +1029,7 @@ ValueFactProgram::ValueFactProgram(sim::SimDesignOp design)
     if (function.getBody().empty())
       for (auto [resultIndex, type] :
            llvm::enumerate(function.getFunctionType().getResults()))
-        if (isLogic(type))
+        if (hasUnknownPlane(type))
           resultBoundaries[index][resultIndex] =
               mayFourState(StateDomainReason::ExternalDeclaration);
   }
@@ -953,7 +1043,7 @@ ValueFactProgram::ValueFactProgram(sim::SimDesignOp design)
       for (auto [index, operand] :
            llvm::enumerate(getInvocationOperands(invocation.operation)))
         if (index < hasIncoming[*invocation.callee].size() &&
-            isLogic(operand.getType()))
+            hasUnknownPlane(operand.getType()))
           hasIncoming[*invocation.callee][index] = true;
     }
 
@@ -1012,7 +1102,7 @@ ValueFactProgram::ValueFactProgram(sim::SimDesignOp design)
   for (auto [function, boundaries] : llvm::enumerate(formalBoundaries))
     for (auto [index, type] :
          llvm::enumerate(functions[function].getFunctionType().getInputs()))
-      if (isLogic(type) &&
+      if (hasUnknownPlane(type) &&
           (functions[function].isExternal() || hasNonCallUse[function] ||
            SymbolTable::getSymbolVisibility(functions[function]) !=
                SymbolTable::Visibility::Private ||
@@ -1060,7 +1150,7 @@ computeValueFacts(const ValueFactProgram &program,
 
     for (auto [result, fact] : llvm::enumerate(locals[function].results)) {
       sim::SimFuncOp current = functions[function];
-      if (!isLogic(current.getFunctionType().getResult(result)) ||
+      if (!hasUnknownPlane(current.getFunctionType().getResult(result)) ||
           !updateBoundary(resultBoundaries[function][result], fact,
                           fact.reason))
         continue;
@@ -1078,7 +1168,7 @@ computeValueFacts(const ValueFactProgram &program,
       for (auto [index, operand] :
            llvm::enumerate(getInvocationOperands(invocation.operation))) {
         if (index >= formalBoundaries[*invocation.callee].size() ||
-            !isLogic(operand.getType()))
+            !hasUnknownPlane(operand.getType()))
           continue;
         StateDomainFact actual =
             lookupLocalFact(locals[function].values, operand);
@@ -1144,7 +1234,7 @@ StateDomainFact getValueFact(const DenseMap<Value, StateDomainFact> &facts,
   auto found = facts.find(value);
   if (found != facts.end())
     return found->second;
-  return isLogic(value.getType())
+  return hasUnknownPlane(value.getType())
              ? mayFourState(StateDomainReason::UnsupportedProducer)
              : twoState(StateDomainReason::NonLogic);
 }
@@ -1199,13 +1289,13 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
   DenseSet<uint64_t> partialConnections;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (isLogic(storage.getType()))
+      if (hasUnknownPlane(storage.getType()))
         candidates.insert(getRootKey(schedule::ComputeResourceKind::Storage,
                                      storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
-      if (isLogic(net.getType())) {
+      if (hasUnknownPlane(net.getType())) {
         candidates.insert(
             getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
         if (std::optional<uint64_t> width =
@@ -1317,7 +1407,7 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
             {copy.getDestination(),
              {},
              getConcreteRoot(copy.getSource(), summary.provenance),
-             !isLogic(copy.getSource().getType().getElementType())});
+             !hasUnknownPlane(copy.getSource().getType().getElementType())});
         return;
       }
       if (auto pair = dyn_cast<sim::SimDriverDriveInertialPathStrengthPairOp>(
@@ -1470,13 +1560,13 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
   RootSet assumedKnown;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (isLogic(storage.getType()))
+      if (hasUnknownPlane(storage.getType()))
         assumedKnown.insert(getRootKey(schedule::ComputeResourceKind::Storage,
                                        storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
-      if (isLogic(net.getType()))
+      if (hasUnknownPlane(net.getType()))
         assumedKnown.insert(
             getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
   }
@@ -1524,13 +1614,13 @@ StateDomainAnalysis::computeForSpecialization(sim::SimDesignOp design,
   RootSet assumedKnown;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (isLogic(storage.getType()))
+      if (hasUnknownPlane(storage.getType()))
         assumedKnown.insert(getRootKey(schedule::ComputeResourceKind::Storage,
                                        storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
-      if (isLogic(net.getType()))
+      if (hasUnknownPlane(net.getType()))
         assumedKnown.insert(
             getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
   }
@@ -1556,7 +1646,7 @@ StateDomainFact StateDomainAnalysis::get(Value value) const {
   auto found = facts.find(value);
   if (found != facts.end() && found->second.domain != StateDomain::Bottom)
     return found->second;
-  if (!isLogic(value.getType()))
+  if (!hasUnknownPlane(value.getType()))
     return twoState(StateDomainReason::NonLogic);
   return mayFourState(StateDomainReason::Unresolved);
 }
@@ -1570,7 +1660,7 @@ StateDomainFact StateDomainAnalysis::getWithInductiveRoots(Value value) const {
   if (found != guardedFacts.end() &&
       found->second.domain != StateDomain::Bottom)
     return found->second;
-  if (!isLogic(value.getType()))
+  if (!hasUnknownPlane(value.getType()))
     return twoState(StateDomainReason::NonLogic);
   return mayFourState(StateDomainReason::Unresolved);
 }

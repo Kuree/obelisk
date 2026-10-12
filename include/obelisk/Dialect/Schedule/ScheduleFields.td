@@ -245,6 +245,11 @@ def TopLevelWildcardWait : ScheduleField<"TopLevelWildcardWait", "schedule.top_l
     "::mlir::UnitAttr">;
 def NativeRegionBody : ScheduleField<"NativeRegionBody", "schedule.native.region_body", "::mlir::UnitAttr">;
 def NativeGuardedSpecializationBody : ScheduleField<"NativeGuardedSpecializationBody", "schedule.native.guarded_specialization_body", "::mlir::UnitAttr">;
+// A read whose location was proved known on the executing path: lowering
+// loads only its value plane.
+def NativeKnownRead : ScheduleField<"NativeKnownRead", "schedule.native.known_read", "::mlir::UnitAttr">;
+// A function containing two-state copies of known-state versioned regions.
+def NativeKnownVersioned : ScheduleField<"NativeKnownVersioned", "schedule.native.known_versioned", "::mlir::UnitAttr">;
 def ObserverCaptureBridge : ScheduleField<"ObserverCaptureBridge", "schedule.observer_capture_bridge", "::mlir::UnitAttr">;
 def ConcurrentEosCoordinator : ScheduleField<"ConcurrentEosCoordinator", "schedule.concurrent_eos_coordinator", "::mlir::UnitAttr">;
 def PrimitiveName : ScheduleField<"PrimitiveName", "schedule.primitive_name", "::mlir::StringAttr">;
