@@ -38,6 +38,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   MLIRPass
   MLIRSCFDialect
   MLIRSCFUtils
+  MLIRUBDialect
   LLVMCore
 )
 

@@ -150,6 +150,7 @@ def ExpressionAggregate : CoverageExpressionResultKind<"Aggregate", 9>;
 def ExpressionClassHandle : CoverageExpressionResultKind<"ClassHandle", 10>;
 def ExpressionChandle : CoverageExpressionResultKind<"Chandle", 11>;
 def ExpressionEvent : CoverageExpressionResultKind<"Event", 12>;
+def ExpressionCovergroup : CoverageExpressionResultKind<"Covergroup", 13>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -392,7 +393,7 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
     [ExpressionBoolean, ExpressionIntegral, ExpressionReal, ExpressionSet,
      ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
      ExpressionContainer, ExpressionAggregate, ExpressionClassHandle,
-     ExpressionChandle, ExpressionEvent]>;
+     ExpressionChandle, ExpressionEvent, ExpressionCovergroup]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
     [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;
@@ -661,16 +662,16 @@ def FTScope : CoverageField<"Scope", "scope", 8, CovU64> {
 def FTName : CoverageField<"Name", "name", 16, CovU32> {
   let semantic = "StringIndex"; let domain = DomainStrings;
 }
-def FTFlags : CoverageField<"Flags", "flags", 20, CovU32> {
-  let semantic = "Flags"; let validMask = 0;
-}
+// Zero means no base; other values are one-based FunctionalTypes ordinals.
+// The relational parser resolves ordinals to stable IDs before validation.
+def FTBase : CoverageField<"Base", "base", 20, CovU32>;
 def FTLanguageVersion : CoverageField<"LanguageVersion", "language_version", 24, CovU32>;
 def FTHierarchy : CoverageField<"Hierarchy", "hierarchy", 28, CovU32> {
   let semantic = "StringIndex"; let domain = DomainStrings;
 }
 def FunctionalTypeRecord : CoverageRecord<"FunctionalTypeRecord",
     FunctionalTypes,
-    [FTId, FTScope, FTName, FTFlags, FTLanguageVersion, FTHierarchy]>;
+    [FTId, FTScope, FTName, FTBase, FTLanguageVersion, FTHierarchy]>;
 
 def FIId : CoverageField<"Id", "id", 0, CovU64> {
   let semantic = "StableID"; let domain = DomainFunctionalItems;
@@ -1346,7 +1347,7 @@ def FFDefaultExpression : CoverageField<"DefaultExpression", "default_expression
   let nullable = 1;
 }
 def FFValueType : CoverageField<"ValueType", "value_type", 56, CovU64> {
-  // The result kind selects the container or aggregate layout table.
+  // Result kind selects a layout table, or FunctionalTypes for a covergroup.
   let semantic = "StableIDRef"; let domain = DomainFunctionalValueTypes;
   let nullable = 1;
 }

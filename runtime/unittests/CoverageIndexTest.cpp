@@ -9,6 +9,35 @@
 
 using namespace obelisk::coverage::detail;
 
+TEST(CoverageIndexTest, TypeHierarchyUsesDirectEdgesAndHandlesUnorderedChains) {
+  struct Type {
+    uint64_t id, base;
+  };
+  std::vector<Type> rows;
+  for (uint64_t id = 64; id != 0; --id)
+    rows.push_back({id, id - 1});
+  rows.push_back({100, 0});
+  rows.push_back({101, 1});
+  TypeHierarchyIndex index;
+  ASSERT_TRUE(index.build(rows));
+  EXPECT_TRUE(index.isInstanceOf(64, 1));
+  EXPECT_TRUE(index.isInstanceOf(64, 64));
+  EXPECT_FALSE(index.isInstanceOf(1, 64));
+  EXPECT_TRUE(index.isInstanceOf(101, 1));
+  EXPECT_FALSE(index.isInstanceOf(64, 101));
+  EXPECT_FALSE(index.isInstanceOf(100, 1));
+  EXPECT_FALSE(index.isInstanceOf(0, 1));
+  EXPECT_FALSE(index.isInstanceOf(1, 999));
+  rows[63].base = 64;
+  EXPECT_FALSE(index.build(rows));
+  EXPECT_FALSE(index.contains(100));
+  rows[63].base = 999;
+  EXPECT_FALSE(index.build(rows));
+  rows[63].base = 0;
+  rows.push_back({1, 0});
+  EXPECT_FALSE(index.build(rows));
+}
+
 #if defined(__cpp_exceptions) || defined(_CPPUNWIND)
 TEST(CoverageIndexTest, FailedInsertionPreservesExistingLeavesAndOrdering) {
   struct Value {

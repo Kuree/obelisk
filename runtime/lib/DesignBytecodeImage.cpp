@@ -2556,7 +2556,9 @@ bool validateImage(const Image &image) {
               ? OBELISK_RT_DBREG_CLASS_HANDLE
           : layout.kind == OBELISK_RT_DBREG_BITS
               ? OBELISK_RT_DBREG_SIGNED |
-                    (layout.width == 64 ? OBELISK_RT_DBREG_CHANDLE : 0)
+                    (layout.width == 64 ? OBELISK_RT_DBREG_CHANDLE |
+                                              OBELISK_RT_DBREG_COVERGROUP
+                                        : 0)
           : layout.kind == OBELISK_RT_DBREG_HANDLE && layout.width == 256
               ? OBELISK_RT_DBREG_EVENT
           : layout.kind == OBELISK_RT_DBREG_LOGIC ? OBELISK_RT_DBREG_SIGNED
@@ -2567,8 +2569,11 @@ bool validateImage(const Image &image) {
           (layout.kind == OBELISK_RT_DBREG_STRING && layout.width != 64) ||
           read16(layoutRecord + 2) != 0 || read64(layoutRecord + 32) != 0 ||
           (layout.flags & ~allowedFlags) != 0 ||
-          ((layout.flags & OBELISK_RT_DBREG_CHANDLE) &&
+          ((layout.flags &
+            (OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_COVERGROUP)) &&
            (layout.flags & OBELISK_RT_DBREG_SIGNED)) ||
+          ((layout.flags & OBELISK_RT_DBREG_CHANDLE) &&
+           (layout.flags & OBELISK_RT_DBREG_COVERGROUP)) ||
           layout.offset % 8 != 0 || layout.offset < previousEnd ||
           layout.offset > function.scratchSize ||
           layout.size > function.scratchSize - layout.offset)

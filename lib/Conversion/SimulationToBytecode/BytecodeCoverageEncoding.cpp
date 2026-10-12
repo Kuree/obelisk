@@ -110,8 +110,7 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
         if (element.isF64() ||
             isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
                 sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
-                sim::EventType>(
-                element))
+                sim::EventType, sim::CovergroupHandleType>(element))
           width = 64;
         else if (packed)
           width = *packed;

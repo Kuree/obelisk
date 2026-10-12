@@ -903,6 +903,8 @@ enum {
 #define OBELISK_RT_DBREG_CHANDLE (UINT8_C(1) << 2)
 // Distinguishes scheduler events from other canonical bytecode handles.
 #define OBELISK_RT_DBREG_EVENT (UINT8_C(1) << 3)
+// A context-local covergroup identity, stored as a canonical 64-bit word.
+#define OBELISK_RT_DBREG_COVERGROUP (UINT8_C(1) << 4)
 
 typedef uint16_t obelisk_rt_design_bytecode_opcode;
 enum {
@@ -4853,7 +4855,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE = 9,
   // Canonical scheduler identity in payload; null is UINT64_MAX. All other
   // value fields are zero. Copies retain the shared synchronization identity.
-  OBELISK_RT_FUNCTIONAL_VALUE_EVENT = 10
+  OBELISK_RT_FUNCTIONAL_VALUE_EVENT = 10,
+  // Context-local covergroup identity in payload; zero is null. All other
+  // value fields are zero. The formal's value_type names a FunctionalType.
+  OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP = 11
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

@@ -69,8 +69,11 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   llvm::DenseMap<uint64_t, const coverage::CrossSelectorNode *> selectors;
   llvm::DenseMap<uint64_t, const coverage::FunctionalFormal *> formals;
   llvm::DenseSet<uint64_t> types;
-  for (const auto &entry : schema.functionalTypes)
+  llvm::DenseMap<uint64_t, uint64_t> typeBases;
+  for (const auto &entry : schema.functionalTypes) {
     types.insert(entry.id);
+    typeBases.try_emplace(entry.id, entry.base);
+  }
   for (const auto &entry : schema.functionalItems)
     items.try_emplace(entry.id, &entry);
   for (const auto &entry : schema.functionalBins)
@@ -121,14 +124,25 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   llvm::DenseMap<uint64_t, const coverage::FunctionalClassType *> classTypes;
   for (const auto &type : schema.functionalClassTypes)
     classTypes.try_emplace(type.id, &type);
-  SymbolTableCollection classSymbols;
-  llvm::DenseMap<std::pair<Operation *, Type>, uint64_t> runtimeClassIDs;
+  SymbolTableCollection nominalSymbols;
+  llvm::DenseMap<std::pair<Operation *, Type>, uint64_t> nominalTypeIDs;
   llvm::DenseMap<Type, uint64_t> storageTypeIDs;
   auto storageTypeMatches = [&](Type type, uint64_t expected, Operation *use) {
     if (auto path = dyn_cast<sim::ReferencePathType>(type))
       type = path.getElementType();
     if (!expected)
       return true;
+    if (auto handle = dyn_cast<sim::CovergroupHandleType>(type)) {
+      auto [identity, fresh] = nominalTypeIDs.try_emplace(
+          {use->getParentOfType<sim::SimDesignOp>(), type}, 0);
+      if (fresh)
+        if (auto declaration =
+                nominalSymbols
+                    .lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+                        use, handle.getCovergroupName()))
+          identity->second = declaration.getSchemaType();
+      return identity->second == expected;
+    }
     auto [entry, inserted] = storageTypeIDs.try_emplace(type, 0);
     if (inserted)
       entry->second = sim::getStableStorageTypeID(type);
@@ -139,10 +153,10 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       if (found == classTypes.end())
         return false;
       Operation *scope = use->getParentOfType<sim::SimDesignOp>();
-      auto [identity, fresh] = runtimeClassIDs.try_emplace({scope, type}, 0);
+      auto [identity, fresh] = nominalTypeIDs.try_emplace({scope, type}, 0);
       if (fresh)
         if (auto declaration =
-                classSymbols.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                nominalSymbols.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
                     use, handle.getClassName()))
           identity->second = declaration.getId();
       return identity->second == found->second->classType;
@@ -183,6 +197,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return isa<sim::ChandleType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Event:
       return isa<sim::EventType>(type) && width == 0;
+    case coverage::FunctionalExpressionResultKind::Covergroup:
+      return isa<sim::CovergroupHandleType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Container:
       return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           type);
@@ -225,11 +241,10 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return ref.getElementType();
     return {};
   };
-  SymbolTableCollection symbolTables;
   auto declarationType = [&](Operation *op, sim::CovergroupHandleType handle) {
     auto reference = handle.getCovergroupName();
     auto declaration =
-        symbolTables.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+        nominalSymbols.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
             op, reference);
     return declaration ? declaration.getSchemaType() : uint64_t{0};
   };
@@ -334,7 +349,9 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
             expression->resultKind ==
                 coverage::FunctionalExpressionResultKind::Aggregate ||
             expression->resultKind ==
-                coverage::FunctionalExpressionResultKind::ClassHandle) &&
+                coverage::FunctionalExpressionResultKind::ClassHandle ||
+            expression->resultKind ==
+                coverage::FunctionalExpressionResultKind::Covergroup) &&
            !storageTypeMatches(values[supplied].getType(),
                                formals.lookup(expression->owner)->valueType,
                                operation))) {
@@ -357,7 +374,31 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
 
   bool invalid = false;
   module.walk([&](Operation *operation) {
-    if (auto create = dyn_cast<sim::SimCovergroupCreateOp>(operation)) {
+    if (auto declaration = dyn_cast<sim::SimCovergroupDeclOp>(operation)) {
+      if (!types.contains(declaration.getSchemaType())) {
+        declaration.emitError(
+            "covergroup schema type is absent from the embedded schema");
+        invalid = true;
+        return;
+      }
+      uint64_t baseType = 0;
+      if (auto base = declaration.getBaseAttr()) {
+        auto target =
+            nominalSymbols.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+                declaration, base);
+        if (!target) {
+          declaration.emitError("covergroup base declaration is unresolved");
+          invalid = true;
+          return;
+        }
+        baseType = target.getSchemaType();
+      }
+      if (typeBases.lookup(declaration.getSchemaType()) != baseType) {
+        declaration.emitError(
+            "covergroup base disagrees with the embedded schema");
+        invalid = true;
+      }
+    } else if (auto create = dyn_cast<sim::SimCovergroupCreateOp>(operation)) {
       uint64_t type = declarationType(create, create.getResult().getType());
       ValueRange arguments = create.getPayloads().take_front(
           static_cast<size_t>(create.getArgumentCount()));
@@ -493,7 +534,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
     } else if (auto query =
                    dyn_cast<sim::SimCovergroupTypeQueryOp>(operation)) {
       auto declaration =
-          symbolTables.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+          nominalSymbols.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
               query, query.getDeclarationAttr());
       uint64_t type = declaration ? declaration.getSchemaType() : uint64_t{0};
       if (failed(verifyQueryItem(query, type, query.getItem())))

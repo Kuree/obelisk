@@ -29,6 +29,7 @@
 // static rows and its newly resolved bundle, independent of earlier instances.
 struct FunctionalCoverageConstructionSchemas {
   obelisk::coverage::Digest schemaFingerprint{};
+  obelisk::coverage::detail::TypeHierarchyIndex hierarchy;
   obelisk::coverage::detail::IndexMap<
       uint64_t, std::shared_ptr<const obelisk::coverage::Database>>
       types;
@@ -1231,8 +1232,6 @@ struct CoverageResult {
   bool contributes = false;
 };
 
-uint64_t ownerType(const obelisk::coverage::Database &schema,
-                   const obelisk::coverage::FunctionalExpression &expression);
 void markStaticallyEmptyStateBins(
     obelisk::coverage::Database &schema, uint64_t typeID,
     const obelisk::coverage::Digest &configuration);
@@ -2249,6 +2248,8 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     return OBELISK_RT_OK;
 
   auto prepared = std::make_shared<FunctionalCoverageConstructionSchemas>();
+  if (!prepared->hierarchy.build(source.functionalTypes))
+    return OBELISK_RT_INVALID_DESIGN;
   prepared->schemaFingerprint = source.schemaFingerprint;
   prepared->loadedTypeProfiles = staticFunctionalTypeProfiles(source);
   IndexMap<uint64_t, std::shared_ptr<Database>> types;
@@ -2263,6 +2264,9 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     schema->flags = source.flags;
     schema->producer = source.producer;
     schema->functionalTypes.push_back(type);
+    // The shared hierarchy above validates ancestry once. A private
+    // construction projection does not clone each type's ancestor closure.
+    schema->functionalTypes.back().base = 0;
     schema->scopes.push_back(*scope->second);
     // This is a private validation projection, never a persisted hierarchy.
     schema->scopes.back().parent = 0;
@@ -2290,11 +2294,28 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
   }
   IndexMap<uint64_t, std::vector<uint64_t>> containerTypeUsers;
   IndexSet<std::pair<uint64_t, uint64_t>> containerTypeUses;
+  IndexSet<std::pair<uint64_t, uint64_t>> nominalTypeUses;
   for (const auto &row : source.functionalFormals) {
     schemaFor(row.type).functionalFormals.push_back(row);
     owners.emplace(std::make_pair(Owner::Formal, row.id), row.type);
     if (row.valueType) {
       prepared->formalValueTypes.emplace(row.id, row.valueType);
+      if (row.resultKind == FunctionalExpressionResultKind::Covergroup) {
+        if (row.valueType != row.type &&
+            nominalTypeUses.emplace(row.type, row.valueType).second) {
+          auto &schema = schemaFor(row.type);
+          std::string hierarchy = "type." + std::to_string(row.valueType);
+          if (hierarchy == schema.functionalTypes.front().hierarchy)
+            hierarchy += "_";
+          // Borrow only the target's identity for relational validation.
+          // Its plans, scopes, names and inheritance remain shared globally.
+          schema.functionalTypes.push_back(
+              {row.valueType, schema.scopes.front().id, "reference", 0,
+               schemaFor(row.valueType).functionalTypes.front().languageVersion,
+               std::move(hierarchy)});
+        }
+        continue;
+      }
       if (containerTypeUses.emplace(row.valueType, row.type).second)
         containerTypeUsers[row.valueType].push_back(row.type);
     }
@@ -2402,6 +2423,8 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     schemaFor(type).functionalOptionPlans.push_back(row);
   }
   for (auto &[id, schema] : types) {
+    sortByKey(schema->functionalTypes.begin(), schema->functionalTypes.end(),
+              [](const auto &type) { return type.id; });
     schema->schemaFingerprint = computeSchemaFingerprint(*schema);
     prepared->types.emplace(id, std::move(schema));
   }
@@ -8079,40 +8102,6 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
   return OBELISK_RT_OK;
 }
 
-uint64_t ownerType(const obelisk::coverage::Database &schema,
-                   const obelisk::coverage::FunctionalExpression &expression) {
-  using Owner = obelisk::coverage::FunctionalExpressionOwnerKind;
-  if (expression.ownerKind == Owner::Type)
-    return expression.owner;
-  if (expression.ownerKind == Owner::Formal) {
-    auto formal = std::find_if(
-        schema.functionalFormals.begin(), schema.functionalFormals.end(),
-        [&](const auto &entry) { return entry.id == expression.owner; });
-    return formal == schema.functionalFormals.end() ? 0 : formal->type;
-  }
-  uint64_t itemID = expression.owner;
-  if (expression.ownerKind == Owner::Bin) {
-    auto bin = std::find_if(
-        schema.functionalBins.begin(), schema.functionalBins.end(),
-        [&](const auto &entry) { return entry.id == expression.owner; });
-    itemID = bin == schema.functionalBins.end() ? 0 : bin->item;
-  } else if (expression.ownerKind == Owner::ValueSet) {
-    auto set = std::find_if(
-        schema.functionalValueSets.begin(), schema.functionalValueSets.end(),
-        [&](const auto &entry) { return entry.id == expression.owner; });
-    itemID = set == schema.functionalValueSets.end() ? 0 : set->item;
-  } else if (expression.ownerKind == Owner::Selector) {
-    auto selector = std::find_if(
-        schema.crossSelectorNodes.begin(), schema.crossSelectorNodes.end(),
-        [&](const auto &entry) { return entry.id == expression.owner; });
-    itemID = selector == schema.crossSelectorNodes.end() ? 0 : selector->cross;
-  }
-  auto item =
-      std::find_if(schema.functionalItems.begin(), schema.functionalItems.end(),
-                   [&](const auto &entry) { return entry.id == itemID; });
-  return item == schema.functionalItems.end() ? 0 : item->type;
-}
-
 const obelisk::coverage::FunctionalContainerType *
 functionalContainerType(const CoverageState &coverage, uint64_t valueType) {
   if (!valueType || !coverage.constructionSchemas)
@@ -8188,6 +8177,29 @@ bool validateClassFormal(obelisk_rt_context *context,
            obelisk_rt_v1_object_is_instance(object, descriptor)));
 }
 
+uint64_t formalValueType(const CoverageState &coverage, uint64_t formal) {
+  if (!coverage.constructionSchemas)
+    return 0;
+  auto found = coverage.constructionSchemas->formalValueTypes.find(formal);
+  return found == coverage.constructionSchemas->formalValueTypes.end()
+             ? 0
+             : found->second;
+}
+
+bool validateCovergroupFormal(obelisk_rt_context *context, uint64_t handle,
+                              uint64_t type) {
+  CoverageState *coverage = coverageState(context, false);
+  if (!coverage || !coverage->constructionSchemas ||
+      !coverage->constructionSchemas->hierarchy.contains(type))
+    return false;
+  if (!handle)
+    return true;
+  auto found = coverage->instances.find(handle);
+  return found != coverage->instances.end() &&
+         coverage->constructionSchemas->hierarchy.isInstanceOf(
+             found->second.typeID, type);
+}
+
 bool validateAggregateFormal(
     obelisk_rt_context *context, obelisk_rt_object_v1 *object,
     const obelisk::coverage::FunctionalAggregateType *type) {
@@ -8248,7 +8260,8 @@ bool validateValue(
     bool reference,
     const obelisk::coverage::FunctionalContainerType *containerType = nullptr,
     const obelisk::coverage::FunctionalAggregateType *aggregateType = nullptr,
-    const obelisk::coverage::FunctionalClassType *classType = nullptr) {
+    const obelisk::coverage::FunctionalClassType *classType = nullptr,
+    uint64_t covergroupType = 0) {
   using Result = obelisk::coverage::FunctionalExpressionResultKind;
   // Boolean schema descriptors have no integral type width, but their helper
   // ABI representation is the canonical one-bit logic value.
@@ -8256,7 +8269,7 @@ bool validateValue(
     width = 1;
   else if ((result == Result::String || result == Result::Container ||
             result == Result::ClassHandle || result == Result::Chandle ||
-            result == Result::Event) &&
+            result == Result::Event || result == Result::Covergroup) &&
            reference)
     width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
@@ -8271,7 +8284,8 @@ bool validateValue(
       return aggregateType &&
              (value.argument_ref_kind != 2 ||
               validateAggregateFormal(context, value.owner, aggregateType));
-    if (result != Result::Container && result != Result::ClassHandle)
+    if (result != Result::Container && result != Result::ClassHandle &&
+        result != Result::Covergroup)
       return true;
     const uint8_t *stateValue =
         context->nativeStateValue
@@ -8288,14 +8302,23 @@ bool validateValue(
     if (obelisk_rt_v1_argument_ref_load(
             context, stateValue, stateUnknown, stateBits, value.owner,
             value.payload, value.argument_ref_kind, 64, 8, 0,
-            OBELISK_RT_ARGUMENT_VALUE_CLASS, &word, nullptr) != OBELISK_RT_OK)
+            result == Result::Covergroup ? OBELISK_RT_ARGUMENT_VALUE_BITS
+                                         : OBELISK_RT_ARGUMENT_VALUE_CLASS,
+            &word, nullptr) != OBELISK_RT_OK)
       return false;
+    if (result == Result::Covergroup)
+      return validateCovergroupFormal(context, word, covergroupType);
     auto *object = obelisk_rt_object_from_managed_word(word);
     return obelisk_rt_managed_word_from_object(object) == word &&
            (result == Result::ClassHandle
                 ? validateClassFormal(context, object, classType)
                 : validateContainerFormal(context, object, containerType));
   }
+  if (result == Result::Covergroup)
+    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP &&
+           !value.bit_width && !value.value_size && !value.value &&
+           !value.unknown && !value.owner && !value.argument_ref_kind &&
+           validateCovergroupFormal(context, value.payload, covergroupType);
   if (result == Result::Chandle || result == Result::Event)
     return value.kind == (result == Result::Event
                               ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
@@ -8369,7 +8392,8 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT)
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP)
     return;
   // Strings are immutable values. The context's service-root enumerator
   // retains this captured managed word independently of the caller's storage.
@@ -8384,19 +8408,19 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
 }
 
 template <typename Entry>
-std::vector<const Entry *>
-schemaOrdered(const std::vector<Entry> &entries, uint64_t typeID,
-              const obelisk::coverage::Database &schema, bool constructor) {
+std::vector<const Entry *> schemaOrdered(const std::vector<Entry> &entries,
+                                         uint64_t typeID, bool constructor) {
   std::vector<const Entry *> result;
-  const bool singleType = schema.functionalTypes.size() == 1 &&
-                          schema.functionalTypes.front().id == typeID;
+  // Rows are already owner-filtered in these construction/configuration
+  // projections. Borrowed nominal identities have no expression rows.
+  // Resolving each expression's owner again would make batching quadratic.
   for (const auto &entry : entries) {
     if constexpr (std::is_same_v<Entry, obelisk::coverage::FunctionalFormal>) {
       if (entry.type == typeID &&
           (entry.kind ==
            obelisk::coverage::FunctionalFormalKind::Constructor) == constructor)
         result.push_back(&entry);
-    } else if (singleType || ownerType(schema, entry) == typeID) {
+    } else {
       using Phase = obelisk::coverage::FunctionalExpressionEvaluationPhase;
       const bool selected =
           constructor ? (entry.evaluationPhase == Phase::Constructor ||
@@ -11845,10 +11869,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     if (construction == coverage->constructionSchemas->types.end())
       return OBELISK_RT_INVALID_DESIGN;
     const auto &templateSchema = *construction->second;
-    auto expectedFormals = schemaOrdered(templateSchema.functionalFormals,
-                                         typeID, templateSchema, true);
-    auto expectedExpressions = schemaOrdered(
-        templateSchema.functionalExpressions, typeID, templateSchema, true);
+    auto expectedFormals =
+        schemaOrdered(templateSchema.functionalFormals, typeID, true);
+    auto expectedExpressions =
+        schemaOrdered(templateSchema.functionalExpressions, typeID, true);
     if (formalCount != expectedFormals.size())
       return OBELISK_RT_INVALID_DESIGN;
     for (size_t index = 0; index != expectedFormals.size(); ++index) {
@@ -11864,7 +11888,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
                   : formal.bitWidth,
               reference, functionalContainerType(*coverage, formal.valueType),
               functionalAggregateType(*coverage, formal.valueType),
-              functionalClassType(*coverage, formal.valueType)))
+              functionalClassType(*coverage, formal.valueType),
+              formal.valueType))
         return OBELISK_RT_INVALID_DESIGN;
       if (reference && formals[index].argument_ref_kind != 0) {
         if (obelisk_rt_managed_object_context(formals[index].owner) != context)
@@ -11897,7 +11922,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
               false,
               functionalDefaultContainerType(*coverage, expression->owner),
               functionalDefaultAggregateType(*coverage, expression->owner),
-              functionalDefaultClassType(*coverage, expression->owner)))
+              functionalDefaultClassType(*coverage, expression->owner),
+              formalValueType(*coverage, expression->owner)))
         return OBELISK_RT_INVALID_DESIGN;
       ++supplied;
     }
@@ -12621,11 +12647,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     auto type = coverage->types.find({instance.typeID, instance.configuration});
     if (type == coverage->types.end())
       return OBELISK_RT_INVALID_DESIGN;
-    const auto &schema = type->second.configurationSchema
-                             ? *type->second.configurationSchema
-                             : *coverage->schema;
-    auto schemaExpressions = schemaOrdered(schema.functionalExpressions,
-                                           instance.typeID, schema, false);
+    if (!type->second.configurationSchema)
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &schema = *type->second.configurationSchema;
+    auto schemaExpressions =
+        schemaOrdered(schema.functionalExpressions, instance.typeID, false);
     std::vector<const obelisk::coverage::FunctionalExpression *> expected;
     size_t supplied = 0;
     for (const auto *entry : schemaExpressions) {
@@ -12645,7 +12671,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
                   : entry->bitWidth,
               false, functionalDefaultContainerType(*coverage, entry->owner),
               functionalDefaultAggregateType(*coverage, entry->owner),
-              functionalDefaultClassType(*coverage, entry->owner)))
+              functionalDefaultClassType(*coverage, entry->owner),
+              formalValueType(*coverage, entry->owner)))
         return OBELISK_RT_INVALID_DESIGN;
       expected.push_back(entry);
       ++supplied;
@@ -13272,11 +13299,45 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     if (position == found->second.formals.end())
       return OBELISK_RT_INVALID_DESIGN;
     const FunctionalCoverageValue &formal = position->second;
+    bool covergroup =
+        formal.resultKind ==
+        obelisk::coverage::FunctionalExpressionResultKind::Covergroup;
+    auto loadReference = [&](uint64_t width, uint64_t size, uint32_t fourState,
+                             uint32_t valueKind, void *value, void *unknown) {
+      const uint8_t *stateValue =
+          globalValue ? globalValue
+          : context->nativeStateValue
+              ? context->nativeStateValue
+              : reinterpret_cast<const uint8_t *>(context->stateValue.data());
+      const uint8_t *stateUnknown =
+          globalValue ? globalUnknown
+          : context->nativeStateUnknown
+              ? context->nativeStateUnknown
+              : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
+      uint64_t stateBits = globalValue ? globalBitCount
+                           : context->nativeStateValue
+                               ? context->nativeStateBitCount
+                               : context->stateValue.size() * uint64_t{64};
+      return obelisk_rt_v1_argument_ref_load(
+          context, stateValue, stateUnknown, stateBits, formal.owner,
+          formal.payload, formal.argumentRefKind, width, size, fourState,
+          valueKind, value, unknown);
+    };
     if (kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
       if ((formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&
            formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
           bitWidth != 192 || valueSize != 24 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
+      if (covergroup) {
+        uint64_t word = 0;
+        obelisk_rt_status status = loadReference(
+            64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr);
+        if (status != OBELISK_RT_OK)
+          return status;
+        if (!validateCovergroupFormal(context, word,
+                                      formalValueType(*coverage, formalID)))
+          return OBELISK_RT_INVALID_HANDLE;
+      }
       std::array<uint64_t, 3> reference{
           obelisk_rt_managed_word_from_object(formal.owner), formal.payload,
           formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
@@ -13297,9 +13358,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                    obelisk::coverage::FunctionalExpressionResultKind::Chandle;
     bool event = formal.resultKind ==
                  obelisk::coverage::FunctionalExpressionResultKind::Event;
-    if (chandle || event) {
-      if (kind != (event ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
-                         : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
+    if (chandle || event || covergroup) {
+      if (kind != (covergroup ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
+                   : event    ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
+                              : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
           bitWidth != 64 || valueSize != 8 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
     } else if (container || classHandle) {
@@ -13318,6 +13380,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
                formal.bitWidth != bitWidth || formal.valueSize != valueSize)
       return OBELISK_RT_INVALID_DESIGN;
     uint32_t storedKind = formal.kind;
@@ -13325,30 +13388,26 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
-          !classHandle && !chandle && !event)
+          !classHandle && !chandle && !event && !covergroup)
         return OBELISK_RT_INVALID_ARGUMENT;
-      const uint8_t *stateValue =
-          globalValue ? globalValue
-          : context->nativeStateValue
-              ? context->nativeStateValue
-              : reinterpret_cast<const uint8_t *>(context->stateValue.data());
-      const uint8_t *stateUnknown =
-          globalValue ? globalUnknown
-          : context->nativeStateUnknown
-              ? context->nativeStateUnknown
-              : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
-      uint64_t stateBits = globalValue ? globalBitCount
-                           : context->nativeStateValue
-                               ? context->nativeStateBitCount
-                               : context->stateValue.size() * uint64_t{64};
-      return obelisk_rt_v1_argument_ref_load(
-          context, stateValue, stateUnknown, stateBits, formal.owner,
-          formal.payload, formal.argumentRefKind, bitWidth, valueSize,
-          fourState,
-          string                     ? OBELISK_RT_ARGUMENT_VALUE_STRING
-          : container || classHandle ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                                     : OBELISK_RT_ARGUMENT_VALUE_BITS,
-          outValue, outUnknown);
+      if (covergroup) {
+        uint64_t word = 0;
+        obelisk_rt_status status = loadReference(
+            64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr);
+        if (status != OBELISK_RT_OK)
+          return status;
+        if (!validateCovergroupFormal(context, word,
+                                      formalValueType(*coverage, formalID)))
+          return OBELISK_RT_INVALID_HANDLE;
+        std::memcpy(outValue, &word, sizeof(word));
+        return OBELISK_RT_OK;
+      }
+      return loadReference(bitWidth, valueSize, fourState,
+                           string ? OBELISK_RT_ARGUMENT_VALUE_STRING
+                           : container || classHandle
+                               ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                               : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                           outValue, outUnknown);
     }
     if (storedKind != kind ||
         (kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
@@ -13362,7 +13421,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       if (status != OBELISK_RT_OK)
         return status;
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
-    } else if (chandle || event)
+    } else if (chandle || event || covergroup)
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
     else
       std::memcpy(outValue, formal.value.data(),

@@ -153,10 +153,14 @@ private:
          << point.endLine << ':' << point.endColumn
          << " phase=" << point.semanticPhase << " flags=" << point.flags
          << '\n';
-    for (const coverage::FunctionalType &type : db.functionalTypes)
+    for (const coverage::FunctionalType &type : db.functionalTypes) {
       os << "functional_type id=" << type.id << " name=" << type.name
          << " language=" << type.languageVersion
-         << " hierarchy=" << type.hierarchy << '\n';
+         << " hierarchy=" << type.hierarchy;
+      if (type.base)
+        os << " base=" << type.base;
+      os << '\n';
+    }
     for (const coverage::FunctionalItem &item : db.functionalItems) {
       os << "functional_item id=" << item.id << " type=" << item.type
          << " name=" << item.name << " kind=" << raw(item.kind);

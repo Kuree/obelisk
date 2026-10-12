@@ -48,8 +48,12 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Bits;
     layout.width = 64;
     layout.flags = OBELISK_RT_DBREG_CHANDLE;
+  } else if (isa<sim::CovergroupHandleType>(type)) {
+    layout.kind = Bits;
+    layout.width = 64;
+    layout.flags = OBELISK_RT_DBREG_COVERGROUP;
   } else if (isa<sim::TimeType, sim::ProcessType, sim::ManagedWatchType,
-                 sim::CovergroupHandleType, sim::VirtualInterfaceType>(type)) {
+                 sim::VirtualInterfaceType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::ControlType>(type)) {
@@ -59,9 +63,8 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Handle;
     layout.width = 256;
     layout.flags = OBELISK_RT_DBREG_EVENT;
-  } else if (isa<sim::RefType, sim::NetType, sim::DriverType,
-                 sim::ContextType, sim::ObserverType, runtime::ContextType>(
-                 type)) {
+  } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::ContextType,
+                 sim::ObserverType, runtime::ContextType>(type)) {
     layout.kind = Handle;
     layout.width = 256;
   } else if (isa<runtime::StatusType>(type)) {

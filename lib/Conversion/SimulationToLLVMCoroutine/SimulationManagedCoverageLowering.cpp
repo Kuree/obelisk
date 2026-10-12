@@ -101,7 +101,7 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
     if (element.isF64() ||
         isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
             sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
-            sim::EventType>(element))
+            sim::EventType, sim::CovergroupHandleType>(element))
       packedWidth = 64;
     if (!packedWidth && sim::isAggregateType(element)) {
       auto span = sim::getProvenanceSpan(element);
@@ -124,6 +124,11 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         rewriter, location, packed,
         llvmConstant(rewriter, location, packed.getType(), 128));
     referenceKind = LLVM::TruncOp::create(rewriter, location, i32, shiftedTag);
+  } else if (isa<sim::CovergroupHandleType>(sourceType)) {
+    if (converted.size() != 1 || !converted.front().getType().isInteger(64))
+      return failure();
+    kind = OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP;
+    payload = converted.front();
   } else if (isa<sim::EventType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
@@ -1164,13 +1169,15 @@ public:
     bool classHandle = isa<sim::ClassHandleType>(op.getResult().getType());
     bool chandle = isa<sim::ChandleType>(op.getResult().getType());
     bool event = isa<sim::EventType>(op.getResult().getType());
+    bool covergroup = isa<sim::CovergroupHandleType>(op.getResult().getType());
     bool container =
         isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
             op.getResult().getType());
     bool reference = isa<sim::ArgumentRefType>(op.getResult().getType());
     uint64_t bitWidth = reference ? 192
                         : op.getResult().getType().isF64() || string ||
-                                container || classHandle || chandle || event
+                                container || classHandle || chandle || event ||
+                                covergroup
                             ? 64
                             : width.value_or(0);
     if (!bitWidth)
@@ -1186,6 +1193,7 @@ public:
         : classHandle ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
         : chandle     ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
         : event       ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
+        : covergroup  ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
         : string      ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
         : container   ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
         : op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL

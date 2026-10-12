@@ -142,7 +142,9 @@ struct FunctionalType {
   uint64_t id = 0;
   uint64_t scope = 0;
   std::string name;
-  uint32_t flags = 0;
+  // Direct inherited type, or zero. The wire record uses a one-based table
+  // ordinal in the former reserved flags word.
+  uint64_t base = 0;
   uint32_t languageVersion = 2017;
   std::string hierarchy;
 };

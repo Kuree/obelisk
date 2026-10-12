@@ -1999,6 +1999,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       runtimeClassIDs.try_emplace(declaration.getSymNameAttr(),
                                   declaration.getId());
     });
+    llvm::DenseMap<StringAttr, uint64_t> covergroupTypeIDs;
+    module.walk([&](sim::SimCovergroupDeclOp declaration) {
+      covergroupTypeIDs.try_emplace(declaration.getSymNameAttr(),
+                                    declaration.getSchemaType());
+    });
     llvm::DenseMap<uint64_t, Operation *> selectorOwners;
     struct PendingValueSet {
       coverage::FunctionalValueSet set;
@@ -2124,6 +2129,15 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             {typeID, scope,
              declaration.getDebugName().value_or(typeHierarchy).str(), 0,
              languageVersion, typeHierarchy});
+        if (auto base = declaration.getBaseAttr()) {
+          schema.functionalTypes.back().base =
+              covergroupTypeIDs.lookup(base.getRootReference());
+          if (!schema.functionalTypes.back().base) {
+            declaration.emitError("cannot resolve base covergroup schema type");
+            signalPassFailure();
+            return;
+          }
+        }
 
         uint32_t itemOrdinal = 0;
         llvm::DenseMap<Operation *, uint64_t> functionalItemIDs;
@@ -2556,7 +2570,17 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   ? coverage::FunctionalFormalDirection::Ref
                   : coverage::FunctionalFormalDirection::Input;
           descriptor.ordinal = ordinal;
-          if (isa<sim::EventType>(*normalized)) {
+          if (auto handle = dyn_cast<sim::CovergroupHandleType>(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::Covergroup;
+            descriptor.valueType = covergroupTypeIDs.lookup(
+                handle.getCovergroupName().getLeafReference());
+            if (!descriptor.valueType) {
+              formal.emitError("functional covergroup type is unresolved");
+              signalPassFailure();
+              return;
+            }
+          } else if (isa<sim::EventType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::Event;
           } else if (isa<sim::ChandleType>(*normalized)) {

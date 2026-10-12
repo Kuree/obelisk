@@ -2374,6 +2374,143 @@ TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage)
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       CovergroupFormalsCopyHandlesAndValidateLiveNominalTypes) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalTypes.push_back({2, 1, "source", 0, 2023, "top.source"});
+  schema.functionalTypes.push_back({3, 1, "derived", 2, 2023, "top.derived"});
+  schema.functionalTypes.push_back(
+      {4, 1, "unrelated", 0, 2023, "top.unrelated"});
+  for (uint64_t id : {70, 71, 72})
+    schema.functionalFormals.push_back(
+        {id, 10, "group" + std::to_string(id),
+         FunctionalFormalKind::Constructor,
+         id == 71 ? FunctionalFormalDirection::Ref
+                  : FunctionalFormalDirection::Input,
+         FunctionalExpressionResultKind::Covergroup, 0, 0,
+         CoverageSignedness::NotApplicable, static_cast<uint32_t>(id - 70), 0,
+         2});
+  schema.functionalFormals.push_back(
+      {73, 10, "sample_default", FunctionalFormalKind::Sample,
+       FunctionalFormalDirection::Input,
+       FunctionalExpressionResultKind::Covergroup, FunctionalFormalHasDefault,
+       0, CoverageSignedness::NotApplicable, 0, 74, 2});
+  FunctionalExpression defaultValue;
+  defaultValue.id = 74;
+  defaultValue.owner = 73;
+  defaultValue.ownerKind = FunctionalExpressionOwnerKind::Formal;
+  defaultValue.role = FunctionalExpressionRole::FormalDefault;
+  defaultValue.resultKind = FunctionalExpressionResultKind::Covergroup;
+  defaultValue.signedness = CoverageSignedness::NotApplicable;
+  defaultValue.evaluationPhase = FunctionalExpressionEvaluationPhase::Sample;
+  defaultValue.resultOrdinal = 2;
+  schema.functionalExpressions.push_back(defaultValue);
+  std::rotate(schema.functionalTypes.begin(),
+              schema.functionalTypes.begin() + 1, schema.functionalTypes.end());
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 first = 0, derived = 0, unrelated = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 2, nullptr, 0, nullptr, 0,
+                                            &first),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 3, nullptr, 0, nullptr, 0,
+                                            &derived),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 4, nullptr, 0, nullptr, 0,
+                                            &unrelated),
+            OBELISK_RT_OK);
+  uint64_t word = first, storage = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
+                &storage),
+            OBELISK_RT_OK);
+  obelisk_rt_functional_value_v1 formals[] = {
+      {70, 0, 0, nullptr, nullptr, nullptr, first,
+       OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 0},
+      {71, 64, 8, nullptr, nullptr, nullptr, storage,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+      {72, 0, 0, nullptr, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 0}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  for (uint64_t invalid : {unrelated, UINT64_MAX}) {
+    formals[0].payload = invalid;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr,
+                                              0, &handle),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(handle, 0u);
+  }
+  formals[0].payload = first;
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  uint8_t sampled = 0;
+  obelisk_rt_functional_value_v1 expressions[] = {
+      {60, 2, 1, &sampled, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {61, 2, 1, &sampled, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {74, 0, 0, nullptr, nullptr, nullptr, derived,
+       OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 0}};
+  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            OBELISK_RT_OK);
+  expressions[2].payload = unrelated;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            OBELISK_RT_INVALID_DESIGN);
+  expressions[2].payload = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, expressions, 3),
+            OBELISK_RT_OK);
+  auto store = [&](uint64_t replacement) {
+    uint8_t dummy = 0;
+    return obelisk_rt_v1_argument_ref_store(
+        context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
+        OBELISK_RT_ARGUMENT_VALUE_BITS, &replacement, nullptr);
+  };
+  ASSERT_EQ(store(derived), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (uint64_t id : {70, 71, 72}) {
+    uint64_t captured = 42;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP,
+                  64, 8, nullptr, nullptr, 0, &captured, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(captured, id == 70 ? first : id == 71 ? derived : 0);
+    captured = 42;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+                  8, nullptr, nullptr, 0, &captured, nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(captured, 42u);
+  }
+  ASSERT_EQ(store(unrelated), OBELISK_RT_OK);
+  uint64_t captured = 42;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP, 64,
+                8, nullptr, nullptr, 0, &captured, nullptr),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(captured, 42u);
+  std::array<uint64_t, 3> reference{7, 8, 9};
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+                192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(reference, (std::array<uint64_t, 3>{7, 8, 9}));
+  obelisk_rt_managed_execution_leave(lane, entered);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
        EventFormalsCopyIdentityAndRetainLiveAliases) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

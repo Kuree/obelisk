@@ -14,7 +14,7 @@ module {
 module {
   simulation.covergroup.decl @cg schema 1
   func.func @unsupported_result(%ctx: !simulation.context, %cg: !simulation.covergroup_handle<@cg>) {
-    // expected-error @+1 {{requires an integral, real, string, container, class, chandle, or event formal value or argument reference}}
+    // expected-error @+1 {{requires an integral, real, string, container, class, chandle, event, or covergroup formal value or argument reference}}
     %value = simulation.covergroup.formal_read %ctx, %cg[1] : !simulation.context, !simulation.covergroup_handle<@cg> -> !simulation.context
     return
   }
@@ -25,7 +25,7 @@ module {
 module {
   simulation.covergroup.decl @cg schema 1
   func.func @unsupported_reference(%ctx: !simulation.context, %cg: !simulation.covergroup_handle<@cg>) {
-    // expected-error @+1 {{requires an integral, real, string, container, class, chandle, or event formal value or argument reference}}
+    // expected-error @+1 {{requires an integral, real, string, container, class, chandle, event, or covergroup formal value or argument reference}}
     %value = simulation.covergroup.formal_read %ctx, %cg[1] : !simulation.context, !simulation.covergroup_handle<@cg> -> !simulation.argument_ref<f32>
     return
   }

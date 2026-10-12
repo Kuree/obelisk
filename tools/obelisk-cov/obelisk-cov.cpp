@@ -2383,7 +2383,7 @@ void jsonReport(
           out.attribute("id", type.id);
           out.attribute("scope", type.scope);
           out.attribute("name", type.name);
-          out.attribute("flags", type.flags);
+          out.attribute("base", type.base);
           out.attribute("comment", computed == report.functionalTypes.end()
                                        ? std::string{}
                                        : computed->second.comment);

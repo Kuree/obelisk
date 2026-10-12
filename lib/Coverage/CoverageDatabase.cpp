@@ -482,7 +482,8 @@ std::vector<T> sorted(const std::vector<T> &input, GetKey getKey) {
 Status planSections(const Database &db, const StringTable &strings,
                     std::vector<EncodedSection> &sections) {
   sections.clear();
-  if (strings.strings.size() > UINT32_MAX)
+  if (strings.strings.size() > UINT32_MAX ||
+      db.functionalTypes.size() > UINT32_MAX)
     return Status::IntegerOverflow;
   uint64_t stringBytes = 0;
   for (const std::string &text : strings.strings) {
@@ -764,13 +765,16 @@ Status encodeSections(const Database &db, const StringTable &strings,
       ToggleDimensionRecord::setFlags(p, v.flags);
     });
   const auto &types = db.functionalTypes;
+  IndexMap<uint64_t, uint32_t> typeOrdinals;
+  for (size_t i = 0; i != types.size(); ++i)
+    typeOrdinals.emplace(types[i].id, static_cast<uint32_t>(i + 1));
   Bytes &ft = add(SectionKind::FunctionalTypes, types.size());
   for (const auto &v : types)
     ft.record<FunctionalTypeRecord>([&](uint8_t *p) {
       FunctionalTypeRecord::setId(p, v.id);
       FunctionalTypeRecord::setScope(p, v.scope);
       FunctionalTypeRecord::setName(p, strings.get(v.name));
-      FunctionalTypeRecord::setFlags(p, v.flags);
+      FunctionalTypeRecord::setBase(p, v.base ? typeOrdinals.at(v.base) : 0);
       FunctionalTypeRecord::setLanguageVersion(p, v.languageVersion);
       FunctionalTypeRecord::setHierarchy(p, strings.get(v.hierarchy));
     });
@@ -1776,7 +1780,7 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.id);
     hashScalar(h, v.scope);
     hashString(h, v.name);
-    hashScalar(h, v.flags);
+    hashScalar(h, v.base);
     hashScalar(h, v.languageVersion);
     hashString(h, v.hierarchy);
   }
@@ -3149,11 +3153,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   IndexSet<std::string> functionalHierarchies;
   for (const auto &v : db.functionalTypes)
     if (!text(v.name) || !text(v.hierarchy) || v.hierarchy.empty() ||
-        !scopesByID.count(v.scope) || v.flags != 0 ||
+        !scopesByID.count(v.scope) || (v.base && v.languageVersion != 2023) ||
         (v.languageVersion != 2017 && v.languageVersion != 2023) ||
         !functionalHierarchies.insert(v.hierarchy).second ||
         !functionalTypeHierarchies.emplace(v.id, v.hierarchy).second)
       return fail(Status::InvalidReference, "functional_type");
+  detail::TypeHierarchyIndex typeHierarchy;
+  if (!typeHierarchy.build(db.functionalTypes))
+    return fail(Status::InvalidReference, "functional_type.base");
   IndexMap<uint64_t, std::string> functionalItemHierarchies;
   IndexMap<uint64_t, IndexSet<uint32_t>> itemOrdinals;
   IndexMap<uint64_t, uint64_t> itemCounts;
@@ -3535,7 +3542,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Container ||
         formal.resultKind == FunctionalExpressionResultKind::ClassHandle ||
         formal.resultKind == FunctionalExpressionResultKind::Chandle ||
-        formal.resultKind == FunctionalExpressionResultKind::Event;
+        formal.resultKind == FunctionalExpressionResultKind::Event ||
+        formal.resultKind == FunctionalExpressionResultKind::Covergroup;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3549,6 +3557,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
          : aggregate ? !aggregateTypesByID.count(formal.valueType)
          : formal.resultKind == FunctionalExpressionResultKind::ClassHandle
              ? !classTypesByID.count(formal.valueType)
+         : formal.resultKind == FunctionalExpressionResultKind::Covergroup
+             ? !functionalTypesByID.count(formal.valueType)
              : bool(formal.valueType)) ||
         (aggregate && aggregateTypesByID.at(formal.valueType)->bitWidth !=
                           formal.bitWidth) ||
@@ -3790,7 +3800,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           expression.resultKind ==
               FunctionalExpressionResultKind::ClassHandle ||
           expression.resultKind == FunctionalExpressionResultKind::Chandle ||
-          expression.resultKind == FunctionalExpressionResultKind::Event) &&
+          expression.resultKind == FunctionalExpressionResultKind::Event ||
+          expression.resultKind ==
+              FunctionalExpressionResultKind::Covergroup) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3807,7 +3819,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Event) ||
+                     FunctionalExpressionResultKind::Covergroup) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -7136,6 +7148,9 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                   else if (resultKind ==
                            FunctionalExpressionResultKind::ClassHandle)
                     targetKind = SectionKind::FunctionalClassTypes;
+                  else if (resultKind ==
+                           FunctionalExpressionResultKind::Covergroup)
+                    targetKind = SectionKind::FunctionalTypes;
                   else
                     return value == 0;
                   auto identities = stableIdentities.find(targetKind);
@@ -8072,12 +8087,18 @@ Status parse(const uint8_t *data, size_t size, Database &output,
         return Status::InvalidReference;
       result.functionalTypes.push_back(
           {FunctionalTypeRecord::getId(p), FunctionalTypeRecord::getScope(p),
-           *s, FunctionalTypeRecord::getFlags(p),
+           *s, FunctionalTypeRecord::getBase(p),
            FunctionalTypeRecord::getLanguageVersion(p), *hierarchy});
       return Status::Ok;
     });
     if (st != Status::Ok)
       return st;
+    for (auto &type : result.functionalTypes) {
+      if (type.base > result.functionalTypes.size())
+        return Status::InvalidReference;
+      if (type.base)
+        type.base = result.functionalTypes[type.base - 1].id;
+    }
     st = fixed(SectionKind::FunctionalItems, [&](const auto &e, uint64_t i,
                                                  const uint8_t *p) {
       const auto *s = str(FunctionalItemRecord::getName(p), e, i,

@@ -18,6 +18,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -161,7 +162,8 @@ public:
 /// attributes, takes the `set` attributes, and has each `replace-from` element
 /// in its attributes and types replaced by `replace-to` (an attribute, or a
 /// type for a type), and has operand `operand` replaced by an `arith.constant`
-/// of the typed `constant` attribute; with `erase`, it is erased instead. With
+/// of the typed `constant` attribute or a `ub.poison` of the `poison` type;
+/// with `erase`, it is erased instead. With
 /// `clone`, the edit applies to an unused copy inserted before each operation,
 /// so a value whose users constrain its type can still be produced mistyped.
 class EditAttributesTestPass
@@ -207,13 +209,16 @@ public:
   Option<std::string> constant{
       *this, "constant",
       llvm::cl::desc("typed attribute of the replacement operand")};
+  Option<std::string> poison{
+      *this, "poison",
+      llvm::cl::desc("type of a ub.poison replacement operand")};
   Option<bool> clone{*this, "clone",
                      llvm::cl::desc("edit an unused copy inserted before each "
                                     "matching operation"),
                      llvm::cl::init(false)};
 
   void getDependentDialects(DialectRegistry &registry) const final {
-    registry.insert<arith::ArithDialect>();
+    registry.insert<arith::ArithDialect, ub::UBDialect>();
   }
 
   void runOnOperation() final {
@@ -233,12 +238,17 @@ public:
       }
     }
     TypedAttr operandValue;
-    if (operandIndex >= 0 || !constant.empty()) {
-      operandValue =
-          dyn_cast_or_null<TypedAttr>(parseElement(constant, "constant"));
-      if (operandIndex < 0 || !operandValue) {
-        module.emitError("operand and constant must be an index and a typed "
-                         "attribute");
+    Type poisonType;
+    if (operandIndex >= 0 || !constant.empty() || !poison.empty()) {
+      if (!constant.empty())
+        operandValue =
+            dyn_cast_or_null<TypedAttr>(parseElement(constant, "constant"));
+      if (auto type = dyn_cast_or_null<TypeAttr>(
+              poison.empty() ? Attribute() : parseElement(poison, "poison")))
+        poisonType = type.getValue();
+      if (operandIndex < 0 || !operandValue == !poisonType) {
+        module.emitError("operand needs an index and either a typed constant "
+                         "attribute or a poison type");
         return signalPassFailure();
       }
     }
@@ -291,16 +301,20 @@ public:
         OpBuilder builder(operation);
         operation = builder.clone(*operation);
       }
-      if (operandValue) {
+      if (operandValue || poisonType) {
         if (static_cast<uint64_t>(operandIndex) >= operation->getNumOperands()) {
           operation->emitError("test-obelisk-edit-attributes operand index is "
                                "out of range");
           return signalPassFailure();
         }
         OpBuilder builder(operation);
-        operation->setOperand(
-            operandIndex, arith::ConstantOp::create(builder, operation->getLoc(),
-                                                    operandValue));
+        Value replacement =
+            operandValue
+                ? Value(arith::ConstantOp::create(builder, operation->getLoc(),
+                                                  operandValue))
+                : Value(ub::PoisonOp::create(builder, operation->getLoc(),
+                                             poisonType));
+        operation->setOperand(operandIndex, replacement);
       }
       for (const std::string &name : remove)
         operation->removeAttr(name);

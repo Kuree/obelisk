@@ -3195,6 +3195,60 @@ TEST(CoverageDatabaseTest, AggregateFormalLayoutsRoundTripAndValidate) {
   EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
 }
 
+TEST(CoverageDatabaseTest,
+     CovergroupFormalsRoundTripNominalTypesAndDirectBases) {
+  Database db = makeTypedDatabase();
+  db.functionalTypes.push_back({11, 1, "derived", 12, 2023, "top.derived"});
+  db.functionalTypes.push_back({12, 1, "source", 0, 2023, "top.source"});
+  auto &formal = db.functionalFormals.front();
+  formal.resultKind = FunctionalExpressionResultKind::Covergroup;
+  formal.bitWidth = 0;
+  formal.signedness = CoverageSignedness::NotApplicable;
+  formal.valueType = 12;
+  for (auto &expression : db.functionalExpressions)
+    if (expression.id == formal.defaultExpression) {
+      expression.resultKind = formal.resultKind;
+      expression.bitWidth = 0;
+      expression.signedness = formal.signedness;
+    }
+  db.schemaFingerprint = {};
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image), Status::Ok);
+  const size_t types = sectionOffset(image, SectionKind::FunctionalTypes);
+  ASSERT_NE(types, std::string::npos);
+  EXPECT_EQ(read32(image, types + 32 + 20), 3u);
+  Database decoded;
+  ASSERT_EQ(parse(image.data(), image.size(), decoded), Status::Ok);
+  EXPECT_EQ(decoded.functionalTypes[1].base, 12u);
+  EXPECT_EQ(decoded.functionalFormals.front().valueType, 12u);
+  EXPECT_EQ(decoded.functionalFormals.front().resultKind,
+            FunctionalExpressionResultKind::Covergroup);
+  EXPECT_EQ(computeSchemaFingerprint(decoded), computeSchemaFingerprint(db));
+  auto malformed = image;
+  put32(malformed, types + 32 + 20, 4);
+  refreshChecksum(malformed);
+  EXPECT_EQ(parse(malformed.data(), malformed.size(), decoded),
+            Status::InvalidReference);
+  auto bad = db;
+  bad.functionalFormals.front().bitWidth = 64;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalFormals.front().valueType = 99;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalTypes[2].base = 11;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalTypes[1].base = 99;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalTypes[1].languageVersion = 2017;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalTypes[1].base = 0;
+  EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
+}
+
 TEST(CoverageDatabaseTest, EventFormalsRoundTripWithCanonicalIdentityType) {
   Database db = makeTypedDatabase();
   auto &formal = db.functionalFormals.front();

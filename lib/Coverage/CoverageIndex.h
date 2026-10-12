@@ -444,6 +444,68 @@ auto groupRecords(const std::vector<T> &rows, GetKey getKey) {
   return groups;
 }
 
+// Single-parent forests need no transitive ancestor tables. Each direct edge
+// is visited once; preorder intervals answer subtype queries in fixed time.
+class TypeHierarchyIndex {
+  struct Interval {
+    size_t begin = 0, end = 0;
+  };
+  IndexMap<uint64_t, Interval> intervals;
+
+public:
+  template <typename Rows> bool build(const Rows &rows) {
+    intervals = {};
+    IndexMap<uint64_t, size_t> ordinals;
+    for (size_t i = 0; i != rows.size(); ++i)
+      if (!rows[i].id || !ordinals.emplace(rows[i].id, i).second)
+        return false;
+    std::vector<std::vector<size_t>> children(rows.size());
+    std::vector<size_t> roots;
+    for (size_t i = 0; i != rows.size(); ++i) {
+      if (!rows[i].base) {
+        roots.push_back(i);
+        continue;
+      }
+      auto parent = ordinals.find(rows[i].base);
+      if (parent == ordinals.end())
+        return false;
+      children[parent->second].push_back(i);
+    }
+    struct Frame {
+      size_t ordinal, child = 0;
+    };
+    size_t preorder = 0;
+    std::vector<Frame> pending;
+    for (size_t root : roots) {
+      intervals.emplace(rows[root].id, Interval{preorder++, 0});
+      pending.push_back({root});
+      while (!pending.empty()) {
+        Frame &frame = pending.back();
+        if (frame.child != children[frame.ordinal].size()) {
+          size_t child = children[frame.ordinal][frame.child++];
+          intervals.emplace(rows[child].id, Interval{preorder++, 0});
+          pending.push_back({child});
+          continue;
+        }
+        intervals.at(rows[frame.ordinal].id).end = preorder;
+        pending.pop_back();
+      }
+    }
+    if (preorder == rows.size())
+      return true;
+    intervals = {};
+    return false;
+  }
+
+  bool contains(uint64_t type) const { return intervals.count(type); }
+  bool isInstanceOf(uint64_t actual, uint64_t expected) const {
+    auto source = intervals.find(actual), target = intervals.find(expected);
+    return source != intervals.end() && target != intervals.end() &&
+           target->second.begin <= source->second.begin &&
+           source->second.begin < target->second.end;
+  }
+};
+
 template <typename Key, typename T>
 const RecordRange<T> &lookupRows(const IndexMap<Key, RecordRange<T>> &groups,
                                  const Key &key) {

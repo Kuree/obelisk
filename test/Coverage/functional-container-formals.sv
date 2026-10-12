@@ -134,9 +134,11 @@ endmodule
 // (dynamic array of int, dynamic array of row, bounded queue, associative
 // array); the int formal is a plain value with value_type 0. Layout IDs are
 // captured from the owning groups' formals and matched in the layout table.
+// Derived::group extends Base::group (IEEE 19.4.1), so its type row names
+// Base::group as its base.
 // JSON: "functional_types":[
-// JSON-DAG: {{[{]}}"id":[[BASE:[0-9]+]],"scope":{{[0-9]+}},"name":"","flags":0,"comment":"","hierarchy":"Base::group"
-// JSON-DAG: {{[{]}}"id":[[DERIVED:[0-9]+]],"scope":{{[0-9]+}},"name":"","flags":0,"comment":"","hierarchy":"Derived::group"
+// JSON-DAG: {{[{]}}"id":[[BASE:[0-9]+]],"scope":{{[0-9]+}},"name":"","base":0,"comment":"","hierarchy":"Base::group"
+// JSON-DAG: {{[{]}}"id":[[DERIVED:[0-9]+]],"scope":{{[0-9]+}},"name":"","base":[[BASE]],"comment":"","hierarchy":"Derived::group"
 // JSON-DAG: {{[{]}}"id":[[ARRAYS:[0-9]+]],"scope":{{[0-9]+}},"name":"arrays",
 // JSON-DAG: {{[{]}}"id":[[PATHS:[0-9]+]],"scope":{{[0-9]+}},"name":"paths",
 // JSON-DAG: {{[{]}}"id":[[SAMPLED:[0-9]+]],"scope":{{[0-9]+}},"name":"sampled",
