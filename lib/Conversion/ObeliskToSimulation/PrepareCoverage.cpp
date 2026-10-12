@@ -11,6 +11,7 @@
 #include "obelisk/Runtime/Runtime.h"
 #include "obelisk/Runtime/StableHash.h"
 
+#include "CoverageOrdering.h"
 #include "Detail.h"
 #include "LowerUnit.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
@@ -33,7 +34,6 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -45,6 +45,9 @@ namespace obelisk {
 #include "obelisk/Conversion/Passes.h.inc"
 
 namespace {
+
+using simlowering::coverageOrderKey;
+using simlowering::sortCoverageRecords;
 
 class ObeliskSimPrepareCoveragePass
     : public impl::ObeliskSimPrepareCoveragePassBase<
@@ -261,8 +264,8 @@ static FailureOr<ToggleTypePlan> buildToggleLayout(Type type,
                                   child->fourState[binding.objectLow + bit]});
       }
     }
-    llvm::sort(physicalBits, [](const auto &lhs, const auto &rhs) {
-      return lhs.first < rhs.first;
+    sortCoverageRecords(physicalBits, [](const auto &entry) {
+      return coverageOrderKey(entry.first);
     });
     uint64_t previous = UINT64_MAX;
     for (const auto &[stateBit, fourState] : physicalBits) {
@@ -1378,8 +1381,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     ScopeInventory inventory;
     SmallVector<sim::SimScopeDeclOp> declarations(
         design.getBody().front().getOps<sim::SimScopeDeclOp>());
-    llvm::sort(declarations,
-               [](auto lhs, auto rhs) { return lhs.getId() < rhs.getId(); });
+    sortCoverageRecords(declarations, [](auto entry) {
+      return coverageOrderKey(entry.getId());
+    });
     for (sim::SimScopeDeclOp declaration : declarations) {
       std::string name =
           declaration.getId() == 0
@@ -1623,10 +1627,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       }
     }
 
-    llvm::sort(candidates,
-               [](const PointCandidate &lhs, const PointCandidate &rhs) {
-                 return lhs.point.id < rhs.point.id;
-               });
+    sortCoverageRecords(candidates, [](const PointCandidate &entry) {
+      return coverageOrderKey(entry.point.id);
+    });
     schema.linePoints.reserve(candidates.size());
     Builder builder(&getContext());
     llvm::DenseMap<Operation *, SmallVector<FlatSymbolRefAttr>> keepalives;
@@ -1841,10 +1844,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       }
     }
 
-    llvm::sort(toggles,
-               [](const ToggleCandidate &lhs, const ToggleCandidate &rhs) {
-                 return lhs.object.id < rhs.object.id;
-               });
+    sortCoverageRecords(toggles, [](const ToggleCandidate &entry) {
+      return coverageOrderKey(entry.object.id);
+    });
     Builder builder(&getContext());
     llvm::DenseMap<Operation *, SmallVector<Attribute>> bindings;
     uint64_t base = 0;
@@ -4562,8 +4564,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
         }
       }
     }
-    llvm::sort(pendingCrossPlans, [](const auto &lhs, const auto &rhs) {
-      return lhs.plan.item < rhs.plan.item;
+    sortCoverageRecords(pendingCrossPlans, [](const auto &entry) {
+      return coverageOrderKey(entry.plan.item);
     });
     for (PendingCrossPlan &pending : pendingCrossPlans) {
       if (schema.crossTargets.size() > UINT32_MAX ||
@@ -4594,8 +4596,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       llvm::append_range(schema.crossSelectorOperands,
                          pending.selectorOperands);
     }
-    llvm::sort(pendingTransitionPrograms, [](const auto &lhs, const auto &rhs) {
-      return lhs.program.bin < rhs.program.bin;
+    sortCoverageRecords(pendingTransitionPrograms, [](const auto &entry) {
+      return coverageOrderKey(entry.program.bin);
     });
     for (PendingTransitionProgram &pending : pendingTransitionPrograms) {
       if (schema.transitionAlternatives.size() > UINT32_MAX ||
@@ -4623,38 +4625,33 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       }
       schema.transitionPrograms.push_back(pending.program);
     }
-    llvm::sort(schema.functionalTypes, [](const auto &lhs, const auto &rhs) {
-      return lhs.id < rhs.id;
+    sortCoverageRecords(schema.functionalTypes, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
     });
-    llvm::sort(schema.functionalItems, [](const auto &lhs, const auto &rhs) {
-      return lhs.id < rhs.id;
+    sortCoverageRecords(schema.functionalItems, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
     });
-    llvm::sort(schema.functionalBins, [](const auto &lhs, const auto &rhs) {
-      return lhs.id < rhs.id;
+    sortCoverageRecords(schema.functionalBins, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
     });
-    llvm::sort(schema.functionalFormals, [](const auto &lhs, const auto &rhs) {
-      return std::tie(lhs.type, lhs.kind, lhs.ordinal) <
-             std::tie(rhs.type, rhs.kind, rhs.ordinal);
+    sortCoverageRecords(schema.functionalFormals, [](const auto &entry) {
+      return coverageOrderKey(entry.type, entry.kind, entry.ordinal);
     });
-    llvm::sort(
-        schema.functionalExpressions,
-        [](const auto &lhs, const auto &rhs) { return lhs.id < rhs.id; });
-    llvm::sort(schema.functionalBinPlans, [](const auto &lhs, const auto &rhs) {
-      return lhs.bin < rhs.bin;
+    sortCoverageRecords(schema.functionalExpressions, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
     });
-    llvm::sort(schema.crossSelectorNodes, [](const auto &lhs, const auto &rhs) {
-      return std::tie(lhs.cross, lhs.ordinal) <
-             std::tie(rhs.cross, rhs.ordinal);
+    sortCoverageRecords(schema.functionalBinPlans, [](const auto &entry) {
+      return coverageOrderKey(entry.bin);
     });
-    llvm::sort(schema.functionalOptionPlans,
-               [](const auto &lhs, const auto &rhs) {
-                 return std::tie(lhs.ownerKind, lhs.owner, lhs.scope,
-                                 lhs.option, lhs.ordinal) <
-                        std::tie(rhs.ownerKind, rhs.owner, rhs.scope,
-                                 rhs.option, rhs.ordinal);
-               });
-    llvm::sort(pendingValueSets, [](const auto &lhs, const auto &rhs) {
-      return lhs.set.id < rhs.set.id;
+    sortCoverageRecords(schema.crossSelectorNodes, [](const auto &entry) {
+      return coverageOrderKey(entry.cross, entry.ordinal);
+    });
+    sortCoverageRecords(schema.functionalOptionPlans, [](const auto &entry) {
+      return coverageOrderKey(entry.ownerKind, entry.owner, entry.scope,
+                              entry.option, entry.ordinal);
+    });
+    sortCoverageRecords(pendingValueSets, [](const auto &entry) {
+      return coverageOrderKey(entry.set.id);
     });
     for (PendingValueSet &pending : pendingValueSets) {
       pending.set.firstAtom = schema.functionalValueAtoms.size();
@@ -4668,19 +4665,19 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                          pending.limbs.begin(),
                                          pending.limbs.end());
     }
-    llvm::sort(schema.functionalSourceRanges,
-               [](const auto &lhs, const auto &rhs) {
-                 return std::tie(lhs.bin, lhs.role, lhs.ordinal) <
-                        std::tie(rhs.bin, rhs.role, rhs.ordinal);
-               });
+    sortCoverageRecords(schema.functionalSourceRanges, [](const auto &entry) {
+      return coverageOrderKey(entry.bin, entry.role, entry.ordinal);
+    });
   }
 
-  llvm::sort(schema.sourceFiles,
-             [](const auto &lhs, const auto &rhs) { return lhs.id < rhs.id; });
-  llvm::sort(schema.scopes,
-             [](const auto &lhs, const auto &rhs) { return lhs.id < rhs.id; });
-  llvm::sort(schema.exclusions, [](const auto &lhs, const auto &rhs) {
-    return std::tie(lhs.metric, lhs.entity) < std::tie(rhs.metric, rhs.entity);
+  sortCoverageRecords(schema.sourceFiles, [](const auto &entry) {
+    return coverageOrderKey(entry.id);
+  });
+  sortCoverageRecords(schema.scopes, [](const auto &entry) {
+    return coverageOrderKey(entry.id);
+  });
+  sortCoverageRecords(schema.exclusions, [](const auto &entry) {
+    return coverageOrderKey(entry.metric, entry.entity);
   });
 
   module.walk([](Operation *operation) {
