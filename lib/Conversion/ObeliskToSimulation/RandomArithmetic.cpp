@@ -778,7 +778,7 @@ struct RandomArithmetic::Impl {
 
   FailureOr<RandomArithmeticPlanes> inside(Operation *expression) {
     auto operands = getChildren(expression);
-    if (operands.size() < 2)
+    if (operands.empty())
       return failure();
     auto input = get(operands.front());
     if (failed(input))

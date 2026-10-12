@@ -2225,7 +2225,7 @@ UnitLowering::compareFloatMember(Value selector, Value candidate,
 FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (op.getItemCount() <= 0 ||
+  if (children.empty() ||
       children.size() != static_cast<size_t>(1 + op.getItemCount())) {
     emitError(location) << "malformed inside item inventory";
     return failure();

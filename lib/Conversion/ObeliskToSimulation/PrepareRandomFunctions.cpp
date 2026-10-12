@@ -1,6 +1,7 @@
 //===- PrepareRandomFunctions.cpp - Frozen constraint functions -----------===//
 
 #include "PrepareRandomFunctions.h"
+#include "PrepareRandomIteration.h"
 #include "Detail.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1106,10 +1107,23 @@ private:
       uint64_t comparisonWidth = 0;
       bool comparisonSigned = true;
       bool comparisonFourState = false;
+      auto membershipElementType = [&](Type type) {
+        while (inside) {
+          if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type))
+            type = array.getElementType();
+          else if (auto array = dyn_cast<semantic::UnpackedArrayType>(type))
+            type = array.getElementType();
+          else
+            break;
+        }
+        return type;
+      };
       for (Operation *operand : comparisonOperands) {
         auto type = operand->getAttrOfType<TypeAttr>("semantic_type");
+        Type elementType =
+            type ? membershipElementType(type.getValue()) : Type{};
         FailureOr<Type> normalized =
-            type ? normalizeSemanticType(type.getValue(),
+            type ? normalizeSemanticType(elementType,
                                          getSemanticLocation(operand), function)
                  : FailureOr<Type>(failure());
         Type scalar = succeeded(normalized)
@@ -1119,7 +1133,7 @@ private:
         if (!operandWidth || *operandWidth == 0)
           return failure();
         comparisonWidth = std::max(comparisonWidth, uint64_t(*operandWidth));
-        comparisonSigned &= isSignedSemanticType(type.getValue());
+        comparisonSigned &= isSignedSemanticType(elementType);
         comparisonFourState |= isa<sim::LogicType>(scalar);
       }
       auto integralType = [&](uint64_t bitWidth, bool fourState) {
@@ -1212,7 +1226,15 @@ private:
               endpoints));
           continue;
         }
-        FailureOr<Operation *> value = contextValue(label);
+        auto labelType = label->getAttrOfType<TypeAttr>("semantic_type");
+        // 11.4.13 traverses unpacked labels to singular members. The array
+        // itself retains its element type; each member is compared in the
+        // selector's common context after fixed-array expansion.
+        bool arrayLabel =
+            labelType &&
+            membershipElementType(labelType.getValue()) != labelType.getValue();
+        FailureOr<Operation *> value =
+            arrayLabel ? expression(label, environment) : contextValue(label);
         if (failed(value))
           return failure();
         labels.push_back(*value);
@@ -1608,6 +1630,7 @@ LogicalResult expandRandomConstraintFunctions(
 
     Operation *cloned = source->cloneWithoutRegions();
     if (functionBody) {
+      cloned->setAttr(randomFunctionExpressionAttrName, builder.getUnitAttr());
       if (auto reference =
               source->getAttrOfType<SymbolRefAttr>("referenced_symbol")) {
         auto symbol = semanticSymbols.find(reference.getLeafReference());
@@ -1647,7 +1670,7 @@ LogicalResult expandRandomConstraintFunctions(
     root = *expanded;
   }
 
-  return success();
+  return expandStaticRandomInsideExpressions(constraintRoots, builder);
 }
 
 } // namespace obelisk::simlowering

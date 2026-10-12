@@ -289,4 +289,159 @@ expandStaticRandomUniquenessConstraints(MutableArrayRef<Operation *> roots,
   return success();
 }
 
+LogicalResult
+expandStaticRandomInsideExpressions(MutableArrayRef<Operation *> roots,
+                                    Builder &builder) {
+  struct Dimension {
+    Type element;
+    int64_t left;
+    int64_t right;
+  };
+  struct Member {
+    Operation *expression;
+    SmallVector<Dimension> dimensions;
+    uint64_t leaves = 1;
+  };
+  Type indexType =
+      semantic::IntegralType::get(builder.getContext(), 64, true, false, 63, 0,
+                                  semantic::SVIntegralFlavor::LongInt);
+  for (Operation *&root : roots) {
+    WalkResult result = root->walk<
+        WalkOrder::PostOrder>([&](semantic::SVInsideExpressionOp inside) {
+      auto children = getChildren(inside);
+      if (children.empty() || inside.getItemCount() != children.size() - 1) {
+        emitError(getSemanticLocation(inside))
+            << "malformed inside item inventory";
+        return WalkResult::interrupt();
+      }
+      SmallVector<Member> members;
+      uint64_t count = 0;
+      bool hasArray = false;
+      for (Operation *child : ArrayRef(children).drop_front()) {
+        Member member{child, {}, 1};
+        auto attribute = child->getAttrOfType<TypeAttr>("semantic_type");
+        Type type = attribute ? attribute.getValue() : Type{};
+        for (;;) {
+          Dimension dimension;
+          uint64_t extent;
+          if (auto array =
+                  dyn_cast_or_null<semantic::RangedUnpackedArrayType>(type)) {
+            dimension = {array.getElementType(), array.getLeft(),
+                         array.getRight()};
+            APInt distance(65, static_cast<uint64_t>(dimension.left), true);
+            distance -= APInt(65, static_cast<uint64_t>(dimension.right), true);
+            if (distance.isNegative())
+              distance = -distance;
+            ++distance;
+            if (distance.getActiveBits() > 32) {
+              emitError(getSemanticLocation(child))
+                  << "fixed inside array exceeds the solver's 32-bit "
+                     "instruction inventory";
+              return WalkResult::interrupt();
+            }
+            extent = distance.getZExtValue();
+          } else if (auto array =
+                         dyn_cast_or_null<semantic::UnpackedArrayType>(type)) {
+            dimension = {array.getElementType(), 0,
+                         static_cast<int64_t>(array.getSize()) - 1};
+            extent = array.getSize();
+          } else {
+            break;
+          }
+          hasArray = true;
+          if (extent != 0 && member.leaves > UINT32_MAX / extent) {
+            emitError(getSemanticLocation(child))
+                << "fixed inside array exceeds the solver's 32-bit "
+                   "instruction inventory";
+            return WalkResult::interrupt();
+          }
+          member.leaves *= extent;
+          member.dimensions.push_back(dimension);
+          type = dimension.element;
+        }
+        if (member.leaves > UINT32_MAX - count) {
+          emitError(getSemanticLocation(inside))
+              << "fixed inside set exceeds the solver's 32-bit "
+                 "instruction inventory";
+          return WalkResult::interrupt();
+        }
+        count += member.leaves;
+        members.push_back(std::move(member));
+      }
+      if (!hasArray)
+        return WalkResult::advance();
+
+      Operation *expanded = inside->cloneWithoutRegions();
+      expanded->setAttr("item_count", builder.getI64IntegerAttr(count));
+      expanded->getRegion(0).push_back(new Block());
+      Block &body = expanded->getRegion(0).front();
+      children.front()->moveBefore(&body, body.end());
+      for (const Member &member : members) {
+        if (member.dimensions.empty()) {
+          member.expression->moveBefore(&body, body.end());
+          continue;
+        }
+        SmallVector<int64_t> indices;
+        for (const Dimension &dimension : member.dimensions)
+          indices.push_back(dimension.left);
+        for (uint64_t leaf = 0; leaf != member.leaves; ++leaf) {
+          // Clone the base once per emitted leaf and wrap it by moving
+          // each preceding selection. This costs the size of the lowered
+          // leaf paths, including singleton dimensions, rather than
+          // repeatedly cloning every prefix of a multidimensional path.
+          Operation *selected = member.expression->clone();
+          for (auto [dimension, index] :
+               llvm::zip_equal(member.dimensions, indices)) {
+            OperationState selection(
+                member.expression->getLoc(),
+                semantic::SVElementSelectExpressionOp::getOperationName());
+            selection.addAttribute("node_id", inside->getAttr("node_id"));
+            selection.addAttribute("semantic_type",
+                                   TypeAttr::get(dimension.element));
+            if (inside->hasAttr(randomFunctionExpressionAttrName))
+              selection.addAttribute(randomFunctionExpressionAttrName,
+                                     builder.getUnitAttr());
+            Block *selectionBody = new Block();
+            selection.addRegion()->push_back(selectionBody);
+            selectionBody->push_back(selected);
+            OperationState literal(
+                member.expression->getLoc(),
+                semantic::SVIntegerLiteralOp::getOperationName());
+            literal.addAttribute("node_id", inside->getAttr("node_id"));
+            literal.addAttribute("semantic_type", TypeAttr::get(indexType));
+            literal.addAttribute("constant_value",
+                                 builder.getStringAttr(std::to_string(index)));
+            literal.addRegion()->push_back(new Block());
+            selectionBody->push_back(Operation::create(literal));
+            selected = Operation::create(selection);
+          }
+          body.push_back(selected);
+          // Stop before incrementing the final endpoint, including
+          // INT64_MIN/MAX. The next leaf follows declaration order.
+          if (leaf + 1 == member.leaves)
+            break;
+          for (size_t index = indices.size(); index != 0;) {
+            --index;
+            const Dimension &dimension = member.dimensions[index];
+            if (indices[index] != dimension.right) {
+              indices[index] += dimension.left <= dimension.right ? 1 : -1;
+              break;
+            }
+            indices[index] = dimension.left;
+          }
+        }
+      }
+      inside->getBlock()->getOperations().insert(inside->getIterator(),
+                                                 expanded);
+      if (root == inside.getOperation())
+        root = expanded;
+      inside->erase();
+      return WalkResult::advance();
+    });
+    if (result.wasInterrupted())
+      return failure();
+  }
+  return success();
+}
+
 } // namespace obelisk::simlowering

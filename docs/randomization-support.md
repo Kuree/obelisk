@@ -144,8 +144,10 @@ its result graph has O(N) size. Constraint lowering also hashes repeated
 ordering edges, joins overlapping selected paths through per-bit adjacency,
 and schedules their latest legal layers with one sink traversal. Candidate and
 runtime-input subtree summaries share an iterative postorder cache; property
-offsets and alias target counts use indexed lookups. Other expression
-construction and proposal lowering paths remain under review.
+offsets and alias target counts use indexed lookups. Fixed inside-array
+expansion clones each base once per emitted leaf and wraps it by moving
+preceding selections, with work linear in the generated leaf paths. Other
+expression construction and proposal lowering paths remain under review.
 
 Native and WASM targets contain no Z3 library or solver calls. A simple sampler
 binds current captures and inactive bits, selects the optimal enabled soft
@@ -216,6 +218,12 @@ cases ignore the designated symbols in either operand under 12.5.1. Procedural
 the right operand and preserve unmatched left unknowns. Integral `inside`
 compares singular members with those RHS wildcards and combines member and
 inclusive-range predicates with four-state OR before any consuming result cast.
+Fixed unpacked array members descend through every dimension to integral leaves,
+including ascending, descending and negative coordinates. Class and scope plans
+retain live state, candidate array relations and frozen X/Z at those leaves.
+Case-inside uses the leaf types in its common comparison context; ordinary
+function execution also traverses nested array labels. Function-origin literals
+retain their procedural symbol semantics after expression-return expansion.
 Simple integral ranges admit a `$` lower or upper endpoint. `case inside` uses
 that asymmetric membership under 12.5.4, takes a branch only for a known true
 match, and skips later labels after the first match.
@@ -229,7 +237,7 @@ buffers. Raw X/Z reads and normalized values have separate caches. Dependency in
 symbol planes and known predicates also reuse immutable subtree summaries.
 Labels after an earlier match do not contribute evaluation errors. Class and
 scope MLIR tests cover these rules and 130-bit results on native and WASM targets.
-Larger, unbounded or general dynamic loops, unpacked-array membership,
+Larger, unbounded or general dynamic loops, dynamic-container membership,
 tolerance ranges and pattern case statements, case qualifier reports,
 non-integral comparisons, selected local assignment targets, non-integral locals,
 and functions on other instance

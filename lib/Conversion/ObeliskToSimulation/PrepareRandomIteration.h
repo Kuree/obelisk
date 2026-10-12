@@ -20,6 +20,12 @@ mlir::LogicalResult expandStaticRandomForeachConstraints(
 mlir::LogicalResult expandStaticRandomUniquenessConstraints(
     llvm::MutableArrayRef<mlir::Operation *> roots, mlir::Builder &builder);
 
+/// Descend through fixed unpacked array members of an inside set until each
+/// member is singular (11.4.13). Preserve declared coordinates and expression
+/// types; ordinary membership lowering supplies the comparison context.
+mlir::LogicalResult expandStaticRandomInsideExpressions(
+    llvm::MutableArrayRef<mlir::Operation *> roots, mlir::Builder &builder);
+
 } // namespace obelisk::simlowering
 
 #endif

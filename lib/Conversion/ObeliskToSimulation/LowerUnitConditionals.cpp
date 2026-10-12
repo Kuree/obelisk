@@ -1112,31 +1112,40 @@ UnitLowering::lowerCaseLabel(Value selector, Type selectorType,
     FailureOr<Value> candidate = lowerExpression(label);
     if (failed(candidate))
       return failure();
-    if (auto array = dyn_cast<sim::UnpackedArrayType>((*candidate).getType())) {
-      unsigned count = sim::getAggregateNumElements(array);
-      for (unsigned index = 0; index < count; ++index) {
-        Value element = sim::SimAggregateExtractOp::create(
-            builder, location, array.getElementType(), *candidate, index);
-        FailureOr<Value> equal = compareValue(element, sim::CompareKind::WildEq,
-                                              arith::CmpIPredicate::eq);
-        if (failed(equal))
-          return failure();
-        if (!result)
-          result = *equal;
-        else if (selectorLogic)
-          result = sim::SimLogicLogicalOp::create(
-              builder, location, sim::LogicType::get(function.getContext(), 1),
-              sim::LogicalKind::Or, result, *equal);
-        else
-          result = arith::OrIOp::create(builder, location, result, *equal);
+    // 11.4.13 and 12.5.4 descend through every unpacked dimension to a
+    // singular member before comparison. A multidimensional subarray is
+    // never converted as though it were one packed label.
+    std::function<LogicalResult(Value)> addCandidate = [&](Value value) {
+      if (auto array = dyn_cast<sim::UnpackedArrayType>(value.getType())) {
+        unsigned count = sim::getAggregateNumElements(array);
+        for (unsigned index = 0; index < count; ++index) {
+          Value element = sim::SimAggregateExtractOp::create(
+              builder, location, array.getElementType(), value, index);
+          if (failed(addCandidate(element)))
+            return failure();
+        }
+        return success();
       }
-    } else {
-      FailureOr<Value> equal = compareValue(
-          *candidate, sim::CompareKind::WildEq, arith::CmpIPredicate::eq);
+      FailureOr<Value> equal = compareValue(value, sim::CompareKind::WildEq,
+                                            arith::CmpIPredicate::eq);
       if (failed(equal))
         return failure();
-      result = *equal;
-    }
+      if (!result)
+        result = *equal;
+      else if (selectorLogic)
+        result = sim::SimLogicLogicalOp::create(
+            builder, location, sim::LogicType::get(function.getContext(), 1),
+            sim::LogicalKind::Or, result, *equal);
+      else
+        result = arith::OrIOp::create(builder, location, result, *equal);
+      return success();
+    };
+    if (failed(addCandidate(*candidate)))
+      return failure();
+    if (!result)
+      return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                       builder.getBoolAttr(false))
+          .getResult();
   }
   if (!result) {
     emitError(location) << "case inside item has no comparable value";

@@ -5010,8 +5010,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return success();
     }
     if (isa<semantic::SVInsideExpressionOp>(expression)) {
-      if (nested.size() < 2)
+      if (nested.empty())
         return failure();
+      if (nested.size() == 1) {
+        emitLiteral(false);
+        return success();
+      }
       bool first = true;
       for (Operation *item : ArrayRef(nested).drop_front()) {
         if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
