@@ -1628,9 +1628,11 @@ LogicalResult materializeEvalTwoStateVariants(
           blockValues.emplace_back(&operation, nba.getValue());
       }
       for (auto [operation, loaded] : blockValues) {
-        // Integer control storage is intrinsically two-state; only packed
-        // language values have an unknown plane to inspect.
-        if (isa<IntegerType>(loaded.getType()))
+        // Only four-state data has an unknown plane to inspect. Integer
+        // control storage and two-state language types, including packed
+        // bit vectors and their aggregates, cannot hold X/Z (IEEE 1800-2023
+        // 6.11.2), so they never constrain the known path.
+        if (!detail::containsLogic(loaded.getType()))
           continue;
         std::optional<unsigned> width =
             detail::nativeStateWidth(loaded.getType());
@@ -1638,8 +1640,7 @@ LogicalResult materializeEvalTwoStateVariants(
         // known state. That is a limit of this predicate, not an invalid
         // design: decline the owner so it keeps its canonical four-state
         // route instead of failing an otherwise legal compilation.
-        if (!width || !detail::containsLogic(loaded.getType()) ||
-            isa<sim::UnpackedUnionType>(loaded.getType())) {
+        if (!width || isa<sim::UnpackedUnionType>(loaded.getType())) {
           traceRejection("load has no native logic width",
                          loaded.getDefiningOp());
           variantSymbols.erase(probe);
