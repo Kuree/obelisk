@@ -292,6 +292,31 @@ checks inherited and embedded owners, receiver evaluation, constructor values,
 and native/bytecode parity. Existing persistence columns already store these
 settings; JSON/text/HTML/LCOV generation is checked without changing the format.
 
+A follow-up 19.10 probe found that copying an entire implicit `option`
+structure still failed after primitive field reads were supported. Whole group,
+point, and cross values now read their eleven or six fields in declaration
+order and construct the ordinary normalized unpacked struct. Every copy
+resolves its typed owner once and evaluates its receiver once; each scalar
+uses the existing indexed getter and each string uses the managed snapshot
+getter. Copies passed through functions, nested records, or dynamic arrays
+remain independent of later name, weight, or comment edits on the live group.
+Ordinary user records with a field named `option` keep their usual lowering.
+
+The field pass is O(F) with F bounded by eleven, plus the returned string
+bytes; it adds no schema or configuration traversal. Existing
+`simulation.aggregate.construct` and typed coverage read operations handle
+both backends, with their existing verifiers, layout metadata, and memory
+effects. This follows the declarative operation and analysis reuse guidance
+in [MLIR ODS](https://mlir.llvm.org/docs/DefiningDialects/Operations/) and
+[pass management](https://mlir.llvm.org/docs/PassManagement/), while retaining
+[string allocation effects](https://mlir.llvm.org/doxygen/SideEffectInterfaces_8h.html).
+MLIR regressions check declaration order, one receiver per copy, stable group
+and item handles, canonicalization/CSE, both backend ABIs, and LLVM verification.
+A two-configuration executable fixture checks all fields, function and array
+copies, and native/bytecode parity, together with JSON/text/HTML/LCOV output.
+The runtime and persistence format need no new operations or columns for
+these value copies; no additional runtime unit or scaling benchmark is needed.
+
 The coverage-related regression suite probes existing coverage semantics; it
 does not certify complete implementation of every feature in the LRM.
 

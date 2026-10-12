@@ -330,46 +330,51 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionRead(
   SmallVector<Operation *> fieldChildren = getChildren(op);
   if (!fieldName || fieldChildren.size() != 1)
     return std::optional<Value>{};
-  auto option =
-      dyn_cast<semantic::SVMemberAccessExpressionOp>(fieldChildren.front());
-  auto optionName =
-      fieldChildren.front()->getAttrOfType<StringAttr>("member_name");
-  if (!option || !optionName || optionName.getValue() != "option")
-    return std::optional<Value>{};
-  SmallVector<Operation *> optionChildren = getChildren(option);
-  if (optionChildren.size() != 1)
-    return std::optional<Value>{};
-
-  std::optional<sim::CovergroupInstanceOptionKind> kind;
-  StringRef name = fieldName.getValue();
-  if (name == "weight")
-    kind = sim::CovergroupInstanceOptionKind::Weight;
-  else if (name == "goal")
-    kind = sim::CovergroupInstanceOptionKind::Goal;
-  else if (name == "at_least")
-    kind = sim::CovergroupInstanceOptionKind::AtLeast;
-  else if (name == "cross_num_print_missing")
-    kind = sim::CovergroupInstanceOptionKind::CrossNumPrintMissing;
-  else if (name == "auto_bin_max")
-    kind = sim::CovergroupInstanceOptionKind::AutoBinMax;
-  else if (name == "detect_overlap")
-    kind = sim::CovergroupInstanceOptionKind::DetectOverlap;
-  else if (name == "per_instance")
-    kind = sim::CovergroupInstanceOptionKind::PerInstance;
-  else if (name == "get_inst_coverage")
-    kind = sim::CovergroupInstanceOptionKind::GetInstCoverage;
-  else if (name == "cross_retain_auto_bins")
-    kind = sim::CovergroupInstanceOptionKind::CrossRetainAutoBins;
-  else if (name == "comment")
-    kind = sim::CovergroupInstanceOptionKind::Comment;
-  else if (name == "name")
-    kind = sim::CovergroupInstanceOptionKind::Name;
-  else
+  const bool wholeStructure = fieldName.getValue() == "option";
+  Operation *owner = fieldChildren.front();
+  if (!wholeStructure) {
+    auto option = dyn_cast<semantic::SVMemberAccessExpressionOp>(owner);
+    auto optionName = owner->getAttrOfType<StringAttr>("member_name");
+    if (!option || !optionName || optionName.getValue() != "option")
+      return std::optional<Value>{};
+    SmallVector<Operation *> optionChildren = getChildren(option);
+    if (optionChildren.size() != 1)
+      return std::optional<Value>{};
+    owner = optionChildren.front();
+  }
+  auto optionKind =
+      [](StringRef name) -> std::optional<sim::CovergroupInstanceOptionKind> {
+    using Kind = sim::CovergroupInstanceOptionKind;
+    if (name == "weight")
+      return Kind::Weight;
+    if (name == "goal")
+      return Kind::Goal;
+    if (name == "at_least")
+      return Kind::AtLeast;
+    if (name == "cross_num_print_missing")
+      return Kind::CrossNumPrintMissing;
+    if (name == "auto_bin_max")
+      return Kind::AutoBinMax;
+    if (name == "detect_overlap")
+      return Kind::DetectOverlap;
+    if (name == "per_instance")
+      return Kind::PerInstance;
+    if (name == "get_inst_coverage")
+      return Kind::GetInstCoverage;
+    if (name == "cross_retain_auto_bins")
+      return Kind::CrossRetainAutoBins;
+    if (name == "comment")
+      return Kind::Comment;
+    if (name == "name")
+      return Kind::Name;
+    return std::nullopt;
+  };
+  auto kind = optionKind(fieldName.getValue());
+  if (!wholeStructure && !kind)
     return std::optional<Value>{};
 
   Location location = getSemanticLocation(op);
-  auto resolvedOwner =
-      resolveCovergroupOptionOwner(optionChildren.front(), location);
+  auto resolvedOwner = resolveCovergroupOptionOwner(owner, location);
   if (failed(resolvedOwner))
     return failure();
   if (!*resolvedOwner)
@@ -377,27 +382,6 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionRead(
   const auto &resolved = **resolvedOwner;
   uint64_t itemID = resolved.itemID;
   Operation *semanticItem = resolved.item;
-  if (*kind == sim::CovergroupInstanceOptionKind::CrossNumPrintMissing &&
-      itemID && !isa<semantic::SVCoverCrossSymbolOp>(semanticItem)) {
-    emitError(location)
-        << "cross_num_print_missing is only available on a covergroup or cross";
-    return failure();
-  }
-
-  if (itemID &&
-      ((*kind == sim::CovergroupInstanceOptionKind::Name ||
-        *kind == sim::CovergroupInstanceOptionKind::PerInstance ||
-        *kind == sim::CovergroupInstanceOptionKind::GetInstCoverage) ||
-       ((*kind == sim::CovergroupInstanceOptionKind::AutoBinMax ||
-         *kind == sim::CovergroupInstanceOptionKind::DetectOverlap) &&
-        !isa<semantic::SVCoverpointSymbolOp>(semanticItem)) ||
-       (*kind == sim::CovergroupInstanceOptionKind::CrossRetainAutoBins &&
-        !isa<semantic::SVCoverCrossSymbolOp>(semanticItem)))) {
-    emitError(location) << "covergroup option '" << name
-                        << "' is not available on this item";
-    return failure();
-  }
-
   FailureOr<Value> loweredReceiver = lowerExpression(resolved.receiver);
   if (failed(loweredReceiver) ||
       !isa<sim::CovergroupHandleType>((*loweredReceiver).getType())) {
@@ -406,25 +390,72 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionRead(
     return failure();
   }
   Value context = function.getBody().front().getArgument(0);
-  if (*kind == sim::CovergroupInstanceOptionKind::Name ||
-      *kind == sim::CovergroupInstanceOptionKind::Comment) {
-    Value value =
-        sim::SimCovergroupGetStringOptionOp::create(
-            builder, location, context, *loweredReceiver, itemID, *kind)
-            .getValue();
-    return std::optional<Value>{value};
-  }
-  Value value = sim::SimCovergroupGetIntegerOptionOp::create(
-                    builder, location, context, *loweredReceiver, itemID, *kind)
-                    .getValue();
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
   if (failed(resultType))
     return failure();
-  FailureOr<Value> converted =
-      convert(value, *resultType, true, location, isSignedNode(op));
-  if (failed(converted))
+  auto read = [&](sim::CovergroupInstanceOptionKind kind, Type result,
+                  bool resultSigned) -> FailureOr<Value> {
+    using Kind = sim::CovergroupInstanceOptionKind;
+    if (itemID && ((kind == Kind::Name || kind == Kind::PerInstance ||
+                    kind == Kind::GetInstCoverage) ||
+                   ((kind == Kind::AutoBinMax || kind == Kind::DetectOverlap) &&
+                    !isa<semantic::SVCoverpointSymbolOp>(semanticItem)) ||
+                   ((kind == Kind::CrossRetainAutoBins ||
+                     kind == Kind::CrossNumPrintMissing) &&
+                    !isa<semantic::SVCoverCrossSymbolOp>(semanticItem)))) {
+      emitError(location) << "covergroup option '"
+                          << sim::stringifyCovergroupInstanceOptionKind(kind)
+                          << "' is not available on this item";
+      return failure();
+    }
+    if (kind == Kind::Name || kind == Kind::Comment) {
+      if (!isa<sim::StringType>(result)) {
+        emitError(location) << "coverage string option requires a string field";
+        return failure();
+      }
+      return sim::SimCovergroupGetStringOptionOp::create(
+                 builder, location, context, *loweredReceiver, itemID, kind)
+          .getValue();
+    }
+    Value value =
+        sim::SimCovergroupGetIntegerOptionOp::create(
+            builder, location, context, *loweredReceiver, itemID, kind)
+            .getValue();
+    return convert(value, result, true, location, resultSigned);
+  };
+  if (!wholeStructure) {
+    FailureOr<Value> value = read(*kind, *resultType, isSignedNode(op));
+    if (failed(value))
+      return failure();
+    return std::optional<Value>{*value};
+  }
+
+  auto structure = dyn_cast<sim::UnpackedStructType>(*resultType);
+  const unsigned count = semanticItem ? 6 : 11;
+  if (!structure || structure.getFields().size() != count) {
+    emitError(location)
+        << "coverage option requires its implicit LRM structure";
     return failure();
-  return std::optional<Value>{*converted};
+  }
+  // The LRM bounds this inventory to eleven fields. Each field is read once
+  // through the same indexed owner and receiver, including managed snapshots.
+  SmallVector<Value> elements(count);
+  for (Attribute attribute : structure.getFields()) {
+    auto field = cast<sim::FieldAttr>(attribute);
+    auto kind = optionKind(field.getName().getValue());
+    if (!kind) {
+      emitError(location) << "unknown field in coverage option structure";
+      return failure();
+    }
+    FailureOr<Value> value =
+        read(*kind, field.getType(), /*resultSigned=*/true);
+    if (failed(value))
+      return failure();
+    elements[field.getOrdinal()] = *value;
+  }
+  return std::optional<Value>{sim::SimAggregateConstructOp::create(
+                                  builder, location, structure, elements)
+                                  .getResult()};
 }
 
 FailureOr<Value>
