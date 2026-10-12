@@ -2550,9 +2550,13 @@ bool validateImage(const Image &image) {
           (layout.kind == OBELISK_RT_DBREG_REAL64 && layout.width != 64) ||
           (layout.kind == OBELISK_RT_DBREG_STRING && layout.width != 64) ||
           read16(layoutRecord + 2) != 0 || read64(layoutRecord + 32) != 0 ||
-          (layout.flags & ~OBELISK_RT_DBREG_SIGNED) != 0 ||
-          (layout.kind != OBELISK_RT_DBREG_BITS &&
-           layout.kind != OBELISK_RT_DBREG_LOGIC && layout.flags != 0) ||
+          (layout.flags &
+           ~(layout.kind == OBELISK_RT_DBREG_MANAGED && layout.width == 64
+                 ? OBELISK_RT_DBREG_CLASS_HANDLE
+             : layout.kind == OBELISK_RT_DBREG_BITS ||
+                     layout.kind == OBELISK_RT_DBREG_LOGIC
+                 ? OBELISK_RT_DBREG_SIGNED
+                 : 0)) != 0 ||
           layout.offset % 8 != 0 || layout.offset < previousEnd ||
           layout.offset > function.scratchSize ||
           layout.size > function.scratchSize - layout.offset)

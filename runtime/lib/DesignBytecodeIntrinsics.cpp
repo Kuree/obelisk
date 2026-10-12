@@ -307,8 +307,10 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (obelisk_rt_managed_word_from_object(result.owner) != word)
         return false;
       result.kind =
-          result.owner && obelisk_rt_managed_object_kind(result.owner) ==
-                              OBELISK_RT_MANAGED_REFERENCE_PATH
+          layout.flags & OBELISK_RT_DBREG_CLASS_HANDLE
+              ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+          : result.owner && obelisk_rt_managed_object_kind(result.owner) ==
+                                OBELISK_RT_MANAGED_REFERENCE_PATH
               ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE
               : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
       result.bit_width = 0;
@@ -1752,7 +1754,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     bool reference = output.kind == OBELISK_RT_DBREG_ARGUMENT_REF;
     if (reference && (output.width != 192 || output.size != 24))
       return OBELISK_RT_INVALID_BYTECODE;
-    uint32_t kind = container   ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+    uint32_t kind = container && (output.flags & OBELISK_RT_DBREG_CLASS_HANDLE)
+                        ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+                    : container ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
                     : reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
                     : output.kind == OBELISK_RT_DBREG_REAL64
                         ? OBELISK_RT_FUNCTIONAL_VALUE_REAL

@@ -68,6 +68,8 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (sim::isManagedHandleType(type)) {
     layout.kind = Managed;
     layout.width = 64;
+    if (isa<sim::ClassHandleType>(type))
+      layout.flags = OBELISK_RT_DBREG_CLASS_HANDLE;
   } else if (isa<sim::ManagedRefType>(type)) {
     layout.kind = ManagedRef;
     layout.width = 128;

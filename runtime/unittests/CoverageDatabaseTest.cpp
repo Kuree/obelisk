@@ -3195,4 +3195,44 @@ TEST(CoverageDatabaseTest, AggregateFormalLayoutsRoundTripAndValidate) {
   EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
 }
 
+TEST(CoverageDatabaseTest, ClassFormalTypesRoundTripAndValidate) {
+  Database db = makeTypedDatabase();
+  db.functionalClassTypes = {{1000, 99}};
+  auto &formal = db.functionalFormals.front();
+  formal.resultKind = FunctionalExpressionResultKind::ClassHandle;
+  formal.bitWidth = 0;
+  formal.signedness = CoverageSignedness::NotApplicable;
+  formal.valueType = 1000;
+  for (auto &expression : db.functionalExpressions)
+    if (expression.id == formal.defaultExpression) {
+      expression.resultKind = formal.resultKind;
+      expression.bitWidth = 0;
+      expression.signedness = formal.signedness;
+    }
+  db.schemaFingerprint = {};
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image), Status::Ok);
+  Database decoded;
+  ASSERT_EQ(parse(image.data(), image.size(), decoded), Status::Ok);
+  ASSERT_EQ(decoded.functionalClassTypes.size(), 1u);
+  EXPECT_EQ(decoded.functionalClassTypes[0].id, 1000u);
+  EXPECT_EQ(decoded.functionalClassTypes[0].classType, 99u);
+  EXPECT_EQ(computeSchemaFingerprint(decoded), computeSchemaFingerprint(db));
+  auto bad = db;
+  bad.functionalFormals.front().valueType = 999;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalClassTypes.front().classType = 0;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalClassTypes.push_back(bad.functionalClassTypes.front());
+  EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
+  bad = db;
+  bad.functionalFormals.front().bitWidth = 64;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalClassTypes.front().classType = 100;
+  EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
+}
+
 } // namespace

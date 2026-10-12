@@ -1992,6 +1992,13 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     llvm::DenseMap<uint64_t, Type> aggregateTypesByID;
     llvm::DenseMap<Type, uint64_t> containerTypeIDs;
     llvm::DenseMap<uint64_t, Type> containerTypesByID;
+    llvm::DenseMap<Type, uint64_t> classTypeIDs;
+    llvm::DenseMap<uint64_t, Type> classTypesByID;
+    llvm::DenseMap<StringAttr, uint64_t> runtimeClassIDs;
+    module.walk([&](sim::SimClassDeclOp declaration) {
+      runtimeClassIDs.try_emplace(declaration.getSymNameAttr(),
+                                  declaration.getId());
+    });
     llvm::DenseMap<uint64_t, Operation *> selectorOwners;
     struct PendingValueSet {
       coverage::FunctionalValueSet set;
@@ -2594,6 +2601,29 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
               layout.elementType = sim::getStableStorageTypeID(element);
               entry->second = layout.id;
               schema.functionalContainerTypes.push_back(layout);
+            }
+            descriptor.valueType = entry->second;
+          } else if (auto handle =
+                         dyn_cast<sim::ClassHandleType>(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::ClassHandle;
+            auto [entry, inserted] = classTypeIDs.try_emplace(*normalized, 0);
+            if (inserted) {
+              coverage::FunctionalClassType layout{
+                  sim::getStableStorageTypeID(*normalized),
+                  runtimeClassIDs.lookup(
+                      handle.getClassName().getLeafReference())};
+              auto [previousType, unique] =
+                  classTypesByID.try_emplace(layout.id, *normalized);
+              if (!layout.classType ||
+                  (!unique && previousType->second != *normalized)) {
+                formal.emitError("functional class type is unresolved or has "
+                                 "an ID collision");
+                signalPassFailure();
+                return;
+              }
+              entry->second = layout.id;
+              schema.functionalClassTypes.push_back(layout);
             }
             descriptor.valueType = entry->second;
           } else if (sim::isAggregateType(*normalized) &&
@@ -4730,6 +4760,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       return coverageOrderKey(entry.id);
     });
     sortCoverageRecords(schema.functionalAggregateTypes, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
+    });
+    sortCoverageRecords(schema.functionalClassTypes, [](const auto &entry) {
       return coverageOrderKey(entry.id);
     });
     sortCoverageRecords(schema.functionalFormals, [](const auto &entry) {

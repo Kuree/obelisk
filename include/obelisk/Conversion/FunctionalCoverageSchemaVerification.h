@@ -118,8 +118,13 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
     }
     return uint64_t{0};
   };
+  llvm::DenseMap<uint64_t, const coverage::FunctionalClassType *> classTypes;
+  for (const auto &type : schema.functionalClassTypes)
+    classTypes.try_emplace(type.id, &type);
+  SymbolTableCollection classSymbols;
+  llvm::DenseMap<std::pair<Operation *, Type>, uint64_t> runtimeClassIDs;
   llvm::DenseMap<Type, uint64_t> storageTypeIDs;
-  auto storageTypeMatches = [&](Type type, uint64_t expected) {
+  auto storageTypeMatches = [&](Type type, uint64_t expected, Operation *use) {
     if (auto path = dyn_cast<sim::ReferencePathType>(type))
       type = path.getElementType();
     if (!expected)
@@ -127,7 +132,22 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
     auto [entry, inserted] = storageTypeIDs.try_emplace(type, 0);
     if (inserted)
       entry->second = sim::getStableStorageTypeID(type);
-    return entry->second == expected;
+    if (entry->second != expected)
+      return false;
+    if (auto handle = dyn_cast<sim::ClassHandleType>(type)) {
+      auto found = classTypes.find(expected);
+      if (found == classTypes.end())
+        return false;
+      Operation *scope = use->getParentOfType<sim::SimDesignOp>();
+      auto [identity, fresh] = runtimeClassIDs.try_emplace({scope, type}, 0);
+      if (fresh)
+        if (auto declaration =
+                classSymbols.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                    use, handle.getClassName()))
+          identity->second = declaration.getId();
+      return identity->second == found->second->classType;
+    }
+    return true;
   };
   llvm::DenseMap<Type, std::optional<uint64_t>> aggregateSpans;
   auto valueMatches = [&](Type type,
@@ -157,6 +177,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return type.isF64();
     case coverage::FunctionalExpressionResultKind::String:
       return isa<sim::StringType>(type);
+    case coverage::FunctionalExpressionResultKind::ClassHandle:
+      return isa<sim::ClassHandleType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Container:
       return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           type);
@@ -306,9 +328,12 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
           ((expression->resultKind ==
                 coverage::FunctionalExpressionResultKind::Container ||
             expression->resultKind ==
-                coverage::FunctionalExpressionResultKind::Aggregate) &&
+                coverage::FunctionalExpressionResultKind::Aggregate ||
+            expression->resultKind ==
+                coverage::FunctionalExpressionResultKind::ClassHandle) &&
            !storageTypeMatches(values[supplied].getType(),
-                               formals.lookup(expression->owner)->valueType))) {
+                               formals.lookup(expression->owner)->valueType,
+                               operation))) {
         operation->emitError()
             << "has a type-mismatched " << label << " FunctionalExpression ID "
             << expression->id << " at result ordinal "
@@ -368,7 +393,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
               rawID <= 0 || static_cast<uint64_t>(rawID) != formal->id ||
               !valueMatches(argumentType, formal->resultKind,
                             formal->bitWidth) ||
-              !storageTypeMatches(argumentType, formal->valueType)) {
+              !storageTypeMatches(argumentType, formal->valueType, create)) {
             create.emitError()
                 << "constructor FunctionalFormal batch is reordered, "
                    "wrong-owner, or type-mismatched at schema ordinal "
@@ -403,7 +428,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
                coverage::FunctionalExpressionResultKind::Aggregate) ||
           !valueMatches(result, found->second->resultKind,
                         found->second->bitWidth) ||
-          !storageTypeMatches(result, found->second->valueType)) {
+          !storageTypeMatches(result, found->second->valueType, read)) {
         read.emitError("has a nonexistent, wrong-owner, or type-mismatched "
                        "constructor FunctionalFormal ID");
         invalid = true;

@@ -1111,16 +1111,17 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
   let description = [{
     Carries the once-evaluated results of every sample-phase expression needed
     by the instance's typed plan. `expression_ids` contains the corresponding
-    stable `FunctionalExpression` identities from the embedded v1 schema in
+    stable `FunctionalExpression` identities from the embedded v2 schema in
     operand order. These are semantic identities, never physical table
     indices. The runtime resolves the handle's constructor configuration and
     atomically performs direct-bin matching, transition automata, ignore and
     illegal precedence, and cross tuple/selector processing.
 
     Integral and four-state sampled values remain typed values; predicates are
-    i1 and real coverpoint samples are f64. A string or container value may occur only for
-    the once-evaluated default of a corresponding formal on an overridden sample()
-    method; matching consumes the derived coverpoint and guard results. This
+    i1 and real coverpoint samples are f64. A string, container, aggregate
+    reference path, or class handle may occur only for the once-evaluated
+    default of a corresponding formal on an overridden sample() method;
+    matching consumes the derived coverpoint and guard results. This
     batch form ensures that a sampled expression or iff predicate is evaluated
     once per sampling event even when several bins, transition steps, or
     crosses consume it.
@@ -1131,7 +1132,8 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                                            SimLogicType, SimStringType,
                                            SimDynamicArrayType, SimQueueType,
                                            SimAssocArrayType,
-                                           SimReferencePathType, F64]>>:$values,
+                                           SimReferencePathType,
+                                           SimClassHandleType, F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
     $context `,` $handle

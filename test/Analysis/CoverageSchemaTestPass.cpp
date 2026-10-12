@@ -260,6 +260,10 @@ private:
          << " alignment=" << aggregate.alignment
          << " width=" << aggregate.bitWidth << " flags=" << aggregate.flags
          << '\n';
+    for (const coverage::FunctionalClassType &classType :
+         db.functionalClassTypes)
+      os << "functional_class_type id=" << classType.id
+         << " class_type=" << classType.classType << '\n';
     for (const coverage::FunctionalValueSet &set : db.functionalValueSets)
       os << "functional_value_set id=" << set.id << " item=" << set.item
          << " atoms=" << set.atomCount << " width=" << set.bitWidth

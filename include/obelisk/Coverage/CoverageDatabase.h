@@ -328,6 +328,13 @@ struct FunctionalAggregateType {
   uint32_t flags = 0;
 };
 
+/// Shared nominal class identity. The storage type ID identifies the typed
+/// handle; classType names the runtime class descriptor, including interfaces.
+struct FunctionalClassType {
+  uint64_t id = 0;
+  uint64_t classType = 0;
+};
+
 struct TransitionProgram {
   uint64_t bin = 0;
   uint64_t item = 0;
@@ -873,6 +880,7 @@ struct Database {
   std::vector<FunctionalFormal> functionalFormals;
   std::vector<FunctionalContainerType> functionalContainerTypes;
   std::vector<FunctionalAggregateType> functionalAggregateTypes;
+  std::vector<FunctionalClassType> functionalClassTypes;
   std::vector<FunctionalBinPlan> functionalBinPlans;
   std::vector<FunctionalTupleSet> functionalTupleSets;
   std::vector<FunctionalTuple> functionalTupleSetTuples;

@@ -808,6 +808,113 @@ bool validateLayoutHandleWrite(
   return true;
 }
 
+class ClassHierarchyIndex {
+public:
+  explicit ClassHierarchyIndex(const ValidatedClasses &classes) {
+    struct Node {
+      const obelisk_rt_class_descriptor_v1 *descriptor = nullptr;
+      std::vector<size_t> children;
+    };
+    std::vector<Node> nodes;
+    std::unordered_map<const obelisk_rt_class_descriptor_v1 *, size_t> ordinals;
+    for (const auto &[id, descriptor] : classes) {
+      ordinals.emplace(descriptor, nodes.size());
+      nodes.push_back({descriptor, {}});
+    }
+    std::vector<size_t> roots;
+    for (size_t index = 0; index != nodes.size(); ++index) {
+      const auto *base = nodes[index].descriptor->base;
+      if (base)
+        nodes[ordinals.at(base)].children.push_back(index);
+      else
+        roots.push_back(index);
+    }
+    struct Frame {
+      size_t node;
+      size_t child = 0;
+    };
+    uint64_t ordinal = 0;
+    for (size_t root : roots) {
+      std::vector<Frame> stack{{root}};
+      while (!stack.empty()) {
+        Frame &frame = stack.back();
+        const Node &node = nodes[frame.node];
+        if (!frame.child)
+          intervals.try_emplace(node.descriptor, Interval{ordinal++, 0});
+        if (frame.child != node.children.size()) {
+          size_t child = node.children[frame.child++];
+          stack.push_back({child});
+          continue;
+        }
+        intervals.at(node.descriptor).end = ordinal;
+        stack.pop_back();
+      }
+    }
+    for (const auto &node : nodes) {
+      Interval interval = intervals.at(node.descriptor);
+      for (uint64_t index = 0; index != node.descriptor->interface_count;
+           ++index) {
+        uint64_t interfaceID = node.descriptor->interfaces[index].interface_id;
+        uint64_t begin = interval.begin;
+        // A subtree interval has at most 128 aligned binary prefixes in a
+        // 64-bit ordinal space. This also handles interfaces declared only
+        // in a base descriptor without materializing descendant closures.
+        while (begin != interval.end) {
+          unsigned alignment = begin ? __builtin_ctzll(begin) : 63;
+          unsigned remaining = 63 - __builtin_clzll(interval.end - begin);
+          unsigned width = std::min(alignment, remaining);
+          interfaces.insert({interfaceID, begin >> width, width});
+          begin += UINT64_C(1) << width;
+        }
+      }
+    }
+  }
+
+  std::optional<bool> contains(const obelisk_rt_class_descriptor_v1 *actual,
+                               uint64_t target,
+                               const ValidatedClasses &classes) const {
+    auto source = intervals.find(actual);
+    if (source == intervals.end())
+      return std::nullopt;
+    auto declared = classes.find(target);
+    if (declared != classes.end()) {
+      Interval base = intervals.at(declared->second);
+      if (base.begin <= source->second.begin && source->second.begin < base.end)
+        return true;
+    }
+    for (unsigned width = 0; width != 64; ++width)
+      if (interfaces.count({target, source->second.begin >> width, width}))
+        return true;
+    return false;
+  }
+
+private:
+  struct Interval {
+    uint64_t begin = 0;
+    uint64_t end = 0;
+  };
+  struct InterfacePrefix {
+    uint64_t interfaceID;
+    uint64_t prefix;
+    unsigned width;
+    bool operator==(const InterfacePrefix &other) const {
+      return interfaceID == other.interfaceID && prefix == other.prefix &&
+             width == other.width;
+    }
+  };
+  struct PrefixHash {
+    size_t operator()(const InterfacePrefix &key) const {
+      size_t hash = std::hash<uint64_t>{}(key.interfaceID);
+      hash ^= std::hash<uint64_t>{}(key.prefix) + UINT64_C(0x9e3779b97f4a7c15) +
+              (hash << 6) + (hash >> 2);
+      return hash ^ key.width;
+    }
+  };
+  std::unordered_map<const obelisk_rt_class_descriptor_v1 *, Interval>
+      intervals;
+  std::unordered_set<InterfacePrefix, PrefixHash> interfaces;
+};
+
 } // namespace
 
 // The runtime ABI makes registered descriptors and their reachable layouts
@@ -815,6 +922,8 @@ bool validateLayoutHandleWrite(
 struct ManagedClassValidationCache {
   ValidatedClasses classes;
   ClassLayoutValidation layouts;
+  size_t indexedClasses = 0;
+  std::unique_ptr<ClassHierarchyIndex> hierarchy;
 };
 
 struct obelisk_rt_gc_lane_v1 {
@@ -3946,6 +4055,29 @@ obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
   if (!object || !target)
     return 0;
   const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
+  if (!descriptor)
+    return 0;
+  if (auto *context = obelisk_rt_managed_object_context(object)) {
+    OBELISK_RT_TRY {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      auto cache = context->managedClassValidation;
+      if (cache) {
+        if (!cache->hierarchy ||
+            cache->indexedClasses != cache->classes.size()) {
+          auto index = std::make_unique<ClassHierarchyIndex>(cache->classes);
+          cache->hierarchy = std::move(index);
+          cache->indexedClasses = cache->classes.size();
+        }
+        if (auto match = cache->hierarchy->contains(
+                descriptor, target->class_id, cache->classes))
+          return *match;
+      }
+    }
+    OBELISK_RT_CATCH_ALL {
+      // The public predicate has no allocation-error result. Unregistered
+      // descriptors and an unavailable index use the validated linear walk.
+    }
+  }
   for (const obelisk_rt_class_descriptor_v1 *current = descriptor; current;
        current = current->base) {
     if (current == target || current->class_id == target->class_id)

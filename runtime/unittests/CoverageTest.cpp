@@ -2373,6 +2373,114 @@ TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage)
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST_F(CoverageRuntimeDesignTest,
+     ClassFormalsRetainIdentityLiveStorageAndInterfaces) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalClassTypes = {{800, 99}, {801, 101}};
+  for (uint64_t id : {70, 71, 72, 73})
+    schema.functionalFormals.push_back(
+        {id, 10, "class" + std::to_string(id),
+         FunctionalFormalKind::Constructor,
+         id == 71 ? FunctionalFormalDirection::Ref
+                  : FunctionalFormalDirection::Input,
+         FunctionalExpressionResultKind::ClassHandle, 0, 0,
+         CoverageSignedness::NotApplicable, static_cast<uint32_t>(id - 70), 0,
+         id == 72 ? uint64_t{801} : uint64_t{800}});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  obelisk_rt_class_descriptor_v1 base{};
+  base.version = OBELISK_RT_VERSION;
+  base.class_id = 99;
+  base.instance_size = 16;
+  base.instance_alignment = 8;
+  obelisk_rt_interface_descriptor_v1 implemented{101, nullptr, 0};
+  base.interfaces = &implemented;
+  base.interface_count = 1;
+  auto derived = base;
+  derived.class_id = 100;
+  derived.base = &base;
+  // The runtime must recognize an interface inherited from the base even
+  // when a foreign descriptor lists only its own direct interfaces.
+  derived.interfaces = nullptr;
+  derived.interface_count = 0;
+  auto viewDescriptor = base;
+  viewDescriptor.class_id = 101;
+  viewDescriptor.flags = OBELISK_RT_CLASS_INTERFACE | OBELISK_RT_CLASS_ABSTRACT;
+  viewDescriptor.interfaces = nullptr;
+  viewDescriptor.interface_count = 0;
+  auto unrelated = viewDescriptor;
+  unrelated.class_id = 102;
+  unrelated.flags = 0;
+  for (const auto *descriptor : {&base, &derived, &viewDescriptor, &unrelated})
+    ASSERT_EQ(obelisk_rt_v1_class_register(context, descriptor), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *original = nullptr, *replacement = nullptr,
+                       *wrong = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &original),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &replacement),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &unrelated, &wrong),
+            OBELISK_RT_OK);
+  uint64_t originalID = obelisk_rt_v1_object_id(original);
+  uint64_t replacementID = obelisk_rt_v1_object_id(replacement);
+  uint64_t word = obelisk_rt_managed_word_from_object(original), storage = 0;
+  const obelisk_rt_managed_root_slot_v1 root{
+      0, OBELISK_RT_MANAGED_ROOT_KIND_CLASS, 0};
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+                context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
+                &root, 1, &storage),
+            OBELISK_RT_OK);
+  obelisk_rt_functional_value_v1 formals[] = {
+      {70, 0, 0, nullptr, nullptr, original, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0},
+      {71, 64, 8, nullptr, nullptr, nullptr, storage,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+      {72, 0, 0, nullptr, nullptr, original, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0},
+      {73, 0, 0, nullptr, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE, 0}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  formals[0].owner = wrong;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 4, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0].owner = original;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 4, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  word = obelisk_rt_managed_word_from_object(replacement);
+  uint8_t dummy = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_CLASS, &word, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
+            OBELISK_RT_OK);
+  original = nullptr;
+  replacement = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (uint64_t id : {70, 71, 72, 73}) {
+    uint64_t captured = UINT64_MAX;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE,
+                  64, 8, nullptr, nullptr, 0, &captured, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(
+        obelisk_rt_v1_object_id(obelisk_rt_object_from_managed_word(captured)),
+        id == 73   ? uint64_t{0}
+        : id == 71 ? replacementID
+                   : originalID);
+  }
+  obelisk_rt_managed_execution_leave(lane, entered);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

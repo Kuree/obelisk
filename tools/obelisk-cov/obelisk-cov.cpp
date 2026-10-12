@@ -2455,6 +2455,13 @@ void jsonReport(
           out.attribute("flags", type.flags);
         });
     });
+    out.attributeArray("functional_class_types", [&] {
+      for (const auto &type : database.functionalClassTypes)
+        out.object([&] {
+          out.attribute("id", type.id);
+          out.attribute("class_type", type.classType);
+        });
+    });
     out.attributeArray("functional_item_templates", [&] {
       for (const FunctionalItem &item : database.functionalItems)
         out.object([&] {

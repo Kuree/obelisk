@@ -609,6 +609,7 @@ Status planSections(const Database &db, const StringTable &strings,
                         db.functionalContainerTypes.size());
   OBELISK_COVERAGE_PLAN(FunctionalAggregateTypes,
                         db.functionalAggregateTypes.size());
+  OBELISK_COVERAGE_PLAN(FunctionalClassTypes, db.functionalClassTypes.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1568,6 +1569,13 @@ Status encodeSections(const Database &db, const StringTable &strings,
       FunctionalAggregateTypeRecord::setBitWidth(p, v.bitWidth);
       FunctionalAggregateTypeRecord::setFlags(p, v.flags);
     });
+  Bytes &classTypes =
+      add(SectionKind::FunctionalClassTypes, db.functionalClassTypes.size());
+  for (const auto &v : db.functionalClassTypes)
+    classTypes.record<FunctionalClassTypeRecord>([&](uint8_t *p) {
+      FunctionalClassTypeRecord::setId(p, v.id);
+      FunctionalClassTypeRecord::setClassType(p, v.classType);
+    });
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -2035,6 +2043,11 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.alignment);
     hashScalar(h, v.bitWidth);
     hashScalar(h, v.flags);
+  }
+  for (const auto &v : db.functionalClassTypes) {
+    hashScalar(h, uint32_t(60));
+    hashScalar(h, v.id);
+    hashScalar(h, v.classType);
   }
   return h.finish();
 }
@@ -3482,6 +3495,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     aggregateTypesByID.emplace(type.id, &type);
   }
 
+  IndexMap<uint64_t, const FunctionalClassType *> classTypesByID;
+  uint64_t previousClassType = 0;
+  for (const auto &type : db.functionalClassTypes) {
+    if (!type.id || type.id <= previousClassType)
+      return fail(Status::UnsortedOrDuplicate, "functional_class_type_order");
+    previousClassType = type.id;
+    if (!type.classType)
+      return fail(Status::InvalidReference, "functional_class_type");
+    classTypesByID.emplace(type.id, &type);
+  }
+
   if (!uniqueNonzero(db.functionalFormals,
                      [](const auto &v) { return v.id; }) ||
       !std::is_sorted(db.functionalFormals.begin(), db.functionalFormals.end(),
@@ -3508,7 +3532,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Integral ||
         formal.resultKind == FunctionalExpressionResultKind::Real ||
         formal.resultKind == FunctionalExpressionResultKind::String ||
-        formal.resultKind == FunctionalExpressionResultKind::Container;
+        formal.resultKind == FunctionalExpressionResultKind::Container ||
+        formal.resultKind == FunctionalExpressionResultKind::ClassHandle;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3520,7 +3545,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         (formal.resultKind == FunctionalExpressionResultKind::Container
              ? !containerTypesByID.count(formal.valueType)
          : aggregate ? !aggregateTypesByID.count(formal.valueType)
-                     : bool(formal.valueType)) ||
+         : formal.resultKind == FunctionalExpressionResultKind::ClassHandle
+             ? !classTypesByID.count(formal.valueType)
+             : bool(formal.valueType)) ||
         (aggregate && aggregateTypesByID.at(formal.valueType)->bitWidth !=
                           formal.bitWidth) ||
         !enumBetween(formal.signedness, CoverageSignedness::Unsigned,
@@ -3757,7 +3784,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           (!(expression.flags & FunctionalExpressionSamplingEventEnd) ||
            (expression.flags & FunctionalExpressionSamplingEventBlock));
     }
-    if ((aggregateResult &&
+    if (((aggregateResult || expression.resultKind ==
+                                 FunctionalExpressionResultKind::ClassHandle) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3774,7 +3802,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Aggregate) ||
+                     FunctionalExpressionResultKind::ClassHandle) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -7100,6 +7128,9 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                   else if (resultKind ==
                            FunctionalExpressionResultKind::Aggregate)
                     targetKind = SectionKind::FunctionalAggregateTypes;
+                  else if (resultKind ==
+                           FunctionalExpressionResultKind::ClassHandle)
+                    targetKind = SectionKind::FunctionalClassTypes;
                   else
                     return value == 0;
                   auto identities = stableIdentities.find(targetKind);
@@ -7945,6 +7976,15 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                       FunctionalAggregateTypeRecord::getAlignment(p),
                       FunctionalAggregateTypeRecord::getBitWidth(p),
                       FunctionalAggregateTypeRecord::getFlags(p)});
+                 return Status::Ok;
+               });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::FunctionalClassTypes,
+               [&](const auto &, uint64_t, const uint8_t *p) {
+                 result.functionalClassTypes.push_back(
+                     {FunctionalClassTypeRecord::getId(p),
+                      FunctionalClassTypeRecord::getClassType(p)});
                  return Status::Ok;
                });
     if (st != Status::Ok)

@@ -888,6 +888,8 @@ enum {
 };
 
 #define OBELISK_RT_DBREG_SIGNED (UINT8_C(1) << 0)
+// Distinguishes nullable class handles from managed container/path values.
+#define OBELISK_RT_DBREG_CLASS_HANDLE (UINT8_C(1) << 1)
 
 typedef uint16_t obelisk_rt_design_bytecode_opcode;
 enum {
@@ -4830,7 +4832,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER = 6,
   // An owned fixed aggregate snapshot in a managed reference path. All other
   // fields are zero; the shared aggregate layout identifies its typed storage.
-  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE = 7
+  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE = 7,
+  // A nullable class handle in owner. Captures retain object identity; all
+  // other fields are zero. The schema records the nominal runtime class ID.
+  OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE = 8
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

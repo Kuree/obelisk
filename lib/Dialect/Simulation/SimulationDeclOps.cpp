@@ -1541,10 +1541,11 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
   if (!getPackedWidth(result) && !result.isF64() &&
       !(isa<ArgumentRefType>(getResult().getType()) &&
         isAggregateType(result)) &&
-      !isa<StringType, DynamicArrayType, QueueType, AssocArrayType>(result))
-    return emitOpError(
-        "requires an integral, real, string, or container formal value or "
-        "argument reference");
+      !isa<StringType, DynamicArrayType, QueueType, AssocArrayType,
+           ClassHandleType>(result))
+    return emitOpError("requires an integral, real, string, container, or "
+                       "class formal value or "
+                       "argument reference");
   return success();
 }
 
