@@ -2047,6 +2047,35 @@ def SimRandomSolveWideOp : SimOp<"random.solve_wide", [
   let hasVerifier = 1;
 }
 
+def SimRandomRealToRankOp : SimOp<"random.real_to_rank", [Pure]> {
+  let summary = "encode a finite IEEE value as its signed numeric coordinate";
+  let description = [{
+    Binary32 values use 279 coordinate bits and binary64 values use 2100 bits.
+    Finite values retain their exact canonical coordinate and both signed zero
+    encodings. A NaN or infinity produces a zero coordinate and false `finite`,
+    allowing source lowering to retain a separate frozen IEEE payload. This
+    operation does not consume any random state.
+  }];
+  let arguments = (ins AnyFloat:$value);
+  let results = (outs AnySignlessInteger:$rank, I1:$finite);
+  let assemblyFormat = [{ $value attr-dict `:` type($value) `->` type($rank) }];
+  let hasVerifier = 1;
+}
+
+def SimRandomRealFromRankOp : SimOp<"random.real_from_rank", [Pure]> {
+  let summary = "decode a finite signed numeric coordinate to an IEEE value";
+  let description = [{
+    The integer operand has 279 bits for binary32 or 2100 bits for binary64.
+    It must be within the finite numeric domain. Decoding rounds towards zero
+    at the format's spacing and retains both zero encodings. The numeric leaf
+    is shared by native and bytecode execution and consumes no random state.
+  }];
+  let arguments = (ins AnySignlessInteger:$rank);
+  let results = (outs AnyFloat:$value);
+  let assemblyFormat = [{ $rank attr-dict `:` type($rank) `->` type($value) }];
+  let hasVerifier = 1;
+}
+
 def SimRandomSeedOp : SimOp<"random.seed", [
     MemoryEffects<[MemWrite<SimRNGResource>]>
   ]> {

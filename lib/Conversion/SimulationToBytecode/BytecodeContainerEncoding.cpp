@@ -370,6 +370,12 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
                                    reg(plan, op.getSuccess()),
                                    reg(plan, op.getNextRngState())});
   }
+  if (auto op = dyn_cast<sim::SimRandomRealToRankOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicRandomRealToRank, {op.getValue()},
+                         {op.getRank(), op.getFinite()});
+  if (auto op = dyn_cast<sim::SimRandomRealFromRankOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicRandomRealFromRank, {op.getRank()},
+                         {op.getValue()});
   if (auto op = dyn_cast<sim::SimContainerReadOp>(operation))
     return emitIntrinsic(plan, kIntrinsicContainerRead,
                          {op.getContainer(), op.getIndex()}, {op.getResult()});

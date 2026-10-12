@@ -650,6 +650,15 @@ void declareNativeRuntimeABI(ModuleOp module) {
        managedPointer, managedI64, managedI64, managedI64, managedI64,
        managedI64, managedPointer, managedI64, managedPointer, managedI64,
        managedPointer, managedPointer, managedPointer});
+  for (Type floating : {Type(Float32Type::get(module.getContext())),
+                        Type(Float64Type::get(module.getContext()))}) {
+    std::string prefix = floating.isF32() ? "obelisk_rt_v1_random_real32"
+                                          : "obelisk_rt_v1_random_real64";
+    getOrDeclareLLVMFunction(module, prefix + "_to_rank", managedI32,
+                             {floating, managedPointer, managedI64});
+    getOrDeclareLLVMFunction(module, prefix + "_from_rank", managedI32,
+                             {managedPointer, managedI64, managedPointer});
+  }
   getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_set_enabled", managedI32,
       {managedPointer, managedI64, managedI64, managedI32});

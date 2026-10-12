@@ -207,12 +207,21 @@ finite-domain constraints. Bitcasts retain their original payloads. Arithmetic
 and precision conversions use round-to-nearest, ties-to-even. Bitcasts of
 computed arithmetic are diagnosed while their platform-dependent NaN semantics
 remain open. The Simulation plan pass rejects unsupported or ill-typed
-expressions, and both
-target readers require an exact uniform plan for IEEE programs. MLIR tests
-cover live captures, disabled constraints, frozen inputs, soft priorities and
-rank decoding in native, bytecode and WASM execution. Efficient full-coordinate
-predicates, source property admission, joint real/integral distributions and
-complete real probability semantics remain open.
+expressions, and both target readers require an exact uniform plan for IEEE
+programs. Full-width rank comparisons against retained IEEE bounds use signed
+numeric-cell predicates. Captured first/last cell bits are deterministic state
+parameters, converted once per payload in the sampler; they never contribute
+random witnesses or extra model counts. Both readers validate the payload
+precision, coordinate indices and capture bindings. Real coordinates use high
+prefix traversal, while ordinary integral fields retain their low-prefix order.
+Simulation rank conversion operations share the existing numeric leaves in
+native and bytecode execution, including nonfinite capture placeholders.
+MLIR tests cover every comparison in both operand orders, live captures,
+disabled constraints, frozen inputs, soft priorities, finite extremes, signed
+zero, NaN/infinity captures and rank decoding in native, bytecode and WASM
+execution. Source property admission, general full-coordinate arithmetic,
+joint real/integral distributions and complete real probability semantics
+remain open.
 
 The compiler appends `HAS_SAMPLER_PLAN` bundles and opts into exact sampling
 through the existing `SMT_UNIFORM` C ABI flag. The legacy flag name is retained

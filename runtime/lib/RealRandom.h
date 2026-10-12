@@ -152,6 +152,52 @@ public:
     return ((encoding(value) >> fractionBits) & exponentMask) != exponentMask;
   }
 
+  /// Complete decoder preimage of a finite IEEE payload. Unlike interval
+  /// clipping, the extreme cells extend to the signed coordinate endpoints.
+  /// Compiler plans impose their own finite property domain. Nonfinite state
+  /// has zero placeholders; its IEEE classification remains in the plan.
+  static bool cell(Float value, uint64_t *first, uint64_t *last) {
+    uint64_t bits = encoding(value);
+    unsigned exponent = (bits >> fractionBits) & exponentMask;
+    if (exponent == exponentMask)
+      return false;
+    if ((bits & ~signMask) == 0) {
+      std::fill_n(first, rankWords, ~uint64_t{0});
+      std::fill_n(last, rankWords, uint64_t{0});
+      first[rankWords - 1] &= highMask;
+      last[0] = 1;
+      return true;
+    }
+    uint64_t significand = bits & fractionMask;
+    if (exponent)
+      significand |= uint64_t{1} << fractionBits;
+    unsigned shift = exponent ? exponent : 1;
+    unsigned lowerWord = shift / 64, offset = shift % 64;
+    bool negative = (bits & signMask) != 0;
+    uint64_t firstCarry = negative, lastCarry = negative;
+    for (unsigned index = 0; index != rankWords; ++index) {
+      uint64_t magnitude = index == lowerWord ? significand << offset : 0;
+      if (offset && index == lowerWord + 1)
+        magnitude = significand >> (64 - offset);
+      uint64_t lower = index < lowerWord    ? ~uint64_t{0}
+                       : index == lowerWord ? (uint64_t{1} << offset) - 1
+                                            : 0;
+      uint64_t firstWord = negative ? magnitude | lower : magnitude;
+      uint64_t lastWord = negative ? magnitude : magnitude | lower;
+      if (negative) {
+        firstWord = ~firstWord + firstCarry;
+        lastWord = ~lastWord + lastCarry;
+        firstCarry = firstCarry && firstWord == 0;
+        lastCarry = lastCarry && lastWord == 0;
+      }
+      first[index] = firstWord;
+      last[index] = lastWord;
+    }
+    first[rankWords - 1] &= highMask;
+    last[rankWords - 1] &= highMask;
+    return true;
+  }
+
   static bool encode(Float value, uint64_t *out) {
     if (!finite(value))
       return false;

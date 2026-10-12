@@ -1690,6 +1690,117 @@ public:
   }
 };
 
+class RandomRealToRankConversion final
+    : public OpConversionPattern<sim::SimRandomRealToRankOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomRealToRankOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getValue().size() != 1)
+      return failure();
+    auto rankType = cast<IntegerType>(op.getRank().getType());
+    uint64_t count = (rankType.getWidth() + 63) / 64;
+    Type i64 = rewriter.getI64Type();
+    Type i32 = rewriter.getI32Type();
+    Value words = entryAlloca(rewriter, op.getLoc(), i64, count, 8);
+    Value zero = llvmConstant(rewriter, op.getLoc(), i64, 0);
+    for (uint64_t index = 0; index != count; ++index)
+      LLVM::StoreOp::create(rewriter, op.getLoc(), zero,
+                            byteGEP(rewriter, op.getLoc(), words, index * 8),
+                            8);
+    StringRef name = op.getValue().getType().isF32()
+                         ? "obelisk_rt_v1_random_real32_to_rank"
+                         : "obelisk_rt_v1_random_real64_to_rank";
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{i32},
+            SymbolRefAttr::get(rewriter.getContext(), name),
+            ValueRange{adaptor.getValue().front(), words,
+                       llvmConstant(rewriter, op.getLoc(), i64, count)})
+            .getResult();
+    // Nonfinite source state has no numeric coordinate. Preserve a zero
+    // placeholder, report false, and let its frozen IEEE payload remain state.
+    Value nonfinite = LLVM::ICmpOp::create(
+        rewriter, op.getLoc(), LLVM::ICmpPredicate::eq, status,
+        llvmConstant(rewriter, op.getLoc(), i32, OBELISK_RT_INVALID_ARGUMENT));
+    Value checked = LLVM::SelectOp::create(
+        rewriter, op.getLoc(), nonfinite,
+        llvmConstant(rewriter, op.getLoc(), i32, OBELISK_RT_OK), status);
+    Value runtimeStatus = runtime::RTStatusFromBitsOp::create(
+        rewriter, op.getLoc(), runtime::StatusType::get(rewriter.getContext()),
+        checked);
+    sim::SimStatusCheckOp::create(rewriter, op.getLoc(), runtimeStatus);
+    Value rank = llvmConstant(rewriter, op.getLoc(), rankType, 0);
+    for (uint64_t index = 0; index != count; ++index) {
+      Value word = LLVM::LoadOp::create(
+          rewriter, op.getLoc(), i64,
+          byteGEP(rewriter, op.getLoc(), words, index * 8), 8);
+      word = LLVM::ZExtOp::create(rewriter, op.getLoc(), rankType, word);
+      if (index)
+        word = arith::ShLIOp::create(
+            rewriter, op.getLoc(), word,
+            llvmConstant(rewriter, op.getLoc(), rankType, index * 64));
+      rank = arith::OrIOp::create(rewriter, op.getLoc(), rank, word);
+    }
+    Value finite = LLVM::ICmpOp::create(
+        rewriter, op.getLoc(), LLVM::ICmpPredicate::eq, status,
+        llvmConstant(rewriter, op.getLoc(), i32, OBELISK_RT_OK));
+    rewriter.replaceOp(op, ValueRange{rank, finite});
+    return success();
+  }
+};
+
+class RandomRealFromRankConversion final
+    : public OpConversionPattern<sim::SimRandomRealFromRankOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimRandomRealFromRankOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getRank().size() != 1)
+      return failure();
+    Value rank = adaptor.getRank().front();
+    auto rankType = dyn_cast<IntegerType>(rank.getType());
+    if (!rankType)
+      return failure();
+    uint64_t count = (rankType.getWidth() + 63) / 64;
+    Type i64 = rewriter.getI64Type();
+    Value words = entryAlloca(rewriter, op.getLoc(), i64, count, 8);
+    for (uint64_t index = 0; index != count; ++index) {
+      Value word = rank;
+      if (index)
+        word = arith::ShRUIOp::create(
+            rewriter, op.getLoc(), word,
+            llvmConstant(rewriter, op.getLoc(), rankType, index * 64));
+      word = LLVM::TruncOp::create(rewriter, op.getLoc(), i64, word);
+      LLVM::StoreOp::create(rewriter, op.getLoc(), word,
+                            byteGEP(rewriter, op.getLoc(), words, index * 8),
+                            8);
+    }
+    Type valueType = op.getValue().getType();
+    Value output = entryAlloca(rewriter, op.getLoc(), valueType, 1, 8);
+    StringRef name = valueType.isF32()
+                         ? "obelisk_rt_v1_random_real32_from_rank"
+                         : "obelisk_rt_v1_random_real64_from_rank";
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(), name),
+            ValueRange{words, llvmConstant(rewriter, op.getLoc(), i64, count),
+                       output})
+            .getResult();
+    Value runtimeStatus = runtime::RTStatusFromBitsOp::create(
+        rewriter, op.getLoc(), runtime::StatusType::get(rewriter.getContext()),
+        status);
+    sim::SimStatusCheckOp::create(rewriter, op.getLoc(), runtimeStatus);
+    Value value =
+        LLVM::LoadOp::create(rewriter, op.getLoc(), valueType, output, 8);
+    rewriter.replaceOp(op, value);
+    return success();
+  }
+};
+
 class RandomSolveConversion final
     : public OpConversionPattern<sim::SimRandomSolveOp> {
 public:
@@ -2080,7 +2191,8 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerExportBitstreamConversion, RecursiveExportBitstreamConversion,
       AggregateExportBitstreamConversion, AggregateImportBitstreamConversion>(
       converter, context, dataLayout);
-  patterns.add<RandomSolveWideConversion, SampledReadConversion,
+  patterns.add<RandomSolveWideConversion, RandomRealToRankConversion,
+               RandomRealFromRankConversion, SampledReadConversion,
                SampledHistoryConversion, ClockedSampleUpdateConversion,
                ClockedSampleReadConversion>(converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);

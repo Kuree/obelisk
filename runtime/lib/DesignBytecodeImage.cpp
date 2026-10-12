@@ -1122,6 +1122,19 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 1);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 2 && floating(input(0)) &&
+           twoStateBits(output(0), input(0)->kind == OBELISK_RT_DBREG_REAL32
+                                       ? OBELISK_RT_REAL32_RANK_BITS
+                                       : OBELISK_RT_REAL64_RANK_BITS) &&
+           twoStateBits(output(1), 1);
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 1 && floating(output(0)) &&
+           twoStateBits(input(0), output(0)->kind == OBELISK_RT_DBREG_REAL32
+                                      ? OBELISK_RT_REAL32_RANK_BITS
+                                      : OBELISK_RT_REAL64_RANK_BITS);
   case OBELISK_RT_INTRINSIC_V1_COVERAGE_CONTROL_DEFINITION:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && twoStateBits(input(0), 32) &&

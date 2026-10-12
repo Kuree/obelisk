@@ -1165,6 +1165,29 @@ LogicalResult SimRandomSolveWideOp::verify() {
   return success();
 }
 
+static LogicalResult verifyRealRank(Operation *op, Type real, Type rank) {
+  auto floating = dyn_cast<FloatType>(real);
+  auto integer = dyn_cast<IntegerType>(rank);
+  if (!floating || (!floating.isF32() && !floating.isF64()))
+    return op->emitOpError("requires IEEE binary32 or binary64");
+  unsigned width = floating.isF32() ? OBELISK_RT_REAL32_RANK_BITS
+                                    : OBELISK_RT_REAL64_RANK_BITS;
+  if (!integer || !integer.isSignless() || integer.getWidth() != width)
+    return op->emitOpError()
+           << "requires a " << width << "-bit signed numeric coordinate";
+  return success();
+}
+
+LogicalResult SimRandomRealToRankOp::verify() {
+  return verifyRealRank(getOperation(), getValue().getType(),
+                        getRank().getType());
+}
+
+LogicalResult SimRandomRealFromRankOp::verify() {
+  return verifyRealRank(getOperation(), getValue().getType(),
+                        getRank().getType());
+}
+
 LogicalResult SimContainerCreateLikeOp::verify() {
   Type type = getResult().getType();
   if (!getSequentialContainerElement(type))

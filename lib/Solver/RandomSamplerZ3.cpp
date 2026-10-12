@@ -6,6 +6,7 @@
 
 #ifdef OBELISK_ENABLE_Z3
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 #include <z3.h>
 
@@ -38,6 +39,7 @@ struct Bits {
   unsigned width;
   bool real = false;
   Z3_ast representation = nullptr;
+  Z3_ast coordinate = nullptr;
 };
 
 class BitVectorFormula {
@@ -134,7 +136,10 @@ public:
           representation =
               Z3_mk_bvxor(context, representation,
                           constant(uint64_t{1} << (width - 1), width));
-        return {value, width, true, representation};
+        return {value, width, true, representation,
+                opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                    ? input.coordinate
+                    : nullptr};
       }
       return {nullptr, width};
     }
@@ -404,8 +409,10 @@ public:
         context, constant((uint64_t{1} << (fraction + 1)) - 1, input.width),
         constant(exponent, input.width));
     return conjunction(
-        Z3_mk_bvsle(context, Z3_mk_bvneg(context, maximum), input.value),
-        Z3_mk_bvsle(context, input.value, maximum));
+        Z3_mk_not(context,
+                  coordinateOrder(input.value, Z3_mk_bvneg(context, maximum),
+                                  input.width, false)),
+        coordinateOrder(input.value, maximum, input.width, true));
   }
 
   Bits realUnary(uint8_t opcode, Bits input, unsigned width, bool sign) {
@@ -429,7 +436,8 @@ public:
                                             realSort(width));
       return {value, width, true,
               input.real && input.width == width ? input.representation
-                                                 : nullptr};
+                                                 : nullptr,
+              input.real && input.width == width ? input.coordinate : nullptr};
     }
     if (opcode == OBELISK_RT_RANDOM_REAL_TO_BITS_V1) {
       if (!input.real || input.width != width || sign)
@@ -506,7 +514,131 @@ public:
         Z3_mk_concat(context, storedExponent,
                      Z3_mk_extract(context, fraction - 1, 0, shifted)));
     return {Z3_mk_fpa_to_fp_bv(context, payload, realSort(width)), width, true,
-            payload};
+            payload, input.value};
+  }
+
+  /// Retain the lexicographic comparator as a linear Boolean prefix. Binding
+  /// a state endpoint then gives a literal AND/OR chain rather than leaving
+  /// bit-blasted subtraction/carry expressions for the sampler to rediscover.
+  Z3_ast coordinateOrder(Z3_ast lhs, Z3_ast rhs, unsigned width,
+                         bool inclusive) {
+    Z3_ast result = inclusive ? Z3_mk_true(context) : Z3_mk_false(context);
+    for (unsigned bit = 0; bit != width; ++bit) {
+      Z3_ast a = Z3_mk_eq(context, Z3_mk_extract(context, bit, bit, lhs),
+                          constant(1, 1));
+      Z3_ast b = Z3_mk_eq(context, Z3_mk_extract(context, bit, bit, rhs),
+                          constant(1, 1));
+      if (bit + 1 == width) {
+        a = Z3_mk_not(context, a);
+        b = Z3_mk_not(context, b);
+      }
+      Z3_ast notA = Z3_mk_not(context, a);
+      result = Z3_mk_ite(context, b, disjunction(notA, result),
+                         conjunction(notA, result));
+    }
+    return result;
+  }
+
+  /// IEEE ordering is monotone in the signed numeric coordinate. Comparing a
+  /// decoded property to a retained IEEE payload therefore only needs the
+  /// payload's complete preimage cell, rather than the property's barrel shift
+  /// and highest-bit decoder. Each endpoint takes a fixed number of Z3 nodes.
+  Z3_ast compareCoordinate(uint8_t opcode, Bits rank, Z3_ast payload,
+                           unsigned precision) {
+    unsigned fraction = precision == 32 ? 23 : 52;
+    unsigned exponent = precision == 32 ? 8 : 11;
+    Z3_ast exponentBits =
+        Z3_mk_extract(context, precision - 2, fraction, payload);
+    Z3_ast fractionBits = Z3_mk_extract(context, fraction - 1, 0, payload);
+    Z3_ast negative = Z3_mk_eq(
+        context, Z3_mk_extract(context, precision - 1, precision - 1, payload),
+        constant(1, 1));
+    Z3_ast normal = Z3_mk_not(
+        context, Z3_mk_eq(context, exponentBits, constant(0, exponent)));
+    Z3_ast significand =
+        Z3_mk_bvor(context, resize({fractionBits, fraction}, rank.width),
+                   Z3_mk_ite(context, normal,
+                             constant(uint64_t{1} << fraction, rank.width),
+                             constant(0, rank.width)));
+    Z3_ast shift =
+        Z3_mk_ite(context, normal, resize({exponentBits, exponent}, rank.width),
+                  constant(1, rank.width));
+    Z3_ast magnitude = Z3_mk_bvshl(context, significand, shift);
+    Z3_ast lastMagnitude = Z3_mk_bvsub(
+        context,
+        Z3_mk_bvadd(context, magnitude,
+                    Z3_mk_bvshl(context, constant(1, rank.width), shift)),
+        constant(1, rank.width));
+    Z3_ast zero =
+        Z3_mk_eq(context, Z3_mk_extract(context, precision - 2, 0, payload),
+                 constant(0, precision - 1));
+    // IEEE equality combines both zero encodings and all three zero ranks.
+    Z3_ast first =
+        Z3_mk_ite(context, zero, Z3_mk_bvneg(context, constant(1, rank.width)),
+                  Z3_mk_ite(context, negative,
+                            Z3_mk_bvneg(context, lastMagnitude), magnitude));
+    Z3_ast last =
+        Z3_mk_ite(context, zero, constant(1, rank.width),
+                  Z3_mk_ite(context, negative, Z3_mk_bvneg(context, magnitude),
+                            lastMagnitude));
+    if (captureCell) {
+      auto cell = captureCell(payload, precision);
+      if (cell.first) {
+        first = cell.first;
+        last = cell.second;
+      }
+    }
+    // The one coordinate outside the decoder's finite cells is the signed
+    // minimum: its magnitude's highest bit yields negative infinity. Keeping
+    // that case makes this rewrite exact even without a separate domain root.
+    Z3_ast minimum = Z3_mk_bvshl(context, constant(1, rank.width),
+                                 constant(rank.width - 1, rank.width));
+    Z3_ast minimumRank = Z3_mk_eq(context, rank.value, minimum);
+    Z3_ast finite = nullptr, infinite = nullptr;
+    switch (opcode) {
+    case OBELISK_RT_RANDOM_EQ_V1:
+    case OBELISK_RT_RANDOM_NE_V1:
+      finite =
+          conjunction(Z3_mk_not(context, coordinateOrder(rank.value, first,
+                                                         rank.width, false)),
+                      coordinateOrder(rank.value, last, rank.width, true));
+      infinite = conjunction(negative, minimumRank);
+      if (opcode == OBELISK_RT_RANDOM_NE_V1) {
+        finite = Z3_mk_not(context, finite);
+        infinite = Z3_mk_not(context, infinite);
+      }
+      break;
+    case OBELISK_RT_RANDOM_LT_V1:
+      finite = coordinateOrder(rank.value, first, rank.width, false);
+      infinite = Z3_mk_not(context, negative);
+      break;
+    case OBELISK_RT_RANDOM_LE_V1:
+      finite = coordinateOrder(rank.value, last, rank.width, true);
+      infinite = disjunction(Z3_mk_not(context, negative), minimumRank);
+      break;
+    case OBELISK_RT_RANDOM_GT_V1:
+      finite = Z3_mk_not(context,
+                         coordinateOrder(rank.value, last, rank.width, true));
+      infinite = conjunction(negative, Z3_mk_not(context, minimumRank));
+      break;
+    case OBELISK_RT_RANDOM_GE_V1:
+      finite = Z3_mk_not(context,
+                         coordinateOrder(rank.value, first, rank.width, false));
+      infinite = negative;
+      break;
+    default:
+      return nullptr;
+    }
+    Z3_ast special =
+        Z3_mk_eq(context, exponentBits,
+                 constant((uint64_t{1} << exponent) - 1, exponent));
+    Z3_ast nan = conjunction(
+        special, Z3_mk_not(context, Z3_mk_eq(context, fractionBits,
+                                             constant(0, fraction))));
+    return Z3_mk_ite(context, nan,
+                     opcode == OBELISK_RT_RANDOM_NE_V1 ? Z3_mk_true(context)
+                                                       : Z3_mk_false(context),
+                     Z3_mk_ite(context, special, infinite, finite));
   }
 
   Bits realBinary(uint8_t opcode, Bits lhs, Bits rhs, unsigned width) {
@@ -522,6 +654,37 @@ public:
     }
     if (!lhs.real || !rhs.real)
       return {nullptr, width};
+    if (lhs.width == rhs.width && opcode >= OBELISK_RT_RANDOM_EQ_V1 &&
+        opcode <= OBELISK_RT_RANDOM_LT_V1) {
+      unsigned rankWidth = lhs.width == 32 ? OBELISK_RT_REAL32_RANK_BITS
+                                           : OBELISK_RT_REAL64_RANK_BITS;
+      if (lhs.coordinate && rhs.representation && !rhs.coordinate) {
+        if (Z3_ast predicate =
+                compareCoordinate(opcode, {lhs.coordinate, rankWidth},
+                                  rhs.representation, lhs.width))
+          return boolean(predicate, width);
+      } else if (rhs.coordinate && lhs.representation && !lhs.coordinate) {
+        uint8_t reversed = opcode;
+        switch (opcode) {
+        case OBELISK_RT_RANDOM_GE_V1:
+          reversed = OBELISK_RT_RANDOM_LE_V1;
+          break;
+        case OBELISK_RT_RANDOM_GT_V1:
+          reversed = OBELISK_RT_RANDOM_LT_V1;
+          break;
+        case OBELISK_RT_RANDOM_LE_V1:
+          reversed = OBELISK_RT_RANDOM_GE_V1;
+          break;
+        case OBELISK_RT_RANDOM_LT_V1:
+          reversed = OBELISK_RT_RANDOM_GT_V1;
+          break;
+        }
+        if (Z3_ast predicate =
+                compareCoordinate(reversed, {rhs.coordinate, rankWidth},
+                                  lhs.representation, lhs.width))
+          return boolean(predicate, width);
+      }
+    }
     unsigned precision = std::max(lhs.width, rhs.width);
     Z3_ast a = resize(lhs, precision), b = resize(rhs, precision);
     Z3_ast predicate = nullptr;
@@ -571,6 +734,7 @@ public:
 
   Z3_context context = nullptr;
   bool hasReal = false;
+  std::function<std::pair<Z3_ast, Z3_ast>(Z3_ast, unsigned)> captureCell;
   std::unordered_map<Z3_ast, Bits> popcounts;
   struct CardinalityInputs {
     std::vector<Z3_ast> positive, negative;
@@ -643,11 +807,47 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   return valid;
 }
 
-/// Preserve named Boolean inputs through bit blasting. No auxiliary Boolean
-/// is accepted: otherwise an existential witness could multiply a sample's
-/// count, or be mistaken for a live state parameter.
+/// Preserve named Boolean inputs through bit blasting. No unbound auxiliary
+/// Boolean is accepted: otherwise an existential witness could multiply a
+/// sample's count. Named IEEE cell parameters are deterministic conversions
+/// of declared state captures.
 class PlanBuilder {
 public:
+  PlanBuilder() {
+    formula.captureCell = [this](Z3_ast payload, unsigned precision) {
+      auto source = realCaptureSources.find(payload);
+      if (source == realCaptureSources.end() ||
+          source->second.second != precision)
+        return std::pair<Z3_ast, Z3_ast>{nullptr, nullptr};
+      unsigned capture = source->second.first;
+      uint64_t key = (uint64_t(capture) << 1) | (precision == 64);
+      auto found = realCaptureCells.find(key);
+      if (found != realCaptureCells.end())
+        return found->second;
+      unsigned width = precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
+                                       : OBELISK_RT_REAL64_RANK_BITS;
+      PlanOpcode first = precision == 32 ? PlanOpcode::Real32FirstBit
+                                         : PlanOpcode::Real64FirstBit;
+      PlanOpcode last = precision == 32 ? PlanOpcode::Real32LastBit
+                                        : PlanOpcode::Real64LastBit;
+      std::vector<Z3_ast> firstBits, lastBits;
+      for (unsigned bit = 0; bit != width; ++bit) {
+        firstBits.push_back(input(first, capture, bit));
+        lastBits.push_back(input(last, capture, bit));
+      }
+      auto endpoints = std::make_pair(pack(firstBits), pack(lastBits));
+      realCaptureCells.emplace(key, endpoints);
+      return endpoints;
+    };
+  }
+
+  void registerRealCapture(Bits capture, unsigned index) {
+    for (unsigned precision : {32u, 64u})
+      if (capture.width >= precision)
+        realCaptureSources.emplace(formula.resize(capture, precision),
+                                   std::make_pair(index, precision));
+  }
+
   Z3_ast input(PlanOpcode opcode, uint32_t a, uint32_t b = 0) {
     ID id = circuit.input(opcode, a, b);
     Z3_ast ast = Z3_mk_const(formula.context,
@@ -738,7 +938,10 @@ private:
       case Z3_OP_XOR:
       case Z3_OP_XOR3:
         id = kind == Z3_OP_AND ? 1 : 0;
-        for (unsigned index = 0; index != arity; ++index)
+        // Z3 flattens literal prefixes in their input order. Put the first
+        // term at the outside of the chain, so binding its earliest variable
+        // need not walk the complete remaining prefix at every bit.
+        for (unsigned index = arity; index-- != 0;)
           id = kind == Z3_OP_AND  ? circuit.conjunction(id, argument(index))
                : kind == Z3_OP_OR ? circuit.disjunction(id, argument(index))
                                   : circuit.exclusiveOr(id, argument(index));
@@ -785,7 +988,8 @@ public:
   /// broad or nonlinear relations retain their exact circuit when this
   /// optimization budget is exhausted.
   void prepare(std::vector<std::pair<unsigned, ID>> &roots,
-               const std::vector<unsigned> &boundaries) {
+               const std::vector<unsigned> &boundaries,
+               const std::vector<bool> &descending) {
     // Each diagram attempt traverses the shared circuit. Bound the number of
     // attempts globally so many atoms cannot cause quadratic compiler work.
     // Skipping this optimization preserves the exact Boolean sampling plan.
@@ -800,7 +1004,8 @@ public:
     for (size_t field = 1; field != boundaries.size(); ++field)
       for (unsigned bit = boundaries[field - 1]; bit != boundaries[field];
            ++bit)
-        columns[bit] = bit - boundaries[field - 1];
+        columns[bit] = descending[field] ? boundaries[field] - 1 - bit
+                                         : bit - boundaries[field - 1];
     std::vector<std::vector<Input>> byColumn;
     for (uint32_t index = 1; index != nodes.size(); ++index) {
       const auto &node = nodes[index];
@@ -811,6 +1016,10 @@ public:
         column = columns[node.a];
       else if (node.opcode == PlanOpcode::CaptureBit)
         column = node.b;
+      else if (unsigned precision = random::realCellPrecision(node.opcode))
+        column = (precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
+                                  : OBELISK_RT_REAL64_RANK_BITS) -
+                 1 - node.b;
       if (byColumn.size() <= column)
         byColumn.resize(size_t(column) + 1);
       byColumn[column].push_back({column, index});
@@ -858,6 +1067,8 @@ public:
 private:
   int nextSymbol = 0;
   std::unordered_map<Z3_ast, ID> converted;
+  std::unordered_map<Z3_ast, std::pair<unsigned, unsigned>> realCaptureSources;
+  std::unordered_map<uint64_t, std::pair<Z3_ast, Z3_ast>> realCaptureCells;
 };
 } // namespace
 
@@ -897,6 +1108,15 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     if (boundary[bit])
       boundaries.push_back(static_cast<unsigned>(bit));
   std::vector<Z3_ast> randomBits(width);
+  // Numeric real intervals prune high prefixes first. Integral fields retain
+  // their low-prefix order, which is useful for modular arithmetic and counts.
+  std::vector<bool> descending(boundaries.size(), false);
+  if (read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL)
+    for (size_t field = 1; field != boundaries.size(); ++field) {
+      unsigned fieldWidth = boundaries[field] - boundaries[field - 1];
+      descending[field] = fieldWidth == OBELISK_RT_REAL32_RANK_BITS ||
+                          fieldWidth == OBELISK_RT_REAL64_RANK_BITS;
+    }
   unsigned ordinal = 0;
   // Keep only unfinished fields in the column traversal. Each declared bit
   // is visited once even when one wide field follows many narrow fields.
@@ -908,9 +1128,10 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     size_t *link = &first;
     while (*link != boundaries.size()) {
       size_t field = *link;
-      unsigned bit = boundaries[field - 1] + column;
+      unsigned bit = descending[field] ? boundaries[field] - 1 - column
+                                       : boundaries[field - 1] + column;
       randomBits[bit] = builder.input(PlanOpcode::RandomBit, bit, ordinal++);
-      if (bit + 1 == boundaries[field])
+      if (column + 1 == boundaries[field] - boundaries[field - 1])
         *link = next[field];
       else
         link = &next[field];
@@ -927,6 +1148,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     for (unsigned bit = 0; bit != captureWidths[index]; ++bit)
       bits.push_back(builder.input(PlanOpcode::CaptureBit, index, bit));
     captures.push_back({builder.pack(bits), captureWidths[index]});
+    builder.registerRealCapture(captures.back(), index);
   }
   std::unordered_map<unsigned, Z3_ast> enabled;
   std::vector<Bits> stack;
@@ -1024,9 +1246,14 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
               ? Z3_mk_ite(f.context, f.truth(condition), yes.representation,
                           no.representation)
               : nullptr;
+      Z3_ast coordinate = yes.real && yes.coordinate && no.coordinate &&
+                                  yes.width == bits && no.width == bits
+                              ? Z3_mk_ite(f.context, f.truth(condition),
+                                          yes.coordinate, no.coordinate)
+                              : nullptr;
       stack.push_back(
           {Z3_mk_ite(f.context, f.truth(condition), yesValue, noValue), bits,
-           yes.real, representation});
+           yes.real, representation, coordinate});
     } else if ((opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
                 opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
                opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
@@ -1056,7 +1283,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   }
   if (!stack.empty())
     return std::nullopt;
-  builder.prepare(roots, boundaries);
+  builder.prepare(roots, boundaries, descending);
   // Retain all random inputs, including unconstrained fields. Everything else
   // is reachable from an atom root; unused captures and replaced arithmetic
   // gates consume no target bytes or specialization work.

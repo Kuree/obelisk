@@ -48,15 +48,36 @@ inline bool validRealInstruction(unsigned opcode, unsigned width,
 }
 
 /// A complemented-edge AND graph. Handles 0 and 1 are false and true; the low
-/// bit of every other handle negates its node. The compiler performs all
-/// bit-vector arithmetic before writing this pointer-free, little-endian plan.
+/// bit of every other handle negates its node. The compiler lowers constraint
+/// arithmetic before writing this pointer-free, little-endian plan. IEEE cell
+/// inputs bind deterministic numeric conversions of live state payloads.
 enum class PlanOpcode : uint32_t {
   Constant = 0,
   RandomBit = 1,
   CaptureBit = 2,
   ConstraintEnabled = 3,
   And = 4,
+  // a is the capture index and b is a signed-coordinate bit. The first/last
+  // pair is the complete finite IEEE decoder cell, before property clipping.
+  // Nonfinite captures have zero placeholders and retain their IEEE guards.
+  Real32FirstBit = 5,
+  Real32LastBit = 6,
+  Real64FirstBit = 7,
+  Real64LastBit = 8,
 };
+
+inline unsigned realCellPrecision(PlanOpcode opcode) {
+  switch (opcode) {
+  case PlanOpcode::Real32FirstBit:
+  case PlanOpcode::Real32LastBit:
+    return 32;
+  case PlanOpcode::Real64FirstBit:
+  case PlanOpcode::Real64LastBit:
+    return 64;
+  default:
+    return 0;
+  }
+}
 
 struct PlanNode {
   PlanOpcode opcode;
@@ -127,6 +148,14 @@ public:
   ID conditional(ID condition, ID yes, ID no) {
     if (yes == no)
       return yes;
+    if (yes == 1)
+      return disjunction(condition, no);
+    if (no == 0)
+      return conjunction(condition, yes);
+    if (yes == 0)
+      return conjunction(condition ^ 1, no);
+    if (no == 1)
+      return disjunction(condition ^ 1, yes);
     return disjunction(conjunction(condition, yes),
                        conjunction(condition ^ 1, no));
   }
@@ -307,6 +336,21 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
           b >= (captureWidths ? captureWidths[a] : 64))
         return false;
       break;
+    case PlanOpcode::Real32FirstBit:
+    case PlanOpcode::Real32LastBit:
+    case PlanOpcode::Real64FirstBit:
+    case PlanOpcode::Real64LastBit: {
+      unsigned precision = realCellPrecision(opcode);
+      unsigned coordinateWidth = precision == 32 ? OBELISK_RT_REAL32_RANK_BITS
+                                                 : OBELISK_RT_REAL64_RANK_BITS;
+      // These are deterministic state parameters, never sampled witnesses.
+      // The low IEEE payload bits of the declared capture name their cell.
+      if (!index || a >= captures || b >= coordinateWidth ||
+          (captureWidths ? captureWidths[a] : 64) < precision ||
+          !(planRead32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL))
+        return false;
+      break;
+    }
     case PlanOpcode::ConstraintEnabled:
       if (!index || a >= 64 || b)
         return false;

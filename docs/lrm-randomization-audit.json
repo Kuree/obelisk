@@ -245,7 +245,7 @@
         {
           "feature": "Real random variables",
           "status": "missing",
-          "detail": "Source real and shortreal constraint lowering remains missing. Native and WASM targets provide finite numeric rank conversions and interval sampling leaves, with spacing-weighted cells, subnormals, signed zero, finite endpoint clipping and transactional failures. Compiler Z3 additionally compiles typed IEEE comparisons, arithmetic, integral conversions, logical operations, selection and numeric-rank decoders into parameterized Boolean plans. Ill-typed operations and computed arithmetic payload bitcasts are diagnosed; targets require exact uniform plans and never interpret IEEE constraints as integers. MLIR tests cover both precisions at O0/O3, the 18.4.1 numeric-density example, live captures, modes, frozen inputs, soft priorities and malformed wire formats. Efficient full-coordinate predicates, source property admission, joint real/integral distributions and complete real probability semantics remain open."
+          "detail": "Source real and shortreal constraint lowering remains missing. Native and WASM targets provide finite numeric rank conversions and interval sampling leaves, with spacing-weighted cells, subnormals, signed zero, finite endpoint clipping and transactional failures. Compiler Z3 additionally compiles typed IEEE comparisons, arithmetic, integral conversions, logical operations, selection and numeric-rank decoders into parameterized Boolean plans. Ill-typed operations and computed arithmetic payload bitcasts are diagnosed; targets require exact uniform plans and never interpret IEEE constraints as integers. MLIR tests cover both precisions at O0/O3, the 18.4.1 numeric-density example, live captures, modes, frozen inputs, soft priorities and malformed wire formats. Full-width coordinate comparisons against retained IEEE bounds use signed numeric-cell predicates, with deterministic captured-cell inputs rather than sampled solver witnesses. Native and bytecode Simulation adapters preserve canonical coordinates and report nonfinite placeholders. MLIR coverage includes all six comparisons in both operand orders, frozen masks, disabled blocks, NaN/infinity captures and the complete finite endpoint cells. Source property admission, general full-coordinate arithmetic, joint real/integral distributions and complete real probability semantics remain open."
         },
         {
           "feature": "Rand object handles",
@@ -273,7 +273,12 @@
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "runtime/lib/RealRandom.h",
           "runtime/lib/RandReal.cpp",
-          "lib/Dialect/Simulation/Transforms/CompileRandomPlans.cpp"
+          "lib/Dialect/Simulation/Transforms/CompileRandomPlans.cpp",
+          "lib/Dialect/Simulation/SimulationContainerOps.cpp",
+          "lib/Conversion/SimulationToLLVMCoroutine/SimulationManagedContainerLowering.cpp",
+          "lib/Conversion/SimulationToBytecode/BytecodeContainerEncoding.cpp",
+          "runtime/lib/DesignBytecodeImage.cpp",
+          "runtime/lib/DesignBytecodeIntrinsics.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -303,7 +308,9 @@
           "test/Runtime/random-real-rank-sampling.mlir",
           "test/Dialect/Simulation/Transforms/simulation-compile-random-real-plans-invalid.mlir",
           "test/Runtime/simulation-random-real-plan-runtime.mlir",
-          "test/Runtime/random-real-plan-validation.mlir"
+          "test/Runtime/random-real-plan-validation.mlir",
+          "test/Dialect/Simulation/random-real-rank-invalid.mlir",
+          "test/Runtime/simulation-random-real-coordinate-runtime.mlir"
         ]
       }
     },

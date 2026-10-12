@@ -367,6 +367,10 @@ constexpr uint32_t kIntrinsicRandomSolveState =
     OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_STATE;
 constexpr uint32_t kIntrinsicRandomSolveWideState =
     OBELISK_RT_INTRINSIC_V1_RANDOM_SOLVE_WIDE_STATE;
+constexpr uint32_t kIntrinsicRandomRealToRank =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK;
+constexpr uint32_t kIntrinsicRandomRealFromRank =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK;
 constexpr uint32_t kIntrinsicRandomCycleNext =
     OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT;
 constexpr uint32_t kIntrinsicRandomNext = OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;

@@ -5,12 +5,15 @@
 #include "RandModelCount.h"
 #include "RandSolveOrder.h"
 #include "RandSolveWeighted.h"
+#include "RealRandom.h"
 #include "obelisk/Runtime/RandomDomain.h"
 #include "obelisk/Runtime/RandomSamplerPlan.h"
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -588,6 +591,10 @@ sampleRandomPlan(const uint8_t *program, size_t programSize,
       variable[physical] = (start[physical / 64] >> (physical % 64)) & 1;
   }
   std::vector<ID> specialized(plan.nodeCount);
+  struct RealCell {
+    std::array<uint64_t, OBELISK_RT_REAL64_RANK_WORDS> first{}, last{};
+  };
+  std::unordered_map<uint64_t, RealCell> realCells;
   auto handle = [&](uint32_t id) { return specialized[id / 2] ^ (id & 1); };
   for (unsigned index = 1; index != plan.nodeCount; ++index) {
     const uint8_t *p = plan.nodes + size_t(index) * random::samplerPlanNodeSize;
@@ -603,6 +610,36 @@ sampleRandomPlan(const uint8_t *program, size_t programSize,
     case PlanOpcode::ConstraintEnabled:
       specialized[index] = ((constraintMask >> a) & 1) == 0;
       break;
+    case PlanOpcode::Real32FirstBit:
+    case PlanOpcode::Real32LastBit:
+    case PlanOpcode::Real64FirstBit:
+    case PlanOpcode::Real64LastBit: {
+      unsigned precision =
+          random::realCellPrecision(static_cast<PlanOpcode>(read32(p)));
+      uint64_t key = (uint64_t(a) << 1) | (precision == 64);
+      auto [entry, inserted] = realCells.try_emplace(key);
+      if (inserted) {
+        uint64_t payload = captures[captureOffsets[a]];
+        if (precision == 32) {
+          uint32_t word = static_cast<uint32_t>(payload);
+          float value;
+          std::memcpy(&value, &word, sizeof(value));
+          RealCoordinates<float>::cell(value, entry->second.first.data(),
+                                       entry->second.last.data());
+        } else {
+          double value;
+          std::memcpy(&value, &payload, sizeof(value));
+          RealCoordinates<double>::cell(value, entry->second.first.data(),
+                                        entry->second.last.data());
+        }
+      }
+      bool first =
+          static_cast<PlanOpcode>(read32(p)) == PlanOpcode::Real32FirstBit ||
+          static_cast<PlanOpcode>(read32(p)) == PlanOpcode::Real64FirstBit;
+      const auto &words = first ? entry->second.first : entry->second.last;
+      specialized[index] = (words[b / 64] >> (b % 64)) & 1;
+      break;
+    }
     case PlanOpcode::And:
       specialized[index] = circuit.conjunction(handle(a), handle(b));
       break;

@@ -1296,6 +1296,81 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK: {
+    Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
+    Layout rankLayout = layoutAt(image, frame.function, outputRegister(0));
+    bool shortReal = valueLayout.kind == OBELISK_RT_DBREG_REAL32;
+    uint32_t width =
+        shortReal ? OBELISK_RT_REAL32_RANK_BITS : OBELISK_RT_REAL64_RANK_BITS;
+    if ((!shortReal && valueLayout.kind != OBELISK_RT_DBREG_REAL64) ||
+        valueLayout.size != (shortReal ? sizeof(float) : sizeof(double)) ||
+        rankLayout.kind != OBELISK_RT_DBREG_BITS || rankLayout.width != width)
+      return OBELISK_RT_INVALID_BYTECODE;
+    OBELISK_RT_TRY {
+      Logic rank{width, false, LimbVector(limbCount(width)),
+                 LimbVector(limbCount(width))};
+      obelisk_rt_status status;
+      if (shortReal) {
+        float value;
+        std::memcpy(&value, frame.data + valueLayout.offset, sizeof(value));
+        status = obelisk_rt_v1_random_real32_to_rank(value, rank.value.data(),
+                                                     rank.value.size());
+      } else {
+        double value;
+        std::memcpy(&value, frame.data + valueLayout.offset, sizeof(value));
+        status = obelisk_rt_v1_random_real64_to_rank(value, rank.value.data(),
+                                                     rank.value.size());
+      }
+      if (status != OBELISK_RT_OK && status != OBELISK_RT_INVALID_ARGUMENT)
+        return status;
+      writeLogic(frame.data, rankLayout, rank);
+      if (!writeScalar(image, frame, outputRegister(1),
+                       status == OBELISK_RT_OK))
+        return OBELISK_RT_INVALID_BYTECODE;
+      return OBELISK_RT_OK;
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+  }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK: {
+    Layout rankLayout = layoutAt(image, frame.function, inputRegister(0));
+    Layout valueLayout = layoutAt(image, frame.function, outputRegister(0));
+    bool shortReal = valueLayout.kind == OBELISK_RT_DBREG_REAL32;
+    uint32_t width =
+        shortReal ? OBELISK_RT_REAL32_RANK_BITS : OBELISK_RT_REAL64_RANK_BITS;
+    if ((!shortReal && valueLayout.kind != OBELISK_RT_DBREG_REAL64) ||
+        valueLayout.size != (shortReal ? sizeof(float) : sizeof(double)) ||
+        rankLayout.kind != OBELISK_RT_DBREG_BITS || rankLayout.width != width)
+      return OBELISK_RT_INVALID_BYTECODE;
+    OBELISK_RT_TRY {
+      Logic rank = readLogic(frame.data, rankLayout);
+      obelisk_rt_status status;
+      if (shortReal) {
+        float value;
+        status = obelisk_rt_v1_random_real32_from_rank(
+            rank.value.data(), rank.value.size(), &value);
+        if (status == OBELISK_RT_OK)
+          std::memcpy(frame.data + valueLayout.offset, &value, sizeof(value));
+      } else {
+        double value;
+        status = obelisk_rt_v1_random_real64_from_rank(
+            rank.value.data(), rank.value.size(), &value);
+        if (status == OBELISK_RT_OK)
+          std::memcpy(frame.data + valueLayout.offset, &value, sizeof(value));
+      }
+      return status;
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+  }
   case OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT: {
     auto point = scalar(0);
     auto enabled = scalar(1);
