@@ -126,13 +126,10 @@ public:
   sim::SimClassMethodDeclOp resolveEffective(sim::SimClassDeclOp dynamicClass,
                                              uint64_t slot,
                                              uint64_t signatureId) {
-    CachedMethod &cached = effective[dynamicClass.getOperation()]
-                                    [std::make_pair(slot, signatureId)];
-    if (!cached.computed) {
-      cached.computed = true;
-      cached.method = dispatch.resolve(dynamicClass, slot, signatureId);
-    }
-    return cached.method;
+    // The persistent tables already bound lookup by the 64-bit key width.
+    // Retaining every candidate/slot result expands a small call inventory
+    // into the Cartesian product of descendants and queried methods.
+    return dispatch.resolve(dynamicClass, slot, signatureId);
   }
 
   sim::SimClassMethodDeclOp resolveMonomorphic(sim::SimClassDeclOp staticClass,
@@ -146,14 +143,8 @@ public:
       return cached.method;
     cached.computed = true;
 
-    auto compatible = compatibleClasses.find(staticClass.getOperation());
-    if (compatible == compatibleClasses.end())
-      compatible =
-          compatibleClasses
-              .try_emplace(staticClass.getOperation(),
-                           dispatch.compatibleConcreteClasses(staticClass))
-              .first;
-    for (sim::SimClassDeclOp candidate : compatible->second) {
+    for (sim::SimClassDeclOp candidate :
+         dispatch.compatibleConcreteClasses(staticClass)) {
       sim::SimClassMethodDeclOp method =
           resolveEffective(candidate, slot, signatureId);
       if (!isDirectTarget(method, signatureId, isTask)) {
@@ -179,8 +170,6 @@ private:
   using Slot = std::pair<uint64_t, uint64_t>;
 
   const analysis::ClassDispatchAnalysis &dispatch;
-  DenseMap<Operation *, SmallVector<sim::SimClassDeclOp>> compatibleClasses;
-  DenseMap<Operation *, DenseMap<Slot, CachedMethod>> effective;
   DenseMap<Operation *, DenseMap<Slot, CachedByKind>> monomorphic;
 };
 

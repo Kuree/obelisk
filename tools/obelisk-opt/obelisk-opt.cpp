@@ -42,6 +42,7 @@ int main(int argc, char **argv) {
   obelisk::registerActivationPhaseAnalysisTestPass();
   obelisk::registerBytecodeImageTestPass();
   obelisk::registerClockInferenceAnalysisTestPass();
+  obelisk::registerClassDispatchAnalysisTestPass();
   obelisk::registerCombinationalDependencyAnalysisTestPass();
   obelisk::registerCoverageSchemaTestPass();
   obelisk::registerStorageWriteAnalysisTestPass();

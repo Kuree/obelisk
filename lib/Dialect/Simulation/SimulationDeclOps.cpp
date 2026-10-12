@@ -4173,35 +4173,6 @@ LogicalResult SimDesignOp::verifyRegions() {
                 "implements list references a non-interface class");
         }
       }
-      if (classDecl.getIsInterface()) {
-        llvm::SmallPtrSet<Operation *, 8> reached;
-        SmallVector<SimClassDeclOp> pending;
-        auto appendInterfaces = [&](SimClassDeclOp declaration) {
-          if (ArrayAttr interfaces = declaration.getInterfacesAttr())
-            for (Attribute attribute : interfaces) {
-              auto reference = cast<FlatSymbolRefAttr>(attribute);
-              auto found = classes.find(reference.getValue());
-              if (found != classes.end() && found->second.getIsInterface())
-                pending.push_back(found->second);
-            }
-        };
-        appendInterfaces(classDecl);
-        while (!pending.empty()) {
-          SimClassDeclOp current = pending.pop_back_val();
-          if (current == classDecl)
-            return classDecl.emitOpError(
-                "interface inheritance contains a cycle");
-          if (reached.insert(current).second)
-            appendInterfaces(current);
-        }
-      }
-      llvm::SmallPtrSet<Operation *, 8> path;
-      for (SimClassDeclOp current = classDecl; current;
-           current = current.getBaseAttr() ? lookupClass(symbolTable, current,
-                                                         current.getBaseAttr())
-                                           : SimClassDeclOp{})
-        if (!path.insert(current).second)
-          return classDecl.emitOpError("class inheritance contains a cycle");
     } else if (auto field = dyn_cast<SimClassFieldDeclOp>(op)) {
       if (!fieldOrdinals[field.getOwner()].insert(field.getOrdinal()).second)
         return field.emitOpError(
@@ -4228,6 +4199,56 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (found->second.getEntryKind() != expected)
           return method.emitOpError(
               "implementation entry kind does not match the method kind");
+      }
+    }
+  }
+  // Memoize completed paths rather than retracing every ancestor chain or
+  // shared interface diamond at each declaration. Both checks are iterative
+  // and visit each vertex and direct inheritance edge once.
+  llvm::DenseMap<Operation *, uint8_t> baseState, interfaceState;
+  for (Operation &op : getBody().front()) {
+    auto root = dyn_cast<SimClassDeclOp>(op);
+    if (!root || baseState.lookup(root) == 2)
+      continue;
+    SmallVector<SimClassDeclOp, 16> path;
+    SimClassDeclOp current = root;
+    while (current && !baseState.lookup(current)) {
+      baseState[current] = 1;
+      path.push_back(current);
+      auto base = current.getBase();
+      current = base ? classes.lookup(*base) : SimClassDeclOp{};
+    }
+    if (current && baseState.lookup(current) == 1)
+      return root.emitOpError("class inheritance contains a cycle");
+    for (auto declaration : path)
+      baseState[declaration] = 2;
+  }
+  struct InterfaceFrame {
+    SimClassDeclOp declaration;
+    ArrayAttr parents;
+    size_t next = 0;
+  };
+  for (Operation &op : getBody().front()) {
+    auto root = dyn_cast<SimClassDeclOp>(op);
+    if (!root || !root.getIsInterface() || interfaceState.lookup(root) == 2)
+      continue;
+    interfaceState[root] = 1;
+    SmallVector<InterfaceFrame, 16> pending{{root, root.getInterfacesAttr()}};
+    while (!pending.empty()) {
+      auto &frame = pending.back();
+      if (!frame.parents || frame.next == frame.parents.size()) {
+        interfaceState[frame.declaration] = 2;
+        pending.pop_back();
+        continue;
+      }
+      auto reference = cast<FlatSymbolRefAttr>(frame.parents[frame.next++]);
+      auto parent = classes.lookup(reference.getValue());
+      uint8_t state = interfaceState.lookup(parent);
+      if (state == 1)
+        return root.emitOpError("interface inheritance contains a cycle");
+      if (!state) {
+        interfaceState[parent] = 1;
+        pending.push_back({parent, parent.getInterfacesAttr()});
       }
     }
   }

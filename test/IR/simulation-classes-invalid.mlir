@@ -183,6 +183,30 @@ module {
 // -----
 
 module {
+  simulation.design @cycle_after_completed_base_paths {
+    simulation.scope.decl 0
+    simulation.class.decl @Done id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    simulation.class.decl @DoneChild id 2 extends @Done {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{class inheritance contains a cycle}}
+    simulation.class.decl @Lead id 3 extends @LoopLeft {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    simulation.class.decl @LoopLeft id 4 extends @LoopRight {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    simulation.class.decl @LoopRight id 5 extends @LoopLeft {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+  }
+}
+
+// -----
+
+module {
   simulation.design @random_object_edge_without_mode {
     simulation.scope.decl 0
     simulation.class.decl @C id 1 {
@@ -273,6 +297,30 @@ module {
       is_abstract = true, is_final = false, is_interface = true
     }
     simulation.class.decl @K id 3 implements [@I] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+  }
+}
+
+// -----
+
+module {
+  simulation.design @cycle_after_completed_interface_diamond {
+    simulation.scope.decl 0
+    simulation.class.decl @Done id 1 {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    simulation.class.decl @DoneLeft id 2 implements [@Done] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    simulation.class.decl @DoneRight id 3 implements [@Done] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    // expected-error @below {{interface inheritance contains a cycle}}
+    simulation.class.decl @LoopTop id 4 implements [@DoneLeft, @DoneRight, @Loop] {
+      is_abstract = true, is_final = false, is_interface = true
+    }
+    simulation.class.decl @Loop id 5 implements [@LoopTop] {
       is_abstract = true, is_final = false, is_interface = true
     }
   }
