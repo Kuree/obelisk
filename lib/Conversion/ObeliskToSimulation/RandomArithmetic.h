@@ -28,8 +28,8 @@ class RandomArithmetic {
 public:
   using Width = std::function<mlir::FailureOr<unsigned>(mlir::Operation *)>;
   using Candidate = std::function<bool(mlir::Operation *)>;
-  RandomArithmetic(mlir::MLIRContext *context, Width width,
-                   Candidate candidate);
+  RandomArithmetic(mlir::MLIRContext *context, Width width, Candidate candidate,
+                   bool frozenVariables);
   ~RandomArithmetic();
 
   bool needed(mlir::Operation *expression);

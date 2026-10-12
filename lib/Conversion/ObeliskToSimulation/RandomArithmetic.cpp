@@ -17,6 +17,7 @@ struct RandomArithmetic::Impl {
   Builder builder;
   Width width;
   Candidate candidate;
+  bool frozenVariables;
   // Temporary expressions retain the target layout used by their original
   // module, including layouts of unpacked values beneath a packed selection.
   OwningOpRef<ModuleOp> expressions;
@@ -25,9 +26,10 @@ struct RandomArithmetic::Impl {
   llvm::DenseMap<Operation *, RandomArithmeticPlanes> planes;
   llvm::DenseMap<Operation *, Operation *> knownPredicates;
 
-  Impl(MLIRContext *context, Width width, Candidate candidate)
+  Impl(MLIRContext *context, Width width, Candidate candidate,
+       bool frozenVariables)
       : builder(context), width(std::move(width)),
-        candidate(std::move(candidate)),
+        candidate(std::move(candidate)), frozenVariables(frozenVariables),
         expressions(ModuleOp::create(UnknownLoc::get(context))) {}
   ~Impl() {
     for (Operation *node : llvm::reverse(nodes))
@@ -229,12 +231,12 @@ struct RandomArithmetic::Impl {
     }
     return value;
   }
-  Operation *projection(Operation *source, unsigned precision, bool unknown) {
+  Operation *projection(Operation *source, unsigned precision, int32_t plane) {
     return make(source, semantic::SVConversionExpressionOp::getOperationName(),
-                precision, !unknown && sign(source),
+                precision, !plane && sign(source),
                 {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true)),
                  builder.getNamedAttr(randomArithmeticPlaneAttr,
-                                      builder.getI32IntegerAttr(unknown))},
+                                      builder.getI32IntegerAttr(plane))},
                 {source});
   }
   bool needed(Operation *expression) {
@@ -252,7 +254,9 @@ struct RandomArithmetic::Impl {
       // Expanded procedural case comparisons consume complete X/Z symbols.
       // Source-level four-state constraint comparisons are rejected earlier.
       return false;
-    bool result = false;
+    bool result = frozenVariables && fourState(expression) &&
+                  (expression->hasAttr(randomVariableAttrName) ||
+                   expression->hasAttr(randomVariableBitOffsetAttrName));
     if (auto op = dyn_cast<semantic::SVBinaryExpressionOp>(expression)) {
       auto children = getChildren(expression);
       if (children.size() == 2) {
@@ -336,9 +340,26 @@ struct RandomArithmetic::Impl {
       return RandomArithmeticPlanes{
           cast(expression, expression, precision, signedResult), nullptr};
     if (expression->hasAttr(randomVariableAttrName) ||
-        expression->hasAttr(randomVariableBitOffsetAttrName))
+        expression->hasAttr(randomVariableBitOffsetAttrName)) {
+      // Random candidates are two-state. Disabled property bits are state,
+      // and their pre-solve unknown symbols survive until consumed by an
+      // admitted conversion or absorbing operator. Plane 2 masks the stored
+      // unknown bits with the current inactive-bit inventory before capture.
+      Operation *unknown = frozenVariables && fourState(expression)
+                               ? projection(expression, precision, 2)
+                               : nullptr;
+      // This reference is already the canonical solver bitstream. Keep its
+      // binding, but prevent the emitted value cast from normalizing the
+      // reference again and recursively rebuilding its unknown mask.
+      Operation *reference = expression->clone();
+      reference->setAttr(randomArithmeticNodeAttr, builder.getUnitAttr());
+      expressions->getBody()->push_back(reference);
+      nodes.push_back(reference);
       return RandomArithmeticPlanes{
-          cast(expression, expression, precision, signedResult), nullptr};
+          mask(expression, cast(expression, reference, precision, signedResult),
+               unknown, precision, signedResult),
+          unknown};
+    }
     if (isa<semantic::SVNamedValueExpressionOp,
             semantic::SVHierarchicalValueExpressionOp,
             semantic::SVMemberAccessExpressionOp>(expression) &&
@@ -711,9 +732,9 @@ struct RandomArithmetic::Impl {
 };
 
 RandomArithmetic::RandomArithmetic(MLIRContext *context, Width width,
-                                   Candidate candidate)
+                                   Candidate candidate, bool frozenVariables)
     : impl(std::make_unique<Impl>(context, std::move(width),
-                                  std::move(candidate))) {}
+                                  std::move(candidate), frozenVariables)) {}
 RandomArithmetic::~RandomArithmetic() = default;
 bool RandomArithmetic::needed(Operation *expression) {
   return impl->needed(expression);

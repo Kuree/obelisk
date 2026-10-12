@@ -3449,7 +3449,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // Compiler Z3 receives canonical value bits and independent unknown planes.
   // The target samples Boolean plans; it never reconstructs SV arithmetic.
   RandomArithmetic arithmetic(builder.getContext(), expressionWidth,
-                              dependsOnCandidate);
+                              dependsOnCandidate,
+                              /*frozenVariables=*/!scopeRandomize);
   bool arithmeticFailure = false;
   auto arithmeticValidity = [&](Operation *expression) -> Operation * {
     if (isa<semantic::SVDistExpressionOp>(expression))
@@ -4208,7 +4209,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         normalization *= factor;
       }
 
-
       DistPlan plan{expression, propertyIndex,
                     0,          activeProgramConstraintBlock,
                     {},         activeSoftDistSource};
@@ -4417,6 +4417,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                   isSignedNode(expression), capture);
       return success();
     };
+    // Raw value/unknown projections are parameters even when their source
+    // property participates in the solve. Frozen unknowns were masked with
+    // the live active-bit inventory while materializing this capture.
+    if (expression->hasAttr(randomArithmeticPlaneAttr))
+      return captureExpression();
     if (isa<semantic::SVConversionExpressionOp>(expression)) {
       // Keep constant conversions structural so Z3 can fold them, but evaluate
       // a conversion of runtime state once as a capture. This preserves the
@@ -5326,17 +5331,54 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<Operation *> operands = getChildren(expression);
     if (auto plane =
             expression->getAttrOfType<IntegerAttr>(randomArithmeticPlaneAttr)) {
-      if (operands.size() != 1 || (plane.getInt() != 0 && plane.getInt() != 1))
+      if (operands.size() != 1 || plane.getInt() < 0 || plane.getInt() > 2)
         return failure();
       bool saved = preserveArithmeticSource;
       preserveArithmeticSource = true;
       auto input = safeConstraintValue(operands.front());
       preserveArithmeticSource = saved;
-      auto scalar = succeeded(input) ? toRandomScalar(input->value, location)
-                                     : FailureOr<Value>(failure());
-      if (failed(scalar))
+      if (failed(input))
         return failure();
       Type bitsType = sim::getPackedScalarType(*resultType);
+      Value source = input->value;
+      unsigned precision = cast<IntegerType>(bitsType).getWidth();
+      unsigned offset = 0;
+      if (plane.getInt() == 2) {
+        APInt sourceMask = priorityInputs(operands.front());
+        offset = sourceMask.countTrailingZeros();
+        if (offset >= assignmentWidth || precision > assignmentWidth - offset ||
+            sourceMask != APInt::getBitsSet(assignmentWidth, offset,
+                                            offset + precision)) {
+          emitError(getSemanticLocation(expression))
+              << "frozen unknown-plane property binding is not a fixed bit "
+                 "range";
+          return failure();
+        }
+        auto propertyEnd = llvm::upper_bound(propertyOffsets, offset);
+        if (propertyEnd == propertyOffsets.begin())
+          return failure();
+        unsigned property =
+            std::distance(propertyOffsets.begin(), propertyEnd) - 1;
+        unsigned localOffset = offset - propertyOffsets[property];
+        if (localOffset >= planned[property].width ||
+            precision > planned[property].width - localOffset)
+          return failure();
+        // Candidate checkers temporarily replace ordinary variable reads with
+        // proposed bits. Frozen unknown symbols must always come from the
+        // pre-solve snapshot, including inside those checkers.
+        source = planned[property].originalScalar;
+        if (!source)
+          return failure();
+        if (auto logic = dyn_cast<sim::LogicType>(source.getType());
+            logic && (localOffset || logic.getWidth() != precision))
+          source = sim::SimLogicExtractOp::create(
+              builder, location,
+              sim::LogicType::get(builder.getContext(), precision), source,
+              builder.getI64IntegerAttr(localOffset));
+      }
+      auto scalar = toRandomScalar(source, location);
+      if (failed(scalar))
+        return failure();
       Value value;
       if (auto logic = dyn_cast<sim::LogicType>(scalar->getType())) {
         Value bits =
@@ -5360,8 +5402,26 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                             builder.getIntegerAttr(bitsType, 0))
                       .getResult();
       }
+      Value random = input->random;
+      if (plane.getInt() == 2) {
+        Value active = activeGuardBits;
+        if (offset)
+          active = arith::ShRUIOp::create(builder, location, active,
+                                          constantAssignment64(offset));
+        auto selected = convert(active, bitsType, false, location);
+        if (failed(selected))
+          return failure();
+        Value inactive = arith::XOrIOp::create(
+            builder, location, *selected,
+            arith::ConstantOp::create(
+                builder, location, bitsType,
+                builder.getIntegerAttr(bitsType,
+                                       APInt::getAllOnes(precision))));
+        value = arith::AndIOp::create(builder, location, value, inactive);
+        random = guardConstant(false);
+      }
       return SafeConstraintValue{
-          value,         input->errors,    input->random,
+          value,         input->errors,    random,
           input->inputs, input->arguments, input->errors};
     }
     SmallVector<Operation *> inputs;

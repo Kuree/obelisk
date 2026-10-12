@@ -191,7 +191,9 @@
           "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
         ]
       }
     },
@@ -252,7 +254,8 @@
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
-          "runtime/include/obelisk/Runtime/RandomDomain.h"
+          "runtime/include/obelisk/Runtime/RandomDomain.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -266,7 +269,9 @@
           "test/Conversion/obelisk-to-simulation-random-wide-enum-domains.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
-          "test/Runtime/random-wide-domain-plan-validation.mlir"
+          "test/Runtime/random-wide-domain-plan-validation.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
         ]
       }
     },
@@ -357,7 +362,7 @@
         {
           "feature": "Division, exponentiation, and system calls",
           "status": "partial",
-          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. General system functions, mixed unknown-plane selections and frozen random operands remain open."
+          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. Disabled four-state scalar properties, fixed-array elements and qualified structure leaves bind their stored unknown symbols through compiler captures masked by the live active-bit inventory. Candidate checks use the pre-solve snapshot; active random candidates remain two-state. General system functions and mixed unknown-plane selections remain open."
         },
         {
           "feature": "Named and multiple constraint blocks",
@@ -417,7 +422,9 @@
           "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
         ]
       }
     },
@@ -1455,12 +1462,12 @@
         {
           "feature": "Per-element unpacked array rand_mode",
           "status": "partial",
-          "detail": "Fixed unpacked integral arrays have persistent per-leaf mode bitmaps, including multidimensional subarray setters, arbitrary leaf counts, static sharing, and inherited dynamic-class resets. Disabled four-state leaves preserve X/Z on commits. Only singular leaves may be queried. Dynamic arrays, queues, and per-element randc histories remain open."
+          "detail": "Fixed unpacked integral arrays have persistent per-leaf mode bitmaps, including multidimensional subarray setters, arbitrary leaf counts, static sharing, and inherited dynamic-class resets. Disabled four-state leaves preserve X/Z on commits and bind their original unknown planes into admitted integral constraints, including conversion and known absorbing operators. Only singular leaves may be queried. Dynamic arrays, queues, and per-element randc histories remain open."
         },
         {
           "feature": "Large-domain partial selection solving",
           "status": "partial",
-          "detail": "With compiled-plan samplers, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. The optional no-runtime-Z3 fallback remains bounded; non-integral and dynamic-container relations remain open."
+          "detail": "With compiled-plan samplers, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. Frozen four-state symbols use snapshot captures and active-bit masks without a runtime solver. The optional build without compiler Z3 retains bounded fallback search; non-integral and dynamic-container relations remain open."
         }
       ],
       "evidence": {
@@ -1478,7 +1485,8 @@
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
-          "runtime/include/obelisk/Runtime/RandomDomain.h"
+          "runtime/include/obelisk/Runtime/RandomDomain.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
@@ -1487,7 +1495,9 @@
           "test/Runtime/obelisk-to-simulation-random-array-modes-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
         ]
       }
     },
@@ -1609,10 +1619,12 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-randomize-properties.mlir"
+          "test/Conversion/obelisk-to-simulation-randomize-properties.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir"
         ]
       }
     },
@@ -1636,10 +1648,12 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-randomize-properties.mlir"
+          "test/Conversion/obelisk-to-simulation-randomize-properties.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir"
         ]
       }
     },
