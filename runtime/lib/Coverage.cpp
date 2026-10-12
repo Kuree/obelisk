@@ -2429,7 +2429,7 @@ obelisk_rt_status resolveStaticFunctionalType(
 
   std::vector<ResolvedFunctionalItem> resolvedItemRows;
   IndexMap<uint64_t, size_t> resolvedItemPositions;
-  std::unordered_map<uint64_t, uint64_t> resolvedItems;
+  IndexMap<uint64_t, uint64_t> resolvedItems;
   for (const FunctionalItem *item : templateItems) {
     uint64_t id = resolvedFunctionalID("functional.resolved.item", typeID,
                                        item->id, 0, itemIDs);
@@ -2485,14 +2485,49 @@ obelisk_rt_status resolveStaticFunctionalType(
       resolvedTransitionExpansionGroupRows;
   std::vector<PendingSet> pendingSets;
   std::vector<PendingDefaultArray> pendingDefaultArrays;
-  std::unordered_map<uint64_t, uint32_t> nextResolvedBinOrdinal;
-  std::unordered_set<uint64_t> transitionAlternativeIDs;
+  IndexMap<uint64_t, uint32_t> nextResolvedBinOrdinal;
+  IndexSet<uint64_t> transitionAlternativeIDs;
   IndexMap<uint64_t, const obelisk_rt_functional_value_v1 *> expressionValues;
   for (uint64_t i = 0; i != expressionCount; ++i)
     expressionValues.emplace(expressions[i].id, &expressions[i]);
   IndexMap<uint64_t, const FunctionalExpression *> expressionSchemas;
-  for (const auto &row : schema.functionalExpressions)
+  IndexMap<uint64_t, const FunctionalExpression *> coverpointSamples;
+  IndexMap<uint64_t, std::vector<const FunctionalExpression *>>
+      binWithExpressions;
+  for (const auto &row : schema.functionalExpressions) {
     expressionSchemas.emplace(row.id, &row);
+    if (row.ownerKind == FunctionalExpressionOwnerKind::Item &&
+        row.role == FunctionalExpressionRole::CoverpointSample)
+      coverpointSamples.emplace(row.owner, &row);
+    if (row.ownerKind == FunctionalExpressionOwnerKind::Bin &&
+        row.role == FunctionalExpressionRole::BinWith)
+      binWithExpressions[row.owner].push_back(&row);
+  }
+  for (auto &[bin, predicates] : binWithExpressions) {
+    (void)bin;
+    sortByKey(predicates.begin(), predicates.end(),
+              [](const auto *row) { return row->ownerOrdinal; });
+  }
+  IndexMap<uint64_t, const FunctionalBinPlan *> binPlans;
+  for (const auto &row : schema.functionalBinPlans)
+    binPlans.emplace(row.bin, &row);
+  IndexMap<uint64_t, const TransitionProgram *> transitionPrograms;
+  for (const auto &row : schema.transitionPrograms)
+    transitionPrograms.emplace(row.bin, &row);
+  IndexMap<uint64_t, const FunctionalValueSet *> valueSets;
+  for (const auto &row : schema.functionalValueSets)
+    valueSets.emplace(row.id, &row);
+  IndexSet<uint64_t> suppressAutomaticBins;
+  for (const auto *bin : templateBins)
+    if ((bin->flags & FunctionalBinAutomatic) ||
+        ((bin->kind == FunctionalBinKind::State ||
+          bin->kind == FunctionalBinKind::Transition) &&
+         !(bin->flags & (FunctionalBinIgnore | FunctionalBinIllegal))))
+      suppressAutomaticBins.insert(bin->item);
+  auto lookup = [](const auto &index, uint64_t id) {
+    auto entry = index.find(id);
+    return entry == index.end() ? nullptr : entry->second;
+  };
   auto expressionValue =
       [&](uint64_t id) -> const obelisk_rt_functional_value_v1 * {
     auto entry = expressionValues.find(id);
@@ -2503,10 +2538,10 @@ obelisk_rt_status resolveStaticFunctionalType(
     return entry == expressionSchemas.end() ? nullptr : entry->second;
   };
   std::vector<FunctionalConfigurationOption> configurationOptionRows;
-  std::unordered_map<uint64_t, uint64_t> itemAtLeast;
-  std::unordered_map<uint64_t, uint64_t> itemAutoBinMax;
-  std::unordered_map<uint64_t, bool> itemCrossRetainAutoBins;
-  std::unordered_map<uint64_t, double> itemRealInterval;
+  IndexMap<uint64_t, uint64_t> itemAtLeast;
+  IndexMap<uint64_t, uint64_t> itemAutoBinMax;
+  IndexMap<uint64_t, bool> itemCrossRetainAutoBins;
+  IndexMap<uint64_t, double> itemRealInterval;
   std::optional<uint64_t> groupAtLeast;
   std::optional<uint64_t> groupAutoBinMax;
   std::optional<bool> groupCrossRetainAutoBins;
@@ -3046,22 +3081,16 @@ obelisk_rt_status resolveStaticFunctionalType(
       continue;
     }
     if (bin->kind == FunctionalBinKind::Transition) {
-      auto plan = std::find_if(
-          schema.functionalBinPlans.begin(), schema.functionalBinPlans.end(),
-          [&](const auto &entry) { return entry.bin == bin->id; });
-      auto program = std::find_if(
-          schema.transitionPrograms.begin(), schema.transitionPrograms.end(),
-          [&](const auto &entry) { return entry.bin == bin->id; });
+      const auto *plan = lookup(binPlans, bin->id);
+      const auto *program = lookup(transitionPrograms, bin->id);
       const bool defaultSequence =
           (bin->flags & FunctionalBinDefaultSequence) != 0;
-      const bool scalar = plan != schema.functionalBinPlans.end() &&
-                          plan->arrayMode == FunctionalBinArrayMode::Scalar;
-      const bool multiple = plan != schema.functionalBinPlans.end() &&
-                            plan->arrayMode == FunctionalBinArrayMode::Unsized;
-      if (plan == schema.functionalBinPlans.end() ||
-          program == schema.transitionPrograms.end() || plan->valueSet ||
-          (!scalar && !multiple) || plan->cardinalityExpression ||
-          plan->arrayCardinality ||
+      const bool scalar =
+          plan && plan->arrayMode == FunctionalBinArrayMode::Scalar;
+      const bool multiple =
+          plan && plan->arrayMode == FunctionalBinArrayMode::Unsized;
+      if (!plan || !program || plan->valueSet || (!scalar && !multiple) ||
+          plan->cardinalityExpression || plan->arrayCardinality ||
           (scalar &&
            plan->distribution != FunctionalBinDistributionKind::None) ||
           (multiple &&
@@ -3133,13 +3162,8 @@ obelisk_rt_status resolveStaticFunctionalType(
                 (!once && !consecutive) ||
                 !resolveTransitionBounds(templateStep, lowerBound, upperBound))
               return OBELISK_RT_INVALID_DESIGN;
-            auto set = std::find_if(schema.functionalValueSets.begin(),
-                                    schema.functionalValueSets.end(),
-                                    [&](const auto &entry) {
-                                      return entry.id == templateStep.valueSet;
-                                    });
-            if (set == schema.functionalValueSets.end() ||
-                set->kind != FunctionalValueSetKind::Integral ||
+            const auto *set = lookup(valueSets, templateStep.valueSet);
+            if (!set || set->kind != FunctionalValueSetKind::Integral ||
                 set->setExpression || !set->atomCount ||
                 (set->flags & ~FunctionalValueSetNeedsResolution) ||
                 uint64_t{set->firstAtom} + set->atomCount >
@@ -3532,13 +3556,8 @@ obelisk_rt_status resolveStaticFunctionalType(
               (!once && !consecutive && !gotoRepetition && !nonconsecutive) ||
               !resolveTransitionBounds(templateStep, lowerBound, upperBound))
             return OBELISK_RT_INVALID_DESIGN;
-          auto set = std::find_if(schema.functionalValueSets.begin(),
-                                  schema.functionalValueSets.end(),
-                                  [&](const auto &entry) {
-                                    return entry.id == templateStep.valueSet;
-                                  });
-          if (set == schema.functionalValueSets.end() ||
-              set->kind != FunctionalValueSetKind::Integral ||
+          const auto *set = lookup(valueSets, templateStep.valueSet);
+          if (!set || set->kind != FunctionalValueSetKind::Integral ||
               set->setExpression || !set->atomCount ||
               (set->flags & ~FunctionalValueSetNeedsResolution))
             return OBELISK_RT_INVALID_DESIGN;
@@ -3648,12 +3667,9 @@ obelisk_rt_status resolveStaticFunctionalType(
     }
     if (bin->kind != FunctionalBinKind::State)
       return OBELISK_RT_INVALID_DESIGN;
-    auto plan = std::find_if(
-        schema.functionalBinPlans.begin(), schema.functionalBinPlans.end(),
-        [&](const auto &entry) { return entry.bin == bin->id; });
+    const auto *plan = lookup(binPlans, bin->id);
     const bool isDefault = (bin->flags & FunctionalBinDefault) != 0;
-    if (plan == schema.functionalBinPlans.end() ||
-        (isDefault ? plan->valueSet != 0 : plan->valueSet == 0) ||
+    if (!plan || (isDefault ? plan->valueSet != 0 : plan->valueSet == 0) ||
         (isDefault && plan->arrayMode == FunctionalBinArrayMode::Fixed) ||
         (plan->arrayMode == FunctionalBinArrayMode::Scalar &&
          (plan->arrayCardinality || plan->cardinalityExpression ||
@@ -3672,16 +3688,11 @@ obelisk_rt_status resolveStaticFunctionalType(
     binIDs.insert(binID);
     uint64_t resolvedSetID = 0;
     std::optional<PendingSet> resolvedTemplateSet;
-    std::vector<const FunctionalExpression *> withExpressions;
-    for (const FunctionalExpression &expression : schema.functionalExpressions)
-      if (expression.owner == bin->id &&
-          expression.ownerKind == FunctionalExpressionOwnerKind::Bin &&
-          expression.role == FunctionalExpressionRole::BinWith)
-        withExpressions.push_back(&expression);
-    std::sort(withExpressions.begin(), withExpressions.end(),
-              [](const auto *lhs, const auto *rhs) {
-                return lhs->ownerOrdinal < rhs->ownerOrdinal;
-              });
+    static const std::vector<const FunctionalExpression *> noWithExpressions;
+    auto withOwner = binWithExpressions.find(bin->id);
+    const auto &withExpressions = withOwner == binWithExpressions.end()
+                                      ? noWithExpressions
+                                      : withOwner->second;
     if (withExpressions.size() > MaxFunctionalWithCandidates)
       return OBELISK_RT_OUT_OF_RESOURCES;
     std::vector<bool> withPredicateResults;
@@ -3708,11 +3719,8 @@ obelisk_rt_status resolveStaticFunctionalType(
       withPredicateResults.push_back(functionalBooleanTrue(*predicate));
     }
     if (!isDefault) {
-      auto set = std::find_if(
-          schema.functionalValueSets.begin(), schema.functionalValueSets.end(),
-          [&](const auto &entry) { return entry.id == plan->valueSet; });
-      if (set == schema.functionalValueSets.end() ||
-          (set->flags & ~FunctionalValueSetNeedsResolution))
+      const auto *set = lookup(valueSets, plan->valueSet);
+      if (!set || (set->flags & ~FunctionalValueSetNeedsResolution))
         return OBELISK_RT_INVALID_DESIGN;
       resolvedSetID = resolvedFunctionalID("functional.resolved.value-set",
                                            typeID, set->id, 0, valueSetIDs);
@@ -4259,7 +4267,7 @@ obelisk_rt_status resolveStaticFunctionalType(
 
     if (isDefault && plan->arrayMode == FunctionalBinArrayMode::Unsized) {
       pendingDefaultArrays.push_back(
-          {bin, &*plan, item->second, binID,
+          {bin, plan, item->second, binID,
            static_cast<uint32_t>(resolvedGroupRows.size())});
       resolvedGroupRows.push_back(
           {typeID,
@@ -5031,21 +5039,35 @@ obelisk_rt_status resolveStaticFunctionalType(
                                  bin->kind});
   }
 
+  // Resolve each default-array domain from its owner's sets, without scanning
+  // unrelated bins or sets. Numeric positions survive appending more rows.
+  IndexMap<uint64_t, uint32_t> resolvedBinFlags;
+  for (const auto &bin : resolvedBinRows)
+    resolvedBinFlags.emplace(bin.id, bin.flags);
+  std::vector<std::vector<size_t>> associatedSets(resolvedItemRows.size());
+  for (size_t index = 0; index != pendingSets.size(); ++index) {
+    const auto &set = pendingSets[index].set;
+    auto owner = resolvedBinFlags.find(set.ownerBin);
+    auto item = resolvedItemPositions.find(set.item);
+    if (owner != resolvedBinFlags.end() &&
+        !(owner->second & FunctionalBinDefault) &&
+        set.kind == FunctionalValueSetKind::Integral &&
+        item != resolvedItemPositions.end())
+      associatedSets[item->second].push_back(index);
+  }
+  std::vector<std::optional<std::vector<FunctionalMagnitude>>> defaultDomains(
+      resolvedItemRows.size());
+  const uint64_t binRecordLimit =
+      std::min<uint64_t>(UINT32_MAX, ParseLimits{}.maxRecords);
   for (const PendingDefaultArray &pendingDefault : pendingDefaultArrays) {
     auto position = resolvedItemPositions.find(pendingDefault.item);
     const ResolvedFunctionalItem *resolvedItem =
         position == resolvedItemPositions.end()
             ? nullptr
             : &resolvedItemRows[position->second];
-    const FunctionalExpression *sampleExpression = nullptr;
-    if (resolvedItem)
-      for (const auto &expression : schema.functionalExpressions)
-        if (expression.owner == resolvedItem->templateItem &&
-            expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-            expression.role == FunctionalExpressionRole::CoverpointSample) {
-          sampleExpression = &expression;
-          break;
-        }
+    const FunctionalExpression *sampleExpression =
+        resolvedItem ? lookup(coverpointSamples, resolvedItem->templateItem)
+                     : nullptr;
     if (!resolvedItem || !sampleExpression ||
         sampleExpression->resultKind == FunctionalExpressionResultKind::Real ||
         !sampleExpression->bitWidth ||
@@ -5056,172 +5078,160 @@ obelisk_rt_status resolveStaticFunctionalType(
     const uint32_t bitWidth = sampleExpression->bitWidth;
     const uint32_t limbCount = functionalLimbCount(bitWidth);
     const auto signedness = sampleExpression->signedness;
-    std::vector<IntegralCoverageShape> associatedShapes;
-    for (const PendingSet &set : pendingSets) {
-      if (set.set.item != pendingDefault.item ||
-          set.set.kind != FunctionalValueSetKind::Integral ||
-          set.set.bitWidth != bitWidth || set.set.signedness != signedness)
-        continue;
-      auto owner = std::find_if(resolvedBinRows.begin(), resolvedBinRows.end(),
-                                [&](const auto &candidate) {
-                                  return candidate.id == set.set.ownerBin;
-                                });
-      if (owner == resolvedBinRows.end() ||
-          (owner->flags & FunctionalBinDefault))
-        continue;
-      for (const auto &atom : set.atoms) {
-        if (atom.limbCount != limbCount || atom.firstLimb > set.limbs.size() ||
-            limbCount > set.limbs.size() - atom.firstLimb)
-          return OBELISK_RT_INVALID_DESIGN;
-        IntegralCoverageShape shape;
-        shape.interval = atom.kind == FunctionalValueAtomKind::IntegralRange;
-        if (!shape.interval &&
-            atom.kind != FunctionalValueAtomKind::IntegralValue)
+    auto &domain = defaultDomains[position->second];
+    if (!domain) {
+      std::vector<IntegralCoverageShape> associatedShapes;
+      for (size_t setIndex : associatedSets[position->second]) {
+        const PendingSet &set = pendingSets[setIndex];
+        if (set.set.bitWidth != bitWidth || set.set.signedness != signedness)
           continue;
-        if (shape.interval) {
-          shape.low.resize(limbCount);
-          shape.high.resize(limbCount);
-        } else {
-          shape.value.resize(limbCount);
-          shape.wildcard.resize(limbCount);
-        }
-        bool coversKnownValues = true;
-        for (uint32_t ordinal = 0; ordinal != limbCount; ++ordinal) {
-          const auto &limb = set.limbs[atom.firstLimb + ordinal];
-          uint64_t valid = ordinal + 1 == limbCount && bitWidth % 64
-                               ? lowBitsMask(bitWidth % 64)
-                               : UINT64_MAX;
+        for (const auto &atom : set.atoms) {
+          if (atom.limbCount != limbCount ||
+              atom.firstLimb > set.limbs.size() ||
+              limbCount > set.limbs.size() - atom.firstLimb)
+            return OBELISK_RT_INVALID_DESIGN;
+          IntegralCoverageShape shape;
+          shape.interval = atom.kind == FunctionalValueAtomKind::IntegralRange;
+          if (!shape.interval &&
+              atom.kind != FunctionalValueAtomKind::IntegralValue)
+            continue;
           if (shape.interval) {
-            if ((limb.lowBval | limb.highBval | limb.wildcardMask) & valid) {
-              coversKnownValues = false;
-              break;
-            }
-            shape.low[ordinal] = limb.lowAval & valid;
-            shape.high[ordinal] = limb.highAval & valid;
+            shape.low.resize(limbCount);
+            shape.high.resize(limbCount);
           } else {
-            if (limb.lowBval & ~limb.wildcardMask & valid) {
-              coversKnownValues = false;
-              break;
+            shape.value.resize(limbCount);
+            shape.wildcard.resize(limbCount);
+          }
+          bool coversKnownValues = true;
+          for (uint32_t ordinal = 0; ordinal != limbCount; ++ordinal) {
+            const auto &limb = set.limbs[atom.firstLimb + ordinal];
+            uint64_t valid = ordinal + 1 == limbCount && bitWidth % 64
+                                 ? lowBitsMask(bitWidth % 64)
+                                 : UINT64_MAX;
+            if (shape.interval) {
+              if ((limb.lowBval | limb.highBval | limb.wildcardMask) & valid) {
+                coversKnownValues = false;
+                break;
+              }
+              shape.low[ordinal] = limb.lowAval & valid;
+              shape.high[ordinal] = limb.highAval & valid;
+            } else {
+              if (limb.lowBval & ~limb.wildcardMask & valid) {
+                coversKnownValues = false;
+                break;
+              }
+              shape.wildcard[ordinal] = limb.wildcardMask & valid;
+              shape.value[ordinal] = limb.lowAval & ~limb.wildcardMask & valid;
             }
-            shape.wildcard[ordinal] = limb.wildcardMask & valid;
-            shape.value[ordinal] = limb.lowAval & ~limb.wildcardMask & valid;
           }
-        }
-        if (!coversKnownValues)
-          continue;
-        if (signedness == CoverageSignedness::Signed) {
-          const uint32_t signBit = bitWidth - 1;
-          const uint32_t signLimb = signBit / 64;
-          const uint64_t signMask = uint64_t{1} << (signBit % 64);
-          if (shape.interval) {
-            shape.low[signLimb] ^= signMask;
-            shape.high[signLimb] ^= signMask;
-          } else {
-            shape.value[signLimb] ^= signMask;
-            shape.value[signLimb] &= ~shape.wildcard[signLimb];
+          if (!coversKnownValues)
+            continue;
+          if (signedness == CoverageSignedness::Signed) {
+            const uint32_t signBit = bitWidth - 1;
+            const uint32_t signLimb = signBit / 64;
+            const uint64_t signMask = uint64_t{1} << (signBit % 64);
+            if (shape.interval) {
+              shape.low[signLimb] ^= signMask;
+              shape.high[signLimb] ^= signMask;
+            } else {
+              shape.value[signLimb] ^= signMask;
+              shape.value[signLimb] &= ~shape.wildcard[signLimb];
+            }
           }
+          associatedShapes.push_back(std::move(shape));
         }
-        associatedShapes.push_back(std::move(shape));
       }
-    }
 
-    struct MissingBlock {
-      FunctionalMagnitude prefix;
-      int64_t remainingBit = -1;
-    };
-    struct SearchFrame {
-      FunctionalMagnitude prefix;
-      int64_t remainingBit = -1;
-      std::vector<size_t> candidates;
-    };
-    std::vector<MissingBlock> missingBlocks;
-    FunctionalMagnitude missingCardinality;
-    SearchFrame root;
-    root.prefix.resize(limbCount);
-    root.remainingBit = static_cast<int64_t>(bitWidth) - 1;
-    root.candidates.resize(associatedShapes.size());
-    for (size_t index = 0; index != associatedShapes.size(); ++index)
-      root.candidates[index] = index;
-    std::vector<SearchFrame> search;
-    search.push_back(std::move(root));
-    while (!search.empty()) {
-      SearchFrame frame = std::move(search.back());
-      search.pop_back();
-      std::vector<size_t> intersecting;
-      intersecting.reserve(frame.candidates.size());
-      bool associated = false;
-      for (size_t index : frame.candidates) {
-        const IntegralCoverageShape &shape = associatedShapes[index];
-        if (!coverageShapeIntersectsPrefix(shape, frame.prefix,
-                                           frame.remainingBit, bitWidth))
-          continue;
-        if (coverageShapeContainsPrefix(shape, frame.prefix, frame.remainingBit,
-                                        bitWidth)) {
-          associated = true;
-          break;
+      struct MissingBlock {
+        FunctionalMagnitude prefix;
+        int64_t remainingBit = -1;
+      };
+      struct SearchFrame {
+        FunctionalMagnitude prefix;
+        int64_t remainingBit = -1;
+        std::vector<size_t> candidates;
+      };
+      std::vector<MissingBlock> missingBlocks;
+      FunctionalMagnitude missingCardinality;
+      SearchFrame root;
+      root.prefix.resize(limbCount);
+      root.remainingBit = static_cast<int64_t>(bitWidth) - 1;
+      root.candidates.resize(associatedShapes.size());
+      for (size_t index = 0; index != associatedShapes.size(); ++index)
+        root.candidates[index] = index;
+      std::vector<SearchFrame> search;
+      search.push_back(std::move(root));
+      while (!search.empty()) {
+        SearchFrame frame = std::move(search.back());
+        search.pop_back();
+        std::vector<size_t> intersecting;
+        intersecting.reserve(frame.candidates.size());
+        bool associated = false;
+        for (size_t index : frame.candidates) {
+          const IntegralCoverageShape &shape = associatedShapes[index];
+          if (!coverageShapeIntersectsPrefix(shape, frame.prefix,
+                                             frame.remainingBit, bitWidth))
+            continue;
+          if (coverageShapeContainsPrefix(shape, frame.prefix,
+                                          frame.remainingBit, bitWidth)) {
+            associated = true;
+            break;
+          }
+          intersecting.push_back(index);
         }
-        intersecting.push_back(index);
+        if (associated)
+          continue;
+        if (intersecting.empty() || frame.remainingBit < 0) {
+          FunctionalMagnitude blockCardinality =
+              frame.remainingBit < 0
+                  ? FunctionalMagnitude{1}
+                  : functionalPowerOfTwoMagnitude(
+                        static_cast<uint32_t>(frame.remainingBit) + 1);
+          missingCardinality =
+              addFunctionalMagnitudes(missingCardinality, blockCardinality);
+          if (!functionalMagnitudeFitsU32(missingCardinality) ||
+              functionalMagnitudeAsU32(missingCardinality) > binRecordLimit)
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          missingBlocks.push_back(
+              {std::move(frame.prefix), frame.remainingBit});
+          continue;
+        }
+        SearchFrame one{frame.prefix, frame.remainingBit - 1, intersecting};
+        setCubeBit(one.prefix, static_cast<uint32_t>(frame.remainingBit), true);
+        search.push_back(std::move(one));
+        search.push_back({std::move(frame.prefix), frame.remainingBit - 1,
+                          std::move(intersecting)});
       }
-      if (associated)
-        continue;
-      if (intersecting.empty() || frame.remainingBit < 0) {
+
+      std::vector<FunctionalMagnitude> values;
+      values.reserve(functionalMagnitudeAsU32(missingCardinality));
+      for (const MissingBlock &block : missingBlocks) {
         FunctionalMagnitude blockCardinality =
-            frame.remainingBit < 0
+            block.remainingBit < 0
                 ? FunctionalMagnitude{1}
                 : functionalPowerOfTwoMagnitude(
-                      static_cast<uint32_t>(frame.remainingBit) + 1);
-        missingCardinality =
-            addFunctionalMagnitudes(missingCardinality, blockCardinality);
-        if (!functionalMagnitudeFitsU32(missingCardinality))
-          return OBELISK_RT_OUT_OF_RESOURCES;
-        missingBlocks.push_back({std::move(frame.prefix), frame.remainingBit});
-        continue;
+                      static_cast<uint32_t>(block.remainingBit) + 1);
+        const uint32_t count = functionalMagnitudeAsU32(blockCardinality);
+        for (uint32_t offset = 0; offset != count; ++offset) {
+          FunctionalMagnitude value = addFunctionalMagnitudes(
+              block.prefix, FunctionalMagnitude{offset});
+          value.resize(limbCount);
+          if (signedness == CoverageSignedness::Signed)
+            toggleFunctionalSignBias(value, bitWidth);
+          values.push_back(std::move(value));
+        }
       }
-      SearchFrame one{frame.prefix, frame.remainingBit - 1, intersecting};
-      setCubeBit(one.prefix, static_cast<uint32_t>(frame.remainingBit), true);
-      search.push_back(std::move(one));
-      search.push_back({std::move(frame.prefix), frame.remainingBit - 1,
-                        std::move(intersecting)});
+      domain = std::move(values);
     }
-
-    std::vector<FunctionalMagnitude> values;
-    values.reserve(functionalMagnitudeAsU32(missingCardinality));
-    for (const MissingBlock &block : missingBlocks) {
-      FunctionalMagnitude blockCardinality =
-          block.remainingBit < 0
-              ? FunctionalMagnitude{1}
-              : functionalPowerOfTwoMagnitude(
-                    static_cast<uint32_t>(block.remainingBit) + 1);
-      const uint32_t count = functionalMagnitudeAsU32(blockCardinality);
-      for (uint32_t offset = 0; offset != count; ++offset) {
-        FunctionalMagnitude value =
-            addFunctionalMagnitudes(block.prefix, FunctionalMagnitude{offset});
-        value.resize(limbCount);
-        if (signedness == CoverageSignedness::Signed)
-          toggleFunctionalSignBias(value, bitWidth);
-        values.push_back(std::move(value));
-      }
-    }
-
+    const auto &values = *domain;
     const uint32_t cardinality = static_cast<uint32_t>(values.size());
-    const uint32_t insertionIndex =
-        resolvedGroupRows[pendingDefault.groupIndex].firstBin;
-    uint32_t firstOrdinal = 0;
-    for (uint32_t index = 0; index != insertionIndex; ++index)
-      if (resolvedBinRows[index].item == pendingDefault.item)
-        firstOrdinal =
-            std::max(firstOrdinal, resolvedBinRows[index].ordinal + 1);
-    for (size_t groupIndex = pendingDefault.groupIndex + 1;
-         groupIndex != resolvedGroupRows.size(); ++groupIndex)
-      resolvedGroupRows[groupIndex].firstBin += cardinality;
-    resolvedGroupRows[pendingDefault.groupIndex].binCount = cardinality;
-    resolvedGroupRows[pendingDefault.groupIndex].arrayCardinality = cardinality;
-    for (auto &bin : resolvedBinRows)
-      if (bin.item == pendingDefault.item && bin.ordinal >= firstOrdinal)
-        bin.ordinal += cardinality;
-
-    std::vector<ResolvedFunctionalBin> defaultBins;
-    defaultBins.reserve(values.size());
+    if (resolvedBinRows.size() > binRecordLimit ||
+        cardinality > binRecordLimit - resolvedBinRows.size())
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    auto &group = resolvedGroupRows[pendingDefault.groupIndex];
+    group.firstBin = static_cast<uint32_t>(resolvedBinRows.size());
+    group.binCount = cardinality;
+    group.arrayCardinality = cardinality;
     PendingSet base;
     base.set = {typeID,
                 {},
@@ -5273,18 +5283,18 @@ obelisk_rt_status resolveStaticFunctionalType(
         label.insert(label.begin(), '-');
       std::string name = pendingDefault.bin->name + "[" + label + "]";
       std::string hierarchy = pendingDefault.bin->hierarchy + "[" + label + "]";
-      defaultBins.push_back({typeID,
-                             {},
-                             binID,
-                             pendingDefault.bin->id,
-                             pendingDefault.item,
-                             std::move(name),
-                             pendingDefault.bin->kind,
-                             pendingDefault.bin->flags,
-                             firstOrdinal + expansion,
-                             expansion,
-                             effectiveAtLeast(pendingDefault.item),
-                             std::move(hierarchy)});
+      resolvedBinRows.push_back({typeID,
+                                 {},
+                                 binID,
+                                 pendingDefault.bin->id,
+                                 pendingDefault.item,
+                                 std::move(name),
+                                 pendingDefault.bin->kind,
+                                 pendingDefault.bin->flags,
+                                 expansion,
+                                 expansion,
+                                 effectiveAtLeast(pendingDefault.item),
+                                 std::move(hierarchy)});
       resolvedPlanRows.push_back({typeID,
                                   {},
                                   binID,
@@ -5296,43 +5306,20 @@ obelisk_rt_status resolveStaticFunctionalType(
                                   FunctionalBinDistributionKind::PerValue,
                                   pendingDefault.plan->flags});
     }
-    resolvedBinRows.insert(resolvedBinRows.begin() + insertionIndex,
-                           defaultBins.begin(), defaultBins.end());
   }
 
   // A coverpoint with no user-defined ordinary bin receives the default set
-  // of automatic integral bins (IEEE 1800-2017 19.5.3).  Ignore and illegal
+  // of automatic integral bins (IEEE 1800-2023 19.5.3). Ignore and illegal
   // bins do not suppress creation; they are applied to the uniformly
   // partitioned bins after distribution.
   for (const ResolvedFunctionalItem &resolvedItem : resolvedItemRows) {
     if (resolvedItem.kind != FunctionalItemKind::Coverpoint)
       continue;
-    const bool hasUserBin = std::any_of(
-        schema.functionalBins.begin(), schema.functionalBins.end(),
-        [&](const FunctionalBin &bin) {
-          return bin.item == resolvedItem.templateItem &&
-                 (bin.kind == FunctionalBinKind::State ||
-                  bin.kind == FunctionalBinKind::Transition) &&
-                 !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal |
-                                FunctionalBinAutomatic));
-        });
-    const bool hasStaticAutomatic =
-        std::any_of(schema.functionalBins.begin(), schema.functionalBins.end(),
-                    [&](const FunctionalBin &bin) {
-                      return bin.item == resolvedItem.templateItem &&
-                             (bin.flags & FunctionalBinAutomatic);
-                    });
-    if (hasUserBin || hasStaticAutomatic)
+    if (suppressAutomaticBins.count(resolvedItem.templateItem))
       continue;
 
-    const FunctionalExpression *sampleExpression = nullptr;
-    for (const FunctionalExpression &expression : schema.functionalExpressions)
-      if (expression.owner == resolvedItem.templateItem &&
-          expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-          expression.role == FunctionalExpressionRole::CoverpointSample) {
-        sampleExpression = &expression;
-        break;
-      }
+    const FunctionalExpression *sampleExpression =
+        lookup(coverpointSamples, resolvedItem.templateItem);
     if (!sampleExpression || !sampleExpression->bitWidth ||
         sampleExpression->resultKind !=
             FunctionalExpressionResultKind::Integral ||
@@ -5347,50 +5334,28 @@ obelisk_rt_status resolveStaticFunctionalType(
     const uint64_t binCount64 =
         bitWidth < 32 ? std::min(uint64_t{1} << bitWidth, autoBinMax)
                       : autoBinMax;
-    if (binCount64 > UINT32_MAX)
+    if (binCount64 > binRecordLimit)
       return OBELISK_RT_OUT_OF_RESOURCES;
     const uint32_t binCount = static_cast<uint32_t>(binCount64);
 
-    auto itemOrdinal = [&](uint64_t item) {
-      auto found = resolvedItemPositions.find(item);
-      return found == resolvedItemPositions.end()
-                 ? UINT32_MAX
-                 : resolvedItemRows[found->second].ordinal;
-    };
-    uint32_t insertionIndex = resolvedBinRows.size();
-    for (uint32_t index = 0; index != resolvedBinRows.size(); ++index) {
-      uint32_t ownerOrdinal = itemOrdinal(resolvedBinRows[index].item);
-      if (ownerOrdinal > resolvedItem.ordinal) {
-        insertionIndex = index;
-        break;
-      }
-    }
-    size_t groupInsertion = resolvedGroupRows.size();
-    for (size_t index = 0; index != resolvedGroupRows.size(); ++index) {
-      if (itemOrdinal(resolvedGroupRows[index].item) > resolvedItem.ordinal) {
-        groupInsertion = index;
-        break;
-      }
-    }
+    if (resolvedBinRows.size() > binRecordLimit ||
+        binCount > binRecordLimit - resolvedBinRows.size())
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    const uint32_t firstBin = static_cast<uint32_t>(resolvedBinRows.size());
     if (!binCount) {
-      resolvedGroupRows.insert(resolvedGroupRows.begin() + groupInsertion,
-                               {typeID,
-                                {},
-                                resolvedItem.id,
-                                0,
-                                insertionIndex,
-                                0,
-                                0,
-                                FunctionalBinArrayMode::Fixed,
-                                FunctionalBinDistributionKind::Uniform,
-                                0,
-                                FunctionalBinKind::State});
+      resolvedGroupRows.push_back({typeID,
+                                   {},
+                                   resolvedItem.id,
+                                   0,
+                                   firstBin,
+                                   0,
+                                   0,
+                                   FunctionalBinArrayMode::Fixed,
+                                   FunctionalBinDistributionKind::Uniform,
+                                   0,
+                                   FunctionalBinKind::State});
       continue;
     }
-    for (size_t index = groupInsertion; index != resolvedGroupRows.size();
-         ++index)
-      resolvedGroupRows[index].firstBin += binCount;
-
     FunctionalMagnitude domain = functionalPowerOfTwoMagnitude(bitWidth);
     uint32_t remainder = 0;
     FunctionalMagnitude uniformWidth =
@@ -5403,8 +5368,6 @@ obelisk_rt_status resolveStaticFunctionalType(
         result.insert(result.begin(), '-');
       return result;
     };
-    std::vector<ResolvedFunctionalBin> automaticBins;
-    automaticBins.reserve(binCount);
     for (uint32_t expansion = 0; expansion != binCount; ++expansion) {
       FunctionalMagnitude binWidth = uniformWidth;
       if (expansion + 1 == binCount && remainder)
@@ -5444,18 +5407,18 @@ obelisk_rt_status resolveStaticFunctionalType(
         binLabel += ":" + label(high);
       std::string name = "auto[" + binLabel + "]";
       std::string hierarchy = resolvedItem.hierarchy + "." + name;
-      automaticBins.push_back({typeID,
-                               {},
-                               binID,
-                               0,
-                               resolvedItem.id,
-                               std::move(name),
-                               FunctionalBinKind::State,
-                               FunctionalBinAutomatic,
-                               nextResolvedBinOrdinal[resolvedItem.id]++,
-                               expansion,
-                               effectiveAtLeast(resolvedItem.id),
-                               std::move(hierarchy)});
+      resolvedBinRows.push_back({typeID,
+                                 {},
+                                 binID,
+                                 0,
+                                 resolvedItem.id,
+                                 std::move(name),
+                                 FunctionalBinKind::State,
+                                 FunctionalBinAutomatic,
+                                 nextResolvedBinOrdinal[resolvedItem.id]++,
+                                 expansion,
+                                 effectiveAtLeast(resolvedItem.id),
+                                 std::move(hierarchy)});
 
       PendingSet base;
       base.set = {typeID,
@@ -5497,21 +5460,62 @@ obelisk_rt_status resolveStaticFunctionalType(
                                   FunctionalBinDistributionKind::Uniform,
                                   0});
     }
-    resolvedBinRows.insert(resolvedBinRows.begin() + insertionIndex,
-                           automaticBins.begin(), automaticBins.end());
-    resolvedGroupRows.insert(resolvedGroupRows.begin() + groupInsertion,
-                             {typeID,
-                              {},
-                              resolvedItem.id,
-                              0,
-                              insertionIndex,
-                              binCount,
-                              binCount,
-                              FunctionalBinArrayMode::Fixed,
-                              FunctionalBinDistributionKind::Uniform,
-                              0,
-                              FunctionalBinKind::State});
+    resolvedGroupRows.push_back({typeID,
+                                 {},
+                                 resolvedItem.id,
+                                 0,
+                                 firstBin,
+                                 binCount,
+                                 binCount,
+                                 FunctionalBinArrayMode::Fixed,
+                                 FunctionalBinDistributionKind::Uniform,
+                                 0,
+                                 FunctionalBinKind::State});
   }
+
+  // Every point bin belongs to exactly one group. Pack the append-only spans
+  // once, preserving item and declaration order, including empty groups.
+  // Late default arrays therefore never shift subsequent rows or ordinals.
+  std::vector<std::vector<size_t>> groupsByItem(resolvedItemRows.size());
+  for (size_t index = 0; index != resolvedGroupRows.size(); ++index) {
+    auto item = resolvedItemPositions.find(resolvedGroupRows[index].item);
+    if (item == resolvedItemPositions.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    groupsByItem[item->second].push_back(index);
+  }
+  std::vector<ResolvedFunctionalBin> packedBins;
+  std::vector<ResolvedFunctionalBinGroup> packedGroups;
+  packedBins.reserve(resolvedBinRows.size());
+  packedGroups.reserve(resolvedGroupRows.size());
+  for (size_t itemIndex = 0; itemIndex != resolvedItemRows.size();
+       ++itemIndex) {
+    uint32_t ordinal = 0;
+    for (size_t groupIndex : groupsByItem[itemIndex]) {
+      auto group = resolvedGroupRows[groupIndex];
+      if (uint64_t{group.firstBin} + group.binCount > resolvedBinRows.size())
+        return OBELISK_RT_INVALID_DESIGN;
+      if (packedBins.size() > UINT32_MAX ||
+          group.binCount > UINT32_MAX - packedBins.size())
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      const uint32_t source = group.firstBin;
+      group.firstBin = static_cast<uint32_t>(packedBins.size());
+      for (uint32_t offset = 0; offset != group.binCount; ++offset) {
+        auto &bin = resolvedBinRows[source + offset];
+        if (bin.item != group.item)
+          return OBELISK_RT_INVALID_DESIGN;
+        bin.ordinal = ordinal++;
+        packedBins.push_back(std::move(bin));
+      }
+      packedGroups.push_back(group);
+    }
+  }
+  if (packedBins.size() != resolvedBinRows.size())
+    return OBELISK_RT_INVALID_DESIGN;
+  resolvedBinRows = std::move(packedBins);
+  resolvedGroupRows = std::move(packedGroups);
+  if (resolvedBinRows.size() > binRecordLimit ||
+      resolvedCrossBinRows.size() > binRecordLimit - resolvedBinRows.size())
+    return OBELISK_RT_OUT_OF_RESOURCES;
   resolvedBinRows.insert(resolvedBinRows.end(), resolvedCrossBinRows.begin(),
                          resolvedCrossBinRows.end());
 
@@ -6341,18 +6345,14 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (bin.type == typeID && bin.configuration == Digest{} &&
         emptyTransitionBins.count(bin.id))
       bin.flags |= FunctionalBinEmpty;
-  for (auto &row : resolvedBinRows) {
-    auto resolved =
-        std::find_if(fingerprintInput.resolvedFunctionalBins.begin(),
-                     fingerprintInput.resolvedFunctionalBins.end(),
-                     [&](const auto &candidate) {
-                       return candidate.type == typeID &&
-                              candidate.configuration == Digest{} &&
-                              candidate.id == row.id;
-                     });
-    if (resolved == fingerprintInput.resolvedFunctionalBins.end())
+  for (size_t index = 0; index != resolvedBinRows.size(); ++index) {
+    auto &row = resolvedBinRows[index];
+    const auto &resolved =
+        fingerprintInput.resolvedFunctionalBins[binBase + index];
+    if (resolved.type != typeID || resolved.configuration != Digest{} ||
+        resolved.id != row.id)
       return OBELISK_RT_INVALID_DESIGN;
-    row.flags = resolved->flags;
+    row.flags = resolved.flags;
   }
 
   struct PendingCrossNode {
@@ -10260,16 +10260,35 @@ void markStaticallyEmptyStateBins(
     obelisk::coverage::Database &schema, uint64_t typeID,
     const obelisk::coverage::Digest &configuration) {
   using namespace obelisk::coverage;
-  auto planFor = [&](uint64_t bin) -> const ResolvedFunctionalBinPlan * {
-    auto found = std::find_if(schema.resolvedFunctionalBinPlans.begin(),
-                              schema.resolvedFunctionalBinPlans.end(),
-                              [&](const auto &entry) {
-                                return entry.type == typeID &&
-                                       entry.configuration == configuration &&
-                                       entry.bin == bin;
-                              });
-    return found == schema.resolvedFunctionalBinPlans.end() ? nullptr : &*found;
+  IndexMap<uint64_t, const ResolvedFunctionalBinPlan *> plans;
+  for (const auto &plan : schema.resolvedFunctionalBinPlans)
+    if (plan.type == typeID && plan.configuration == configuration)
+      plans.emplace(plan.bin, &plan);
+  IndexMap<uint64_t, const ResolvedFunctionalValueSet *> sets;
+  for (const auto &set : schema.resolvedFunctionalValueSets)
+    if (set.type == typeID && set.configuration == configuration)
+      sets.emplace(set.id, &set);
+  auto setFor = [&](uint64_t bin) -> const ResolvedFunctionalValueSet * {
+    auto plan = plans.find(bin);
+    if (plan == plans.end())
+      return nullptr;
+    auto set = sets.find(plan->second->valueSet);
+    return set == sets.end() ? nullptr : set->second;
   };
+  IndexMap<uint64_t, std::vector<const ResolvedFunctionalValueSet *>>
+      exclusionsByItem;
+  for (const auto &bin : schema.resolvedFunctionalBins) {
+    if (bin.type != typeID || bin.configuration != configuration ||
+        !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) ||
+        (bin.flags & FunctionalBinEmpty))
+      continue;
+    auto plan = plans.find(bin.id);
+    const auto *set = setFor(bin.id);
+    // An iff-guarded exclusion cannot make a resolved schema bin globally
+    // empty.
+    if (set && !plan->second->iffExpression)
+      exclusionsByItem[bin.item].push_back(set);
+  }
   for (auto &bin : schema.resolvedFunctionalBins) {
     constexpr uint32_t nonContributing =
         FunctionalBinDefault | FunctionalBinIgnore | FunctionalBinIllegal |
@@ -10277,35 +10296,16 @@ void markStaticallyEmptyStateBins(
     if (bin.type != typeID || bin.configuration != configuration ||
         bin.kind != FunctionalBinKind::State || (bin.flags & nonContributing))
       continue;
-    const auto *plan = planFor(bin.id);
-    const auto *subject =
-        plan ? findResolvedValueSet(schema, configuration, plan->valueSet)
-             : nullptr;
+    const auto *subject = setFor(bin.id);
     if (!subject)
       continue;
     if (!subject->atomCount) {
       bin.flags |= FunctionalBinEmpty;
       continue;
     }
-    std::vector<const ResolvedFunctionalValueSet *> exclusions;
-    for (const auto &candidate : schema.resolvedFunctionalBins) {
-      if (candidate.type != typeID ||
-          candidate.configuration != configuration ||
-          candidate.item != bin.item ||
-          !(candidate.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) ||
-          (candidate.flags & FunctionalBinEmpty))
-        continue;
-      const auto *candidatePlan = planFor(candidate.id);
-      const auto *set = candidatePlan
-                            ? findResolvedValueSet(schema, configuration,
-                                                   candidatePlan->valueSet)
-                            : nullptr;
-      // An iff-guarded exclusion is runtime state and therefore cannot make a
-      // resolved schema bin globally empty.
-      if (set && !candidatePlan->iffExpression)
-        exclusions.push_back(set);
-    }
-    if (!exclusions.empty() && valueSetCoveredBy(schema, *subject, exclusions))
+    auto exclusions = exclusionsByItem.find(bin.item);
+    if (exclusions != exclusionsByItem.end() &&
+        valueSetCoveredBy(schema, *subject, exclusions->second))
       bin.flags |= FunctionalBinEmpty;
   }
 }

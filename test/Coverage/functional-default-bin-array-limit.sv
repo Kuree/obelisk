@@ -1,21 +1,27 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t %s
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
 // RUN: not %t --no-coverage-dump 2>&1 | FileCheck %s
+// RUN: not %t +automatic --no-coverage-dump 2>&1 | FileCheck %s
 
-// The v1 physical schema represents a resolved bin-group cardinality in
-// uint32_t.  A 32-bit domain with no defined values therefore cannot be
-// materialized as one default-array bin per value and must fail explicitly.
+// The physical schema has a maximum record count below UINT32_MAX. Both
+// paths must reject larger expansions before allocating/enumerating values.
 module top;
-  bit [31:0] sampled;
+  bit [30:0] sampled;
   covergroup cg;
     cp: coverpoint sampled {
       bins every_value[] = default;
     }
   endgroup
+  covergroup automatic_cg;
+    cp: coverpoint sampled { option.auto_bin_max = 536870912; }
+  endgroup
 
   cg cov;
+  automatic_cg automatic_cov;
   initial begin
-    cov = new;
+    if ($test$plusargs("automatic"))
+      automatic_cov = new;
+    else
+      cov = new;
     $finish;
   end
 endmodule

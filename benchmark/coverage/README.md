@@ -114,3 +114,35 @@ The indexes add setup cost at small counts. These bounded observations support
 the traversal review; they are not timing assertions or larger-input estimates.
 Native and bytecode queries agreed, and JSON, HTML, text, and LCOV reports
 matched after normalizing run metadata.
+
+## Bounded bin-construction probe
+
+`bin-construction-scaling.cpp` constructs one configuration with automatic
+points, ignored values, default arrays preceding explicit bins, and empty
+default arrays. It defaults to 16 coverpoints and rejects more than 128. It is
+outside the unit and lit suites. The reported timer measures construction;
+schema loading and optional saving happen outside that timer.
+
+```sh
+c++ -O3 -DNDEBUG -std=c++17 -Iinclude -Iruntime/include -Ibuild/include \
+  benchmark/coverage/bin-construction-scaling.cpp build/runtime/libobelisk_rt.a \
+  -pthread -o build/coverage-bin-construction-scaling
+timeout 1s build/coverage-bin-construction-scaling 128 build/bin-scaling.obcov
+```
+
+On ARM64 Release, median construction times from three sequential before/after
+pairs were:
+
+| Coverpoints | Before (ms) | Indexed and packed once (ms) |
+| --- | ---: | ---: |
+| 32 | 9.76 | 16.30 |
+| 64 | 20.39 | 19.29 |
+| 128 | 47.30 | 40.06 |
+
+The smaller observations include index setup cost and substantial timing
+variation. These measurements do not establish overall linear runtime; the
+linear table joins and group packing follow from the traversal review. All
+text, JSON, HTML, and LCOV report fields agreed after normalizing run metadata,
+both for this probe and the mixed automatic/default compiler probe. Unit
+regressions use four coverpoints, twelve resolved bins, and two instances;
+oversized-domain regressions reject before allocating or enumerating values.

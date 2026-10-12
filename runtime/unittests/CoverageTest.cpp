@@ -3264,6 +3264,102 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest,
+     LateDefaultAndAutomaticGroupsPreserveDeclarationOrder) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalItems[1].ordinal = 3;
+  schema.functionalBins[0].ordinal = 2;
+  schema.functionalBins[1].ordinal = 3;
+  for (uint64_t bin : {uint64_t{32}, uint64_t{33}}) {
+    const std::string name = bin == 32 ? "other_a" : "other_b";
+    schema.functionalBins.push_back(
+        {bin, 20, name, FunctionalBinKind::State, FunctionalBinDefault, 1,
+         static_cast<uint32_t>(bin - 32), "top.cg.first." + name});
+    FunctionalBinPlan plan;
+    plan.bin = bin;
+    plan.arrayMode = FunctionalBinArrayMode::Unsized;
+    plan.distribution = FunctionalBinDistributionKind::PerValue;
+    schema.functionalBinPlans.push_back(plan);
+  }
+  for (uint64_t item : {uint64_t{22}, uint64_t{23}}) {
+    const std::string name = item == 22 ? "automatic" : "empty_default";
+    schema.functionalItems.push_back(
+        {item, 10, name, FunctionalItemKind::Coverpoint, 0, 100, 1,
+         static_cast<uint32_t>(item - 21), "top.cg." + name});
+    auto sample = schema.functionalExpressions.front();
+    sample.id = item + 40;
+    sample.owner = item;
+    sample.resultOrdinal = static_cast<uint32_t>(item - 21);
+    schema.functionalExpressions.push_back(sample);
+  }
+  schema.functionalExpressions[1].resultOrdinal = 3;
+  schema.functionalBins.push_back({34, 23, "other", FunctionalBinKind::State,
+                                   FunctionalBinDefault, 1, 0,
+                                   "top.cg.empty_default.other"});
+  FunctionalBinPlan emptyDefault;
+  emptyDefault.bin = 34;
+  emptyDefault.arrayMode = FunctionalBinArrayMode::Unsized;
+  emptyDefault.distribution = FunctionalBinDistributionKind::PerValue;
+  schema.functionalBinPlans.push_back(emptyDefault);
+  schema.functionalBins.push_back({35, 23, "all", FunctionalBinKind::State, 0,
+                                   1, 1, "top.cg.empty_default.all"});
+  schema.functionalBinPlans.push_back({35, 53});
+  schema.functionalValueSets.push_back({53, 23, 3, 1, 2,
+                                        FunctionalValueSetKind::Integral, 0,
+                                        CoverageSignedness::Unsigned, 0});
+  schema.functionalValueAtoms.push_back(
+      {53, 0, 0, 3, 1, 0, FunctionalValueAtomKind::IntegralRange,
+       FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive, 0,
+       0});
+  schema.functionalValueLimbs.push_back({53, 0, 0, 0, 0, 3, 0, 0});
+  std::sort(
+      schema.functionalBins.begin(), schema.functionalBins.end(),
+      [](const auto &left, const auto &right) { return left.id < right.id; });
+  std::sort(
+      schema.functionalBinPlans.begin(), schema.functionalBinPlans.end(),
+      [](const auto &left, const auto &right) { return left.bin < right.bin; });
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 first = 0, second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  EXPECT_NE(first, second);
+  Database saved = saveCoverage(context, "late-bin-groups");
+  obelisk_rt_v1_context_destroy(context);
+  ASSERT_EQ(validate(saved), Status::Ok);
+  ASSERT_EQ(saved.functionalConfigurations.size(), 1u);
+  ASSERT_EQ(saved.resolvedFunctionalBins.size(), 12u);
+  ASSERT_EQ(saved.resolvedFunctionalBinGroups.size(), 8u);
+  const std::array<std::array<uint64_t, 3>, 8> groups = {{{32, 0, 2},
+                                                          {33, 2, 2},
+                                                          {30, 4, 1},
+                                                          {31, 5, 1},
+                                                          {0, 6, 4},
+                                                          {34, 10, 0},
+                                                          {35, 10, 1},
+                                                          {40, 11, 1}}};
+  for (size_t index = 0; index != groups.size(); ++index) {
+    const auto &group = saved.resolvedFunctionalBinGroups[index];
+    EXPECT_EQ(group.templateBin, groups[index][0]);
+    EXPECT_EQ(group.firstBin, groups[index][1]);
+    EXPECT_EQ(group.binCount, groups[index][2]);
+    for (uint32_t offset = 0; offset != group.binCount; ++offset)
+      EXPECT_EQ(saved.resolvedFunctionalBins[group.firstBin + offset].item,
+                group.item);
+  }
+  const std::array<const char *, 12> names = {
+      "other_a[2]", "other_a[3]", "other_b[2]", "other_b[3]", "zero", "one",
+      "auto[0]",    "auto[1]",    "auto[2]",    "auto[3]",    "all",  "two"};
+  const std::array<uint32_t, 12> ordinals = {0, 1, 2, 3, 4, 5,
+                                             0, 1, 2, 3, 0, 0};
+  for (size_t index = 0; index != names.size(); ++index) {
+    EXPECT_EQ(saved.resolvedFunctionalBins[index].name, names[index]);
+    EXPECT_EQ(saved.resolvedFunctionalBins[index].ordinal, ordinals[index]);
+  }
+}
+
 TEST(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

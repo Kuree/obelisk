@@ -317,6 +317,47 @@ copies, and native/bytecode parity, together with JSON/text/HTML/LCOV output.
 The runtime and persistence format need no new operations or columns for
 these value copies; no additional runtime unit or scaling benchmark is needed.
 
+Constructor probes of 19.5.1 and 19.5.3 also exposed repeated table scans and
+middle-vector insertion for automatic bins and late default arrays. Resolution
+now indexes sample expressions, bin plans, transition programs, value sets,
+and `with` predicates once per configuration. Default-array association uses
+owner-local set positions and computes the complement once per coverpoint,
+including when several default arrays share that domain. Automatic eligibility
+uses an indexed owner flag. Ignore and illegal bins still permit automatic
+creation; ordinary bins suppress it, and enum templates retain their named
+automatic bins.
+
+Every generated group appends its rows. One final pass groups spans by item,
+packs them in item and declaration order, recomputes point-local ordinals,
+and sets `firstBin` from the running prefix count. Empty groups keep their
+positions and consume no rows. Cross rows follow the packed point rows.
+Stable bin IDs, expansion ordinals, names, signed uniform partitions, and
+exclusion semantics stay consistent. Table joins and packing cost
+O(I + B + E + S + G + K), where the terms count items, template bins,
+expressions, value sets, groups, and expanded bins. Value generation additionally
+costs its output limb and name bytes. Geometric union/complement proof work is
+separate from this table-joining bound. Exclusion metadata is indexed once by
+owner; copying derived flags back uses the aligned fingerprint span.
+
+Automatic counts and default complement cardinalities now respect the
+existing parser record ceiling before output allocation or enumeration, with
+explicit `out of resources` status. A 31-bit empty default domain and an
+oversized positive `auto_bin_max` exercise that rejection in both backends.
+No ABI or wire columns change, and every report format consumes the same
+resolved rows. Before/after report comparisons include configuration digests,
+stable IDs, ordinals, flags, value sets, counters, and cross data.
+
+The MLIR review keeps constructor-derived data in the shared coverage schema
+and the existing typed effectful create/sample operations. It adds no mutable
+pass-global cache or backend-specific coverage semantics, consistent with
+[pass management](https://mlir.llvm.org/docs/PassManagement/) and
+[side-effect modeling](https://mlir.llvm.org/docs/Rationale/SideEffectsAndSpeculation/).
+Small MLIR regressions check ownership, declaration metadata, signed samples,
+canonicalization/CSE, LLVM verification, and bytecode calls. A four-coverpoint
+runtime unit checks exact group spans, empty groups, row ordinals, and reuse;
+a one-configuration executable fixture checks native/bytecode parity and
+text/JSON/HTML/LCOV generation. Large timings remain standalone bounded probes.
+
 The coverage-related regression suite probes existing coverage semantics; it
 does not certify complete implementation of every feature in the LRM.
 
