@@ -1,6 +1,7 @@
 //===- ManagedClassLayoutAnalysis.cpp - Shared managed class layout -------===//
 
 #include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
+#include "obelisk/Analysis/DescriptorOrdering.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
@@ -40,9 +41,8 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
     fields[field.getOwner()].push_back(field);
   });
   for (auto &entry : fields)
-    llvm::sort(entry.second, [](auto lhs, auto rhs) {
-      return lhs.getOrdinal() < rhs.getOrdinal();
-    });
+    orderByUnsignedKey(entry.second,
+                       [](auto field) { return field.getOrdinal(); });
 
   llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
   llvm::LLVMContext llvmContext;
@@ -143,10 +143,8 @@ ManagedClassLayoutAnalysis::compute(sim::SimDesignOp design,
   ordered.reserve(declarations.size());
   for (const auto &entry : declarations)
     ordered.push_back(entry.second);
-  llvm::sort(ordered, [](auto lhs, auto rhs) {
-    return std::make_pair(lhs.getId(), lhs.getSymName()) <
-           std::make_pair(rhs.getId(), rhs.getSymName());
-  });
+  orderByUnsignedKey(ordered,
+                     [](auto declaration) { return declaration.getId(); });
   llvm::StringMap<uint8_t> state;
   struct Frame {
     sim::SimClassDeclOp declaration;

@@ -207,6 +207,15 @@ struct ClassInfo {
                OBELISK_RT_TRACE_STRONG,
                OBELISK_RT_MANAGED_SLOT_CLASS,
                nullptr};
+    if (base && base->layout && base->layout->entry_count) {
+      entry = {0,
+               0,
+               1,
+               OBELISK_RT_TRACE_EMBEDDED,
+               OBELISK_RT_MANAGED_SLOT_INVALID,
+               base->layout};
+      objectField = true;
+    }
     layout = {OBELISK_RT_VERSION,
               0,
               size,

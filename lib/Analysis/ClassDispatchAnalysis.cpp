@@ -1,6 +1,7 @@
 //===- ClassDispatchAnalysis.cpp - Managed class dispatch ---------------===//
 
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
+#include "obelisk/Analysis/DescriptorOrdering.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/IntrusiveRefCntPtr.h"
@@ -8,7 +9,6 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/MathExtras.h"
 
-#include <array>
 #include <limits>
 #include <utility>
 
@@ -146,23 +146,8 @@ public:
 };
 
 void orderClasses(llvm::SmallVectorImpl<sim::SimClassDeclOp> &classes) {
-  if (classes.size() < 2)
-    return;
-  SmallVector<sim::SimClassDeclOp> temporary(classes.size());
-  for (unsigned shift = 0; shift != 64; shift += 8) {
-    std::array<size_t, 256> offsets{};
-    for (auto declaration : classes)
-      ++offsets[(declaration.getId() >> shift) & 255];
-    size_t begin = 0;
-    for (size_t &offset : offsets) {
-      size_t count = offset;
-      offset = begin;
-      begin += count;
-    }
-    for (auto declaration : classes)
-      temporary[offsets[(declaration.getId() >> shift) & 255]++] = declaration;
-    classes.swap(temporary);
-  }
+  orderByUnsignedKey(classes,
+                     [](auto declaration) { return declaration.getId(); });
 }
 
 } // namespace

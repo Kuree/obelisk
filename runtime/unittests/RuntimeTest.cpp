@@ -1,5 +1,6 @@
 //===- RuntimeTest.cpp - Tests for the Obelisk native runtime -------------===//
 
+#include "obelisk/Runtime/DescriptorMap.h"
 #include "obelisk/Runtime/Runtime.h"
 #include "svdpi.h"
 
@@ -4419,8 +4420,15 @@ const obelisk_rt_trace_entry_v1 nodeTraceEntry{kNodeLinkOffset,
                                                nullptr};
 const obelisk_rt_trace_layout_v1 nodeTraceLayout{
     OBELISK_RT_VERSION, 0, kSlot * 3, kSlotAlign, &nodeTraceEntry, 1};
+const obelisk_rt_trace_entry_v1 derivedTraceEntry{
+    0,
+    0,
+    1,
+    OBELISK_RT_TRACE_EMBEDDED,
+    OBELISK_RT_MANAGED_SLOT_INVALID,
+    &nodeTraceLayout};
 const obelisk_rt_trace_layout_v1 derivedTraceLayout{
-    OBELISK_RT_VERSION, 0, kSlot * 4, kSlotAlign, &nodeTraceEntry, 1};
+    OBELISK_RT_VERSION, 0, kSlot * 4, kSlotAlign, &derivedTraceEntry, 1};
 
 obelisk_rt_status nodeValueMethod(obelisk_rt_context *context,
                                   obelisk_rt_gc_lane_v1 *,
@@ -4453,9 +4461,9 @@ obelisk_rt_status derivedValueMethod(obelisk_rt_context *context,
 }
 
 const obelisk_rt_method_descriptor_v1 nodeMethods[]{
-    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, nodeValueMethod, nullptr}};
+    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, nodeValueMethod, nullptr, 0}};
 const obelisk_rt_method_descriptor_v1 derivedMethods[]{
-    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, derivedValueMethod, nullptr}};
+    {42, 0, OBELISK_RT_METHOD_NO_BYTECODE, derivedValueMethod, nullptr, 0}};
 const char nodeName[] = "node";
 const char derivedName[] = "derived_node";
 const char throwingName[] = "throwing_node";
@@ -4505,7 +4513,8 @@ const obelisk_rt_class_descriptor_v1 randomNodeDescriptor{
     sizeof(randomNodeName) - 1,
     &randomNodeLayout};
 const obelisk_rt_trace_entry_v1 randomDerivedTraceEntries[]{
-    nodeTraceEntry,
+    {0, 0, 1, OBELISK_RT_TRACE_EMBEDDED, OBELISK_RT_MANAGED_SLOT_INVALID,
+     &randomNodeTraceLayout},
     {kSlot * 4, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
      nullptr}};
 const obelisk_rt_trace_layout_v1 randomDerivedTraceLayout{
@@ -4676,10 +4685,9 @@ TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
   EXPECT_EQ(found, 0u);
   EXPECT_TRUE(tail.empty());
 
-  const char *replacement[] = {"sim", "+NEW=value",
-                               "--coverage-output=kept.obcov",
-                               "--coverage-test=kept",
-                               "--coverage-tag=suite=kept"};
+  const char *replacement[] = {
+      "sim", "+NEW=value", "--coverage-output=kept.obcov",
+      "--coverage-test=kept", "--coverage-tag=suite=kept"};
   ASSERT_EQ(obelisk_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(replacement)), replacement),
             OBELISK_RT_OK);
@@ -4700,8 +4708,8 @@ TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
   obelisk_rt_random_state_v1 randomBefore{};
   ASSERT_EQ(obelisk_rt_v1_random_get_state(context, &randomBefore),
             OBELISK_RT_OK);
-  const char *failedCoverageLoad[] = {
-      "sim", "+BROKEN", "--seed=19", "--coverage-load=missing.obcov"};
+  const char *failedCoverageLoad[] = {"sim", "+BROKEN", "--seed=19",
+                                      "--coverage-load=missing.obcov"};
   EXPECT_EQ(obelisk_rt_v1_context_configure_argv(
                 context, static_cast<int>(std::size(failedCoverageLoad)),
                 failedCoverageLoad),
@@ -4725,14 +4733,13 @@ TEST_F(ManagedHeapTest, PlusargsPreservePrefixOrderAndReplaceTheirIndex) {
   validRun.name = "staged";
   validDatabase.runs.push_back(validRun);
   std::filesystem::path validPath = temporary.file("valid.obcov");
-  ASSERT_EQ(obelisk::coverage::writeFileAtomically(validPath.string(),
-                                                   validDatabase),
-            obelisk::coverage::Status::Ok);
+  ASSERT_EQ(
+      obelisk::coverage::writeFileAtomically(validPath.string(), validDatabase),
+      obelisk::coverage::Status::Ok);
   obelisk::coverage::Database mismatchedDatabase;
   mismatchedDatabase.sourceFiles.push_back({1, "other.sv", {}});
   mismatchedDatabase.scopes.push_back({2, 0, "top", 0, "top"});
-  mismatchedDatabase.linePoints.push_back(
-      {3, 1, 1, 2, "", 1, 1, 1, 2, 0, 0});
+  mismatchedDatabase.linePoints.push_back({3, 1, 1, 2, "", 1, 1, 1, 2, 0, 0});
   std::filesystem::path mismatchedPath = temporary.file("mismatch.obcov");
   ASSERT_EQ(obelisk::coverage::writeFileAtomically(mismatchedPath.string(),
                                                    mismatchedDatabase),
@@ -6349,7 +6356,9 @@ TEST(ManagedHeap, SerializesConcurrentCollectionRequestsWithoutDeadlock) {
 }
 
 TEST(ManagedHeap, RejectsMalformedClassLayouts) {
-  obelisk_rt_method_descriptor_v1 sparseMethods[]{{}, nodeMethods[0]};
+  obelisk_rt_method_descriptor_v1 sparseMethods[]{nodeMethods[0],
+                                                  nodeMethods[0]};
+  sparseMethods[1].slot = UINT64_C(1) << 20;
   obelisk_rt_class_descriptor_v1 sparse = nodeDescriptor;
   sparse.methods = sparseMethods;
   sparse.method_count = std::size(sparseMethods);
@@ -6433,6 +6442,20 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
   malformed.base = &finalBase;
   EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
             OBELISK_RT_INVALID_DESIGN);
+
+  malformed = derivedDescriptor;
+  malformed.layout = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed),
+            OBELISK_RT_INVALID_DESIGN);
+
+  auto scalarBase = nodeDescriptor;
+  scalarBase.layout = nullptr;
+  auto intrudingLayout = derivedTraceLayout;
+  intrudingLayout.entries = &nodeTraceEntry;
+  malformed = derivedDescriptor;
+  malformed.base = &scalarBase;
+  malformed.layout = &intrudingLayout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&malformed), OBELISK_RT_INVALID_DESIGN);
 
   obelisk_rt_method_descriptor_v1 pureMethod = nodeMethods[0];
   pureMethod.flags = OBELISK_RT_METHOD_PURE;
@@ -6657,12 +6680,183 @@ TEST(ManagedHeap, ChecksCachedBaseLayoutsAndRollsBackFailedRegistration) {
   entry.offset = kDerivedExtraOffset;
   EXPECT_EQ(obelisk_rt_v1_class_register(context, &child),
             OBELISK_RT_INVALID_ARGUMENT);
-  entry.offset = kNodeLinkOffset;
+  entry = derivedTraceEntry;
   // Unregistered metadata may be repaired. A failed attempt must leave no
   // stale layout index in the cache or skip the base/derived boundary checks.
   EXPECT_EQ(obelisk_rt_v1_class_register(context, &child), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_class_register(context, &child), OBELISK_RT_OK);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(ManagedHeapTest,
+       ResolvesSparseInheritedDescriptorsAndInterfaceDiamonds) {
+  constexpr size_t count = 32;
+  const uint64_t signatures[]{42};
+  const obelisk_rt_interface_descriptor_v1 root{501, signatures, 1, nullptr, 0};
+  const obelisk_rt_interface_descriptor_v1 *rootBases[]{&root};
+  const obelisk_rt_interface_descriptor_v1 left{502, nullptr, 0, rootBases, 1};
+  const obelisk_rt_interface_descriptor_v1 right{503, nullptr, 0, rootBases, 1};
+  const obelisk_rt_interface_descriptor_v1 *joinBases[]{&left, &right};
+  const obelisk_rt_interface_descriptor_v1 join{504, nullptr, 0, joinBases, 2};
+  std::array<obelisk_rt_class_descriptor_v1, count> classes{};
+  std::array<obelisk_rt_trace_layout_v1, count> layouts{};
+  std::array<std::array<obelisk_rt_trace_entry_v1, 2>, count> entries{};
+  std::array<std::array<obelisk_rt_method_descriptor_v1, 2>, count> methods{};
+  auto destroy = [&](obelisk_rt_context *) {
+    TearDown();
+    lane = nullptr;
+    context = nullptr;
+  };
+  // Registered immutable metadata must outlive its context, including failures.
+  std::unique_ptr<obelisk_rt_context, decltype(destroy)> cleanup(context,
+                                                                 destroy);
+  for (size_t index = 0; index != count; ++index) {
+    methods[index][0] = nodeMethods[0];
+    if (index) {
+      methods[index][0].slot = (UINT64_C(1) << 20) + index;
+      methods[index][0].signature_id = 100 + index;
+      entries[index][0] = {0,
+                           0,
+                           1,
+                           OBELISK_RT_TRACE_EMBEDDED,
+                           OBELISK_RT_MANAGED_SLOT_INVALID,
+                           &layouts[index - 1]};
+      entries[index][1] = {
+          kSlot * (index + 2),           0,      1, OBELISK_RT_TRACE_STRONG,
+          OBELISK_RT_MANAGED_SLOT_CLASS, nullptr};
+    } else {
+      entries[index][0] = nodeTraceEntry;
+    }
+    layouts[index] = {OBELISK_RT_VERSION,    0,
+                      kSlot * (index + 3),   kSlotAlign,
+                      entries[index].data(), index ? 2u : 1u};
+    classes[index] = nodeDescriptor;
+    classes[index].class_id = 1000 + index;
+    classes[index].instance_size = layouts[index].size;
+    classes[index].layout = &layouts[index];
+    classes[index].base = index ? &classes[index - 1] : nullptr;
+    classes[index].methods = methods[index].data();
+    classes[index].interfaces = index ? nullptr : &join;
+    classes[index].interface_count = index ? 0 : 1;
+  }
+  methods.back()[1] = methods.back()[0];
+  methods.back()[0] = derivedMethods[0];
+  classes.back().method_count = 2;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&classes.back()), OBELISK_RT_OK);
+  methods.back()[0].signature_id = 43;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&classes.back()),
+            OBELISK_RT_INVALID_DESIGN);
+  methods.back()[0] = derivedMethods[0];
+  methods.back()[0].flags = OBELISK_RT_METHOD_TASK;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&classes.back()),
+            OBELISK_RT_INVALID_DESIGN);
+  methods.back()[0] = derivedMethods[0];
+
+  ASSERT_EQ(obelisk_rt_v1_class_register(context, &classes.back()),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &classes.back(), &object),
+            OBELISK_RT_OK);
+  const obelisk_rt_method_descriptor_v1 *resolved = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_method_resolve(object, 0, 42, &resolved),
+            OBELISK_RT_OK);
+  EXPECT_EQ(resolved, &methods.back()[0]);
+  ASSERT_EQ(obelisk_rt_v1_method_resolve(object, (UINT64_C(1) << 20) + 1, 101,
+                                         &resolved),
+            OBELISK_RT_OK);
+  EXPECT_EQ(resolved, &methods[1][0]);
+  ASSERT_EQ(
+      obelisk_rt_v1_interface_method_resolve(object, 501, 0, 42, &resolved),
+      OBELISK_RT_OK);
+  EXPECT_EQ(resolved, &methods.back()[0]);
+  EXPECT_EQ(
+      obelisk_rt_v1_interface_method_resolve(object, 501, 0, 43, &resolved),
+      OBELISK_RT_LAYOUT_MISMATCH);
+  EXPECT_EQ(
+      obelisk_rt_v1_method_resolve(object, UINT64_C(1) << 48, 42, &resolved),
+      OBELISK_RT_INVALID_HANDLE);
+  for (const auto &ancestor : classes)
+    EXPECT_EQ(obelisk_rt_v1_object_is_instance(object, &ancestor), 1u);
+  auto interfaceType = classes.front();
+  interfaceType.class_id = 501;
+  interfaceType.flags = OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE;
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(object, &interfaceType), 1u);
+}
+
+TEST_F(ManagedHeapTest,
+       CompletesInheritedInterfaceRequirementsAndRollsBackGraphs) {
+  const uint64_t signatures[]{42};
+  obelisk_rt_interface_descriptor_v1 interface{701, signatures, 1, nullptr, 0};
+  auto base = nodeDescriptor;
+  base.class_id = 702;
+  base.flags = OBELISK_RT_CLASS_ABSTRACT;
+  base.interfaces = &interface;
+  base.interface_count = 1;
+  base.methods = nullptr;
+  base.method_count = 0;
+  auto child = derivedDescriptor;
+  child.class_id = 703;
+  child.base = &base;
+  auto method = derivedMethods[0];
+  auto destroy = [&](obelisk_rt_context *) {
+    TearDown();
+    lane = nullptr;
+    context = nullptr;
+  };
+  std::unique_ptr<obelisk_rt_context, decltype(destroy)> cleanup(context,
+                                                                 destroy);
+  child.methods = &method;
+  method.signature_id = 43;
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &child),
+            OBELISK_RT_INVALID_ARGUMENT);
+  method.signature_id = 42;
+  const obelisk_rt_interface_descriptor_v1 *cycle[]{&interface};
+  interface.bases = cycle;
+  interface.base_count = 1;
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &child),
+            OBELISK_RT_INVALID_ARGUMENT);
+  interface.bases = nullptr;
+  interface.base_count = 0;
+  ASSERT_EQ(obelisk_rt_v1_class_register(context, &child), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &child, &object),
+            OBELISK_RT_OK);
+  const obelisk_rt_method_descriptor_v1 *resolved = nullptr;
+  EXPECT_EQ(
+      obelisk_rt_v1_interface_method_resolve(object, 701, 0, 42, &resolved),
+      OBELISK_RT_OK);
+  EXPECT_EQ(resolved, &method);
+}
+
+TEST(ManagedHeap, ReusesInterfaceChecksAcrossSiblingMethodOverrides) {
+  using Map = obelisk::runtime::DescriptorMap<uint64_t>;
+  constexpr size_t count = 32;
+  Map requirements, inherited;
+  for (size_t index = 0; index != count; ++index) {
+    uint64_t key = (UINT64_C(1) << 48) + index * 257;
+    requirements = requirements.set(key, key);
+    inherited = inherited.set(key, 1);
+  }
+  std::vector<Map> siblings;
+  siblings.reserve(count);
+  for (size_t index = 0; index != count; ++index)
+    siblings.push_back(inherited.set((UINT64_C(1) << 48) + index * 257, 0));
+  obelisk::runtime::DescriptorMatchCache cache;
+  size_t comparisons = 0;
+  auto implements = [&](uint64_t, uint64_t available) {
+    ++comparisons;
+    return available != 0;
+  };
+  EXPECT_EQ(requirements.countMatches(inherited, cache, implements), count);
+  for (const Map &sibling : siblings)
+    EXPECT_EQ(requirements.countMatches(sibling, cache, implements), count - 1);
+  // Each sibling changes exactly one implementation. Unchanged inherited
+  // methods are compared once across all classes, rather than once per class.
+  EXPECT_EQ(comparisons, count * 2);
+  cache.rollback();
+  comparisons = 0;
+  EXPECT_EQ(requirements.countMatches(inherited, cache, implements), count);
+  EXPECT_EQ(comparisons, count);
 }
 
 } // namespace

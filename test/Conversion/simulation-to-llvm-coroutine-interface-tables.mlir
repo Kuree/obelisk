@@ -48,13 +48,22 @@ module attributes {
   }
 }
 
-// The abstract descriptor inherits Runner directly and keeps its pure method
-// unresolved. Concrete inherits Runner only through its base and resolves the
-// same ordinal after overriding the effective slot.
-// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__obelisk_interfaces
-// CHECK: llvm.mlir.constant(1 : i64)
-// CHECK: llvm.mlir.addressof @Concrete.__obelisk_interface_0_slots
-// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__obelisk_interface_0_slots
-// CHECK: llvm.mlir.constant(0 : i32)
-// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__obelisk_interface_0_slots
-// CHECK: llvm.mlir.constant(-1 : i32)
+// The abstract descriptor introduces Runner and its pure method. Concrete
+// shares the inherited interface through its base and records only its local
+// method override. Interface ordinals index the shared signature table.
+// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__obelisk_class_descriptor
+// CHECK: llvm.mlir.addressof @AbstractBase.__obelisk_class_descriptor
+// CHECK-NOT: @Concrete.__obelisk_interfaces
+// CHECK-LABEL: llvm.mlir.global internal constant @Concrete.__obelisk_methods
+// CHECK-SAME: !llvm.array<1 x
+// CHECK: llvm.mlir.constant(17 : i64)
+// CHECK: llvm.mlir.addressof @Concrete_run.__obelisk_native_thunk
+// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__obelisk_interfaces
+// CHECK-SAME: !llvm.array<1 x
+// CHECK: llvm.mlir.addressof @Runner.__obelisk_interface_signatures
+// CHECK-LABEL: llvm.mlir.global internal constant @AbstractBase.__obelisk_methods
+// CHECK: llvm.mlir.constant(17 : i64)
+// CHECK: llvm.mlir.constant(2 : i32)
+// CHECK-LABEL: llvm.mlir.global internal constant @Runner.__obelisk_interface_signatures
+// CHECK-SAME: !llvm.array<1 x i64>
+// CHECK: llvm.mlir.constant(17 : i64)

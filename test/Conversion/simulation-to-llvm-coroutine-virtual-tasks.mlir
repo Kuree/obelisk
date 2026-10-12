@@ -84,11 +84,19 @@ module attributes {
 // CHECK-NOT: llvm.mlir.constant(13 : i32)
 // CHECK: llvm.return
 // CHECK: llvm.func @obelisk_rt_v1_method_task_activate
+// Base introduces Runner through the shared signature table; its sparse
+// method table binds signature 17 to the task thunk.
 // CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_interfaces
-// CHECK: llvm.mlir.constant(1 : i64)
-// CHECK: llvm.mlir.addressof @Base.__obelisk_interface_0_slots
-// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_interface_0_slots
-// CHECK: llvm.mlir.constant(0 : i32)
+// CHECK-SAME: !llvm.array<1 x
+// CHECK: llvm.mlir.addressof @Runner.__obelisk_interface_signatures
+// CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_methods
+// CHECK-SAME: !llvm.array<1 x
+// CHECK: llvm.mlir.constant(17 : i64)
+// CHECK: llvm.mlir.constant(1 : i32)
+// CHECK: llvm.mlir.addressof @Base_run.__obelisk_native_thunk
+// CHECK-LABEL: llvm.mlir.global internal constant @Runner.__obelisk_interface_signatures
+// CHECK-SAME: !llvm.array<1 x i64>
+// CHECK: llvm.mlir.constant(17 : i64)
 // CHECK-LABEL: llvm.func internal @base_run.__obelisk_activate_checked(
 // CHECK: llvm.call @obelisk_rt_v1_process_instance_create_for_context
 // CHECK: llvm.store {{.*}} : i64, !llvm.ptr

@@ -42,7 +42,7 @@ _Static_assert(sizeof(obelisk_rt_trace_entry_v1) == 40,
                "managed trace entry size changed");
 _Static_assert(sizeof(obelisk_rt_trace_layout_v1) == 40,
                "managed trace layout size changed");
-_Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == SMOKE_PTR(32, 24),
+_Static_assert(sizeof(obelisk_rt_method_descriptor_v1) == SMOKE_PTR(40, 32),
                "managed method descriptor size changed");
 _Static_assert(sizeof(obelisk_rt_random_edge_v1) == 24,
                "managed random edge size changed");

@@ -20,7 +20,7 @@ module attributes {
       is_abstract = true, is_final = false, is_interface = true
     }
     // Deliberately precede the base declaration. Native descriptor emission
-    // must still flatten the base's managed trace slots into this layout.
+    // must still share the base's managed trace layout.
     simulation.class.decl @Derived id 3 extends @Base implements [@J] {
       is_abstract = false, is_final = true, is_interface = false
     }
@@ -209,17 +209,15 @@ module attributes {
 // CHECK: llvm.func @obelisk_rt_v1_object_bits_insert(!llvm.ptr, i64, i64, i64, i32, i64, i32) -> i32
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_class_descriptor
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interfaces
-// CHECK: llvm.mlir.constant(1 : i64)
-// CHECK: llvm.mlir.addressof @Derived.__obelisk_interface_0_slots
 // CHECK: llvm.mlir.constant(4 : i64)
-// CHECK: llvm.mlir.addressof @Derived.__obelisk_interface_1_slots
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interface_1_slots
-// CHECK: llvm.mlir.constant(1 : i32)
-// CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interface_0_slots
-// CHECK: llvm.mlir.constant(0 : i32)
+// CHECK: llvm.mlir.addressof @J.__obelisk_interface_signatures
+// CHECK: llvm.mlir.addressof @J.__obelisk_interface_bases
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_trace_entries
-// CHECK: llvm.mlir.constant(16 : i64)
+// CHECK: llvm.mlir.constant(3 : i32)
+// CHECK: llvm.mlir.addressof @Base.__obelisk_trace_layout
 // CHECK-LABEL: llvm.mlir.global internal constant @Base.__obelisk_class_descriptor
+// CHECK-LABEL: llvm.mlir.global internal constant @J.__obelisk_interface_bases
+// CHECK: llvm.mlir.addressof @I.__obelisk_interface
 // CHECK-LABEL: llvm.func internal @Base_get.__obelisk_native_thunk
 // PARTITION: module attributes {
 // PARTITION-SAME: obelisk.native.physical_partition_manifest = [

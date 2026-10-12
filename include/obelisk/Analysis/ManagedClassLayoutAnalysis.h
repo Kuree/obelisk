@@ -53,6 +53,7 @@ struct ManagedClassLayoutAnalysis {
   mlir::FailureOr<mlir::SmallVector<const Field *>>
   getBitstreamFields(const Class &layout) const;
 
+  // Deterministic dependency order: each base precedes its derived classes.
   mlir::SmallVector<Class> classes;
 
 private:

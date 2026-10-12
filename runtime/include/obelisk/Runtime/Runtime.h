@@ -183,15 +183,21 @@ typedef struct obelisk_rt_method_descriptor_v1 {
   uint32_t bytecode_function;
   obelisk_rt_native_method_v1 native_entry;
   const void *environment;
+  // Stable dispatch slot. Class arrays contain only direct declarations,
+  // ordered by slot; inherited entries remain in the base descriptor.
+  uint64_t slot;
 } obelisk_rt_method_descriptor_v1;
 
-// One flattened interface dispatch table for a managed class. Method slots
-// are indexed by the declaring interface's stable method ordinal and select
-// entries in the containing class descriptor's effective method table.
+// An interface introduced by this class. Signatures are indexed by the
+// declaring interface's stable method ordinal. Inherited bindings remain in
+// the base descriptor and resolve against the dynamic class's method index.
 typedef struct obelisk_rt_interface_descriptor_v1 {
   uint64_t interface_id;
-  const uint32_t *method_slots;
+  const uint64_t *method_signatures;
   uint64_t method_count;
+  // Shared interface inheritance graph; bases contain direct parents only.
+  const struct obelisk_rt_interface_descriptor_v1 *const *bases;
+  uint64_t base_count;
 } obelisk_rt_interface_descriptor_v1;
 
 // One direct rand class-handle edge declared by a class. The mode word and
@@ -256,6 +262,9 @@ typedef struct obelisk_rt_class_descriptor_v1 {
   const struct obelisk_rt_class_descriptor_v1 *base;
   const obelisk_rt_interface_descriptor_v1 *interfaces;
   uint64_t interface_count;
+  // Contains direct trace entries and embeds a nonempty base layout exactly
+  // once at offset zero; other entries start after the base instance. An
+  // unchanged, equal-size layout may share its pointer.
   const obelisk_rt_trace_layout_v1 *layout;
   const obelisk_rt_method_descriptor_v1 *methods;
   uint64_t method_count;

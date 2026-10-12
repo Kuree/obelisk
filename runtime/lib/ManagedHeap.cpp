@@ -1,6 +1,7 @@
 //===- ManagedHeap.cpp - Precise SystemVerilog class heap ----------------===//
 
 #include "RuntimeInternal.h"
+#include "obelisk/Runtime/DescriptorMap.h"
 
 #include <array>
 #include <condition_variable>
@@ -467,20 +468,49 @@ struct TraceHandle {
   uint64_t offset = 0;
   obelisk_rt_trace_kind kind = 0;
   obelisk_rt_managed_slot_kind_v1 slotKind = 0;
+
+  bool operator==(const TraceHandle &other) const {
+    return offset == other.offset && kind == other.kind &&
+           slotKind == other.slotKind;
+  }
 };
 
-using TraceHandles = std::vector<TraceHandle>;
-
 struct TraceHandleIndex {
-  std::shared_ptr<const TraceHandles> slots;
+  obelisk::runtime::DescriptorMap<TraceHandle> slots;
   uint64_t offset = 0;
 
-  size_t size() const { return slots ? slots->size() : 0; }
-  bool empty() const { return size() == 0; }
-  TraceHandle at(size_t index) const {
-    TraceHandle handle = (*slots)[index];
+  size_t size() const { return slots.size(); }
+  bool empty() const { return slots.empty(); }
+  TraceHandle first() const {
+    const TraceHandle *first = slots.lowerBound(uint64_t{0} - offset);
+    TraceHandle handle = *(first ? first : slots.first());
     handle.offset += offset;
     return handle;
+  }
+  std::optional<TraceHandle> find(uint64_t key) const {
+    const TraceHandle *handle = slots.find(key - offset);
+    if (!handle)
+      return std::nullopt;
+    TraceHandle result = *handle;
+    result.offset += offset;
+    return result;
+  }
+  bool overlaps(uint64_t key, uint64_t size) const {
+    uint64_t begin = key >= sizeof(obelisk_rt_managed_word_v1) - 1
+                         ? key - (sizeof(obelisk_rt_managed_word_v1) - 1)
+                         : 0;
+    auto overlaps = [&](const TraceHandle *handle) {
+      return handle && rangesOverlap(key, size, handle->offset + offset,
+                                     sizeof(obelisk_rt_managed_word_v1));
+    };
+    return overlaps(slots.lowerBound(begin - offset)) ||
+           overlaps(slots.first());
+  }
+  template <typename Visit> void forEach(Visit visit) const {
+    slots.forEach([&](TraceHandle handle) {
+      handle.offset += offset;
+      visit(handle);
+    });
   }
 };
 
@@ -520,45 +550,57 @@ public:
         continue;
       }
       const auto *current = frame.layout;
-      // Single embedded wrappers share the child's index and adjust its
-      // origin. Deep chains need neither slot copies nor rescans.
-      const auto &first = current->entries[0];
-      if (current->entry_count == 1 &&
-          first.kind == OBELISK_RT_TRACE_EMBEDDED && first.count == 1) {
-        TraceHandleIndex result = handles.at(first.child_layout);
-        result.offset += first.offset;
-        store(current, std::move(result));
-        stack.pop_back();
-        continue;
-      }
-      auto result = std::make_shared<TraceHandles>();
+      // Keep the largest embedded index. Appending direct fields to a base
+      // allocates only bounded-width paths, instead of copying every base slot.
+      uint64_t sharedEntry = current->entry_count;
+      TraceHandleIndex result;
       for (uint64_t index = 0; index != current->entry_count; ++index) {
         const auto &entry = current->entries[index];
+        if (entry.kind != OBELISK_RT_TRACE_EMBEDDED || entry.count != 1)
+          continue;
+        const auto &child = handles.at(entry.child_layout);
+        if (child.size() <= result.size())
+          continue;
+        result = child;
+        result.offset += entry.offset;
+        sharedEntry = index;
+      }
+      bool valid = true;
+      auto insert = [&](TraceHandle handle) {
+        if (!valid)
+          return;
+        if (result.overlaps(handle.offset,
+                            sizeof(obelisk_rt_managed_word_v1))) {
+          valid = false;
+          return;
+        }
+        // Unsigned relative keys allow entries on either side of the shared
+        // origin. Translation is modular; validation bounds absolute offsets.
+        handle.offset -= result.offset;
+        result.slots = result.slots.set(handle.offset, handle);
+      };
+      for (uint64_t index = 0; index != current->entry_count; ++index) {
+        if (index == sharedEntry)
+          continue;
+        const auto &entry = current->entries[index];
         if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-          if (!validation.hasHandles(entry.child_layout))
-            continue;
-          const auto &childHandles = handles.at(entry.child_layout);
-          for (uint64_t item = 0; item != entry.count; ++item) {
+          const auto &child = handles.at(entry.child_layout);
+          for (uint64_t item = 0; item != entry.count && valid; ++item) {
             uint64_t offset = entry.offset + item * entry.stride;
-            for (size_t slot = 0; slot != childHandles.size(); ++slot) {
-              TraceHandle handle = childHandles.at(slot);
-              result->push_back(
-                  {offset + handle.offset, handle.kind, handle.slotKind});
-            }
+            child.forEach([&](TraceHandle handle) {
+              handle.offset += offset;
+              insert(handle);
+            });
           }
         } else {
-          for (uint64_t item = 0; item != entry.count; ++item)
-            result->push_back({entry.offset + item * entry.stride, entry.kind,
-                               entry.slot_kind});
+          for (uint64_t item = 0; item != entry.count && valid; ++item)
+            insert({entry.offset + item * entry.stride, entry.kind,
+                    entry.slot_kind});
         }
       }
-      orderDescriptorRecords(
-          *result, [](const TraceHandle &handle) { return handle.offset; });
-      for (size_t index = 1; index < result->size(); ++index)
-        if ((*result)[index].offset - (*result)[index - 1].offset <
-            sizeof(obelisk_rt_managed_word_v1))
-          return nullptr;
-      store(current, {std::move(result), 0});
+      if (!valid)
+        return nullptr;
+      store(current, std::move(result));
       stack.pop_back();
     }
     return &handles.at(layout);
@@ -568,7 +610,6 @@ public:
     validation.commit();
     additions.clear();
   }
-
   void rollback() {
     for (const auto *layout : additions)
       handles.erase(layout);
@@ -584,24 +625,198 @@ private:
   TraceHandleIndex empty;
 };
 
-bool containsTraceHandles(const TraceHandleIndex &candidate,
-                          const TraceHandleIndex &required) {
-  if (candidate.slots == required.slots && candidate.offset == required.offset)
-    return true;
-  size_t index = 0;
-  for (size_t slot = 0; slot != required.size(); ++slot) {
-    TraceHandle handle = required.at(slot);
-    while (index != candidate.size() &&
-           candidate.at(index).offset < handle.offset)
-      ++index;
-    if (index == candidate.size() ||
-        candidate.at(index).offset != handle.offset ||
-        candidate.at(index).kind != handle.kind ||
-        candidate.at(index).slotKind != handle.slotKind)
-      return false;
+class InterfaceValidation {
+public:
+  using Requirements = obelisk::runtime::DescriptorMap<uint64_t>;
+  using Bindings = obelisk::runtime::DescriptorMap<
+      const obelisk_rt_interface_descriptor_v1 *>;
+  struct Inventory {
+    obelisk_rt_interface_descriptor_v1 descriptor{};
+    Requirements requirements;
+    Bindings bindings;
+    bool complete = false;
+  };
+  const Inventory *get(const obelisk_rt_interface_descriptor_v1 *interface) {
+    auto equivalent = [](const auto &left, const auto &right) {
+      return left.interface_id == right.interface_id &&
+             left.method_signatures == right.method_signatures &&
+             left.method_count == right.method_count &&
+             left.bases == right.bases && left.base_count == right.base_count;
+    };
+    auto enter = [&](const obelisk_rt_interface_descriptor_v1 *current) {
+      if (!current || !current->interface_id ||
+          (current->method_count == 0) !=
+              (current->method_signatures == nullptr) ||
+          (current->base_count == 0) != (current->bases == nullptr))
+        return false;
+      additions.push_back(current->interface_id);
+      Inventory inventory;
+      inventory.descriptor = *current;
+      inventory.bindings =
+          inventory.bindings.set(current->interface_id, current);
+      for (uint64_t ordinal = 0; ordinal != current->method_count; ++ordinal) {
+        uint64_t signature = current->method_signatures[ordinal];
+        if (!signature)
+          return false;
+        inventory.requirements =
+            inventory.requirements.set(signature, signature);
+      }
+      states.emplace(current->interface_id, std::move(inventory));
+      return true;
+    };
+    auto known = states.find(interface->interface_id);
+    if (known != states.end())
+      return known->second.complete &&
+                     equivalent(known->second.descriptor, *interface)
+                 ? &known->second
+                 : nullptr;
+    if (!enter(interface))
+      return nullptr;
+    struct Frame {
+      const obelisk_rt_interface_descriptor_v1 *interface;
+      uint64_t base = 0;
+    };
+    std::vector<Frame> stack{{interface}};
+    while (!stack.empty()) {
+      Frame &frame = stack.back();
+      Inventory &inventory = states.at(frame.interface->interface_id);
+      if (frame.base == frame.interface->base_count) {
+        inventory.complete = true;
+        stack.pop_back();
+        continue;
+      }
+      const auto *base = frame.interface->bases[frame.base];
+      if (!base ||
+          (frame.base && frame.interface->bases[frame.base - 1]->interface_id >=
+                             base->interface_id))
+        return nullptr;
+      auto found = states.find(base->interface_id);
+      if (found == states.end()) {
+        if (!enter(base))
+          return nullptr;
+        stack.push_back({base});
+        continue;
+      }
+      if (!found->second.complete ||
+          !equivalent(found->second.descriptor, *base))
+        return nullptr;
+      inventory.requirements =
+          inventory.requirements.merge(found->second.requirements);
+      inventory.bindings = inventory.bindings.merge(found->second.bindings);
+      ++frame.base;
+    }
+    return &states.at(interface->interface_id);
   }
-  return true;
-}
+  void commit() { additions.clear(); }
+  void rollback() {
+    for (uint64_t id : additions)
+      states.erase(id);
+    additions.clear();
+  }
+
+private:
+  std::unordered_map<uint64_t, Inventory> states;
+  std::vector<uint64_t> additions;
+};
+
+class ClassMethodValidation {
+public:
+  using Methods =
+      obelisk::runtime::DescriptorMap<const obelisk_rt_method_descriptor_v1 *>;
+  struct Inventory {
+    Methods slots, signatures;
+    obelisk::runtime::DescriptorMap<const obelisk_rt_class_descriptor_v1 *>
+        ancestors;
+    InterfaceValidation::Requirements requirements;
+    InterfaceValidation::Bindings interfaces;
+    size_t pure = 0, missing = 0;
+  };
+  const Inventory *
+  lookup(const obelisk_rt_class_descriptor_v1 *descriptor) const {
+    auto found = inventories.find(descriptor);
+    return found == inventories.end() ? nullptr : &found->second;
+  }
+  const Inventory *get(const obelisk_rt_class_descriptor_v1 *descriptor) {
+    if (const Inventory *known = lookup(descriptor))
+      return known;
+    Inventory result;
+    if (descriptor->base) {
+      const Inventory *base = lookup(descriptor->base);
+      if (!base)
+        return nullptr;
+      result = *base;
+    }
+    result.ancestors = result.ancestors.set(descriptor->class_id, descriptor);
+    constexpr uint32_t validFlags =
+        OBELISK_RT_METHOD_TASK | OBELISK_RT_METHOD_PURE;
+    for (uint64_t index = 0; index != descriptor->method_count; ++index) {
+      const auto &method = descriptor->methods[index];
+      if (!method.signature_id || method.slot >= UINT32_MAX ||
+          (index && descriptor->methods[index - 1].slot >= method.slot) ||
+          (method.flags & ~validFlags) != 0 ||
+          (!method.native_entry &&
+           method.bytecode_function == OBELISK_RT_METHOD_NO_BYTECODE &&
+           !(method.flags & OBELISK_RT_METHOD_PURE)))
+        return nullptr;
+      auto inherited = result.slots.find(method.slot);
+      if (inherited) {
+        if ((*inherited)->signature_id != method.signature_id ||
+            (((*inherited)->flags ^ method.flags) & OBELISK_RT_METHOD_TASK))
+          return nullptr;
+        result.pure -= !!((*inherited)->flags & OBELISK_RT_METHOD_PURE);
+      }
+      result.pure += !!(method.flags & OBELISK_RT_METHOD_PURE);
+      result.slots = result.slots.set(method.slot, &method);
+      const auto *previous = result.signatures.find(method.signature_id);
+      if (!previous || (*previous)->slot >= method.slot) {
+        result.signatures = result.signatures.set(method.signature_id, &method);
+      }
+    }
+    for (uint64_t index = 0; index != descriptor->interface_count; ++index) {
+      const auto &interface = descriptor->interfaces[index];
+      if (index && descriptor->interfaces[index - 1].interface_id >=
+                       interface.interface_id)
+        return nullptr;
+      const auto *inventory = interfaceValidation.get(&interface);
+      if (!inventory)
+        return nullptr;
+      result.interfaces = result.interfaces.merge(inventory->bindings);
+      result.requirements = result.requirements.merge(inventory->requirements);
+    }
+    result.missing =
+        result.requirements.size() -
+        result.requirements.countMatches(
+            result.signatures, matches,
+            [](uint64_t, const auto *implementation) {
+              return !(implementation->flags & OBELISK_RT_METHOD_PURE);
+            });
+    if (!(descriptor->flags &
+          (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) &&
+        (result.pure || result.missing))
+      return nullptr;
+    additions.push_back(descriptor);
+    return &inventories.emplace(descriptor, std::move(result)).first->second;
+  }
+  void commit() {
+    interfaceValidation.commit();
+    matches.commit();
+    additions.clear();
+  }
+  void rollback() {
+    matches.rollback();
+    interfaceValidation.rollback();
+    for (const auto *descriptor : additions)
+      inventories.erase(descriptor);
+    additions.clear();
+  }
+
+private:
+  InterfaceValidation interfaceValidation;
+  obelisk::runtime::DescriptorMatchCache matches;
+  std::unordered_map<const obelisk_rt_class_descriptor_v1 *, Inventory>
+      inventories;
+  std::vector<const obelisk_rt_class_descriptor_v1 *> additions;
+};
 
 using ValidatedClasses =
     std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>;
@@ -610,7 +825,8 @@ obelisk_rt_status validateClassDescriptor(
     const obelisk_rt_class_descriptor_v1 *descriptor,
     const ValidatedClasses *validated = nullptr,
     std::vector<const obelisk_rt_class_descriptor_v1 *> *pending = nullptr,
-    ClassLayoutValidation *sharedLayouts = nullptr);
+    ClassLayoutValidation *sharedLayouts = nullptr,
+    ClassMethodValidation *sharedMethods = nullptr);
 
 bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
                           const TraceHandleIndex &handles) {
@@ -631,9 +847,6 @@ bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
     uint64_t mask = 0;
   };
   std::vector<Range> ranges;
-  for (size_t slot = 0; slot != handles.size(); ++slot)
-    ranges.push_back(
-        {handles.at(slot).offset, sizeof(obelisk_rt_managed_word_v1)});
   std::vector<Mode> modes;
   std::vector<uint64_t> edges;
   for (uint64_t index = 0; index != random->edge_count; ++index) {
@@ -650,17 +863,12 @@ bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
     modes.push_back({edge.mode_offset, edge.mode_mask});
   }
   orderDescriptorRecords(edges, [](uint64_t offset) { return offset; });
-  size_t handleIndex = 0;
   for (size_t index = 0; index != edges.size(); ++index) {
     if (index != 0 && edges[index - 1] == edges[index])
       return false;
-    while (handleIndex != handles.size() &&
-           handles.at(handleIndex).offset < edges[index])
-      ++handleIndex;
-    if (handleIndex == handles.size() ||
-        handles.at(handleIndex).offset != edges[index] ||
-        handles.at(handleIndex).kind != OBELISK_RT_TRACE_STRONG ||
-        handles.at(handleIndex).slotKind != OBELISK_RT_MANAGED_SLOT_CLASS)
+    auto handle = handles.find(edges[index]);
+    if (!handle || handle->kind != OBELISK_RT_TRACE_STRONG ||
+        handle->slotKind != OBELISK_RT_MANAGED_SLOT_CLASS)
       return false;
   }
   for (uint64_t index = 0; index != random->variable_count; ++index) {
@@ -706,6 +914,9 @@ bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
       ranges.push_back({variable.randc_position_offset, sizeof(uint64_t)});
     }
   }
+  for (const Range &range : ranges)
+    if (handles.overlaps(range.offset, range.size))
+      return false;
   orderDescriptorRecords(ranges,
                          [](const Range &range) { return range.offset; });
   for (size_t index = 1; index < ranges.size(); ++index)
@@ -808,113 +1019,6 @@ bool validateLayoutHandleWrite(
   return true;
 }
 
-class ClassHierarchyIndex {
-public:
-  explicit ClassHierarchyIndex(const ValidatedClasses &classes) {
-    struct Node {
-      const obelisk_rt_class_descriptor_v1 *descriptor = nullptr;
-      std::vector<size_t> children;
-    };
-    std::vector<Node> nodes;
-    std::unordered_map<const obelisk_rt_class_descriptor_v1 *, size_t> ordinals;
-    for (const auto &[id, descriptor] : classes) {
-      ordinals.emplace(descriptor, nodes.size());
-      nodes.push_back({descriptor, {}});
-    }
-    std::vector<size_t> roots;
-    for (size_t index = 0; index != nodes.size(); ++index) {
-      const auto *base = nodes[index].descriptor->base;
-      if (base)
-        nodes[ordinals.at(base)].children.push_back(index);
-      else
-        roots.push_back(index);
-    }
-    struct Frame {
-      size_t node;
-      size_t child = 0;
-    };
-    uint64_t ordinal = 0;
-    for (size_t root : roots) {
-      std::vector<Frame> stack{{root}};
-      while (!stack.empty()) {
-        Frame &frame = stack.back();
-        const Node &node = nodes[frame.node];
-        if (!frame.child)
-          intervals.try_emplace(node.descriptor, Interval{ordinal++, 0});
-        if (frame.child != node.children.size()) {
-          size_t child = node.children[frame.child++];
-          stack.push_back({child});
-          continue;
-        }
-        intervals.at(node.descriptor).end = ordinal;
-        stack.pop_back();
-      }
-    }
-    for (const auto &node : nodes) {
-      Interval interval = intervals.at(node.descriptor);
-      for (uint64_t index = 0; index != node.descriptor->interface_count;
-           ++index) {
-        uint64_t interfaceID = node.descriptor->interfaces[index].interface_id;
-        uint64_t begin = interval.begin;
-        // A subtree interval has at most 128 aligned binary prefixes in a
-        // 64-bit ordinal space. This also handles interfaces declared only
-        // in a base descriptor without materializing descendant closures.
-        while (begin != interval.end) {
-          unsigned alignment = begin ? __builtin_ctzll(begin) : 63;
-          unsigned remaining = 63 - __builtin_clzll(interval.end - begin);
-          unsigned width = std::min(alignment, remaining);
-          interfaces.insert({interfaceID, begin >> width, width});
-          begin += UINT64_C(1) << width;
-        }
-      }
-    }
-  }
-
-  std::optional<bool> contains(const obelisk_rt_class_descriptor_v1 *actual,
-                               uint64_t target,
-                               const ValidatedClasses &classes) const {
-    auto source = intervals.find(actual);
-    if (source == intervals.end())
-      return std::nullopt;
-    auto declared = classes.find(target);
-    if (declared != classes.end()) {
-      Interval base = intervals.at(declared->second);
-      if (base.begin <= source->second.begin && source->second.begin < base.end)
-        return true;
-    }
-    for (unsigned width = 0; width != 64; ++width)
-      if (interfaces.count({target, source->second.begin >> width, width}))
-        return true;
-    return false;
-  }
-
-private:
-  struct Interval {
-    uint64_t begin = 0;
-    uint64_t end = 0;
-  };
-  struct InterfacePrefix {
-    uint64_t interfaceID;
-    uint64_t prefix;
-    unsigned width;
-    bool operator==(const InterfacePrefix &other) const {
-      return interfaceID == other.interfaceID && prefix == other.prefix &&
-             width == other.width;
-    }
-  };
-  struct PrefixHash {
-    size_t operator()(const InterfacePrefix &key) const {
-      size_t hash = std::hash<uint64_t>{}(key.interfaceID);
-      hash ^= std::hash<uint64_t>{}(key.prefix) + UINT64_C(0x9e3779b97f4a7c15) +
-              (hash << 6) + (hash >> 2);
-      return hash ^ key.width;
-    }
-  };
-  std::unordered_map<const obelisk_rt_class_descriptor_v1 *, Interval>
-      intervals;
-  std::unordered_set<InterfacePrefix, PrefixHash> interfaces;
-};
-
 } // namespace
 
 // The runtime ABI makes registered descriptors and their reachable layouts
@@ -922,8 +1026,7 @@ private:
 struct ManagedClassValidationCache {
   ValidatedClasses classes;
   ClassLayoutValidation layouts;
-  size_t indexedClasses = 0;
-  std::unique_ptr<ClassHierarchyIndex> hierarchy;
+  ClassMethodValidation methods;
 };
 
 struct obelisk_rt_gc_lane_v1 {
@@ -2504,12 +2607,11 @@ obelisk_rt_status validateClassDescriptor(
     const obelisk_rt_class_descriptor_v1 *descriptor,
     const ValidatedClasses *validated,
     std::vector<const obelisk_rt_class_descriptor_v1 *> *pending,
-    ClassLayoutValidation *sharedLayouts) {
+    ClassLayoutValidation *sharedLayouts,
+    ClassMethodValidation *sharedMethods) {
   constexpr uint32_t validFlags =
       OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE |
       OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER;
-  constexpr uint32_t validMethodFlags =
-      OBELISK_RT_METHOD_TASK | OBELISK_RT_METHOD_PURE;
   if (!descriptor)
     return OBELISK_RT_INVALID_DESIGN;
 
@@ -2542,9 +2644,15 @@ obelisk_rt_status validateClassDescriptor(
   ClassLayoutValidation localLayouts;
   ClassLayoutValidation &layouts =
       sharedLayouts ? *sharedLayouts : localLayouts;
-  const TraceHandleIndex *derivedHandles = nullptr;
-  const obelisk_rt_class_descriptor_v1 *derived = nullptr;
-  for (const auto *current = descriptor; current; current = current->base) {
+  ClassMethodValidation localMethods;
+  ClassMethodValidation &methods =
+      sharedMethods ? *sharedMethods : localMethods;
+  if (trustedBase && !methods.lookup(trustedBase))
+    return OBELISK_RT_INVALID_DESIGN;
+  for (auto iterator = unvalidated.rbegin(); iterator != unvalidated.rend();
+       ++iterator) {
+    const auto *current = *iterator;
+    const auto *base = current->base;
     if (current->version != OBELISK_RT_VERSION || current->class_id == 0 ||
         current->instance_size < sizeof(current) ||
         !validPowerOfTwo(current->instance_alignment) ||
@@ -2553,92 +2661,45 @@ obelisk_rt_status validateClassDescriptor(
         (current->interface_count == 0) != (current->interfaces == nullptr) ||
         (current->method_count == 0) != (current->methods == nullptr) ||
         (current->debug_name_size == 0) != (current->debug_name == nullptr) ||
-        (derived &&
-         ((current->flags & OBELISK_RT_CLASS_FINAL) != 0 ||
-          derived->instance_size < current->instance_size ||
-          derived->instance_alignment < current->instance_alignment ||
-          derived->method_count < current->method_count)))
+        (base && ((base->flags & OBELISK_RT_CLASS_FINAL) != 0 ||
+                  current->instance_size < base->instance_size ||
+                  current->instance_alignment < base->instance_alignment)))
       return OBELISK_RT_INVALID_DESIGN;
     const TraceHandleIndex *currentHandles = layouts.get(current->layout);
     if (!currentHandles ||
         (!currentHandles->empty() &&
-         currentHandles->at(0).offset < sizeof(void *)) ||
+         currentHandles->first().offset < sizeof(void *)) ||
         (current->layout && current->layout->size != current->instance_size))
       return OBELISK_RT_INVALID_DESIGN;
-    if (derived) {
-      if (!containsTraceHandles(*derivedHandles, *currentHandles))
+    if (base) {
+      const TraceHandleIndex *baseHandles = layouts.get(base->layout);
+      if (!baseHandles)
         return OBELISK_RT_INVALID_DESIGN;
-      if (derived->methods != current->methods)
-        for (uint64_t index = 0; index != current->method_count; ++index) {
-          const auto &baseMethod = current->methods[index];
-          const auto &overrideMethod = derived->methods[index];
-          if (baseMethod.signature_id != 0 &&
-              (overrideMethod.signature_id != baseMethod.signature_id ||
-               ((overrideMethod.flags ^ baseMethod.flags) &
-                OBELISK_RT_METHOD_TASK) != 0))
-            return OBELISK_RT_INVALID_DESIGN;
-        }
-    }
-    if (current == trustedBase)
-      break;
-    for (uint64_t index = 0; index != current->interface_count; ++index) {
-      const obelisk_rt_interface_descriptor_v1 &interface =
-          current->interfaces[index];
-      if (interface.interface_id == 0 ||
-          (interface.method_count == 0) !=
-              (interface.method_slots == nullptr)) {
-        return OBELISK_RT_INVALID_DESIGN;
-      }
-      if (index != 0 &&
-          current->interfaces[index - 1].interface_id >= interface.interface_id)
-        return OBELISK_RT_INVALID_DESIGN;
-      for (uint64_t ordinal = 0; ordinal != interface.method_count; ++ordinal) {
-        uint32_t slot = interface.method_slots[ordinal];
-        if (slot == UINT32_MAX) {
-          if ((current->flags & OBELISK_RT_CLASS_ABSTRACT) == 0)
-            return OBELISK_RT_INVALID_DESIGN;
-        } else if (slot >= current->method_count) {
+      if (current->layout != base->layout) {
+        bool embedsBase = false;
+        if (current->layout)
+          for (uint64_t index = 0; index != current->layout->entry_count;
+               ++index) {
+            const auto &entry = current->layout->entries[index];
+            bool inherited = entry.kind == OBELISK_RT_TRACE_EMBEDDED &&
+                             entry.offset == 0 && entry.count == 1 &&
+                             entry.child_layout == base->layout;
+            if (!inherited && entry.offset < base->instance_size)
+              return OBELISK_RT_INVALID_DESIGN;
+            embedsBase |= inherited;
+          }
+        if (!baseHandles->empty() && !embedsBase)
           return OBELISK_RT_INVALID_DESIGN;
-        } else if ((current->flags & OBELISK_RT_CLASS_ABSTRACT) == 0 &&
-                   (current->methods[slot].flags & OBELISK_RT_METHOD_PURE) !=
-                       0) {
-          return OBELISK_RT_INVALID_DESIGN;
-        }
       }
     }
-    for (uint64_t index = 0; index != current->method_count; ++index) {
-      const obelisk_rt_method_descriptor_v1 &method = current->methods[index];
-      // A zeroed descriptor is an unreachable sparse-vtable hole left after
-      // closed-world virtual-family DCE. Every other descriptor remains
-      // subject to the full ABI validation below.
-      if (method.signature_id == 0) {
-        if (method.flags != 0 || method.bytecode_function != 0 ||
-            method.native_entry != nullptr || method.environment != nullptr)
-          return OBELISK_RT_INVALID_DESIGN;
-        continue;
-      }
-      if ((method.flags & ~validMethodFlags) != 0 ||
-          ((current->flags &
-            (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) == 0 &&
-           (method.flags & OBELISK_RT_METHOD_PURE) != 0) ||
-          (!method.native_entry &&
-           method.bytecode_function == OBELISK_RT_METHOD_NO_BYTECODE &&
-           (method.flags & OBELISK_RT_METHOD_PURE) == 0))
-        return OBELISK_RT_INVALID_DESIGN;
-    }
-    if (!validateRandomLayout(current, *currentHandles))
+    if (!methods.get(current) ||
+        !validateRandomLayout(current, *currentHandles))
       return OBELISK_RT_INVALID_DESIGN;
-    if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0) {
-      // The sorted, unique slots make this one direct check instead of two
-      // complete recursive layout searches.
-      if (currentHandles->empty() ||
-          currentHandles->at(0).offset !=
-              sizeof(obelisk_rt_managed_word_v1) ||
-          currentHandles->at(0).kind != OBELISK_RT_TRACE_WEAK)
-        return OBELISK_RT_INVALID_DESIGN;
-    }
-    derivedHandles = currentHandles;
-    derived = current;
+    if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0 &&
+        (currentHandles->empty() ||
+         currentHandles->first().offset != sizeof(obelisk_rt_managed_word_v1) ||
+         currentHandles->first().kind != OBELISK_RT_TRACE_WEAK))
+      return OBELISK_RT_INVALID_DESIGN;
   }
   if (pending)
     *pending = std::move(unvalidated);
@@ -2931,19 +2992,24 @@ obelisk_rt_v1_class_register(obelisk_rt_context *context,
       cache = std::make_shared<ManagedClassValidationCache>();
     struct LayoutTransaction {
       ClassLayoutValidation &layouts;
+      ClassMethodValidation &methods;
       bool committed = false;
       ~LayoutTransaction() {
-        if (!committed)
+        if (!committed) {
           layouts.rollback();
+          methods.rollback();
+        }
       }
       void commit() {
         layouts.commit();
+        methods.commit();
         committed = true;
       }
-    } transaction{cache->layouts};
+    } transaction{cache->layouts, cache->methods};
     std::vector<const obelisk_rt_class_descriptor_v1 *> pending;
-    obelisk_rt_status status = validateClassDescriptor(
-        descriptor, &cache->classes, &pending, &cache->layouts);
+    obelisk_rt_status status =
+        validateClassDescriptor(descriptor, &cache->classes, &pending,
+                                &cache->layouts, &cache->methods);
     if (status != OBELISK_RT_OK)
       return status == OBELISK_RT_INVALID_DESIGN ? OBELISK_RT_INVALID_ARGUMENT
                                                  : status;
@@ -3333,7 +3399,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_element_type_register(
   obelisk_rt_status status = obelisk_rt_v1_element_type_validate(descriptor);
   if (status != OBELISK_RT_OK)
     return status == OBELISK_RT_INVALID_DESIGN ? OBELISK_RT_INVALID_ARGUMENT
-                                              : status;
+                                               : status;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto [found, inserted] = context->managedElementTypes.try_emplace(
@@ -4061,31 +4127,39 @@ obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
     OBELISK_RT_TRY {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
       auto cache = context->managedClassValidation;
-      if (cache) {
-        if (!cache->hierarchy ||
-            cache->indexedClasses != cache->classes.size()) {
-          auto index = std::make_unique<ClassHierarchyIndex>(cache->classes);
-          cache->hierarchy = std::move(index);
-          cache->indexedClasses = cache->classes.size();
+      if (cache)
+        if (const auto *inventory = cache->methods.lookup(descriptor)) {
+          if (target->flags & OBELISK_RT_CLASS_INTERFACE)
+            return inventory->interfaces.find(target->class_id) != nullptr;
+          return inventory->ancestors.find(target->class_id) != nullptr;
         }
-        if (auto match = cache->hierarchy->contains(
-                descriptor, target->class_id, cache->classes))
-          return *match;
-      }
     }
     OBELISK_RT_CATCH_ALL {
       // The public predicate has no allocation-error result. Unregistered
       // descriptors and an unavailable index use the validated linear walk.
     }
   }
-  for (const obelisk_rt_class_descriptor_v1 *current = descriptor; current;
-       current = current->base) {
-    if (current == target || current->class_id == target->class_id)
-      return 1;
-    for (uint64_t index = 0; index != current->interface_count; ++index)
-      if (current->interfaces[index].interface_id == target->class_id)
+  OBELISK_RT_TRY {
+    std::vector<const obelisk_rt_interface_descriptor_v1 *> pending;
+    std::unordered_set<uint64_t> visited;
+    for (const auto *current = descriptor; current; current = current->base) {
+      if (current == target || current->class_id == target->class_id)
         return 1;
+      for (uint64_t index = 0; index != current->interface_count; ++index)
+        pending.push_back(&current->interfaces[index]);
+    }
+    while (!pending.empty()) {
+      const auto *interface = pending.back();
+      pending.pop_back();
+      if (!visited.insert(interface->interface_id).second)
+        continue;
+      if (interface->interface_id == target->class_id)
+        return 1;
+      for (uint64_t index = 0; index != interface->base_count; ++index)
+        pending.push_back(interface->bases[index]);
+    }
   }
+  OBELISK_RT_CATCH_ALL {}
   return 0;
 }
 
@@ -4189,14 +4263,39 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
   if (!descriptor || !outMethod)
     return OBELISK_RT_INVALID_HANDLE;
   const obelisk_rt_method_descriptor_v1 *method = nullptr;
-  if (slot == UINT32_MAX) {
-    for (uint64_t index = 0; index != descriptor->method_count; ++index)
-      if (descriptor->methods[index].signature_id == signatureID) {
-        method = &descriptor->methods[index];
-        break;
+  if (auto *context = obelisk_rt_managed_object_context(receiver)) {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    auto cache = context->managedClassValidation;
+    if (cache)
+      if (const auto *inventory = cache->methods.lookup(descriptor)) {
+        const auto *entry = slot == UINT32_MAX
+                                ? inventory->signatures.find(signatureID)
+                                : inventory->slots.find(slot);
+        if (entry)
+          method = *entry;
+        // The complete cached inventory also proves absence.
+        if (!method)
+          return OBELISK_RT_INVALID_HANDLE;
       }
-  } else if (slot < descriptor->method_count) {
-    method = &descriptor->methods[slot];
+  }
+  if (!method) {
+    // Standalone descriptors have no context index. Each direct declaration
+    // is visited once; a derived entry shadows an inherited slot.
+    for (const auto *current = descriptor; current; current = current->base) {
+      for (uint64_t index = 0; index != current->method_count; ++index) {
+        const auto &candidate = current->methods[index];
+        if (slot == UINT32_MAX) {
+          if (candidate.signature_id == signatureID &&
+              (!method || candidate.slot < method->slot))
+            method = &candidate;
+        } else if (candidate.slot == slot) {
+          method = &candidate;
+          break;
+        }
+      }
+      if (method && slot != UINT32_MAX)
+        break;
+    }
   }
   if (!method)
     return OBELISK_RT_INVALID_HANDLE;
@@ -4213,34 +4312,44 @@ extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
   const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
   if (!descriptor || !outMethod || interfaceID == 0)
     return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_interface_descriptor_v1 *interface = nullptr;
-  for (const obelisk_rt_class_descriptor_v1 *current = descriptor; current;
-       current = current->base) {
-    uint64_t begin = 0, end = current->interface_count;
-    while (begin != end) {
-      uint64_t middle = begin + (end - begin) / 2;
-      uint64_t candidate = current->interfaces[middle].interface_id;
-      if (candidate < interfaceID)
-        begin = middle + 1;
-      else
-        end = middle;
+  return guarded(obelisk_rt_managed_object_context(receiver), [&] {
+    const obelisk_rt_interface_descriptor_v1 *interface = nullptr;
+    if (auto *context = obelisk_rt_managed_object_context(receiver)) {
+      std::lock_guard<std::recursive_mutex> lock(context->mutex);
+      if (auto cache = context->managedClassValidation)
+        if (const auto *inventory = cache->methods.lookup(descriptor)) {
+          if (const auto *entry = inventory->interfaces.find(interfaceID))
+            interface = *entry;
+          else
+            return OBELISK_RT_INVALID_HANDLE;
+        }
     }
-    if (begin != current->interface_count &&
-        current->interfaces[begin].interface_id == interfaceID) {
-      interface = &current->interfaces[begin];
-      break;
+    if (!interface) {
+      std::vector<const obelisk_rt_interface_descriptor_v1 *> pending;
+      std::unordered_set<uint64_t> visited;
+      for (const auto *current = descriptor; current; current = current->base)
+        for (uint64_t index = 0; index != current->interface_count; ++index)
+          pending.push_back(&current->interfaces[index]);
+      while (!pending.empty()) {
+        const auto *candidate = pending.back();
+        pending.pop_back();
+        if (!visited.insert(candidate->interface_id).second)
+          continue;
+        if (candidate->interface_id == interfaceID) {
+          interface = candidate;
+          break;
+        }
+        for (uint64_t index = 0; index != candidate->base_count; ++index)
+          pending.push_back(candidate->bases[index]);
+      }
     }
-  }
-  if (!interface || interfaceOrdinal >= interface->method_count)
-    return OBELISK_RT_INVALID_HANDLE;
-  uint32_t slot = interface->method_slots[interfaceOrdinal];
-  if (slot == UINT32_MAX || slot >= descriptor->method_count)
-    return OBELISK_RT_INVALID_HANDLE;
-  const obelisk_rt_method_descriptor_v1 *method = &descriptor->methods[slot];
-  if (method->signature_id != signatureID)
-    return OBELISK_RT_LAYOUT_MISMATCH;
-  *outMethod = method;
-  return OBELISK_RT_OK;
+    if (!interface || interfaceOrdinal >= interface->method_count)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (interface->method_signatures[interfaceOrdinal] != signatureID)
+      return OBELISK_RT_LAYOUT_MISMATCH;
+    return obelisk_rt_v1_method_resolve(receiver, UINT32_MAX, signatureID,
+                                        outMethod);
+  });
 }
 
 static obelisk_rt_status validateMethodInvocation(

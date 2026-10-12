@@ -2,9 +2,12 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/ClassDispatchAnalysis.h"
+#include "obelisk/Analysis/DescriptorOrdering.h"
 #include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
+#include "obelisk/Runtime/DescriptorMap.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -56,7 +59,6 @@ struct ManagedRandomVariable {
 struct ManagedClassLayout {
   struct Interface {
     sim::SimClassDeclOp declaration;
-    SmallVector<uint32_t> methodSlots;
   };
 
   sim::SimClassDeclOp declaration;
@@ -137,42 +139,11 @@ prepareManagedClassInventory(ModuleOp module,
       fieldOffsets[declaration.getSymName()] = field.offset;
     }
 
-  // ManagedClassLayout inherits the complete trace and vtable inventories of
-  // its base. The shared layout analysis is deterministic but does not promise
-  // declaration order, so establish the dependency order explicitly instead
-  // of default-constructing an empty base entry when a derived class appears
-  // first (as happens in the UVM factory hierarchy).
+  // The shared layout analysis visits bases before derived classes.
   using SharedClass = analysis::ManagedClassLayoutAnalysis::Class;
-  llvm::StringMap<SharedClass *> sharedByName;
-  for (SharedClass &shared : analyzed->classes)
-    sharedByName[shared.declaration.getSymName()] = &shared;
   SmallVector<SharedClass *> orderedClasses;
-  llvm::SmallPtrSet<Operation *, 32> ordered;
-  llvm::SmallPtrSet<Operation *, 32> ordering;
-  std::function<LogicalResult(SharedClass &)> orderClass =
-      [&](SharedClass &shared) -> LogicalResult {
-    Operation *operation = shared.declaration.getOperation();
-    if (ordered.contains(operation))
-      return success();
-    if (!ordering.insert(operation).second)
-      return shared.declaration.emitError(
-          "managed class inheritance contains a cycle");
-    if (auto base = shared.declaration.getBase()) {
-      auto found = sharedByName.find(*base);
-      if (found == sharedByName.end())
-        return shared.declaration.emitError(
-            "managed base layout analysis is missing");
-      if (failed(orderClass(*found->second)))
-        return failure();
-    }
-    ordering.erase(operation);
-    ordered.insert(operation);
-    orderedClasses.push_back(&shared);
-    return success();
-  };
   for (SharedClass &shared : analyzed->classes)
-    if (failed(orderClass(shared)))
-      return failure();
+    orderedClasses.push_back(&shared);
 
   llvm::StringMap<sim::SimClassDeclOp> hierarchyRoots;
   for (SharedClass *sharedPtr : orderedClasses) {
@@ -192,9 +163,6 @@ prepareManagedClassInventory(ModuleOp module,
       auto base = layouts.find(*baseName);
       if (base == layouts.end())
         return declaration.emitError("managed base layout is missing");
-      const ManagedClassLayout &baseLayout = base->second;
-      layout.tracedFields = baseLayout.tracedFields;
-      layout.methods = baseLayout.methods;
     }
     layout.size = shared.size;
     layout.alignment = shared.alignment;
@@ -297,12 +265,13 @@ prepareManagedClassInventory(ModuleOp module,
       if (declaration.getIsInterface())
         continue;
       uint64_t slot = *method.getSlot();
-      if (slot >= std::numeric_limits<size_t>::max())
-        return method.emitError("virtual method slot exceeds host limits");
-      if (layout.methods.size() <= slot)
-        layout.methods.resize(static_cast<size_t>(slot) + 1);
-      layout.methods[slot] = method;
+      if (slot >= UINT32_MAX)
+        return method.emitError(
+            "class method uses the interface dispatch sentinel");
+      layout.methods.push_back(method);
     }
+    analysis::orderByUnsignedKey(layout.methods,
+                                 [](auto method) { return *method.getSlot(); });
     declaration->setAttr(
         "obelisk.native.instance_size",
         IntegerAttr::get(IntegerType::get(module.getContext(), 64),
@@ -314,102 +283,138 @@ prepareManagedClassInventory(ModuleOp module,
     layouts[declaration.getSymName()] = std::move(layout);
   }
 
-  // Flatten each class's complete interface closure and map every stable
-  // interface-method ordinal to the effective class vtable slot. Unresolved
-  // entries are retained only for abstract descriptors and may be completed
-  // by a concrete derived class.
-  for (auto &entry : layouts) {
-    ManagedClassLayout &layout = entry.second;
+  // Emit signatures once per interface. A class records only interfaces it
+  // introduces; inheritance resolves those bindings against its dynamic table.
+  llvm::StringMap<SmallVector<uint64_t>> interfaceSignatures;
+  for (sim::SimClassDeclOp declaration : classes) {
+    if (!declaration.getIsInterface())
+      continue;
+    SmallVector<sim::SimClassMethodDeclOp> localMethods;
+    for (auto method : methodsByOwner[declaration.getSymName()])
+      if (method.getInterfaceOrdinalAttr())
+        localMethods.push_back(method);
+    auto &signatures = interfaceSignatures[declaration.getSymName()];
+    signatures.resize(localMethods.size());
+    for (auto method : localMethods) {
+      uint64_t ordinal = *method.getInterfaceOrdinal();
+      if (ordinal >= signatures.size() || signatures[ordinal] ||
+          !method.getSignatureId() || !*method.getSignatureId())
+        return method.emitError("interface method ordinals are not dense");
+      signatures[ordinal] = *method.getSignatureId();
+    }
+  }
+  llvm::StringMap<SmallVector<sim::SimClassDeclOp>> interfaceBases;
+  for (sim::SimClassDeclOp declaration : classes) {
     SmallVector<sim::SimClassDeclOp> interfaces;
-    llvm::SmallPtrSet<Operation *, 8> visited;
-    std::function<LogicalResult(sim::SimClassDeclOp)> addInterface =
-        [&](sim::SimClassDeclOp declaration) -> LogicalResult {
-      if (!visited.insert(declaration).second)
-        return success();
-      if (!declaration.getIsInterface())
-        return declaration.emitError("interface closure contains a class");
-      if (ArrayAttr bases = declaration.getInterfacesAttr())
-        for (Attribute attribute : bases) {
-          auto reference = cast<FlatSymbolRefAttr>(attribute);
-          auto found = classesByName.find(reference.getValue());
-          if (found == classesByName.end() ||
-              failed(addInterface(found->second)))
-            return failure();
-        }
-      interfaces.push_back(declaration);
-      return success();
-    };
-    for (sim::SimClassDeclOp current = layout.declaration; current;) {
-      if (ArrayAttr declared = current.getInterfacesAttr())
-        for (Attribute attribute : declared) {
-          auto reference = cast<FlatSymbolRefAttr>(attribute);
-          auto found = classesByName.find(reference.getValue());
-          if (found == classesByName.end() ||
-              failed(addInterface(found->second)))
-            return current.emitError("managed interface descriptor is missing");
-        }
-      if (!current.getBaseAttr())
-        break;
-      auto found = classesByName.find(*current.getBase());
-      if (found == classesByName.end())
-        return current.emitError("managed base descriptor is missing");
-      current = found->second;
-    }
-    llvm::sort(interfaces,
-               [](sim::SimClassDeclOp left, sim::SimClassDeclOp right) {
-                 return std::tuple(left.getId(), left.getSymName()) <
-                        std::tuple(right.getId(), right.getSymName());
-               });
-    DenseMap<uint64_t, std::pair<uint64_t, sim::SimClassMethodDeclOp>>
-        effectiveMethodsBySignature;
-    for (auto [slot, method] : llvm::enumerate(layout.methods))
-      if (method)
-        if (auto signature = method.getSignatureId())
-          effectiveMethodsBySignature.try_emplace(
-              *signature,
-              std::pair<uint64_t, sim::SimClassMethodDeclOp>(slot, method));
-    for (sim::SimClassDeclOp interface : interfaces) {
-      ManagedClassLayout::Interface dispatch;
-      dispatch.declaration = interface;
-      SmallVector<sim::SimClassMethodDeclOp> interfaceMethods;
-      for (sim::SimClassMethodDeclOp method :
-           methodsByOwner[interface.getSymName()])
-        if (method.getInterfaceOrdinalAttr())
-          interfaceMethods.push_back(method);
-      llvm::sort(interfaceMethods, [](sim::SimClassMethodDeclOp left,
-                                      sim::SimClassMethodDeclOp right) {
-        return *left.getInterfaceOrdinal() < *right.getInterfaceOrdinal();
-      });
-      dispatch.methodSlots.assign(interfaceMethods.size(), UINT32_MAX);
-      for (sim::SimClassMethodDeclOp method : interfaceMethods) {
-        uint64_t ordinal = *method.getInterfaceOrdinal();
-        if (ordinal >= dispatch.methodSlots.size())
-          return method.emitError("interface method ordinals are not dense");
-        auto effective =
-            method.getSignatureId()
-                ? effectiveMethodsBySignature.find(*method.getSignatureId())
-                : effectiveMethodsBySignature.end();
-        if (effective == effectiveMethodsBySignature.end())
-          continue;
-        uint64_t slot = effective->second.first;
-        sim::SimClassMethodDeclOp implementation = effective->second.second;
-        // A pure declaration still occupies and shadows its effective class
-        // slot, but it does not implement the interface method.
-        if (!implementation.getIsPure() &&
-            implementation.getImplementationAttr()) {
-          if (slot > UINT32_MAX)
-            return implementation.emitError(
-                "interface vtable slot is too large");
-          dispatch.methodSlots[ordinal] = static_cast<uint32_t>(slot);
-        }
+    if (ArrayAttr declared = declaration.getInterfacesAttr())
+      for (Attribute attribute : declared) {
+        auto reference = cast<FlatSymbolRefAttr>(attribute);
+        auto found = classesByName.find(reference.getValue());
+        if (found == classesByName.end() || !found->second.getIsInterface())
+          return declaration.emitError(
+              "managed interface descriptor is missing");
+        interfaces.push_back(found->second);
       }
-      if (!layout.declaration.getIsAbstract() &&
-          llvm::is_contained(dispatch.methodSlots, UINT32_MAX))
-        return layout.declaration.emitError()
-               << "concrete class does not implement interface "
-               << interface.getSymName();
-      layout.interfaces.push_back(std::move(dispatch));
+    analysis::orderByUnsignedKey(
+        interfaces, [](auto interface) { return interface.getId(); });
+    if (declaration.getIsInterface())
+      interfaceBases[declaration.getSymName()] = interfaces;
+    auto &layout = layouts[declaration.getSymName()];
+    for (auto interface : interfaces)
+      layout.interfaces.push_back({interface});
+  }
+
+  // Validate concrete implementations without rescanning inherited contracts.
+  // Interface requirements share Patricia subtrees just like runtime indexes.
+  using Requirements =
+      obelisk::runtime::DescriptorMap<sim::SimClassMethodDeclOp>;
+  llvm::StringMap<Requirements> interfaceRequirements;
+  llvm::StringMap<uint8_t> interfaceState;
+  struct InterfaceFrame {
+    sim::SimClassDeclOp declaration;
+    size_t base = 0;
+    Requirements requirements;
+  };
+  for (auto root : classes) {
+    if (!root.getIsInterface() || interfaceState.lookup(root.getSymName()) == 2)
+      continue;
+    SmallVector<InterfaceFrame> pending{{root}};
+    interfaceState[root.getSymName()] = 1;
+    while (!pending.empty()) {
+      InterfaceFrame &frame = pending.back();
+      auto &bases = interfaceBases[frame.declaration.getSymName()];
+      if (frame.base != bases.size()) {
+        auto base = bases[frame.base];
+        uint8_t state = interfaceState.lookup(base.getSymName());
+        if (state == 1)
+          return base.emitError(
+              "managed interface inheritance contains a cycle");
+        if (state == 0) {
+          interfaceState[base.getSymName()] = 1;
+          pending.push_back({base});
+          continue;
+        }
+        frame.requirements =
+            frame.requirements.merge(interfaceRequirements[base.getSymName()]);
+        ++frame.base;
+        continue;
+      }
+      for (auto method : methodsByOwner[frame.declaration.getSymName()])
+        if (method.getInterfaceOrdinalAttr())
+          frame.requirements =
+              frame.requirements.set(*method.getSignatureId(), method);
+      interfaceRequirements[frame.declaration.getSymName()] =
+          std::move(frame.requirements);
+      interfaceState[frame.declaration.getSymName()] = 2;
+      pending.pop_back();
     }
+  }
+  analysis::ClassDispatchAnalysis dispatch(
+      classes.front()->getParentOfType<sim::SimDesignOp>());
+  struct ContractState {
+    Requirements requirements, signatures;
+  };
+  obelisk::runtime::DescriptorMatchCache matches;
+  llvm::StringMap<ContractState> contracts;
+  auto missingImplementation = [&](sim::SimClassDeclOp declaration,
+                                   uint64_t signature) {
+    auto implementation = dispatch.resolve(declaration, UINT32_MAX, signature);
+    return !implementation || implementation.getIsPure() ||
+           !implementation.getImplementationAttr();
+  };
+  for (SharedClass *shared : orderedClasses) {
+    auto declaration = shared->declaration;
+    if (declaration.getIsInterface())
+      continue;
+    ContractState state;
+    if (auto baseName = declaration.getBase())
+      state = contracts[*baseName];
+    for (auto method : layouts[declaration.getSymName()].methods) {
+      uint64_t signature = *method.getSignatureId();
+      state.signatures = state.signatures.set(
+          signature, dispatch.resolve(declaration, UINT32_MAX, signature));
+    }
+    for (auto interface : layouts[declaration.getSymName()].interfaces)
+      state.requirements = state.requirements.merge(
+          interfaceRequirements[interface.declaration.getSymName()]);
+    size_t implemented = state.requirements.countMatches(
+        state.signatures, matches, [](auto, auto implementation) {
+          return implementation && !implementation.getIsPure() &&
+                 implementation.getImplementationAttr();
+        });
+    if (!declaration.getIsAbstract() &&
+        implemented != state.requirements.size()) {
+      sim::SimClassMethodDeclOp missing;
+      state.requirements.forEach([&](auto requirement) {
+        if (!missing &&
+            missingImplementation(declaration, *requirement.getSignatureId()))
+          missing = requirement;
+      });
+      return declaration.emitError()
+             << "concrete class does not implement interface "
+             << missing.getOwner();
+    }
+    contracts[declaration.getSymName()] = std::move(state);
   }
 
   MLIRContext *context = module.getContext();
@@ -427,9 +432,9 @@ prepareManagedClassInventory(ModuleOp module,
   Type randomLayoutType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, pointer, i64, pointer, i64});
   Type methodType = LLVM::LLVMStructType::getLiteral(
-      context, {i64, i32, i32, pointer, pointer});
-  Type interfaceType =
-      LLVM::LLVMStructType::getLiteral(context, {i64, pointer, i64});
+      context, {i64, i32, i32, pointer, pointer, i64});
+  Type interfaceType = LLVM::LLVMStructType::getLiteral(
+      context, {i64, pointer, i64, pointer, i64});
   Type classType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
                 pointer, i64, pointer, i64, pointer});
@@ -460,6 +465,85 @@ prepareManagedClassInventory(ModuleOp module,
               static_cast<uint32_t>(index.getValue().getZExtValue());
       });
 
+  for (const auto &entry : interfaceSignatures) {
+    if (entry.second.empty())
+      continue;
+    Type arrayType = LLVM::LLVMArrayType::get(i64, entry.second.size());
+    makeConstantGlobal(
+        module, classes.front().getLoc(), arrayType,
+        entry.getKey().str() + ".__obelisk_interface_signatures",
+        LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+          Location location = classes.front().getLoc();
+          Value array = LLVM::ZeroOp::create(builder, location, arrayType);
+          for (auto [index, signature] : llvm::enumerate(entry.second))
+            array = LLVM::InsertValueOp::create(
+                builder, location, array,
+                llvmConstant(builder, location, i64, signature),
+                ArrayRef<int64_t>{static_cast<int64_t>(index)});
+          return array;
+        });
+  }
+
+  auto interfaceRecord = [&](OpBuilder &builder, Location location,
+                             sim::SimClassDeclOp declaration) {
+    Value record = LLVM::ZeroOp::create(builder, location, interfaceType);
+    record = insertValue(
+        builder, location, record,
+        llvmConstant(builder, location, i64, declaration.getId()), 0);
+    const auto &signatures = interfaceSignatures[declaration.getSymName()];
+    if (!signatures.empty())
+      record = insertValue(
+          builder, location, record,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    declaration.getSymName().str() +
+                                        ".__obelisk_interface_signatures"),
+          1);
+    record =
+        insertValue(builder, location, record,
+                    llvmConstant(builder, location, i64, signatures.size()), 2);
+    const auto &bases = interfaceBases[declaration.getSymName()];
+    if (!bases.empty())
+      record = insertValue(
+          builder, location, record,
+          LLVM::AddressOfOp::create(builder, location, pointer,
+                                    declaration.getSymName().str() +
+                                        ".__obelisk_interface_bases"),
+          3);
+    return insertValue(builder, location, record,
+                       llvmConstant(builder, location, i64, bases.size()), 4);
+  };
+  for (sim::SimClassDeclOp declaration : classes) {
+    if (!declaration.getIsInterface())
+      continue;
+    const auto &bases = interfaceBases[declaration.getSymName()];
+    if (!bases.empty()) {
+      Type arrayType = LLVM::LLVMArrayType::get(pointer, bases.size());
+      makeConstantGlobal(
+          module, declaration.getLoc(), arrayType,
+          declaration.getSymName().str() + ".__obelisk_interface_bases",
+          LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+            Location location = declaration.getLoc();
+            Value array = LLVM::ZeroOp::create(builder, location, arrayType);
+            for (auto [index, base] : llvm::enumerate(bases)) {
+              sim::SimClassDeclOp baseDeclaration = base;
+              array = LLVM::InsertValueOp::create(
+                  builder, location, array,
+                  LLVM::AddressOfOp::create(builder, location, pointer,
+                                            baseDeclaration.getSymName().str() +
+                                                ".__obelisk_interface"),
+                  ArrayRef<int64_t>{static_cast<int64_t>(index)});
+            }
+            return array;
+          });
+    }
+    makeConstantGlobal(module, declaration.getLoc(), interfaceType,
+                       declaration.getSymName().str() + ".__obelisk_interface",
+                       LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                         return interfaceRecord(builder, declaration.getLoc(),
+                                                declaration);
+                       });
+  }
+
   // Base descriptors must exist before derived initializers take their
   // addresses. The validated inventory order above already provides that
   // topological order, so materialize each class exactly once.
@@ -481,14 +565,36 @@ prepareManagedClassInventory(ModuleOp module,
               FlatSymbolRefAttr::get(context, declaration.getSymName()));
           Location location = declaration.getLoc();
 
-          Type entriesType = LLVM::LLVMArrayType::get(
-              traceEntryType, layout.tracedFields.size());
-          if (!layout.tracedFields.empty())
+          size_t inheritedEntries = declaration.getBase().has_value() ? 1 : 0;
+          size_t traceEntryCount =
+              layout.tracedFields.size() + inheritedEntries;
+          Type entriesType =
+              LLVM::LLVMArrayType::get(traceEntryType, traceEntryCount);
+          if (traceEntryCount)
             makeConstantGlobal(
                 module, location, entriesType, entriesName,
                 LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
                   Value array =
                       LLVM::ZeroOp::create(builder, location, entriesType);
+                  if (auto base = declaration.getBase()) {
+                    Value entry =
+                        LLVM::ZeroOp::create(builder, location, traceEntryType);
+                    entry =
+                        insertValue(builder, location, entry,
+                                    llvmConstant(builder, location, i64, 1), 2);
+                    entry = insertValue(builder, location, entry,
+                                        llvmConstant(builder, location, i32,
+                                                     OBELISK_RT_TRACE_EMBEDDED),
+                                        3);
+                    entry = insertValue(
+                        builder, location, entry,
+                        LLVM::AddressOfOp::create(
+                            builder, location, pointer,
+                            base->str() + ".__obelisk_trace_layout"),
+                        5);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, entry, ArrayRef<int64_t>{0});
+                  }
                   for (auto [index, field] :
                        llvm::enumerate(layout.tracedFields)) {
                     Value entry =
@@ -511,7 +617,8 @@ prepareManagedClassInventory(ModuleOp module,
                         4);
                     array = LLVM::InsertValueOp::create(
                         builder, location, array, entry,
-                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                        ArrayRef<int64_t>{
+                            static_cast<int64_t>(index + inheritedEntries)});
                   }
                   return array;
                 });
@@ -530,16 +637,15 @@ prepareManagedClassInventory(ModuleOp module,
                 trace = insertValue(
                     builder, location, trace,
                     llvmConstant(builder, location, i64, layout.alignment), 3);
-                if (!layout.tracedFields.empty())
+                if (traceEntryCount)
                   trace =
                       insertValue(builder, location, trace,
                                   LLVM::AddressOfOp::create(
                                       builder, location, pointer, entriesName),
                                   4);
-                trace = insertValue(builder, location, trace,
-                                    llvmConstant(builder, location, i64,
-                                                 layout.tracedFields.size()),
-                                    5);
+                trace = insertValue(
+                    builder, location, trace,
+                    llvmConstant(builder, location, i64, traceEntryCount), 5);
                 return trace;
               });
 
@@ -665,13 +771,6 @@ prepareManagedClassInventory(ModuleOp module,
                   for (auto indexedMethod : llvm::enumerate(layout.methods)) {
                     auto index = indexedMethod.index();
                     auto method = indexedMethod.value();
-                    // Early virtual-family DCE can leave a slot unused in one
-                    // branch while a sibling still needs the stable family
-                    // slot. Keep the zero descriptor as an explicit unreachable
-                    // hole; runtime validation and dispatch reject attempts to
-                    // use it.
-                    if (!method)
-                      continue;
                     Value entry =
                         LLVM::ZeroOp::create(builder, location, methodType);
                     entry = insertValue(builder, location, entry,
@@ -707,6 +806,10 @@ prepareManagedClassInventory(ModuleOp module,
                               builder, location, pointer,
                               managedMethodThunkName(method.getSymName())),
                           3);
+                    entry = insertValue(
+                        builder, location, entry,
+                        llvmConstant(builder, location, i64, *method.getSlot()),
+                        5);
                     array = LLVM::InsertValueOp::create(
                         builder, location, array, entry,
                         ArrayRef<int64_t>{static_cast<int64_t>(index)});
@@ -714,28 +817,6 @@ prepareManagedClassInventory(ModuleOp module,
                   return array;
                 });
 
-          SmallVector<std::string> interfaceSlotNames;
-          for (auto [index, interface] : llvm::enumerate(layout.interfaces)) {
-            std::string slotsName = prefix + ".__obelisk_interface_" +
-                                    llvm::Twine(index).str() + "_slots";
-            interfaceSlotNames.push_back(slotsName);
-            Type slotsType =
-                LLVM::LLVMArrayType::get(i32, interface.methodSlots.size());
-            if (!interface.methodSlots.empty())
-              makeConstantGlobal(
-                  module, location, slotsType, slotsName,
-                  LLVM::Linkage::Internal, 4, [&](OpBuilder &builder) {
-                    Value array =
-                        LLVM::ZeroOp::create(builder, location, slotsType);
-                    for (auto [ordinal, slot] :
-                         llvm::enumerate(interface.methodSlots))
-                      array = LLVM::InsertValueOp::create(
-                          builder, location, array,
-                          llvmConstant(builder, location, i32, slot),
-                          ArrayRef<int64_t>{static_cast<int64_t>(ordinal)});
-                    return array;
-                  });
-          }
           Type interfacesType =
               LLVM::LLVMArrayType::get(interfaceType, layout.interfaces.size());
           if (!layout.interfaces.empty())
@@ -746,24 +827,8 @@ prepareManagedClassInventory(ModuleOp module,
                       LLVM::ZeroOp::create(builder, location, interfacesType);
                   for (auto [index, interface] :
                        llvm::enumerate(layout.interfaces)) {
-                    Value record =
-                        LLVM::ZeroOp::create(builder, location, interfaceType);
-                    record =
-                        insertValue(builder, location, record,
-                                    llvmConstant(builder, location, i64,
-                                                 interface.declaration.getId()),
-                                    0);
-                    if (!interface.methodSlots.empty())
-                      record = insertValue(
-                          builder, location, record,
-                          LLVM::AddressOfOp::create(builder, location, pointer,
-                                                    interfaceSlotNames[index]),
-                          1);
-                    record =
-                        insertValue(builder, location, record,
-                                    llvmConstant(builder, location, i64,
-                                                 interface.methodSlots.size()),
-                                    2);
+                    Value record = interfaceRecord(builder, location,
+                                                   interface.declaration);
                     array = LLVM::InsertValueOp::create(
                         builder, location, array, record,
                         ArrayRef<int64_t>{static_cast<int64_t>(index)});
