@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -503,9 +504,25 @@ addResolvedFunctionalConfiguration(obelisk::coverage::Database &database) {
   return configuration;
 }
 
-obelisk_rt_context *
-createContextForSchema(const obelisk::coverage::Database &schema,
-                       bool preResolve = false) {
+class CoverageRuntimeDesignTest : public testing::Test {
+protected:
+  obelisk_rt_context *
+  createContextForSchema(const obelisk::coverage::Database &schema,
+                         bool preResolve = false);
+
+private:
+  struct Execution {
+    obelisk_rt_execution_descriptor_v1 descriptor{};
+    obelisk_rt_execution_extension_v1 extension{};
+    std::vector<uint8_t> image;
+  };
+  // Contexts borrow execution metadata, so it must survive helper return and
+  // every scheduler or GC operation until the test destroys those contexts.
+  std::vector<std::unique_ptr<Execution>> executions;
+};
+
+obelisk_rt_context *CoverageRuntimeDesignTest::createContextForSchema(
+    const obelisk::coverage::Database &schema, bool preResolve) {
   obelisk::coverage::Database runtimeSchema = schema;
   if (preResolve && runtimeSchema.functionalConfigurations.empty())
     addResolvedFunctionalConfiguration(runtimeSchema);
@@ -521,18 +538,16 @@ createContextForSchema(const obelisk::coverage::Database &schema,
                   << " detail=" << diagnostic.detail;
     return nullptr;
   }
-  struct Execution {
-    obelisk_rt_execution_descriptor_v1 descriptor{};
-    obelisk_rt_execution_extension_v1 extension{};
-  } execution;
+  Execution &execution = *executions.emplace_back(std::make_unique<Execution>());
+  execution.image = std::move(image);
   execution.descriptor.version = OBELISK_RT_VERSION;
   execution.descriptor.flags = OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
   execution.descriptor.reserved = sizeof(execution.descriptor);
   execution.descriptor.state_bit_count = 1;
   execution.extension.version = OBELISK_RT_EXECUTION_EXTENSION_VERSION;
   execution.extension.size = sizeof(execution.extension);
-  execution.extension.coverage_schema = image.data();
-  execution.extension.coverage_schema_size = image.size();
+  execution.extension.coverage_schema = execution.image.data();
+  execution.extension.coverage_schema_size = execution.image.size();
   obelisk_rt_context *result = nullptr;
   if (obelisk_rt_v1_context_create_for_design(&execution.descriptor, &result) !=
       OBELISK_RT_OK)
@@ -611,7 +626,7 @@ TEST_F(CoverageRuntimeTest, LineHitsAreAtomicAndSaturatingServiceIsQueryable) {
   EXPECT_EQ(covered, 0u);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      CrossNumPrintMissingReadsDefaultsAndPreservesExplicitOverride) {
   obelisk::coverage::Database schema = makeSharedAndSelectorSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);
@@ -658,7 +673,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      MutableOptionUpdatesPreserveOwnerLocalThresholds) {
   auto schema = makeSharedAndSelectorSchema();
   // Serialized ID order differs from declaration order and bin ownership.
@@ -730,7 +745,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      OptionReadsHonorDefaultsAndRejectInvalidScopes) {
   const auto schema = makeSharedAndSelectorSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);
@@ -792,7 +807,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, OptionNBAsKeepCapturedPathsAndStringsRooted) {
+TEST_F(CoverageRuntimeDesignTest, OptionNBAsKeepCapturedPathsAndStringsRooted) {
   const auto schema = makeSharedAndSelectorSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
@@ -910,7 +925,7 @@ TEST(CoverageRuntimeDesignTest, OptionNBAsKeepCapturedPathsAndStringsRooted) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, StringOptionReadsReturnIndependentGcSnapshots) {
+TEST_F(CoverageRuntimeDesignTest, StringOptionReadsReturnIndependentGcSnapshots) {
   const auto schema = makeSharedAndSelectorSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
@@ -1011,7 +1026,7 @@ TEST(CoverageRuntimeDesignTest, StringOptionReadsReturnIndependentGcSnapshots) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, Clause40ControlAndQueryHonorScopeSelection) {
+TEST_F(CoverageRuntimeDesignTest, Clause40ControlAndQueryHonorScopeSelection) {
   obelisk::coverage::Database schema = makeScopedCodeCoverageSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
@@ -1170,7 +1185,7 @@ TEST(CoverageRuntimeDesignTest, Clause40ControlAndQueryHonorScopeSelection) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      Clause40MetricDatabasesSaveFilterAndMergeTransactionally) {
   using namespace obelisk::coverage;
   Database schema = makeScopedCodeCoverageSchema();
@@ -1312,7 +1327,7 @@ TEST(CoverageRuntimeDesignTest,
   std::filesystem::remove(mismatchPath, ignored);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      Clause40QueriesAndScopedResetIncludeLoadedBaselines) {
   using namespace obelisk::coverage;
   Database schema = makeScopedCodeCoverageSchema();
@@ -1549,7 +1564,7 @@ TEST_F(CoverageRuntimeTest, CoverageCommandLineOptionsAreValidated) {
             OBELISK_RT_IO_ERROR);
 }
 
-TEST(CoverageRuntimeDesignTest, CoverageSaveFailureNamesTheRequestedOutput) {
+TEST_F(CoverageRuntimeDesignTest, CoverageSaveFailureNamesTheRequestedOutput) {
   obelisk::coverage::Database schema;
   schema.schemaFingerprint = obelisk::coverage::computeSchemaFingerprint(schema);
   obelisk_rt_context *context = createContextForSchema(schema);
@@ -1622,7 +1637,7 @@ TEST_F(CoverageRuntimeTest, LoadedSchemaMustMatchFinalizedCounterLayout) {
   std::filesystem::remove(path, ignored);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      FunctionalExclusionsChangeQueriesButRetainCounters) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -1697,7 +1712,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, SharedAndSelectorDagBindsAndSamplesOnce) {
+TEST_F(CoverageRuntimeDesignTest, SharedAndSelectorDagBindsAndSamplesOnce) {
   obelisk::coverage::Database schema = makeSharedAndSelectorSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);
   ASSERT_NE(context, nullptr);
@@ -1768,7 +1783,7 @@ TEST(CoverageDatabaseTest,
   EXPECT_FALSE(isSchemaOnly(schema));
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      CrossWithPersistsSatisfyingTuplesAndAppliesMatchesPolicies) {
   using namespace obelisk::coverage;
   auto exercise = [&](CrossMatchesPolicy policy, uint64_t count,
@@ -1841,7 +1856,7 @@ TEST(CoverageRuntimeDesignTest,
            /*everyPredicate=*/true, /*expectedSelected=*/true, "with-all");
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      CrossSetConsumesManagedQueueAndPersistsCanonicalTuple) {
   using namespace obelisk::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1);
@@ -1946,7 +1961,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
-TEST(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
+TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
   using namespace obelisk::coverage;
   // The predicate is true for four value tuples globally, but only twice in
   // each candidate bin tuple because the first target is split into [0:1]
@@ -1993,7 +2008,7 @@ TEST(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
   obelisk_rt_v1_context_destroy(local);
 }
 
-TEST(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
+TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   using namespace obelisk::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, /*count=*/0);
   schema.crossSelectorNodes.front().matchesExpression = 200;
@@ -2048,7 +2063,7 @@ TEST(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   obelisk_rt_v1_context_destroy(local);
 }
 
-TEST(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
+TEST_F(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalFormals.push_back(
@@ -2137,7 +2152,7 @@ TEST(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
+TEST_F(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalFormals.push_back(
@@ -2252,7 +2267,7 @@ TEST(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage) {
+TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalContainerTypes.push_back(
@@ -2358,7 +2373,7 @@ TEST(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) {
+TEST_F(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalAggregateTypes = {{800, 99, 24, 1, 192, 0}};
@@ -2497,7 +2512,7 @@ TEST(CoverageRuntimeDesignTest, AggregateFormalsTraceSnapshotsAndLiveStorage) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      ConflictingTypeProfileDoesNotPublishConfiguration) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -2552,7 +2567,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState) {
+TEST_F(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   FunctionalExpression comment;
@@ -2630,7 +2645,7 @@ TEST(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      TypeQueriesBeforeConstructionDoNotResolveConstructorExpressions) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -2720,7 +2735,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, DistributionUpdatesReusePayloadlessConfigs) {
+TEST_F(CoverageRuntimeDesignTest, DistributionUpdatesReusePayloadlessConfigs) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   obelisk_rt_context *context = createContextForSchema(schema);
@@ -2818,7 +2833,7 @@ TEST(CoverageRuntimeDesignTest, DistributionUpdatesReusePayloadlessConfigs) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences) {
+TEST_F(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences) {
   using namespace obelisk::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
@@ -2880,7 +2895,7 @@ TEST(CoverageRuntimeDesignTest, EmptyGroupsKeepIdentitiesAndValidateReferences) 
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      LoadedQueryIndexesRefreshWithoutReplacingLiveProfiles) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -2975,7 +2990,7 @@ TEST(CoverageRuntimeDesignTest,
   std::filesystem::remove(path, ignored);
 }
 
-TEST(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
+TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalItems.push_back({22, 10, "product",
@@ -3098,7 +3113,7 @@ TEST(CoverageDatabaseTest, AtomicWriteReplacesExistingImageAndCleansTemporary) {
   std::filesystem::remove(path, ignored);
 }
 
-TEST(CoverageRuntimeDesignTest, ParsesAndBindsEmbeddedSchema) {
+TEST_F(CoverageRuntimeDesignTest, ParsesAndBindsEmbeddedSchema) {
   obelisk::coverage::Database schema;
   schema.sourceFiles.push_back({1, "design.sv", {}});
   schema.scopes.push_back({2, 0, "top", 0, "top"});
@@ -3153,7 +3168,7 @@ TEST(CoverageRuntimeDesignTest, ParsesAndBindsEmbeddedSchema) {
   EXPECT_EQ(context, nullptr);
 }
 
-TEST(CoverageRuntimeDesignTest, RejectsResolvedStateInEmbeddedSchema) {
+TEST_F(CoverageRuntimeDesignTest, RejectsResolvedStateInEmbeddedSchema) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   addResolvedFunctionalConfiguration(schema);
@@ -3183,7 +3198,7 @@ TEST(CoverageRuntimeDesignTest, RejectsResolvedStateInEmbeddedSchema) {
   EXPECT_EQ(context, nullptr);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      PersistsDistinctFunctionalInstancesFromEmbeddedSchema) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -3285,7 +3300,7 @@ TEST(CoverageRuntimeDesignTest,
   std::filesystem::remove(path, ignored);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      TemplateOnlySchemaResolvesStableNamespacesAndRoundTrips) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -3335,7 +3350,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, KnownBoundConsecutiveTransitionArrayResolves) {
+TEST_F(CoverageRuntimeDesignTest, KnownBoundConsecutiveTransitionArrayResolves) {
   using namespace obelisk::coverage;
   Database schema;
   schema.scopes.push_back({1, 0, "top", 0, "top"});
@@ -3419,7 +3434,7 @@ TEST(CoverageRuntimeDesignTest, KnownBoundConsecutiveTransitionArrayResolves) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      WildcardTransitionArrayRejectsHugeExpansionBeforeAllocation) {
   using namespace obelisk::coverage;
   Database schema;
@@ -3493,7 +3508,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      FixedTransitionExclusionDerivationHasDeterministicWorkLimit) {
   using namespace obelisk::coverage;
   Database schema;
@@ -3605,7 +3620,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      SymbolicTransitionExclusionDerivationHasDeterministicWorkLimit) {
   using namespace obelisk::coverage;
   Database schema;
@@ -3736,7 +3751,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      CompilerShapedDeferredSingletonFourStateAndRangeRoundTrip) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -3844,7 +3859,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      LateDefaultAndAutomaticGroupsPreserveDeclarationOrder) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -3940,7 +3955,7 @@ TEST(CoverageRuntimeDesignTest,
   }
 }
 
-TEST(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
+TEST_F(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalBins.push_back({32, 20, "other", FunctionalBinKind::State,
@@ -3982,7 +3997,7 @@ TEST(CoverageRuntimeDesignTest, DefaultBinCatchesButNeverEntersDenominator) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      FourStateExactWildcardAndIffUseCanonicalLogicPlanes) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -4113,7 +4128,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      IgnoreIllegalOverlapEmptiesOrdinaryBinAndIllegalWins) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -4186,7 +4201,7 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, WideWildcardExclusionUnionUsesIterativeProof) {
+TEST_F(CoverageRuntimeDesignTest, WideWildcardExclusionUnionUsesIterativeProof) {
   using namespace obelisk::coverage;
   constexpr uint32_t bitWidth = 8192;
   constexpr uint32_t limbCount = bitWidth / 64;
@@ -4297,7 +4312,7 @@ TEST(CoverageRuntimeDesignTest, WideWildcardExclusionUnionUsesIterativeProof) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
+TEST_F(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   constexpr uint32_t inclusive =
@@ -4376,7 +4391,7 @@ TEST(CoverageRuntimeDesignTest, SignedWideAndRealIntervalsMatchDirectly) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      FunctionalConfigurationIgnoresUnrelatedMetricSchema) {
   using namespace obelisk::coverage;
   Database functionalOnly = makeFunctionalSchema();
@@ -4422,7 +4437,7 @@ TEST(CoverageRuntimeDesignTest,
             snapshotConfiguration(withLine, 1, "line"));
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      Clause40CodeMetricSaveOmitsResolvedFunctionalPayload) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -4486,7 +4501,7 @@ TEST(CoverageRuntimeDesignTest,
   std::filesystem::remove(path, ignored);
 }
 
-TEST(CoverageRuntimeDesignTest,
+TEST_F(CoverageRuntimeDesignTest,
      PersistenceMaskRetainsStaticSchemaButOnlySelectedRunData) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
