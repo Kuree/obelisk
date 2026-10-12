@@ -907,6 +907,8 @@ enum {
 #define OBELISK_RT_DBREG_COVERGROUP (UINT8_C(1) << 4)
 // Bits64 scheduler process identity; zero is null.
 #define OBELISK_RT_DBREG_PROCESS (UINT8_C(1) << 5)
+// Bits64 elaborated interface scope identity; zero is null.
+#define OBELISK_RT_DBREG_VIRTUAL_INTERFACE (UINT8_C(1) << 6)
 
 typedef uint16_t obelisk_rt_design_bytecode_opcode;
 enum {
@@ -4863,7 +4865,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP = 11,
   // Shared scheduler process identity in payload; zero is null. All other
   // value fields are zero. Finished and killed identities remain valid.
-  OBELISK_RT_FUNCTIONAL_VALUE_PROCESS = 12
+  OBELISK_RT_FUNCTIONAL_VALUE_PROCESS = 12,
+  // Elaborated interface scope identity in payload; zero is null. All other
+  // value fields are zero. The formal's value_type includes its modport view.
+  OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE = 13
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

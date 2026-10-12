@@ -152,6 +152,7 @@ def ExpressionChandle : CoverageExpressionResultKind<"Chandle", 11>;
 def ExpressionEvent : CoverageExpressionResultKind<"Event", 12>;
 def ExpressionCovergroup : CoverageExpressionResultKind<"Covergroup", 13>;
 def ExpressionProcess : CoverageExpressionResultKind<"Process", 14>;
+def ExpressionVirtualInterface : CoverageExpressionResultKind<"VirtualInterface", 15>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -326,6 +327,8 @@ def ResolvedInstanceOptions    : CoverageSection<"ResolvedInstanceOptions", 57, 
 def FunctionalContainerTypes : CoverageSection<"FunctionalContainerTypes", 58, 40, 0, 1>;
 def FunctionalAggregateTypes : CoverageSection<"FunctionalAggregateTypes", 59, 40, 0, 1>;
 def FunctionalClassTypes : CoverageSection<"FunctionalClassTypes", 60, 16, 0, 1>;
+def FunctionalVirtualInterfaceTypes : CoverageSection<"FunctionalVirtualInterfaceTypes", 61, 16, 0, 1>;
+def FunctionalVirtualInterfaceScopes : CoverageSection<"FunctionalVirtualInterfaceScopes", 62, 16, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -395,7 +398,7 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
      ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
      ExpressionContainer, ExpressionAggregate, ExpressionClassHandle,
      ExpressionChandle, ExpressionEvent, ExpressionCovergroup,
-     ExpressionProcess]>;
+     ExpressionProcess, ExpressionVirtualInterface]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
     [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;
@@ -471,6 +474,8 @@ def DomainFunctionalFormals : CoverageFieldDomain<"FunctionalFormals", "StableRe
 def DomainFunctionalContainerTypes : CoverageFieldDomain<"FunctionalContainerTypes", "StableRef", [], 58>;
 def DomainFunctionalAggregateTypes : CoverageFieldDomain<"FunctionalAggregateTypes", "StableRef", [], 59>;
 def DomainFunctionalClassTypes : CoverageFieldDomain<"FunctionalClassTypes", "StableRef", [], 60>;
+def DomainFunctionalVirtualInterfaceTypes : CoverageFieldDomain<"FunctionalVirtualInterfaceTypes", "StableRef", [], 61>;
+def DomainFunctionalVirtualInterfaceScopes : CoverageFieldDomain<"FunctionalVirtualInterfaceScopes", "StableRef", [], 62>;
 def DomainFunctionalValueSets : CoverageFieldDomain<"FunctionalValueSets", "StableRef", [], 27>;
 def DomainFunctionalValueAtoms : CoverageFieldDomain<"FunctionalValueAtoms", "Range", [], 28>;
 def DomainFunctionalValueLimbs : CoverageFieldDomain<"FunctionalValueLimbs", "Range", [], 29>;
@@ -1392,6 +1397,20 @@ def FCLId : CoverageField<"Id", "id", 0, CovU64> {
 def FCLClassType : CoverageField<"ClassType", "class_type", 8, CovU64>;
 def FunctionalClassTypeRecord : CoverageRecord<"FunctionalClassTypeRecord",
     FunctionalClassTypes, [FCLId, FCLClassType]>;
+
+def FVIId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainFunctionalVirtualInterfaceTypes;
+}
+def FVIInterfaceType : CoverageField<"InterfaceType", "interface_type", 8, CovU64>;
+def FunctionalVirtualInterfaceTypeRecord : CoverageRecord<"FunctionalVirtualInterfaceTypeRecord",
+    FunctionalVirtualInterfaceTypes, [FVIId, FVIInterfaceType]>;
+
+def FVScopeId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainFunctionalVirtualInterfaceScopes;
+}
+def FVScopeInterfaceType : CoverageField<"InterfaceType", "interface_type", 8, CovU64>;
+def FunctionalVirtualInterfaceScopeRecord : CoverageRecord<"FunctionalVirtualInterfaceScopeRecord",
+    FunctionalVirtualInterfaceScopes, [FVScopeId, FVScopeInterfaceType]>;
 
 def FCType      : CoverageField<"Type", "type", 0, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainFunctionalTypes;

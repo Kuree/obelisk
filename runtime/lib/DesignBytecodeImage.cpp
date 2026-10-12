@@ -2551,15 +2551,15 @@ bool validateImage(const Image &image) {
           image.data + image.layouts +
           (function.firstLayout + registerIndex) * kLayoutSize;
       uint64_t expected = layoutSize(layout.kind, layout.width);
+      constexpr uint8_t opaqueMask =
+          OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_COVERGROUP |
+          OBELISK_RT_DBREG_PROCESS | OBELISK_RT_DBREG_VIRTUAL_INTERFACE;
+      uint8_t opaqueFlags = layout.flags & opaqueMask;
       uint8_t allowedFlags =
           layout.kind == OBELISK_RT_DBREG_MANAGED && layout.width == 64
               ? OBELISK_RT_DBREG_CLASS_HANDLE
           : layout.kind == OBELISK_RT_DBREG_BITS
-              ? OBELISK_RT_DBREG_SIGNED |
-                    (layout.width == 64 ? OBELISK_RT_DBREG_CHANDLE |
-                                              OBELISK_RT_DBREG_COVERGROUP |
-                                              OBELISK_RT_DBREG_PROCESS
-                                        : 0)
+              ? OBELISK_RT_DBREG_SIGNED | (layout.width == 64 ? opaqueMask : 0)
           : layout.kind == OBELISK_RT_DBREG_HANDLE && layout.width == 256
               ? OBELISK_RT_DBREG_EVENT
           : layout.kind == OBELISK_RT_DBREG_LOGIC ? OBELISK_RT_DBREG_SIGNED
@@ -2570,15 +2570,8 @@ bool validateImage(const Image &image) {
           (layout.kind == OBELISK_RT_DBREG_STRING && layout.width != 64) ||
           read16(layoutRecord + 2) != 0 || read64(layoutRecord + 32) != 0 ||
           (layout.flags & ~allowedFlags) != 0 ||
-          ((layout.flags &
-            (OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_COVERGROUP |
-             OBELISK_RT_DBREG_PROCESS)) &&
-           (layout.flags & OBELISK_RT_DBREG_SIGNED)) ||
-          ((layout.flags & OBELISK_RT_DBREG_CHANDLE) &&
-           (layout.flags & OBELISK_RT_DBREG_COVERGROUP)) ||
-          ((layout.flags & OBELISK_RT_DBREG_PROCESS) &&
-           (layout.flags &
-            (OBELISK_RT_DBREG_COVERGROUP | OBELISK_RT_DBREG_CHANDLE))) ||
+          (opaqueFlags && (layout.flags & OBELISK_RT_DBREG_SIGNED)) ||
+          (opaqueFlags && (opaqueFlags & (opaqueFlags - 1))) ||
           layout.offset % 8 != 0 || layout.offset < previousEnd ||
           layout.offset > function.scratchSize ||
           layout.size > function.scratchSize - layout.offset)

@@ -124,9 +124,26 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   llvm::DenseMap<uint64_t, const coverage::FunctionalClassType *> classTypes;
   for (const auto &type : schema.functionalClassTypes)
     classTypes.try_emplace(type.id, &type);
+  llvm::DenseMap<uint64_t, const coverage::FunctionalVirtualInterfaceType *>
+      virtualTypes;
+  llvm::DenseSet<uint64_t> interfaceTypes;
+  for (const auto &type : schema.functionalVirtualInterfaceTypes) {
+    virtualTypes.try_emplace(type.id, &type);
+    interfaceTypes.insert(type.interfaceType);
+  }
   SymbolTableCollection nominalSymbols;
   llvm::DenseMap<std::pair<Operation *, Type>, uint64_t> nominalTypeIDs;
   llvm::DenseMap<Type, uint64_t> storageTypeIDs;
+  llvm::DenseMap<StringAttr, uint64_t> interfaceTypeIDs;
+  auto interfaceTypeID = [&](StringAttr name) {
+    auto [entry, fresh] = interfaceTypeIDs.try_emplace(name, 0);
+    if (fresh)
+      entry->second =
+          sim::getStableStorageTypeID(sim::VirtualInterfaceType::get(
+              module.getContext(), name,
+              StringAttr::get(module.getContext(), "")));
+    return entry->second;
+  };
   auto storageTypeMatches = [&](Type type, uint64_t expected, Operation *use) {
     if (auto path = dyn_cast<sim::ReferencePathType>(type))
       type = path.getElementType();
@@ -148,6 +165,12 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       entry->second = sim::getStableStorageTypeID(type);
     if (entry->second != expected)
       return false;
+    if (auto handle = dyn_cast<sim::VirtualInterfaceType>(type)) {
+      auto found = virtualTypes.find(expected);
+      return found != virtualTypes.end() &&
+             found->second->interfaceType ==
+                 interfaceTypeID(handle.getInterfaceName());
+    }
     if (auto handle = dyn_cast<sim::ClassHandleType>(type)) {
       auto found = classTypes.find(expected);
       if (found == classTypes.end())
@@ -201,6 +224,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return isa<sim::CovergroupHandleType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Process:
       return isa<sim::ProcessType>(type) && width == 0;
+    case coverage::FunctionalExpressionResultKind::VirtualInterface:
+      return isa<sim::VirtualInterfaceType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Container:
       return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           type);
@@ -375,6 +400,30 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   };
 
   bool invalid = false;
+  llvm::DenseMap<uint64_t, uint64_t> expectedInterfaceScopes;
+  if (!interfaceTypes.empty())
+    module.walk([&](sim::SimScopeDeclOp scope) {
+      if (auto name = scope.getInterfaceTypeAttr()) {
+        uint64_t identity = interfaceTypeID(name);
+        if (interfaceTypes.contains(identity))
+          expectedInterfaceScopes.try_emplace(scope.getId(), identity);
+      }
+    });
+  for (const auto &scope : schema.functionalVirtualInterfaceScopes) {
+    auto found = expectedInterfaceScopes.find(scope.id);
+    if (found == expectedInterfaceScopes.end() ||
+        found->second != scope.interfaceType) {
+      module.emitError("functional virtual interface bindings disagree with "
+                       "elaborated interface scopes");
+      invalid = true;
+      break;
+    }
+  }
+  if (expectedInterfaceScopes.size() !=
+      schema.functionalVirtualInterfaceScopes.size()) {
+    module.emitError("functional virtual interface bindings are incomplete");
+    invalid = true;
+  }
   module.walk([&](Operation *operation) {
     if (auto declaration = dyn_cast<sim::SimCovergroupDeclOp>(operation)) {
       if (!types.contains(declaration.getSchemaType())) {

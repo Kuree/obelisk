@@ -101,8 +101,8 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
     if (element.isF64() ||
         isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
             sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
-            sim::EventType, sim::CovergroupHandleType, sim::ProcessType>(
-            element))
+            sim::EventType, sim::CovergroupHandleType, sim::ProcessType,
+            sim::VirtualInterfaceType>(element))
       packedWidth = 64;
     if (!packedWidth && sim::isAggregateType(element)) {
       auto span = sim::getProvenanceSpan(element);
@@ -125,6 +125,11 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         rewriter, location, packed,
         llvmConstant(rewriter, location, packed.getType(), 128));
     referenceKind = LLVM::TruncOp::create(rewriter, location, i32, shiftedTag);
+  } else if (isa<sim::VirtualInterfaceType>(sourceType)) {
+    if (converted.size() != 1 || !converted.front().getType().isInteger(64))
+      return failure();
+    kind = OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
+    payload = converted.front();
   } else if (isa<sim::ProcessType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
@@ -1175,6 +1180,8 @@ public:
     bool classHandle = isa<sim::ClassHandleType>(op.getResult().getType());
     bool chandle = isa<sim::ChandleType>(op.getResult().getType());
     bool process = isa<sim::ProcessType>(op.getResult().getType());
+    bool virtualInterface =
+        isa<sim::VirtualInterfaceType>(op.getResult().getType());
     bool event = isa<sim::EventType>(op.getResult().getType());
     bool covergroup = isa<sim::CovergroupHandleType>(op.getResult().getType());
     bool container =
@@ -1184,7 +1191,8 @@ public:
     uint64_t bitWidth = reference ? 192
                         : op.getResult().getType().isF64() || string ||
                                 container || classHandle || chandle ||
-                                process || event || covergroup
+                                process || event || covergroup ||
+                                virtualInterface
                             ? 64
                             : width.value_or(0);
     if (!bitWidth)
@@ -1196,14 +1204,15 @@ public:
     if (convertedTypes.size() == 2)
       unknown = entryAlloca(rewriter, op.getLoc(), convertedTypes[1], 1, 8);
     uint64_t kind =
-        reference     ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
-        : classHandle ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
-        : chandle     ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
-        : process     ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
-        : event       ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
-        : covergroup  ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
-        : string      ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
-        : container   ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+        reference          ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
+        : virtualInterface ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
+        : classHandle      ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+        : chandle          ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
+        : process          ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
+        : event            ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
+        : covergroup       ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
+        : string           ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
+        : container        ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
         : op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
         : convertedTypes.size() == 2 ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
                                      : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;

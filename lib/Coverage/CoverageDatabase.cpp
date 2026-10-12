@@ -611,6 +611,10 @@ Status planSections(const Database &db, const StringTable &strings,
   OBELISK_COVERAGE_PLAN(FunctionalAggregateTypes,
                         db.functionalAggregateTypes.size());
   OBELISK_COVERAGE_PLAN(FunctionalClassTypes, db.functionalClassTypes.size());
+  OBELISK_COVERAGE_PLAN(FunctionalVirtualInterfaceTypes,
+                        db.functionalVirtualInterfaceTypes.size());
+  OBELISK_COVERAGE_PLAN(FunctionalVirtualInterfaceScopes,
+                        db.functionalVirtualInterfaceScopes.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1580,6 +1584,26 @@ Status encodeSections(const Database &db, const StringTable &strings,
       FunctionalClassTypeRecord::setId(p, v.id);
       FunctionalClassTypeRecord::setClassType(p, v.classType);
     });
+  Bytes &virtualInterfaceTypes =
+      add(SectionKind::FunctionalVirtualInterfaceTypes,
+          db.functionalVirtualInterfaceTypes.size());
+  for (const auto &v : db.functionalVirtualInterfaceTypes)
+    virtualInterfaceTypes.record<FunctionalVirtualInterfaceTypeRecord>(
+        [&](uint8_t *p) {
+          FunctionalVirtualInterfaceTypeRecord::setId(p, v.id);
+          FunctionalVirtualInterfaceTypeRecord::setInterfaceType(
+              p, v.interfaceType);
+        });
+  Bytes &virtualInterfaceScopes =
+      add(SectionKind::FunctionalVirtualInterfaceScopes,
+          db.functionalVirtualInterfaceScopes.size());
+  for (const auto &v : db.functionalVirtualInterfaceScopes)
+    virtualInterfaceScopes.record<FunctionalVirtualInterfaceScopeRecord>(
+        [&](uint8_t *p) {
+          FunctionalVirtualInterfaceScopeRecord::setId(p, v.id);
+          FunctionalVirtualInterfaceScopeRecord::setInterfaceType(
+              p, v.interfaceType);
+        });
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -2052,6 +2076,16 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, uint32_t(60));
     hashScalar(h, v.id);
     hashScalar(h, v.classType);
+  }
+  for (const auto &v : db.functionalVirtualInterfaceTypes) {
+    hashScalar(h, uint32_t(61));
+    hashScalar(h, v.id);
+    hashScalar(h, v.interfaceType);
+  }
+  for (const auto &v : db.functionalVirtualInterfaceScopes) {
+    hashScalar(h, uint32_t(62));
+    hashScalar(h, v.id);
+    hashScalar(h, v.interfaceType);
   }
   return h.finish();
 }
@@ -3513,6 +3547,31 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     classTypesByID.emplace(type.id, &type);
   }
 
+  IndexMap<uint64_t, const FunctionalVirtualInterfaceType *> virtualTypesByID;
+  IndexSet<uint64_t> interfaceTypes;
+  uint64_t previousVirtualType = 0;
+  for (const auto &type : db.functionalVirtualInterfaceTypes) {
+    if (!type.id || type.id <= previousVirtualType)
+      return fail(Status::UnsortedOrDuplicate,
+                  "functional_virtual_interface_type_order");
+    previousVirtualType = type.id;
+    if (!type.interfaceType)
+      return fail(Status::InvalidReference,
+                  "functional_virtual_interface_type");
+    virtualTypesByID.emplace(type.id, &type);
+    interfaceTypes.insert(type.interfaceType);
+  }
+  uint64_t previousVirtualScope = 0;
+  for (const auto &scope : db.functionalVirtualInterfaceScopes) {
+    if (!scope.id || scope.id <= previousVirtualScope)
+      return fail(Status::UnsortedOrDuplicate,
+                  "functional_virtual_interface_scope_order");
+    previousVirtualScope = scope.id;
+    if (!interfaceTypes.count(scope.interfaceType))
+      return fail(Status::InvalidReference,
+                  "functional_virtual_interface_scope");
+  }
+
   if (!uniqueNonzero(db.functionalFormals,
                      [](const auto &v) { return v.id; }) ||
       !std::is_sorted(db.functionalFormals.begin(), db.functionalFormals.end(),
@@ -3544,7 +3603,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Chandle ||
         formal.resultKind == FunctionalExpressionResultKind::Event ||
         formal.resultKind == FunctionalExpressionResultKind::Covergroup ||
-        formal.resultKind == FunctionalExpressionResultKind::Process;
+        formal.resultKind == FunctionalExpressionResultKind::Process ||
+        formal.resultKind == FunctionalExpressionResultKind::VirtualInterface;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3560,6 +3620,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
              ? !classTypesByID.count(formal.valueType)
          : formal.resultKind == FunctionalExpressionResultKind::Covergroup
              ? !functionalTypesByID.count(formal.valueType)
+         : formal.resultKind == FunctionalExpressionResultKind::VirtualInterface
+             ? !virtualTypesByID.count(formal.valueType)
              : bool(formal.valueType)) ||
         (aggregate && aggregateTypesByID.at(formal.valueType)->bitWidth !=
                           formal.bitWidth) ||
@@ -3803,7 +3865,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           expression.resultKind == FunctionalExpressionResultKind::Chandle ||
           expression.resultKind == FunctionalExpressionResultKind::Event ||
           expression.resultKind == FunctionalExpressionResultKind::Covergroup ||
-          expression.resultKind == FunctionalExpressionResultKind::Process) &&
+          expression.resultKind == FunctionalExpressionResultKind::Process ||
+          expression.resultKind ==
+              FunctionalExpressionResultKind::VirtualInterface) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3820,7 +3884,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Process) ||
+                     FunctionalExpressionResultKind::VirtualInterface) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -7152,6 +7216,9 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                   else if (resultKind ==
                            FunctionalExpressionResultKind::Covergroup)
                     targetKind = SectionKind::FunctionalTypes;
+                  else if (resultKind ==
+                           FunctionalExpressionResultKind::VirtualInterface)
+                    targetKind = SectionKind::FunctionalVirtualInterfaceTypes;
                   else
                     return value == 0;
                   auto identities = stableIdentities.find(targetKind);
@@ -8008,6 +8075,26 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                       FunctionalClassTypeRecord::getClassType(p)});
                  return Status::Ok;
                });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(
+        SectionKind::FunctionalVirtualInterfaceTypes,
+        [&](const auto &, uint64_t, const uint8_t *p) {
+          result.functionalVirtualInterfaceTypes.push_back(
+              {FunctionalVirtualInterfaceTypeRecord::getId(p),
+               FunctionalVirtualInterfaceTypeRecord::getInterfaceType(p)});
+          return Status::Ok;
+        });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(
+        SectionKind::FunctionalVirtualInterfaceScopes,
+        [&](const auto &, uint64_t, const uint8_t *p) {
+          result.functionalVirtualInterfaceScopes.push_back(
+              {FunctionalVirtualInterfaceScopeRecord::getId(p),
+               FunctionalVirtualInterfaceScopeRecord::getInterfaceType(p)});
+          return Status::Ok;
+        });
     if (st != Status::Ok)
       return st;
     st = fixed(SectionKind::Scopes, [&](const auto &e, uint64_t i,

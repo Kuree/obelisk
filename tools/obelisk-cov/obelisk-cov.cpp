@@ -2462,6 +2462,20 @@ void jsonReport(
           out.attribute("class_type", type.classType);
         });
     });
+    out.attributeArray("functional_virtual_interface_types", [&] {
+      for (const auto &type : database.functionalVirtualInterfaceTypes)
+        out.object([&] {
+          out.attribute("id", type.id);
+          out.attribute("interface_type", type.interfaceType);
+        });
+    });
+    out.attributeArray("functional_virtual_interface_scopes", [&] {
+      for (const auto &scope : database.functionalVirtualInterfaceScopes)
+        out.object([&] {
+          out.attribute("id", scope.id);
+          out.attribute("interface_type", scope.interfaceType);
+        });
+    });
     out.attributeArray("functional_item_templates", [&] {
       for (const FunctionalItem &item : database.functionalItems)
         out.object([&] {

@@ -268,6 +268,14 @@ private:
          db.functionalClassTypes)
       os << "functional_class_type id=" << classType.id
          << " class_type=" << classType.classType << '\n';
+    for (const coverage::FunctionalVirtualInterfaceType &interfaceType :
+         db.functionalVirtualInterfaceTypes)
+      os << "functional_virtual_interface_type id=" << interfaceType.id
+         << " interface_type=" << interfaceType.interfaceType << '\n';
+    for (const coverage::FunctionalVirtualInterfaceScope &scope :
+         db.functionalVirtualInterfaceScopes)
+      os << "functional_virtual_interface_scope id=" << scope.id
+         << " interface_type=" << scope.interfaceType << '\n';
     for (const coverage::FunctionalValueSet &set : db.functionalValueSets)
       os << "functional_value_set id=" << set.id << " item=" << set.item
          << " atoms=" << set.atomCount << " width=" << set.bitWidth

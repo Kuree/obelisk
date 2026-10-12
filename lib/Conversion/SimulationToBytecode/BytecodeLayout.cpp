@@ -56,8 +56,11 @@ FailureOr<Layout> getLayout(Type type) {
     layout.kind = Bits;
     layout.width = 64;
     layout.flags = OBELISK_RT_DBREG_PROCESS;
-  } else if (isa<sim::TimeType, sim::ManagedWatchType,
-                 sim::VirtualInterfaceType>(type)) {
+  } else if (isa<sim::VirtualInterfaceType>(type)) {
+    layout.kind = Bits;
+    layout.width = 64;
+    layout.flags = OBELISK_RT_DBREG_VIRTUAL_INTERFACE;
+  } else if (isa<sim::TimeType, sim::ManagedWatchType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::ControlType>(type)) {

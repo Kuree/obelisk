@@ -3249,6 +3249,61 @@ TEST(CoverageDatabaseTest,
   EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
 }
 
+TEST(CoverageDatabaseTest,
+     VirtualInterfaceFormalsRoundTripWithSharedSpecializations) {
+  Database db = makeTypedDatabase();
+  auto &formal = db.functionalFormals.front();
+  formal.resultKind = FunctionalExpressionResultKind::VirtualInterface;
+  formal.bitWidth = 0;
+  formal.valueType = 1000;
+  db.functionalVirtualInterfaceTypes = {{1000, 99}, {1001, 99}};
+  db.functionalVirtualInterfaceScopes = {{7, 99}, {9, 99}};
+  formal.signedness = CoverageSignedness::NotApplicable;
+  for (auto &expression : db.functionalExpressions)
+    if (expression.id == formal.defaultExpression) {
+      expression.resultKind = formal.resultKind;
+      expression.bitWidth = 0;
+      expression.signedness = formal.signedness;
+    }
+  db.schemaFingerprint = {};
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image), Status::Ok);
+  Database decoded;
+  ASSERT_EQ(parse(image.data(), image.size(), decoded), Status::Ok);
+  EXPECT_EQ(decoded.functionalFormals.front().resultKind,
+            FunctionalExpressionResultKind::VirtualInterface);
+  EXPECT_EQ(computeSchemaFingerprint(decoded), computeSchemaFingerprint(db));
+  ASSERT_EQ(decoded.functionalVirtualInterfaceTypes.size(), 2u);
+  ASSERT_EQ(decoded.functionalVirtualInterfaceScopes.size(), 2u);
+  EXPECT_EQ(decoded.functionalVirtualInterfaceScopes[1].id, 9u);
+  EXPECT_EQ(decoded.functionalVirtualInterfaceTypes[1].interfaceType, 99u);
+  auto bad = db;
+  bad.functionalFormals.front().bitWidth = 64;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalFormals.front().valueType = 99;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalVirtualInterfaceScopes[0].interfaceType = 88;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalVirtualInterfaceTypes[0].interfaceType = 0;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalVirtualInterfaceScopes[0].id = 0;
+  EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
+  bad = db;
+  bad.functionalVirtualInterfaceTypes.push_back(
+      bad.functionalVirtualInterfaceTypes[0]);
+  EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
+  bad = db;
+  bad.functionalVirtualInterfaceScopes[1].id = 7;
+  EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
+  bad = db;
+  bad.functionalVirtualInterfaceScopes[1].id = 10;
+  EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
+}
+
 TEST(CoverageDatabaseTest, ProcessFormalsRoundTripWithSharedIdentityType) {
   Database db = makeTypedDatabase();
   auto &formal = db.functionalFormals.front();

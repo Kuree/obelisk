@@ -1138,7 +1138,9 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                                            SimChandleType,
                                            SimEventType,
                                            SimCovergroupHandleType,
-                                           SimProcessType, F64]>>:$values,
+                                           SimProcessType,
+                                           SimVirtualInterfaceType,
+                                           F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
     $context `,` $handle

@@ -337,6 +337,20 @@ struct FunctionalClassType {
   uint64_t classType = 0;
 };
 
+/// The typed handle ID includes its modport. The interface type identifies the
+/// canonical parameter specialization independently of that static view.
+struct FunctionalVirtualInterfaceType {
+  uint64_t id = 0;
+  uint64_t interfaceType = 0;
+};
+
+/// Shared bindings from nonnull runtime scope identities to interface types.
+/// These rows are indexed once, independently of individual covergroup types.
+struct FunctionalVirtualInterfaceScope {
+  uint64_t id = 0;
+  uint64_t interfaceType = 0;
+};
+
 struct TransitionProgram {
   uint64_t bin = 0;
   uint64_t item = 0;
@@ -883,6 +897,8 @@ struct Database {
   std::vector<FunctionalContainerType> functionalContainerTypes;
   std::vector<FunctionalAggregateType> functionalAggregateTypes;
   std::vector<FunctionalClassType> functionalClassTypes;
+  std::vector<FunctionalVirtualInterfaceType> functionalVirtualInterfaceTypes;
+  std::vector<FunctionalVirtualInterfaceScope> functionalVirtualInterfaceScopes;
   std::vector<FunctionalBinPlan> functionalBinPlans;
   std::vector<FunctionalTupleSet> functionalTupleSets;
   std::vector<FunctionalTuple> functionalTupleSetTuples;

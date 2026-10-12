@@ -1386,20 +1386,8 @@ LogicalResult SimVirtualInterfaceBindOp::verify() {
   SimDesignOp design = (*this)->getParentOfType<SimDesignOp>();
   if (!design)
     return emitOpError("requires an enclosing simulation design");
-  SimScopeDeclOp found;
-  for (SimScopeDeclOp scope : design.getBody().front().getOps<SimScopeDeclOp>())
-    if (scope.getId() == getScopeId()) {
-      found = scope;
-      break;
-    }
-  if (!found)
-    return emitOpError("references an unknown interface scope ID ")
-           << getScopeId();
-  if (!found.getInterfaceTypeAttr())
-    return emitOpError("scope ID does not identify an interface instance");
-  if (found.getInterfaceTypeAttr() != getResult().getType().getInterfaceName())
-    return emitOpError(
-        "scope interface specialization does not match result type");
+  // The design's region verifier checks scope references using its shared
+  // inventory. Scanning every scope here would make B binds over S scopes B*S.
   return success();
 }
 
@@ -1543,10 +1531,10 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
         isAggregateType(result)) &&
       !isa<StringType, DynamicArrayType, QueueType, AssocArrayType,
            ClassHandleType, ChandleType, EventType, CovergroupHandleType,
-           ProcessType>(result))
+           ProcessType, VirtualInterfaceType>(result))
     return emitOpError(
         "requires an integral, real, string, container, class, chandle, event, "
-        "covergroup, or process formal value or "
+        "covergroup, process, or virtual interface formal value or "
         "argument reference");
   return success();
 }
@@ -1577,7 +1565,7 @@ LogicalResult SimCovergroupSampleOp::verify() {
     if (!type.isSignlessIntOrIndex() || isa<IndexType>(type)) {
       if (isa<LogicType, StringType, DynamicArrayType, QueueType,
               AssocArrayType, ClassHandleType, ChandleType, EventType,
-              CovergroupHandleType, ProcessType>(type) ||
+              CovergroupHandleType, ProcessType, VirtualInterfaceType>(type) ||
           (isa<ReferencePathType>(type) &&
            isAggregateType(cast<ReferencePathType>(type).getElementType()) &&
            !getPackedScalarType(
@@ -1587,7 +1575,8 @@ LogicalResult SimCovergroupSampleOp::verify() {
       return emitOpError() << "sample value " << index
                            << " must have signless integer, !simulation.logic, "
                               "!simulation.string, container, class handle, "
-                              "chandle, event, covergroup, process, or "
+                              "chandle, event, covergroup, process, virtual "
+                              "interface, or "
                               "f64 type, but has "
                            << type;
     }
@@ -3990,6 +3979,24 @@ LogicalResult SimDesignOp::verifyRegions() {
     return WalkResult::advance();
   };
   WalkResult descriptors = walk([&](Operation *operation) {
+    if (auto bind = dyn_cast<SimVirtualInterfaceBindOp>(operation)) {
+      auto found = scopes.find(bind.getScopeId());
+      if (found == scopes.end()) {
+        bind.emitOpError("references an unknown interface scope ID ")
+            << bind.getScopeId();
+        return WalkResult::interrupt();
+      }
+      auto interfaceType = found->second.getInterfaceTypeAttr();
+      if (!interfaceType) {
+        bind.emitOpError("scope ID does not identify an interface instance");
+        return WalkResult::interrupt();
+      }
+      if (interfaceType != bind.getResult().getType().getInterfaceName()) {
+        bind.emitOpError(
+            "scope interface specialization does not match result type");
+        return WalkResult::interrupt();
+      }
+    }
     if (auto create = dyn_cast<SimContainerCreateOp>(operation))
       return recordElementShape(
           operation, create.getTypeId(),

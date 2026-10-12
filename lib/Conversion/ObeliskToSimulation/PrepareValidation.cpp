@@ -885,6 +885,8 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         const bool covergroup =
             succeeded(type) && isa<sim::CovergroupHandleType>(*type);
         const bool process = succeeded(type) && isa<sim::ProcessType>(*type);
+        const bool virtualInterface =
+            succeeded(type) && isa<sim::VirtualInterfaceType>(*type);
         const bool container =
             succeeded(type) &&
             isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
@@ -895,13 +897,13 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
              !(succeeded(type) &&
                ((*type).isF64() || sim::isAggregateType(*type))) &&
              !string && !container && !classHandle && !chandle && !event &&
-             !covergroup && !process) ||
+             !covergroup && !process && !virtualInterface) ||
             (scalar && !isa<IntegerType, sim::LogicType>(scalar))) {
           emitError(getSemanticLocation(formal))
               << "coverage formals must be input or ref values with signless "
                  "integer, four-state logic, real, string, container, fixed "
-                 "aggregate, class handle, chandle, event, covergroup, or "
-                 "process type";
+                 "aggregate, class handle, chandle, event, covergroup, "
+                 "process, or virtual interface type";
           invalid = true;
         }
       }

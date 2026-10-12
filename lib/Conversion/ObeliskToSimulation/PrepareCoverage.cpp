@@ -1994,6 +1994,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     llvm::DenseMap<uint64_t, Type> containerTypesByID;
     llvm::DenseMap<Type, uint64_t> classTypeIDs;
     llvm::DenseMap<uint64_t, Type> classTypesByID;
+    llvm::DenseMap<Type, uint64_t> virtualTypeIDs;
+    llvm::DenseMap<uint64_t, Type> virtualTypesByID;
+    llvm::DenseMap<StringAttr, uint64_t> interfaceTypeIDs;
+    llvm::DenseMap<uint64_t, StringAttr> interfaceNamesByID;
     llvm::DenseMap<StringAttr, uint64_t> runtimeClassIDs;
     module.walk([&](sim::SimClassDeclOp declaration) {
       runtimeClassIDs.try_emplace(declaration.getSymNameAttr(),
@@ -2570,7 +2574,42 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   ? coverage::FunctionalFormalDirection::Ref
                   : coverage::FunctionalFormalDirection::Input;
           descriptor.ordinal = ordinal;
-          if (isa<sim::ProcessType>(*normalized)) {
+          if (auto handle = dyn_cast<sim::VirtualInterfaceType>(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::VirtualInterface;
+            auto [entry, inserted] = virtualTypeIDs.try_emplace(*normalized, 0);
+            if (inserted) {
+              auto [identity, fresh] =
+                  interfaceTypeIDs.try_emplace(handle.getInterfaceName(), 0);
+              if (fresh) {
+                identity->second =
+                    sim::getStableStorageTypeID(sim::VirtualInterfaceType::get(
+                        formal.getContext(), handle.getInterfaceName(),
+                        StringAttr::get(formal.getContext(), "")));
+                auto [previousName, unique] = interfaceNamesByID.try_emplace(
+                    identity->second, handle.getInterfaceName());
+                if (!unique &&
+                    previousName->second != handle.getInterfaceName()) {
+                  formal.emitError("functional interface type ID collision");
+                  signalPassFailure();
+                  return;
+                }
+              }
+              coverage::FunctionalVirtualInterfaceType layout{
+                  sim::getStableStorageTypeID(*normalized), identity->second};
+              auto [previousType, unique] =
+                  virtualTypesByID.try_emplace(layout.id, *normalized);
+              if (!unique && previousType->second != *normalized) {
+                formal.emitError(
+                    "functional virtual interface type ID collision");
+                signalPassFailure();
+                return;
+              }
+              entry->second = layout.id;
+              schema.functionalVirtualInterfaceTypes.push_back(layout);
+            }
+            descriptor.valueType = entry->second;
+          } else if (isa<sim::ProcessType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::Process;
           } else if (auto handle =
@@ -4781,6 +4820,20 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       }
       schema.transitionPrograms.push_back(pending.program);
     }
+    // One shared row per relevant elaborated instance, independent of the
+    // number of covergroups or modport views that reference its specialization.
+    module.walk([&](sim::SimScopeDeclOp scope) {
+      auto found = interfaceTypeIDs.find(scope.getInterfaceTypeAttr());
+      if (found != interfaceTypeIDs.end())
+        schema.functionalVirtualInterfaceScopes.push_back(
+            {scope.getId(), found->second});
+    });
+    sortCoverageRecords(
+        schema.functionalVirtualInterfaceTypes,
+        [](const auto &entry) { return coverageOrderKey(entry.id); });
+    sortCoverageRecords(
+        schema.functionalVirtualInterfaceScopes,
+        [](const auto &entry) { return coverageOrderKey(entry.id); });
     sortCoverageRecords(schema.functionalTypes, [](const auto &entry) {
       return coverageOrderKey(entry.id);
     });

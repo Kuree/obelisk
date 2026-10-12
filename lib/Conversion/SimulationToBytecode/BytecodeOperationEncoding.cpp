@@ -625,7 +625,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
     return success();
   }
   if (auto op = dyn_cast<sim::SimVirtualInterfaceScopeOp>(operation)) {
-    emit({Move, 0, reg(plan, op.getResult()), reg(plan, op.getInput())});
+    emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
+          reg(plan, op.getInput()), kInvalidRegister});
     return success();
   }
   if (auto op = dyn_cast<sim::SimVirtualInterfaceEqualOp>(operation)) {

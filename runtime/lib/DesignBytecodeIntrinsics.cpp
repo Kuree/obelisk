@@ -329,6 +329,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return true;
     }
     if (layout.kind == OBELISK_RT_DBREG_BITS) {
+      if (layout.flags & OBELISK_RT_DBREG_VIRTUAL_INTERFACE) {
+        auto word = readScalar(image, frame, reg);
+        if (layout.width != 64 || layout.size != 8 || !word)
+          return false;
+        result.kind = OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE;
+        result.payload = *word;
+        result.bit_width = 0;
+        result.value_size = 0;
+        return true;
+      }
       if (layout.flags & OBELISK_RT_DBREG_PROCESS) {
         auto word = readScalar(image, frame, reg);
         if (layout.width != 64 || layout.size != 8 || !word)
@@ -1810,7 +1820,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (reference && (output.width != 192 || output.size != 24))
       return OBELISK_RT_INVALID_BYTECODE;
     uint32_t kind =
-        output.flags & OBELISK_RT_DBREG_PROCESS
+        output.flags & OBELISK_RT_DBREG_VIRTUAL_INTERFACE
+            ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
+        : output.flags & OBELISK_RT_DBREG_PROCESS
             ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
         : output.flags & OBELISK_RT_DBREG_COVERGROUP
             ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
