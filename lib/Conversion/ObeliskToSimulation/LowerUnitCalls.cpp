@@ -2830,6 +2830,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
         describeContainerElement(mailbox.getElementType(), location);
     if (failed(bound) || failed(descriptor))
       return failure();
+    descriptor->typeID = mailbox.getMessageTypeID();
     return sim::SimMailboxCreateOp::create(
                builder, location, mailbox, *bound, descriptor->typeID,
                descriptor->kind, descriptor->flags, descriptor->valueSize,

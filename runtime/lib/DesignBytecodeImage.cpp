@@ -2557,7 +2557,8 @@ bool validateImage(const Image &image) {
       uint8_t opaqueFlags = layout.flags & opaqueMask;
       uint8_t allowedFlags =
           layout.kind == OBELISK_RT_DBREG_MANAGED && layout.width == 64
-              ? OBELISK_RT_DBREG_CLASS_HANDLE | OBELISK_RT_DBREG_SEMAPHORE
+              ? OBELISK_RT_DBREG_CLASS_HANDLE | OBELISK_RT_DBREG_SEMAPHORE |
+                    OBELISK_RT_DBREG_MAILBOX
           : layout.kind == OBELISK_RT_DBREG_BITS
               ? OBELISK_RT_DBREG_SIGNED | (layout.width == 64 ? opaqueMask : 0)
           : layout.kind == OBELISK_RT_DBREG_HANDLE && layout.width == 256

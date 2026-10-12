@@ -487,6 +487,8 @@ public:
 
 void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
+  simlowering::SemanticTypeIndex semanticTypes(module);
+  simlowering::ScopedSemanticTypeIndex semanticTypeScope(semanticTypes);
   MLIRContext *context = &getContext();
 
   bool usesFunctionalCoverageDatabase = false;

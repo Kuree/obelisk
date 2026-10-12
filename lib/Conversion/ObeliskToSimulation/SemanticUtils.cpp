@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cctype>
@@ -855,48 +856,101 @@ static bool isStandardClassHandle(semantic::ClassHandleType handle,
          sourceSymbolName(name.getLeafReference().getValue()) == className;
 }
 
+thread_local const SemanticTypeIndex *ScopedSemanticTypeIndex::current =
+    nullptr;
+using TypeNormalizationCache = DenseMap<std::pair<Type, unsigned>, Type>;
+// Only index construction writes this cache. Workers borrow the frozen index.
+static thread_local TypeNormalizationCache *buildingNormalizationCache =
+    nullptr;
+
+ScopedSemanticTypeIndex::ScopedSemanticTypeIndex(const SemanticTypeIndex &index)
+    : previous(current) {
+  current = &index;
+}
+ScopedSemanticTypeIndex::~ScopedSemanticTypeIndex() { current = previous; }
+const SemanticTypeIndex::Mailbox *
+ScopedSemanticTypeIndex::lookupMailbox(Type type) {
+  return current ? current->lookupMailbox(type) : nullptr;
+}
+std::optional<Type>
+ScopedSemanticTypeIndex::lookupNormalizedType(Type type, bool allowRealScalar) {
+  return current ? current->lookupNormalizedType(type, allowRealScalar)
+                 : std::nullopt;
+}
+std::optional<Type>
+SemanticTypeIndex::lookupNormalizedType(Type type, bool allowRealScalar) const {
+  auto found = normalizedTypes.find({type, allowRealScalar});
+  return found == normalizedTypes.end() ? std::nullopt
+                                        : std::optional<Type>(found->second);
+}
+const SemanticTypeIndex::Mailbox *
+SemanticTypeIndex::lookupMailbox(Type type) const {
+  auto found = mailboxes.find(type);
+  return found == mailboxes.end() ? nullptr : &found->second;
+}
+SemanticTypeIndex::SemanticTypeIndex(Operation *module) {
+  module->walk([&](semantic::SVClassTypeOp candidate) {
+    auto handle =
+        dyn_cast<semantic::ClassHandleType>(candidate.getSemanticType());
+    if (!handle || !isStandardClassHandle(handle, "mailbox"))
+      return;
+    Type element;
+    for (Operation *child : getChildren(candidate)) {
+      if (auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child)) {
+        if (element)
+          return;
+        element = parameter.getSemanticType().value_or(Type{});
+      }
+    }
+    if (!element)
+      return;
+    StringRef name = getHierarchyName(candidate);
+    uint64_t specialization = stableCodeUnitID(name);
+    mailboxes.try_emplace(
+        handle,
+        Mailbox{element, {}, getSemanticLocation(candidate), specialization});
+  });
+  ScopedSemanticTypeIndex scope(*this);
+  llvm::SaveAndRestore<TypeNormalizationCache *> cacheScope(
+      buildingNormalizationCache, &normalizedTypes);
+  DenseSet<Type> visitedTypes, activeMailboxes;
+  std::function<void(Type)> prepareMailbox = [&](Type handle) {
+    auto &mailbox = mailboxes.find(handle)->second;
+    if (mailbox.normalized)
+      return;
+    if (!activeMailboxes.insert(handle).second) {
+      emitError(mailbox.location) << "cyclic mailbox message specialization";
+      return;
+    }
+    // Visit shared source types once, preparing nested mailbox identities
+    // before their containing message layout. Class handles remain leaves.
+    mailbox.element.walk<WalkOrder::PreOrder>([&](Type nested) -> WalkResult {
+      if (mailboxes.count(nested)) {
+        prepareMailbox(nested);
+        return WalkResult::skip();
+      }
+      return visitedTypes.insert(nested).second ? WalkResult::advance()
+                                                : WalkResult::skip();
+    });
+    auto normalized =
+        normalizeSemanticType(mailbox.element, mailbox.location, module);
+    if (succeeded(normalized))
+      mailbox.normalized = sim::MailboxType::get(
+          module->getContext(), *normalized, mailbox.specialization);
+    activeMailboxes.erase(handle);
+  };
+  for (auto &[handle, mailbox] : mailboxes)
+    prepareMailbox(handle);
+}
+
 static FailureOr<Type> getMailboxElementType(Operation *owner,
                                              semantic::ClassHandleType handle,
                                              Location location) {
-  if (!owner) {
-    emitError(location)
-        << "mailbox VPI inventory requires its semantic class definition";
-    return failure();
-  }
-  semantic::SVClassTypeOp specialization;
-  Operation *root = owner;
-  while (root->getParentOp())
-    root = root->getParentOp();
-  root->walk([&](semantic::SVClassTypeOp candidate) {
-    if (candidate.getSemanticType() == handle) {
-      specialization = candidate;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  if (!specialization) {
-    emitError(location)
-        << "mailbox specialization has no semantic class definition";
-    return failure();
-  }
-  Type elementType;
-  for (Operation *child : getChildren(specialization)) {
-    auto parameter = dyn_cast<semantic::SVTypeParameterSymbolOp>(child);
-    if (!parameter)
-      continue;
-    if (elementType) {
-      emitError(location)
-          << "mailbox specialization has multiple type parameters";
-      return failure();
-    }
-    elementType = parameter.getSemanticType().value_or(Type{});
-  }
-  if (!elementType) {
-    emitError(location)
-        << "mailbox specialization has no resolved element type";
-    return failure();
-  }
-  return elementType;
+  if (const auto *mailbox = ScopedSemanticTypeIndex::lookupMailbox(handle))
+    return mailbox->element;
+  emitError(location)
+      << "mailbox specialization has no indexed semantic class definition";
+  return failure();
 }
 
 FailureOr<sim::VPITypeSemanticsAttr>
@@ -1493,9 +1547,31 @@ static FailureOr<ArrayAttr> normalizeDictionaryFields(DictionaryAttr fields,
   return ArrayAttr::get(fields.getContext(), normalized);
 }
 
+static FailureOr<Type> normalizeTypeUncached(Type type, Location location,
+                                             bool allowRealScalar);
 static FailureOr<Type> normalizeType(Type type, Location location,
                                      bool allowRealScalar) {
+  if (auto normalized =
+          ScopedSemanticTypeIndex::lookupNormalizedType(type, allowRealScalar))
+    return *normalized ? FailureOr<Type>(*normalized)
+                       : FailureOr<Type>(failure());
+  // A null entry records failure and also stops malformed recursive types.
+  if (buildingNormalizationCache)
+    buildingNormalizationCache->try_emplace({type, allowRealScalar}, Type{});
+  auto normalized = normalizeTypeUncached(type, location, allowRealScalar);
+  if (buildingNormalizationCache && succeeded(normalized))
+    (*buildingNormalizationCache)[{type, allowRealScalar}] = *normalized;
+  return normalized;
+}
+static FailureOr<Type> normalizeTypeUncached(Type type, Location location,
+                                             bool allowRealScalar) {
   MLIRContext *context = type.getContext();
+  if (const auto *mailbox = ScopedSemanticTypeIndex::lookupMailbox(type)) {
+    if (mailbox->normalized)
+      return mailbox->normalized;
+    emitError(location) << "mailbox message type is cyclic or unresolved";
+    return failure();
+  }
   if (auto classHandle = dyn_cast<semantic::ClassHandleType>(type)) {
     SymbolRefAttr className = classHandle.getClassName();
     auto sourceName = [](StringRef symbol) {
@@ -1732,15 +1808,12 @@ FailureOr<Type> getNormalizedSemanticType(Operation *op) {
   Type semanticType = typeAttr.getValue();
   if (auto handle = dyn_cast<semantic::ClassHandleType>(semanticType)) {
     if (isStandardClassHandle(handle, "mailbox")) {
-      FailureOr<Type> elementType =
-          getMailboxElementType(op, handle, getSemanticLocation(op));
-      if (failed(elementType))
-        return failure();
-      FailureOr<Type> normalized =
-          normalizeSemanticType(*elementType, getSemanticLocation(op), op);
-      return failed(normalized) ? FailureOr<Type>(failure())
-                                : FailureOr<Type>(sim::MailboxType::get(
-                                      semanticType.getContext(), *normalized));
+      if (const auto *mailbox = ScopedSemanticTypeIndex::lookupMailbox(handle))
+        if (mailbox->normalized)
+          return mailbox->normalized;
+      emitError(getSemanticLocation(op))
+          << "mailbox specialization has no indexed normalized type";
+      return failure();
     }
   }
   return normalizeSemanticType(semanticType, getSemanticLocation(op), op);

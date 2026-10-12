@@ -1406,6 +1406,10 @@ LogicalResult SimMailboxCreateOp::verify() {
   Type element = getResult().getType().getElementType();
   if (getTypeId() == 0)
     return emitOpError("element type ID must be nonzero");
+  if (getResult().getType().getSpecialization() &&
+      getTypeId() != getResult().getType().getMessageTypeID())
+    return emitOpError(
+        "message descriptor ID must match the mailbox specialization");
   if (getValueSize() == 0 || getAlignment() == 0 ||
       !llvm::isPowerOf2_64(getAlignment()) ||
       getValueSize() % getAlignment() != 0)

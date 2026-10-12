@@ -102,7 +102,8 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
             sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
             sim::EventType, sim::CovergroupHandleType, sim::ProcessType,
-            sim::VirtualInterfaceType, sim::SemaphoreType>(element))
+            sim::VirtualInterfaceType, sim::SemaphoreType, sim::MailboxType>(
+            element))
       packedWidth = 64;
     if (!packedWidth && sim::isAggregateType(element)) {
       auto span = sim::getProvenanceSpan(element);
@@ -125,10 +126,12 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         rewriter, location, packed,
         llvmConstant(rewriter, location, packed.getType(), 128));
     referenceKind = LLVM::TruncOp::create(rewriter, location, i32, shiftedTag);
-  } else if (isa<sim::SemaphoreType>(sourceType)) {
+  } else if (isa<sim::SemaphoreType, sim::MailboxType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE;
+    kind = isa<sim::MailboxType>(sourceType)
+               ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
+               : OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE;
     ownerPointer = managedObjectPointer(rewriter, location, converted.front());
   } else if (isa<sim::VirtualInterfaceType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
@@ -1184,6 +1187,7 @@ public:
     bool string = isa<sim::StringType>(op.getResult().getType());
     bool classHandle = isa<sim::ClassHandleType>(op.getResult().getType());
     bool semaphore = isa<sim::SemaphoreType>(op.getResult().getType());
+    bool mailbox = isa<sim::MailboxType>(op.getResult().getType());
     bool chandle = isa<sim::ChandleType>(op.getResult().getType());
     bool process = isa<sim::ProcessType>(op.getResult().getType());
     bool virtualInterface =
@@ -1198,7 +1202,7 @@ public:
                         : op.getResult().getType().isF64() || string ||
                                 container || classHandle || chandle ||
                                 process || event || covergroup ||
-                                virtualInterface || semaphore
+                                virtualInterface || semaphore || mailbox
                             ? 64
                             : width.value_or(0);
     if (!bitWidth)
@@ -1214,6 +1218,7 @@ public:
         : virtualInterface ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
         : classHandle      ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
         : semaphore        ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
+        : mailbox          ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
         : chandle          ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
         : process          ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
         : event            ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT

@@ -2,7 +2,7 @@
 // RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 //
-// CHECK: !simulation.mailbox<!simulation.string>
+// CHECK: !simulation.mailbox<!simulation.string, {{[0-9]+}}>
 // CHECK: simulation.storage.decl {{.*}} : !simulation.semaphore
 // CHECK: simulation.mailbox.create
 // CHECK: simulation.mailbox.try_put

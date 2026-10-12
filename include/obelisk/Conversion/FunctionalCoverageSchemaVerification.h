@@ -228,6 +228,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return isa<sim::VirtualInterfaceType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Semaphore:
       return isa<sim::SemaphoreType>(type) && width == 0;
+    case coverage::FunctionalExpressionResultKind::Mailbox:
+      return isa<sim::MailboxType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Container:
       return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           type);
@@ -380,7 +382,9 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
             expression->resultKind ==
                 coverage::FunctionalExpressionResultKind::ClassHandle ||
             expression->resultKind ==
-                coverage::FunctionalExpressionResultKind::Covergroup) &&
+                coverage::FunctionalExpressionResultKind::Covergroup ||
+            expression->resultKind ==
+                coverage::FunctionalExpressionResultKind::Mailbox) &&
            !storageTypeMatches(values[supplied].getType(),
                                formals.lookup(expression->owner)->valueType,
                                operation))) {

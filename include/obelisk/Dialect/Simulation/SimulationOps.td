@@ -1141,6 +1141,7 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                                            SimProcessType,
                                            SimVirtualInterfaceType,
                                            SimSemaphoreType,
+                                           SimMailboxType,
                                            F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
@@ -1772,6 +1773,15 @@ def SimMailboxTryGetOp : SimOp<"mailbox.try_get", [
   let arguments = (ins SimMailboxType:$mailbox);
   let results = (outs I1:$success, AnyType:$value);
   let hasVerifier = 1;
+}
+
+def SimMailboxEqualOp : SimOp<"mailbox.equal", [Pure, Commutative,
+                                             SameTypeOperands]> {
+  let summary = "compare nullable mailbox identities with equivalent message types";
+  let arguments = (ins SimMailboxType:$lhs, SimMailboxType:$rhs);
+  let results = (outs I1:$equal);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+  let hasFolder = 1;
 }
 
 def SimSemaphoreCreateOp : SimOp<"semaphore.create", [

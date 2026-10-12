@@ -5,6 +5,7 @@
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_UNITLOWERINGINPUTS_H
 
 #include "ContainerElementDescriptor.h"
+#include "SemanticTypeIndex.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/SymbolTable.h"
@@ -26,6 +27,7 @@ namespace obelisk::simlowering {
 /// callable flags while that sibling is being lowered or canonicalized.
 class UnitLoweringInputs {
 public:
+  SemanticTypeIndex semanticTypes;
   struct Callable {
     mlir::FunctionType type;
     bool voidFunction;

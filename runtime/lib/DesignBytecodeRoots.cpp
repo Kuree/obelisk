@@ -145,7 +145,8 @@ void obelisk_rt_enumerate_design_managed_roots(
                     formal.kind ==
                         OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
                     formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
-                    formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE) &&
+                    formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
+                    formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX) &&
                    formal.owner)
             visit(visitorEnvironment, &formal.owner);
           else if (formal.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF &&

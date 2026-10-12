@@ -1263,6 +1263,8 @@ static coverage::Digest digestFile(StringRef path) {
 
 void ObeliskSimPrepareCoveragePass::runOnOperation() {
   ModuleOp module = getOperation();
+  simlowering::SemanticTypeIndex semanticTypes(module);
+  simlowering::ScopedSemanticTypeIndex semanticTypeScope(semanticTypes);
   bool hasExecutableCovergroups = false;
   module.walk(
       [&](sim::SimCovergroupDeclOp) { hasExecutableCovergroups = true; });
@@ -2634,9 +2636,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::Chandle;
           } else if (isa<sim::DynamicArrayType, sim::QueueType,
-                         sim::AssocArrayType>(*normalized)) {
+                         sim::AssocArrayType, sim::MailboxType>(*normalized)) {
             descriptor.resultKind =
-                coverage::FunctionalExpressionResultKind::Container;
+                isa<sim::MailboxType>(*normalized)
+                    ? coverage::FunctionalExpressionResultKind::Mailbox
+                    : coverage::FunctionalExpressionResultKind::Container;
             auto [entry, inserted] =
                 containerTypeIDs.try_emplace(*normalized, 0);
             if (inserted) {
@@ -2657,6 +2661,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 layout.kind = coverage::FunctionalContainerKind::Queue;
                 layout.bound = queue.getBound();
                 element = queue.getElementType();
+              } else if (auto mailbox =
+                             dyn_cast<sim::MailboxType>(*normalized)) {
+                layout.kind = coverage::FunctionalContainerKind::Mailbox;
+                element = mailbox.getElementType();
               } else {
                 auto array = cast<sim::AssocArrayType>(*normalized);
                 layout.kind =
@@ -2676,6 +2684,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   layout.keyWidth = sim::getPackedWidth(key).value_or(0);
               }
               layout.elementType = sim::getStableStorageTypeID(element);
+              if (auto mailbox = dyn_cast<sim::MailboxType>(*normalized))
+                layout.elementType = mailbox.getMessageTypeID();
               entry->second = layout.id;
               schema.functionalContainerTypes.push_back(layout);
             }

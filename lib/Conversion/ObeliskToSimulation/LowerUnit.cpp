@@ -2323,7 +2323,7 @@ FailureOr<Value> UnitLowering::truthValue(Value value, Location location) {
     null = sim::SimEventNullOp::create(builder, location, type);
   else if (isa<sim::VirtualInterfaceType>(type))
     null = sim::SimVirtualInterfaceNullOp::create(builder, location, type);
-  else if (isa<sim::SemaphoreType>(type))
+  else if (isa<sim::SemaphoreType, sim::MailboxType>(type))
     null = sim::SimManagedNullOp::create(builder, location, type);
   if (null) {
     FailureOr<Value> isNull = conditionalEqual(value, null, type, location,
@@ -2886,7 +2886,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       if (isa<sim::ChandleType>(*target))
         return sim::SimChandleNullOp::create(builder, getSemanticLocation(op))
             .getResult();
-      if (isa<sim::SemaphoreType>(*target))
+      if (isa<sim::SemaphoreType, sim::MailboxType>(*target))
         return sim::SimManagedNullOp::create(builder, getSemanticLocation(op),
                                              *target)
             .getResult();
@@ -6870,6 +6870,8 @@ public:
           "unit lowering requires obelisk-sim-prepare-unit-lowering");
       return signalPassFailure();
     }
+    simlowering::ScopedSemanticTypeIndex semanticTypeScope(
+        inputs->get().semanticTypes);
     if (failed(sim::verifyUnitBindings(function))) {
       signalPassFailure();
       return;

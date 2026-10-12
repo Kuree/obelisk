@@ -911,6 +911,9 @@ enum {
 #define OBELISK_RT_DBREG_VIRTUAL_INTERFACE (UINT8_C(1) << 6)
 // Managed64 semaphore identity, distinct from classes and other containers.
 #define OBELISK_RT_DBREG_SEMAPHORE (UINT8_C(1) << 7)
+// Managed64 typed mailbox identity. Register flags are interpreted by kind;
+// this bit denotes an event only in Handle256 layouts.
+#define OBELISK_RT_DBREG_MAILBOX (UINT8_C(1) << 3)
 
 typedef uint16_t obelisk_rt_design_bytecode_opcode;
 enum {
@@ -4873,7 +4876,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE = 13,
   // Managed semaphore handle in owner; null is allowed. All other value
   // fields are zero. Inputs preserve the shared bucket's identity.
-  OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE = 14
+  OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE = 14,
+  // Shared mailbox handle in owner, with message type in the schema. Null is
+  // allowed; all other value fields are zero. The bound is instance state.
+  OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX = 15
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

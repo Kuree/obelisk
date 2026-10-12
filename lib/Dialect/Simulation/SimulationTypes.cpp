@@ -40,11 +40,20 @@ using namespace mlir;
 namespace obelisk::sim {
 
 uint64_t getStableStorageTypeID(Type type, uint32_t descriptorFlags) {
-  std::string spelling;
-  llvm::raw_string_ostream stream(spelling);
-  type.print(stream);
-  stream.flush();
-  uint64_t hash = obelisk_stable_hash(spelling.data(), spelling.size());
+  uint64_t hash;
+  if (auto mailbox = dyn_cast<MailboxType>(type);
+      mailbox && mailbox.getSpecialization()) {
+    constexpr StringLiteral domain = "obelisk.mailbox.handle";
+    hash = obelisk_stable_hash(domain.data(), domain.size());
+    hash = obelisk_stable_hash_append_uint_le(hash, mailbox.getSpecialization(),
+                                              8);
+  } else {
+    std::string spelling;
+    llvm::raw_string_ostream stream(spelling);
+    type.print(stream);
+    stream.flush();
+    hash = obelisk_stable_hash(spelling.data(), spelling.size());
+  }
   // Keep the established IDs for ordinary type descriptors, but distinguish
   // context-dependent ABI flags such as signed wildcard keys. Type spellings
   // cannot contain NUL, so the sentinel keeps this suffix unambiguous.
@@ -52,6 +61,15 @@ uint64_t getStableStorageTypeID(Type type, uint32_t descriptorFlags) {
     hash = obelisk_stable_hash_append_byte(hash, 0);
     hash = obelisk_stable_hash_append_uint_le(hash, descriptorFlags, 4);
   }
+  return hash ? hash : 1;
+}
+
+uint64_t MailboxType::getMessageTypeID() const {
+  if (!getSpecialization())
+    return getStableStorageTypeID(getElementType());
+  constexpr StringLiteral domain = "obelisk.mailbox.message";
+  uint64_t hash = obelisk_stable_hash(domain.data(), domain.size());
+  hash = obelisk_stable_hash_append_uint_le(hash, getSpecialization(), 8);
   return hash ? hash : 1;
 }
 
@@ -98,7 +116,7 @@ QueueType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 MailboxType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                    Type elementType) {
+                    Type elementType, uint64_t specialization) {
   if (!isNormalizedValueType(elementType))
     return emitError() << "element must be a normalized simulation value";
   return success();

@@ -28,7 +28,8 @@ struct AssocSlot {
 struct ContainerHeader {
   const void *descriptor;
   obelisk_rt_container_kind_v1 kind;
-  uint32_t reserved;
+  // Mailboxes share queue storage but preserve a distinct object identity.
+  uint32_t isMailbox;
   const obelisk_rt_element_type_v1 *element;
   obelisk_rt_object_v1 *buffer;
   obelisk_rt_object_v1 *ordered;

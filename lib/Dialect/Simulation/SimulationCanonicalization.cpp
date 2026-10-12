@@ -232,6 +232,12 @@ OpFoldResult SimSemaphoreEqualOp::fold(FoldAdaptor) {
     return BoolAttr::get(getContext(), true);
   return {};
 }
+OpFoldResult SimMailboxEqualOp::fold(FoldAdaptor) {
+  if (getLhs() == getRhs() || (getLhs().getDefiningOp<SimManagedNullOp>() &&
+                               getRhs().getDefiningOp<SimManagedNullOp>()))
+    return BoolAttr::get(getContext(), true);
+  return {};
+}
 OpFoldResult SimEventEqualOp::fold(FoldAdaptor) {
   if (getLhs() == getRhs())
     return BoolAttr::get(getContext(), true);

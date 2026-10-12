@@ -116,3 +116,30 @@ func.func @semaphore_nulls() -> i1 {
   %r = simulation.semaphore.equal %a, %b
   return %r : i1
 }
+// CHECK-LABEL: func.func @mailbox_self(
+// CHECK: arith.constant true
+// CHECK-NOT: simulation.mailbox.equal
+// CHECK: return
+func.func @mailbox_self(%a: !simulation.mailbox<i32>) -> i1 {
+  %r = simulation.mailbox.equal %a, %a : !simulation.mailbox<i32>
+  return %r : i1
+}
+
+// CHECK-LABEL: func.func @mailbox_different(
+// CHECK: simulation.mailbox.equal
+// CHECK: return
+func.func @mailbox_different(%a: !simulation.mailbox<i32>, %b: !simulation.mailbox<i32>) -> i1 {
+  %r = simulation.mailbox.equal %a, %b : !simulation.mailbox<i32>
+  return %r : i1
+}
+
+// CHECK-LABEL: func.func @mailbox_nulls(
+// CHECK: arith.constant true
+// CHECK-NOT: simulation.mailbox.equal
+// CHECK: return
+func.func @mailbox_nulls() -> i1 {
+  %a = simulation.managed.null : !simulation.mailbox<i32>
+  %b = simulation.managed.null : !simulation.mailbox<i32>
+  %r = simulation.mailbox.equal %a, %b : !simulation.mailbox<i32>
+  return %r : i1
+}

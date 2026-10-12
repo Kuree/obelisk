@@ -154,12 +154,14 @@ def ExpressionCovergroup : CoverageExpressionResultKind<"Covergroup", 13>;
 def ExpressionProcess : CoverageExpressionResultKind<"Process", 14>;
 def ExpressionVirtualInterface : CoverageExpressionResultKind<"VirtualInterface", 15>;
 def ExpressionSemaphore : CoverageExpressionResultKind<"Semaphore", 16>;
+def ExpressionMailbox : CoverageExpressionResultKind<"Mailbox", 17>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
 def ContainerDynamicArray : CoverageFunctionalContainerKind<"DynamicArray", 1>;
 def ContainerQueue : CoverageFunctionalContainerKind<"Queue", 2>;
 def ContainerAssociativeArray : CoverageFunctionalContainerKind<"AssociativeArray", 3>;
+def ContainerMailbox : CoverageFunctionalContainerKind<"Mailbox", 4>;
 
 class CoverageFunctionalContainerKeyKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -399,10 +401,12 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
      ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
      ExpressionContainer, ExpressionAggregate, ExpressionClassHandle,
      ExpressionChandle, ExpressionEvent, ExpressionCovergroup,
-     ExpressionProcess, ExpressionVirtualInterface, ExpressionSemaphore]>;
+     ExpressionProcess, ExpressionVirtualInterface, ExpressionSemaphore,
+     ExpressionMailbox]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
-    [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;
+    [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray,
+     ContainerMailbox]>;
 def DomainFunctionalContainerKeyKind : CoverageFieldDomain<
     "FunctionalContainerKeyKind", "Enum",
     [ContainerKeyNone, ContainerKeyUnsigned, ContainerKeySigned,

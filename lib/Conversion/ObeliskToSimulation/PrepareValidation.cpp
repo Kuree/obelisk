@@ -889,6 +889,7 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             succeeded(type) && isa<sim::VirtualInterfaceType>(*type);
         const bool semaphore =
             succeeded(type) && isa<sim::SemaphoreType>(*type);
+        const bool mailbox = succeeded(type) && isa<sim::MailboxType>(*type);
         const bool container =
             succeeded(type) &&
             isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
@@ -899,13 +900,14 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
              !(succeeded(type) &&
                ((*type).isF64() || sim::isAggregateType(*type))) &&
              !string && !container && !classHandle && !chandle && !event &&
-             !covergroup && !process && !virtualInterface && !semaphore) ||
+             !covergroup && !process && !virtualInterface && !semaphore &&
+             !mailbox) ||
             (scalar && !isa<IntegerType, sim::LogicType>(scalar))) {
           emitError(getSemanticLocation(formal))
               << "coverage formals must be input or ref values with signless "
                  "integer, four-state logic, real, string, container, fixed "
                  "aggregate, class handle, chandle, event, covergroup, "
-                 "process, virtual interface, or semaphore type";
+                 "process, virtual interface, semaphore, or mailbox type";
           invalid = true;
         }
       }

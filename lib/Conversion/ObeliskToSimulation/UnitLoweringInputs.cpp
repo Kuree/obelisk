@@ -19,7 +19,8 @@ namespace obelisk {
 namespace simlowering {
 
 UnitLoweringInputs::UnitLoweringInputs(Operation *module)
-    : lockedSymbols(symbols) {
+    : semanticTypes(module), lockedSymbols(symbols) {
+  ScopedSemanticTypeIndex semanticTypeScope(semanticTypes);
   symbols.getSymbolTable(module);
   module->walk<WalkOrder::PreOrder>([&](Operation *operation) {
     if (auto design = dyn_cast<sim::SimDesignOp>(operation))

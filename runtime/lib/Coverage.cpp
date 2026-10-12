@@ -8286,12 +8286,19 @@ bool validateContainerFormal(
                const auto &validation =
                    *static_cast<const Validation *>(environment);
                const auto &type = validation.type;
-               return header.kind == static_cast<uint32_t>(type.kind) &&
+               bool mailbox =
+                   type.kind ==
+                   obelisk::coverage::FunctionalContainerKind::Mailbox;
+               uint32_t kind = mailbox ? OBELISK_RT_CONTAINER_QUEUE
+                                       : static_cast<uint32_t>(type.kind);
+               return header.kind == kind &&
+                              header.isMailbox ==
+                                  static_cast<uint32_t>(mailbox) &&
                               header.element == validation.element &&
                               header.keyKind ==
                                   static_cast<uint32_t>(type.keyKind) &&
                               header.keyWidth == type.keyWidth &&
-                              header.bound == type.bound
+                              (mailbox || header.bound == type.bound)
                           ? OBELISK_RT_OK
                           : OBELISK_RT_INVALID_DESIGN;
              },
@@ -8315,7 +8322,7 @@ bool validateValue(
             result == Result::ClassHandle || result == Result::Chandle ||
             result == Result::Event || result == Result::Covergroup ||
             result == Result::Process || result == Result::VirtualInterface ||
-            result == Result::Semaphore) &&
+            result == Result::Semaphore || result == Result::Mailbox) &&
            reference)
     width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
@@ -8332,7 +8339,8 @@ bool validateValue(
               validateAggregateFormal(context, value.owner, aggregateType));
     if (result != Result::Container && result != Result::ClassHandle &&
         result != Result::Covergroup && result != Result::Process &&
-        result != Result::VirtualInterface && result != Result::Semaphore)
+        result != Result::VirtualInterface && result != Result::Semaphore &&
+        result != Result::Mailbox)
       return true;
     const uint8_t *stateValue =
         context->nativeStateValue
@@ -8405,8 +8413,11 @@ bool validateValue(
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            validateAggregateFormal(context, value.owner, aggregateType);
-  if (result == Result::Container)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER &&
+  if (result == Result::Container || result == Result::Mailbox)
+    return value.kind ==
+               (result == Result::Mailbox
+                    ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
+                    : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.payload && !value.argument_ref_kind &&
            validateContainerFormal(context, value.owner, containerType);
@@ -8462,6 +8473,7 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
@@ -13383,11 +13395,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     bool semaphore =
         formal.resultKind ==
         obelisk::coverage::FunctionalExpressionResultKind::Semaphore;
+    bool mailbox = formal.resultKind ==
+                   obelisk::coverage::FunctionalExpressionResultKind::Mailbox;
     auto validHandle = [&](uint64_t word) {
-      if (semaphore) {
+      if (semaphore || mailbox) {
         auto *object = obelisk_rt_object_from_managed_word(word);
         return obelisk_rt_managed_word_from_object(object) == word &&
-               validateSemaphoreFormal(context, object);
+               (semaphore
+                    ? validateSemaphoreFormal(context, object)
+                    : validateContainerFormal(
+                          context, object,
+                          functionalDefaultContainerType(*coverage, formalID)));
       }
       return process ? validateProcessFormal(context, word)
              : virtualInterface
@@ -13422,12 +13440,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
            formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
           bitWidth != 192 || valueSize != 24 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
-      if (covergroup || process || virtualInterface || semaphore) {
+      if (covergroup || process || virtualInterface || semaphore || mailbox) {
         uint64_t word = 0;
         obelisk_rt_status status =
             loadReference(64, 8, 0,
-                          semaphore ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                                    : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                          semaphore || mailbox ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                                               : OBELISK_RT_ARGUMENT_VALUE_BITS,
                           &word, nullptr);
         if (status != OBELISK_RT_OK)
           return status;
@@ -13463,8 +13481,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                                 : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
           bitWidth != 64 || valueSize != 8 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
-    } else if (container || classHandle || semaphore) {
-      uint32_t expected = semaphore ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
+    } else if (container || classHandle || semaphore || mailbox) {
+      uint32_t expected = mailbox     ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
+                          : semaphore ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
                           : classHandle
                               ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
                               : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
@@ -13479,6 +13498,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
@@ -13492,14 +13512,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
           !classHandle && !chandle && !event && !covergroup && !process &&
-          !virtualInterface && !semaphore)
+          !virtualInterface && !semaphore && !mailbox)
         return OBELISK_RT_INVALID_ARGUMENT;
-      if (covergroup || process || virtualInterface || semaphore) {
+      if (covergroup || process || virtualInterface || semaphore || mailbox) {
         uint64_t word = 0;
         obelisk_rt_status status =
             loadReference(64, 8, 0,
-                          semaphore ? OBELISK_RT_ARGUMENT_VALUE_CLASS
-                                    : OBELISK_RT_ARGUMENT_VALUE_BITS,
+                          semaphore || mailbox ? OBELISK_RT_ARGUMENT_VALUE_CLASS
+                                               : OBELISK_RT_ARGUMENT_VALUE_BITS,
                           &word, nullptr);
         if (status != OBELISK_RT_OK)
           return status;
@@ -13518,7 +13538,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     if (storedKind != kind ||
         (kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE && !outUnknown))
       return OBELISK_RT_INVALID_DESIGN;
-    if (container || classHandle || semaphore) {
+    if (container || classHandle || semaphore || mailbox) {
       uint64_t word = obelisk_rt_managed_word_from_object(formal.owner);
       std::memcpy(outValue, &word, sizeof(word));
     } else if (string) {

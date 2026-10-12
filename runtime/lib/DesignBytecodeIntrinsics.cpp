@@ -307,7 +307,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       if (obelisk_rt_managed_word_from_object(result.owner) != word)
         return false;
       result.kind =
-          layout.flags & OBELISK_RT_DBREG_SEMAPHORE
+          layout.flags & OBELISK_RT_DBREG_MAILBOX
+              ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
+          : layout.flags & OBELISK_RT_DBREG_SEMAPHORE
               ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
           : layout.flags & OBELISK_RT_DBREG_CLASS_HANDLE
               ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
@@ -1822,7 +1824,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (reference && (output.width != 192 || output.size != 24))
       return OBELISK_RT_INVALID_BYTECODE;
     uint32_t kind =
-        output.flags & OBELISK_RT_DBREG_SEMAPHORE
+        container && (output.flags & OBELISK_RT_DBREG_MAILBOX)
+            ? OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX
+        : output.flags & OBELISK_RT_DBREG_SEMAPHORE
             ? OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE
         : output.flags & OBELISK_RT_DBREG_VIRTUAL_INTERFACE
             ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE

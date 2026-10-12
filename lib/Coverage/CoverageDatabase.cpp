@@ -3509,7 +3509,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         type.keyKind == FunctionalContainerKeyKind::Unsigned ||
         type.keyKind == FunctionalContainerKeyKind::Signed;
     if (!enumBetween(type.kind, FunctionalContainerKind::DynamicArray,
-                     FunctionalContainerKind::AssociativeArray) ||
+                     FunctionalContainerKind::Mailbox) ||
         !enumBetween(type.keyKind, FunctionalContainerKeyKind::None,
                      FunctionalContainerKeyKind::Wildcard) ||
         !type.elementType ||
@@ -3605,7 +3605,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Covergroup ||
         formal.resultKind == FunctionalExpressionResultKind::Process ||
         formal.resultKind == FunctionalExpressionResultKind::VirtualInterface ||
-        formal.resultKind == FunctionalExpressionResultKind::Semaphore;
+        formal.resultKind == FunctionalExpressionResultKind::Semaphore ||
+        formal.resultKind == FunctionalExpressionResultKind::Mailbox;
+    const bool container =
+        formal.resultKind == FunctionalExpressionResultKind::Container ||
+        formal.resultKind == FunctionalExpressionResultKind::Mailbox;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3614,8 +3618,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !enumBetween(formal.direction, FunctionalFormalDirection::Input,
                      FunctionalFormalDirection::Ref) ||
         !scalar ||
-        (formal.resultKind == FunctionalExpressionResultKind::Container
-             ? !containerTypesByID.count(formal.valueType)
+        (container   ? !containerTypesByID.count(formal.valueType)
          : aggregate ? !aggregateTypesByID.count(formal.valueType)
          : formal.resultKind == FunctionalExpressionResultKind::ClassHandle
              ? !classTypesByID.count(formal.valueType)
@@ -3624,6 +3627,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
          : formal.resultKind == FunctionalExpressionResultKind::VirtualInterface
              ? !virtualTypesByID.count(formal.valueType)
              : bool(formal.valueType)) ||
+        (container &&
+         ((containerTypesByID.at(formal.valueType)->kind ==
+           FunctionalContainerKind::Mailbox) !=
+          (formal.resultKind == FunctionalExpressionResultKind::Mailbox))) ||
         (aggregate && aggregateTypesByID.at(formal.valueType)->bitWidth !=
                           formal.bitWidth) ||
         !enumBetween(formal.signedness, CoverageSignedness::Unsigned,
@@ -3869,7 +3876,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           expression.resultKind == FunctionalExpressionResultKind::Process ||
           expression.resultKind ==
               FunctionalExpressionResultKind::VirtualInterface ||
-          expression.resultKind == FunctionalExpressionResultKind::Semaphore) &&
+          expression.resultKind == FunctionalExpressionResultKind::Semaphore ||
+          expression.resultKind == FunctionalExpressionResultKind::Mailbox) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3886,7 +3894,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Semaphore) ||
+                     FunctionalExpressionResultKind::Mailbox) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -7207,7 +7215,8 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                   auto resultKind = static_cast<FunctionalExpressionResultKind>(
                       FunctionalFormalRecord::getResultKind(recordData));
                   SectionKind targetKind;
-                  if (resultKind == FunctionalExpressionResultKind::Container)
+                  if (resultKind == FunctionalExpressionResultKind::Container ||
+                      resultKind == FunctionalExpressionResultKind::Mailbox)
                     targetKind = SectionKind::FunctionalContainerTypes;
                   else if (resultKind ==
                            FunctionalExpressionResultKind::Aggregate)

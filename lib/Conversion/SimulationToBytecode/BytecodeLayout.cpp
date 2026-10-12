@@ -90,6 +90,8 @@ FailureOr<Layout> getLayout(Type type) {
       layout.flags = OBELISK_RT_DBREG_CLASS_HANDLE;
     else if (isa<sim::SemaphoreType>(type))
       layout.flags = OBELISK_RT_DBREG_SEMAPHORE;
+    else if (isa<sim::MailboxType>(type))
+      layout.flags = OBELISK_RT_DBREG_MAILBOX;
   } else if (isa<sim::ManagedRefType>(type)) {
     layout.kind = ManagedRef;
     layout.width = 128;

@@ -111,7 +111,8 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
             isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
                 sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
                 sim::EventType, sim::CovergroupHandleType, sim::ProcessType,
-                sim::VirtualInterfaceType, sim::SemaphoreType>(element))
+                sim::VirtualInterfaceType, sim::SemaphoreType,
+                sim::MailboxType>(element))
           width = 64;
         else if (packed)
           width = *packed;

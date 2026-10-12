@@ -245,9 +245,15 @@ def SimQueueType : SimType<"Queue"> {
 def SimMailboxType : SimType<"Mailbox"> {
   let mnemonic = "mailbox";
   let summary = "managed typed SystemVerilog mailbox handle";
-  let parameters = (ins "::mlir::Type":$elementType);
-  let assemblyFormat = "`<` $elementType `>`";
+  let parameters = (ins "::mlir::Type":$elementType,
+                       DefaultValuedParameter<"uint64_t", "0">:$specialization);
+  let assemblyFormat = "`<` $elementType (`,` $specialization^)? `>`";
   let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    // Domain-separated descriptor identity for the payload, distinct from
+    // the mailbox handle stored as a message in another container.
+    uint64_t getMessageTypeID() const;
+  }];
 }
 
 def SimBoxType : SimType<"Box"> {

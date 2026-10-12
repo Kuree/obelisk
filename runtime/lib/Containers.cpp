@@ -806,7 +806,8 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
                                       obelisk_rt_container_kind_v1 kind,
                                       const obelisk_rt_element_type_v1 *element,
                                       uint64_t size, uint64_t bound,
-                                      obelisk_rt_object_v1 **outContainer) {
+                                      obelisk_rt_object_v1 **outContainer,
+                                      bool isMailbox = false) {
   if (!outContainer ||
       obelisk_rt_v1_element_type_validate(element) != OBELISK_RT_OK)
     return OBELISK_RT_INVALID_ARGUMENT;
@@ -856,7 +857,8 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
       uint64_t size;
       uint64_t capacity;
       uint64_t bound;
-    } initialize{kind, element, buffer, size, capacity, bound};
+      bool isMailbox;
+    } initialize{kind, element, buffer, size, capacity, bound, isMailbox};
     status = obelisk_rt_managed_object_access(
         container, OBELISK_RT_MANAGED_CONTAINER,
         [](void *environment, uint8_t *object,
@@ -867,6 +869,7 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
           auto *header = reinterpret_cast<ContainerHeader *>(object);
           header->descriptor = &containerDescriptorToken;
           header->kind = initialize->kind;
+          header->isMailbox = initialize->isMailbox;
           header->element = initialize->element;
           header->buffer = initialize->buffer;
           header->size = initialize->size;
@@ -3375,6 +3378,14 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
     return status;
   ContainerHeader snapshot{};
   status = snapshotHeader(container, snapshot);
+  // A mailbox is a class identity backed by queue storage. Copying a message
+  // or aggregate containing it must share that identity, not copy its messages.
+  if (status == OBELISK_RT_OK && snapshot.isMailbox) {
+    status = obelisk_rt_v1_gc_root_pop(lane, &sourceRoot);
+    if (status == OBELISK_RT_OK)
+      *outContainer = container;
+    return status;
+  }
   if (status == OBELISK_RT_OK &&
       snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY) {
     status = cloneAssocContainer(lane, container, snapshot, outContainer);
@@ -4154,14 +4165,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,
     uint64_t bitWidth, const obelisk_rt_element_trace_slot_v1 *traceSlots,
     uint64_t traceSlotCount, int64_t bound, obelisk_rt_object_v1 **outMailbox) {
-  if (bound < 0)
+  if (!lane || !outMailbox || bound < 0)
     return OBELISK_RT_INVALID_ARGUMENT;
+  *outMailbox = nullptr;
   uint64_t queueBound =
       bound == 0 ? UINT64_MAX : static_cast<uint64_t>(bound - 1);
-  return obelisk_rt_v1_container_create_typed(
-      lane, OBELISK_RT_CONTAINER_QUEUE, typeID, elementKind, elementFlags,
-      valueSize, alignment, bitWidth, traceSlots, traceSlotCount, 0, queueBound,
-      outMailbox);
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  obelisk_rt_status status = internElementType(
+      lane, typeID, elementKind, elementFlags, valueSize, alignment, bitWidth,
+      traceSlots, traceSlotCount, nullptr, 0, &element);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return initializeContainer(lane, OBELISK_RT_CONTAINER_QUEUE, element, 0,
+                             queueBound, outMailbox, true);
 }
 
 extern "C" obelisk_rt_status

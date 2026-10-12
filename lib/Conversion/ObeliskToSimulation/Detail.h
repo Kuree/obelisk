@@ -9,6 +9,8 @@
 #ifndef OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_DETAIL_H
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_DETAIL_H
 
+#include "SemanticTypeIndex.h"
+
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
