@@ -8255,7 +8255,8 @@ bool validateValue(
   if (result == Result::Boolean)
     width = 1;
   else if ((result == Result::String || result == Result::Container ||
-            result == Result::ClassHandle || result == Result::Chandle) &&
+            result == Result::ClassHandle || result == Result::Chandle ||
+            result == Result::Event) &&
            reference)
     width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
@@ -8295,8 +8296,10 @@ bool validateValue(
                 ? validateClassFormal(context, object, classType)
                 : validateContainerFormal(context, object, containerType));
   }
-  if (result == Result::Chandle)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE &&
+  if (result == Result::Chandle || result == Result::Event)
+    return value.kind == (result == Result::Event
+                              ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
+                              : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.owner && !value.argument_ref_kind;
   if (result == Result::ClassHandle)
@@ -8365,7 +8368,8 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE)
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT)
     return;
   // Strings are immutable values. The context's service-root enumerator
   // retains this captured managed word independently of the caller's storage.
@@ -13291,9 +13295,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
         obelisk::coverage::FunctionalExpressionResultKind::ClassHandle;
     bool chandle = formal.resultKind ==
                    obelisk::coverage::FunctionalExpressionResultKind::Chandle;
-    if (chandle) {
-      if (kind != OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE || bitWidth != 64 ||
-          valueSize != 8 || outUnknown)
+    bool event = formal.resultKind ==
+                 obelisk::coverage::FunctionalExpressionResultKind::Event;
+    if (chandle || event) {
+      if (kind != (event ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
+                         : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
+          bitWidth != 64 || valueSize != 8 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
     } else if (container || classHandle) {
       uint32_t expected = classHandle
@@ -13310,6 +13317,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
                formal.bitWidth != bitWidth || formal.valueSize != valueSize)
       return OBELISK_RT_INVALID_DESIGN;
     uint32_t storedKind = formal.kind;
@@ -13317,7 +13325,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
-          !classHandle && !chandle)
+          !classHandle && !chandle && !event)
         return OBELISK_RT_INVALID_ARGUMENT;
       const uint8_t *stateValue =
           globalValue ? globalValue
@@ -13354,7 +13362,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       if (status != OBELISK_RT_OK)
         return status;
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
-    } else if (chandle)
+    } else if (chandle || event)
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
     else
       std::memcpy(outValue, formal.value.data(),

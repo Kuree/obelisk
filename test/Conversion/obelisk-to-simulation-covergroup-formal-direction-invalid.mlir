@@ -15,4 +15,4 @@ module {
   }
 }
 
-// CHECK: coverage formals must be input or ref values with signless integer, four-state logic, real, string, container, fixed aggregate, class handle, or chandle type
+// CHECK: coverage formals must be input or ref values with signless integer, four-state logic, real, string, container, fixed aggregate, class handle, chandle, or event type

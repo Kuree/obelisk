@@ -259,11 +259,32 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   SmallVector<EventInputCandidate> eventInputs;
   llvm::StringMap<semantic::SVNetSymbolOp> nets;
   bool hasAnnotatedTimingOrSwitches = false;
+  // Index constructor ref positions once per declaration. Repeated creates
+  // must not rescan a covergroup's body or all of its formal descriptors.
+  llvm::DenseMap<Type, SmallVector<unsigned>> covergroupEventRefs;
+  semanticRoot->walk([&](semantic::SVCovergroupTypeOp group) {
+    unsigned ordinal = 0;
+    for (Operation *child : getChildren(group)) {
+      auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
+      if (!formal || formal.getIsCoverageSampleFormal().value_or(false))
+        continue;
+      auto type = formal->getAttrOfType<TypeAttr>("semantic_type");
+      if (formal.getDirection() == semantic::SVArgumentDirection::Ref && type &&
+          isa<semantic::EventType>(type.getValue()))
+        covergroupEventRefs[group.getSemanticType()].push_back(ordinal);
+      ++ordinal;
+    }
+  });
+  llvm::DenseSet<Operation *> collectedEventCellReferences;
   auto collectEventCellReferences = [&](Operation *root) {
-    root->walk<WalkOrder::PreOrder>([&](Operation *nested) {
+    root->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
+      // Nested lvalues and calls can ask for the same subtree. Visit each
+      // node once across the complete inventory to keep this walk linear.
+      if (!collectedEventCellReferences.insert(nested).second)
+        return WalkResult::skip();
       auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
       if (!type || !isa<semantic::EventType>(type.getValue()))
-        return;
+        return WalkResult::advance();
       StringRef path;
       if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested))
         path = named.getReferencedPath();
@@ -275,6 +296,7 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
         path = member.getReferencedPath();
       if (!path.empty())
         result.eventCellPaths.insert(path);
+      return WalkResult::advance();
     });
   };
 
@@ -354,6 +376,18 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
       if (type && isa<semantic::EventType>(type.getValue()) &&
           !getChildren(op).empty())
         result.eventCellPaths.insert(getHierarchyName(op));
+      return;
+    }
+    if (auto create = dyn_cast<semantic::SVNewCovergroupExpressionOp>(op)) {
+      auto type = create->getAttrOfType<TypeAttr>("semantic_type");
+      auto found = type ? covergroupEventRefs.find(type.getValue())
+                        : covergroupEventRefs.end();
+      if (found != covergroupEventRefs.end()) {
+        auto actuals = getChildren(create);
+        for (unsigned position : found->second)
+          if (position < actuals.size())
+            collectEventCellReferences(actuals[position]);
+      }
       return;
     }
     if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(op)) {

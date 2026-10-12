@@ -2556,7 +2556,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   ? coverage::FunctionalFormalDirection::Ref
                   : coverage::FunctionalFormalDirection::Input;
           descriptor.ordinal = ordinal;
-          if (isa<sim::ChandleType>(*normalized)) {
+          if (isa<sim::EventType>(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::Event;
+          } else if (isa<sim::ChandleType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::Chandle;
           } else if (isa<sim::DynamicArrayType, sim::QueueType,

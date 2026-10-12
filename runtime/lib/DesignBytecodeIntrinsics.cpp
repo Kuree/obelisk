@@ -317,6 +317,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       result.value_size = 0;
       return true;
     }
+    if (layout.kind == OBELISK_RT_DBREG_HANDLE &&
+        (layout.flags & OBELISK_RT_DBREG_EVENT)) {
+      if (layout.width != 256 || layout.size != 32 ||
+          read32(frame.data + layout.offset) != OBELISK_RT_DESCRIPTOR_EVENT ||
+          !encodeCanonicalHandle(frame.data + layout.offset, result.payload))
+        return false;
+      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_EVENT;
+      result.bit_width = 0;
+      result.value_size = 0;
+      return true;
+    }
     if (layout.kind == OBELISK_RT_DBREG_BITS) {
       if (layout.flags & OBELISK_RT_DBREG_CHANDLE) {
         auto word = readScalar(image, frame, reg);
@@ -1761,6 +1772,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     bool container = output.kind == OBELISK_RT_DBREG_MANAGED &&
                      output.width == 64 && output.size == 8;
+    bool event = output.kind == OBELISK_RT_DBREG_HANDLE &&
+                 (output.flags & OBELISK_RT_DBREG_EVENT) &&
+                 output.width == 256 && output.size == 32;
+    if (event) {
+      uint64_t word = UINT64_MAX;
+      obelisk_rt_status status = obelisk_rt_v1_covergroup_formal_read(
+          context, *handle, *formal, OBELISK_RT_FUNCTIONAL_VALUE_EVENT, 64, 8,
+          nullptr, nullptr, 0, &word, nullptr);
+      if (status != OBELISK_RT_OK)
+        return status;
+      return decodeCanonicalEventHandle(word, frame.data + output.offset)
+                 ? OBELISK_RT_OK
+                 : OBELISK_RT_INVALID_HANDLE;
+    }
     bool reference = output.kind == OBELISK_RT_DBREG_ARGUMENT_REF;
     if (reference && (output.width != 192 || output.size != 24))
       return OBELISK_RT_INVALID_BYTECODE;
@@ -2563,9 +2588,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout output = layoutAt(image, frame.function, outputRegister(0));
     bool fourState = (*flags & 1) != 0;
     uint32_t valueKind = static_cast<uint32_t>(*flags >> 1);
-    uint64_t scratchPlaneSize = ((uint64_t{output.width} + 63) / 64) * 8;
-    if (*bitWidth != output.width || *planeSize > scratchPlaneSize ||
-        output.size != scratchPlaneSize * (fourState ? 2 : 1) ||
+    bool event = output.kind == OBELISK_RT_DBREG_HANDLE &&
+                 (output.flags & OBELISK_RT_DBREG_EVENT);
+    uint64_t canonicalWidth = event ? 64 : output.width;
+    uint64_t scratchPlaneSize = ((canonicalWidth + 63) / 64) * 8;
+    if (*bitWidth != canonicalWidth || *planeSize > scratchPlaneSize ||
+        (event ? output.width != 256 || output.size != 32
+               : output.size != scratchPlaneSize * (fourState ? 2 : 1)) ||
         fourState != (output.kind == OBELISK_RT_DBREG_LOGIC) ||
         (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) !=
             (output.kind == OBELISK_RT_DBREG_MANAGED) ||
@@ -2582,11 +2611,17 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         context->stateUnknown.empty()
             ? &dummy
             : reinterpret_cast<const uint8_t *>(context->stateUnknown.data());
-    return obelisk_rt_v1_argument_ref_load(
+    uint64_t word = UINT64_MAX;
+    obelisk_rt_status status = obelisk_rt_v1_argument_ref_load(
         context, stateValue, stateUnknown, image.stateBitCount, owner, payload,
         managed, *bitWidth, *planeSize, fourState, valueKind,
-        frame.data + output.offset,
+        event ? static_cast<void *>(&word) : frame.data + output.offset,
         fourState ? frame.data + output.offset + scratchPlaneSize : nullptr);
+    if (status != OBELISK_RT_OK || !event)
+      return status;
+    return decodeCanonicalEventHandle(word, frame.data + output.offset)
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_HANDLE;
   }
   case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_STORE: {
     obelisk_rt_object_v1 *owner = nullptr;
@@ -2602,9 +2637,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     Layout input = layoutAt(image, frame.function, inputRegister(1));
     bool fourState = (*flags & 1) != 0;
     uint32_t valueKind = static_cast<uint32_t>(*flags >> 1);
-    uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
-    if (*bitWidth != input.width || *planeSize > scratchPlaneSize ||
-        input.size != scratchPlaneSize * (fourState ? 2 : 1) ||
+    bool event = input.kind == OBELISK_RT_DBREG_HANDLE &&
+                 (input.flags & OBELISK_RT_DBREG_EVENT);
+    uint64_t canonicalWidth = event ? 64 : input.width;
+    uint64_t scratchPlaneSize = ((canonicalWidth + 63) / 64) * 8;
+    if (*bitWidth != canonicalWidth || *planeSize > scratchPlaneSize ||
+        (event ? input.width != 256 || input.size != 32
+               : input.size != scratchPlaneSize * (fourState ? 2 : 1)) ||
         fourState != (input.kind == OBELISK_RT_DBREG_LOGIC) ||
         (valueKind == OBELISK_RT_ARGUMENT_VALUE_CLASS) !=
             (input.kind == OBELISK_RT_DBREG_MANAGED) ||
@@ -2612,6 +2651,11 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
             (input.kind == OBELISK_RT_DBREG_STRING) ||
         valueKind > OBELISK_RT_ARGUMENT_VALUE_STRING)
       return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t word = UINT64_MAX;
+    if (event &&
+        (read32(frame.data + input.offset) != OBELISK_RT_DESCRIPTOR_EVENT ||
+         !encodeCanonicalHandle(frame.data + input.offset, word)))
+      return OBELISK_RT_INVALID_HANDLE;
     uint8_t dummy = 0;
     uint8_t *stateValue =
         context->stateValue.empty()
@@ -2624,7 +2668,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_argument_ref_store(
         context, stateValue, stateUnknown, image.stateBitCount, owner, payload,
         managed, *bitWidth, *planeSize, fourState, valueKind,
-        frame.data + input.offset,
+        event ? static_cast<const void *>(&word) : frame.data + input.offset,
         fourState ? frame.data + input.offset + scratchPlaneSize : nullptr);
   }
   case OBELISK_RT_INTRINSIC_V1_MANAGED_ROOT_EXTRACT: {
@@ -3910,7 +3954,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     const uint8_t *address = frame.data + event.offset;
     std::memcpy(&kind, address, 4);
     std::memcpy(&start, address + 16, 8);
-    if (kind != OBELISK_RT_DESCRIPTOR_EVENT || start < 0)
+    if (kind != OBELISK_RT_DESCRIPTOR_EVENT)
+      return OBELISK_RT_INVALID_HANDLE;
+    // IEEE 15.5.3: a null named event has no persistent triggered state.
+    if (start == -1)
+      return sentinel(0, 0);
+    if (start < 0)
       return OBELISK_RT_INVALID_HANDLE;
     uint32_t triggered = obelisk_rt_v1_scheduler_event_triggered(
         context, static_cast<uint64_t>(start));
@@ -3958,6 +4007,19 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (initialLayout.kind == OBELISK_RT_DBREG_MANAGED) {
       obelisk_rt_object_v1 *initial = readManaged(inputRegister(0));
       status = obelisk_rt_native_state_alloc_managed(context, initial, &stable);
+    } else if (initialLayout.kind == OBELISK_RT_DBREG_HANDLE &&
+               (initialLayout.flags & OBELISK_RT_DBREG_EVENT)) {
+      uint64_t identity = UINT64_MAX;
+      if (signature.id != OBELISK_RT_INTRINSIC_V1_STATE_ALLOC ||
+          site.inputCount != 1 ||
+          read32(frame.data + initialLayout.offset) !=
+              OBELISK_RT_DESCRIPTOR_EVENT ||
+          !encodeCanonicalHandle(frame.data + initialLayout.offset, identity))
+        return OBELISK_RT_INVALID_BYTECODE;
+      initialWidth = 64;
+      status = obelisk_rt_v1_native_state_alloc(
+          context, initialWidth, reinterpret_cast<const uint8_t *>(&identity),
+          nullptr, &stable);
     } else {
       Logic initial = readLogic(frame.data, initialLayout);
       initialWidth = initial.width;

@@ -585,8 +585,15 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
                          static_cast<uint32_t>(op.getOccurrenceSite()));
   }
   if (auto op = dyn_cast<sim::SimEventEqualOp>(operation)) {
-    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()),
-          reg(plan, op.getLhs()), reg(plan, op.getRhs())});
+    // Event equality compares the shared synchronization identity. Record
+    // bounds vary with the way a handle entered a frame or reference cell.
+    Type word = IntegerType::get(op.getContext(), 64);
+    uint32_t left = temporary(plan, word), right = temporary(plan, word);
+    if (left == kInvalidRegister || right == kInvalidRegister)
+      return op.emitOpError("cannot allocate event identity registers");
+    emit({HandleID, 0, left, reg(plan, op.getLhs())});
+    emit({HandleID, 0, right, reg(plan, op.getRhs())});
+    emit({Compare, OBELISK_RT_DB_CMP_EQ, reg(plan, op.getResult()), left, right});
     return success();
   }
   if (auto op = dyn_cast<sim::SimProcessNullOp>(operation)) {

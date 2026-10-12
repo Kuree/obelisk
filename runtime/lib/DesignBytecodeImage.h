@@ -114,6 +114,26 @@ inline bool encodeCanonicalHandle(const uint8_t *address, uint64_t &stable) {
   return stable != UINT64_MAX;
 }
 
+// Scheduler events carry an identity, not a state view. Materialize the
+// bytecode record from the same one-word identity stored in canonical frames,
+// coverage captures and argument-reference cells.
+inline bool decodeCanonicalEventHandle(uint64_t stable, uint8_t *address) {
+  int64_t start = -1;
+  if (stable != UINT64_MAX) {
+    if (isDynamicEventStableHandle(stable))
+      start = static_cast<int64_t>(stable);
+    else if (!decodeGlobalHandle(stable, start))
+      return false;
+  }
+  uint64_t words[4] = {
+      OBELISK_RT_DESCRIPTOR_EVENT, static_cast<uint64_t>(start),
+      static_cast<uint64_t>(start),
+      static_cast<uint64_t>(start == -1 || start == INT64_MAX ? start
+                                                              : start + 1)};
+  std::memcpy(address, words, sizeof(words));
+  return true;
+}
+
 struct Image {
   const uint8_t *data = nullptr;
   uint64_t size = 0;

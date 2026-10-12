@@ -435,6 +435,10 @@ bool validIntrinsic(const Image &image, const Function &function,
   auto handle = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_HANDLE;
   };
+  auto event = [&](const std::optional<Layout> &layout) {
+    return handle(layout) && layout->width == 256 && layout->size == 32 &&
+           layout->flags == OBELISK_RT_DBREG_EVENT;
+  };
   auto status = [](const std::optional<Layout> &layout) {
     return layout && layout->kind == OBELISK_RT_DBREG_STATUS;
   };
@@ -647,9 +651,10 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_STATE_ALLOC:
     if (signature.flags != 0 || site.inputCount == 0 || site.outputCount != 1 ||
         (!numeric(input(0)) && !floating(input(0)) && !managed(input(0)) &&
-         !string(input(0))) ||
+         !string(input(0)) && !event(input(0))) ||
         !handle(output(0)) ||
-        ((managed(input(0)) || string(input(0))) && site.inputCount != 1))
+        ((managed(input(0)) || string(input(0)) || event(input(0))) &&
+         site.inputCount != 1))
       return false;
     for (uint32_t index = 1; index != site.inputCount; ++index)
       if (!twoStateBits(input(index), 64))
@@ -1151,7 +1156,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     for (uint32_t index = 3; index != site.inputCount; ++index)
       if (!twoStateBits(input(index), 64) && !numeric(input(index)) &&
           !floating(input(index)) && !argumentRef(input(index)) &&
-          !string(input(index)) && !managed(input(index)))
+          !string(input(index)) && !managed(input(index)) && !event(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CLOCK_EVENT_REGISTER:
@@ -1232,6 +1237,7 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) &&
            (numeric(output(0)) || string(output(0)) || argumentRef(output(0)) ||
+            event(output(0)) ||
             (managed(output(0)) && output(0)->width == 64 &&
              output(0)->size == 8) ||
             (output(0) && output(0)->kind == OBELISK_RT_DBREG_REAL64));
@@ -1241,7 +1247,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     for (uint32_t index = 2; index != site.inputCount; ++index)
       if (!numeric(input(index)) && !floating(input(index)) &&
-          !string(input(index)) && !managed(input(index)))
+          !string(input(index)) && !managed(input(index)) && !event(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY:
@@ -2551,6 +2557,8 @@ bool validateImage(const Image &image) {
           : layout.kind == OBELISK_RT_DBREG_BITS
               ? OBELISK_RT_DBREG_SIGNED |
                     (layout.width == 64 ? OBELISK_RT_DBREG_CHANDLE : 0)
+          : layout.kind == OBELISK_RT_DBREG_HANDLE && layout.width == 256
+              ? OBELISK_RT_DBREG_EVENT
           : layout.kind == OBELISK_RT_DBREG_LOGIC ? OBELISK_RT_DBREG_SIGNED
                                                   : 0;
       if (layout.width == 0 || expected == 0 || layout.size != expected ||

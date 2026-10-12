@@ -55,7 +55,11 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (isa<sim::ControlType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
-  } else if (isa<sim::RefType, sim::NetType, sim::DriverType, sim::EventType,
+  } else if (isa<sim::EventType>(type)) {
+    layout.kind = Handle;
+    layout.width = 256;
+    layout.flags = OBELISK_RT_DBREG_EVENT;
+  } else if (isa<sim::RefType, sim::NetType, sim::DriverType,
                  sim::ContextType, sim::ObserverType, runtime::ContextType>(
                  type)) {
     layout.kind = Handle;

@@ -3534,7 +3534,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::String ||
         formal.resultKind == FunctionalExpressionResultKind::Container ||
         formal.resultKind == FunctionalExpressionResultKind::ClassHandle ||
-        formal.resultKind == FunctionalExpressionResultKind::Chandle;
+        formal.resultKind == FunctionalExpressionResultKind::Chandle ||
+        formal.resultKind == FunctionalExpressionResultKind::Event;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3788,7 +3789,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (((aggregateResult ||
           expression.resultKind ==
               FunctionalExpressionResultKind::ClassHandle ||
-          expression.resultKind == FunctionalExpressionResultKind::Chandle) &&
+          expression.resultKind == FunctionalExpressionResultKind::Chandle ||
+          expression.resultKind == FunctionalExpressionResultKind::Event) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3805,7 +3807,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Chandle) ||
+                     FunctionalExpressionResultKind::Event) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,

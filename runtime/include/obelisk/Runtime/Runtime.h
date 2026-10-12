@@ -901,6 +901,8 @@ enum {
 #define OBELISK_RT_DBREG_CLASS_HANDLE (UINT8_C(1) << 1)
 /* An opaque C pointer in a canonical unsigned 64-bit register. */
 #define OBELISK_RT_DBREG_CHANDLE (UINT8_C(1) << 2)
+// Distinguishes scheduler events from other canonical bytecode handles.
+#define OBELISK_RT_DBREG_EVENT (UINT8_C(1) << 3)
 
 typedef uint16_t obelisk_rt_design_bytecode_opcode;
 enum {
@@ -4848,7 +4850,10 @@ enum {
   // other fields are zero. The schema records the nominal runtime class ID.
   OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE = 8,
   /* Opaque C pointer word in payload; all other value fields are zero. */
-  OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE = 9
+  OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE = 9,
+  // Canonical scheduler identity in payload; null is UINT64_MAX. All other
+  // value fields are zero. Copies retain the shared synchronization identity.
+  OBELISK_RT_FUNCTIONAL_VALUE_EVENT = 10
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

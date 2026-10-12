@@ -13633,7 +13633,22 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   mixedTierObservedHandle = UINT64_MAX;
 }
 
-TEST(DesignBytecode, ChandleRegistersRequireUnsignedOpaqueWordGeometry) {
+TEST(DesignBytecode, EventWordsRoundTripCanonicalHandles) {
+  using namespace obelisk::designbytecode;
+  for (uint64_t identity :
+       {uint64_t{0}, uint64_t{37}, OBELISK_RT_STABLE_HANDLE_PREPONED_EVENT,
+        OBELISK_RT_STABLE_HANDLE_DYNAMIC_EVENT_TAG | uint64_t{77},
+        UINT64_MAX}) {
+    std::array<uint8_t, 32> record{};
+    ASSERT_TRUE(decodeCanonicalEventHandle(identity, record.data()));
+    EXPECT_EQ(read32(record.data()), OBELISK_RT_DESCRIPTOR_EVENT);
+    uint64_t encoded = 0;
+    ASSERT_TRUE(encodeCanonicalHandle(record.data(), encoded));
+    EXPECT_EQ(encoded, identity);
+  }
+}
+
+TEST(DesignBytecode, OpaqueHandleRegistersRequireCanonicalGeometry) {
   struct Case {
     uint8_t kind, flags;
     uint32_t width;
@@ -13650,6 +13665,16 @@ TEST(DesignBytecode, ChandleRegistersRequireUnsignedOpaqueWordGeometry) {
        OBELISK_RT_INVALID_DESIGN},
       {OBELISK_RT_DBREG_BITS,
        OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_SIGNED, 64, 8,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_HANDLE, OBELISK_RT_DBREG_EVENT, 256, 32, OBELISK_RT_OK},
+      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_EVENT, 64, 8,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_HANDLE, OBELISK_RT_DBREG_EVENT, 128, 32,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_EVENT, 64, 8,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_HANDLE,
+       OBELISK_RT_DBREG_EVENT | OBELISK_RT_DBREG_SIGNED, 256, 32,
        OBELISK_RT_INVALID_DESIGN}};
   for (const auto &test : cases) {
     Fixture fixture;
@@ -13658,6 +13683,9 @@ TEST(DesignBytecode, ChandleRegistersRequireUnsignedOpaqueWordGeometry) {
     fixture.bytecode[record + 1] = test.flags;
     put32(fixture.bytecode, record + 4, test.width);
     put64(fixture.bytecode, record + 16, test.size);
+    if (test.kind == OBELISK_RT_DBREG_HANDLE)
+      put16(fixture.bytecode, get64(fixture.bytecode, 72) + 32 + 2,
+            OBELISK_RT_DESCRIPTOR_EVENT);
     put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
     fixture.execution.bytecode = fixture.bytecode.data();
     fixture.execution.checksum = imageChecksum(fixture.bytecode);

@@ -881,6 +881,7 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         const bool classHandle =
             succeeded(type) && isa<sim::ClassHandleType>(*type);
         const bool chandle = succeeded(type) && isa<sim::ChandleType>(*type);
+        const bool event = succeeded(type) && isa<sim::EventType>(*type);
         const bool container =
             succeeded(type) &&
             isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
@@ -890,12 +891,12 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             (!scalar &&
              !(succeeded(type) &&
                ((*type).isF64() || sim::isAggregateType(*type))) &&
-             !string && !container && !classHandle && !chandle) ||
+             !string && !container && !classHandle && !chandle && !event) ||
             (scalar && !isa<IntegerType, sim::LogicType>(scalar))) {
           emitError(getSemanticLocation(formal))
               << "coverage formals must be input or ref values with signless "
                  "integer, four-state logic, real, string, container, fixed "
-                 "aggregate, class handle, or chandle type";
+                 "aggregate, class handle, chandle, or event type";
           invalid = true;
         }
       }

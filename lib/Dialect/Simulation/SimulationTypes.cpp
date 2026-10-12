@@ -68,6 +68,8 @@ bool isNormalizedValueType(Type type) {
 bool haveCompatibleArgumentRefLayout(Type lhs, Type rhs) {
   if (lhs == rhs)
     return true;
+  if (!lhs || !rhs)
+    return false;
   std::optional<unsigned> lhsWidth = getPackedWidth(lhs);
   std::optional<unsigned> rhsWidth = getPackedWidth(rhs);
   if (!lhsWidth || lhsWidth != rhsWidth)
