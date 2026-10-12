@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -2105,6 +2106,34 @@ TEST(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
                 nullptr, nullptr, 0, &actual, nullptr),
             OBELISK_RT_OK);
   EXPECT_EQ(actual, 7);
+  std::array<uint64_t, 3> reference{};
+  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+                192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(reference, (std::array<uint64_t, 3>{0, liveHandle, 0}));
+  live = 11;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, liveHandle, 0, 8, 1, 0,
+                OBELISK_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+                context, &dummy, &dummy, 8, nullptr, reference[1], reference[2],
+                8, 1, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &actual, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(actual, 11);
+  for (auto [id, width, size] :
+       {std::tuple{uint64_t{70}, uint64_t{192}, uint64_t{24}},
+        std::tuple{uint64_t{71}, uint64_t{8}, uint64_t{24}},
+        std::tuple{uint64_t{71}, uint64_t{192}, uint64_t{8}}}) {
+    reference.fill(UINT64_MAX);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+                  width, size, nullptr, nullptr, 0, reference.data(), nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(reference,
+              (std::array<uint64_t, 3>{UINT64_MAX, UINT64_MAX, UINT64_MAX}));
+  }
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -2179,6 +2208,26 @@ TEST(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
             OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
   ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  std::array<uint64_t, 3> reference{};
+  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF,
+                192, 24, nullptr, nullptr, 0, reference.data(), nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(reference[2], 2u);
+  obelisk_rt_string_v1 projectedString = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_load(
+                context, nullptr, nullptr, 0,
+                obelisk_rt_object_from_managed_word(reference[0]), reference[1],
+                reference[2], 64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_STRING,
+                &projectedString, nullptr),
+            OBELISK_RT_OK);
+  char projectedScratch[8];
+  const char *projectedBytes = nullptr;
+  uint64_t projectedSize = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(projectedString, projectedScratch,
+                                      &projectedBytes, &projectedSize),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(projectedBytes, projectedSize), updatedText);
   for (auto [id, expected] : {std::pair{uint64_t{90}, frozenText},
                               std::pair{uint64_t{71}, updatedText}}) {
     obelisk_rt_string_v1 value = 0;

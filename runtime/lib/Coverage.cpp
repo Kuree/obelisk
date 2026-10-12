@@ -13043,6 +13043,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     if (position == found->second.formals.end())
       return OBELISK_RT_INVALID_DESIGN;
     const FunctionalCoverageValue &formal = position->second;
+    if (kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
+      if (formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
+          bitWidth != 192 || valueSize != 24 || outUnknown)
+        return OBELISK_RT_INVALID_DESIGN;
+      std::array<uint64_t, 3> reference{
+          obelisk_rt_managed_word_from_object(formal.owner), formal.payload,
+          formal.argumentRefKind};
+      std::memcpy(outValue, reference.data(), sizeof(reference));
+      return OBELISK_RT_OK;
+    }
     bool string = formal.resultKind ==
                   obelisk::coverage::FunctionalExpressionResultKind::String;
     if (string) {

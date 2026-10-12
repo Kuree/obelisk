@@ -1536,8 +1536,11 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
     return emitOpError(
         "FunctionalFormal ID must be a positive signed 64-bit value");
   Type result = getResult().getType();
+  if (auto ref = dyn_cast<ArgumentRefType>(result))
+    result = ref.getElementType();
   if (!getPackedWidth(result) && !result.isF64() && !isa<StringType>(result))
-    return emitOpError("requires an integral, real, or string formal result");
+    return emitOpError("requires an integral, real, or string formal value or "
+                       "argument reference");
   return success();
 }
 

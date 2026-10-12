@@ -1082,8 +1082,10 @@ def SimCovergroupFormalReadOp : SimOp<"covergroup.formal_read", [
   ]> {
   let summary = "read a constructor formal captured by a covergroup instance";
   let description = [{
-    Projects the value of an input constructor formal, or the current value of
-    a live `ref` constructor formal, from the instance configuration. The
+    Projects the value of an input constructor formal, or the retained typed
+    argument reference or current value of a live `ref` constructor formal,
+    from the instance configuration. A typed argument reference preserves the
+    storage binding until each use and can be passed to const-ref helpers. The
     positive stable ID names a `FunctionalFormal` record in the embedded v1
     schema; it is not a physical table index.
     Input strings retain immutable managed values; references load the current

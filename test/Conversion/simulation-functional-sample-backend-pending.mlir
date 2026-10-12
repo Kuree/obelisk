@@ -29,6 +29,14 @@
 // RUN: not obelisk-opt %t/bad-string-read.mlir \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-STRING-READ
+// RUN: %python %S/Inputs/mutate-functional-batch.py insert-string-formal-reference \
+// RUN:   < %t/lowered.mlir > %t/bad-input-reference.mlir
+// RUN: not obelisk-opt %t/bad-input-reference.mlir \
+// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=BAD-STRING-READ
+// RUN: not obelisk-opt %t/bad-input-reference.mlir \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=BAD-STRING-READ
 // RUN: obelisk -emit-obelisk %t/string-sample.sv -o %t/string-sample.mlir
 // RUN: obelisk-opt %t/string-sample.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=STRING-SAMPLE

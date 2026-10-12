@@ -18,13 +18,14 @@
 // SIM: %[[HANDLE:[0-9]+]] = simulation.covergroup.create {{.*}} formal_ids {{\[}}[[FROZEN:[1-9][0-9]*]], [[LIVE:[1-9][0-9]*]], [[REAL:[1-9][0-9]*]]{{\]}}
 // SIM: simulation.covergroup.sample_enabled {{.*}}, %[[SAMPLE_HANDLE:[0-9]+]]
 // SIM: %[[FROZEN_VALUE:[0-9]+]] = simulation.covergroup.formal_read {{.*}}, %[[SAMPLE_HANDLE]]{{\[}}[[FROZEN]]{{\]}} {{.*}} -> !simulation.string
-// SIM: %[[LIVE_VALUE:[0-9]+]] = simulation.covergroup.formal_read {{.*}}, %[[SAMPLE_HANDLE]]{{\[}}[[LIVE]]{{\]}} {{.*}} -> !simulation.string
-// SIM: simulation.covergroup.formal_read {{.*}}, %[[SAMPLE_HANDLE]]{{\[}}[[REAL]]{{\]}} {{.*}} -> f64
+// SIM: %[[LIVE_REF:[0-9]+]] = simulation.covergroup.formal_read {{.*}}, %[[SAMPLE_HANDLE]]{{\[}}[[LIVE]]{{\]}} {{.*}} -> !simulation.argument_ref<!simulation.string>
+// SIM: simulation.covergroup.formal_read {{.*}}, %[[SAMPLE_HANDLE]]{{\[}}[[REAL]]{{\]}} {{.*}} -> !simulation.argument_ref<f64>
 // SIM: simulation.string.length %[[FROZEN_VALUE]]
+// SIM: %[[LIVE_VALUE:[0-9]+]] = simulation.argument_ref.load %[[LIVE_REF]]
 // SIM: simulation.string.length %[[LIVE_VALUE]]
 // SIM: simulation.covergroup.sample
 // SIM: simulation.covergroup.formal_read {{.*}}{{\[}}[[FROZEN]]{{\]}} {{.*}} -> !simulation.string
-// SIM: simulation.covergroup.formal_read {{.*}}{{\[}}[[LIVE]]{{\]}} {{.*}} -> !simulation.string
+// SIM: simulation.covergroup.formal_read {{.*}}{{\[}}[[LIVE]]{{\]}} {{.*}} -> !simulation.argument_ref<!simulation.string>
 // SIM: simulation.covergroup.sample
 // NATIVE: llvm.call @obelisk_rt_v1_covergroup_create
 // NATIVE: %[[STRING_KIND:[0-9]+]] = llvm.mlir.constant(5 : i32) : i32
@@ -34,13 +35,13 @@
 // NATIVE-NEXT: %[[STRING_UNKNOWN:[0-9]+]] = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
 // NATIVE-NEXT: %[[STRING_COUNT:[0-9]+]] = llvm.mlir.constant({{[1-9][0-9]*}} : i64) : i64
 // NATIVE-NEXT: llvm.call @obelisk_rt_v1_covergroup_formal_read({{.*}}, %[[STRING_KIND]], %[[STRING_WIDTH]], %[[STRING_SIZE]], %[[STRING_STATE]], %[[STRING_UNKNOWN]], %[[STRING_COUNT]], {{.*}}) : (!llvm.ptr, i64, i64, i32, i64, i64, !llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
-// NATIVE: %[[REAL_KIND:[0-9]+]] = llvm.mlir.constant(3 : i32) : i32
-// NATIVE-NEXT: %[[REAL_WIDTH:[0-9]+]] = llvm.mlir.constant(64 : i64) : i64
-// NATIVE-NEXT: %[[REAL_SIZE:[0-9]+]] = llvm.mlir.constant(8 : i64) : i64
-// NATIVE-NEXT: %[[REAL_STATE:[0-9]+]] = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
-// NATIVE-NEXT: %[[REAL_UNKNOWN:[0-9]+]] = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
-// NATIVE-NEXT: %[[REAL_COUNT:[0-9]+]] = llvm.mlir.constant({{[1-9][0-9]*}} : i64) : i64
-// NATIVE-NEXT: llvm.call @obelisk_rt_v1_covergroup_formal_read({{.*}}, %[[REAL_KIND]], %[[REAL_WIDTH]], %[[REAL_SIZE]], %[[REAL_STATE]], %[[REAL_UNKNOWN]], %[[REAL_COUNT]], {{.*}}) : (!llvm.ptr, i64, i64, i32, i64, i64, !llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
+// NATIVE: %[[REF_KIND:[0-9]+]] = llvm.mlir.constant(4 : i32) : i32
+// NATIVE-NEXT: %[[REF_WIDTH:[0-9]+]] = llvm.mlir.constant(192 : i64) : i64
+// NATIVE-NEXT: %[[REF_SIZE:[0-9]+]] = llvm.mlir.constant(24 : i64) : i64
+// NATIVE-NEXT: %[[REF_STATE:[0-9]+]] = llvm.mlir.addressof @__obelisk_state_value : !llvm.ptr
+// NATIVE-NEXT: %[[REF_UNKNOWN:[0-9]+]] = llvm.mlir.addressof @__obelisk_state_unknown : !llvm.ptr
+// NATIVE-NEXT: %[[REF_COUNT:[0-9]+]] = llvm.mlir.constant({{[1-9][0-9]*}} : i64) : i64
+// NATIVE-NEXT: llvm.call @obelisk_rt_v1_covergroup_formal_read({{.*}}, %[[REF_KIND]], %[[REF_WIDTH]], %[[REF_SIZE]], %[[REF_STATE]], %[[REF_UNKNOWN]], %[[REF_COUNT]], {{.*}}) : (!llvm.ptr, i64, i64, i32, i64, i64, !llvm.ptr, !llvm.ptr, i64, !llvm.ptr, !llvm.ptr) -> i32
 // BYTECODE-DAG: intrinsic {{.*}}id=0x00010450 inputs=18 outputs=1 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x00010453 inputs=2 outputs=1 flags=0
 

@@ -4942,6 +4942,9 @@ obelisk_rt_status obelisk_rt_v1_covergroup_block_event_fire(
 // String reads use a 64-bit managed String value (value_size == 8) and no
 // unknown plane. Input formals return their immutable captured value; ref
 // formals load the current typed value from their retained storage binding.
+// ARGUMENT_REF reads instead project the borrowed retained reference as three
+// 64-bit words (managed owner, payload, reference kind); bit_width is 192,
+// value_size is 24, and out_unknown is null. Only ref formals permit this mode.
 // Generated native callers provide their global state planes. Null planes
 // select the context's canonical state for bytecode and runtime-only callers.
 obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(

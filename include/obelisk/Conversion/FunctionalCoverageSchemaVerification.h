@@ -336,9 +336,15 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       auto found = read.getFormalId() > 0
                        ? formals.find(static_cast<uint64_t>(read.getFormalId()))
                        : formals.end();
+      Type result = read.getResult().getType();
+      auto reference = dyn_cast<sim::ArgumentRefType>(result);
+      if (reference)
+        result = reference.getElementType();
       if (found == formals.end() || found->second->type != type ||
           found->second->kind != coverage::FunctionalFormalKind::Constructor ||
-          !valueMatches(read.getResult().getType(), found->second->resultKind,
+          (reference && found->second->direction !=
+                            coverage::FunctionalFormalDirection::Ref) ||
+          !valueMatches(result, found->second->resultKind,
                         found->second->bitWidth)) {
         read.emitError("has a nonexistent, wrong-owner, or type-mismatched "
                        "constructor FunctionalFormal ID");

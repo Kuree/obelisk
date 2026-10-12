@@ -2321,7 +2321,32 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
                            ValueRange{}, doneBlock, ValueRange{});
   setCurrent(sampleBlock);
 
-  SmallVector<std::pair<std::string, Value>> savedConstructorFormals;
+  struct SavedConstructorFormal {
+    std::string path;
+    Value value;
+    Value lvalue;
+  };
+  SmallVector<SavedConstructorFormal> savedConstructorFormals;
+  llvm::scope_exit restoreConstructorFormals([&] {
+    for (const auto &[path, value, lvalue] : savedConstructorFormals) {
+      if (value)
+        values[path] = value;
+      else
+        values.erase(path);
+      if (lvalue)
+        lvalues[path] = lvalue;
+      else
+        lvalues.erase(path);
+    }
+  });
+  auto formalAliases = indexInheritedFormalAliases(covergroup);
+  auto bindConstructorFormal = [&](StringRef path, Value value, bool ref) {
+    savedConstructorFormals.push_back(
+        {path.str(), values.lookup(path), lvalues.lookup(path)});
+    values[path] = value;
+    if (ref)
+      lvalues[path] = value;
+  };
   for (Operation *child : getChildren(covergroup)) {
     auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
     if (!formal || formal.getIsCoverageSampleFormal().value_or(false))
@@ -2336,18 +2361,22 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
       return failure();
     }
     std::string path = getHierarchyName(formal).str();
-    savedConstructorFormals.emplace_back(path, values.lookup(path));
-    values[path] = sim::SimCovergroupFormalReadOp::create(
-        builder, getSemanticLocation(formal), *type, context, handle, id);
+    // IEEE 19.3: a constructor ref is a read-only storage alias. Keep the
+    // reference addressable for const-ref helper actuals and load at each read.
+    bool ref = formal.getDirection() == semantic::SVArgumentDirection::Ref;
+    Type result =
+        ref ? sim::ArgumentRefType::get(builder.getContext(), *type) : *type;
+    Value value = sim::SimCovergroupFormalReadOp::create(
+        builder, getSemanticLocation(formal), result, context, handle, id);
+    bindConstructorFormal(path, value, ref);
+    auto found = formalAliases.find(getDebugName(formal));
+    if (found != formalAliases.end())
+      for (auto alias : found->second) {
+        StringRef aliasPath = getHierarchyName(alias);
+        if (aliasPath != path)
+          bindConstructorFormal(aliasPath, value, ref);
+      }
   }
-  llvm::scope_exit restoreConstructorFormals([&] {
-    for (const auto &[path, value] : savedConstructorFormals) {
-      if (value)
-        values[path] = value;
-      else
-        values.erase(path);
-    }
-  });
 
   // IEEE 1800-2017 19.5 requires the coverpoint expression and its iff
   // condition to be evaluated when the group is sampled. Keep those results
