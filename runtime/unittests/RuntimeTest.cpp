@@ -6442,4 +6442,227 @@ TEST(ManagedHeap, RejectsMalformedClassLayouts) {
             OBELISK_RT_INVALID_DESIGN);
 }
 
+TEST(ManagedHeap, ValidatesDeepClassChainsAndRejectsAliasedIDs) {
+  std::array<obelisk_rt_class_descriptor_v1, 32> classes{};
+  for (size_t index = 0; index != classes.size(); ++index) {
+    auto &descriptor = classes[index];
+    descriptor.version = OBELISK_RT_VERSION;
+    descriptor.class_id = (UINT64_C(1) << 48) + (classes.size() - index) * 257;
+    descriptor.instance_size = sizeof(void *);
+    descriptor.instance_alignment = alignof(void *);
+    descriptor.base = index ? &classes[index - 1] : nullptr;
+  }
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&classes.back()), OBELISK_RT_OK);
+  uint64_t savedID = classes.back().class_id;
+  classes.back().class_id = classes.front().class_id;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&classes.back()),
+            OBELISK_RT_INVALID_DESIGN);
+  classes.back().class_id = savedID;
+  classes.front().base = &classes.back();
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&classes.back()),
+            OBELISK_RT_INVALID_DESIGN);
+  classes.front().base = nullptr;
+
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  // Registering the leaf first validates unregistered ancestors as well.
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &classes.back()),
+            OBELISK_RT_OK);
+  for (const auto &descriptor : classes) {
+    EXPECT_EQ(obelisk_rt_v1_class_register(context, &descriptor),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_class_register(context, &descriptor),
+              OBELISK_RT_OK);
+  }
+  auto duplicate = classes.front();
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &duplicate),
+            OBELISK_RT_INVALID_DESIGN);
+  auto child = classes.back();
+  child.class_id += 1;
+  child.base = &duplicate;
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &child),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(ManagedHeap, ValidatesSharedNestedTraceLayoutsAndRejectsCycles) {
+  obelisk_rt_trace_entry_v1 fields[] = {
+      {8, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
+       nullptr},
+      {0, 0, 1, OBELISK_RT_TRACE_WEAK, OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH,
+       nullptr}};
+  obelisk_rt_trace_layout_v1 element{OBELISK_RT_VERSION, 0, 16, 8, fields, 2};
+  obelisk_rt_trace_entry_v1 entries[] = {
+      {8, 16, 8, OBELISK_RT_TRACE_EMBEDDED, OBELISK_RT_MANAGED_SLOT_INVALID,
+       &element},
+      {16, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
+       nullptr}};
+  obelisk_rt_trace_layout_v1 layout{OBELISK_RT_VERSION, 0, 136, 8, entries, 1};
+  auto descriptor = nodeDescriptor;
+  descriptor.instance_size = layout.size;
+  descriptor.layout = &layout;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor), OBELISK_RT_OK);
+  // A direct slot aliases a slot reached through the repeated child layout.
+  layout.entry_count = 2;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  layout.entry_count = 1;
+  element.alignment = 0;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  element.alignment = 8;
+  entries[0].stride = 8;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+
+  obelisk_rt_trace_entry_v1 cycleEntry{
+      0,       0, 1, OBELISK_RT_TRACE_EMBEDDED, OBELISK_RT_MANAGED_SLOT_INVALID,
+      &element};
+  element.entries = &cycleEntry;
+  element.entry_count = 1;
+  entries[0].stride = 16;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+}
+
+TEST(ManagedHeap, ValidatesDeepTraceLayoutsWithoutRecursiveValidation) {
+  std::array<obelisk_rt_trace_layout_v1, 32> children{};
+  std::array<obelisk_rt_trace_entry_v1, 32> entries{};
+  for (size_t index = 0; index != children.size(); ++index) {
+    entries[index] =
+        index ? obelisk_rt_trace_entry_v1{8,
+                                          0,
+                                          1,
+                                          OBELISK_RT_TRACE_EMBEDDED,
+                                          OBELISK_RT_MANAGED_SLOT_INVALID,
+                                          &children[index - 1]}
+              : obelisk_rt_trace_entry_v1{0,
+                                          8,
+                                          8,
+                                          OBELISK_RT_TRACE_STRONG,
+                                          OBELISK_RT_MANAGED_SLOT_CLASS,
+                                          nullptr};
+    children[index] = {OBELISK_RT_VERSION, 0, 64 + index * 8, 8,
+                       &entries[index],    1};
+  }
+  obelisk_rt_trace_entry_v1 rootEntry{8,
+                                      0,
+                                      1,
+                                      OBELISK_RT_TRACE_EMBEDDED,
+                                      OBELISK_RT_MANAGED_SLOT_INVALID,
+                                      &children.back()};
+  obelisk_rt_trace_layout_v1 root{
+      OBELISK_RT_VERSION, 0, children.back().size + 8, 8, &rootEntry, 1};
+  auto descriptor = nodeDescriptor;
+  descriptor.instance_size = root.size;
+  descriptor.layout = &root;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor), OBELISK_RT_OK);
+  for (size_t index = 1; index != children.size(); ++index) {
+    entries[index].offset = 0;
+    children[index].size = 64;
+  }
+  root.size = 72;
+  descriptor.instance_size = root.size;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor), OBELISK_RT_OK);
+  entries.front() = {0,
+                     0,
+                     1,
+                     OBELISK_RT_TRACE_EMBEDDED,
+                     OBELISK_RT_MANAGED_SLOT_INVALID,
+                     &children.back()};
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+}
+
+TEST(ManagedHeap, ValidatesUnorderedRandomStorageAndSharedModeWords) {
+  constexpr size_t count = 16;
+  constexpr uint64_t modeOffset = 8 + count * 8;
+  constexpr uint64_t valueOffset = modeOffset + 8;
+  std::array<obelisk_rt_random_edge_v1, count> edges{};
+  std::array<obelisk_rt_random_variable_v1, count> variables{};
+  for (size_t index = 0; index != count; ++index) {
+    edges[index] = {8 + (count - index - 1) * 8, modeOffset,
+                    UINT64_C(1) << index};
+    auto &variable = variables[index];
+    variable.value_offset = valueOffset + (count - index - 1) * 32;
+    variable.mode_offset = modeOffset;
+    variable.mode_mask = UINT64_C(1) << (count + index);
+    variable.bit_width = 32;
+    variable.flags = index % 2 ? 0 : OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE;
+    variable.randc_key_offset = UINT64_MAX;
+    variable.randc_position_offset = UINT64_MAX;
+    if (index % 3 == 0) {
+      variable.flags |= OBELISK_RT_RANDOM_VARIABLE_RANDC;
+      variable.randc_key_offset = variable.value_offset + 8;
+      variable.randc_position_offset = variable.value_offset + 16;
+    }
+  }
+  obelisk_rt_trace_entry_v1 entry{
+      8,      8, count, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
+      nullptr};
+  obelisk_rt_trace_layout_v1 trace{
+      OBELISK_RT_VERSION, 0, valueOffset + count * 32, 8, &entry, 1};
+  obelisk_rt_random_layout_v1 random{
+      OBELISK_RT_VERSION, 0, edges.data(), count, variables.data(), count};
+  auto descriptor = nodeDescriptor;
+  descriptor.instance_size = trace.size;
+  descriptor.layout = &trace;
+  descriptor.random_layout = &random;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor), OBELISK_RT_OK);
+
+  auto savedEdge = edges.back();
+  edges.back().handle_offset = edges.front().handle_offset;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  edges.back() = savedEdge;
+  edges.back().mode_mask = variables.front().mode_mask;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  edges.back() = savedEdge;
+  auto savedVariable = variables.back();
+  variables.back().value_offset = variables.front().value_offset + 4;
+  // The value aliases the unknown plane of another four-state variable.
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  variables.back() = savedVariable;
+  variables.back().value_offset = 10;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  variables.back() = savedVariable;
+  variables.back().randc_key_offset = variables.front().value_offset;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  variables.back() = savedVariable;
+  variables.back().mode_mask = variables.front().mode_mask;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  variables.back() = savedVariable;
+  variables.back().value_offset = UINT64_MAX - 2;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor),
+            OBELISK_RT_INVALID_DESIGN);
+  variables.back() = savedVariable;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&descriptor), OBELISK_RT_OK);
+}
+
+TEST(ManagedHeap, ChecksCachedBaseLayoutsAndRollsBackFailedRegistration) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_class_register(context, &nodeDescriptor),
+            OBELISK_RT_OK);
+  auto child = derivedDescriptor;
+  auto entry = nodeTraceEntry;
+  auto layout = derivedTraceLayout;
+  layout.entries = &entry;
+  child.layout = &layout;
+  entry.offset = kDerivedExtraOffset;
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &child),
+            OBELISK_RT_INVALID_ARGUMENT);
+  entry.offset = kNodeLinkOffset;
+  // Unregistered metadata may be repaired. A failed attempt must leave no
+  // stale layout index in the cache or skip the base/derived boundary checks.
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &child), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_class_register(context, &child), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 } // namespace

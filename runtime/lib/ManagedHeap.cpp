@@ -285,102 +285,158 @@ bool rangesOverlap(uint64_t leftOffset, uint64_t leftSize, uint64_t rightOffset,
          rightOffset < leftOffset + leftSize;
 }
 
-struct TraceValidationFrame {
-  const obelisk_rt_trace_layout_v1 *layout;
-  const TraceValidationFrame *parent;
-};
-
-bool validateTraceLayout(const obelisk_rt_trace_layout_v1 *layout,
-                         uint64_t containingSize,
-                         const TraceValidationFrame *parent = nullptr) {
-  for (const TraceValidationFrame *frame = parent; frame; frame = frame->parent)
-    if (frame->layout == layout)
-      return false;
-  if (!layout || layout->version != OBELISK_RT_VERSION ||
-      layout->reserved != 0 || layout->size > containingSize ||
-      !validPowerOfTwo(layout->alignment) || layout->alignment > 16 ||
-      (layout->entry_count == 0) != (layout->entries == nullptr))
-    return false;
-
-  TraceValidationFrame frame{layout, parent};
-  for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
-    if (entry.count == 0 || (entry.count > 1 && entry.stride == 0))
-      return false;
-    uint64_t elementSize = sizeof(obelisk_rt_managed_word_v1);
-    if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-      if (!entry.child_layout ||
-          entry.slot_kind != OBELISK_RT_MANAGED_SLOT_INVALID)
-        return false;
-      elementSize = entry.child_layout->size;
-    } else {
-      bool candidate = isCandidateSlotKind(entry.slot_kind);
-      uint32_t candidateMask = candidateSlotMask(entry.slot_kind);
-      if ((entry.kind != OBELISK_RT_TRACE_STRONG &&
-           entry.kind != OBELISK_RT_TRACE_WEAK) ||
-          entry.child_layout ||
-          (candidate
-               ? entry.kind != OBELISK_RT_TRACE_STRONG || candidateMask == 0 ||
-                     (candidateMask & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
-               : entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
-                     entry.slot_kind > OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH ||
-                     (entry.kind == OBELISK_RT_TRACE_WEAK &&
-                      entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS &&
-                      entry.slot_kind !=
-                          OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH)))
-        return false;
+// Descriptor keys have a fixed width. Radix ordering followed by a merge
+// keeps duplicate and interval checks linear even for unordered metadata.
+template <typename T, typename Key>
+void orderDescriptorRecords(std::vector<T> &records, Key key) {
+  if (records.size() < 2)
+    return;
+  uint64_t varyingBits = 0;
+  uint64_t first = key(records.front());
+  for (const T &record : records)
+    varyingBits |= key(record) ^ first;
+  if (!varyingBits)
+    return;
+  std::vector<T> scratch(records.size());
+  for (unsigned shift = 0; shift != 64; shift += 8) {
+    if (((varyingBits >> shift) & 255) == 0)
+      continue;
+    std::array<size_t, 256> positions{};
+    for (const T &record : records)
+      ++positions[(key(record) >> shift) & 255];
+    size_t position = 0;
+    for (size_t &count : positions) {
+      size_t next = position + count;
+      count = position;
+      position = next;
     }
-    uint64_t requiredAlignment = entry.kind == OBELISK_RT_TRACE_EMBEDDED
-                                     ? entry.child_layout->alignment
-                                     : alignof(obelisk_rt_managed_word_v1);
-    if (entry.offset % requiredAlignment != 0 ||
-        (entry.count > 1 && entry.stride % requiredAlignment != 0))
-      return false;
-    if (entry.count - 1 >
-        (std::numeric_limits<uint64_t>::max() - entry.offset) /
-            std::max<uint64_t>(entry.stride, 1))
-      return false;
-    uint64_t last = entry.offset + (entry.count - 1) * entry.stride;
-    if (!checkedRange(last, elementSize, layout->size) ||
-        (entry.kind == OBELISK_RT_TRACE_EMBEDDED &&
-         !validateTraceLayout(entry.child_layout, elementSize, &frame)))
-      return false;
+    for (T &record : records) {
+      size_t bucket = (key(record) >> shift) & 255;
+      scratch[positions[bucket]++] = std::move(record);
+    }
+    records.swap(scratch);
   }
-  return true;
 }
 
-bool traceLayoutContainsWeak(const obelisk_rt_trace_layout_v1 *layout) {
-  if (!layout)
-    return false;
-  for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
-    if (entry.kind == OBELISK_RT_TRACE_WEAK ||
-        (entry.kind == OBELISK_RT_TRACE_EMBEDDED &&
-         traceLayoutContainsWeak(entry.child_layout)))
+class TraceLayoutValidation {
+public:
+  bool validate(const obelisk_rt_trace_layout_v1 *layout,
+                uint64_t containingSize) {
+    if (!layout || layout->size > containingSize)
+      return false;
+    auto known = states.find(layout);
+    if (known != states.end())
+      return known->second.complete;
+    struct Frame {
+      const obelisk_rt_trace_layout_v1 *layout;
+      uint64_t entry = 0;
+    };
+    std::vector<Frame> stack;
+    auto enter = [&](const obelisk_rt_trace_layout_v1 *child) {
+      if (child->version != OBELISK_RT_VERSION || child->reserved != 0 ||
+          !validPowerOfTwo(child->alignment) || child->alignment > 16 ||
+          (child->entry_count == 0) != (child->entries == nullptr))
+        return false;
+      additions.push_back(child);
+      states.emplace(child, State{});
+      stack.push_back({child});
       return true;
-  }
-  return false;
-}
-
-bool layoutHasWeakHandleAt(const obelisk_rt_trace_layout_v1 *layout,
-                           uint64_t baseOffset, uint64_t wantedOffset) {
-  if (!layout)
-    return false;
-  for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
-    for (uint64_t item = 0; item != entry.count; ++item) {
-      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-        if (layoutHasWeakHandleAt(entry.child_layout, offset, wantedOffset))
-          return true;
-      } else if (entry.kind == OBELISK_RT_TRACE_WEAK &&
-                 offset == wantedOffset) {
-        return true;
+    };
+    if (!enter(layout))
+      return false;
+    while (!stack.empty()) {
+      Frame &frame = stack.back();
+      State &state = states.at(frame.layout);
+      if (frame.entry == frame.layout->entry_count) {
+        state.complete = true;
+        stack.pop_back();
+        continue;
       }
+      const auto &entry = frame.layout->entries[frame.entry];
+      if (entry.count == 0 || (entry.count > 1 && entry.stride == 0))
+        return false;
+      uint64_t elementSize = sizeof(obelisk_rt_managed_word_v1);
+      uint64_t alignment = alignof(obelisk_rt_managed_word_v1);
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (!entry.child_layout ||
+            entry.slot_kind != OBELISK_RT_MANAGED_SLOT_INVALID)
+          return false;
+        elementSize = entry.child_layout->size;
+        alignment = entry.child_layout->alignment;
+      } else {
+        bool candidate = isCandidateSlotKind(entry.slot_kind);
+        uint32_t mask = candidateSlotMask(entry.slot_kind);
+        if ((entry.kind != OBELISK_RT_TRACE_STRONG &&
+             entry.kind != OBELISK_RT_TRACE_WEAK) ||
+            entry.child_layout ||
+            (candidate
+                 ? entry.kind != OBELISK_RT_TRACE_STRONG || mask == 0 ||
+                       (mask & ~OBELISK_RT_MANAGED_ROOT_KIND_ALL) != 0
+                 : entry.slot_kind < OBELISK_RT_MANAGED_SLOT_CLASS ||
+                       entry.slot_kind >
+                           OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH ||
+                       (entry.kind == OBELISK_RT_TRACE_WEAK &&
+                        entry.slot_kind != OBELISK_RT_MANAGED_SLOT_CLASS &&
+                        entry.slot_kind !=
+                            OBELISK_RT_MANAGED_SLOT_REFERENCE_PATH)))
+          return false;
+      }
+      // Validate embedded alignment before taking a remainder: malformed
+      // child metadata may contain zero, independently of its parent.
+      if (!validPowerOfTwo(alignment) || alignment > 16 ||
+          entry.offset % alignment != 0 ||
+          (entry.count > 1 && entry.stride % alignment != 0) ||
+          entry.count - 1 >
+              (UINT64_MAX - entry.offset) / std::max<uint64_t>(entry.stride, 1))
+        return false;
+      uint64_t last = entry.offset + (entry.count - 1) * entry.stride;
+      if (!checkedRange(last, elementSize, frame.layout->size))
+        return false;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        auto child = states.find(entry.child_layout);
+        if (child == states.end()) {
+          if (!enter(entry.child_layout))
+            return false;
+          continue;
+        }
+        if (!child->second.complete)
+          return false;
+        state.hasHandles |= child->second.hasHandles;
+        state.hasWeakHandles |= child->second.hasWeakHandles;
+      } else {
+        state.hasHandles = true;
+        state.hasWeakHandles |= entry.kind == OBELISK_RT_TRACE_WEAK;
+      }
+      ++frame.entry;
     }
+    return true;
   }
-  return false;
-}
+
+  bool hasHandles(const obelisk_rt_trace_layout_v1 *layout) const {
+    return states.at(layout).hasHandles;
+  }
+
+  bool hasWeakHandles(const obelisk_rt_trace_layout_v1 *layout) const {
+    return states.at(layout).hasWeakHandles;
+  }
+
+  void commit() { additions.clear(); }
+
+  void rollback() {
+    for (const auto *layout : additions)
+      states.erase(layout);
+    additions.clear();
+  }
+
+private:
+  struct State {
+    bool complete = false;
+    bool hasHandles = false;
+    bool hasWeakHandles = false;
+  };
+  std::unordered_map<const obelisk_rt_trace_layout_v1 *, State> states;
+  std::vector<const obelisk_rt_trace_layout_v1 *> additions;
+};
 
 bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
                              uint64_t baseOffset, uint64_t wantedOffset,
@@ -407,67 +463,266 @@ bool layoutHasStrongHandleAt(const obelisk_rt_trace_layout_v1 *layout,
   return false;
 }
 
-unsigned layoutHandleCountAt(const obelisk_rt_trace_layout_v1 *layout,
-                             uint64_t baseOffset, uint64_t wantedOffset) {
-  if (!layout)
-    return 0;
-  unsigned count = 0;
-  for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
-    for (uint64_t item = 0; item != entry.count; ++item) {
-      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED)
-        count += layoutHandleCountAt(entry.child_layout, offset, wantedOffset);
-      else if (offset == wantedOffset)
-        ++count;
-      if (count > 1)
-        return count;
-    }
-  }
-  return count;
-}
+struct TraceHandle {
+  uint64_t offset = 0;
+  obelisk_rt_trace_kind kind = 0;
+  obelisk_rt_managed_slot_kind_v1 slotKind = 0;
+};
 
-bool layoutHandlesAreUnique(const obelisk_rt_trace_layout_v1 *root,
-                            const obelisk_rt_trace_layout_v1 *layout,
-                            uint64_t baseOffset = 0) {
-  if (!layout)
-    return true;
-  for (uint64_t index = 0; index != layout->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
-    for (uint64_t item = 0; item != entry.count; ++item) {
-      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-        if (!layoutHandlesAreUnique(root, entry.child_layout, offset))
-          return false;
-      } else if (layoutHandleCountAt(root, 0, offset) != 1) {
-        return false;
+using TraceHandles = std::vector<TraceHandle>;
+
+struct TraceHandleIndex {
+  std::shared_ptr<const TraceHandles> slots;
+  uint64_t offset = 0;
+
+  size_t size() const { return slots ? slots->size() : 0; }
+  bool empty() const { return size() == 0; }
+  TraceHandle at(size_t index) const {
+    TraceHandle handle = (*slots)[index];
+    handle.offset += offset;
+    return handle;
+  }
+};
+
+class ClassLayoutValidation {
+public:
+  const TraceHandleIndex *get(const obelisk_rt_trace_layout_v1 *layout) {
+    if (!layout)
+      return &empty;
+    auto known = handles.find(layout);
+    if (known != handles.end())
+      return &known->second;
+    if (!validation.validate(layout, layout->size))
+      return nullptr;
+    struct Frame {
+      const obelisk_rt_trace_layout_v1 *layout;
+      uint64_t entry = 0;
+    };
+    auto store = [&](const obelisk_rt_trace_layout_v1 *child,
+                     TraceHandleIndex result) {
+      additions.push_back(child);
+      handles.emplace(child, std::move(result));
+    };
+    std::vector<Frame> stack{{layout}};
+    while (!stack.empty()) {
+      Frame &frame = stack.back();
+      if (!validation.hasHandles(frame.layout)) {
+        store(frame.layout, {});
+        stack.pop_back();
+        continue;
       }
+      if (frame.entry != frame.layout->entry_count) {
+        const auto &entry = frame.layout->entries[frame.entry++];
+        if (entry.kind == OBELISK_RT_TRACE_EMBEDDED &&
+            validation.hasHandles(entry.child_layout) &&
+            handles.find(entry.child_layout) == handles.end())
+          stack.push_back({entry.child_layout});
+        continue;
+      }
+      const auto *current = frame.layout;
+      // Single embedded wrappers share the child's index and adjust its
+      // origin. Deep chains need neither slot copies nor rescans.
+      const auto &first = current->entries[0];
+      if (current->entry_count == 1 &&
+          first.kind == OBELISK_RT_TRACE_EMBEDDED && first.count == 1) {
+        TraceHandleIndex result = handles.at(first.child_layout);
+        result.offset += first.offset;
+        store(current, std::move(result));
+        stack.pop_back();
+        continue;
+      }
+      auto result = std::make_shared<TraceHandles>();
+      for (uint64_t index = 0; index != current->entry_count; ++index) {
+        const auto &entry = current->entries[index];
+        if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+          if (!validation.hasHandles(entry.child_layout))
+            continue;
+          const auto &childHandles = handles.at(entry.child_layout);
+          for (uint64_t item = 0; item != entry.count; ++item) {
+            uint64_t offset = entry.offset + item * entry.stride;
+            for (size_t slot = 0; slot != childHandles.size(); ++slot) {
+              TraceHandle handle = childHandles.at(slot);
+              result->push_back(
+                  {offset + handle.offset, handle.kind, handle.slotKind});
+            }
+          }
+        } else {
+          for (uint64_t item = 0; item != entry.count; ++item)
+            result->push_back({entry.offset + item * entry.stride, entry.kind,
+                               entry.slot_kind});
+        }
+      }
+      orderDescriptorRecords(
+          *result, [](const TraceHandle &handle) { return handle.offset; });
+      for (size_t index = 1; index < result->size(); ++index)
+        if ((*result)[index].offset - (*result)[index - 1].offset <
+            sizeof(obelisk_rt_managed_word_v1))
+          return nullptr;
+      store(current, {std::move(result), 0});
+      stack.pop_back();
     }
+    return &handles.at(layout);
+  }
+
+  void commit() {
+    validation.commit();
+    additions.clear();
+  }
+
+  void rollback() {
+    for (const auto *layout : additions)
+      handles.erase(layout);
+    additions.clear();
+    validation.rollback();
+  }
+
+private:
+  TraceLayoutValidation validation;
+  std::unordered_map<const obelisk_rt_trace_layout_v1 *, TraceHandleIndex>
+      handles;
+  std::vector<const obelisk_rt_trace_layout_v1 *> additions;
+  TraceHandleIndex empty;
+};
+
+bool containsTraceHandles(const TraceHandleIndex &candidate,
+                          const TraceHandleIndex &required) {
+  if (candidate.slots == required.slots && candidate.offset == required.offset)
+    return true;
+  size_t index = 0;
+  for (size_t slot = 0; slot != required.size(); ++slot) {
+    TraceHandle handle = required.at(slot);
+    while (index != candidate.size() &&
+           candidate.at(index).offset < handle.offset)
+      ++index;
+    if (index == candidate.size() ||
+        candidate.at(index).offset != handle.offset ||
+        candidate.at(index).kind != handle.kind ||
+        candidate.at(index).slotKind != handle.slotKind)
+      return false;
   }
   return true;
 }
 
-bool layoutContainsHandles(const obelisk_rt_trace_layout_v1 *candidate,
-                           const obelisk_rt_trace_layout_v1 *required,
-                           uint64_t baseOffset = 0) {
-  if (!required)
+using ValidatedClasses =
+    std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>;
+
+obelisk_rt_status validateClassDescriptor(
+    const obelisk_rt_class_descriptor_v1 *descriptor,
+    const ValidatedClasses *validated = nullptr,
+    std::vector<const obelisk_rt_class_descriptor_v1 *> *pending = nullptr,
+    ClassLayoutValidation *sharedLayouts = nullptr);
+
+bool validateRandomLayout(const obelisk_rt_class_descriptor_v1 *descriptor,
+                          const TraceHandleIndex &handles) {
+  const auto *random = descriptor->random_layout;
+  if (!random)
     return true;
-  if (!candidate)
+  if (random->version != OBELISK_RT_VERSION || random->reserved != 0 ||
+      (random->edge_count == 0) != (random->edges == nullptr) ||
+      (random->variable_count == 0) != (random->variables == nullptr) ||
+      (random->edge_count == 0 && random->variable_count == 0))
     return false;
-  for (uint64_t index = 0; index != required->entry_count; ++index) {
-    const obelisk_rt_trace_entry_v1 &entry = required->entries[index];
-    for (uint64_t item = 0; item != entry.count; ++item) {
-      uint64_t offset = baseOffset + entry.offset + item * entry.stride;
-      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
-        if (!layoutContainsHandles(candidate, entry.child_layout, offset))
-          return false;
-      } else if (entry.kind == OBELISK_RT_TRACE_STRONG) {
-        if (!layoutHasStrongHandleAt(candidate, 0, offset, entry.slot_kind))
-          return false;
-      } else if (!layoutHasWeakHandleAt(candidate, 0, offset)) {
+  struct Range {
+    uint64_t offset = 0;
+    uint64_t size = 0;
+  };
+  struct Mode {
+    uint64_t offset = 0;
+    uint64_t mask = 0;
+  };
+  std::vector<Range> ranges;
+  for (size_t slot = 0; slot != handles.size(); ++slot)
+    ranges.push_back(
+        {handles.at(slot).offset, sizeof(obelisk_rt_managed_word_v1)});
+  std::vector<Mode> modes;
+  std::vector<uint64_t> edges;
+  for (uint64_t index = 0; index != random->edge_count; ++index) {
+    const auto &edge = random->edges[index];
+    if (edge.handle_offset % alignof(obelisk_rt_managed_word_v1) != 0 ||
+        edge.mode_offset % alignof(uint64_t) != 0 ||
+        !checkedRange(edge.handle_offset, sizeof(obelisk_rt_managed_word_v1),
+                      descriptor->instance_size) ||
+        !checkedRange(edge.mode_offset, sizeof(uint64_t),
+                      descriptor->instance_size) ||
+        !validPowerOfTwo(edge.mode_mask))
+      return false;
+    edges.push_back(edge.handle_offset);
+    modes.push_back({edge.mode_offset, edge.mode_mask});
+  }
+  orderDescriptorRecords(edges, [](uint64_t offset) { return offset; });
+  size_t handleIndex = 0;
+  for (size_t index = 0; index != edges.size(); ++index) {
+    if (index != 0 && edges[index - 1] == edges[index])
+      return false;
+    while (handleIndex != handles.size() &&
+           handles.at(handleIndex).offset < edges[index])
+      ++handleIndex;
+    if (handleIndex == handles.size() ||
+        handles.at(handleIndex).offset != edges[index] ||
+        handles.at(handleIndex).kind != OBELISK_RT_TRACE_STRONG ||
+        handles.at(handleIndex).slotKind != OBELISK_RT_MANAGED_SLOT_CLASS)
+      return false;
+  }
+  for (uint64_t index = 0; index != random->variable_count; ++index) {
+    const auto &variable = random->variables[index];
+    bool isRandC = (variable.flags & OBELISK_RT_RANDOM_VARIABLE_RANDC) != 0;
+    uint64_t valueSize = (uint64_t(variable.bit_width) + 7) / 8;
+    uint64_t storageSize =
+        (variable.flags & OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
+            ? valueSize * 2
+            : valueSize;
+    if (variable.bit_width == 0 ||
+        (variable.flags & ~kRandomVariableFlags) != 0 ||
+        variable.value_offset < sizeof(void *) ||
+        variable.mode_offset < sizeof(void *) ||
+        variable.mode_offset % alignof(uint64_t) != 0 ||
+        !checkedRange(variable.value_offset, storageSize,
+                      descriptor->instance_size) ||
+        !checkedRange(variable.mode_offset, sizeof(uint64_t),
+                      descriptor->instance_size) ||
+        !validPowerOfTwo(variable.mode_mask) ||
+        rangesOverlap(variable.value_offset, storageSize, variable.mode_offset,
+                      sizeof(uint64_t)) ||
+        (isRandC != (variable.randc_key_offset != UINT64_MAX)) ||
+        (isRandC != (variable.randc_position_offset != UINT64_MAX)))
+      return false;
+    ranges.push_back({variable.value_offset, storageSize});
+    modes.push_back({variable.mode_offset, variable.mode_mask});
+    if (isRandC) {
+      if (variable.randc_key_offset < sizeof(void *) ||
+          variable.randc_position_offset < sizeof(void *) ||
+          variable.randc_key_offset % alignof(uint64_t) != 0 ||
+          variable.randc_position_offset % alignof(uint64_t) != 0 ||
+          !checkedRange(variable.randc_key_offset, sizeof(uint64_t),
+                        descriptor->instance_size) ||
+          !checkedRange(variable.randc_position_offset, sizeof(uint64_t),
+                        descriptor->instance_size) ||
+          rangesOverlap(variable.mode_offset, sizeof(uint64_t),
+                        variable.randc_key_offset, sizeof(uint64_t)) ||
+          rangesOverlap(variable.mode_offset, sizeof(uint64_t),
+                        variable.randc_position_offset, sizeof(uint64_t)))
         return false;
-      }
+      ranges.push_back({variable.randc_key_offset, sizeof(uint64_t)});
+      ranges.push_back({variable.randc_position_offset, sizeof(uint64_t)});
     }
+  }
+  orderDescriptorRecords(ranges,
+                         [](const Range &range) { return range.offset; });
+  for (size_t index = 1; index < ranges.size(); ++index)
+    if (ranges[index].offset - ranges[index - 1].offset <
+        ranges[index - 1].size)
+      return false;
+  orderDescriptorRecords(modes, [](const Mode &mode) { return mode.offset; });
+  uint64_t modeOffset = UINT64_MAX;
+  uint64_t modeMask = 0;
+  for (const Mode &mode : modes) {
+    if (mode.offset != modeOffset) {
+      modeOffset = mode.offset;
+      modeMask = 0;
+    }
+    if ((modeMask & mode.mask) != 0)
+      return false;
+    modeMask |= mode.mask;
   }
   return true;
 }
@@ -554,6 +809,13 @@ bool validateLayoutHandleWrite(
 }
 
 } // namespace
+
+// The runtime ABI makes registered descriptors and their reachable layouts
+// immutable. Share validation and trace indexes for the context's lifetime.
+struct ManagedClassValidationCache {
+  ValidatedClasses classes;
+  ClassLayoutValidation layouts;
+};
 
 struct obelisk_rt_gc_lane_v1 {
   ManagedHeap *heap = nullptr;
@@ -993,8 +1255,22 @@ public:
       if (std::find(validationCache.validatedDescriptors.begin(),
                     validationCache.validatedDescriptors.end(),
                     descriptor) == validationCache.validatedDescriptors.end()) {
-        if (obelisk_rt_v1_class_validate(descriptor) != OBELISK_RT_OK)
-          return OBELISK_RT_INVALID_ARGUMENT;
+        bool registered = false;
+        {
+          std::lock_guard<std::recursive_mutex> lock(context->mutex);
+          if (context->managedClassValidation) {
+            const auto &classes = context->managedClassValidation->classes;
+            auto found = classes.find(descriptor->class_id);
+            registered = found != classes.end() && found->second == descriptor;
+          }
+        }
+        if (!registered) {
+          obelisk_rt_status status = obelisk_rt_v1_class_validate(descriptor);
+          if (status != OBELISK_RT_OK)
+            return status == OBELISK_RT_INVALID_DESIGN
+                       ? OBELISK_RT_INVALID_ARGUMENT
+                       : status;
+        }
         validationCache
             .validatedDescriptors[validationCache.nextValidatedDescriptor] =
             descriptor;
@@ -2114,8 +2390,12 @@ obelisk_rt_managed_object_class_descriptor(
              : nullptr;
 }
 
-extern "C" obelisk_rt_status
-obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
+namespace {
+obelisk_rt_status validateClassDescriptor(
+    const obelisk_rt_class_descriptor_v1 *descriptor,
+    const ValidatedClasses *validated,
+    std::vector<const obelisk_rt_class_descriptor_v1 *> *pending,
+    ClassLayoutValidation *sharedLayouts) {
   constexpr uint32_t validFlags =
       OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE |
       OBELISK_RT_CLASS_FINAL | OBELISK_RT_CLASS_WEAK_WRAPPER;
@@ -2124,24 +2404,38 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
   if (!descriptor)
     return OBELISK_RT_INVALID_DESIGN;
 
-  // Validate cycles before the main walk so all subsequent pairwise checks
-  // are allocation-free and guaranteed to terminate.
-  const obelisk_rt_class_descriptor_v1 *slow = descriptor;
-  const obelisk_rt_class_descriptor_v1 *fast = descriptor;
-  while (fast && fast->base) {
-    slow = slow->base;
-    fast = fast->base->base;
-    if (slow == fast)
+  // Stop at a validated immutable ancestor. This also avoids rewalking
+  // the entire chain when registering successive subclasses.
+  const obelisk_rt_class_descriptor_v1 *trustedBase = nullptr;
+  std::unordered_set<const obelisk_rt_class_descriptor_v1 *> seen;
+  std::vector<const obelisk_rt_class_descriptor_v1 *> unvalidated;
+  std::vector<uint64_t> classIDs;
+  for (const auto *current = descriptor; current; current = current->base) {
+    if (validated) {
+      auto known = validated->find(current->class_id);
+      if (known != validated->end()) {
+        if (known->second != current)
+          return OBELISK_RT_INVALID_DESIGN;
+        trustedBase = current;
+        break;
+      }
+    }
+    if (!seen.insert(current).second)
       return OBELISK_RT_INVALID_DESIGN;
+    unvalidated.push_back(current);
+    classIDs.push_back(current->class_id);
   }
+  orderDescriptorRecords(classIDs, [](uint64_t id) { return id; });
+  for (size_t index = 1; index < classIDs.size(); ++index)
+    if (classIDs[index - 1] == classIDs[index])
+      return OBELISK_RT_INVALID_DESIGN;
 
+  ClassLayoutValidation localLayouts;
+  ClassLayoutValidation &layouts =
+      sharedLayouts ? *sharedLayouts : localLayouts;
+  const TraceHandleIndex *derivedHandles = nullptr;
   const obelisk_rt_class_descriptor_v1 *derived = nullptr;
-  for (const obelisk_rt_class_descriptor_v1 *current = descriptor; current;
-       current = current->base) {
-    for (const obelisk_rt_class_descriptor_v1 *previous = descriptor;
-         previous != current; previous = previous->base)
-      if (previous->class_id == current->class_id)
-        return OBELISK_RT_INVALID_DESIGN;
+  for (const auto *current = descriptor; current; current = current->base) {
     if (current->version != OBELISK_RT_VERSION || current->class_id == 0 ||
         current->instance_size < sizeof(current) ||
         !validPowerOfTwo(current->instance_alignment) ||
@@ -2156,6 +2450,28 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
           derived->instance_alignment < current->instance_alignment ||
           derived->method_count < current->method_count)))
       return OBELISK_RT_INVALID_DESIGN;
+    const TraceHandleIndex *currentHandles = layouts.get(current->layout);
+    if (!currentHandles ||
+        (!currentHandles->empty() &&
+         currentHandles->at(0).offset < sizeof(void *)) ||
+        (current->layout && current->layout->size != current->instance_size))
+      return OBELISK_RT_INVALID_DESIGN;
+    if (derived) {
+      if (!containsTraceHandles(*derivedHandles, *currentHandles))
+        return OBELISK_RT_INVALID_DESIGN;
+      if (derived->methods != current->methods)
+        for (uint64_t index = 0; index != current->method_count; ++index) {
+          const auto &baseMethod = current->methods[index];
+          const auto &overrideMethod = derived->methods[index];
+          if (baseMethod.signature_id != 0 &&
+              (overrideMethod.signature_id != baseMethod.signature_id ||
+               ((overrideMethod.flags ^ baseMethod.flags) &
+                OBELISK_RT_METHOD_TASK) != 0))
+            return OBELISK_RT_INVALID_DESIGN;
+        }
+    }
+    if (current == trustedBase)
+      break;
     for (uint64_t index = 0; index != current->interface_count; ++index) {
       const obelisk_rt_interface_descriptor_v1 &interface =
           current->interfaces[index];
@@ -2193,170 +2509,39 @@ obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
         continue;
       }
       if ((method.flags & ~validMethodFlags) != 0 ||
+          ((current->flags &
+            (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) == 0 &&
+           (method.flags & OBELISK_RT_METHOD_PURE) != 0) ||
           (!method.native_entry &&
            method.bytecode_function == OBELISK_RT_METHOD_NO_BYTECODE &&
            (method.flags & OBELISK_RT_METHOD_PURE) == 0))
         return OBELISK_RT_INVALID_DESIGN;
     }
-    if (derived)
-      for (uint64_t index = 0; index != current->method_count; ++index) {
-        const obelisk_rt_method_descriptor_v1 &baseMethod =
-            current->methods[index];
-        const obelisk_rt_method_descriptor_v1 &overrideMethod =
-            derived->methods[index];
-        if (baseMethod.signature_id == 0)
-          continue;
-        if (overrideMethod.signature_id != baseMethod.signature_id ||
-            ((overrideMethod.flags ^ baseMethod.flags) &
-             OBELISK_RT_METHOD_TASK) != 0)
-          return OBELISK_RT_INVALID_DESIGN;
-      }
-    if (current->layout) {
-      if (current->layout->size != current->instance_size ||
-          !validateTraceLayout(current->layout, current->instance_size) ||
-          !layoutHandlesAreUnique(current->layout, current->layout) ||
-          layoutOverlapsHandle(current->layout, 0, 0, sizeof(void *)))
+    if (!validateRandomLayout(current, *currentHandles))
+      return OBELISK_RT_INVALID_DESIGN;
+    if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0) {
+      // The sorted, unique slots make this one direct check instead of two
+      // complete recursive layout searches.
+      if (currentHandles->empty() ||
+          currentHandles->at(0).offset !=
+              sizeof(obelisk_rt_managed_word_v1) ||
+          currentHandles->at(0).kind != OBELISK_RT_TRACE_WEAK)
         return OBELISK_RT_INVALID_DESIGN;
     }
-    if (const obelisk_rt_random_layout_v1 *random = current->random_layout) {
-      if (random->version != OBELISK_RT_VERSION || random->reserved != 0 ||
-          (random->edge_count == 0) != (random->edges == nullptr) ||
-          (random->variable_count == 0) != (random->variables == nullptr) ||
-          (random->edge_count == 0 && random->variable_count == 0))
-        return OBELISK_RT_INVALID_DESIGN;
-      for (uint64_t index = 0; index != random->edge_count; ++index) {
-        const obelisk_rt_random_edge_v1 &edge = random->edges[index];
-        if (edge.handle_offset % alignof(obelisk_rt_managed_word_v1) != 0 ||
-            edge.mode_offset % alignof(uint64_t) != 0 ||
-            !checkedRange(edge.handle_offset,
-                          sizeof(obelisk_rt_managed_word_v1),
-                          current->instance_size) ||
-            !checkedRange(edge.mode_offset, sizeof(uint64_t),
-                          current->instance_size) ||
-            !validPowerOfTwo(edge.mode_mask) ||
-            !layoutHasStrongHandleAt(current->layout, 0, edge.handle_offset,
-                                     OBELISK_RT_MANAGED_SLOT_CLASS))
-          return OBELISK_RT_INVALID_DESIGN;
-        for (uint64_t previous = 0; previous != index; ++previous)
-          if (random->edges[previous].handle_offset == edge.handle_offset ||
-              (random->edges[previous].mode_offset == edge.mode_offset &&
-               random->edges[previous].mode_mask == edge.mode_mask))
-            return OBELISK_RT_INVALID_DESIGN;
-      }
-      for (uint64_t index = 0; index != random->variable_count; ++index) {
-        const obelisk_rt_random_variable_v1 &variable =
-            random->variables[index];
-        bool isRandC = (variable.flags & OBELISK_RT_RANDOM_VARIABLE_RANDC) != 0;
-        uint64_t valueSize = (uint64_t(variable.bit_width) + 7) / 8;
-        uint64_t storageSize =
-            (variable.flags & OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
-                ? valueSize * 2
-                : valueSize;
-        if (variable.bit_width == 0 ||
-            (variable.flags & ~kRandomVariableFlags) != 0 ||
-            variable.value_offset < sizeof(void *) ||
-            variable.mode_offset < sizeof(void *) ||
-            variable.mode_offset % alignof(uint64_t) != 0 ||
-            !checkedRange(variable.value_offset, storageSize,
-                          current->instance_size) ||
-            !checkedRange(variable.mode_offset, sizeof(uint64_t),
-                          current->instance_size) ||
-            !validPowerOfTwo(variable.mode_mask) ||
-            rangesOverlap(variable.value_offset, storageSize,
-                          variable.mode_offset, sizeof(uint64_t)) ||
-            layoutOverlapsHandle(current->layout, 0, variable.value_offset,
-                                 storageSize) ||
-            (isRandC != (variable.randc_key_offset != UINT64_MAX)) ||
-            (isRandC != (variable.randc_position_offset != UINT64_MAX)))
-          return OBELISK_RT_INVALID_DESIGN;
-        if (isRandC &&
-            (variable.randc_key_offset < sizeof(void *) ||
-             variable.randc_position_offset < sizeof(void *) ||
-             variable.randc_key_offset % alignof(uint64_t) != 0 ||
-             variable.randc_position_offset % alignof(uint64_t) != 0 ||
-             variable.randc_key_offset == variable.randc_position_offset ||
-             rangesOverlap(variable.value_offset, storageSize,
-                           variable.randc_key_offset, sizeof(uint64_t)) ||
-             rangesOverlap(variable.value_offset, storageSize,
-                           variable.randc_position_offset, sizeof(uint64_t)) ||
-             rangesOverlap(variable.mode_offset, sizeof(uint64_t),
-                           variable.randc_key_offset, sizeof(uint64_t)) ||
-             rangesOverlap(variable.mode_offset, sizeof(uint64_t),
-                           variable.randc_position_offset, sizeof(uint64_t)) ||
-             !checkedRange(variable.randc_key_offset, sizeof(uint64_t),
-                           current->instance_size) ||
-             !checkedRange(variable.randc_position_offset, sizeof(uint64_t),
-                           current->instance_size) ||
-             layoutOverlapsHandle(current->layout, 0, variable.randc_key_offset,
-                                  sizeof(uint64_t)) ||
-             layoutOverlapsHandle(current->layout, 0,
-                                  variable.randc_position_offset,
-                                  sizeof(uint64_t))))
-          return OBELISK_RT_INVALID_DESIGN;
-        for (uint64_t previous = 0; previous != index; ++previous) {
-          const obelisk_rt_random_variable_v1 &other =
-              random->variables[previous];
-          uint64_t otherValueSize = (uint64_t(other.bit_width) + 7) / 8;
-          uint64_t otherStorageSize =
-              (other.flags & OBELISK_RT_RANDOM_VARIABLE_FOUR_STATE) != 0
-                  ? otherValueSize * 2
-                  : otherValueSize;
-          bool otherIsRandC =
-              (other.flags & OBELISK_RT_RANDOM_VARIABLE_RANDC) != 0;
-          if (rangesOverlap(other.value_offset, otherStorageSize,
-                            variable.value_offset, storageSize) ||
-              (isRandC &&
-               (rangesOverlap(other.value_offset, otherStorageSize,
-                              variable.randc_key_offset, sizeof(uint64_t)) ||
-                rangesOverlap(other.value_offset, otherStorageSize,
-                              variable.randc_position_offset,
-                              sizeof(uint64_t)))) ||
-              (otherIsRandC &&
-               (rangesOverlap(variable.value_offset, storageSize,
-                              other.randc_key_offset, sizeof(uint64_t)) ||
-                rangesOverlap(variable.value_offset, storageSize,
-                              other.randc_position_offset,
-                              sizeof(uint64_t)))) ||
-              (isRandC && otherIsRandC &&
-               (rangesOverlap(variable.randc_key_offset, sizeof(uint64_t),
-                              other.randc_key_offset, sizeof(uint64_t)) ||
-                rangesOverlap(variable.randc_key_offset, sizeof(uint64_t),
-                              other.randc_position_offset, sizeof(uint64_t)) ||
-                rangesOverlap(variable.randc_position_offset, sizeof(uint64_t),
-                              other.randc_key_offset, sizeof(uint64_t)) ||
-                rangesOverlap(variable.randc_position_offset, sizeof(uint64_t),
-                              other.randc_position_offset,
-                              sizeof(uint64_t)))) ||
-              (other.mode_offset == variable.mode_offset &&
-               other.mode_mask == variable.mode_mask))
-            return OBELISK_RT_INVALID_DESIGN;
-        }
-        for (uint64_t edgeIndex = 0; edgeIndex != random->edge_count;
-             ++edgeIndex) {
-          const obelisk_rt_random_edge_v1 &edge = random->edges[edgeIndex];
-          if (edge.mode_offset == variable.mode_offset &&
-              edge.mode_mask == variable.mode_mask)
-            return OBELISK_RT_INVALID_DESIGN;
-        }
-      }
-    }
-    if (derived && !layoutContainsHandles(derived->layout, current->layout))
-      return OBELISK_RT_INVALID_DESIGN;
-    if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0 &&
-        (!current->layout ||
-         !layoutHasWeakHandleAt(current->layout, 0,
-                                sizeof(obelisk_rt_managed_word_v1)) ||
-         layoutHasStrongHandleAt(current->layout, 0,
-                                 sizeof(obelisk_rt_managed_word_v1))))
-      return OBELISK_RT_INVALID_DESIGN;
+    derivedHandles = currentHandles;
     derived = current;
   }
-  if ((descriptor->flags &
-       (OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE)) == 0)
-    for (uint64_t index = 0; index != descriptor->method_count; ++index)
-      if ((descriptor->methods[index].flags & OBELISK_RT_METHOD_PURE) != 0)
-        return OBELISK_RT_INVALID_DESIGN;
+  if (pending)
+    *pending = std::move(unvalidated);
   return OBELISK_RT_OK;
+}
+} // namespace
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_class_validate(const obelisk_rt_class_descriptor_v1 *descriptor) {
+  // Validation now builds bounded-width indexes; exceptions must not cross
+  // the C ABI, including failures while validating untrusted metadata.
+  return guarded(nullptr, [&] { return validateClassDescriptor(descriptor); });
 }
 
 extern "C" obelisk_rt_status
@@ -2624,14 +2809,52 @@ obelisk_rt_v1_gc_statistics(obelisk_rt_context *context,
 extern "C" obelisk_rt_status
 obelisk_rt_v1_class_register(obelisk_rt_context *context,
                              const obelisk_rt_class_descriptor_v1 *descriptor) {
-  if (!context || obelisk_rt_v1_class_validate(descriptor) != OBELISK_RT_OK)
+  if (!context || !descriptor)
     return OBELISK_RT_INVALID_ARGUMENT;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    auto [found, inserted] =
-        context->managedClasses.try_emplace(descriptor->class_id, descriptor);
-    return inserted || found->second == descriptor ? OBELISK_RT_OK
-                                                   : OBELISK_RT_INVALID_DESIGN;
+    auto found = context->managedClasses.find(descriptor->class_id);
+    if (found != context->managedClasses.end())
+      return found->second == descriptor ? OBELISK_RT_OK
+                                         : OBELISK_RT_INVALID_DESIGN;
+    auto cache = context->managedClassValidation;
+    if (!cache)
+      cache = std::make_shared<ManagedClassValidationCache>();
+    struct LayoutTransaction {
+      ClassLayoutValidation &layouts;
+      bool committed = false;
+      ~LayoutTransaction() {
+        if (!committed)
+          layouts.rollback();
+      }
+      void commit() {
+        layouts.commit();
+        committed = true;
+      }
+    } transaction{cache->layouts};
+    std::vector<const obelisk_rt_class_descriptor_v1 *> pending;
+    obelisk_rt_status status = validateClassDescriptor(
+        descriptor, &cache->classes, &pending, &cache->layouts);
+    if (status != OBELISK_RT_OK)
+      return status == OBELISK_RT_INVALID_DESIGN ? OBELISK_RT_INVALID_ARGUMENT
+                                                 : status;
+    // Stage allocations before publishing the registration. A failed call
+    // must not retain pointers to descriptors the caller is free to discard.
+    ValidatedClasses additions;
+    for (const auto *current : pending)
+      additions.emplace(current->class_id, current);
+    size_t needed = cache->classes.size() + additions.size();
+    // reserve(size + 1) on every registration would force repeated rehashes.
+    // Grow geometrically, while staging enough buckets for a no-allocation
+    // node merge after the registration has been published.
+    if (needed > cache->classes.bucket_count())
+      cache->classes.reserve(
+          std::max(needed, cache->classes.bucket_count() * 2));
+    context->managedClasses.emplace(descriptor->class_id, descriptor);
+    cache->classes.merge(additions);
+    transaction.commit();
+    context->managedClassValidation = std::move(cache);
+    return OBELISK_RT_OK;
   });
 }
 
@@ -2937,8 +3160,9 @@ bool elementTypesEquivalent(const obelisk_rt_element_type_v1 *left,
 
 } // namespace
 
-extern "C" obelisk_rt_status obelisk_rt_v1_element_type_validate(
-    const obelisk_rt_element_type_v1 *descriptor) {
+namespace {
+obelisk_rt_status
+validateElementTypeDescriptor(const obelisk_rt_element_type_v1 *descriptor) {
   constexpr uint32_t validFlags =
       OBELISK_RT_ELEMENT_FOUR_STATE | OBELISK_RT_ELEMENT_SIGNED;
   if (!descriptor || descriptor->version != OBELISK_RT_VERSION ||
@@ -2975,19 +3199,32 @@ extern "C" obelisk_rt_status obelisk_rt_v1_element_type_validate(
       (descriptor->bit_width == 0 || descriptor->value_size > UINT64_MAX / 8 ||
        descriptor->bit_width > descriptor->value_size * 8))
     return OBELISK_RT_INVALID_DESIGN;
-  if (descriptor->trace &&
-      (descriptor->trace->size != descriptor->value_size ||
-       !validateTraceLayout(descriptor->trace, descriptor->value_size) ||
-       traceLayoutContainsWeak(descriptor->trace)))
-    return OBELISK_RT_INVALID_DESIGN;
+  if (descriptor->trace) {
+    TraceLayoutValidation validation;
+    if (descriptor->trace->size != descriptor->value_size ||
+        !validation.validate(descriptor->trace, descriptor->value_size) ||
+        validation.hasWeakHandles(descriptor->trace))
+      return OBELISK_RT_INVALID_DESIGN;
+  }
   return OBELISK_RT_OK;
+}
+
+} // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_element_type_validate(
+    const obelisk_rt_element_type_v1 *descriptor) {
+  return guarded(nullptr,
+                 [&] { return validateElementTypeDescriptor(descriptor); });
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_element_type_register(
     obelisk_rt_context *context, const obelisk_rt_element_type_v1 *descriptor) {
-  if (!context ||
-      obelisk_rt_v1_element_type_validate(descriptor) != OBELISK_RT_OK)
+  if (!context || !descriptor)
     return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_status status = obelisk_rt_v1_element_type_validate(descriptor);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_INVALID_DESIGN ? OBELISK_RT_INVALID_ARGUMENT
+                                              : status;
   return guarded(context, [&] {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
     auto [found, inserted] = context->managedElementTypes.try_emplace(

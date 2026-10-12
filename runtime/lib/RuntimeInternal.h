@@ -1472,6 +1472,7 @@ extern decltype(&obelisk_rt_v1_dpi_aggregate_state_alloc)
     designBytecodeDpiAggregateStateAlloc;
 
 class ManagedHeap;
+struct ManagedClassValidationCache;
 
 struct NetAliasRange {
   uint64_t valueOffset = 0;
@@ -2462,6 +2463,7 @@ struct obelisk_rt_context {
   EVCDTraceState *evcdState = nullptr;
   std::unordered_map<uint64_t, const obelisk_rt_class_descriptor_v1 *>
       managedClasses;
+  std::shared_ptr<ManagedClassValidationCache> managedClassValidation;
   std::unordered_map<uint64_t, const obelisk_rt_element_type_v1 *>
       managedElementTypes;
   std::unordered_map<uint64_t, std::unique_ptr<OwnedElementTypeDescriptor>>
