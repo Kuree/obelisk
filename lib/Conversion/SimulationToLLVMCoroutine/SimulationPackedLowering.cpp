@@ -1108,6 +1108,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimCovergroupStartOp, sim::SimCovergroupStopOp,
         sim::SimCovergroupSetNameOp, sim::SimCovergroupSetIntegerOptionOp,
         sim::SimCovergroupGetIntegerOptionOp,
+        sim::SimCovergroupGetStringOptionOp,
         sim::SimCovergroupSetStringOptionOp,
         sim::SimCovergroupSetTypeIntegerOptionOp,
         sim::SimCovergroupSetTypeStringOptionOp,

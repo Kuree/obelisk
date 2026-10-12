@@ -101,6 +101,73 @@ LogicalResult UnitLowering::publishCovergroupTypeOption(
   return success();
 }
 
+FailureOr<std::optional<UnitLowering::CovergroupOptionOwner>>
+UnitLowering::resolveCovergroupOptionOwner(Operation *owner,
+                                           Location location) {
+  auto getHandleType = [](Operation *expression) {
+    auto type = expression->getAttrOfType<TypeAttr>("semantic_type");
+    return type ? dyn_cast<semantic::CovergroupHandleType>(type.getValue())
+                : semantic::CovergroupHandleType{};
+  };
+  CovergroupOptionOwner result{owner};
+  auto handle = getHandleType(owner);
+  Operation *itemOwner = nullptr;
+  if (!handle) {
+    auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(owner);
+    if (!member)
+      return std::optional<CovergroupOptionOwner>{};
+    SmallVector<Operation *> children = getChildren(member);
+    if (children.size() != 1)
+      return std::optional<CovergroupOptionOwner>{};
+    result.receiver = children.front();
+    handle = getHandleType(result.receiver);
+    if (!handle)
+      return std::optional<CovergroupOptionOwner>{};
+    itemOwner = owner;
+  }
+
+  auto group = dyn_cast_or_null<semantic::SVCovergroupTypeOp>(
+      loweringInputs.getCovergroup(handle));
+  if (!group) {
+    emitError(location) << "functional coverage option has no typed covergroup";
+    return failure();
+  }
+  if (!itemOwner)
+    return std::optional<CovergroupOptionOwner>{result};
+
+  // Build each immutable declaration's body table once per worker, then use
+  // the shared symbol-table index for every field. Inherited selectors resolve
+  // in the effective receiver's body rather than walking all its items.
+  auto cached = covergroupOptionBodies.try_emplace(group);
+  if (cached.second)
+    for (Operation *child : getChildren(group))
+      if (auto body = dyn_cast<semantic::SVCovergroupBodySymbolOp>(child)) {
+        cached.first->second = body;
+        break;
+      }
+  auto body = cached.first->second;
+  auto reference = itemOwner->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+  if (body && reference) {
+    auto leaf = FlatSymbolRefAttr::get(reference.getLeafReference());
+    result.item =
+        lookupNearestSymbolFrom<semantic::SVCoverpointSymbolOp>(body, leaf);
+    if (!result.item)
+      result.item =
+          lookupNearestSymbolFrom<semantic::SVCoverCrossSymbolOp>(body, leaf);
+  }
+  auto stableID = result.item && group->isAncestor(result.item)
+                      ? result.item->getAttrOfType<IntegerAttr>(
+                            sim::metadata::coverageFunctionalItemId)
+                      : IntegerAttr{};
+  if (!stableID || stableID.getValue().isZero()) {
+    emitError(location)
+        << "functional coverage item option has no typed v1 identity";
+    return failure();
+  }
+  result.itemID = stableID.getValue().getZExtValue();
+  return std::optional<CovergroupOptionOwner>{result};
+}
+
 FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
     semantic::SVAssignmentExpressionOp op, Operation *destination,
     Operation *source, Value rhs) {
@@ -196,53 +263,15 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
     return std::optional<Value>{};
   }
 
-  Operation *receiver = owner;
-  Operation *itemOwner = nullptr;
-  if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(owner)) {
-    SmallVector<Operation *> memberChildren = getChildren(owner);
-    if (memberChildren.size() != 1) {
-      emitError(location) << "functional coverage option has no instance receiver";
-      return failure();
-    }
-    itemOwner = member;
-    receiver = memberChildren.front();
-  }
-  semantic::SVCovergroupTypeOp covergroup = findSemanticCovergroup(receiver);
-  if (!covergroup) {
-    emitError(location) << "functional coverage option has no covergroup type";
+  auto resolvedOwner = resolveCovergroupOptionOwner(owner, location);
+  if (failed(resolvedOwner))
     return failure();
-  }
-
-  uint64_t itemID = 0;
-  Operation *semanticItem = nullptr;
-  if (itemOwner) {
-    auto reference = itemOwner->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-    if (reference) {
-      StringRef leaf = reference.getLeafReference();
-      covergroup->walk([&](Operation *candidate) {
-        if (semanticItem ||
-            !isa<semantic::SVCoverpointSymbolOp,
-                 semantic::SVCoverCrossSymbolOp>(candidate))
-          return;
-        auto symbol = candidate->getAttrOfType<StringAttr>(
-            SymbolTable::getSymbolAttrName());
-        if (symbol && symbol.getValue() == leaf)
-          semanticItem = candidate;
-      });
-    }
-    auto stableID = semanticItem
-                        ? semanticItem->getAttrOfType<IntegerAttr>(
-                              sim::metadata::coverageFunctionalItemId)
-                        : IntegerAttr{};
-    if (!stableID || stableID.getValue().isZero()) {
-      emitError(location)
-          << "functional coverage item option has no typed v1 identity";
-      return failure();
-    }
-    itemID = stableID.getValue().getZExtValue();
-  }
-
-  FailureOr<Value> loweredReceiver = lowerExpression(receiver);
+  if (!*resolvedOwner)
+    return std::optional<Value>{};
+  const auto &resolved = **resolvedOwner;
+  uint64_t itemID = resolved.itemID;
+  Operation *semanticItem = resolved.item;
+  FailureOr<Value> loweredReceiver = lowerExpression(resolved.receiver);
   if (failed(loweredReceiver) ||
       !isa<sim::CovergroupHandleType>((*loweredReceiver).getType())) {
     emitError(location) << "functional coverage option receiver is not a covergroup instance";
@@ -295,7 +324,7 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
   return std::optional<Value>{rhs};
 }
 
-FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupIntegerOptionRead(
+FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionRead(
     semantic::SVMemberAccessExpressionOp op) {
   auto fieldName = op->getAttrOfType<StringAttr>("member_name");
   SmallVector<Operation *> fieldChildren = getChildren(op);
@@ -321,55 +350,33 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupIntegerOptionRead(
     kind = sim::CovergroupInstanceOptionKind::AtLeast;
   else if (name == "cross_num_print_missing")
     kind = sim::CovergroupInstanceOptionKind::CrossNumPrintMissing;
+  else if (name == "auto_bin_max")
+    kind = sim::CovergroupInstanceOptionKind::AutoBinMax;
+  else if (name == "detect_overlap")
+    kind = sim::CovergroupInstanceOptionKind::DetectOverlap;
+  else if (name == "per_instance")
+    kind = sim::CovergroupInstanceOptionKind::PerInstance;
+  else if (name == "get_inst_coverage")
+    kind = sim::CovergroupInstanceOptionKind::GetInstCoverage;
+  else if (name == "cross_retain_auto_bins")
+    kind = sim::CovergroupInstanceOptionKind::CrossRetainAutoBins;
+  else if (name == "comment")
+    kind = sim::CovergroupInstanceOptionKind::Comment;
+  else if (name == "name")
+    kind = sim::CovergroupInstanceOptionKind::Name;
   else
     return std::optional<Value>{};
 
   Location location = getSemanticLocation(op);
-  Operation *owner = optionChildren.front();
-  Operation *receiver = owner;
-  Operation *itemOwner = nullptr;
-  if (auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(owner)) {
-    SmallVector<Operation *> memberChildren = getChildren(member);
-    if (memberChildren.size() != 1) {
-      emitError(location)
-          << "functional coverage option has no instance receiver";
-      return failure();
-    }
-    itemOwner = owner;
-    receiver = memberChildren.front();
-  }
-
-  semantic::SVCovergroupTypeOp covergroup = findSemanticCovergroup(receiver);
-  if (!covergroup)
+  auto resolvedOwner =
+      resolveCovergroupOptionOwner(optionChildren.front(), location);
+  if (failed(resolvedOwner))
+    return failure();
+  if (!*resolvedOwner)
     return std::optional<Value>{};
-
-  uint64_t itemID = 0;
-  Operation *semanticItem = nullptr;
-  if (itemOwner) {
-    auto reference =
-        itemOwner->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-    if (reference) {
-      StringRef leaf = reference.getLeafReference();
-      covergroup->walk([&](Operation *candidate) {
-        if (semanticItem || !isa<semantic::SVCoverpointSymbolOp,
-                                 semantic::SVCoverCrossSymbolOp>(candidate))
-          return;
-        auto symbol = candidate->getAttrOfType<StringAttr>(
-            SymbolTable::getSymbolAttrName());
-        if (symbol && symbol.getValue() == leaf)
-          semanticItem = candidate;
-      });
-    }
-    auto stableID = semanticItem ? semanticItem->getAttrOfType<IntegerAttr>(
-                                       sim::metadata::coverageFunctionalItemId)
-                                 : IntegerAttr{};
-    if (!stableID || stableID.getValue().isZero()) {
-      emitError(location)
-          << "functional coverage item option has no typed v1 identity";
-      return failure();
-    }
-    itemID = stableID.getValue().getZExtValue();
-  }
+  const auto &resolved = **resolvedOwner;
+  uint64_t itemID = resolved.itemID;
+  Operation *semanticItem = resolved.item;
   if (*kind == sim::CovergroupInstanceOptionKind::CrossNumPrintMissing &&
       itemID && !isa<semantic::SVCoverCrossSymbolOp>(semanticItem)) {
     emitError(location)
@@ -377,7 +384,21 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupIntegerOptionRead(
     return failure();
   }
 
-  FailureOr<Value> loweredReceiver = lowerExpression(receiver);
+  if (itemID &&
+      ((*kind == sim::CovergroupInstanceOptionKind::Name ||
+        *kind == sim::CovergroupInstanceOptionKind::PerInstance ||
+        *kind == sim::CovergroupInstanceOptionKind::GetInstCoverage) ||
+       ((*kind == sim::CovergroupInstanceOptionKind::AutoBinMax ||
+         *kind == sim::CovergroupInstanceOptionKind::DetectOverlap) &&
+        !isa<semantic::SVCoverpointSymbolOp>(semanticItem)) ||
+       (*kind == sim::CovergroupInstanceOptionKind::CrossRetainAutoBins &&
+        !isa<semantic::SVCoverCrossSymbolOp>(semanticItem)))) {
+    emitError(location) << "covergroup option '" << name
+                        << "' is not available on this item";
+    return failure();
+  }
+
+  FailureOr<Value> loweredReceiver = lowerExpression(resolved.receiver);
   if (failed(loweredReceiver) ||
       !isa<sim::CovergroupHandleType>((*loweredReceiver).getType())) {
     emitError(location)
@@ -385,6 +406,14 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupIntegerOptionRead(
     return failure();
   }
   Value context = function.getBody().front().getArgument(0);
+  if (*kind == sim::CovergroupInstanceOptionKind::Name ||
+      *kind == sim::CovergroupInstanceOptionKind::Comment) {
+    Value value =
+        sim::SimCovergroupGetStringOptionOp::create(
+            builder, location, context, *loweredReceiver, itemID, *kind)
+            .getValue();
+    return std::optional<Value>{value};
+  }
   Value value = sim::SimCovergroupGetIntegerOptionOp::create(
                     builder, location, context, *loweredReceiver, itemID, *kind)
                     .getValue();

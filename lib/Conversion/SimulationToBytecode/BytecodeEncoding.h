@@ -213,6 +213,8 @@ constexpr uint32_t kIntrinsicCovergroupSetIntegerOption =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_INTEGER_OPTION;
 constexpr uint32_t kIntrinsicCovergroupGetIntegerOption =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION;
+constexpr uint32_t kIntrinsicCovergroupGetStringOption =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION;
 constexpr uint32_t kIntrinsicCovergroupSetStringOption =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION;
 constexpr uint32_t kIntrinsicCovergroupSetTypeIntegerOption =

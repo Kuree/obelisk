@@ -932,6 +932,40 @@ public:
   }
 };
 
+class CovergroupGetStringOptionConversion final
+    : public OpConversionPattern<sim::SimCovergroupGetStringOptionOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimCovergroupGetStringOptionOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (adaptor.getHandle().size() != 1)
+      return failure();
+    Value value =
+        entryAlloca(rewriter, op.getLoc(), rewriter.getI64Type(), 1, 8);
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_covergroup_get_string_option"),
+            ValueRange{lane, adaptor.getHandle().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), op.getItem()),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI32Type(),
+                                    static_cast<uint32_t>(op.getOption())),
+                       value})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(op,
+                       LLVM::LoadOp::create(rewriter, op.getLoc(),
+                                            rewriter.getI64Type(), value, 8));
+    return success();
+  }
+};
+
 class CovergroupSetStringOptionConversion final
     : public OpConversionPattern<sim::SimCovergroupSetStringOptionOp> {
 public:
@@ -1217,7 +1251,8 @@ void populateManagedCoverageToLLVMConversionPatterns(
       CovergroupBlockEventRegisterConversion,
       CovergroupBlockEventFireConversion, CovergroupSetNameConversion,
       CovergroupSetIntegerOptionConversion,
-      CovergroupGetIntegerOptionConversion, CovergroupSetStringOptionConversion,
+      CovergroupGetIntegerOptionConversion, CovergroupGetStringOptionConversion,
+      CovergroupSetStringOptionConversion,
       CovergroupSetTypeIntegerOptionConversion,
       CovergroupSetTypeStringOptionConversion, CovergroupFormalReadConversion,
       CovergroupControlConversion<sim::SimCovergroupStartOp, true>,

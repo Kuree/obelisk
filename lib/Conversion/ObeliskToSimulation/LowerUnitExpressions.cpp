@@ -3503,8 +3503,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
                           bool lvalue) {
   Location location = getSemanticLocation(op);
   if (!lvalue) {
-    FailureOr<std::optional<Value>> option =
-        lowerCovergroupIntegerOptionRead(op);
+    FailureOr<std::optional<Value>> option = lowerCovergroupOptionRead(op);
     if (failed(option))
       return failure();
     if (*option)

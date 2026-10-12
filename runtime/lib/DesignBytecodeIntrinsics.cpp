@@ -1680,13 +1680,32 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         !((*option >= OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
            *option <= OBELISK_RT_COVERGROUP_OPTION_AT_LEAST &&
            *option != OBELISK_RT_COVERGROUP_OPTION_COMMENT) ||
-          *option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING))
+          *option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING ||
+          (*option >= OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX &&
+           *option <= OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS)))
       return OBELISK_RT_INVALID_BYTECODE;
     int64_t value = 0;
     obelisk_rt_status status = obelisk_rt_v1_covergroup_get_integer_option(
         context, *handle, *item, static_cast<uint32_t>(*option), &value);
     return status == OBELISK_RT_OK ? sentinel(0, static_cast<uint64_t>(value))
                                    : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION: {
+    auto handle = scalar(0), item = scalar(1), option = scalar(2);
+    if (site.inputCount != 3 || site.outputCount != 1 || !handle || !item ||
+        !option ||
+        (*option != OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
+         (*option != OBELISK_RT_COVERGROUP_OPTION_NAME || *item)))
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    obelisk_rt_string_v1 result = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_get_string_option(
+        lane, *handle, *item, static_cast<uint32_t>(*option), &result);
+    return status == OBELISK_RT_OK && !writeString(outputRegister(0), result)
+               ? OBELISK_RT_INVALID_BYTECODE
+               : status;
   }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_STRING_OPTION: {
     auto handle = scalar(0), item = scalar(1), option = scalar(2);

@@ -22,14 +22,29 @@ def SimCovergroupOptionCrossNumPrintMissing
                       "cross_num_print_missing">;
 def SimCovergroupOptionDistributeFirst
     : I32EnumAttrCase<"DistributeFirst", 7, "distribute_first">;
+def SimCovergroupOptionAutoBinMax
+    : I32EnumAttrCase<"AutoBinMax", 8, "auto_bin_max">;
+def SimCovergroupOptionDetectOverlap
+    : I32EnumAttrCase<"DetectOverlap", 9, "detect_overlap">;
+def SimCovergroupOptionPerInstance
+    : I32EnumAttrCase<"PerInstance", 10, "per_instance">;
+def SimCovergroupOptionGetInstCoverage
+    : I32EnumAttrCase<"GetInstCoverage", 11, "get_inst_coverage">;
+def SimCovergroupOptionCrossRetainAutoBins
+    : I32EnumAttrCase<"CrossRetainAutoBins", 12, "cross_retain_auto_bins">;
+def SimCovergroupOptionName
+    : I32EnumAttrCase<"Name", 13, "name">;
 def SimCovergroupInstanceOptionKind
     : I32EnumAttr<"CovergroupInstanceOptionKind",
-                  "mutable functional-coverage option", [
+                  "functional-coverage option", [
         SimCovergroupOptionWeight, SimCovergroupOptionGoal,
         SimCovergroupOptionComment, SimCovergroupOptionAtLeast,
         SimCovergroupOptionMergeInstances,
         SimCovergroupOptionCrossNumPrintMissing,
-        SimCovergroupOptionDistributeFirst
+        SimCovergroupOptionDistributeFirst, SimCovergroupOptionAutoBinMax,
+        SimCovergroupOptionDetectOverlap, SimCovergroupOptionPerInstance,
+        SimCovergroupOptionGetInstCoverage,
+        SimCovergroupOptionCrossRetainAutoBins, SimCovergroupOptionName
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

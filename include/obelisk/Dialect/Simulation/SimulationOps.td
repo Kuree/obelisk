@@ -1200,17 +1200,41 @@ def SimCovergroupGetIntegerOptionOp
     : SimOp<"covergroup.get_integer_option", [
         MemoryEffects<[MemRead<SimCoverageResource>]>
       ]> {
-  let summary = "read a mutable integral option from a covergroup instance owner";
+  let summary = "read an integral option from a covergroup instance owner";
   let description = [{
     `item` is zero for the covergroup owner or a positive stable template
     `FunctionalItem` ID for a coverpoint or cross. The result is the current
     effective per-instance value after group defaults and item overrides.
+    Construction-only fields are readable but cannot be assigned procedurally.
   }];
   let arguments = (ins SimContextType:$context,
                        SimCovergroupHandleType:$handle,
                        I64Attr:$item,
                        SimCovergroupInstanceOptionKind:$option);
   let results = (outs I64:$value);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option
+    attr-dict `:` type($context) `,` qualified(type($handle))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupGetStringOptionOp
+    : SimOp<"covergroup.get_string_option", [
+        MemoryEffects<[MemRead<SimCoverageResource>,
+                       MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "read a covergroup name or an instance owner's comment";
+  let description = [{
+    `item` is zero for the group or a stable template FunctionalItem ID.
+    Names are group-only. The result is a managed string snapshot of the
+    current option value, including constructor values and later edits.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle,
+                       I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option);
+  let results = (outs SimStringType:$value);
   let assemblyFormat = [{
     $context `,` $handle `item` $item `option` $option
     attr-dict `:` type($context) `,` qualified(type($handle))

@@ -298,6 +298,12 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getHandle()), emitU64Constant(plan, op.getItem()),
          emitU64Constant(plan, static_cast<uint32_t>(op.getOption()))},
         {reg(plan, op.getValue())});
+  if (auto op = dyn_cast<sim::SimCovergroupGetStringOptionOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicCovergroupGetStringOption,
+        {reg(plan, op.getHandle()), emitU64Constant(plan, op.getItem()),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getOption()))},
+        {reg(plan, op.getValue())});
   if (auto op = dyn_cast<sim::SimCovergroupSetStringOptionOp>(operation))
     return emitIntrinsicRegisters(
         plan, kIntrinsicCovergroupSetStringOption,

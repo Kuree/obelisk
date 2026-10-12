@@ -1328,6 +1328,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_SET_TYPE_STRING_OPTION =
       UINT32_C(0x00010479),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION = UINT32_C(0x0001047a),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION = UINT32_C(0x0001047b),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -4845,7 +4846,13 @@ enum {
   OBELISK_RT_COVERGROUP_OPTION_AT_LEAST = 4,
   OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES = 5,
   OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING = 6,
-  OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST = 7
+  OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST = 7,
+  OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX = 8,
+  OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP = 9,
+  OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE = 10,
+  OBELISK_RT_COVERGROUP_OPTION_GET_INST_COVERAGE = 11,
+  OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS = 12,
+  OBELISK_RT_COVERGROUP_OPTION_NAME = 13
 };
 obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
@@ -4859,6 +4866,12 @@ obelisk_rt_status obelisk_rt_v1_covergroup_set_string_option(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
     uint64_t item_id, obelisk_rt_covergroup_instance_option_v1 option,
     obelisk_rt_string_v1 value);
+// Allocate a string snapshot in the active lane; name is group-only and
+// comment accepts a group or a stable item selector.
+obelisk_rt_status obelisk_rt_v1_covergroup_get_string_option(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_covergroup_v1 handle,
+    uint64_t item_id, obelisk_rt_covergroup_instance_option_v1 option,
+    obelisk_rt_string_v1 *out_value);
 obelisk_rt_status obelisk_rt_v1_covergroup_set_type_integer_option(
     obelisk_rt_context *context, uint64_t type_id, uint64_t item_id,
     obelisk_rt_covergroup_instance_option_v1 option, int64_t value);

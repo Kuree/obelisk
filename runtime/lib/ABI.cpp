@@ -1057,6 +1057,11 @@ ABI_FUNCTION(obelisk_rt_v1_covergroup_set_string_option,
                                    obelisk_rt_covergroup_v1, uint64_t,
                                    obelisk_rt_covergroup_instance_option_v1,
                                    obelisk_rt_string_v1));
+ABI_FUNCTION(obelisk_rt_v1_covergroup_get_string_option,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
+                                    obelisk_rt_covergroup_v1, uint64_t,
+                                    obelisk_rt_covergroup_instance_option_v1,
+                                    obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_covergroup_set_type_integer_option,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
                                    obelisk_rt_covergroup_instance_option_v1,

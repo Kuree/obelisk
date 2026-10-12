@@ -656,6 +656,169 @@ TEST(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest,
+     OptionReadsHonorDefaultsAndRejectInvalidScopes) {
+  const auto schema = makeSharedAndSelectorSchema();
+  obelisk_rt_context *context = createContextForSchema(schema, false);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  struct Read {
+    uint64_t item;
+    obelisk_rt_covergroup_instance_option_v1 option;
+    int64_t value;
+  };
+  const Read defaults[] = {
+      {0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 64},
+      {20, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 64},
+      {0, OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
+      {20, OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
+      {0, OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 1},
+      {22, OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 1},
+      {0, OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE, 0},
+      {0, OBELISK_RT_COVERGROUP_OPTION_GET_INST_COVERAGE, 0}};
+  for (const auto &read : defaults) {
+    int64_t value = -99;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                  context, handle, read.item, read.option, &value),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, read.value);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_set_integer_option(
+                  context, handle, read.item, read.option, read.value),
+              OBELISK_RT_INVALID_ARGUMENT);
+  }
+  for (const auto &read :
+       {Read{22, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, 0},
+        Read{22, OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP, 0},
+        Read{20, OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS, 0},
+        Read{20, OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE, 0},
+        Read{22, OBELISK_RT_COVERGROUP_OPTION_GET_INST_COVERAGE, 0},
+        Read{0, OBELISK_RT_COVERGROUP_OPTION_NAME, 0}}) {
+    int64_t value = -99;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                  context, handle, read.item, read.option, &value),
+              OBELISK_RT_INVALID_ARGUMENT);
+    EXPECT_EQ(value, -99);
+  }
+  int64_t value = -99;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                context, handle, 999, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
+                &value),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(value, -99);
+  EXPECT_EQ(
+      obelisk_rt_v1_covergroup_get_integer_option(
+          context, 0, 0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, &value),
+      OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
+                nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(CoverageRuntimeDesignTest, StringOptionReadsReturnIndependentGcSnapshots) {
+  const auto schema = makeSharedAndSelectorSchema();
+  obelisk_rt_context *context = createContextForSchema(schema, false);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 first = 0, second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  obelisk_rt_string_v1 values[4]{};
+  obelisk_rt_gc_managed_root_range_v1 roots{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &roots, values, 4),
+            OBELISK_RT_OK);
+  auto expectText = [](obelisk_rt_string_v1 value,
+                       const std::string &expected) {
+    char scratch[8];
+    const char *bytes = nullptr;
+    uint64_t size = 0;
+    ASSERT_EQ(obelisk_rt_v1_string_view(value, scratch, &bytes, &size),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::string(bytes, size), expected);
+  };
+  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                lane, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[0]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                lane, second, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[1]),
+            OBELISK_RT_OK);
+  EXPECT_NE(values[0], values[1]);
+  expectText(values[0], "$auto$1");
+  expectText(values[1], "$auto$2");
+  for (uint64_t item : {uint64_t{0}, uint64_t{20}, uint64_t{22}}) {
+    ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                  lane, first, item, OBELISK_RT_COVERGROUP_OPTION_COMMENT,
+                  &values[2]),
+              OBELISK_RT_OK);
+    expectText(values[2], "");
+  }
+  const std::string comment = "a long point comment with independent storage";
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, comment.data(), comment.size(),
+                                        &values[3]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_set_string_option(
+          context, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, values[3]),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_get_string_option(
+          lane, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &values[2]),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "edited", 6, &values[3]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_set_string_option(
+          context, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, values[3]),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_name(context, first, values[3]),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  expectText(values[0], "$auto$1");
+  expectText(values[2], comment);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_get_string_option(
+          lane, first, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &values[3]),
+      OBELISK_RT_OK);
+  expectText(values[3], "edited");
+  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                lane, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[3]),
+            OBELISK_RT_OK);
+  expectText(values[3], "edited");
+  for (const auto &invalid :
+       {std::make_pair(uint64_t{20}, OBELISK_RT_COVERGROUP_OPTION_NAME),
+        std::make_pair(uint64_t{0}, OBELISK_RT_COVERGROUP_OPTION_WEIGHT)}) {
+    EXPECT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                  lane, first, invalid.first, invalid.second, &values[3]),
+              OBELISK_RT_INVALID_ARGUMENT);
+    expectText(values[3], "edited");
+  }
+  EXPECT_EQ(
+      obelisk_rt_v1_covergroup_get_string_option(
+          lane, first, 999, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &values[3]),
+      OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(
+      obelisk_rt_v1_covergroup_get_string_option(
+          nullptr, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[3]),
+      OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                lane, 0, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, &values[3]),
+            OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                lane, first, 0, OBELISK_RT_COVERGROUP_OPTION_NAME, nullptr),
+            OBELISK_RT_INVALID_ARGUMENT);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &roots),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(CoverageRuntimeDesignTest, Clause40ControlAndQueryHonorScopeSelection) {
   obelisk::coverage::Database schema = makeScopedCodeCoverageSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);

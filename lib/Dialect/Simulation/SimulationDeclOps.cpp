@@ -1589,9 +1589,10 @@ LogicalResult SimCovergroupSetNameOp::verify() {
 LogicalResult SimCovergroupSetIntegerOptionOp::verify() {
   if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
     return failure();
-  if (getOption() == CovergroupInstanceOptionKind::Comment ||
-      getOption() == CovergroupInstanceOptionKind::MergeInstances ||
-      getOption() == CovergroupInstanceOptionKind::DistributeFirst)
+  if (getOption() != CovergroupInstanceOptionKind::Weight &&
+      getOption() != CovergroupInstanceOptionKind::Goal &&
+      getOption() != CovergroupInstanceOptionKind::AtLeast &&
+      getOption() != CovergroupInstanceOptionKind::CrossNumPrintMissing)
     return emitOpError("requires an integral option kind");
   return success();
 }
@@ -1600,9 +1601,22 @@ LogicalResult SimCovergroupGetIntegerOptionOp::verify() {
   if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
     return failure();
   if (getOption() == CovergroupInstanceOptionKind::Comment ||
+      getOption() == CovergroupInstanceOptionKind::Name ||
       getOption() == CovergroupInstanceOptionKind::MergeInstances ||
-      getOption() == CovergroupInstanceOptionKind::DistributeFirst)
+      getOption() == CovergroupInstanceOptionKind::DistributeFirst ||
+      (getItem() &&
+       (getOption() == CovergroupInstanceOptionKind::PerInstance ||
+        getOption() == CovergroupInstanceOptionKind::GetInstCoverage)))
     return emitOpError("requires an integral instance-option kind");
+  return success();
+}
+
+LogicalResult SimCovergroupGetStringOptionOp::verify() {
+  if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
+    return failure();
+  if (getOption() != CovergroupInstanceOptionKind::Comment &&
+      (getOption() != CovergroupInstanceOptionKind::Name || getItem()))
+    return emitOpError("requires a comment or group-name option kind");
   return success();
 }
 
@@ -1615,9 +1629,11 @@ LogicalResult SimCovergroupSetStringOptionOp::verify() {
 }
 
 LogicalResult SimCovergroupSetTypeIntegerOptionOp::verify() {
-  if (!getTypeId() || getOption() == CovergroupInstanceOptionKind::Comment ||
-      getOption() == CovergroupInstanceOptionKind::AtLeast ||
-      getOption() == CovergroupInstanceOptionKind::CrossNumPrintMissing ||
+  if (!getTypeId() ||
+      (getOption() != CovergroupInstanceOptionKind::Weight &&
+       getOption() != CovergroupInstanceOptionKind::Goal &&
+       getOption() != CovergroupInstanceOptionKind::MergeInstances &&
+       getOption() != CovergroupInstanceOptionKind::DistributeFirst) ||
       (getItem() &&
        (getOption() == CovergroupInstanceOptionKind::MergeInstances ||
         getOption() == CovergroupInstanceOptionKind::DistributeFirst)))

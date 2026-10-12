@@ -337,12 +337,20 @@ private:
   lowerCovergroupOptionAssignment(semantic::SVAssignmentExpressionOp op,
                                   ::mlir::Operation *destination,
                                   ::mlir::Operation *source, ::mlir::Value rhs);
+  struct CovergroupOptionOwner {
+    ::mlir::Operation *receiver;
+    ::mlir::Operation *item = nullptr;
+    uint64_t itemID = 0;
+  };
+  ::mlir::FailureOr<std::optional<CovergroupOptionOwner>>
+  resolveCovergroupOptionOwner(::mlir::Operation *owner,
+                               ::mlir::Location location);
   ::mlir::LogicalResult publishCovergroupTypeOption(
       semantic::SVCovergroupTypeOp covergroup, ::mlir::Operation *item,
       sim::CovergroupInstanceOptionKind kind, ::mlir::Value value,
       bool sourceSigned, ::mlir::Location location);
   ::mlir::FailureOr<std::optional<::mlir::Value>>
-  lowerCovergroupIntegerOptionRead(semantic::SVMemberAccessExpressionOp op);
+  lowerCovergroupOptionRead(semantic::SVMemberAccessExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
   lowerCovergroupSample(semantic::SVCallExpressionOp op,
                         semantic::SVCovergroupTypeOp covergroup,
@@ -805,6 +813,8 @@ private:
   bool coverageInventoryReady = false;
   bool coverageBlockEventStarted = false;
   ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
+  ::llvm::DenseMap<::mlir::Operation *, semantic::SVCovergroupBodySymbolOp>
+      covergroupOptionBodies;
   ::llvm::StringMap<uint64_t> coverageInstanceIDs;
   ::mlir::Value thisObject;
   // The object of the scope containing a randomize() with call, live

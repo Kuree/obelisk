@@ -3,6 +3,7 @@
 
 #include "UnitLoweringInputs.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
+#include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -27,6 +28,11 @@ UnitLoweringInputs::UnitLoweringInputs(Operation *module)
                              function->hasAttr("simulation.void_function")});
       return WalkResult::skip();
     }
+    if (auto group = dyn_cast<ir::SVCovergroupTypeOp>(operation)) {
+      auto entry = covergroups.try_emplace(group.getSemanticType(), operation);
+      if (!entry.second)
+        entry.first->second = nullptr; // Ambiguous identities never alias.
+    }
     return WalkResult::advance();
   });
 }
@@ -35,6 +41,11 @@ const UnitLoweringInputs::Callable *
 UnitLoweringInputs::getCallable(sim::SimFuncOp function) const {
   auto found = callables.find(function);
   return found == callables.end() ? nullptr : &found->second;
+}
+
+Operation *UnitLoweringInputs::getCovergroup(Type handle) const {
+  auto found = covergroups.find(handle);
+  return found == covergroups.end() ? nullptr : found->second;
 }
 
 } // namespace simlowering

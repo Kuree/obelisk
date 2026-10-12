@@ -1863,7 +1863,7 @@ struct FunctionalCoverageInstanceState {
   std::unordered_map<uint64_t, uint64_t> crossNumPrintMissing;
   std::unordered_set<uint64_t> explicitCrossNumPrintMissingItems;
   /// Mutable comments keyed by zero for the group or by template item ID.
-  std::map<uint64_t, std::string> comments;
+  obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
   std::unordered_set<uint64_t> disabledItems;
   std::vector<FunctionalCoverageValue> formals;
   std::vector<FunctionalCoverageBinState> bins;

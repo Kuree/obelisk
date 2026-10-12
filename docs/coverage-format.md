@@ -257,6 +257,41 @@ and coverage-resource read/write effects, following
 [MLIR ODS](https://mlir.llvm.org/docs/DefiningDialects/Operations/) and
 [memory effect interfaces](https://mlir.llvm.org/doxygen/SideEffectInterfaces_8h.html).
 
+An instance-option read probe against IEEE 19.7 and 19.10 found that names,
+comments, and definition-only option fields fell through to ordinary member
+lowering and failed to compile. Typed reads now cover all primitive group,
+point, and cross option fields. Construction-only values come from the captured
+configuration, including group defaults and item overrides; live name/comment
+reads see procedural edits. String results are independent managed snapshots.
+The restrictions on procedural writes remain those of 19.7, and weight, goal,
+comment, and per-instance settings do not become lower-owner defaults.
+
+Compiler preparation indexes complete semantic handle types in one shared
+analysis; these paths may omit instance wrappers in the actual symbol tree.
+Option accesses use that type index and cache each body once per worker, then
+use the shared symbol-table index for each item.
+They no longer walk every item for every field and evaluate the receiver once,
+including embedded members and inherited selectors. Runtime profiles build
+construction-option and inherited-name indexes in linear passes. Constructor
+option resolution, numeric item reads, and constructor comment initialization
+use bounded numeric indexes;
+inherited fallback costs the selector's name bytes, and string snapshots cost
+the returned bytes. Comments use the same bounded index as other runtime
+coverage metadata. No getter scans all schema items or configurations.
+
+The managed-string read is declared in TableGen with typed handle operands,
+a string result, coverage read effects, and heap allocation/write effects.
+This follows [MLIR ODS](https://mlir.llvm.org/docs/DefiningDialects/Operations/),
+[symbol tables](https://mlir.llvm.org/docs/SymbolsAndSymbolTables/), and
+[memory effects](https://mlir.llvm.org/doxygen/SideEffectInterfaces_8h.html).
+Small MLIR regressions cover every field, ordered reads around mutations,
+invalid kinds/scopes, both backend ABIs, and LLVM verification. Two fast runtime
+units cover defaults, unchanged outputs on invalid arguments, and snapshots
+across edits and garbage collection. A three-configuration executable fixture
+checks inherited and embedded owners, receiver evaluation, constructor values,
+and native/bytecode parity. Existing persistence columns already store these
+settings; JSON/text/HTML/LCOV generation is checked without changing the format.
+
 The coverage-related regression suite probes existing coverage semantics; it
 does not certify complete implementation of every feature in the LRM.
 

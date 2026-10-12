@@ -53,11 +53,23 @@ struct FunctionalCoverageConfigurationSchemas {
 };
 
 struct FunctionalCoverageQueryMetadata {
+  struct ConstructionOptions {
+    uint64_t autoBinMax = 64;
+    bool detectOverlap = false;
+    bool crossRetainAutoBins = true;
+    bool perInstance = false;
+  };
   std::shared_ptr<const FunctionalCoverageConstructionSchemas> templates;
+  ConstructionOptions groupOptions;
+  std::vector<ConstructionOptions> itemOptions;
   std::vector<obelisk::coverage::ResolvedFunctionalItem> items;
   std::vector<obelisk::coverage::ResolvedFunctionalBin> bins;
   obelisk::coverage::detail::IndexMap<uint64_t, size_t> itemPositions;
   obelisk::coverage::detail::IndexMap<uint64_t, size_t> templateItemPositions;
+  /// Same-name inherited selectors follow the effective aggregating item.
+  /// SIZE_MAX marks ambiguity without a linear scan at every field read.
+  obelisk::coverage::detail::IndexMap<std::pair<std::string, uint32_t>, size_t>
+      inheritedItemPositions;
   obelisk::coverage::detail::IndexMap<uint64_t, size_t> binPositions;
   obelisk::coverage::detail::IndexMap<uint64_t, size_t> crossPositions;
   std::vector<std::vector<size_t>> itemBins;
@@ -2416,6 +2428,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     itemOrdinals.emplace(item->id, item->ordinal);
 
   std::vector<ResolvedFunctionalItem> resolvedItemRows;
+  IndexMap<uint64_t, size_t> resolvedItemPositions;
   std::unordered_map<uint64_t, uint64_t> resolvedItems;
   for (const FunctionalItem *item : templateItems) {
     uint64_t id = resolvedFunctionalID("functional.resolved.item", typeID,
@@ -2423,6 +2436,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (!id)
       return OBELISK_RT_INVALID_DESIGN;
     itemIDs.insert(id);
+    resolvedItemPositions.emplace(id, resolvedItemRows.size());
     resolvedItemRows.push_back({typeID,
                                 {},
                                 id,
@@ -2684,12 +2698,10 @@ obelisk_rt_status resolveStaticFunctionalType(
     // resolved instance-item profile used by get_inst_coverage().
     if (plan.scope == FunctionalOptionScopeKind::Type)
       continue;
-    auto item = std::find_if(resolvedItemRows.begin(), resolvedItemRows.end(),
-                             [&](const auto &candidate) {
-                               return candidate.id == resolvedOwner->second;
-                             });
-    if (item == resolvedItemRows.end())
+    auto position = resolvedItemPositions.find(resolvedOwner->second);
+    if (position == resolvedItemPositions.end())
       return OBELISK_RT_INVALID_DESIGN;
+    auto *item = &resolvedItemRows[position->second];
     switch (plan.option) {
     case FunctionalConfigurationOptionKind::Goal:
       item->goal = static_cast<uint32_t>(value);
@@ -5020,12 +5032,11 @@ obelisk_rt_status resolveStaticFunctionalType(
   }
 
   for (const PendingDefaultArray &pendingDefault : pendingDefaultArrays) {
-    const ResolvedFunctionalItem *resolvedItem = nullptr;
-    for (const auto &candidate : resolvedItemRows)
-      if (candidate.id == pendingDefault.item) {
-        resolvedItem = &candidate;
-        break;
-      }
+    auto position = resolvedItemPositions.find(pendingDefault.item);
+    const ResolvedFunctionalItem *resolvedItem =
+        position == resolvedItemPositions.end()
+            ? nullptr
+            : &resolvedItemRows[position->second];
     const FunctionalExpression *sampleExpression = nullptr;
     if (resolvedItem)
       for (const auto &expression : schema.functionalExpressions)
@@ -5341,10 +5352,10 @@ obelisk_rt_status resolveStaticFunctionalType(
     const uint32_t binCount = static_cast<uint32_t>(binCount64);
 
     auto itemOrdinal = [&](uint64_t item) {
-      auto found = std::find_if(
-          resolvedItemRows.begin(), resolvedItemRows.end(),
-          [&](const auto &candidate) { return candidate.id == item; });
-      return found == resolvedItemRows.end() ? UINT32_MAX : found->ordinal;
+      auto found = resolvedItemPositions.find(item);
+      return found == resolvedItemPositions.end()
+                 ? UINT32_MAX
+                 : resolvedItemRows[found->second].ordinal;
     };
     uint32_t insertionIndex = resolvedBinRows.size();
     for (uint32_t index = 0; index != resolvedBinRows.size(); ++index) {
@@ -7161,6 +7172,18 @@ obelisk_rt_status createResolvedFunctionalType(
         return OBELISK_RT_INVALID_DESIGN;
       type.getInstCoverage = option.value != 0;
     } else if (option.scope == Scope::Instance &&
+               option.option == Option::PerInstance) {
+      metadata->groupOptions.perInstance = option.value != 0;
+    } else if (option.scope == Scope::Instance &&
+               option.option == Option::AutoBinMax) {
+      metadata->groupOptions.autoBinMax = option.value;
+    } else if (option.scope == Scope::Instance &&
+               option.option == Option::DetectOverlap) {
+      metadata->groupOptions.detectOverlap = option.value != 0;
+    } else if (option.scope == Scope::Instance &&
+               option.option == Option::CrossRetainAutoBins) {
+      metadata->groupOptions.crossRetainAutoBins = option.value != 0;
+    } else if (option.scope == Scope::Instance &&
                option.option == Option::CrossNumPrintMissing) {
       type.groupCrossNumPrintMissing = option.value;
     } else if (option.scope == Scope::Type && option.option == Option::Goal) {
@@ -7210,6 +7233,26 @@ obelisk_rt_status createResolvedFunctionalType(
         optionsFor(FunctionalConfigurationOptionOwnerKind::Item, item->id);
     const bool nonAggregating =
         (item->flags & obelisk::coverage::FunctionalItemNonAggregating) != 0;
+    auto constructionOptions = metadata->groupOptions;
+    for (const auto &option : itemOptions) {
+      if (option.scope != FunctionalOptionScopeKind::Instance)
+        continue;
+      using Option = FunctionalConfigurationOptionKind;
+      if (option.option == Option::AutoBinMax)
+        constructionOptions.autoBinMax = option.value;
+      else if (option.option == Option::DetectOverlap)
+        constructionOptions.detectOverlap = option.value != 0;
+      else if (option.option == Option::CrossRetainAutoBins)
+        constructionOptions.crossRetainAutoBins = option.value != 0;
+    }
+    metadata->itemOptions.push_back(constructionOptions);
+    if (!nonAggregating) {
+      auto alias = metadata->inheritedItemPositions.emplace(
+          std::make_pair(item->name, static_cast<uint32_t>(item->kind)),
+          type.items.size());
+      if (!alias.second)
+        alias.first->second = SIZE_MAX;
+    }
     metadata->itemPositions.emplace(item->id, type.items.size());
     metadata->templateItemPositions.emplace(item->templateItem,
                                             type.items.size());
@@ -11212,18 +11255,12 @@ findResolvedFunctionalItem(const CoverageState &coverage, uint64_t typeID,
   auto source = metadata.templates->items.find(templateItem);
   if (source == metadata.templates->items.end())
     return nullptr;
-  const obelisk::coverage::ResolvedFunctionalItem *result = nullptr;
-  for (const auto &candidate : metadata.items) {
-    if (candidate.name != source->second.name ||
-        candidate.kind != source->second.kind ||
-        (candidate.flags & obelisk::coverage::FunctionalItemNonAggregating) !=
-            0)
-      continue;
-    if (result)
-      return nullptr;
-    result = &candidate;
-  }
-  return result;
+  auto alias = metadata.inheritedItemPositions.find(std::make_pair(
+      source->second.name, static_cast<uint32_t>(source->second.kind)));
+  return alias == metadata.inheritedItemPositions.end() ||
+                 alias->second >= metadata.items.size()
+             ? nullptr
+             : &metadata.items[alias->second];
 }
 
 bool selectFunctionalItem(const CoverageState &coverage, uint64_t typeID,
@@ -11681,15 +11718,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
       }
       if (option.ownerKind != Owner::Item)
         continue;
-      auto resolved = std::find_if(
-          schema.resolvedFunctionalItems.begin(),
-          schema.resolvedFunctionalItems.end(), [&](const auto &item) {
-            return item.type == typeID &&
-                   item.configuration == type->configuration &&
-                   item.id == option.owner;
-          });
-      if (resolved == schema.resolvedFunctionalItems.end())
+      const auto &metadata = *type->queryMetadata;
+      auto position = metadata.itemPositions.find(option.owner);
+      if (position == metadata.itemPositions.end())
         return OBELISK_RT_INVALID_DESIGN;
+      const auto *resolved = &metadata.items[position->second];
       if (option.option == Option::AtLeast)
         instance.explicitAtLeastItems.insert(resolved->templateItem);
       else if (option.option == Option::CrossNumPrintMissing) {
@@ -11971,7 +12004,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
       (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
        option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
        option != OBELISK_RT_COVERGROUP_OPTION_AT_LEAST &&
-       option != OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING))
+       option != OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
+       !(option >= OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX &&
+         option <= OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS)))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
@@ -11982,7 +12017,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
     return OBELISK_RT_INVALID_HANDLE;
   FunctionalCoverageInstanceState &instance = found->second;
   auto type = coverage->types.find({instance.typeID, instance.configuration});
-  if (type == coverage->types.end())
+  if (type == coverage->types.end() || !type->second.queryMetadata)
     return OBELISK_RT_INVALID_DESIGN;
 
   const obelisk::coverage::ResolvedFunctionalItem *resolved = nullptr;
@@ -11992,11 +12027,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
                                           instance.configuration, itemID);
     if (!resolved)
       return OBELISK_RT_INVALID_DESIGN;
-    auto position = std::find(type->second.items.begin(),
-                              type->second.items.end(), resolved->id);
-    if (position == type->second.items.end())
+    auto position =
+        type->second.queryMetadata->itemPositions.find(resolved->id);
+    if (position == type->second.queryMetadata->itemPositions.end())
       return OBELISK_RT_INVALID_DESIGN;
-    itemIndex = static_cast<size_t>(position - type->second.items.begin());
+    itemIndex = position->second;
   }
 
   uint64_t value = 0;
@@ -12021,7 +12056,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
       value = instance.itemAtLeast[itemIndex];
     } else
       value = instance.groupAtLeast;
-  } else {
+  } else if (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING) {
     if (resolved) {
       if (resolved->kind != obelisk::coverage::FunctionalItemKind::Cross)
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -12032,6 +12067,37 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_integer_option(
                   : explicitValue->second;
     } else
       value = instance.groupCrossNumPrintMissing;
+  } else {
+    const auto &metadata = *type->second.queryMetadata;
+    if (resolved && itemIndex >= metadata.itemOptions.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &construction =
+        resolved ? metadata.itemOptions[itemIndex] : metadata.groupOptions;
+    const bool point =
+        resolved &&
+        resolved->kind == obelisk::coverage::FunctionalItemKind::Coverpoint;
+    const bool cross =
+        resolved &&
+        resolved->kind == obelisk::coverage::FunctionalItemKind::Cross;
+    if (option == OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX) {
+      if (cross)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      value = construction.autoBinMax;
+    } else if (option == OBELISK_RT_COVERGROUP_OPTION_DETECT_OVERLAP) {
+      if (cross)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      value = construction.detectOverlap;
+    } else if (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_RETAIN_AUTO_BINS) {
+      if (point)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      value = construction.crossRetainAutoBins;
+    } else {
+      if (resolved)
+        return OBELISK_RT_INVALID_ARGUMENT;
+      value = option == OBELISK_RT_COVERGROUP_OPTION_PER_INSTANCE
+                  ? construction.perInstance
+                  : type->second.getInstCoverage;
+    }
   }
   if (value > static_cast<uint64_t>(INT64_MAX))
     return OBELISK_RT_INVALID_DESIGN;
@@ -12072,6 +12138,47 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_string_option(
     } else
       found->second.comments[0] = std::move(copied);
     return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_get_string_option(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_covergroup_v1 handle,
+    uint64_t itemID, obelisk_rt_covergroup_instance_option_v1 option,
+    obelisk_rt_string_v1 *outValue) {
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  if (!context || !outValue ||
+      (option != OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
+       (option != OBELISK_RT_COVERGROUP_OPTION_NAME || itemID)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *coverage = coverageState(context, false);
+    if (!coverage || !coverage->schema)
+      return OBELISK_RT_INVALID_HANDLE;
+    auto found = coverage->instances.find(handle);
+    if (!handle || found == coverage->instances.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    uint64_t owner = 0;
+    if (itemID) {
+      const auto *item = findResolvedFunctionalItem(
+          *coverage, found->second.typeID, found->second.configuration, itemID);
+      if (!item)
+        return OBELISK_RT_INVALID_DESIGN;
+      owner = item->templateItem;
+    }
+    const std::string *text = &found->second.name;
+    const std::string empty;
+    if (option == OBELISK_RT_COVERGROUP_OPTION_COMMENT) {
+      auto comment = found->second.comments.find(owner);
+      text =
+          comment == found->second.comments.end() ? &empty : &comment->second;
+    }
+    return obelisk_rt_v1_string_create(lane, text->data(), text->size(),
+                                       outValue);
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH(const std::length_error &) {

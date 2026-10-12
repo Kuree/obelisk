@@ -26,6 +26,9 @@ public:
   explicit UnitLoweringInputs(mlir::Operation *module);
 
   const Callable *getCallable(sim::SimFuncOp function) const;
+  /// Semantic handle paths describe elaborated types and may omit instance
+  /// wrappers in the symbol tree. Resolve the complete type identity directly.
+  mlir::Operation *getCovergroup(mlir::Type handle) const;
 
   template <typename T>
   T lookupNearestSymbolFrom(mlir::Operation *from,
@@ -41,6 +44,7 @@ private:
   mutable mlir::SymbolTableCollection symbols;
   mutable mlir::LockedSymbolTableCollection lockedSymbols;
   llvm::DenseMap<mlir::Operation *, Callable> callables;
+  llvm::DenseMap<mlir::Type, mlir::Operation *> covergroups;
 };
 
 } // namespace obelisk::simlowering
