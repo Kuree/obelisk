@@ -710,7 +710,6 @@ private:
       ::mlir::Operation *expression,
       semantic::SVMemberAccessExpressionOp access, ::mlir::Value interface,
       ::mlir::Value selectedClock = {}, std::optional<uint64_t> scopeID = {});
-  void ensureCoverageInventory();
 
   static bool isSignedNode(::mlir::Operation *op) {
     if (auto isSigned = op->getAttrOfType<::mlir::BoolAttr>("is_signed"))
@@ -840,12 +839,9 @@ private:
   ::llvm::DenseMap<::mlir::Block *, ClockingOccurrence>
       clockingEventContinuations;
   ::llvm::DenseSet<::mlir::Block *> timingBoundaryContinuations;
-  bool coverageInventoryReady = false;
   bool coverageBlockEventStarted = false;
-  ::llvm::StringMap<semantic::SVCovergroupTypeOp> semanticCovergroups;
   ::llvm::DenseMap<::mlir::Operation *, semantic::SVCovergroupBodySymbolOp>
       covergroupOptionBodies;
-  ::llvm::StringMap<uint64_t> coverageInstanceIDs;
   ::mlir::Value thisObject;
   // The object of the scope containing a randomize() with call, live
   // only while its inline constraints are lowered. IEEE 1800-2017 18.7

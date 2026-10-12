@@ -2531,7 +2531,6 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
                  true)
           .Default(false);
   if (coverageCall) {
-    ensureCoverageInventory();
     // IEEE 1800-2017 40.3.2 distinguishes string module-definition targets
     // from elaborated instance-path targets. Keep that distinction explicit
     // in Simulation IR so neither the backends nor the runtime have to infer
@@ -2547,14 +2546,16 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       if (auto symbol =
               dyn_cast<semantic::SVArbitrarySymbolExpressionOp>(target)) {
         std::optional<StringRef> path = symbol.getReferencedPath();
-        auto found = path ? coverageInstanceIDs.find(*path)
-                          : coverageInstanceIDs.end();
-        if (found == coverageInstanceIDs.end()) {
+        auto instance =
+            path ? loweringInputs.getCoverageInstanceID(
+                       function->getParentOfType<sim::SimDesignOp>(), *path)
+                 : std::nullopt;
+        if (!instance) {
           emitError(getSemanticLocation(target))
               << "coverage instance target has no elaborated module scope";
           return failure();
         }
-        return CoverageTarget{Value{}, found->second};
+        return CoverageTarget{Value{}, *instance};
       }
       FailureOr<Value> lowered = lowerExpression(target);
       if (failed(lowered) || !isa<sim::StringType>((*lowered).getType())) {

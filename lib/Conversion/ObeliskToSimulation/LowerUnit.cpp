@@ -619,37 +619,6 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
   }
 }
 
-void UnitLowering::ensureCoverageInventory() {
-  if (coverageInventoryReady)
-    return;
-  coverageInventoryReady = true;
-
-  sim::SimDesignOp design = function->getParentOfType<sim::SimDesignOp>();
-  bool hasCovergroupDeclarations =
-      llvm::any_of(design.getBody().front(), [](Operation &operation) {
-        return isa<sim::SimCovergroupDeclOp>(operation);
-      });
-  ModuleOp module = function->getParentOfType<ModuleOp>();
-  for (sim::SimScopeDeclOp scope :
-       design.getBody().front().getOps<sim::SimScopeDeclOp>()) {
-    std::optional<StringRef> hierarchy = scope.getHierarchicalName();
-    std::optional<uint64_t> coverageID = scope.getCoverageId();
-    if (hierarchy && coverageID &&
-        (scope.getId() == 0 || scope.getDefinitionName()))
-      coverageInstanceIDs.try_emplace(*hierarchy, *coverageID);
-  }
-  for (Operation &topLevel : module.getBody()->getOperations()) {
-    if (!hasCovergroupDeclarations)
-      continue;
-    auto root = dyn_cast<semantic::SVRootSymbolOp>(topLevel);
-    if (!root)
-      continue;
-    root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
-      semanticCovergroups[covergroup.getSymName()] = covergroup;
-    });
-  }
-}
-
 // One design-precision tick, in femtoseconds. Simulation time is counted in
 // these ticks, so a duration that IEEE 1800-2017 states in a scope's own time
 // units -- a clocking skew, per 14.4 -- has to be divided by this to become a

@@ -33,16 +33,30 @@ indexInheritedFormalAliases(semantic::SVCovergroupTypeOp covergroup) {
 
 semantic::SVCovergroupTypeOp
 UnitLowering::findSemanticCovergroup(Operation *operation) {
-  ensureCoverageInventory();
-  SmallVector<StringRef> candidateNames;
-  auto semanticType = operation->getAttrOfType<TypeAttr>("semantic_type");
-  if (semanticType)
-    if (auto handle =
-            dyn_cast<semantic::CovergroupHandleType>(semanticType.getValue())) {
-      SymbolRefAttr reference = handle.getCovergroupName();
-      candidateNames.push_back(reference.getLeafReference());
-    }
+  // An ordinary function may share a coverage method's name and accept a
+  // covergroup actual. Its prepared callee identifies the function; the
+  // argument's type must not redirect it to a built-in coverage method.
+  if (isa<semantic::SVCallExpressionOp>(operation) &&
+      operation->hasAttr(calleeAttrName))
+    return {};
+  auto fromType = [&](Operation *node) {
+    auto type = node->getAttrOfType<TypeAttr>("semantic_type");
+    auto handle =
+        type ? dyn_cast<semantic::CovergroupHandleType>(type.getValue())
+             : semantic::CovergroupHandleType{};
+    if (!handle)
+      return semantic::SVCovergroupTypeOp{};
+    if (auto group = dyn_cast_or_null<semantic::SVCovergroupTypeOp>(
+            loweringInputs.getCovergroup(handle)))
+      return group;
+    return dyn_cast_or_null<semantic::SVCovergroupTypeOp>(
+        loweringInputs.getCovergroup(
+            handle.getCovergroupName().getLeafReference()));
+  };
+  if (auto group = fromType(operation))
+    return group;
 
+  semantic::SVCovergroupTypeOp group;
   operation->walk<WalkOrder::PreOrder>([&](Operation *nested) {
     if (nested == operation)
       return WalkResult::advance();
@@ -52,20 +66,27 @@ UnitLowering::findSemanticCovergroup(Operation *operation) {
              : semantic::CovergroupHandleType{};
     if (!handle)
       return WalkResult::advance();
-    candidateNames.push_back(handle.getCovergroupName().getLeafReference());
+    group = fromType(nested);
     return WalkResult::interrupt();
   });
+  if (group)
+    return group;
 
   auto call = dyn_cast<semantic::SVCallExpressionOp>(operation);
   if (call && call.getReferencedSymbol()) {
     SymbolRefAttr referenced = *call.getReferencedSymbol();
+    // Static calls have no typed receiver. Their rooted source reference is
+    // resolved in the module, outside the outlined function's symbol table.
+    if (auto method =
+            loweringInputs
+                .lookupNearestSymbolFrom<semantic::SVSubroutineSymbolOp>(
+                    function->getParentOfType<ModuleOp>(), referenced))
+      if (auto group = method->getParentOfType<semantic::SVCovergroupTypeOp>())
+        return group;
     for (FlatSymbolRefAttr nested : referenced.getNestedReferences())
-      candidateNames.push_back(nested.getValue());
-  }
-  for (StringRef name : candidateNames) {
-    auto found = semanticCovergroups.find(name);
-    if (found != semanticCovergroups.end())
-      return found->second;
+      if (auto group = dyn_cast_or_null<semantic::SVCovergroupTypeOp>(
+              loweringInputs.getCovergroup(nested.getValue())))
+        return group;
   }
   return {};
 }
@@ -547,22 +568,13 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     return failure();
   }
   if (thisObject && dispatchInheritance) {
-    SmallVector<semantic::SVCovergroupTypeOp> derivedGroups;
-    for (const auto &entry : semanticCovergroups) {
-      semantic::SVCovergroupTypeOp candidate = entry.second;
-      TypeAttr base =
-          candidate->getAttrOfType<TypeAttr>("obelisk.coverage.base_group");
-      if (base && base.getValue() == covergroup.getSemanticType())
-        derivedGroups.push_back(candidate);
-    }
-    llvm::sort(derivedGroups, [](auto lhs, auto rhs) {
-      return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
-             std::tuple(getHierarchyName(rhs), rhs.getSymName());
-    });
+    auto derivedGroups =
+        loweringInputs.getDerivedCovergroups(covergroup.getSemanticType());
     if (!derivedGroups.empty()) {
       Block *resume = addBlock();
       resume->addArgument(handleType, location);
-      for (semantic::SVCovergroupTypeOp derived : derivedGroups) {
+      for (Operation *operation : derivedGroups) {
+        auto derived = cast<semantic::SVCovergroupTypeOp>(operation);
         auto owner = derived->getParentOfType<semantic::SVClassTypeOp>();
         auto ownerHandle =
             owner ? dyn_cast<semantic::ClassHandleType>(owner.getSemanticType())
@@ -2070,22 +2082,13 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
     Value handle, Value classOwner, bool dispatchInheritance) {
   Location location = getSemanticLocation(op);
   if (classOwner && dispatchInheritance) {
-    SmallVector<semantic::SVCovergroupTypeOp> derivedGroups;
-    for (const auto &entry : semanticCovergroups) {
-      semantic::SVCovergroupTypeOp candidate = entry.second;
-      TypeAttr base =
-          candidate->getAttrOfType<TypeAttr>("obelisk.coverage.base_group");
-      if (base && base.getValue() == covergroup.getSemanticType())
-        derivedGroups.push_back(candidate);
-    }
-    llvm::sort(derivedGroups, [](auto lhs, auto rhs) {
-      return std::tuple(getHierarchyName(lhs), lhs.getSymName()) <
-             std::tuple(getHierarchyName(rhs), rhs.getSymName());
-    });
+    auto derivedGroups =
+        loweringInputs.getDerivedCovergroups(covergroup.getSemanticType());
     if (!derivedGroups.empty()) {
       Block *resume = addBlock();
       resume->addArgument(builder.getI1Type(), location);
-      for (semantic::SVCovergroupTypeOp derived : derivedGroups) {
+      for (Operation *operation : derivedGroups) {
+        auto derived = cast<semantic::SVCovergroupTypeOp>(operation);
         auto owner = derived->getParentOfType<semantic::SVClassTypeOp>();
         auto ownerHandle =
             owner ? dyn_cast<semantic::ClassHandleType>(owner.getSemanticType())

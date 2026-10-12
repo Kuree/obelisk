@@ -8,7 +8,13 @@
 
 #include "mlir/IR/SymbolTable.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
+
+#include <cstdint>
+#include <optional>
 
 namespace obelisk::simlowering {
 
@@ -29,6 +35,14 @@ public:
   /// Semantic handle paths describe elaborated types and may omit instance
   /// wrappers in the symbol tree. Resolve the complete type identity directly.
   mlir::Operation *getCovergroup(mlir::Type handle) const;
+  /// A leaf-name fallback is valid only when that name is unambiguous.
+  mlir::Operation *getCovergroup(llvm::StringRef symbolName) const;
+  /// Direct children in deterministic semantic declaration order.
+  llvm::ArrayRef<mlir::Operation *>
+  getDerivedCovergroups(mlir::Type baseHandle) const;
+  std::optional<uint64_t>
+  getCoverageInstanceID(sim::SimDesignOp design,
+                        llvm::StringRef hierarchy) const;
 
   template <typename T>
   T lookupNearestSymbolFrom(mlir::Operation *from,
@@ -37,14 +51,19 @@ public:
   }
 
 private:
-  // Tables containing mutable simulation functions are populated eagerly.
-  // Other tables belong to immutable semantic declarations; MLIR's locked
-  // collection synchronizes their lazy construction, without rescanning the
-  // mutable design block on every lookup.
+  // Call signatures and coverage indexes are frozen once before workers run.
+  // Other symbol tables belong to immutable semantic declarations; MLIR's
+  // locked collection synchronizes their lazy construction, without rescanning
+  // the mutable design block on every lookup.
   mutable mlir::SymbolTableCollection symbols;
   mutable mlir::LockedSymbolTableCollection lockedSymbols;
   llvm::DenseMap<mlir::Operation *, Callable> callables;
   llvm::DenseMap<mlir::Type, mlir::Operation *> covergroups;
+  llvm::StringMap<mlir::Operation *> covergroupsByName;
+  llvm::DenseMap<mlir::Type, llvm::SmallVector<mlir::Operation *>>
+      derivedCovergroups;
+  llvm::DenseMap<mlir::Operation *, llvm::StringMap<uint64_t>>
+      coverageInstances;
 };
 
 } // namespace obelisk::simlowering
