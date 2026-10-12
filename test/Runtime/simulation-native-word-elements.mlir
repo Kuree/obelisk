@@ -22,7 +22,9 @@
 // WORDS: schedule.word.region 64
 // WORDS: schedule.word.extract {{.*}}i64
 // WORDS: arith.xori {{.*}} : i64
-// WORDS: schedule.word.table {{.*}}!simulation.logic<8>
+// A one-bit logical negation is a bitwise lane negation (Table 11-15), so its
+// word form is one bitwise negation rather than a truth table.
+// WORDS: simulation.logic.unary bit_not {{.*}}!simulation.logic<8>
 // WORDS: simulation.logic.replicate {{.*}}!simulation.logic<24>
 // CHECK: byte lanes 1 1 1 1
 !byte = !simulation.logic<8>

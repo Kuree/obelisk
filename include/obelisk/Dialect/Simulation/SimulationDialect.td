@@ -9,6 +9,7 @@ def ObeliskSimulationDialect : Dialect {
   let name = "simulation";
   let cppNamespace = "::obelisk::sim";
   let dependentDialects = ["::obelisk::schedule::ScheduleDialect", "::mlir::arith::ArithDialect",
+                           "::mlir::math::MathDialect",
                            "::obelisk::runtime::ObeliskRuntimeDialect"];
   let summary = "Target-independent executable SystemVerilog simulation IR";
   let description = [{
@@ -32,7 +33,6 @@ def ObeliskSimulationDialect : Dialect {
   let useDefaultTypePrinterParser = 1;
   let usePropertiesForAttributes = 0;
   let hasConstantMaterializer = 1;
-  let hasCanonicalizer = 1;
 }
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONDIALECT_TD

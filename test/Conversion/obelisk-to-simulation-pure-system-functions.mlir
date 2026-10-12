@@ -161,4 +161,10 @@ module {
 // CHECK-NEXT: simulation.ref.store %[[VALUE]]
 // CHECK-NOT: simulation.call
 // CHECK-NOT: obelisk.sv.
-// COUNT-COUNT-5: simulation.logic.count_bits
+// IEEE 1800-2023 20.9: $countones, $onehot and $onehot0 count the known ones,
+// which are the bits of to_bits; $countbits with a variable control and
+// $isunknown (X and Z) still count symbols of the four-state value.
+// COUNT: simulation.logic.count_bits
+// COUNT-COUNT-3: math.ctpop
+// COUNT: simulation.logic.count_bits
+// COUNT-NOT: simulation.logic.count_bits

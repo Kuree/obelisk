@@ -569,6 +569,18 @@ executeFunction(const Image &image, Frame &frame, obelisk_rt_context *context,
       write(instruction.destination, input);
       break;
     }
+    case OBELISK_RT_DB_POPCOUNT: {
+      Logic input = read(instruction.source0);
+      uint64_t count = 0;
+      for (uint64_t limb : input.value)
+        count += static_cast<uint64_t>(__builtin_popcountll(limb));
+      Logic result{input.width, false, LimbVector(input.value.size()),
+                   LimbVector(input.value.size())};
+      result.value[0] = count;
+      mask(result);
+      write(instruction.destination, result);
+      break;
+    }
     case OBELISK_RT_DB_REDUCE: {
       Logic input = read(instruction.source0);
       Layout destination = layout(instruction.destination);

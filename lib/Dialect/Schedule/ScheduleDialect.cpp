@@ -1,4 +1,5 @@
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Transforms/InliningUtils.h"

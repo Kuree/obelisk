@@ -3928,7 +3928,6 @@ def SimUnionConstructOp : SimOp<"union.construct", [Pure]> {
   let results = (outs AnyType:$result);
   let assemblyFormat = "$value `as` $index attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
-  let hasCanonicalizer = 1;
 }
 
 def SimUnionExtractOp : SimOp<"union.extract", [Pure]> {
@@ -4509,6 +4508,7 @@ def SimLogicToBitsOp : SimOp<"logic.to_bits", [
   let assemblyFormat = "$input attr-dict `:` qualified(type($input)) `->` type($result)";
   let hasVerifier = 1;
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicIsTrueOp : SimOp<"logic.is_true", [Pure]> {
@@ -4596,6 +4596,17 @@ def SimLogicUnaryOp : SimOp<"logic.unary", [Pure]> {
   let results = (outs SimLogicType:$result);
   let assemblyFormat =
       "$kind $input attr-dict `:` functional-type(operands, results)";
+  let extraClassDeclaration = [{
+    /// Bitwise negation. A one-bit logical negation maps 0, 1, X and Z
+    /// exactly as bitwise negation does (IEEE 1800-2023 11.4.7, Table
+    /// 11-15), and canonicalization spells the one-bit case that way, so
+    /// analyses must accept both forms.
+    bool isBitwiseNegation() {
+      return getKind() == UnaryKind::BitNot ||
+             (getKind() == UnaryKind::LogicalNot &&
+              getInput().getType().getWidth() == 1);
+    }
+  }];
   let hasVerifier = 1;
   let hasFolder = 1;
   let hasCanonicalizer = 1;
@@ -4763,6 +4774,7 @@ def SimBitsDynExtractOp : SimOp<"bits.dyn_extract", [Pure]> {
       "$input `from` $low_bit attr-dict `:` functional-type(operands, results)";
   let hasVerifier = 1;
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicDynInsertOp
@@ -4802,6 +4814,7 @@ def SimBitsDynInsertOp
       "functional-type(operands, results)";
   let hasVerifier = 1;
   let hasFolder = 1;
+  let hasCanonicalizer = 1;
 }
 
 def SimLogicInsertOp

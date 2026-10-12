@@ -76,8 +76,8 @@ public:
                   binary.getKind() == sim::BinaryKind::Xor ||
                   binary.getKind() == sim::BinaryKind::Xnor;
     if (auto unary = dyn_cast<sim::SimLogicUnaryOp>(op))
-      supported = unary.getKind() == sim::UnaryKind::Plus ||
-                  unary.getKind() == sim::UnaryKind::BitNot;
+      supported =
+          unary.getKind() == sim::UnaryKind::Plus || unary.isBitwiseNegation();
     if (!supported || results.size() != 1)
       return full();
     if (!results.front()->getValue().bits)

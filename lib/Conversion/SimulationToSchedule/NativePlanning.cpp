@@ -60,8 +60,7 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
     });
     if (delays.size() != 1 || loads.size() != 1 || stores.size() != 1 ||
         unaries.size() + xors.size() != 1 ||
-        (!unaries.empty() &&
-         unaries.front().getKind() != sim::UnaryKind::BitNot))
+        (!unaries.empty() && !unaries.front().isBitwiseNegation()))
       return WalkResult::advance();
 
     sim::SimSuspendDelayOp delay = delays.front();

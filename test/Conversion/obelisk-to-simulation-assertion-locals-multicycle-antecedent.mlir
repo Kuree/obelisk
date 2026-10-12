@@ -416,7 +416,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: arith.andi %[[ANTE_ACTIVE]], {{.*}} {simulation.implication_antecedent_failure}
 // CHECK: %[[ANTE_MATCH:.*]] = arith.andi %[[ANTE_ACTIVE]], %[[ANTE_TRUE]] {simulation.implication_antecedent}
 // CHECK: cf.cond_br %[[ANTE_MATCH]]
-// CHECK: %[[UPDATED_LOCAL:.*]] = simulation.logic.unary logical_not
+// CHECK: %[[UPDATED_LOCAL:.*]] = simulation.logic.unary bit_not
 // CHECK: simulation.spawn @[[MATCH_CALL]](%arg0, %[[UPDATED_LOCAL]])
 // CHECK: simulation.logic.compare eq {{.*}}, %[[UPDATED_LOCAL]]
 

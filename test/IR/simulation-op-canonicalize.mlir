@@ -496,7 +496,7 @@ func.func @reduce_replicate_nand_3(%x: !simulation.logic<4>) -> !simulation.logi
 
 // CHECK-LABEL: func.func @reduce_replicate_nor_2(
 // CHECK-NOT: simulation.logic.replicate
-// CHECK: simulation.logic.reduction nor %arg0
+// CHECK: simulation.logic.unary logical_not %arg0
 // CHECK: return
 func.func @reduce_replicate_nor_2(%x: !simulation.logic<4>) -> !simulation.logic<1> {
   %w = simulation.logic.replicate %x times 2 : !simulation.logic<4> -> !simulation.logic<8>
@@ -506,7 +506,7 @@ func.func @reduce_replicate_nor_2(%x: !simulation.logic<4>) -> !simulation.logic
 
 // CHECK-LABEL: func.func @reduce_replicate_nor_3(
 // CHECK-NOT: simulation.logic.replicate
-// CHECK: simulation.logic.reduction nor %arg0
+// CHECK: simulation.logic.unary logical_not %arg0
 // CHECK: return
 func.func @reduce_replicate_nor_3(%x: !simulation.logic<4>) -> !simulation.logic<1> {
   %w = simulation.logic.replicate %x times 3 : !simulation.logic<4> -> !simulation.logic<12>

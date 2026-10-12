@@ -174,6 +174,10 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
   }
   if (auto op = dyn_cast<math::PowFOp>(operation))
     return binary(FPow, op.getResult(), op.getLhs(), op.getRhs());
+  if (auto op = dyn_cast<math::CtPopOp>(operation)) {
+    emit({PopCount, 0, reg(plan, op.getResult()), reg(plan, op.getOperand())});
+    return success();
+  }
   if (auto op = dyn_cast<arith::IndexCastOp>(operation)) {
     emit({Extract, OBELISK_RT_DB_EXTRACT_ZERO_EXTEND, reg(plan, op.getResult()),
           reg(plan, op.getIn()), kInvalidRegister});

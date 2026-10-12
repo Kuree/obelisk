@@ -11,6 +11,7 @@ add_mlir_library(ObeliskScheduleIR
   ObeliskScheduleAttrsIncGen
   ObeliskScheduleEnumsIncGen
   LINK_LIBS PUBLIC
+  MLIRArithDialect
   MLIRControlFlowInterfaces
   MLIRFunctionInterfaces
   MLIRLLVMDialect

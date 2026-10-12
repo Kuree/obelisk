@@ -162,9 +162,9 @@ public:
       }
     } else if (auto unary = value.getDefiningOp<sim::SimLogicUnaryOp>()) {
       if (unary.getKind() == sim::UnaryKind::Plus ||
-          unary.getKind() == sim::UnaryKind::BitNot) {
+          unary.isBitwiseNegation()) {
         result = operand(unary.getInput());
-        if (unary.getKind() == sim::UnaryKind::BitNot)
+        if (unary.isBitwiseNegation())
           std::swap(result.zero, result.one);
       }
     } else if (auto select = dyn_cast<SelectLikeOpInterface>(op)) {

@@ -127,9 +127,12 @@ public:
         if (isa<InferIntRangeInterface, sim::SimLogicFromBitsOp,
                 sim::SimLogicToBitsOp, sim::SimLogicIsTrueOp,
                 sim::SimLogicCompareOp, sim::SimLogicResizeOp,
-                sim::SimLogicBinaryOp, sim::SimRefArrayElementOp,
-                sim::SimRefSubelementOp, sim::SimRefExtractOp,
-                sim::SimRefDynExtractOp>(op))
+                sim::SimLogicBinaryOp, sim::SimLogicExtractOp,
+                sim::SimLogicUnaryOp, sim::SimLogicReductionOp,
+                sim::SimLogicConcatOp, sim::SimLogicReplicateOp,
+                sim::SimLogicMuxOp, sim::SimLogicShiftOp,
+                sim::SimRefArrayElementOp, sim::SimRefSubelementOp,
+                sim::SimRefExtractOp, sim::SimRefDynExtractOp>(op))
           llvm::append_range(pending, op->getOperands());
       }
     }
@@ -171,18 +174,24 @@ public:
           interface && llvm::any_of(op->getResults(), [&](Value value) {
             return relevant.contains(value);
           })) {
+        // An unknown logic operand may be X, so it cannot be modeled as an
+        // arbitrary integer of the right width for a logic result.
         SmallVector<ConstantIntRanges> operands;
+        bool unknownLogic = false;
         for (Value value : op->getOperands()) {
           auto constant = get(value, path);
-          operands.push_back(constant
-                                 ? ConstantIntRanges::constant(*constant)
-                                 : ConstantIntRanges::maxRange(
-                                       ConstantIntRanges::getStorageBitwidth(
-                                           value.getType())));
+          unknownLogic |= !constant && isa<sim::LogicType>(value.getType());
+          unsigned width =
+              ConstantIntRanges::getStorageBitwidth(value.getType());
+          if (auto packed = sim::getPackedWidth(value.getType()))
+            width = *packed;
+          operands.push_back(constant ? ConstantIntRanges::constant(*constant)
+                                      : ConstantIntRanges::maxRange(width));
         }
         interface.inferResultRanges(
             operands, [&](Value value, const ConstantIntRanges &range) {
-              if (range.umin() == range.umax())
+              if (range.umin() == range.umax() &&
+                  !(unknownLogic && isa<sim::LogicType>(value.getType())))
                 put(value, range.umin());
             });
       } else if (op->getNumResults() == 1 &&
@@ -303,10 +312,34 @@ private:
     return base->getZExtValue() + low;
   }
 
+  /// Evaluate a logic operation whose operands are known two-state bits.
+  /// Every canonical spelling of an operation must be covered, since
+  /// canonicalization may choose any of them (for example a truncation is a
+  /// low slice and `x != 0` is a truth value).
   std::optional<APInt> evaluateLogic(Operation *op,
                                      const Environment &path) const {
     if (op->getNumOperands() == 0)
       return std::nullopt;
+    if (auto concat = dyn_cast<sim::SimLogicConcatOp>(op)) {
+      unsigned width = concat.getType().getWidth();
+      APInt result = APInt::getZero(width);
+      unsigned trailing = width;
+      for (Value input : concat.getInputs()) {
+        auto bits = get(input, path);
+        if (!bits)
+          return std::nullopt;
+        trailing -= bits->getBitWidth();
+        result |= bits->zext(width).shl(trailing);
+      }
+      return result;
+    }
+    if (auto mux = dyn_cast<sim::SimLogicMuxOp>(op)) {
+      auto condition = get(mux.getCondition(), path);
+      if (!condition)
+        return std::nullopt;
+      return get(condition->isZero() ? mux.getFalseValue() : mux.getTrueValue(),
+                 path);
+    }
     auto lhs = get(op->getOperand(0), path);
     if (!lhs)
       return std::nullopt;
@@ -319,6 +352,65 @@ private:
       if (width)
         return resize.getIsSigned() ? lhs->sextOrTrunc(*width)
                                     : lhs->zextOrTrunc(*width);
+    }
+    if (auto extract = dyn_cast<sim::SimLogicExtractOp>(op))
+      return lhs->lshr(extract.getLowBit()).trunc(extract.getType().getWidth());
+    if (auto replicate = dyn_cast<sim::SimLogicReplicateOp>(op)) {
+      unsigned width = replicate.getType().getWidth();
+      APInt result = APInt::getZero(width);
+      for (int64_t copy = 0; copy < replicate.getCount(); ++copy)
+        result |= lhs->zext(width).shl(copy * lhs->getBitWidth());
+      return result;
+    }
+    if (auto unary = dyn_cast<sim::SimLogicUnaryOp>(op)) {
+      switch (unary.getKind()) {
+      case sim::UnaryKind::Plus:
+        return lhs;
+      case sim::UnaryKind::Negate:
+        return -*lhs;
+      case sim::UnaryKind::BitNot:
+        return ~*lhs;
+      case sim::UnaryKind::LogicalNot:
+        return APInt(1, lhs->isZero());
+      }
+    }
+    if (auto reduction = dyn_cast<sim::SimLogicReductionOp>(op)) {
+      bool value = false;
+      switch (reduction.getKind()) {
+      case sim::ReductionKind::And:
+      case sim::ReductionKind::Nand:
+        value = lhs->isAllOnes();
+        break;
+      case sim::ReductionKind::Or:
+      case sim::ReductionKind::Nor:
+        value = !lhs->isZero();
+        break;
+      case sim::ReductionKind::Xor:
+      case sim::ReductionKind::Xnor:
+        value = lhs->popcount() & 1;
+        break;
+      }
+      bool inverted = reduction.getKind() == sim::ReductionKind::Nand ||
+                      reduction.getKind() == sim::ReductionKind::Nor ||
+                      reduction.getKind() == sim::ReductionKind::Xnor;
+      return APInt(1, value != inverted);
+    }
+    if (auto shift = dyn_cast<sim::SimLogicShiftOp>(op)) {
+      // IEEE 1800-2023 11.4.10: the amount is unsigned and may have any width.
+      auto amount = get(shift.getAmount(), path);
+      if (!amount)
+        return std::nullopt;
+      unsigned width = lhs->getBitWidth();
+      bool vacated = amount->uge(width);
+      uint64_t count = vacated ? width : amount->getZExtValue();
+      switch (shift.getKind()) {
+      case sim::ShiftKind::Left:
+        return vacated ? APInt::getZero(width) : lhs->shl(count);
+      case sim::ShiftKind::Right:
+        return vacated ? APInt::getZero(width) : lhs->lshr(count);
+      case sim::ShiftKind::RightArith:
+        return lhs->ashr(std::min<uint64_t>(count, width - 1));
+      }
     }
     if (op->getNumOperands() != 2)
       return std::nullopt;

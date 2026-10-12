@@ -30,6 +30,7 @@ add_mlir_library(ObeliskSimulationIR
   MLIRCallInterfaces
   MLIRCastInterfaces
   MLIRArithDialect
+  MLIRMathDialect
   MLIRControlFlowInterfaces
   MLIRFunctionInterfaces
   MLIRInferTypeOpInterface

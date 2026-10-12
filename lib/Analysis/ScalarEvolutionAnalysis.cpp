@@ -28,12 +28,18 @@ std::optional<unsigned> integerWidth(Value value) {
              : std::nullopt;
 }
 bool transparent(Operation *op) {
-  return isa<arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::AndIOp,
-             arith::OrIOp, arith::XOrIOp, arith::ExtSIOp, arith::ExtUIOp,
-             arith::TruncIOp, arith::CmpIOp, arith::SelectOp,
-             sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
-             sim::SimLogicResizeOp, sim::SimLogicBinaryOp,
-             sim::SimLogicCompareOp, sim::SimLogicIsTrueOp>(op);
+  if (auto reduction = dyn_cast<sim::SimLogicReductionOp>(op))
+    return reduction.getKind() == sim::ReductionKind::Or ||
+           reduction.getKind() == sim::ReductionKind::Nor ||
+           reduction.getKind() == sim::ReductionKind::And;
+  return isa<
+      arith::AddIOp, arith::SubIOp, arith::MulIOp, arith::AndIOp, arith::OrIOp,
+      arith::XOrIOp, arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp,
+      arith::CmpIOp, arith::SelectOp, arith::ShLIOp, arith::ShRUIOp,
+      arith::ShRSIOp, arith::DivUIOp, arith::RemUIOp, arith::DivSIOp,
+      arith::RemSIOp, sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp,
+      sim::SimLogicResizeOp, sim::SimLogicExtractOp, sim::SimLogicUnaryOp,
+      sim::SimLogicBinaryOp, sim::SimLogicCompareOp, sim::SimLogicIsTrueOp>(op);
 }
 } // namespace
 
@@ -248,6 +254,22 @@ struct ScalarEvolutionAnalysis::Impl {
       return builder.CreateOr(lhs, rhs);
     if (isa<arith::XOrIOp>(op))
       return builder.CreateXor(lhs, rhs);
+    // Integer shifts and divisions have the same poison and undefined cases
+    // in arith and LLVM IR, so the translation is exact.
+    if (isa<arith::ShLIOp>(op))
+      return builder.CreateShl(lhs, rhs);
+    if (isa<arith::ShRUIOp>(op))
+      return builder.CreateLShr(lhs, rhs);
+    if (isa<arith::ShRSIOp>(op))
+      return builder.CreateAShr(lhs, rhs);
+    if (isa<arith::DivUIOp>(op))
+      return builder.CreateUDiv(lhs, rhs);
+    if (isa<arith::RemUIOp>(op))
+      return builder.CreateURem(lhs, rhs);
+    if (isa<arith::DivSIOp>(op))
+      return builder.CreateSDiv(lhs, rhs);
+    if (isa<arith::RemSIOp>(op))
+      return builder.CreateSRem(lhs, rhs);
     auto *type =
         llvm::IntegerType::get(context, *integerWidth(op->getResult(0)));
     if (isa<arith::ExtSIOp>(op))
@@ -266,6 +288,37 @@ struct ScalarEvolutionAnalysis::Impl {
     if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op))
       return resize.getIsSigned() ? builder.CreateSExtOrTrunc(lhs, type)
                                   : builder.CreateZExtOrTrunc(lhs, type);
+    // Every canonical spelling of a known computation must translate: a
+    // truncation is a low slice, x == 0 is !x, and x != 0 is |x.
+    if (auto extract = dyn_cast<sim::SimLogicExtractOp>(op)) {
+      llvm::Value *bits = lhs;
+      if (extract.getLowBit() != 0)
+        bits = builder.CreateLShr(
+            bits, llvm::ConstantInt::get(lhs->getType(), extract.getLowBit()));
+      return builder.CreateTrunc(bits, type);
+    }
+    if (auto unary = dyn_cast<sim::SimLogicUnaryOp>(op)) {
+      switch (unary.getKind()) {
+      case sim::UnaryKind::Plus:
+        return lhs;
+      case sim::UnaryKind::Negate:
+        return builder.CreateNeg(lhs);
+      case sim::UnaryKind::BitNot:
+        return builder.CreateNot(lhs);
+      case sim::UnaryKind::LogicalNot:
+        return builder.CreateICmpEQ(lhs,
+                                    llvm::ConstantInt::get(lhs->getType(), 0));
+      }
+    }
+    if (auto reduction = dyn_cast<sim::SimLogicReductionOp>(op)) {
+      auto *zero = llvm::ConstantInt::get(lhs->getType(), 0);
+      if (reduction.getKind() == sim::ReductionKind::Or)
+        return builder.CreateICmpNE(lhs, zero);
+      if (reduction.getKind() == sim::ReductionKind::Nor)
+        return builder.CreateICmpEQ(lhs, zero);
+      return builder.CreateICmpEQ(
+          lhs, llvm::ConstantInt::getAllOnesValue(lhs->getType()));
+    }
     if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
       switch (binary.getKind()) {
       case sim::BinaryKind::Add:

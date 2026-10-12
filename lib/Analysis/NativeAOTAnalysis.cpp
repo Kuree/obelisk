@@ -516,9 +516,8 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     if (store.getValue().getDefiningOp() != toggle ||
         load.getReference() != store.getReference())
       return;
-    if (!unaries.empty() &&
-        (unaries.front().getKind() != sim::UnaryKind::BitNot ||
-         unaries.front().getInput() != load.getResult()))
+    if (!unaries.empty() && (!unaries.front().isBitwiseNegation() ||
+                             unaries.front().getInput() != load.getResult()))
       return;
     if (!xors.empty()) {
       arith::XOrIOp xorOp = xors.front();

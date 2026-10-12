@@ -1,6 +1,9 @@
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -55,6 +58,24 @@ LogicalResult NativeWordReverseOp::verify() {
   if (getLaneWidth() < 1 || getLaneWidth() > *width || *width % getLaneWidth())
     return emitOpError("requires a lane width dividing the native word width");
   return success();
+}
+OpFoldResult NativeWordReverseOp::fold(FoldAdaptor) {
+  // Reversing a single lane, or reversing the same lanes twice, keeps every
+  // lane in place.
+  // Folding may run before verification, so the width is not assumed.
+  std::optional<unsigned> width = sim::getPackedWidth(getInput().getType());
+  if (width && getLaneWidth() == *width)
+    return getInput();
+  if (auto inner = getInput().getDefiningOp<NativeWordReverseOp>();
+      inner && inner.getLaneWidth() == getLaneWidth())
+    return inner.getInput();
+  return {};
+}
+OpFoldResult NativeWordResizeLanesOp::fold(FoldAdaptor) {
+  if (getInputLaneWidth() == getResultLaneWidth() &&
+      getInput().getType() == getResult().getType())
+    return getInput();
+  return {};
 }
 LogicalResult NativeWordResizeLanesOp::verify() {
   auto wordWidth = [](Type type) -> unsigned {
@@ -203,6 +224,32 @@ LogicalResult NativeKnownValueOp::verify() {
        !sim::getFixedBitStreamPlan(type)))
     return emitOpError("requires a fixed native bit value");
   return success();
+}
+namespace {
+/// An integer, a conversion from integer bits, and a logic constant without
+/// X or Z have a known unknown plane, so the predicate is a constant.
+struct FoldKnownValue final : OpRewritePattern<NativeKnownValueOp> {
+  using OpRewritePattern::OpRewritePattern;
+  LogicalResult matchAndRewrite(NativeKnownValueOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    std::optional<bool> known;
+    if (isa<IntegerType>(input.getType()) ||
+        input.getDefiningOp<sim::SimLogicFromBitsOp>())
+      known = true;
+    else if (auto constant = input.getDefiningOp<sim::SimLogicConstantOp>())
+      known = constant.getUnknown().isZero();
+    if (!known)
+      return failure();
+    rewriter.replaceOpWithNewOp<arith::ConstantOp>(
+        op, rewriter.getBoolAttr(*known));
+    return success();
+  }
+};
+} // namespace
+void NativeKnownValueOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
+  results.add<FoldKnownValue>(context);
 }
 LogicalResult NativeReadyRegionOp::verify() {
   if (getBody().empty() || getBody().front().getNumArguments())

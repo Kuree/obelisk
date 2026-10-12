@@ -661,6 +661,11 @@ bool coalesceWord(sim::SimFuncOp function, analysis::BoundedLoop loop,
       } else {
         copy = op.clone();
         builder.insert(copy);
+        // A one-bit logical negation is a bitwise negation of its lane; the
+        // word form must use bitwise negation, which keeps every lane.
+        if (auto unary = dyn_cast<sim::SimLogicUnaryOp>(copy);
+            unary && kind == Kind::Logic && unary.isBitwiseNegation())
+          unary.setKind(sim::UnaryKind::BitNot);
       }
       Type logicalType;
       if (kind == Kind::Logic) {

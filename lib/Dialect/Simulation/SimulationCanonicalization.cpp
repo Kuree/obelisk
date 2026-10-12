@@ -12,6 +12,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Matchers.h"
@@ -62,6 +63,13 @@ static ArrayAttr getLogicAttribute(MLIRContext *context, LogicPlanes planes) {
   auto type = IntegerType::get(context, planes.value.getBitWidth());
   return ArrayAttr::get(context, {IntegerAttr::get(type, planes.value),
                                   IntegerAttr::get(type, planes.unknown)});
+}
+
+/// Planes of a logic constant without X or Z bits whose value satisfies
+/// `predicate`.
+static bool isKnownPlanes(const std::optional<LogicPlanes> &planes,
+                          llvm::function_ref<bool(const APInt &)> predicate) {
+  return planes && planes->unknown.isZero() && predicate(planes->value);
 }
 
 static LogicPlanes getCanonicalUnknown(unsigned width) {
@@ -475,10 +483,12 @@ OpFoldResult SimLogicBinaryOp::fold(FoldAdaptor adaptor) {
   // These are controlling values, not identities: unlike `x & all_ones` and
   // `x | zero`, they are insensitive to whether unknown bits encode X or Z.
   auto isKnownZero = [](const std::optional<LogicPlanes> &planes) {
-    return planes && planes->unknown.isZero() && planes->value.isZero();
+    return isKnownPlanes(planes,
+                         [](const APInt &bits) { return bits.isZero(); });
   };
   auto isKnownOnes = [](const std::optional<LogicPlanes> &planes) {
-    return planes && planes->unknown.isZero() && planes->value.isAllOnes();
+    return isKnownPlanes(planes,
+                         [](const APInt &bits) { return bits.isAllOnes(); });
   };
   unsigned width = getResult().getType().getWidth();
   if (getKind() == BinaryKind::And && (isKnownZero(lhs) || isKnownZero(rhs)))
@@ -1162,7 +1172,138 @@ static std::optional<uint64_t> getSelectionWidth(Type type) {
     return getPackedWidth(reference.getElementType());
   if (auto driver = dyn_cast<DriverType>(type))
     return getPackedWidth(driver.getElementType());
+  if (auto net = dyn_cast<NetType>(type))
+    return getPackedWidth(net.getElementType());
   return std::nullopt;
+}
+
+static std::optional<LogicPlanes> getConstantPlanes(Value value) {
+  Attribute attribute;
+  if (!matchPattern(value, m_Constant(&attribute)))
+    return std::nullopt;
+  return getLogicPlanes(attribute);
+}
+
+/// A logic constant without X or Z bits whose value satisfies `predicate`.
+static bool isKnownConstant(Value value,
+                            llvm::function_ref<bool(const APInt &)> predicate) {
+  return isKnownPlanes(getConstantPlanes(value), predicate);
+}
+
+static bool isKnownZero(Value value) {
+  return isKnownConstant(value,
+                         [](const APInt &bits) { return bits.isZero(); });
+}
+
+static bool isKnownAllOnes(Value value) {
+  return isKnownConstant(value,
+                         [](const APInt &bits) { return bits.isAllOnes(); });
+}
+
+static bool isKnownOne(Value value) {
+  return isKnownConstant(value, [](const APInt &bits) { return bits.isOne(); });
+}
+
+static Value createLogicConstant(OpBuilder &builder, Location location,
+                                 unsigned width, const APInt &value,
+                                 const APInt &unknown) {
+  auto plane = builder.getIntegerType(width);
+  return SimLogicConstantOp::create(builder, location,
+                                    LogicType::get(builder.getContext(), width),
+                                    builder.getIntegerAttr(plane, value),
+                                    builder.getIntegerAttr(plane, unknown));
+}
+
+static Value createKnownLogic(OpBuilder &builder, Location location,
+                              unsigned width, const APInt &value) {
+  return createLogicConstant(builder, location, width, value,
+                             APInt::getZero(width));
+}
+
+static Value createIntegerConstant(OpBuilder &builder, Location location,
+                                   Type type, const APInt &value) {
+  return arith::ConstantOp::create(
+      builder, location, cast<IntegerType>(type),
+      builder.getIntegerAttr(
+          type, value.zextOrTrunc(cast<IntegerType>(type).getWidth())));
+}
+
+/// IEEE 1800-2023 11.4: every operator that computes bits, rather than
+/// moving them, produces only 0, 1 or X. Its result never holds Z, so the
+/// Z-to-X normalization of a later bitwise operation is the identity on it.
+/// This is a property of the defining operation alone; no operand is
+/// inspected recursively.
+static bool cannotHoldHighImpedance(Value value) {
+  if (std::optional<LogicPlanes> planes = getConstantPlanes(value))
+    return (planes->value & planes->unknown).isZero();
+  Operation *op = value.getDefiningOp();
+  if (!op || !isa<LogicType>(value.getType()))
+    return false;
+  if (auto unary = dyn_cast<SimLogicUnaryOp>(op))
+    return unary.getKind() != UnaryKind::Plus;
+  return isa<SimLogicFromBitsOp, SimLogicBinaryOp, SimLogicReductionOp,
+             SimLogicLogicalOp, SimLogicPowerOp, SimLogicCompareOp>(op);
+}
+
+/// Look through producers that preserve whether a value has a known one bit
+/// and whether every bit is a known zero: replication, extension and the OR
+/// reduction (11.4.9, 11.4.12.1, 11.6.1).
+static Value stripTruthPreservingProducers(Value value) {
+  for (;;) {
+    if (auto replicate = value.getDefiningOp<SimLogicReplicateOp>())
+      value = replicate.getInput();
+    else if (auto resize = value.getDefiningOp<SimLogicResizeOp>();
+             resize && resize.getType().getWidth() >=
+                           resize.getInput().getType().getWidth())
+      value = resize.getInput();
+    else if (auto reduction = value.getDefiningOp<SimLogicReductionOp>();
+             reduction && reduction.getKind() == ReductionKind::Or)
+      value = reduction.getInput();
+    else
+      return value;
+  }
+}
+
+/// A logical negation, or a one-bit bitwise negation, which canonicalization
+/// prefers because it keeps the type: both map 0, 1, X and Z to 1, 0, X and X
+/// (11.4.7, Table 11-15). Truth rewrites must accept both spellings.
+static bool isTruthNegation(SimLogicUnaryOp op) {
+  return op.getKind() == UnaryKind::LogicalNot ||
+         (op.getKind() == UnaryKind::BitNot && op.getType().getWidth() == 1);
+}
+
+/// The canonical negation of the truth value of `value`.
+static SimLogicUnaryOp createNegation(OpBuilder &builder, Location location,
+                                      Value value) {
+  auto type = cast<LogicType>(value.getType());
+  return SimLogicUnaryOp::create(
+      builder, location, LogicType::get(builder.getContext(), 1),
+      type.getWidth() == 1 ? UnaryKind::BitNot : UnaryKind::LogicalNot, value);
+}
+
+/// IEEE 1800-2023 11.4.3: an arithmetic result is either fully known or
+/// entirely X. Arithmetic identities hold on such a value even though they
+/// do not hold on an arbitrary four-state value.
+static bool isWholeValueArithmetic(Value value) {
+  Operation *op = value.getDefiningOp();
+  if (!op)
+    return false;
+  if (isa<SimLogicFromBitsOp, SimLogicPowerOp>(op))
+    return true;
+  if (auto unary = dyn_cast<SimLogicUnaryOp>(op))
+    return unary.getKind() == UnaryKind::Negate;
+  auto binary = dyn_cast<SimLogicBinaryOp>(op);
+  if (!binary)
+    return false;
+  switch (binary.getKind()) {
+  case BinaryKind::And:
+  case BinaryKind::Or:
+  case BinaryKind::Xor:
+  case BinaryKind::Xnor:
+    return false;
+  default:
+    return true;
+  }
 }
 
 template <typename OldOp, typename NewOp>
@@ -1186,20 +1327,30 @@ struct CollapseResizeChain final : OpRewritePattern<SimLogicResizeOp> {
     unsigned innerWidth = inner.getResult().getType().getWidth();
     unsigned resultWidth = op.getResult().getType().getWidth();
     bool signedResult;
-    if (resultWidth <= std::min(sourceWidth, innerWidth)) {
+    if (innerWidth == sourceWidth) {
+      // The inner resize is an identity, so only the outer extension (or
+      // truncation) is observable. Its signedness must not be replaced by
+      // the inner one: a sign extension of the same bits stays one.
+      signedResult = op.getIsSigned();
+    } else if (resultWidth <= std::min(sourceWidth, innerWidth)) {
       // Both resizes only contribute a low-bit truncation.
       signedResult = false;
-    } else if (innerWidth >= sourceWidth && resultWidth <= innerWidth) {
+    } else if (innerWidth > sourceWidth && resultWidth <= innerWidth) {
       // The result observes the extension performed by the inner resize.
       signedResult = inner.getIsSigned();
-    } else if (innerWidth >= sourceWidth && resultWidth > innerWidth &&
+    } else if (innerWidth > sourceWidth && resultWidth > innerWidth &&
                (!inner.getIsSigned() || op.getIsSigned())) {
-      // Repeated zero-extension, or repeated sign-extension, composes.
+      // Repeated zero-extension, or repeated sign-extension, composes. A
+      // sign extension of a zero-extended value sees a known-zero sign bit.
       signedResult = inner.getIsSigned();
     } else {
       return failure();
     }
 
+    if (resultWidth == sourceWidth) {
+      rewriter.replaceOp(op, inner.getInput());
+      return success();
+    }
     auto replacement = SimLogicResizeOp::create(
         rewriter, op.getLoc(), op.getResult().getType(), inner.getInput(),
         rewriter.getBoolAttr(signedResult));
@@ -1240,25 +1391,61 @@ struct TwoStateBinary final : OpRewritePattern<SimLogicBinaryOp> {
   LogicalResult matchAndRewrite(SimLogicBinaryOp op,
                                 PatternRewriter &rewriter) const override {
     // IEEE 1800-2023 11.4.3, 11.4.8 and 11.6: these operations preserve
-    // knownness and wrap at the already resolved expression width. Division
-    // and remainder need their SV zero/overflow behavior and stay in logic.
+    // knownness and wrap at the already resolved expression width.
+    auto left = matchTwoStateValue(op.getLhs());
+    auto right = matchTwoStateValue(op.getRhs());
+    if (!left || !right)
+      return failure();
+    // Division and remainder are two-state only for a known nonzero divisor:
+    // a zero divisor produces X (11.4.3). The signed MIN / -1 overflow wraps,
+    // so -1 is expressed as negation instead of a poison-producing divsi.
+    bool division = false;
+    std::optional<APInt> divisor;
     switch (op.getKind()) {
     case BinaryKind::UDiv:
     case BinaryKind::SDiv:
     case BinaryKind::UMod:
     case BinaryKind::SMod:
-      return failure();
+      division = true;
+      if (auto attribute = dyn_cast<Attribute>(*right))
+        divisor = cast<IntegerAttr>(attribute).getValue();
+      if (!divisor || divisor->isZero())
+        return failure();
+      break;
     default:
       break;
     }
-    auto left = matchTwoStateValue(op.getLhs());
-    auto right = matchTwoStateValue(op.getRhs());
-    if (!left || !right)
-      return failure();
     Value lhs = materializeBits(*left, op.getLoc(), rewriter);
     Value rhs = materializeBits(*right, op.getLoc(), rewriter);
     Value result;
+    bool signedDivision =
+        op.getKind() == BinaryKind::SDiv || op.getKind() == BinaryKind::SMod;
+    if (division && signedDivision && divisor->isAllOnes()) {
+      Value zero =
+          createIntegerConstant(rewriter, op.getLoc(), lhs.getType(),
+                                APInt::getZero(divisor->getBitWidth()));
+      result =
+          op.getKind() == BinaryKind::SMod
+              ? zero
+              : Value(arith::SubIOp::create(rewriter, op.getLoc(), zero, lhs));
+      replaceWithNewOp(rewriter, op,
+                       SimLogicFromBitsOp::create(rewriter, op.getLoc(),
+                                                  op.getType(), result));
+      return success();
+    }
     switch (op.getKind()) {
+    case BinaryKind::UDiv:
+      result = arith::DivUIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::UMod:
+      result = arith::RemUIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::SDiv:
+      result = arith::DivSIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
+    case BinaryKind::SMod:
+      result = arith::RemSIOp::create(rewriter, op.getLoc(), lhs, rhs);
+      break;
     case BinaryKind::Add:
       result = arith::AddIOp::create(rewriter, op.getLoc(), lhs, rhs);
       break;
@@ -1285,8 +1472,6 @@ struct TwoStateBinary final : OpRewritePattern<SimLogicBinaryOp> {
         result = arith::XOrIOp::create(rewriter, op.getLoc(), result, ones);
       }
       break;
-    default:
-      llvm_unreachable("non-total operations excluded above");
     }
     replaceWithNewOp(rewriter, op,
                      SimLogicFromBitsOp::create(rewriter, op.getLoc(),
@@ -1406,27 +1591,17 @@ struct TwoStateTruth final : OpRewritePattern<SimLogicIsTrueOp> {
   }
 };
 
-// These producer/consumer rules belong to the dialect canonicalizer. They
-// preserve the resolved expression widths and four-state conversion contracts;
-// they do not recursively infer facts about an arbitrary defining expression.
+// The truth-source and resized-conversion rules are registered on their root
+// operations. They preserve the resolved expression widths and four-state
+// conversion contracts; they do not recursively infer facts about an
+// arbitrary defining expression.
 struct SimplifyTruthSource final : OpRewritePattern<SimLogicIsTrueOp> {
   using OpRewritePattern::OpRewritePattern;
   LogicalResult matchAndRewrite(SimLogicIsTrueOp op,
                                 PatternRewriter &rewriter) const override {
-    Value input;
-    if (auto repeat = op.getInput().getDefiningOp<SimLogicReplicateOp>())
-      input = repeat.getInput();
-    else if (auto resize = op.getInput().getDefiningOp<SimLogicResizeOp>()) {
-      // Zero/sign extension cannot introduce the first known one. Truncation
-      // can discard it, so narrowing must retain the original truth test.
-      if (resize.getType().getWidth() >= resize.getInput().getType().getWidth())
-        input = resize.getInput();
-    } else if (auto reduction =
-                   op.getInput().getDefiningOp<SimLogicReductionOp>()) {
-      if (reduction.getKind() == ReductionKind::Or)
-        input = reduction.getInput();
-    }
-    if (!input)
+    // Truncation can discard the only known one, so it is not stripped.
+    Value input = stripTruthPreservingProducers(op.getInput());
+    if (input == op.getInput())
       return failure();
     replaceWithNewOp(rewriter, op,
                      SimLogicIsTrueOp::create(rewriter, op.getLoc(), input));
@@ -1944,8 +2119,11 @@ struct SimplifyStaticExtract final : OpRewritePattern<ExtractOp> {
       return success();
     }
 
+    // Only packed bit offsets compose. A net view of an unpacked array element
+    // is addressed by its storage offset and must name exactly one element,
+    // so a packed slice of that element is not a view of the array.
     auto nested = op.getInput().template getDefiningOp<ExtractOp>();
-    if (!nested)
+    if (!nested || !getSelectionWidth(nested.getInput().getType()))
       return failure();
     uint64_t innerLow = nested.getLowBit();
     uint64_t outerLow = op.getLowBit();
@@ -2134,23 +2312,146 @@ struct PackedLocalSubelement final : OpRewritePattern<SimRefSubelementOp> {
     Type type = op.getInput().getType().getElementType();
     if (!getPackedWidth(type))
       return failure();
+    std::optional<uint64_t> low = getPackedMemberOffset(type, op.getIndices());
+    if (!low)
+      return failure();
+    Type parentScalar = getPackedScalarType(type);
+    Type memberScalar =
+        getPackedScalarType(op.getResult().getType().getElementType());
+    if (!parentScalar || !memberScalar)
+      return failure();
+    if (isa<LogicType>(parentScalar) == isa<LogicType>(memberScalar)) {
+      rewriter.replaceOpWithNewOp<SimRefExtractOp>(op, op.getResult().getType(),
+                                                   op.getInput(), *low);
+      return success();
+    }
+    // LRM 7.2.1, 7.3.1: a two-state member of a four-state packed aggregate
+    // occupies four-state bits. Reading it converts X and Z to zero; writing
+    // it stores known bits. A reference view cannot change the state domain,
+    // so view the four-state bits and convert at every access instead.
+    if (!isa<LogicType>(parentScalar) || !hasOnlyPackedAccesses(op.getResult()))
+      return failure();
+    std::optional<unsigned> width =
+        getPackedWidth(op.getResult().getType().getElementType());
+    auto view = SimRefExtractOp::create(
+        rewriter, op.getLoc(),
+        RefType::get(op.getContext(), LogicType::get(op.getContext(), *width)),
+        op.getInput(), *low);
+    convertTwoStateAccesses(rewriter, op.getResult(), view.getResult());
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  /// Offset of a static member path inside packed storage. Tagged member
+  /// access must retain its active-member check (LRM 7.3.2).
+  static std::optional<uint64_t> getPackedMemberOffset(Type type,
+                                                       ArrayRef<int64_t> path) {
     uint64_t low = 0;
-    for (int64_t index : op.getIndices()) {
-      // Tagged member access must retain its active-member check (LRM 7.3.2).
+    for (int64_t index : path) {
       if (auto packed = dyn_cast<PackedUnionType>(type);
           packed && packed.getIsTagged())
-        return failure();
+        return std::nullopt;
       if (index < 0 || uint64_t(index) > UINT_MAX)
-        return failure();
+        return std::nullopt;
       auto child = getAggregateProvenanceSubelement(type, index);
       if (!child || child->first > UINT64_MAX - low)
-        return failure();
+        return std::nullopt;
       low += child->first;
       type = getAggregateElementType(type, index);
     }
-    rewriter.replaceOpWithNewOp<SimRefExtractOp>(op, op.getResult().getType(),
-                                                 op.getInput(), low);
-    return success();
+    return low;
+  }
+
+  /// Every transitive use is a load, a store, or a static or dynamic packed
+  /// view, so each access can be expressed on four-state storage.
+  static bool hasOnlyPackedAccesses(Value reference) {
+    for (Operation *user : reference.getUsers()) {
+      if (auto load = dyn_cast<SimRefLoadOp>(user)) {
+        if (load.getReference() != reference)
+          return false;
+        continue;
+      }
+      if (auto store = dyn_cast<SimRefStoreOp>(user)) {
+        if (store.getReference() != reference)
+          return false;
+        continue;
+      }
+      if (isa<SimRefExtractOp, SimRefDynExtractOp>(user) &&
+          user->getOperand(0) == reference) {
+        if (!hasOnlyPackedAccesses(user->getResult(0)))
+          return false;
+        continue;
+      }
+      if (auto member = dyn_cast<SimRefSubelementOp>(user)) {
+        if (!getPackedMemberOffset(member.getInput().getType().getElementType(),
+                                   member.getIndices()) ||
+            !hasOnlyPackedAccesses(member.getResult()))
+          return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  /// Rewrite the accesses through a two-state reference as accesses through
+  /// the four-state view of the same bits.
+  static void convertTwoStateAccesses(PatternRewriter &rewriter, Value twoState,
+                                      Value fourState) {
+    MLIRContext *context = rewriter.getContext();
+    for (Operation *user : llvm::make_early_inc_range(twoState.getUsers())) {
+      rewriter.setInsertionPoint(user);
+      Location location = user->getLoc();
+      if (auto load = dyn_cast<SimRefLoadOp>(user)) {
+        Type type = load.getResult().getType();
+        Type scalar = getPackedScalarType(type);
+        Value bits = SimRefLoadOp::create(
+            rewriter, location, LogicType::get(context, *getPackedWidth(type)),
+            fourState);
+        bits.getDefiningOp()->setAttrs(load->getAttrs());
+        Value value =
+            SimLogicToBitsOp::create(rewriter, location, scalar, bits);
+        if (type != scalar)
+          value = SimPackedUnflattenOp::create(rewriter, location, type, value);
+        rewriter.replaceOp(load, value);
+        continue;
+      }
+      if (auto store = dyn_cast<SimRefStoreOp>(user)) {
+        Value value = store.getValue();
+        Type scalar = getPackedScalarType(value.getType());
+        if (value.getType() != scalar)
+          value = SimPackedFlattenOp::create(rewriter, location, scalar, value);
+        value = SimLogicFromBitsOp::create(
+            rewriter, location,
+            LogicType::get(context, *getPackedWidth(scalar)), value);
+        auto replacement =
+            SimRefStoreOp::create(rewriter, location, value, fourState);
+        replacement->setAttrs(store->getAttrs());
+        rewriter.eraseOp(store);
+        continue;
+      }
+      Type element =
+          cast<RefType>(user->getResult(0).getType()).getElementType();
+      Type viewType = RefType::get(
+          context, LogicType::get(context, *getPackedWidth(element)));
+      Value view;
+      if (auto extract = dyn_cast<SimRefExtractOp>(user))
+        view = SimRefExtractOp::create(rewriter, location, viewType, fourState,
+                                       extract.getLowBitAttr());
+      else if (auto extract = dyn_cast<SimRefDynExtractOp>(user))
+        view = SimRefDynExtractOp::create(rewriter, location, viewType,
+                                          fourState, extract.getLowBit());
+      else {
+        auto member = cast<SimRefSubelementOp>(user);
+        view = SimRefExtractOp::create(
+            rewriter, location, viewType, fourState,
+            *getPackedMemberOffset(member.getInput().getType().getElementType(),
+                                   member.getIndices()));
+      }
+      convertTwoStateAccesses(rewriter, user->getResult(0), view);
+      rewriter.eraseOp(user);
+    }
   }
 };
 
@@ -3216,6 +3517,1169 @@ struct FoldExactStringToPacked final
   }
 };
 
+//===----------------------------------------------------------------------===//
+// Two-state integer helpers. These build exact arith for values whose
+// unknown plane is known to be zero; no operation here can produce poison.
+//===----------------------------------------------------------------------===//
+
+/// Bits [low, low + width) of `bits`.
+static Value extractIntegerBits(PatternRewriter &rewriter, Location location,
+                                Value bits, uint64_t low, unsigned width) {
+  auto type = cast<IntegerType>(bits.getType());
+  if (low != 0)
+    bits = rewriter.createOrFold<arith::ShRUIOp>(
+        location, bits,
+        createIntegerConstant(rewriter, location, type,
+                              APInt(type.getWidth(), low)));
+  if (width < type.getWidth())
+    bits = rewriter.createOrFold<arith::TruncIOp>(
+        location, rewriter.getIntegerType(width), bits);
+  return bits;
+}
+
+static Value populationCount(PatternRewriter &rewriter, Location location,
+                             Value bits) {
+  return math::CtPopOp::create(rewriter, location, bits.getType(), bits);
+}
+
+/// Resize an unsigned count to the 32-bit SystemVerilog `int` result. The
+/// count of a W-bit value fits in W bits, and truncation is modulo 2^32.
+static Value resizeCount(PatternRewriter &rewriter, Location location,
+                         Value count) {
+  auto type = cast<IntegerType>(count.getType());
+  auto i32 = rewriter.getI32Type();
+  if (type.getWidth() > 32)
+    return rewriter.createOrFold<arith::TruncIOp>(location, i32, count);
+  if (type.getWidth() < 32)
+    return rewriter.createOrFold<arith::ExtUIOp>(location, i32, count);
+  return count;
+}
+
+/// Materialize an operand known to be two-state: a from_bits input, an
+/// integer, or a logic constant without X/Z.
+static std::optional<Value> getTwoStateBits(Value value, Location location,
+                                            PatternRewriter &rewriter) {
+  if (isa<IntegerType>(value.getType()))
+    return value;
+  std::optional<OpFoldResult> bits = matchTwoStateValue(value);
+  if (!bits)
+    return std::nullopt;
+  return materializeBits(*bits, location, rewriter);
+}
+
+static bool isTwoStateValue(Value value) {
+  return isa<IntegerType>(value.getType()) ||
+         matchTwoStateValue(value).has_value();
+}
+
+//===----------------------------------------------------------------------===//
+// Control predicates
+//===----------------------------------------------------------------------===//
+
+/// IEEE 1800-2023 12.4 and 11.4.7: a condition holds only when its value has
+/// a known one bit. Express truth tests of logical connectives, negations,
+/// reductions and equalities as two-state predicates so a branch leaves the
+/// four-state domain as early as possible.
+struct SimplifyTruthCondition final : OpRewritePattern<SimLogicIsTrueOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicIsTrueOp op,
+                                PatternRewriter &rewriter) const override {
+    Operation *producer = op.getInput().getDefiningOp();
+    if (!producer)
+      return failure();
+    Location location = op.getLoc();
+    auto truth = [&](Value value) -> Value {
+      return SimLogicIsTrueOp::create(rewriter, location, value);
+    };
+    // x === c is one exactly when every bit of x is the known bit of c.
+    auto caseEqual = [&](Value value, Value constant) -> Value {
+      return SimLogicCompareOp::create(rewriter, location, rewriter.getI1Type(),
+                                       CompareKind::CaseEq, value, constant);
+    };
+    auto caseEqualBits = [&](Value value, const APInt &bits) -> Value {
+      return caseEqual(value, createKnownLogic(rewriter, location,
+                                               bits.getBitWidth(), bits));
+    };
+    Value replacement;
+    // Splitting a connective into two truth tests only helps when the
+    // four-state result is not needed anyway; one-for-one rewrites below
+    // apply regardless.
+    bool soleUse = producer->hasOneUse();
+    if (auto logical = dyn_cast<SimLogicLogicalOp>(producer);
+        logical && soleUse) {
+      // Kleene conjunction is one only for two true operands; disjunction is
+      // one when either operand is true.
+      Value lhs = truth(logical.getLhs());
+      Value rhs = truth(logical.getRhs());
+      replacement =
+          logical.getKind() == LogicalKind::And
+              ? Value(arith::AndIOp::create(rewriter, location, lhs, rhs))
+              : Value(arith::OrIOp::create(rewriter, location, lhs, rhs));
+    } else if (auto binary = dyn_cast<SimLogicBinaryOp>(producer);
+               binary && soleUse) {
+      // A bit of a | b is a known one when either operand bit is (Table
+      // 11-13); a one-bit a & b is a known one only when both are.
+      bool single = binary.getType().getWidth() == 1;
+      if (binary.getKind() == BinaryKind::Or)
+        replacement = arith::OrIOp::create(
+            rewriter, location, truth(binary.getLhs()), truth(binary.getRhs()));
+      else if (binary.getKind() == BinaryKind::And && single)
+        replacement = arith::AndIOp::create(
+            rewriter, location, truth(binary.getLhs()), truth(binary.getRhs()));
+    } else if (auto unary = dyn_cast<SimLogicUnaryOp>(producer)) {
+      // !x is one exactly when every bit of x is a known zero.
+      if (isTruthNegation(unary)) {
+        Value source = stripTruthPreservingProducers(unary.getInput());
+        replacement = caseEqualBits(
+            source,
+            APInt::getZero(cast<LogicType>(source.getType()).getWidth()));
+      }
+    } else if (auto reduction = dyn_cast<SimLogicReductionOp>(producer)) {
+      // Tables 11-16 and 11-17: &x is one only when every bit is a known one
+      // and ~|x only when every bit is a known zero.
+      unsigned width = reduction.getInput().getType().getWidth();
+      if (reduction.getKind() == ReductionKind::And) {
+        replacement =
+            caseEqualBits(reduction.getInput(), APInt::getAllOnes(width));
+      } else if (reduction.getKind() == ReductionKind::Nor) {
+        Value source = stripTruthPreservingProducers(reduction.getInput());
+        replacement = caseEqualBits(
+            source,
+            APInt::getZero(cast<LogicType>(source.getType()).getWidth()));
+      }
+    } else if (auto compare = dyn_cast<SimLogicCompareOp>(producer);
+               compare && compare.getKind() == CompareKind::Eq) {
+      // 11.4.5: x == c is one only when neither operand has X or Z and the
+      // bits match. A constant with X or Z therefore never compares true.
+      for (unsigned operand : {1u, 0u}) {
+        Value constant = compare->getOperand(operand);
+        std::optional<LogicPlanes> planes = getConstantPlanes(constant);
+        if (!planes)
+          continue;
+        replacement =
+            planes->unknown.isZero()
+                ? caseEqual(compare->getOperand(1 - operand), constant)
+                : Value(arith::ConstantOp::create(rewriter, location,
+                                                  rewriter.getBoolAttr(false)));
+        break;
+      }
+    }
+    if (!replacement)
+      return failure();
+    rewriter.replaceOp(op, replacement);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Two-state operations
+//===----------------------------------------------------------------------===//
+
+/// IEEE 1800-2023 11.4.10 on a known operand shifted by a known amount.
+/// Amounts of the width or more are folded on the shift itself, so the
+/// integer shift is in range and cannot form poison. A variable amount stays
+/// a logic shift: its range guard would cost more operations than the shift.
+struct TwoStateShift final : OpRewritePattern<SimLogicShiftOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicShiftOp op,
+                                PatternRewriter &rewriter) const override {
+    Location location = op.getLoc();
+    std::optional<ConstantIndex> amount = getConstantIndex(op.getAmount());
+    unsigned width = op.getType().getWidth();
+    if (!amount || !amount->value || amount->value->uge(width) ||
+        !isTwoStateValue(op.getInput()))
+      return failure();
+    Value value = *getTwoStateBits(op.getInput(), location, rewriter);
+    auto type = cast<IntegerType>(value.getType());
+    Value shift = createIntegerConstant(
+        rewriter, location, type, APInt(width, amount->value->getZExtValue()));
+    Value result;
+    switch (op.getKind()) {
+    case ShiftKind::Left:
+      result = rewriter.createOrFold<arith::ShLIOp>(location, value, shift);
+      break;
+    case ShiftKind::Right:
+      result = rewriter.createOrFold<arith::ShRUIOp>(location, value, shift);
+      break;
+    case ShiftKind::RightArith:
+      result = rewriter.createOrFold<arith::ShRSIOp>(location, value, shift);
+      break;
+    }
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicFromBitsOp::create(rewriter, location, op.getType(), result));
+    return success();
+  }
+};
+
+/// The low slice of a known value is an integer truncation. Other slices stay
+/// logic extracts, which the bytecode backend executes as one instruction.
+struct TwoStateExtract final : OpRewritePattern<SimLogicExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getLowBit() != 0 || !isTwoStateValue(op.getInput()))
+      return failure();
+    Value bits = *getTwoStateBits(op.getInput(), op.getLoc(), rewriter);
+    bits = extractIntegerBits(rewriter, op.getLoc(), bits, op.getLowBit(),
+                              op.getType().getWidth());
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicFromBitsOp::create(rewriter, op.getLoc(), op.getType(), bits));
+    return success();
+  }
+};
+
+/// An unknown or wholly invalid index leaves the input unchanged and a
+/// partial write stores only in-range replacement bits, so a write of known
+/// bits into known bits stays known (11.5.1).
+struct TwoStateDynamicInsert final : OpRewritePattern<SimLogicDynInsertOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicDynInsertOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isTwoStateValue(op.getInput()) ||
+        !isTwoStateValue(op.getReplacement()))
+      return failure();
+    Value base = *getTwoStateBits(op.getInput(), op.getLoc(), rewriter);
+    Value piece = *getTwoStateBits(op.getReplacement(), op.getLoc(), rewriter);
+    Value bits = SimBitsDynInsertOp::create(
+        rewriter, op.getLoc(), base.getType(), base, piece, op.getLowBit());
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicFromBitsOp::create(rewriter, op.getLoc(), op.getType(), bits));
+    return success();
+  }
+};
+
+/// Parity of a known word is the low bit of its population count.
+struct TwoStateParity final : OpRewritePattern<SimLogicReductionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicReductionOp op,
+                                PatternRewriter &rewriter) const override {
+    if ((op.getKind() != ReductionKind::Xor &&
+         op.getKind() != ReductionKind::Xnor) ||
+        !isTwoStateValue(op.getInput()))
+      return failure();
+    Location location = op.getLoc();
+    Value bits = *getTwoStateBits(op.getInput(), location, rewriter);
+    Value parity = bits;
+    if (cast<IntegerType>(bits.getType()).getWidth() != 1)
+      parity =
+          arith::TruncIOp::create(rewriter, location, rewriter.getI1Type(),
+                                  populationCount(rewriter, location, bits));
+    if (op.getKind() == ReductionKind::Xnor)
+      parity = arith::XOrIOp::create(
+          rewriter, location, parity,
+          arith::ConstantOp::create(rewriter, location,
+                                    rewriter.getBoolAttr(true)));
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicFromBitsOp::create(rewriter, location, op.getType(), parity));
+    return success();
+  }
+};
+
+/// IEEE 1800-2023 20.9 with constant controls. On a two-state input only 0
+/// and 1 can match. On a four-state input, the known ones of x are the bits
+/// of to_bits(x) and its known zeros are the bits of to_bits(~x), since
+/// bitwise negation maps X and Z to X (Table 11-15).
+struct CountBitsWithPopulationCount final
+    : OpRewritePattern<SimLogicCountBitsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicCountBitsOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    if (!isa<IntegerType, LogicType>(input.getType()))
+      return failure();
+    bool selected[4] = {};
+    for (Value control : op.getControls()) {
+      std::optional<LogicPlanes> planes = getConstantPlanes(control);
+      if (!planes)
+        return failure();
+      selected[(planes->unknown[0] ? 2u : 0u) | (planes->value[0] ? 1u : 0u)] =
+          true;
+    }
+    std::optional<unsigned> packedWidth = getPackedWidth(input.getType());
+    if (!packedWidth)
+      return failure();
+    Location location = op.getLoc();
+    unsigned width = *packedWidth;
+    auto type = rewriter.getIntegerType(width);
+    Value ones;
+    Value zeros;
+    if (isTwoStateValue(input)) {
+      Value bits = *getTwoStateBits(input, location, rewriter);
+      if (selected[0] && selected[1]) {
+        rewriter.replaceOp(op, createIntegerConstant(rewriter, location,
+                                                     op.getType(),
+                                                     APInt(32, width)));
+        return success();
+      }
+      if (selected[1])
+        ones = populationCount(rewriter, location, bits);
+      if (selected[0])
+        zeros = arith::SubIOp::create(
+            rewriter, location,
+            createIntegerConstant(rewriter, location, type,
+                                  APInt(width, width)),
+            populationCount(rewriter, location, bits));
+    } else {
+      // Counting both known values would take two conversions and two counts.
+      if (selected[2] || selected[3] || (selected[0] && selected[1]))
+        return failure();
+      if (selected[1])
+        ones = populationCount(
+            rewriter, location,
+            SimLogicToBitsOp::create(rewriter, location, type, input));
+      if (selected[0]) {
+        Value inverted = SimLogicUnaryOp::create(
+            rewriter, location, input.getType(), UnaryKind::BitNot, input);
+        zeros = populationCount(
+            rewriter, location,
+            SimLogicToBitsOp::create(rewriter, location, type, inverted));
+      }
+    }
+    Value count =
+        ones && zeros
+            ? Value(arith::AddIOp::create(rewriter, location, ones, zeros))
+        : ones  ? ones
+        : zeros ? zeros
+                : createIntegerConstant(rewriter, location, type,
+                                        APInt::getZero(width));
+    rewriter.replaceOp(op, resizeCount(rewriter, location, count));
+    return success();
+  }
+};
+
+/// to_bits keeps exactly the known one bits (6.24.1). A bit of a & b is a
+/// known one only when both operand bits are, and a bit of a | b when either
+/// is (Tables 11-12, 11-13). With one known operand the conversion moves to
+/// the other one and the operation becomes integer arith without adding
+/// operations; a one-use producer keeps four-state work from being repeated.
+struct ConvertLogicToBitsThroughProducer final
+    : OpRewritePattern<SimLogicToBitsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicToBitsOp op,
+                                PatternRewriter &rewriter) const override {
+    auto binary = op.getInput().getDefiningOp<SimLogicBinaryOp>();
+    if (!binary || !binary->hasOneUse() || !op.getType().isSignless() ||
+        (binary.getKind() != BinaryKind::And &&
+         binary.getKind() != BinaryKind::Or) ||
+        (!isTwoStateValue(binary.getLhs()) &&
+         !isTwoStateValue(binary.getRhs())))
+      return failure();
+    Location location = op.getLoc();
+    auto toBits = [&](Value value) -> Value {
+      if (std::optional<Value> bits =
+              getTwoStateBits(value, location, rewriter))
+        return *bits;
+      return SimLogicToBitsOp::create(rewriter, location, op.getType(), value);
+    };
+    Value lhs = toBits(binary.getLhs());
+    Value rhs = toBits(binary.getRhs());
+    if (binary.getKind() == BinaryKind::And)
+      rewriter.replaceOpWithNewOp<arith::AndIOp>(op, lhs, rhs);
+    else
+      rewriter.replaceOpWithNewOp<arith::OrIOp>(op, lhs, rhs);
+    return success();
+  }
+};
+
+/// A two-state selection at constant index zero is an integer truncation
+/// (11.5.1). Other constant selections keep the one-instruction bytecode
+/// extract; the native backend simplifies them after lowering.
+struct ConstantBitsDynamicExtract final
+    : OpRewritePattern<SimBitsDynExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimBitsDynExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    std::optional<ConstantIndex> index = getConstantIndex(op.getLowBit());
+    if (!index || !index->value || !index->value->isZero())
+      return failure();
+    rewriter.replaceOp(op,
+                       extractIntegerBits(rewriter, op.getLoc(), op.getInput(),
+                                          0, op.getType().getWidth()));
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Canonical forms. Each rule picks one spelling for operations the LRM
+// defines identically, so CSE and the other patterns see a single form.
+//===----------------------------------------------------------------------===//
+
+/// A truncating resize keeps the low bits whatever its signedness (11.6.1).
+struct TruncatingResizeToExtract final : OpRewritePattern<SimLogicResizeOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicResizeOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getType().getWidth() >= op.getInput().getType().getWidth())
+      return failure();
+    replaceWithNewOp(rewriter, op,
+                     SimLogicExtractOp::create(rewriter, op.getLoc(),
+                                               op.getType(), op.getInput(),
+                                               rewriter.getI64IntegerAttr(0)));
+    return success();
+  }
+};
+
+/// {'0, x} is the zero extension of x, and {zext(y), z...} is the zero
+/// extension of {y, z...} (11.4.12, 11.6.1).
+struct ConcatLeadingZerosToResize final : OpRewritePattern<SimLogicConcatOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicConcatOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getInputs().size() < 2)
+      return failure();
+    Value leading = op.getInputs().front();
+    SmallVector<Value> rest(op.getInputs().drop_front());
+    if (auto resize = leading.getDefiningOp<SimLogicResizeOp>();
+        resize && !resize.getIsSigned() &&
+        resize.getType().getWidth() > resize.getInput().getType().getWidth())
+      rest.insert(rest.begin(), resize.getInput());
+    else if (!isKnownZero(leading))
+      return failure();
+    Value inner = rest.front();
+    if (rest.size() > 1) {
+      uint64_t width = 0;
+      for (Value value : rest)
+        width += cast<LogicType>(value.getType()).getWidth();
+      inner = SimLogicConcatOp::create(
+          rewriter, op.getLoc(), LogicType::get(op.getContext(), width), rest);
+    }
+    replaceWithNewOp(rewriter, op,
+                     SimLogicResizeOp::create(rewriter, op.getLoc(),
+                                              op.getType(), inner,
+                                              rewriter.getBoolAttr(false)));
+    return success();
+  }
+};
+
+/// Adjacent constant operands of a concatenation form one constant.
+struct MergeConcatConstants final : OpRewritePattern<SimLogicConcatOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicConcatOp op,
+                                PatternRewriter &rewriter) const override {
+    // A failing pattern must not create operations, so find an adjacent pair
+    // of constants before building anything.
+    auto inputsRange = op.getInputs();
+    bool adjacent = false;
+    for (unsigned index = 1; index < inputsRange.size() && !adjacent; ++index)
+      adjacent = getConstantPlanes(inputsRange[index - 1]) &&
+                 getConstantPlanes(inputsRange[index]);
+    if (!adjacent)
+      return failure();
+    SmallVector<Value> inputs;
+    std::optional<LogicPlanes> pending;
+    bool changed = false;
+    auto flush = [&]() {
+      if (!pending)
+        return;
+      inputs.push_back(createLogicConstant(rewriter, op.getLoc(),
+                                           pending->value.getBitWidth(),
+                                           pending->value, pending->unknown));
+      pending.reset();
+    };
+    for (Value input : op.getInputs()) {
+      std::optional<LogicPlanes> planes = getConstantPlanes(input);
+      if (!planes) {
+        flush();
+        inputs.push_back(input);
+        continue;
+      }
+      if (!pending) {
+        pending = planes;
+        continue;
+      }
+      unsigned width =
+          pending->value.getBitWidth() + planes->value.getBitWidth();
+      unsigned shift = planes->value.getBitWidth();
+      pending = LogicPlanes{pending->value.zext(width).shl(shift) |
+                                planes->value.zext(width),
+                            pending->unknown.zext(width).shl(shift) |
+                                planes->unknown.zext(width)};
+      changed = true;
+    }
+    if (!changed)
+      return failure();
+    flush();
+    if (inputs.size() == 1) {
+      rewriter.replaceOp(op, inputs.front());
+      return success();
+    }
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicConcatOp::create(rewriter, op.getLoc(), op.getType(), inputs));
+    return success();
+  }
+};
+
+/// On one-bit operands, logical and bitwise connectives agree: each maps Z
+/// to X and applies the Kleene table (Tables 11-12, 11-13; 11.4.7).
+struct SingleBitLogicalToBitwise final : OpRewritePattern<SimLogicLogicalOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicLogicalOp op,
+                                PatternRewriter &rewriter) const override {
+    // Identities with constants or a repeated operand belong to
+    // SimplifyLogical, which reduces them further.
+    if (op.getLhs().getType().getWidth() != 1 ||
+        op.getRhs().getType().getWidth() != 1 || op.getLhs() == op.getRhs() ||
+        isConstantValue(op.getLhs()) || isConstantValue(op.getRhs()))
+      return failure();
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicBinaryOp::create(
+            rewriter, op.getLoc(), op.getType(),
+            op.getKind() == LogicalKind::And ? BinaryKind::And : BinaryKind::Or,
+            op.getLhs(), op.getRhs()));
+    return success();
+  }
+};
+
+static std::optional<CompareKind> getInverseComparison(CompareKind kind) {
+  switch (kind) {
+  case CompareKind::Eq:
+    return CompareKind::Ne;
+  case CompareKind::Ne:
+    return CompareKind::Eq;
+  case CompareKind::ULT:
+    return CompareKind::UGE;
+  case CompareKind::ULE:
+    return CompareKind::UGT;
+  case CompareKind::UGT:
+    return CompareKind::ULE;
+  case CompareKind::UGE:
+    return CompareKind::ULT;
+  case CompareKind::SLT:
+    return CompareKind::SGE;
+  case CompareKind::SLE:
+    return CompareKind::SGT;
+  case CompareKind::SGT:
+    return CompareKind::SLE;
+  case CompareKind::SGE:
+    return CompareKind::SLT;
+  case CompareKind::WildEq:
+    return CompareKind::WildNe;
+  case CompareKind::WildNe:
+    return CompareKind::WildEq;
+  default:
+    return std::nullopt;
+  }
+}
+
+static ReductionKind getInverseReduction(ReductionKind kind) {
+  switch (kind) {
+  case ReductionKind::And:
+    return ReductionKind::Nand;
+  case ReductionKind::Nand:
+    return ReductionKind::And;
+  case ReductionKind::Or:
+    return ReductionKind::Nor;
+  case ReductionKind::Nor:
+    return ReductionKind::Or;
+  case ReductionKind::Xor:
+    return ReductionKind::Xnor;
+  case ReductionKind::Xnor:
+    return ReductionKind::Xor;
+  }
+  llvm_unreachable("unknown reduction kind");
+}
+
+/// Logical negation of a one-bit 0/1/X value inverts it and keeps X
+/// (11.4.7). Comparisons and reductions produce such values, so negating them
+/// selects the inverse operator (11.4.4-6, 11.4.9). A one-bit bitwise
+/// negation is the same operator (Table 11-15).
+struct SimplifyNegation final : OpRewritePattern<SimLogicUnaryOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    Location location = op.getLoc();
+    if (op.getKind() == UnaryKind::LogicalNot &&
+        op.getInput().getType().getWidth() == 1) {
+      replaceWithNewOp(rewriter, op,
+                       createNegation(rewriter, location, op.getInput()));
+      return success();
+    }
+    if (op.getKind() == UnaryKind::Negate) {
+      // An arithmetic value is fully known or entirely X, and negation maps
+      // each of those to itself after two applications (11.4.3).
+      auto inner = op.getInput().getDefiningOp<SimLogicUnaryOp>();
+      if (inner && inner.getKind() == UnaryKind::Negate &&
+          isWholeValueArithmetic(inner.getInput())) {
+        rewriter.replaceOp(op, inner.getInput());
+        return success();
+      }
+      return failure();
+    }
+    if (op.getKind() == UnaryKind::BitNot && op.getType().getWidth() != 1) {
+      // ~~x is x unless x holds Z, which the inner negation turns into X.
+      auto inner = op.getInput().getDefiningOp<SimLogicUnaryOp>();
+      if (inner && inner.getKind() == UnaryKind::BitNot &&
+          cannotHoldHighImpedance(inner.getInput())) {
+        rewriter.replaceOp(op, inner.getInput());
+        return success();
+      }
+      return failure();
+    }
+    if (!isTruthNegation(op))
+      return failure();
+    Operation *producer = op.getInput().getDefiningOp();
+    if (!producer)
+      return failure();
+    // Replication, extension and the OR reduction keep the truth value of
+    // their source (see SimplifyTruthSource).
+    if (op.getKind() == UnaryKind::LogicalNot) {
+      Value source = stripTruthPreservingProducers(op.getInput());
+      if (source != op.getInput()) {
+        replaceWithNewOp(rewriter, op,
+                         createNegation(rewriter, location, source));
+        return success();
+      }
+    }
+    if (auto compare = dyn_cast<SimLogicCompareOp>(producer)) {
+      std::optional<CompareKind> inverse =
+          getInverseComparison(compare.getKind());
+      if (!inverse)
+        return failure();
+      replaceWithNewOp(
+          rewriter, op,
+          SimLogicCompareOp::create(rewriter, location, op.getType(), *inverse,
+                                    compare.getLhs(), compare.getRhs()));
+      return success();
+    }
+    if (auto reduction = dyn_cast<SimLogicReductionOp>(producer)) {
+      replaceWithNewOp(
+          rewriter, op,
+          SimLogicReductionOp::create(rewriter, location, op.getType(),
+                                      getInverseReduction(reduction.getKind()),
+                                      reduction.getInput()));
+      return success();
+    }
+    if (auto negation = dyn_cast<SimLogicUnaryOp>(producer);
+        negation && isTruthNegation(negation)) {
+      // !!x is the truth value of x.
+      replaceWithNewOp(
+          rewriter, op,
+          SimLogicReductionOp::create(rewriter, location, op.getType(),
+                                      ReductionKind::Or, negation.getInput()));
+      return success();
+    }
+    return failure();
+  }
+};
+
+/// 11.4.9: ~|x is !x. A one-bit reduction applies its table to a single bit:
+/// AND, OR and XOR all map Z to X and keep 0, 1 and X, which is the identity
+/// on a value that cannot hold Z; the inverted reductions negate it.
+struct SimplifyReductionForm final : OpRewritePattern<SimLogicReductionOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicReductionOp op,
+                                PatternRewriter &rewriter) const override {
+    TypedValue<LogicType> input = op.getInput();
+    bool single = input.getType().getWidth() == 1;
+    bool inverted = op.getKind() == ReductionKind::Nand ||
+                    op.getKind() == ReductionKind::Nor ||
+                    op.getKind() == ReductionKind::Xnor;
+    if (op.getKind() == ReductionKind::Nor || (single && inverted)) {
+      replaceWithNewOp(rewriter, op,
+                       createNegation(rewriter, op.getLoc(), input));
+      return success();
+    }
+    if (!single)
+      return failure();
+    if (cannotHoldHighImpedance(input)) {
+      rewriter.replaceOp(op, input);
+      return success();
+    }
+    if (op.getKind() == ReductionKind::Or)
+      return failure();
+    rewriter.modifyOpInPlace(op, [&] { op.setKind(ReductionKind::Or); });
+    return success();
+  }
+};
+
+/// x == 0 is !x and x != 0 is the truth value of x: both are X exactly when
+/// x has no known one bit but some X or Z bit (11.4.5, 11.4.7).
+struct CompareWithZero final : OpRewritePattern<SimLogicCompareOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicCompareOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getKind() != CompareKind::Eq && op.getKind() != CompareKind::Ne)
+      return failure();
+    Value value;
+    if (isKnownZero(op.getRhs()))
+      value = op.getLhs();
+    else if (isKnownZero(op.getLhs()))
+      value = op.getRhs();
+    else
+      return failure();
+    if (op.getKind() == CompareKind::Eq)
+      replaceWithNewOp(rewriter, op,
+                       createNegation(rewriter, op.getLoc(), value));
+    else
+      replaceWithNewOp(rewriter, op,
+                       SimLogicReductionOp::create(rewriter, op.getLoc(),
+                                                   op.getType(),
+                                                   ReductionKind::Or, value));
+    return success();
+  }
+};
+
+/// Table 11-20 is symmetric in the two arms, and an X or Z condition stays
+/// ambiguous under negation, so a negated condition swaps the arms. With
+/// constant one-bit arms the conditional operator is a truth test.
+struct SimplifyMuxCondition final : OpRewritePattern<SimLogicMuxOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicMuxOp op,
+                                PatternRewriter &rewriter) const override {
+    Location location = op.getLoc();
+    if (auto negation = op.getCondition().getDefiningOp<SimLogicUnaryOp>();
+        negation && isTruthNegation(negation)) {
+      Value condition = negation.getInput();
+      if (condition.getType() != op.getCondition().getType())
+        condition = SimLogicReductionOp::create(rewriter, location,
+                                                op.getCondition().getType(),
+                                                ReductionKind::Or, condition);
+      replaceWithNewOp(rewriter, op,
+                       SimLogicMuxOp::create(rewriter, location, op.getType(),
+                                             condition, op.getFalseValue(),
+                                             op.getTrueValue()));
+      return success();
+    }
+    // c ? 1'b1 : 1'b0 is c with Z mapped to X, and c ? 1'b0 : 1'b1 is !c.
+    if (op.getType().getWidth() == 1) {
+      if (isKnownOne(op.getTrueValue()) && isKnownZero(op.getFalseValue())) {
+        replaceWithNewOp(
+            rewriter, op,
+            SimLogicReductionOp::create(rewriter, location, op.getType(),
+                                        ReductionKind::Or, op.getCondition()));
+        return success();
+      }
+      if (isKnownZero(op.getTrueValue()) && isKnownOne(op.getFalseValue())) {
+        replaceWithNewOp(rewriter, op,
+                         createNegation(rewriter, location, op.getCondition()));
+        return success();
+      }
+    }
+    // Table 11-20 keeps matching known bits and turns Z into X, so equal arms
+    // that cannot hold Z are returned unchanged.
+    if (op.getTrueValue() == op.getFalseValue() &&
+        cannotHoldHighImpedance(op.getTrueValue())) {
+      rewriter.replaceOp(op, op.getTrueValue());
+      return success();
+    }
+    return failure();
+  }
+};
+
+/// Identities of the bitwise and arithmetic operators that hold in four-state
+/// logic. x ^ '1 is ~x and x ~^ '0 is ~x (Table 11-14). The remaining
+/// identities normalize Z to X, so they return x only when x cannot hold Z
+/// (bitwise) or is a whole-value arithmetic result (11.4.3); a one-bit
+/// normalization is the truth value of x.
+struct SimplifyBinaryIdentity final : OpRewritePattern<SimLogicBinaryOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    Value lhs = op.getLhs();
+    Value rhs = op.getRhs();
+    Location location = op.getLoc();
+    BinaryKind kind = op.getKind();
+    if ((kind == BinaryKind::Xor && isKnownAllOnes(rhs)) ||
+        (kind == BinaryKind::Xnor && isKnownZero(rhs))) {
+      replaceWithNewOp(rewriter, op,
+                       SimLogicUnaryOp::create(rewriter, location, op.getType(),
+                                               UnaryKind::BitNot, lhs));
+      return success();
+    }
+    bool normalization =
+        ((kind == BinaryKind::And || kind == BinaryKind::Or) && lhs == rhs) ||
+        (kind == BinaryKind::And && isKnownAllOnes(rhs)) ||
+        (kind == BinaryKind::Xnor && isKnownAllOnes(rhs)) ||
+        ((kind == BinaryKind::Or || kind == BinaryKind::Xor) &&
+         isKnownZero(rhs));
+    if (normalization) {
+      if (cannotHoldHighImpedance(lhs)) {
+        rewriter.replaceOp(op, lhs);
+        return success();
+      }
+      if (op.getType().getWidth() != 1)
+        return failure();
+      replaceWithNewOp(rewriter, op,
+                       SimLogicReductionOp::create(rewriter, location,
+                                                   op.getType(),
+                                                   ReductionKind::Or, lhs));
+      return success();
+    }
+    bool arithmeticIdentity =
+        ((kind == BinaryKind::Add || kind == BinaryKind::Sub) &&
+         isKnownZero(rhs)) ||
+        ((kind == BinaryKind::Mul || kind == BinaryKind::UDiv ||
+          kind == BinaryKind::SDiv) &&
+         isKnownOne(rhs));
+    if (arithmeticIdentity && isWholeValueArithmetic(lhs)) {
+      rewriter.replaceOp(op, lhs);
+      return success();
+    }
+    return failure();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Structural selections
+//===----------------------------------------------------------------------===//
+
+/// A slice of an extended value is a slice of the source, the extension
+/// bits, or both (11.6.1). Sign-extension bits replicate the source MSB,
+/// including X and Z.
+struct ExtractOfResize final : OpRewritePattern<SimLogicExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resize = op.getInput().getDefiningOp<SimLogicResizeOp>();
+    if (!resize)
+      return failure();
+    TypedValue<LogicType> source = resize.getInput();
+    uint64_t sourceWidth = source.getType().getWidth();
+    uint64_t low = op.getLowBit();
+    uint64_t width = op.getType().getWidth();
+    Location location = op.getLoc();
+    if (low + width <= sourceWidth) {
+      if (low == 0 && width == sourceWidth) {
+        rewriter.replaceOp(op, source);
+        return success();
+      }
+      replaceWithNewOp(
+          rewriter, op,
+          SimLogicExtractOp::create(rewriter, location, op.getType(), source,
+                                    rewriter.getI64IntegerAttr(low)));
+      return success();
+    }
+    // The resize can only be widening here, since the slice lies within it.
+    if (low >= sourceWidth) {
+      if (!resize.getIsSigned()) {
+        rewriter.replaceOp(op, createKnownLogic(rewriter, location, width,
+                                                APInt::getZero(width)));
+        return success();
+      }
+      Value sign = SimLogicExtractOp::create(
+          rewriter, location, LogicType::get(op.getContext(), 1), source,
+          rewriter.getI64IntegerAttr(sourceWidth - 1));
+      replaceWithNewOp(
+          rewriter, op,
+          SimLogicReplicateOp::create(rewriter, location, op.getType(), sign,
+                                      rewriter.getI64IntegerAttr(width)));
+      return success();
+    }
+    Value part = source;
+    if (low != 0)
+      part = SimLogicExtractOp::create(
+          rewriter, location,
+          LogicType::get(op.getContext(), sourceWidth - low), source,
+          rewriter.getI64IntegerAttr(low));
+    replaceWithNewOp(rewriter, op,
+                     SimLogicResizeOp::create(rewriter, location, op.getType(),
+                                              part, resize.getIsSigned()));
+    return success();
+  }
+};
+
+/// Bitwise operators and the conditional operator act on each bit position
+/// independently (Tables 11-12 through 11-15, Table 11-20), so a slice of
+/// their result is the operator applied to slices. Arithmetic is excluded:
+/// an X anywhere in an operand makes every result bit X (11.4.3).
+struct NarrowBitwiseExtract final : OpRewritePattern<SimLogicExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  /// A slice of a constant or of a concatenation, replication, slice,
+  /// insertion or resize folds into its source, so narrowing does not add a
+  /// selection per operand.
+  static bool sliceFolds(Value value) {
+    return isConstantValue(value) ||
+           isa_and_nonnull<SimLogicConcatOp, SimLogicReplicateOp,
+                           SimLogicExtractOp, SimLogicInsertOp,
+                           SimLogicResizeOp>(value.getDefiningOp());
+  }
+
+  LogicalResult matchAndRewrite(SimLogicExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    Operation *producer = op.getInput().getDefiningOp();
+    if (!producer || !producer->hasOneUse())
+      return failure();
+    if (isa<SimLogicBinaryOp>(producer) &&
+        !llvm::all_of(producer->getOperands(), sliceFolds))
+      return failure();
+    if (auto mux = dyn_cast<SimLogicMuxOp>(producer);
+        mux &&
+        (!sliceFolds(mux.getTrueValue()) || !sliceFolds(mux.getFalseValue())))
+      return failure();
+    Location location = op.getLoc();
+    auto slice = [&](Value value) -> Value {
+      return SimLogicExtractOp::create(rewriter, location, op.getType(), value,
+                                       op.getLowBitAttr());
+    };
+    Value replacement;
+    if (auto binary = dyn_cast<SimLogicBinaryOp>(producer)) {
+      switch (binary.getKind()) {
+      case BinaryKind::And:
+      case BinaryKind::Or:
+      case BinaryKind::Xor:
+      case BinaryKind::Xnor:
+        replacement = SimLogicBinaryOp::create(
+            rewriter, location, op.getType(), binary.getKind(),
+            slice(binary.getLhs()), slice(binary.getRhs()));
+        break;
+      default:
+        break;
+      }
+    } else if (auto unary = dyn_cast<SimLogicUnaryOp>(producer)) {
+      if (unary.getKind() == UnaryKind::BitNot)
+        replacement =
+            SimLogicUnaryOp::create(rewriter, location, op.getType(),
+                                    UnaryKind::BitNot, slice(unary.getInput()));
+    } else if (auto mux = dyn_cast<SimLogicMuxOp>(producer)) {
+      replacement = SimLogicMuxOp::create(
+          rewriter, location, op.getType(), mux.getCondition(),
+          slice(mux.getTrueValue()), slice(mux.getFalseValue()));
+    }
+    if (!replacement)
+      return failure();
+    rewriter.replaceOp(op, replacement);
+    return success();
+  }
+};
+
+/// A slice of a value shifted by a constant is a slice of the source, the
+/// vacated fill, or both (11.4.10). Logical shifts fill with zero and an
+/// arithmetic right shift with the source MSB, including X and Z.
+struct ExtractOfConstantShift final : OpRewritePattern<SimLogicExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    auto shift = op.getInput().getDefiningOp<SimLogicShiftOp>();
+    if (!shift)
+      return failure();
+    std::optional<ConstantIndex> amount = getConstantIndex(shift.getAmount());
+    uint64_t sourceWidth = shift.getType().getWidth();
+    // Unknown, zero and out-of-range amounts are folded on the shift itself.
+    if (!amount || !amount->value || amount->value->isZero() ||
+        amount->value->uge(sourceWidth))
+      return failure();
+    uint64_t k = amount->value->getZExtValue();
+    uint64_t low = op.getLowBit();
+    uint64_t width = op.getType().getWidth();
+    Value source = shift.getInput();
+    Location location = op.getLoc();
+    MLIRContext *context = op.getContext();
+    auto zero = [&](uint64_t bits) {
+      return createKnownLogic(rewriter, location, bits, APInt::getZero(bits));
+    };
+    auto slice = [&](uint64_t from, uint64_t bits) -> Value {
+      if (from == 0 && bits == sourceWidth)
+        return source;
+      return SimLogicExtractOp::create(rewriter, location,
+                                       LogicType::get(context, bits), source,
+                                       rewriter.getI64IntegerAttr(from));
+    };
+    Value replacement;
+    if (shift.getKind() == ShiftKind::Left) {
+      // Result bit i is source bit i - k, or zero below k.
+      if (low >= k)
+        replacement = slice(low - k, width);
+      else if (low + width <= k)
+        replacement = zero(width);
+      else
+        replacement = SimLogicConcatOp::create(
+            rewriter, location, op.getType(),
+            ValueRange{slice(0, low + width - k), zero(k - low)});
+    } else {
+      // Result bit i is source bit i + k, or the fill above sourceWidth - k.
+      bool arithmetic = shift.getKind() == ShiftKind::RightArith;
+      if (low + width + k <= sourceWidth)
+        replacement = slice(low + k, width);
+      else if (low + k >= sourceWidth && !arithmetic)
+        replacement = zero(width);
+      else if (low + k >= sourceWidth)
+        replacement = SimLogicReplicateOp::create(
+            rewriter, location, op.getType(), slice(sourceWidth - 1, 1),
+            rewriter.getI64IntegerAttr(width));
+      else
+        replacement =
+            SimLogicResizeOp::create(rewriter, location, op.getType(),
+                                     slice(low + k, sourceWidth - low - k),
+                                     rewriter.getBoolAttr(arithmetic));
+    }
+    rewriter.replaceOp(op, replacement);
+    return success();
+  }
+};
+
+/// A constant selection that overlaps the input only partially reads X for
+/// its out-of-range bits and writes only its in-range bits (11.5.1).
+struct PartialConstantDynamicExtract final
+    : OpRewritePattern<SimLogicDynExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicDynExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    std::optional<ConstantIndex> index = getConstantIndex(op.getLowBit());
+    if (!index || !index->value)
+      return failure();
+    uint64_t inputWidth = op.getInput().getType().getWidth();
+    uint64_t width = op.getType().getWidth();
+    const APInt &low = *index->value;
+    Location location = op.getLoc();
+    MLIRContext *context = op.getContext();
+    auto unknown = [&](uint64_t bits) {
+      return createLogicConstant(rewriter, location, bits, APInt::getZero(bits),
+                                 APInt::getAllOnes(bits));
+    };
+    SmallVector<Value, 2> pieces;
+    if (!low.isNegative()) {
+      if (low.uge(inputWidth) || low.getZExtValue() + width <= inputWidth)
+        return failure();
+      uint64_t start = low.getZExtValue();
+      pieces = {unknown(start + width - inputWidth),
+                SimLogicExtractOp::create(
+                    rewriter, location,
+                    LogicType::get(context, inputWidth - start), op.getInput(),
+                    rewriter.getI64IntegerAttr(start))};
+    } else {
+      APInt skipped = -low;
+      if (skipped.uge(width))
+        return failure();
+      uint64_t below = skipped.getZExtValue();
+      pieces = {SimLogicExtractOp::create(
+                    rewriter, location, LogicType::get(context, width - below),
+                    op.getInput(), rewriter.getI64IntegerAttr(0)),
+                unknown(below)};
+    }
+    replaceWithNewOp(
+        rewriter, op,
+        SimLogicConcatOp::create(rewriter, location, op.getType(), pieces));
+    return success();
+  }
+};
+
+struct PartialConstantDynamicInsert final
+    : OpRewritePattern<SimLogicDynInsertOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimLogicDynInsertOp op,
+                                PatternRewriter &rewriter) const override {
+    std::optional<ConstantIndex> index = getConstantIndex(op.getLowBit());
+    if (!index || !index->value)
+      return failure();
+    uint64_t inputWidth = op.getInput().getType().getWidth();
+    uint64_t width = op.getReplacement().getType().getWidth();
+    const APInt &low = *index->value;
+    Location location = op.getLoc();
+    MLIRContext *context = op.getContext();
+    uint64_t sourceLow;
+    uint64_t pieceWidth;
+    uint64_t targetLow;
+    if (!low.isNegative()) {
+      if (low.uge(inputWidth) || low.getZExtValue() + width <= inputWidth)
+        return failure();
+      targetLow = low.getZExtValue();
+      sourceLow = 0;
+      pieceWidth = inputWidth - targetLow;
+    } else {
+      APInt skipped = -low;
+      if (skipped.uge(width))
+        return failure();
+      targetLow = 0;
+      sourceLow = skipped.getZExtValue();
+      pieceWidth = width - sourceLow;
+    }
+    Value piece = SimLogicExtractOp::create(
+        rewriter, location, LogicType::get(context, pieceWidth),
+        op.getReplacement(), rewriter.getI64IntegerAttr(sourceLow));
+    replaceWithNewOp(rewriter, op,
+                     SimLogicInsertOp::create(
+                         rewriter, location, op.getType(), op.getInput(), piece,
+                         rewriter.getI64IntegerAttr(targetLow)));
+    return success();
+  }
+};
+
+/// IEEE 1800-2023 7.4.6: writing back the element just read changes nothing.
+/// An invalid index reads the default and makes the write a no-op, so this
+/// holds for every index.
+struct RemoveArrayWriteBack final : OpRewritePattern<SimArrayDynInsertOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimArrayDynInsertOp op,
+                                PatternRewriter &rewriter) const override {
+    auto extract = op.getReplacement().getDefiningOp<SimArrayDynExtractOp>();
+    if (!extract || extract.getInput() != op.getInput() ||
+        extract.getIndex() != op.getIndex())
+      return failure();
+    rewriter.replaceOp(op, op.getInput());
+    return success();
+  }
+};
+
+/// IEEE 1800-2023 7.3.1: members of a hard packed union share all their bits,
+/// so reading another member reinterprets them. A two-state member read from
+/// four-state bits converts X and Z to zero.
+struct ReinterpretPackedUnionMember final
+    : OpRewritePattern<SimUnionExtractOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SimUnionExtractOp op,
+                                PatternRewriter &rewriter) const override {
+    auto construct = op.getInput().getDefiningOp<SimUnionConstructOp>();
+    auto unionType = dyn_cast<PackedUnionType>(op.getInput().getType());
+    if (!construct || !unionType || unionType.getIsTagged() ||
+        construct.getIndex() == op.getIndex())
+      return failure();
+    Value value = construct.getValue();
+    Type sourceType = value.getType();
+    Type resultType = op.getType();
+    Type sourceScalar = getPackedScalarType(sourceType);
+    Type resultScalar = getPackedScalarType(resultType);
+    std::optional<unsigned> unionWidth = getPackedWidth(unionType);
+    if (!sourceScalar || !resultScalar || !unionWidth ||
+        getPackedWidth(sourceScalar) != unionWidth ||
+        getPackedWidth(resultScalar) != unionWidth)
+      return failure();
+    Location location = op.getLoc();
+    if (sourceType != sourceScalar)
+      value =
+          SimPackedFlattenOp::create(rewriter, location, sourceScalar, value);
+    if (isa<LogicType>(sourceScalar) && isa<IntegerType>(resultScalar))
+      value = SimLogicToBitsOp::create(rewriter, location, resultScalar, value);
+    else if (isa<IntegerType>(sourceScalar) && isa<LogicType>(resultScalar))
+      value =
+          SimLogicFromBitsOp::create(rewriter, location, resultScalar, value);
+    if (resultType != resultScalar)
+      value =
+          SimPackedUnflattenOp::create(rewriter, location, resultType, value);
+    rewriter.replaceOp(op, value);
+    return success();
+  }
+};
+
 } // namespace
 
 void SimPackedFlattenOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -3266,16 +4730,13 @@ void SimArrayDynExtractOp::getCanonicalizationPatterns(
 
 void SimArrayDynInsertOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
-  results.add<ConstantArrayInsert, TwoStateIndex<SimArrayDynInsertOp, 2>>(
-      context);
+  results.add<ConstantArrayInsert, RemoveArrayWriteBack,
+              TwoStateIndex<SimArrayDynInsertOp, 2>>(context);
 }
-
-void SimUnionConstructOp::getCanonicalizationPatterns(RewritePatternSet &,
-                                                      MLIRContext *) {}
 
 void SimUnionExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
-  results.add<SimplifyUnionExtract>(context);
+  results.add<SimplifyUnionExtract, ReinterpretPackedUnionMember>(context);
 }
 
 void SimRefSubelementOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -3313,28 +4774,29 @@ void SimDriverArrayElementOp::getCanonicalizationPatterns(
 
 void SimLogicBinaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
-  results.add<NormalizeBinaryConstant, TwoStateBinary, CombineBinaryConstants>(
-      context);
+  results.add<NormalizeBinaryConstant, TwoStateBinary, CombineBinaryConstants,
+              SimplifyBinaryIdentity>(context);
 }
 
 void SimLogicUnaryOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
-  results.add<TwoStateUnary>(context);
+  results.add<TwoStateUnary, SimplifyNegation>(context);
 }
 
 void SimLogicReductionOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
-  results.add<TwoStateReduction, ReduceReplication>(context);
+  results.add<TwoStateReduction, TwoStateParity, ReduceReplication,
+              SimplifyReductionForm>(context);
 }
 
 void SimLogicLogicalOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
-  results.add<SimplifyLogical>(context);
+  results.add<SimplifyLogical, SingleBitLogicalToBitwise>(context);
 }
 
 void SimLogicMuxOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                 MLIRContext *context) {
-  results.add<TwoStateMux>(context);
+  results.add<TwoStateMux, SimplifyMuxCondition>(context);
 }
 
 void SimLogicCaseDifferenceMaskOp::getCanonicalizationPatterns(
@@ -3344,7 +4806,7 @@ void SimLogicCaseDifferenceMaskOp::getCanonicalizationPatterns(
 
 void SimLogicShiftOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                   MLIRContext *context) {
-  results.add<TwoStateIndex<SimLogicShiftOp, 1>>(context);
+  results.add<TwoStateIndex<SimLogicShiftOp, 1>, TwoStateShift>(context);
 }
 
 void SimStringCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
@@ -3374,33 +4836,38 @@ void SimStringToPackedExactOp::getCanonicalizationPatterns(
 
 void SimLogicCompareOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
-  results.add<NormalizeCompareConstant, TwoStateCompare>(context);
+  results.add<NormalizeCompareConstant, TwoStateCompare, CompareWithZero>(
+      context);
 }
 
 void SimLogicResizeOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
-  results.add<CollapseResizeChain, TwoStateResize>(context);
+  results.add<CollapseResizeChain, TwoStateResize, TruncatingResizeToExtract>(
+      context);
 }
 
 void SimLogicIsTrueOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
-  results.add<TwoStateTruth>(context);
+  results.add<TwoStateTruth, SimplifyTruthSource, SimplifyTruthCondition>(
+      context);
+}
+
+void SimLogicToBitsOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                   MLIRContext *context) {
+  results.add<ConvertResizedLogicToBits, ConvertLogicToBitsThroughProducer>(
+      context);
 }
 
 void SimLogicCountBitsOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
-  results.add<DeduplicateCountControls>(context);
-}
-
-void ObeliskSimulationDialect::getCanonicalizationPatterns(
-    RewritePatternSet &results) const {
-  results.add<SimplifyTruthSource, ConvertResizedLogicToBits>(getContext());
+  results.add<DeduplicateCountControls, CountBitsWithPopulationCount>(context);
 }
 
 void SimLogicConcatOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
   results.add<FlattenConcat, ReplicateRepeatedConcatInput,
-              MergeAdjacentConcatExtracts>(context);
+              MergeAdjacentConcatExtracts, MergeConcatConstants,
+              ConcatLeadingZerosToResize>(context);
 }
 
 void SimLogicReplicateOp::getCanonicalizationPatterns(
@@ -3411,26 +4878,39 @@ void SimLogicReplicateOp::getCanonicalizationPatterns(
 void SimLogicExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                     MLIRContext *context) {
   results.add<SimplifyStaticExtract<SimLogicExtractOp>,
-              SimplifyLogicExtractSource>(context);
+              SimplifyLogicExtractSource, ExtractOfResize, NarrowBitwiseExtract,
+              ExtractOfConstantShift, TwoStateExtract>(context);
 }
 
 void SimLogicDynExtractOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<TwoStateIndex<SimLogicDynExtractOp, 1>>(context);
-  results.add<ConstantDynamicExtract<SimLogicDynExtractOp, SimLogicExtractOp>>(
-      context);
+  results.add<ConstantDynamicExtract<SimLogicDynExtractOp, SimLogicExtractOp>,
+              PartialConstantDynamicExtract>(context);
 }
 
 void SimLogicDynInsertOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<TwoStateIndex<SimLogicDynInsertOp, 2>>(context);
-  results.add<ConstantDynamicInsert<SimLogicDynInsertOp, SimLogicInsertOp>>(
-      context);
+  results.add<ConstantDynamicInsert<SimLogicDynInsertOp, SimLogicInsertOp>,
+              PartialConstantDynamicInsert, TwoStateDynamicInsert>(context);
 }
 
 void SimLogicInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                    MLIRContext *context) {
   results.add<RemoveOverwrittenInsert>(context);
+}
+
+void SimBitsDynExtractOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results
+      .add<TwoStateIndex<SimBitsDynExtractOp, 1>, ConstantBitsDynamicExtract>(
+          context);
+}
+
+void SimBitsDynInsertOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                     MLIRContext *context) {
+  results.add<TwoStateIndex<SimBitsDynInsertOp, 2>>(context);
 }
 
 void SimRefExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,

@@ -962,7 +962,10 @@ enum {
   OBELISK_RT_DB_POWER = 60,
   // Packed replication. The immediate is the positive replication count;
   // destination width equals source width times that count.
-  OBELISK_RT_DB_REPLICATE = 61
+  OBELISK_RT_DB_REPLICATE = 61,
+  // Two-state population count (math.ctpop). Destination and source are
+  // equal-width bit registers.
+  OBELISK_RT_DB_POPCOUNT = 62
 };
 
 // StoreState writes its exact post-resolution transition predicate to the

@@ -13,5 +13,7 @@ def ScheduleDialect : Dialect {
     transforms optimize them; executor conversions consume them.
   }];
   let useDefaultAttributePrinterParser = 1;
+  // Canonicalization of native predicates materializes arith constants.
+  let dependentDialects = ["::mlir::arith::ArithDialect"];
 }
 #endif

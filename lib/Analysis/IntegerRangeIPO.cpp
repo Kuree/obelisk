@@ -198,6 +198,9 @@ Attribute summarizeExpression(Value value, sim::SimFuncOp function,
     kind = "identity";
   else if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op))
     kind = resize.getIsSigned() ? "sext" : "zext";
+  else if (auto extract = dyn_cast<sim::SimLogicExtractOp>(op);
+           extract && extract.getLowBit() == 0)
+    kind = "trunc"; // A truncation is canonically the low slice.
   else if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
     switch (binary.getKind()) {
     case sim::BinaryKind::Add:

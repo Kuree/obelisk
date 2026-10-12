@@ -19,12 +19,15 @@ func.func @truth_chain(%x: !simulation.logic<4>) -> i1 {
 }
 
 // Truncating can discard the only known one; other reductions have different
-// truth tables. Neither operation can be bypassed by a truth check.
+// truth tables. Neither operation can be bypassed by a truth check. A
+// truncating resize is the low slice, and ~|x is true only for x === '0.
 // CHECK-LABEL: func.func @truth_refusals
-// CHECK: simulation.logic.resize %arg0 signed = false
-// CHECK: simulation.logic.reduction xor
-// CHECK: simulation.logic.reduction nor
-// CHECK: simulation.logic.is_true
+// CHECK-DAG: %[[ZERO:.*]] = simulation.logic.constant 0 : i8, 0 : i8
+// CHECK-DAG: %[[NARROW:.*]] = simulation.logic.extract %arg0 from 0 : !simulation.logic<8> -> !simulation.logic<4>
+// CHECK-DAG: %[[XOR:.*]] = simulation.logic.reduction xor %arg0
+// CHECK-DAG: simulation.logic.is_true %[[NARROW]]
+// CHECK-DAG: simulation.logic.is_true %[[XOR]]
+// CHECK-DAG: simulation.logic.compare case_eq %arg0, %[[ZERO]]
 func.func @truth_refusals(%x: !simulation.logic<8>) -> (i1, i1, i1) {
   %narrow = simulation.logic.resize %x signed = false : !simulation.logic<8> -> !simulation.logic<4>
   %xor = simulation.logic.reduction xor %x : !simulation.logic<8> -> !simulation.logic<1>
@@ -35,14 +38,15 @@ func.func @truth_refusals(%x: !simulation.logic<8>) -> (i1, i1, i1) {
   return %a, %b, %c : i1, i1, i1
 }
 
+// A truncation is the low slice; its conversion converts only that slice.
 // CHECK-LABEL: func.func @convert_resize
 // CHECK-NOT: simulation.logic.resize
+// CHECK: %[[LOW:.*]] = simulation.logic.extract %arg0 from 0 : !simulation.logic<4> -> !simulation.logic<1>
 // CHECK: %[[BITS:.*]] = simulation.logic.to_bits %arg0 : !simulation.logic<4> -> i4
 // CHECK: arith.extsi %[[BITS]] : i4 to i128
 // CHECK: %[[UBITS:.*]] = simulation.logic.to_bits %arg0 : !simulation.logic<4> -> i4
 // CHECK: arith.extui %[[UBITS]] : i4 to i65
-// CHECK: %[[TBITS:.*]] = simulation.logic.to_bits %arg0 : !simulation.logic<4> -> i4
-// CHECK: arith.trunci %[[TBITS]] : i4 to i1
+// CHECK: simulation.logic.to_bits %[[LOW]] : !simulation.logic<1> -> i1
 func.func @convert_resize(%x: !simulation.logic<4>) -> (i128, i65, i1) {
   %signed = simulation.logic.resize %x signed = true : !simulation.logic<4> -> !simulation.logic<128>
   %unsigned = simulation.logic.resize %x signed = false : !simulation.logic<4> -> !simulation.logic<65>

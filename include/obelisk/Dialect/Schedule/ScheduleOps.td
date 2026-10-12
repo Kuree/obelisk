@@ -67,6 +67,7 @@ def NativeWordReverseOp : ScheduleNativeOp<"word.reverse", [Pure]> {
   let arguments = (ins AnyType:$input, DefaultValuedAttr<I32Attr, "1">:$lane_width);
   let results = (outs AnyType:$result);
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 def NativeWordResizeLanesOp : ScheduleNativeOp<"word.resize_lanes", [Pure]> {
   let summary = "resize each native storage lane without changing its bit order";
@@ -81,6 +82,7 @@ def NativeWordResizeLanesOp : ScheduleNativeOp<"word.resize_lanes", [Pure]> {
                        I32Attr:$result_lane_width);
   let results = (outs AnyType:$result);
   let hasVerifier = 1;
+  let hasFolder = 1;
 }
 def NativeWordViewOp : ScheduleNativeOp<"word.view", [Pure, ViewLikeOpInterface]> {
   let summary = "view consecutive scalar array storage lanes as one packed word";
@@ -168,6 +170,7 @@ def NativeKnownValueOp : ScheduleNativeOp<"known.value", [Pure]> {
   let arguments = (ins AnyType:$input);
   let results = (outs I1:$known);
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
 }
 def NativeTransitionOp
     : ScheduleNativeOp<

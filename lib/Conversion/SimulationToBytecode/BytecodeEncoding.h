@@ -456,6 +456,7 @@ enum Opcode : uint16_t {
   Bitcast = OBELISK_RT_DB_BITCAST,
   Power = OBELISK_RT_DB_POWER,
   Replicate = OBELISK_RT_DB_REPLICATE,
+  PopCount = OBELISK_RT_DB_POPCOUNT,
 };
 
 } // namespace obelisk::bytecode

@@ -73,9 +73,10 @@ module {
 // CHECK: %[[NEG1:.*]] = simulation.logic.mux %[[IS_MINUS_ONE]] ? %[[PARITY]] : %[[ZERO]]
 // CHECK: %[[IS_ONE:.*]] = simulation.logic.compare eq %[[BASE]], %{{.*}}
 // CHECK: %[[NEG2:.*]] = simulation.logic.mux %[[IS_ONE]] ? %{{.*}} : %[[NEG1]]
-// CHECK: %[[IS_ZERO:.*]] = simulation.logic.compare eq %[[BASE]], %{{.*}}
+// base == 0 is !base, and a negated condition swaps the conditional arms.
+// CHECK: %[[NONZERO:.*]] = simulation.logic.reduction or %[[BASE]]
 // CHECK: %[[UNKNOWN:.*]] = simulation.logic.constant 0 : i8, -1 : i8
-// CHECK: %[[NEG3:.*]] = simulation.logic.mux %[[IS_ZERO]] ? %[[UNKNOWN]] : %[[NEG2]]
+// CHECK: %[[NEG3:.*]] = simulation.logic.mux %[[NONZERO]] ? %[[NEG2]] : %[[UNKNOWN]]
 // CHECK: simulation.logic.mux %[[SIGN]] ? %[[NEG3]] : %[[MAGNITUDE]]
 
 // An unsigned exponent cannot be negative, so the table's lower half is not

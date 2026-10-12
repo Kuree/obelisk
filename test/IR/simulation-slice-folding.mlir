@@ -47,13 +47,19 @@ module {
       simulation.return %slice : !simulation.logic<8>
     }
 
-    // Partially overlapping slices and arithmetic shifts still depend on data.
-    // A wildcard on the LHS does not wildcard a known RHS.
+    // A partially overlapping constant slice reads X for its out-of-range
+    // bits and writes only its in-range bits. Arithmetic shifts still depend
+    // on data, and a wildcard on the LHS does not wildcard a known RHS.
     // CHECK-LABEL: simulation.func @partial
-    // CHECK: simulation.logic.dyn_extract
-    // CHECK: simulation.logic.dyn_insert
-    // CHECK: simulation.logic.shift right_arith
-    // CHECK: simulation.logic.compare wild_eq
+    // CHECK-DAG: %[[X:.*]] = simulation.logic.constant false, true : !simulation.logic<1>
+    // CHECK-DAG: %[[READ:.*]] = simulation.logic.extract %arg1 from 0 : !simulation.logic<8> -> !simulation.logic<3>
+    // CHECK-DAG: %[[A:.*]] = simulation.logic.concat %[[READ]], %[[X]] : (!simulation.logic<3>, !simulation.logic<1>) -> !simulation.logic<4>
+    // CHECK-DAG: %[[PIECE:.*]] = simulation.logic.extract %arg2 from 1 : !simulation.logic<4> -> !simulation.logic<3>
+    // CHECK-DAG: %[[B:.*]] = simulation.logic.insert %[[PIECE]] into %arg1 at 0
+    // CHECK-DAG: simulation.logic.shift right_arith
+    // CHECK-DAG: simulation.logic.compare wild_eq
+    // CHECK-NOT: dyn_extract
+    // CHECK-NOT: dyn_insert
     simulation.func @partial(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %v: !simulation.logic<8> {simulation.capture_kind = 2 : i32}, %r: !simulation.logic<4> {simulation.capture_kind = 2 : i32}) -> (!simulation.logic<4>, !simulation.logic<8>, !simulation.logic<8>, !simulation.logic<1>) attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64} {
       %low = arith.constant -1 : i32
       %high = arith.constant 8 : i32

@@ -217,6 +217,60 @@ static bool matchInductionConstant(Value value, APInt &bits) {
   return false;
 }
 
+/// A four-state induction test against a known bound. Canonicalization
+/// spells the same test in several ways: a condition `x == c` becomes the
+/// case equality `x === c`, and `x != 0` becomes the truth value of `x`
+/// (IEEE 1800-2023 11.4.5, 12.4). For a known counter and a known bound these
+/// are all one comparison.
+struct LogicInductionTest {
+  Value compared;
+  sim::CompareKind kind;
+  APInt bound;
+  SmallVector<Operation *, 2> operations;
+};
+
+static std::optional<LogicInductionTest>
+matchLogicInductionTest(Value condition) {
+  auto knownBound = [](Value value) -> std::optional<APInt> {
+    auto constant = value.getDefiningOp<sim::SimLogicConstantOp>();
+    if (!constant || !constant.getUnknown().isZero())
+      return std::nullopt;
+    return constant.getValue();
+  };
+  if (auto compare = condition.getDefiningOp<sim::SimLogicCompareOp>()) {
+    if (compare.getKind() != sim::CompareKind::CaseEq &&
+        compare.getKind() != sim::CompareKind::CaseNe)
+      return std::nullopt;
+    std::optional<APInt> bound = knownBound(compare.getRhs());
+    if (!bound)
+      return std::nullopt;
+    return LogicInductionTest{compare.getLhs(),
+                              compare.getKind() == sim::CompareKind::CaseEq
+                                  ? sim::CompareKind::Eq
+                                  : sim::CompareKind::Ne,
+                              *bound,
+                              {compare.getOperation()}};
+  }
+  auto isTrue = condition.getDefiningOp<sim::SimLogicIsTrueOp>();
+  if (!isTrue)
+    return std::nullopt;
+  if (auto compare =
+          isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>()) {
+    std::optional<APInt> bound = knownBound(compare.getRhs());
+    if (!bound)
+      return std::nullopt;
+    return LogicInductionTest{compare.getLhs(),
+                              compare.getKind(),
+                              *bound,
+                              {isTrue.getOperation(), compare.getOperation()}};
+  }
+  auto logic = cast<sim::LogicType>(isTrue.getInput().getType());
+  return LogicInductionTest{isTrue.getInput(),
+                            sim::CompareKind::Ne,
+                            APInt::getZero(logic.getWidth()),
+                            {isTrue.getOperation()}};
+}
+
 /// Infer invariant expressions through dialect interfaces. Only constants and
 /// enclosing inductions are leaves: neither mutable design state nor a value
 /// carried by the current loop can establish a finite recurrence.
@@ -296,16 +350,12 @@ recognizeBoundedLoopImpl(Block *header,
                      cast<BlockArgument>(compare.getLhs()).getOwner() == header
                  ? compare.getLhs()
                  : compare.getRhs();
-  else if (auto isTrue =
-               condition.getCondition().getDefiningOp<sim::SimLogicIsTrueOp>())
-    if (auto compare =
-            isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>()) {
-      if (auto fromBits =
-              compare.getLhs().getDefiningOp<sim::SimLogicFromBitsOp>())
-        tested = fromBits.getInput();
-      else if (forMarking)
-        tested = unwrapUnsignedInduction(compare.getLhs());
-    }
+  else if (auto test = matchLogicInductionTest(condition.getCondition())) {
+    if (auto fromBits = test->compared.getDefiningOp<sim::SimLogicFromBitsOp>())
+      tested = fromBits.getInput();
+    else if (forMarking)
+      tested = unwrapUnsignedInduction(test->compared);
+  }
   auto induction = dyn_cast_or_null<BlockArgument>(tested);
   if (!induction || induction.getOwner() != header)
     return std::nullopt;
@@ -356,19 +406,16 @@ recognizeBoundedLoopImpl(Block *header,
       limit = increasing ? limitMax : limitMin;
     }
     testOperations.insert(compare.getOperation());
-  } else if (auto isTrue = condition.getCondition()
-                               .getDefiningOp<sim::SimLogicIsTrueOp>()) {
-    auto compare = isTrue.getInput().getDefiningOp<sim::SimLogicCompareOp>();
-    if (!compare || compare->getBlock() != header ||
-        isTrue->getBlock() != header)
+  } else if (auto test = matchLogicInductionTest(condition.getCondition())) {
+    if (llvm::any_of(test->operations, [&](Operation *operation) {
+          return operation->getBlock() != header;
+        }))
       return std::nullopt;
-    auto fromBits = compare.getLhs().getDefiningOp<sim::SimLogicFromBitsOp>();
-    auto bound = compare.getRhs().getDefiningOp<sim::SimLogicConstantOp>();
+    auto fromBits = test->compared.getDefiningOp<sim::SimLogicFromBitsOp>();
     if ((!fourState && (!fromBits || fromBits.getInput() != induction)) ||
-        (fourState && unwrapUnsignedInduction(compare.getLhs()) != induction) ||
-        !bound || !bound.getUnknown().isZero())
+        (fourState && unwrapUnsignedInduction(test->compared) != induction))
       return std::nullopt;
-    switch (compare.getKind()) {
+    switch (test->kind) {
     case sim::CompareKind::SLT:
       predicate = arith::CmpIPredicate::slt;
       break;
@@ -403,7 +450,7 @@ recognizeBoundedLoopImpl(Block *header,
       // Case/wildcard forms are not induction comparisons.
       return std::nullopt;
     }
-    limit = bound.getValue();
+    limit = test->bound;
     if (fourState) {
       // The comparison sees a zero-extended unsigned counter. Retain the
       // recurrence's storage width, rather than proving a wider nonwrapping
@@ -417,7 +464,7 @@ recognizeBoundedLoopImpl(Block *header,
           !limit.isIntN(inductionWidth))
         return std::nullopt;
     }
-    testOperations.insert({isTrue.getOperation(), compare.getOperation()});
+    testOperations.insert(test->operations.begin(), test->operations.end());
     if (fromBits)
       testOperations.insert(fromBits.getOperation());
   } else {
@@ -502,6 +549,16 @@ recognizeBoundedLoopImpl(Block *header,
             cast<sim::LogicType>(resize.getType()).getWidth() < inductionWidth)
           return std::nullopt;
         arithmetic = resize.getInput();
+        continue;
+      }
+      // A truncation is canonically the low slice (11.6.1), with the same
+      // width condition as a truncating resize.
+      if (auto slice = dyn_cast<sim::SimLogicExtractOp>(op);
+          slice && slice.getLowBit() == 0) {
+        if (slice.getInput().getType().getWidth() < inductionWidth ||
+            slice.getType().getWidth() < inductionWidth)
+          return std::nullopt;
+        arithmetic = slice.getInput();
         continue;
       }
       break;

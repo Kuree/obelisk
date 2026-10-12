@@ -703,7 +703,7 @@ module {
 // SIM-DAG: simulation.logic.compare slt
 // SIM-DAG: simulation.time.constant 5000
 // SIM-DAG: simulation.time.constant 50000
-// SIM-DAG: simulation.logic.logical and
+// SIM-DAG: simulation.logic.binary and
 // SIM-DAG: simulation.logic.unary logical_not
 // SIM-DAG: arith.cmpi eq
 // SIM-DAG: simulation.logic.shift left

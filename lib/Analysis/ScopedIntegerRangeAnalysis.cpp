@@ -1,6 +1,7 @@
 #include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/Utils/InferIntRangeCommon.h"
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
@@ -112,8 +113,8 @@ ScopedIntegerRangeAnalysis::ScopedIntegerRangeAnalysis(DataFlowSolver &solver,
     if (auto *op = value.getDefiningOp())
       if (isa<InferIntRangeInterface, sim::SimCallOp, sim::SimLogicFromBitsOp,
               sim::SimLogicToBitsOp, sim::SimLogicBinaryOp,
-              sim::SimLogicResizeOp, sim::SimLogicCompareOp,
-              sim::SimLogicIsTrueOp>(op))
+              sim::SimLogicResizeOp, sim::SimLogicExtractOp,
+              sim::SimLogicCompareOp, sim::SimLogicIsTrueOp, math::CtPopOp>(op))
         llvm::append_range(pending, op->getOperands());
     // Phi inputs are also data dependencies; no predecessor recursion is
     // required for range solving. This walk only builds the analysis slice.
@@ -246,13 +247,25 @@ ScopedIntegerRangeAnalysis::visitOperation(Operation *op,
   for (Value value : op->getResults())
     next.erase(value);
   if (auto interface = dyn_cast<InferIntRangeInterface>(op)) {
+    // A logic range certifies that the value has no X or Z bits. A logic
+    // operand without that certificate may be X, so no logic result of an
+    // interface operation (for example a select of logic arms) can have one,
+    // and a width-mismatched placeholder must never reach the inference.
     SmallVector<ConstantIntRanges> inputs;
-    for (Value value : op->getOperands())
-      inputs.push_back(
-          getRange(value, before).value_or(ConstantIntRanges::maxRange(0)));
+    bool uncertifiedLogic = false;
+    for (Value value : op->getOperands()) {
+      std::optional<ConstantIntRanges> range = getRange(value, before);
+      uncertifiedLogic |= !range && isa<sim::LogicType>(value.getType());
+      unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
+      if (!range)
+        if (auto packed = sim::getPackedWidth(value.getType()))
+          width = *packed;
+      inputs.push_back(range.value_or(ConstantIntRanges::maxRange(width)));
+    }
     interface.inferResultRanges(
         inputs, [&](Value value, const ConstantIntRanges &range) {
-          if (relevant.contains(value))
+          if (relevant.contains(value) &&
+              !(uncertifiedLogic && isa<sim::LogicType>(value.getType())))
             next.insert_or_assign(value, range);
         });
   } else if (op->getNumResults() == 1 && relevant.contains(op->getResult(0))) {
@@ -275,6 +288,24 @@ ScopedIntegerRangeAnalysis::visitOperation(Operation *op,
           put(resize.getIsSigned() ? intrange::extSIRange(*input, width)
                                    : intrange::extUIRange(*input, width));
       }
+    } else if (auto extract = dyn_cast<sim::SimLogicExtractOp>(op)) {
+      // A slice is a logical shift right followed by a truncation; a
+      // truncation is canonically the low slice.
+      if (auto input = getRange(extract.getInput(), before)) {
+        unsigned inputWidth = input->umin().getBitWidth();
+        ConstantIntRanges shifted = *input;
+        if (extract.getLowBit() != 0)
+          shifted = intrange::inferShrU(
+              {*input, ConstantIntRanges::constant(
+                           APInt(inputWidth, extract.getLowBit()))});
+        put(intrange::truncRange(shifted, extract.getType().getWidth()));
+      }
+    } else if (auto count = dyn_cast<math::CtPopOp>(op)) {
+      // A population count never exceeds the width of its operand.
+      unsigned width = cast<IntegerType>(count.getType()).getWidth();
+      put(ConstantIntRanges::fromUnsigned(
+          APInt::getZero(width),
+          APInt(width, width, /*isSigned=*/false, /*implicitTrunc=*/true)));
     } else if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
       auto lhs = getRange(binary.getLhs(), before);
       auto rhs = getRange(binary.getRhs(), before);

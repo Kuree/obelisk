@@ -144,23 +144,28 @@ module {
 
 // CHECK-LABEL: simulation.func private @unit_0
 // `a -> b` negates the left operand and branches on the negation, so the
-// right operand is only loaded on the path that needs it.
-// CHECK: %[[A:.*]] = simulation.logic.reduction or
-// CHECK: %[[NOT_A:.*]] = simulation.logic.unary logical_not %[[A]]
-// CHECK: %[[TAKEN:.*]] = simulation.logic.is_true %[[NOT_A]]
+// right operand is only loaded on the path that needs it. Negating the truth
+// value of a one-bit operand is the type-preserving ~a, which is true exactly
+// when a is a known zero, so the branch tests a === 0 without four-state logic.
+// CHECK: %[[ZERO:.*]] = simulation.logic.constant false, false
+// CHECK: %[[A:.*]] = simulation.ref.load %arg1
+// CHECK: %[[NOT_A:.*]] = simulation.logic.unary bit_not %[[A]]
+// CHECK: %[[TAKEN:.*]] = simulation.logic.compare case_eq %[[A]], %[[ZERO]]
 // CHECK: cf.cond_br %[[TAKEN]], ^bb2(%{{.*}} : !simulation.logic<1>), ^bb1
 // CHECK: ^bb1:
 // CHECK: %[[B:.*]] = simulation.logic.reduction or
-// CHECK: %[[IMPLY:.*]] = simulation.logic.logical or %[[NOT_A]], %[[B]]
+// CHECK: %[[IMPLY:.*]] = simulation.logic.binary or %[[NOT_A]], %[[B]]
 // CHECK: cf.br ^bb2(%[[IMPLY]] : !simulation.logic<1>)
 
 // `a <-> b` evaluates both operands unconditionally and conjoins the two
-// implications.
+// implications. One-bit logical connectives are the bitwise ones.
 // CHECK: ^bb2(
-// CHECK: %[[EA:.*]] = simulation.logic.reduction or
-// CHECK: %[[EB:.*]] = simulation.logic.reduction or
-// CHECK-DAG: %[[NOT_EB:.*]] = simulation.logic.unary logical_not %[[EB]]
-// CHECK-DAG: %[[BACKWARD:.*]] = simulation.logic.logical or %[[NOT_EB]], %[[EA]]
-// CHECK-DAG: %[[NOT_EA:.*]] = simulation.logic.unary logical_not %[[EA]]
-// CHECK-DAG: %[[FORWARD:.*]] = simulation.logic.logical or %[[NOT_EA]], %[[EB]]
-// CHECK: simulation.logic.logical and %[[FORWARD]], %[[BACKWARD]]
+// CHECK: %[[LA:.*]] = simulation.ref.load %arg1
+// CHECK: %[[EA:.*]] = simulation.logic.reduction or %[[LA]]
+// CHECK: %[[LB:.*]] = simulation.ref.load %arg2
+// CHECK: %[[EB:.*]] = simulation.logic.reduction or %[[LB]]
+// CHECK-DAG: %[[NOT_EB:.*]] = simulation.logic.unary bit_not %[[LB]]
+// CHECK-DAG: %[[BACKWARD:.*]] = simulation.logic.binary or %[[NOT_EB]], %[[EA]]
+// CHECK-DAG: %[[NOT_EA:.*]] = simulation.logic.unary bit_not %[[LA]]
+// CHECK-DAG: %[[FORWARD:.*]] = simulation.logic.binary or %[[NOT_EA]], %[[EB]]
+// CHECK: simulation.logic.binary and %[[FORWARD]], %[[BACKWARD]]

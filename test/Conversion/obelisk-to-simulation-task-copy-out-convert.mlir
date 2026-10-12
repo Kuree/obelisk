@@ -86,6 +86,6 @@ module attributes {
 // CHECK: simulation.task.call @unit_0(%{{.*}}, %[[IN]], %[[FORMAL]]
 // CHECK: ^bb1(%[[RETURNED:.*]]: !simulation.ref<!simulation.logic<32>>):
 // CHECK: %[[OUT:.*]] = simulation.ref.load %[[RETURNED]]
-// CHECK: %[[NARROWED:.*]] = simulation.logic.resize %[[OUT]]
+// CHECK: %[[NARROWED:.*]] = simulation.logic.extract %[[OUT]] from 0
 // CHECK-SAME: !simulation.logic<32> -> !simulation.logic<1>
 // CHECK: simulation.ref.store %[[NARROWED]] to %[[FLAG]]

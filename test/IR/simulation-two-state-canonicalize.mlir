@@ -454,13 +454,13 @@ func.func @retain_smod(%a: i8, %b: i8) -> !simulation.logic<8> {
 // indices. Range checks remain owned by the selection operation.
 // CHECK-LABEL: func.func @array_read_write(
 // CHECK: %[[V:.*]] = simulation.array.extract_dynamic %arg0[%arg1] : (!simulation.unpacked_array<3 : -2 x i8>, i65) -> i8
-// CHECK: %[[A:.*]] = simulation.array.insert_dynamic %[[V]] into %arg0[%arg1] : (!simulation.unpacked_array<3 : -2 x i8>, i8, i65)
-// CHECK: return %[[A]]
-func.func @array_read_write(%array: !simulation.unpacked_array<3 : -2 x i8>, %index: i65) -> !simulation.unpacked_array<3 : -2 x i8> {
+// CHECK: %[[A:.*]] = simulation.array.insert_dynamic %arg2 into %arg0[%arg1] : (!simulation.unpacked_array<3 : -2 x i8>, i8, i65)
+// CHECK: return %[[V]], %[[A]]
+func.func @array_read_write(%array: !simulation.unpacked_array<3 : -2 x i8>, %index: i65, %data: i8) -> (i8, !simulation.unpacked_array<3 : -2 x i8>) {
   %logic = simulation.logic.from_bits %index : i65 -> !simulation.logic<65>
   %value = simulation.array.extract_dynamic %array[%logic] : (!simulation.unpacked_array<3 : -2 x i8>, !simulation.logic<65>) -> i8
-  %updated = simulation.array.insert_dynamic %value into %array[%logic] : (!simulation.unpacked_array<3 : -2 x i8>, i8, !simulation.logic<65>) -> !simulation.unpacked_array<3 : -2 x i8>
-  return %updated : !simulation.unpacked_array<3 : -2 x i8>
+  %updated = simulation.array.insert_dynamic %data into %array[%logic] : (!simulation.unpacked_array<3 : -2 x i8>, i8, !simulation.logic<65>) -> !simulation.unpacked_array<3 : -2 x i8>
+  return %value, %updated : i8, !simulation.unpacked_array<3 : -2 x i8>
 }
 
 // CHECK-LABEL: func.func @driver_array(

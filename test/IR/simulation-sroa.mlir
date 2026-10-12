@@ -265,13 +265,12 @@ module {
     // reconstructing the packed value preserves the static/dynamic bit index.
     // CHECK-LABEL: simulation.func @safe_enclosing_packed_extract
     // CHECK-NOT: !simulation.ref<!simulation.unpacked_struct
-    // CHECK: %[[LOW:.*]] = arith.constant 0 : i64
     // CHECK: %[[ZERO:.*]] = arith.constant 0 : i8
     // CHECK-COUNT-4: simulation.ref.alloc %[[ZERO]] : i8 -> !simulation.ref<i8>
     // CHECK-NOT: simulation.ref.alloc
     // CHECK: %[[PACKED:.*]] = simulation.aggregate.construct {{.*}} : (i8, i8, i8, i8) -> !simulation.packed_array<3 : 0 x i8>
     // CHECK: %[[BITS:.*]] = simulation.packed.flatten %[[PACKED]] : (!simulation.packed_array<3 : 0 x i8>) -> i32
-    // CHECK: %[[BYTE:.*]] = simulation.bits.dyn_extract %[[BITS]] from %[[LOW]] : (i32, i64) -> i8
+    // CHECK: %[[BYTE:.*]] = arith.trunci %[[BITS]] : i32 to i8
     // CHECK: simulation.return %[[BYTE]] : i8
     simulation.func @safe_enclosing_packed_extract(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> i8

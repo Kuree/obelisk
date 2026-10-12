@@ -55,8 +55,7 @@ bool isWordBitwiseComputation(Operation *op) {
            binary.getKind() == sim::BinaryKind::Xor ||
            binary.getKind() == sim::BinaryKind::Xnor;
   if (auto unary = dyn_cast<sim::SimLogicUnaryOp>(op))
-    return unary.getKind() == sim::UnaryKind::Plus ||
-           unary.getKind() == sim::UnaryKind::BitNot;
+    return unary.getKind() == sim::UnaryKind::Plus || unary.isBitwiseNegation();
   return isa<arith::AndIOp, arith::OrIOp, arith::XOrIOp>(op);
 }
 namespace {
