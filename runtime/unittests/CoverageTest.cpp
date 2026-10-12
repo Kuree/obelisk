@@ -2374,7 +2374,93 @@ TEST_F(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage)
 }
 
 TEST_F(CoverageRuntimeDesignTest,
-     ClassFormalsRetainIdentityLiveStorageAndInterfaces) {
+       ChandleFormalsCopyOpaqueWordsAndAliasStorage) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  for (uint64_t id : {70, 71, 72})
+    schema.functionalFormals.push_back({id, 10, "chandle" + std::to_string(id),
+                                        FunctionalFormalKind::Constructor,
+                                        id == 71
+                                            ? FunctionalFormalDirection::Ref
+                                            : FunctionalFormalDirection::Input,
+                                        FunctionalExpressionResultKind::Chandle,
+                                        0, 0, CoverageSignedness::NotApplicable,
+                                        static_cast<uint32_t>(id - 70), 0, 0});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  // Foreign pointers are opaque: even an unmapped word must never be followed
+  // by validation or GC, nor confused with a managed class or numeric value.
+  uint64_t word = UINT64_MAX, storage = 0;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
+                &storage),
+            OBELISK_RT_OK);
+  obelisk_rt_functional_value_v1 formals[] = {
+      {70, 0, 0, nullptr, nullptr, nullptr, word,
+       OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 0},
+      {71, 64, 8, nullptr, nullptr, nullptr, storage,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+      {72, 0, 0, nullptr, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 0}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  auto valid = formals[0];
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0] = valid;
+  formals[0].bit_width = 64;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0] = valid;
+  formals[0].value = &word;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0] = valid;
+  formals[0].owner = reinterpret_cast<obelisk_rt_object_v1 *>(&word);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  formals[0] = valid;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals, 3, nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  word = UINT64_C(0x123456789abcdef0);
+  uint8_t dummy = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (uint64_t id : {70, 71, 72}) {
+    uint64_t captured = 42;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE, 64,
+                  8, nullptr, nullptr, 0, &captured, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(captured, id == 70 ? UINT64_MAX : id == 71 ? word : uint64_t{0});
+    captured = 42;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
+                  8, nullptr, nullptr, 0, &captured, nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(captured, 42u);
+  }
+  obelisk_rt_managed_execution_leave(lane, entered);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       ClassFormalsRetainIdentityLiveStorageAndInterfaces) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
   schema.functionalClassTypes = {{800, 99}, {801, 101}};

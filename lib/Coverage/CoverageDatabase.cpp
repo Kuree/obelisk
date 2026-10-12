@@ -3533,7 +3533,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Real ||
         formal.resultKind == FunctionalExpressionResultKind::String ||
         formal.resultKind == FunctionalExpressionResultKind::Container ||
-        formal.resultKind == FunctionalExpressionResultKind::ClassHandle;
+        formal.resultKind == FunctionalExpressionResultKind::ClassHandle ||
+        formal.resultKind == FunctionalExpressionResultKind::Chandle;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3784,8 +3785,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           (!(expression.flags & FunctionalExpressionSamplingEventEnd) ||
            (expression.flags & FunctionalExpressionSamplingEventBlock));
     }
-    if (((aggregateResult || expression.resultKind ==
-                                 FunctionalExpressionResultKind::ClassHandle) &&
+    if (((aggregateResult ||
+          expression.resultKind ==
+              FunctionalExpressionResultKind::ClassHandle ||
+          expression.resultKind == FunctionalExpressionResultKind::Chandle) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3802,7 +3805,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::ClassHandle) ||
+                     FunctionalExpressionResultKind::Chandle) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,

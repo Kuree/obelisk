@@ -14,6 +14,7 @@
 #include "AnalysisTestPasses.h"
 
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -159,7 +160,10 @@ public:
 /// the `has` attribute names and, if given, the `op` name loses its `remove`
 /// attributes, takes the `set` attributes, and has each `replace-from` element
 /// in its attributes and types replaced by `replace-to` (an attribute, or a
-/// type for a type); with `erase`, it is erased instead.
+/// type for a type), and has operand `operand` replaced by an `arith.constant`
+/// of the typed `constant` attribute; with `erase`, it is erased instead. With
+/// `clone`, the edit applies to an unused copy inserted before each operation,
+/// so a value whose users constrain its type can still be produced mistyped.
 class EditAttributesTestPass
     : public PassWrapper<EditAttributesTestPass, OperationPass<ModuleOp>> {
 public:
@@ -196,6 +200,21 @@ public:
       llvm::cl::desc("attribute or type to replace, also when nested")};
   Option<std::string> replaceTo{*this, "replace-to",
                                 llvm::cl::desc("its replacement")};
+  Option<int64_t> operandIndex{
+      *this, "operand",
+      llvm::cl::desc("index of the operand to replace with `constant`"),
+      llvm::cl::init(-1)};
+  Option<std::string> constant{
+      *this, "constant",
+      llvm::cl::desc("typed attribute of the replacement operand")};
+  Option<bool> clone{*this, "clone",
+                     llvm::cl::desc("edit an unused copy inserted before each "
+                                    "matching operation"),
+                     llvm::cl::init(false)};
+
+  void getDependentDialects(DialectRegistry &registry) const final {
+    registry.insert<arith::ArithDialect>();
+  }
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
@@ -212,6 +231,20 @@ public:
                          "or two types");
         return signalPassFailure();
       }
+    }
+    TypedAttr operandValue;
+    if (operandIndex >= 0 || !constant.empty()) {
+      operandValue =
+          dyn_cast_or_null<TypedAttr>(parseElement(constant, "constant"));
+      if (operandIndex < 0 || !operandValue) {
+        module.emitError("operand and constant must be an index and a typed "
+                         "attribute");
+        return signalPassFailure();
+      }
+    }
+    if (clone && erase) {
+      module.emitError("clone and erase cannot be combined");
+      return signalPassFailure();
     }
     // An edit that changes nothing would silently test the unedited input.
     bool replaced = false;
@@ -251,9 +284,24 @@ public:
       module.emitError("test-obelisk-edit-attributes matched no operation");
       return signalPassFailure();
     }
-    for (Operation *operation : matched) {
+    for (Operation *&operation : matched) {
       if (erase)
         continue;
+      if (clone) {
+        OpBuilder builder(operation);
+        operation = builder.clone(*operation);
+      }
+      if (operandValue) {
+        if (static_cast<uint64_t>(operandIndex) >= operation->getNumOperands()) {
+          operation->emitError("test-obelisk-edit-attributes operand index is "
+                               "out of range");
+          return signalPassFailure();
+        }
+        OpBuilder builder(operation);
+        operation->setOperand(
+            operandIndex, arith::ConstantOp::create(builder, operation->getLoc(),
+                                                    operandValue));
+      }
       for (const std::string &name : remove)
         operation->removeAttr(name);
       for (NamedAttribute attribute : assigned)

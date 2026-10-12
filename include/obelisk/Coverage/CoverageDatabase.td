@@ -148,6 +148,7 @@ def ExpressionTupleQueue : CoverageExpressionResultKind<"TupleQueue", 7>;
 def ExpressionContainer : CoverageExpressionResultKind<"Container", 8>;
 def ExpressionAggregate : CoverageExpressionResultKind<"Aggregate", 9>;
 def ExpressionClassHandle : CoverageExpressionResultKind<"ClassHandle", 10>;
+def ExpressionChandle : CoverageExpressionResultKind<"Chandle", 11>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -389,7 +390,8 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
     "FunctionalExpressionResultKind", "Enum",
     [ExpressionBoolean, ExpressionIntegral, ExpressionReal, ExpressionSet,
      ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
-     ExpressionContainer, ExpressionAggregate, ExpressionClassHandle]>;
+     ExpressionContainer, ExpressionAggregate, ExpressionClassHandle,
+     ExpressionChandle]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
     [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;

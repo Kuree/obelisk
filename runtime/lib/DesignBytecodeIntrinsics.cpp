@@ -318,6 +318,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return true;
     }
     if (layout.kind == OBELISK_RT_DBREG_BITS) {
+      if (layout.flags & OBELISK_RT_DBREG_CHANDLE) {
+        auto word = readScalar(image, frame, reg);
+        if (!word)
+          return false;
+        result.kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
+        result.bit_width = 0;
+        result.value_size = 0;
+        result.payload = *word;
+        return true;
+      }
       result.kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
       result.value = frame.data + layout.offset;
       return layout.width != 0;
@@ -1754,17 +1764,20 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     bool reference = output.kind == OBELISK_RT_DBREG_ARGUMENT_REF;
     if (reference && (output.width != 192 || output.size != 24))
       return OBELISK_RT_INVALID_BYTECODE;
-    uint32_t kind = container && (output.flags & OBELISK_RT_DBREG_CLASS_HANDLE)
-                        ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
-                    : container ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
-                    : reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
-                    : output.kind == OBELISK_RT_DBREG_REAL64
-                        ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
-                    : output.kind == OBELISK_RT_DBREG_STRING
-                        ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
-                    : output.kind == OBELISK_RT_DBREG_LOGIC
-                        ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
-                        : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+    uint32_t kind =
+        output.flags & OBELISK_RT_DBREG_CHANDLE
+            ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
+        : container && (output.flags & OBELISK_RT_DBREG_CLASS_HANDLE)
+            ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+        : container ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+        : reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
+        : output.kind == OBELISK_RT_DBREG_REAL64
+            ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
+        : output.kind == OBELISK_RT_DBREG_STRING
+            ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
+        : output.kind == OBELISK_RT_DBREG_LOGIC
+            ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+            : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
     if (output.kind != OBELISK_RT_DBREG_BITS &&
         output.kind != OBELISK_RT_DBREG_LOGIC &&
         output.kind != OBELISK_RT_DBREG_REAL64 &&

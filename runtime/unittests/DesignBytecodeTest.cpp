@@ -13633,6 +13633,47 @@ TEST(DesignBytecode, MixedTierSchedulerUsesRegionRankAndInsertionKey) {
   mixedTierObservedHandle = UINT64_MAX;
 }
 
+TEST(DesignBytecode, ChandleRegistersRequireUnsignedOpaqueWordGeometry) {
+  struct Case {
+    uint8_t kind, flags;
+    uint32_t width;
+    uint64_t size;
+    obelisk_rt_status expected;
+  };
+  const Case cases[] = {
+      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_CHANDLE, 64, 8, OBELISK_RT_OK},
+      {OBELISK_RT_DBREG_BITS, OBELISK_RT_DBREG_CHANDLE, 32, 8,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_LOGIC, OBELISK_RT_DBREG_CHANDLE, 65, 32,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_MANAGED, OBELISK_RT_DBREG_CHANDLE, 64, 8,
+       OBELISK_RT_INVALID_DESIGN},
+      {OBELISK_RT_DBREG_BITS,
+       OBELISK_RT_DBREG_CHANDLE | OBELISK_RT_DBREG_SIGNED, 64, 8,
+       OBELISK_RT_INVALID_DESIGN}};
+  for (const auto &test : cases) {
+    Fixture fixture;
+    size_t record = get64(fixture.bytecode, 56);
+    fixture.bytecode[record] = test.kind;
+    fixture.bytecode[record + 1] = test.flags;
+    put32(fixture.bytecode, record + 4, test.width);
+    put64(fixture.bytecode, record + 16, test.size);
+    put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));
+    fixture.execution.bytecode = fixture.bytecode.data();
+    fixture.execution.checksum = imageChecksum(fixture.bytecode);
+    obelisk_rt_context *context = nullptr;
+    EXPECT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        test.expected);
+    if (test.expected == OBELISK_RT_OK)
+      ASSERT_NE(context, nullptr);
+    else
+      EXPECT_EQ(context, nullptr);
+    if (context)
+      obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST(DesignBytecode, RejectsNonCanonicalTablesAndUncallableFunctions) {
   auto rejected = [](Fixture &fixture) {
     put64(fixture.bytecode, 32, imageChecksum(fixture.bytecode));

@@ -2545,18 +2545,22 @@ bool validateImage(const Image &image) {
           image.data + image.layouts +
           (function.firstLayout + registerIndex) * kLayoutSize;
       uint64_t expected = layoutSize(layout.kind, layout.width);
+      uint8_t allowedFlags =
+          layout.kind == OBELISK_RT_DBREG_MANAGED && layout.width == 64
+              ? OBELISK_RT_DBREG_CLASS_HANDLE
+          : layout.kind == OBELISK_RT_DBREG_BITS
+              ? OBELISK_RT_DBREG_SIGNED |
+                    (layout.width == 64 ? OBELISK_RT_DBREG_CHANDLE : 0)
+          : layout.kind == OBELISK_RT_DBREG_LOGIC ? OBELISK_RT_DBREG_SIGNED
+                                                  : 0;
       if (layout.width == 0 || expected == 0 || layout.size != expected ||
           (layout.kind == OBELISK_RT_DBREG_REAL32 && layout.width != 32) ||
           (layout.kind == OBELISK_RT_DBREG_REAL64 && layout.width != 64) ||
           (layout.kind == OBELISK_RT_DBREG_STRING && layout.width != 64) ||
           read16(layoutRecord + 2) != 0 || read64(layoutRecord + 32) != 0 ||
-          (layout.flags &
-           ~(layout.kind == OBELISK_RT_DBREG_MANAGED && layout.width == 64
-                 ? OBELISK_RT_DBREG_CLASS_HANDLE
-             : layout.kind == OBELISK_RT_DBREG_BITS ||
-                     layout.kind == OBELISK_RT_DBREG_LOGIC
-                 ? OBELISK_RT_DBREG_SIGNED
-                 : 0)) != 0 ||
+          (layout.flags & ~allowedFlags) != 0 ||
+          ((layout.flags & OBELISK_RT_DBREG_CHANDLE) &&
+           (layout.flags & OBELISK_RT_DBREG_SIGNED)) ||
           layout.offset % 8 != 0 || layout.offset < previousEnd ||
           layout.offset > function.scratchSize ||
           layout.size > function.scratchSize - layout.offset)

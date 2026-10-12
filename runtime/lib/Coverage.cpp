@@ -8255,7 +8255,7 @@ bool validateValue(
   if (result == Result::Boolean)
     width = 1;
   else if ((result == Result::String || result == Result::Container ||
-            result == Result::ClassHandle) &&
+            result == Result::ClassHandle || result == Result::Chandle) &&
            reference)
     width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
@@ -8295,6 +8295,10 @@ bool validateValue(
                 ? validateClassFormal(context, object, classType)
                 : validateContainerFormal(context, object, containerType));
   }
+  if (result == Result::Chandle)
+    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE &&
+           !value.bit_width && !value.value_size && !value.value &&
+           !value.unknown && !value.owner && !value.argument_ref_kind;
   if (result == Result::ClassHandle)
     return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE &&
            !value.bit_width && !value.value_size && !value.value &&
@@ -8360,7 +8364,8 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
   if (source.kind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE)
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE)
     return;
   // Strings are immutable values. The context's service-root enumerator
   // retains this captured managed word independently of the caller's storage.
@@ -13284,7 +13289,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     bool classHandle =
         formal.resultKind ==
         obelisk::coverage::FunctionalExpressionResultKind::ClassHandle;
-    if (container || classHandle) {
+    bool chandle = formal.resultKind ==
+                   obelisk::coverage::FunctionalExpressionResultKind::Chandle;
+    if (chandle) {
+      if (kind != OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE || bitWidth != 64 ||
+          valueSize != 8 || outUnknown)
+        return OBELISK_RT_INVALID_DESIGN;
+    } else if (container || classHandle) {
       uint32_t expected = classHandle
                               ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
                               : OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
@@ -13298,6 +13309,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     } else if (kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
                formal.bitWidth != bitWidth || formal.valueSize != valueSize)
       return OBELISK_RT_INVALID_DESIGN;
     uint32_t storedKind = formal.kind;
@@ -13305,7 +13317,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
-          !classHandle)
+          !classHandle && !chandle)
         return OBELISK_RT_INVALID_ARGUMENT;
       const uint8_t *stateValue =
           globalValue ? globalValue
@@ -13342,7 +13354,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       if (status != OBELISK_RT_OK)
         return status;
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
-    } else
+    } else if (chandle)
+      std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
+    else
       std::memcpy(outValue, formal.value.data(),
                   static_cast<size_t>(valueSize));
     if (outUnknown) {

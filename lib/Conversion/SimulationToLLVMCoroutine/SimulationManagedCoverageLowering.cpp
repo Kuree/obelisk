@@ -100,7 +100,8 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
     Type element = argumentRef.getElementType();
     if (element.isF64() ||
         isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
-            sim::AssocArrayType, sim::ClassHandleType>(element))
+            sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType>(
+            element))
       packedWidth = 64;
     if (!packedWidth && sim::isAggregateType(element)) {
       auto span = sim::getProvenanceSpan(element);
@@ -123,6 +124,11 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
         rewriter, location, packed,
         llvmConstant(rewriter, location, packed.getType(), 128));
     referenceKind = LLVM::TruncOp::create(rewriter, location, i32, shiftedTag);
+  } else if (isa<sim::ChandleType>(sourceType)) {
+    if (converted.size() != 1 || !converted.front().getType().isInteger(64))
+      return failure();
+    kind = OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE;
+    payload = converted.front();
   } else if (isa<sim::ClassHandleType>(sourceType)) {
     if (converted.size() != 1 || !converted.front().getType().isInteger(64))
       return failure();
@@ -1151,15 +1157,16 @@ public:
         sim::getPackedWidth(op.getResult().getType());
     bool string = isa<sim::StringType>(op.getResult().getType());
     bool classHandle = isa<sim::ClassHandleType>(op.getResult().getType());
+    bool chandle = isa<sim::ChandleType>(op.getResult().getType());
     bool container =
         isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
             op.getResult().getType());
     bool reference = isa<sim::ArgumentRefType>(op.getResult().getType());
-    uint64_t bitWidth =
-        reference ? 192
-        : op.getResult().getType().isF64() || string || container || classHandle
-            ? 64
-            : width.value_or(0);
+    uint64_t bitWidth = reference ? 192
+                        : op.getResult().getType().isF64() || string ||
+                                container || classHandle || chandle
+                            ? 64
+                            : width.value_or(0);
     if (!bitWidth)
       return failure();
     uint64_t size = (bitWidth + 7) / 8;
@@ -1171,6 +1178,7 @@ public:
     uint64_t kind =
         reference     ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
         : classHandle ? OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE
+        : chandle     ? OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE
         : string      ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
         : container   ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
         : op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL

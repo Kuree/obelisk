@@ -1119,7 +1119,7 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
 
     Integral and four-state sampled values remain typed values; predicates are
     i1 and real coverpoint samples are f64. A string, container, aggregate
-    reference path, or class handle may occur only for the once-evaluated
+    reference path, class handle, or chandle may occur only for the once-evaluated
     default of a corresponding formal on an overridden sample() method;
     matching consumes the derived coverpoint and guard results. This
     batch form ensures that a sampled expression or iff predicate is evaluated
@@ -1133,7 +1133,8 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                                            SimDynamicArrayType, SimQueueType,
                                            SimAssocArrayType,
                                            SimReferencePathType,
-                                           SimClassHandleType, F64]>>:$values,
+                                           SimClassHandleType,
+                                           SimChandleType, F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
     $context `,` $handle

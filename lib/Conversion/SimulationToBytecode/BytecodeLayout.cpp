@@ -11,6 +11,7 @@
 #include "obelisk/Analysis/NativeStateLayoutAnalysis.h"
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
+#include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
 
@@ -43,9 +44,12 @@ FailureOr<Layout> getLayout(Type type) {
   } else if (auto logic = dyn_cast<sim::LogicType>(type)) {
     layout.kind = Logic;
     layout.width = logic.getWidth();
+  } else if (isa<sim::ChandleType>(type)) {
+    layout.kind = Bits;
+    layout.width = 64;
+    layout.flags = OBELISK_RT_DBREG_CHANDLE;
   } else if (isa<sim::TimeType, sim::ProcessType, sim::ManagedWatchType,
-                 sim::CovergroupHandleType, sim::VirtualInterfaceType,
-                 sim::ChandleType>(type)) {
+                 sim::CovergroupHandleType, sim::VirtualInterfaceType>(type)) {
     layout.kind = Bits;
     layout.width = 64;
   } else if (isa<sim::ControlType>(type)) {
