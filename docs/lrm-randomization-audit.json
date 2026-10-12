@@ -193,7 +193,9 @@
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
         ]
       }
     },
@@ -271,7 +273,9 @@
           "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
           "test/Runtime/random-wide-domain-plan-validation.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
         ]
       }
     },
@@ -424,7 +428,9 @@
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
         ]
       }
     },
@@ -1019,7 +1025,7 @@
         {
           "feature": "Integral system functions",
           "status": "partial",
-          "detail": "Signedness casts, clog2, countones, onehot, onehot0, and countbits participate in compiler Z3 plans and native/WASM execution. Value and unknown planes also support isunknown and bit counting for admitted undefined arithmetic and packed state captures; X/Z countbits control constants remain legal. General mixed unknown-plane system functions remain open."
+          "detail": "Signedness casts, clog2, countones, onehot, onehot0, isunknown and countbits participate in compiler Z3 plans and native/WASM execution. Value, unknown and high-impedance planes distinguish X from Z in admitted packed operands. Countbits combines distinct control LSBs as a set of 0/1/X/Z selectors, including live four-state controls. Casts, shifts, concatenation, replication and conditional merging preserve Z as required; undefined arithmetic and unary arithmetic on X/Z operands produce X. Clog2 consumes unsigned value bits after X/Z-to-zero conversion, including active four-state random declarations. Snapshot captures preserve frozen symbols through mode changes and checker-only calls. Scalar, 130-bit and bidirectional 32-bit MLIR regressions cover these cases. General mixed unknown selections and non-integral bitstreams remain open."
         },
         {
           "feature": "Scope-randomization user functions",
@@ -1076,7 +1082,9 @@
           "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
         ]
       }
     },
@@ -1497,7 +1505,9 @@
           "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
         ]
       }
     },

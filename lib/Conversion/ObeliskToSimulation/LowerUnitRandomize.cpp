@@ -5331,8 +5331,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<Operation *> operands = getChildren(expression);
     if (auto plane =
             expression->getAttrOfType<IntegerAttr>(randomArithmeticPlaneAttr)) {
-      if (operands.size() != 1 || plane.getInt() < 0 || plane.getInt() > 2)
+      if (operands.size() != 1 || plane.getInt() < 0 ||
+          plane.getInt() >
+              static_cast<int32_t>(RandomArithmeticPlane::FrozenHighImpedance))
         return failure();
+      auto kind = static_cast<RandomArithmeticPlane>(plane.getInt());
+      bool frozen = kind == RandomArithmeticPlane::FrozenUnknown ||
+                    kind == RandomArithmeticPlane::FrozenHighImpedance;
       bool saved = preserveArithmeticSource;
       preserveArithmeticSource = true;
       auto input = safeConstraintValue(operands.front());
@@ -5343,7 +5348,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value source = input->value;
       unsigned precision = cast<IntegerType>(bitsType).getWidth();
       unsigned offset = 0;
-      if (plane.getInt() == 2) {
+      if (frozen) {
         APInt sourceMask = priorityInputs(operands.front());
         offset = sourceMask.countTrailingZeros();
         if (offset >= assignmentWidth || precision > assignmentWidth - offset ||
@@ -5383,9 +5388,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (auto logic = dyn_cast<sim::LogicType>(scalar->getType())) {
         Value bits =
             sim::SimLogicToBitsOp::create(builder, location, bitsType, *scalar);
-        if (plane.getInt() == 0)
+        if (kind == RandomArithmeticPlane::Value)
           value = bits;
-        else {
+        else if (kind == RandomArithmeticPlane::HighImpedance ||
+                 kind == RandomArithmeticPlane::FrozenHighImpedance) {
+          auto all =
+              builder.getIntegerAttr(bitsType, APInt::getAllOnes(precision));
+          Value highImpedance = sim::SimLogicConstantOp::create(
+              builder, location, logic, all, all);
+          Value difference = sim::SimLogicCaseDifferenceMaskOp::create(
+              builder, location, bitsType, *scalar, highImpedance);
+          value = arith::XOrIOp::create(
+              builder, location, difference,
+              arith::ConstantOp::create(builder, location, bitsType, all));
+        } else {
           Value known =
               sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
           value = sim::SimLogicCaseDifferenceMaskOp::create(
@@ -5396,14 +5412,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         if (failed(converted))
           return failure();
         value =
-            plane.getInt() == 0
+            kind == RandomArithmeticPlane::Value
                 ? *converted
                 : arith::ConstantOp::create(builder, location, bitsType,
                                             builder.getIntegerAttr(bitsType, 0))
                       .getResult();
       }
       Value random = input->random;
-      if (plane.getInt() == 2) {
+      if (frozen) {
         Value active = activeGuardBits;
         if (offset)
           active = arith::ShRUIOp::create(builder, location, active,

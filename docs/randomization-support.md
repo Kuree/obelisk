@@ -79,8 +79,16 @@ Bit counting uses balanced sums at the minimum count width in Z3; wide
 results can also become proven definitions in generated code. Random
 inputs are two-state. Compiler value and unknown planes also preserve
 `$isunknown`, `$countones`, `$onehot`, and `$onehot0` for admitted unknown
-arithmetic and packed state captures. General mixed unknown-plane system
-functions remain open. These paths execute in native and WASM runtime builds.
+arithmetic and packed state captures. A compiler high-impedance plane separates
+stored Z symbols from X. `$countbits` applies the distinct control LSBs as a
+set of 0/1/X/Z symbols, including live four-state controls. Casts,
+shifts, concatenation, replication, and conditional merging preserve Z where
+required; undefined arithmetic and unary arithmetic on X/Z operands produce X.
+`$clog2` uses the unsigned value bits after X/Z-to-zero conversion, including
+four-state random declarations.
+These cases have scalar and 130-bit MLIR regressions in native, bytecode, and
+WASM execution. General mixed unknown selections and non-integral bitstreams
+remain open.
 
 Compiler Z3 resolves static domains, aliases, definitions and small complete
 assignment tables, and lowers every admitted residual arithmetic expression

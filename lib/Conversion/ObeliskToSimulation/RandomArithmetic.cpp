@@ -14,6 +14,7 @@ namespace obelisk::simlowering {
 struct RandomArithmetic::Impl {
   using Binary = semantic::SVBinaryOperator;
   using Unary = semantic::SVUnaryOperator;
+  using Plane = RandomArithmeticPlane;
   Builder builder;
   Width width;
   Candidate candidate;
@@ -187,6 +188,8 @@ struct RandomArithmetic::Impl {
     return binary(source, Binary::BinaryOr, a, b, precision);
   }
   Operation *bitNot(Operation *source, Operation *value, unsigned precision) {
+    if (!value)
+      return ones(source, precision);
     if (auto bits = constant(value))
       return literal(source, ~*bits);
     return unary(source, Unary::BitwiseNot, value, precision);
@@ -229,15 +232,39 @@ struct RandomArithmetic::Impl {
       if (inputWidth != precision)
         value.unknown = cast(source, value.unknown, precision, signedInput);
     }
+    if (value.highImpedance) {
+      unsigned inputWidth = *width(value.highImpedance);
+      if (sign(value.highImpedance) != signedInput)
+        value.highImpedance =
+            cast(source, value.highImpedance, inputWidth, signedInput);
+      if (inputWidth != precision)
+        value.highImpedance =
+            cast(source, value.highImpedance, precision, signedInput);
+    }
     return value;
   }
-  Operation *projection(Operation *source, unsigned precision, int32_t plane) {
+  Operation *projection(Operation *source, unsigned precision, Plane plane) {
     return make(source, semantic::SVConversionExpressionOp::getOperationName(),
-                precision, !plane && sign(source),
+                precision, plane == Plane::Value && sign(source),
                 {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true)),
-                 builder.getNamedAttr(randomArithmeticPlaneAttr,
-                                      builder.getI32IntegerAttr(plane))},
+                 builder.getNamedAttr(
+                     randomArithmeticPlaneAttr,
+                     builder.getI32IntegerAttr(static_cast<int32_t>(plane)))},
                 {source});
+  }
+  Operation *integralCall(Operation *source, StringRef name, Operation *input,
+                          unsigned precision, bool isSigned = false) {
+    Operation *node = source->clone();
+    expressions->getBody()->push_back(node);
+    nodes.push_back(node);
+    node->setAttr(randomArithmeticNodeAttr, builder.getUnitAttr());
+    node->setAttr("semantic_type", TypeAttr::get(type(precision, isSigned)));
+    node->setAttr("callee_name", builder.getStringAttr(name));
+    node->setAttr("argument_count", builder.getI64IntegerAttr(1));
+    node->setAttr("defaulted_arguments", builder.getDenseI64ArrayAttr({0}));
+    node->getRegion(0).front().clear();
+    node->getRegion(0).front().push_back(input->clone());
+    return node;
   }
   bool needed(Operation *expression) {
     if (expression->hasAttr(randomArithmeticNodeAttr))
@@ -285,6 +312,9 @@ struct RandomArithmetic::Impl {
         call.getCalleeName() == "$countbits") {
       if (!children.empty())
         result |= needed(children.front());
+      for (Operation *control : ArrayRef(children).drop_front())
+        if (!getConstantSpelling(control))
+          result |= needed(control);
     } else {
       for (Operation *child : children)
         result |= needed(child);
@@ -310,6 +340,8 @@ struct RandomArithmetic::Impl {
     if (succeeded(result)) {
       if (isZero(result->unknown))
         result->unknown = nullptr;
+      if (isZero(result->highImpedance))
+        result->highImpedance = nullptr;
       planes[expression] = *result;
     }
     return result;
@@ -333,8 +365,10 @@ struct RandomArithmetic::Impl {
       }
       return RandomArithmeticPlanes{
           literal(expression, bits->value & ~bits->unknown, signedResult),
-          bits->unknown.isZero() ? nullptr
-                                 : literal(expression, bits->unknown)};
+          bits->unknown.isZero() ? nullptr : literal(expression, bits->unknown),
+          (bits->value & bits->unknown).isZero()
+              ? nullptr
+              : literal(expression, bits->value & bits->unknown)};
     }
     if (!needed(expression))
       return RandomArithmeticPlanes{
@@ -343,11 +377,16 @@ struct RandomArithmetic::Impl {
         expression->hasAttr(randomVariableBitOffsetAttrName)) {
       // Random candidates are two-state. Disabled property bits are state,
       // and their pre-solve unknown symbols survive until consumed by an
-      // admitted conversion or absorbing operator. Plane 2 masks the stored
+      // admitted conversion or absorbing operator. FrozenUnknown masks stored
       // unknown bits with the current inactive-bit inventory before capture.
-      Operation *unknown = frozenVariables && fourState(expression)
-                               ? projection(expression, precision, 2)
-                               : nullptr;
+      Operation *unknown =
+          frozenVariables && fourState(expression)
+              ? projection(expression, precision, Plane::FrozenUnknown)
+              : nullptr;
+      Operation *highImpedance =
+          unknown
+              ? projection(expression, precision, Plane::FrozenHighImpedance)
+              : nullptr;
       // This reference is already the canonical solver bitstream. Keep its
       // binding, but prevent the emitted value cast from normalizing the
       // reference again and recursively rebuilding its unknown mask.
@@ -358,16 +397,20 @@ struct RandomArithmetic::Impl {
       return RandomArithmeticPlanes{
           mask(expression, cast(expression, reference, precision, signedResult),
                unknown, precision, signedResult),
-          unknown};
+          unknown, highImpedance};
     }
     if (isa<semantic::SVNamedValueExpressionOp,
             semantic::SVHierarchicalValueExpressionOp,
             semantic::SVMemberAccessExpressionOp>(expression) &&
         !candidate(expression))
       return RandomArithmeticPlanes{
-          projection(expression, precision, false),
-          fourState(expression) ? projection(expression, precision, true)
-                                : nullptr};
+          projection(expression, precision, Plane::Value),
+          fourState(expression)
+              ? projection(expression, precision, Plane::Unknown)
+              : nullptr,
+          fourState(expression)
+              ? projection(expression, precision, Plane::HighImpedance)
+              : nullptr};
     if (auto count = expression->getAttrOfType<IntegerAttr>(
             randomEvaluationInputsAttrName)) {
       if (count.getValue().isNegative() ||
@@ -378,8 +421,10 @@ struct RandomArithmetic::Impl {
       if (failed(input))
         return failure();
       auto result = resize(expression, *input, precision, signedResult);
-      if (!fourState(expression))
+      if (!fourState(expression)) {
         result.unknown = nullptr;
+        result.highImpedance = nullptr;
+      }
       result.value = mask(expression, result.value, result.unknown, precision,
                           signedResult);
       return result;
@@ -391,9 +436,74 @@ struct RandomArithmetic::Impl {
              semantic::SVConcatenationExpressionOp,
              semantic::SVCallExpressionOp>(expression))
       return RandomArithmeticPlanes{
-          projection(expression, precision, false),
-          fourState(expression) ? projection(expression, precision, true)
-                                : nullptr};
+          projection(expression, precision, Plane::Value),
+          fourState(expression)
+              ? projection(expression, precision, Plane::Unknown)
+              : nullptr,
+          fourState(expression)
+              ? projection(expression, precision, Plane::HighImpedance)
+              : nullptr};
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
+        call && call.getIsSystemCall() &&
+        call.getCalleeName() == "$countbits" && children.size() >= 2) {
+      auto input = get(children.front());
+      if (failed(input))
+        return failure();
+      unsigned inputWidth = *width(input->value);
+      // IEEE 20.9 treats controls as a set of four symbols and uses only each
+      // control's LSB. Symbol selectors consume X/Z rather than tainting the
+      // known integer result. Keep X and Z separate until this boundary.
+      Operation *controls[4] = {nullptr, nullptr, nullptr, nullptr};
+      for (Operation *child : ArrayRef(children).drop_front()) {
+        RandomArithmeticPlanes control;
+        if (auto spelling = getConstantSpelling(child)) {
+          auto bits = parseSVInteger(*spelling, 1, child->getLoc());
+          if (failed(bits))
+            return failure();
+          control = {literal(expression, bits->value & ~bits->unknown),
+                     literal(expression, bits->unknown),
+                     literal(expression, bits->value & bits->unknown)};
+        } else {
+          auto planes = get(child);
+          if (failed(planes))
+            return failure();
+          control = resize(expression, *planes, 1, false);
+        }
+        Operation *symbols[4] = {
+            bitNot(expression,
+                   bitOr(expression, control.value, control.unknown, 1), 1),
+            control.value,
+            mask(expression,
+                 control.unknown ? control.unknown : zero(expression, 1),
+                 control.highImpedance, 1),
+            control.highImpedance};
+        for (unsigned symbol = 0; symbol < 4; ++symbol)
+          controls[symbol] =
+              bitOr(expression, controls[symbol], symbols[symbol], 1);
+      }
+      Operation *symbols[4] = {
+          bitNot(expression,
+                 bitOr(expression, input->value, input->unknown, inputWidth),
+                 inputWidth),
+          input->value,
+          mask(expression,
+               input->unknown ? input->unknown : zero(expression, inputWidth),
+               input->highImpedance, inputWidth),
+          input->highImpedance};
+      Operation *matches = zero(expression, inputWidth);
+      for (unsigned symbol = 0; symbol < 4; ++symbol)
+        if (!isZero(controls[symbol]))
+          matches = bitOr(
+              expression, matches,
+              bitAnd(expression, symbols[symbol],
+                     unknownMask(expression, controls[symbol], inputWidth),
+                     inputWidth),
+              inputWidth);
+      return RandomArithmeticPlanes{integralCall(expression, "$countones",
+                                                 matches, precision,
+                                                 signedResult),
+                                    nullptr};
+    }
     SmallVector<RandomArithmeticPlanes> inputs;
     for (Operation *child : children) {
       auto input = get(child);
@@ -410,8 +520,10 @@ struct RandomArithmetic::Impl {
           resize(expression, inputs.front(), precision, sign(children.front()));
       // The destination's value set is the conversion boundary. Arithmetic
       // width conversions emitted by Slang retain the four-state type.
-      if (!fourState(expression))
+      if (!fourState(expression)) {
         result.unknown = nullptr;
+        result.highImpedance = nullptr;
+      }
       result.value = mask(expression, result.value, result.unknown, precision,
                           signedResult);
       return result;
@@ -467,7 +579,7 @@ struct RandomArithmetic::Impl {
       }
       input = resize(expression, input, precision, signedResult);
       Operation *unknown = input.unknown;
-      if (kind == Unary::Minus && unknown)
+      if ((kind == Unary::Plus || kind == Unary::Minus) && unknown)
         unknown = unknownMask(
             expression, nonzero(expression, unknown, precision), precision);
       Operation *value =
@@ -531,6 +643,7 @@ struct RandomArithmetic::Impl {
       if (!shift && !power)
         right = resize(expression, right, operationWidth, signedOperation);
       Operation *unknown = nullptr;
+      Operation *highImpedance = nullptr;
       Operation *value = nullptr;
       if (kind == Binary::BinaryAnd || kind == Binary::BinaryOr) {
         if (kind == Binary::BinaryAnd) {
@@ -600,6 +713,18 @@ struct RandomArithmetic::Impl {
                           operationWidth);
         value = binary(expression, kind, left.value, right.value,
                        operationWidth, signedResult);
+        if (left.highImpedance) {
+          highImpedance = binary(
+              expression, kind, left.highImpedance, right.value, operationWidth,
+              kind == Binary::ArithmeticShiftRight && signedOperation);
+          if (right.unknown)
+            highImpedance = mask(expression, highImpedance,
+                                 unknownMask(expression,
+                                             nonzero(expression, right.unknown,
+                                                     *width(right.value)),
+                                             operationWidth),
+                                 operationWidth);
+        }
       } else {
         Operation *undefined =
             bitOr(expression, nonzero(expression, left.unknown, operationWidth),
@@ -629,7 +754,8 @@ struct RandomArithmetic::Impl {
                        operationWidth, signedResult);
       }
       return RandomArithmeticPlanes{
-          mask(expression, value, unknown, precision, signedResult), unknown};
+          mask(expression, value, unknown, precision, signedResult), unknown,
+          highImpedance};
     }
     if (auto op = dyn_cast<semantic::SVConditionalExpressionOp>(expression);
         op && inputs.size() == 3 && op.getConditionCount() == 1) {
@@ -642,6 +768,11 @@ struct RandomArithmetic::Impl {
           no.unknown ? no.unknown : zero(expression, precision), precision);
       Operation *value = select(expression, condition.value, yes.value,
                                 no.value, precision, signedResult);
+      Operation *highImpedance = select(
+          expression, condition.value,
+          yes.highImpedance ? yes.highImpedance : zero(expression, precision),
+          no.highImpedance ? no.highImpedance : zero(expression, precision),
+          precision);
       if (condition.unknown) {
         Operation *different = binary(expression, Binary::BinaryXor, yes.value,
                                       no.value, precision);
@@ -654,13 +785,19 @@ struct RandomArithmetic::Impl {
                          precision);
         value = select(expression, condition.unknown, mergedValue, value,
                        precision, signedResult);
+        highImpedance = select(
+            expression, condition.unknown,
+            bitAnd(expression, yes.highImpedance, no.highImpedance, precision),
+            highImpedance, precision);
       }
       return RandomArithmeticPlanes{
-          mask(expression, value, unknown, precision, signedResult), unknown};
+          mask(expression, value, unknown, precision, signedResult), unknown,
+          highImpedance};
     }
     if (isa<semantic::SVConcatenationExpressionOp>(expression)) {
       Operation *value = zero(expression, precision);
       Operation *unknown = zero(expression, precision);
+      Operation *highImpedance = zero(expression, precision);
       for (auto input : inputs) {
         unsigned inputWidth = *width(input.value);
         auto amount = literal(expression, APInt(precision, inputWidth));
@@ -675,9 +812,48 @@ struct RandomArithmetic::Impl {
                   input.unknown ? cast(expression, input.unknown, precision)
                                 : zero(expression, precision),
                   precision);
+        highImpedance =
+            bitOr(expression,
+                  binary(expression, Binary::LogicalShiftLeft, highImpedance,
+                         amount, precision),
+                  input.highImpedance
+                      ? cast(expression, input.highImpedance, precision)
+                      : zero(expression, precision),
+                  precision);
       }
       return RandomArithmeticPlanes{mask(expression, value, unknown, precision),
-                                    unknown};
+                                    unknown, highImpedance};
+    }
+    if (isa<semantic::SVReplicationExpressionOp>(expression) &&
+        children.size() == 2) {
+      auto count = constant(children.front());
+      unsigned inputWidth = *width(inputs.back().value);
+      if (!count || count->isZero() || count->isNegative() ||
+          count->getActiveBits() > 64) {
+        emitError(expression->getLoc())
+            << "random replication requires a known positive count";
+        return failure();
+      }
+      if (precision % inputWidth ||
+          count->getZExtValue() != precision / inputWidth) {
+        emitError(expression->getLoc())
+            << "random replication width is inconsistent";
+        return failure();
+      }
+      // Validate even a zero plane, which would otherwise fold away the
+      // replication before the existing program encoder sees its count.
+      auto replicate = [&](Operation *plane) -> Operation * {
+        if (isZero(plane))
+          return zero(expression, precision);
+        return make(expression,
+                    semantic::SVReplicationExpressionOp::getOperationName(),
+                    precision, false, {}, {children.front(), plane});
+      };
+      auto input = inputs.back();
+      Operation *unknown = replicate(input.unknown);
+      return RandomArithmeticPlanes{
+          mask(expression, replicate(input.value), unknown, precision), unknown,
+          replicate(input.highImpedance)};
     }
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
         call && call.getIsSystemCall() && inputs.size() == 1) {
@@ -689,23 +865,22 @@ struct RandomArithmetic::Impl {
                                               inputs.front().unknown,
                                               *width(inputs.front().value)),
                                       nullptr};
-      if (name == "$countones" || name == "$onehot" || name == "$onehot0") {
-        Operation *node = expression->clone();
-        expressions->getBody()->push_back(node);
-        nodes.push_back(node);
-        node->setAttr(randomArithmeticNodeAttr, builder.getUnitAttr());
-        node->setAttr("semantic_type",
-                      TypeAttr::get(type(precision, signedResult)));
-        node->getRegion(0).front().clear();
-        node->getRegion(0).front().push_back(inputs.front().value->clone());
-        return RandomArithmeticPlanes{node, nullptr};
-      }
+      if (name == "$clog2" || name == "$countones" || name == "$onehot" ||
+          name == "$onehot0")
+        return RandomArithmeticPlanes{integralCall(expression, name,
+                                                   inputs.front().value,
+                                                   precision, signedResult),
+                                      nullptr};
     }
     if (!candidate(expression))
       return RandomArithmeticPlanes{
-          projection(expression, precision, false),
-          fourState(expression) ? projection(expression, precision, true)
-                                : nullptr};
+          projection(expression, precision, Plane::Value),
+          fourState(expression)
+              ? projection(expression, precision, Plane::Unknown)
+              : nullptr,
+          fourState(expression)
+              ? projection(expression, precision, Plane::HighImpedance)
+              : nullptr};
     emitError(expression->getLoc())
         << "constraint unknown arithmetic is not lowered for "
         << expression->getName();
