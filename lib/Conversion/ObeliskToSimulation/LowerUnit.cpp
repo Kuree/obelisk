@@ -4411,6 +4411,33 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     if (failed(converted))
       return failure();
     sim::SimRefStoreOp::create(builder, location, *converted, destination);
+    if (auto owner = op->getAttrOfType<SymbolRefAttr>(
+            coverageTypeOptionInitializerOwnerAttrName)) {
+      auto kind = op->getAttrOfType<sim::CovergroupInstanceOptionKindAttr>(
+          coverageTypeOptionInitializerKindAttrName);
+      auto module = function->getParentOfType<ModuleOp>();
+      // Semantic declarations are siblings of the isolated simulation design.
+      // Resolve its qualified reference through the shared module tables.
+      auto group =
+          lookupNearestSymbolFrom<semantic::SVCovergroupTypeOp>(module, owner);
+      Operation *item = nullptr;
+      if (!group) {
+        item = lookupNearestSymbolFrom<semantic::SVCoverpointSymbolOp>(module,
+                                                                       owner);
+        if (!item)
+          item = lookupNearestSymbolFrom<semantic::SVCoverCrossSymbolOp>(module,
+                                                                         owner);
+        if (item)
+          group = item->getParentOfType<semantic::SVCovergroupTypeOp>();
+      }
+      if (!group || !kind)
+        return emitError(location)
+               << "static type option initializer has no typed owner or kind";
+      if (failed(publishCovergroupTypeOption(group, item, kind.getValue(),
+                                             *converted, isSignedNode(op),
+                                             location)))
+        return failure();
+    }
     if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
             "simulation.initialize_sample_default")) {
       Value original = lvalues.lookup(path.getValue());

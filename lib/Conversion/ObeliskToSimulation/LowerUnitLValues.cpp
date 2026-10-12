@@ -414,12 +414,14 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   bool virtualInterfaceMember = false;
   if (isa<semantic::SVMemberAccessExpressionOp>(destination)) {
     memberChildren = getChildren(destination);
-    if (memberChildren.size() == 1) {
-      FailureOr<Type> receiverType =
-          getNormalizedSemanticType(memberChildren.front());
-      virtualInterfaceMember = succeeded(receiverType) &&
-                               isa<sim::VirtualInterfaceType>(*receiverType);
-    }
+    // Only classify the receiver: normalizing it would diagnose receivers that
+    // have no value type, such as a coverpoint whose option is assigned.
+    if (memberChildren.size() == 1)
+      if (auto receiverType =
+              memberChildren.front()->getAttrOfType<TypeAttr>("semantic_type"))
+        virtualInterfaceMember =
+            isa<semantic::VirtualInterfaceType, sim::VirtualInterfaceType>(
+                receiverType.getValue());
   }
   if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
       !destination->hasAttr("simulation.class_field") &&

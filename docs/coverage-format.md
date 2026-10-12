@@ -188,6 +188,28 @@ tuples after load, zero weights, and consistent optional method counts. MLIR
 checks preserve the owning point/cross ID through assignment, query, and both
 backends; the compiler operation contracts remain unchanged.
 
+A pre-construction probe against 19.7.1, 19.10, and 19.11 found that the
+implicit static `type_option` structures were zero-initialized and empty type
+queries ignored zero weights. Preparation now freezes elaborated integral,
+string, and real definitions, supplies the LRM field defaults, and invokes the
+existing static initializer functions before spawning processes. Constant
+functions do not run again at `new()`, and later procedural edits remain in
+effect. Embedded and inherited groups receive distinct compiler storage
+identities even when their source display paths coincide. Point/cross
+qualifiers address static storage while evaluating their group receiver once.
+
+Initialization uses linear semantic walks, an owner-local definition index, at most
+seven fields per owner, and shared MLIR symbol tables. Runtime option ownership
+and mutable profiles use bounded radix indexes; each write changes only its
+owner in that type's bound configurations. This avoids both repeated global
+schema scans and reapplying every item override after each write. Empty method
+queries perform indexed weight lookups, return zero optional counts, and remain
+excluded from overall coverage. These changes use the existing persisted type
+option rows and require no codec or report-field changes. Fast MLIR checks cover
+startup ordering, constant values, independent embedded owners, receiver
+selection, both backend ABIs, and LLVM verification. The executable regression
+has two small configurations and validates JSON/text/HTML/LCOV generation.
+
 Indexes are local to one invocation and borrow immutable input. There are no
 global mutable compiler caches. Wire declarations stay in TableGen, and runtime
 code stays independent of MLIR and LLVM. This follows the analysis-lifetime and

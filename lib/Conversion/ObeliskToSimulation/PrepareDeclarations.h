@@ -55,6 +55,12 @@ mlir::LogicalResult
 materializeInheritedCovergroupPlans(ir::SVRootSymbolOp semanticRoot,
                                     mlir::OpBuilder &builder);
 
+/// Initialize each implicit static type_option struct from LRM defaults and
+/// its effective constant definitions before any simulation process starts.
+mlir::LogicalResult materializeCovergroupTypeOptionInitializers(
+    ir::SVRootSymbolOp semanticRoot, mlir::OpBuilder &builder,
+    const llvm::DenseSet<mlir::Type> &unusedEmbeddedCovergroupTypes);
+
 /// Materialize deterministic covergroup declarations into `design`.
 mlir::LogicalResult materializeCovergroupDeclarations(
     ir::SVRootSymbolOp semanticRoot, mlir::OpBuilder &builder,

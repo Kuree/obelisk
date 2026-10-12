@@ -16,6 +16,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -327,6 +328,225 @@ materializeInheritedCovergroupPlans(semantic::SVRootSymbolOp semanticRoot,
     if (failed(materialize(entry.second)))
       return failure();
   return success();
+}
+
+LogicalResult materializeCovergroupTypeOptionInitializers(
+    semantic::SVRootSymbolOp semanticRoot, OpBuilder &builder,
+    const llvm::DenseSet<Type> &unusedEmbeddedCovergroupTypes) {
+  bool invalid = false;
+  llvm::DenseMap<Operation *, uint64_t> typeIDs;
+  llvm::DenseMap<Operation *, StringAttr> storagePaths;
+  llvm::StringMap<Operation *> storageOwners;
+  // Each owner has at most seven fields. Visit its definitions once and use
+  // an owner-local index, rather than searching the design for each field.
+  semanticRoot->walk([&](semantic::SVClassPropertySymbolOp property) {
+    if (property.getName() != "type_option" ||
+        !property.getIsCompilerGenerated().value_or(false) ||
+        property.getLifetime() != semantic::SVVariableLifetime::Static)
+      return;
+    Operation *owner = property->getParentOp();
+    if (!isa<semantic::SVCovergroupBodySymbolOp, semantic::SVCoverpointSymbolOp,
+             semantic::SVCoverCrossSymbolOp>(owner))
+      return;
+    auto group = property->getParentOfType<semantic::SVCovergroupTypeOp>();
+    if (!group ||
+        unusedEmbeddedCovergroupTypes.contains(group.getSemanticType()))
+      return;
+    auto [type, inserted] = typeIDs.try_emplace(group);
+    if (inserted)
+      type->second = stableFunctionalTypeID(group);
+    // Slang's display path omits the anonymous embedded group name; inherited
+    // item clones also retain their base's display path. Neither is a storage
+    // identity. Salt the compiler-owned static root by its group and item.
+    const uint64_t itemID =
+        isa<semantic::SVCovergroupBodySymbolOp>(owner)
+            ? 0
+            : stableCodeUnitID(functionalSemanticIdentity(owner));
+    auto path = builder.getStringAttr((Twine(getHierarchyName(property)) +
+                                       ".$coverage$" + Twine(type->second) +
+                                       "$" + Twine(itemID))
+                                          .str());
+    auto [previous, unique] =
+        storageOwners.try_emplace(path.getValue(), property);
+    if (!unique) {
+      property.emitError("static type_option storage identity collision with ")
+          << previous->second->getLoc();
+      invalid = true;
+      return;
+    }
+    storagePaths.try_emplace(property, path);
+    property->setAttr("hierarchical_name", path);
+    auto aggregate = dyn_cast_or_null<semantic::SourceAggregateType>(
+        property.getSemanticType().value_or(Type{}));
+    if (!aggregate || !getChildren(property).empty()) {
+      property.emitError(
+          "implicit type_option requires an uninitialized struct");
+      invalid = true;
+      return;
+    }
+    llvm::DenseMap<semantic::SVCoverageOptionKind, semantic::SVCoverageOptionOp>
+        definitions;
+    for (Operation *child : getChildren(owner))
+      if (auto option = dyn_cast<semantic::SVCoverageOptionOp>(child);
+          option &&
+          option.getScopeKind() == semantic::SVCoverageOptionScopeKind::Type)
+        definitions.try_emplace(option.getOptionKind(), option);
+
+    OpBuilder::InsertionGuard guard(builder);
+    if (property.getBody().empty())
+      property.getBody().emplaceBlock();
+    SmallVector<int64_t> ordinals;
+    for (auto [ordinal, attribute] : llvm::enumerate(aggregate.getFields())) {
+      auto field = cast<DictionaryAttr>(attribute);
+      StringRef name = field.getAs<StringAttr>("name").getValue();
+      Type type = field.getAs<TypeAttr>("type").getValue();
+      auto kind =
+          llvm::StringSwitch<std::optional<semantic::SVCoverageOptionKind>>(
+              name)
+              .Case("weight", semantic::SVCoverageOptionKind::Weight)
+              .Case("goal", semantic::SVCoverageOptionKind::Goal)
+              .Case("comment", semantic::SVCoverageOptionKind::Comment)
+              .Case("strobe", semantic::SVCoverageOptionKind::Strobe)
+              .Case("merge_instances",
+                    semantic::SVCoverageOptionKind::MergeInstances)
+              .Case("distribute_first",
+                    semantic::SVCoverageOptionKind::DistributeFirst)
+              .Case("real_interval",
+                    semantic::SVCoverageOptionKind::RealInterval)
+              .Default(std::nullopt);
+      if (!kind) {
+        property.emitError("unknown implicit type_option field '")
+            << name << "'";
+        invalid = true;
+        continue;
+      }
+      auto found = definitions.find(*kind);
+      auto definition = found == definitions.end()
+                            ? semantic::SVCoverageOptionOp{}
+                            : found->second;
+      NamedAttrList attrs;
+      StringAttr spelling;
+      Location location = getSemanticLocation(property);
+      if (definition) {
+        SmallVector<Operation *> expressions = getChildren(definition);
+        if (expressions.size() != 1) {
+          definition.emitError(
+              "type option definition requires one expression");
+          invalid = true;
+          continue;
+        }
+        Operation *expression = expressions.front();
+        location = getSemanticLocation(expression);
+        // Copy source provenance, without carrying call or conversion
+        // attributes onto the newly typed literal operation.
+        for (NamedAttribute attr : expression->getAttrs()) {
+          StringRef key = attr.getName().getValue();
+          if (key == "node_id" || key.starts_with("source_") ||
+              key == "original_source_range" ||
+              key == "macro_expansion_stack" || key == "macro_name")
+            attrs.append(attr);
+        }
+        spelling = definition->getAttrOfType<StringAttr>(
+            "obelisk.coverage.type_option_constant");
+        if (!spelling)
+          if (auto constant = getConstantSpelling(expression))
+            spelling = builder.getStringAttr(*constant);
+        // Also accept hand-written semantic IR with a literal conversion.
+        for (Operation *value = expression; !spelling;) {
+          spelling = value->getAttrOfType<StringAttr>("constant_value");
+          auto children = getChildren(value);
+          if (!isa<semantic::SVConversionExpressionOp>(value) ||
+              children.size() != 1)
+            break;
+          value = children.front();
+        }
+        if (!spelling) {
+          definition.emitError(
+              "type option definition has no elaborated constant");
+          invalid = true;
+          continue;
+        }
+      } else {
+        attrs.set("node_id", property.getNodeIdAttr());
+        spelling = builder.getStringAttr(
+            name == "weight" || name == "real_interval" ? "1"
+            : name == "goal"                            ? "100"
+            : name == "comment"                         ? ""
+                                                        : "0");
+      }
+      attrs.set("semantic_type", TypeAttr::get(type));
+      attrs.set("constant_value", spelling);
+      attrs.set("is_signed", builder.getBoolAttr(isSignedSemanticType(type)));
+      attrs.erase(foldedConstantAttrName);
+      auto literal = [&]() -> Operation * {
+        Operation *result;
+        if (isa<semantic::StringType>(type))
+          result = semantic::SVStringLiteralOp::create(
+              builder, location, TypeRange{}, ValueRange{}, attrs.getAttrs());
+        else if (isa<semantic::RealType>(type))
+          result = semantic::SVRealLiteralOp::create(
+              builder, location, TypeRange{}, ValueRange{}, attrs.getAttrs());
+        else
+          result = semantic::SVIntegerLiteralOp::create(
+              builder, location, TypeRange{}, ValueRange{}, attrs.getAttrs());
+        result->getRegion(0).emplaceBlock();
+        return result;
+      };
+      // Freeze the same elaborated value in constructor batches. In
+      // particular, a constant function must never run once per instance.
+      if (definition) {
+        builder.setInsertionPointToStart(&definition.getBody().front());
+        Operation *original = getChildren(definition).front();
+        literal();
+        original->erase();
+      }
+      builder.setInsertionPointToEnd(&property.getBody().front());
+      Operation *initializer = literal();
+      ordinals.push_back(ordinal);
+      std::optional<sim::CovergroupInstanceOptionKind> publish;
+      if (definition) {
+        if (name == "weight")
+          publish = sim::CovergroupInstanceOptionKind::Weight;
+        else if (name == "goal")
+          publish = sim::CovergroupInstanceOptionKind::Goal;
+        else if (name == "comment")
+          publish = sim::CovergroupInstanceOptionKind::Comment;
+        else if (name == "merge_instances")
+          publish = sim::CovergroupInstanceOptionKind::MergeInstances;
+      }
+      if (publish) {
+        initializer->setAttr(coverageTypeOptionInitializerOwnerAttrName,
+                             definition.getOwnerSymbolAttr());
+        initializer->setAttr(coverageTypeOptionInitializerKindAttrName,
+                             sim::CovergroupInstanceOptionKindAttr::get(
+                                 builder.getContext(), *publish));
+      }
+    }
+    property->setAttr("obelisk.aggregate_member_initializer_ordinals",
+                      builder.getDenseI64ArrayAttr(ordinals));
+  });
+  // Freeze source references to the same independent storage roots. Qualified
+  // symbols are authoritative; each lookup reuses one preparation-local table
+  // collection instead of scanning owners by their ambiguous display paths.
+  SymbolTableCollection symbols;
+  ModuleOp module = semanticRoot->getParentOfType<ModuleOp>();
+  semanticRoot->walk([&](Operation *operation) {
+    auto reference =
+        operation->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    if (!reference)
+      return;
+    Operation *property = symbols.lookupSymbolIn(module, reference);
+    auto path = storagePaths.find(property);
+    if (path != storagePaths.end()) {
+      operation->setAttr("referenced_path", path->second);
+      if (isa<semantic::SVMemberAccessExpressionOp>(operation) &&
+          isa<semantic::SVCoverpointSymbolOp, semantic::SVCoverCrossSymbolOp>(
+              property->getParentOp()))
+        operation->setAttr(coverageTypeOptionItemQualifierAttrName,
+                           builder.getUnitAttr());
+    }
+  });
+  return failure(invalid);
 }
 
 LogicalResult materializeCovergroupDeclarations(

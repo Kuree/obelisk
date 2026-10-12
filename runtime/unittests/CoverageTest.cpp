@@ -1926,6 +1926,40 @@ TEST(CoverageRuntimeDesignTest,
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
 
+  // Static option writes are meaningful before any constructor bundle exists.
+  // Zero-denominator queries honor only the queried owner's type weight;
+  // they still must not attempt to evaluate the unresolved comment expression.
+  for (uint64_t owner : {uint64_t{0}, uint64_t{20}}) {
+    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, owner, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
+              OBELISK_RT_OK);
+    covered = total = -1;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+                  context, 10, owner, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_DOUBLE_EQ(percentage, 100.0);
+    EXPECT_EQ(covered, 0);
+    EXPECT_EQ(total, 0);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, owner, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 2),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_type_query(
+                  context, 10, owner, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_DOUBLE_EQ(percentage, 0.0);
+    EXPECT_EQ(covered, 0);
+    EXPECT_EQ(total, 0);
+  }
+  ASSERT_EQ(obelisk_rt_v1_functional_coverage_get(context, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                context, 11, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                context, 10, 22, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0),
+            OBELISK_RT_INVALID_DESIGN);
+
   EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
                 context, 11, 0, &percentage, &covered, &total),
             OBELISK_RT_INVALID_DESIGN);

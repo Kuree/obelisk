@@ -533,7 +533,10 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::StringMap<Operation *> &semanticSymbols = validated->symbols;
   OpBuilder coveragePlanBuilder(context);
   if (failed(materializeInheritedCovergroupPlans(semanticRoot,
-                                                 coveragePlanBuilder))) {
+                                                 coveragePlanBuilder)) ||
+      failed(materializeCovergroupTypeOptionInitializers(
+          semanticRoot, coveragePlanBuilder,
+          validated->unusedEmbeddedCovergroupTypes))) {
     signalPassFailure();
     return;
   }

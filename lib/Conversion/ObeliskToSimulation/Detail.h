@@ -55,6 +55,16 @@ inline constexpr ::mlir::StringLiteral calleeFormalsAttrName =
     "simulation.callee_formals";
 inline constexpr ::mlir::StringLiteral staticClassPropertyAttrName =
     "simulation.static_class_property";
+/// Connect a one-time static option initializer to its typed coverage owner.
+inline constexpr ::mlir::StringLiteral
+    coverageTypeOptionInitializerOwnerAttrName =
+        "simulation.initialize_type_option_owner";
+inline constexpr ::mlir::StringLiteral
+    coverageTypeOptionInitializerKindAttrName =
+        "simulation.initialize_type_option_kind";
+/// A point/cross selection qualifies static storage; it is not a value field.
+inline constexpr ::mlir::StringLiteral coverageTypeOptionItemQualifierAttrName =
+    "simulation.type_option_item_qualifier";
 inline constexpr ::mlir::StringLiteral staticClassReceiverAttrName =
     "simulation.static_class_receiver";
 inline constexpr ::mlir::StringLiteral dynamicCastEnumValuesAttrName =

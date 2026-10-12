@@ -337,6 +337,10 @@ private:
   lowerCovergroupOptionAssignment(semantic::SVAssignmentExpressionOp op,
                                   ::mlir::Operation *destination,
                                   ::mlir::Operation *source, ::mlir::Value rhs);
+  ::mlir::LogicalResult publishCovergroupTypeOption(
+      semantic::SVCovergroupTypeOp covergroup, ::mlir::Operation *item,
+      sim::CovergroupInstanceOptionKind kind, ::mlir::Value value,
+      bool sourceSigned, ::mlir::Location location);
   ::mlir::FailureOr<std::optional<::mlir::Value>>
   lowerCovergroupIntegerOptionRead(semantic::SVMemberAccessExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>
@@ -646,8 +650,7 @@ private:
   ::mlir::LogicalResult
   emitFunctionReturn(::mlir::Location location,
                      std::optional<::mlir::Value> explicitResult,
-                     bool resultSigned = false,
-                     bool emitBlockEventEnd = true);
+                     bool resultSigned = false, bool emitBlockEventEnd = true);
   void emitCovergroupBlockEvent(uint64_t targetID, uint32_t eventKind,
                                 ::mlir::Location location);
   ::mlir::Block *addBlock();

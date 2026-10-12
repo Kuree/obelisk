@@ -336,18 +336,18 @@ module attributes {
 // CHECK: simulation.class.field {{.*}}debug_name = "cg"
 // CHECK: simulation.class.decl @[[DERIVED:[^ ]+]] id 2 extends @[[BASE]]
 // CHECK: simulation.class.field {{.*}}of @[[DERIVED]]{{.*}}debug_name = "bias"
-// CHECK-LABEL: simulation.func private @unit_0
+// CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%arg1: !simulation.class_handle
 // CHECK: simulation.covergroup.create
 // CHECK: simulation.class.field_ref %arg1[{{.*}}field_1]
 // CHECK: simulation.managed.store
-// CHECK-LABEL: simulation.func private @unit_1
+// CHECK: simulation.func private @[[SELF:unit_[0-9]+]]({{.*}}%arg1: !simulation.class_handle
 // CHECK: %[[SELF_CG_REF:[0-9]+]] = simulation.class.field_ref %arg1[{{.*}}field_1]
 // CHECK: %[[SELF_VALUE_REF:[0-9]+]] = simulation.class.field_ref %arg1[{{.*}}field_0]
 // CHECK: simulation.argument_ref.from_managed %[[SELF_VALUE_REF]]
 // CHECK: simulation.covergroup.sample_enabled
 // CHECK: simulation.managed.load %[[SELF_VALUE_REF]]
 // CHECK: simulation.covergroup.sample
-// CHECK-LABEL: simulation.func private @unit_2
+// CHECK: simulation.func private @[[OTHER:unit_[0-9]+]]({{.*}}%arg2: !simulation.class_handle
 // CHECK: %[[OTHER_CG_REF:[0-9]+]] = simulation.class.field_ref %arg2[{{.*}}field_1]
 // The omitted default in other.cg.sample() is evaluated in the declaration
 // scope using the receiver (%arg2), never the caller's current this (%arg1).
@@ -371,8 +371,8 @@ module attributes {
 // CHECK: %[[EXPLICIT_SUM:[0-9]+]] = arith.addi %[[EXPLICIT_RECEIVER_VALUE]], %[[EXPLICIT_VALUE]]
 // CHECK: %[[EXPLICIT_EXPR:[0-9]+]] = simulation.logic.from_bits %[[EXPLICIT_SUM]]
 // CHECK: simulation.covergroup.sample {{.*}}values[%[[EXPLICIT_EXPR]]]
-// CHECK-LABEL: simulation.func private @unit_3
-// CHECK: simulation.class.direct_call @unit_1
+// CHECK-LABEL: simulation.func private @unit_{{[0-9]+}}({{.*}}%arg1: !simulation.ref
+// CHECK: simulation.class.direct_call @[[SELF]]
 // CHECK: %[[OWNER:[0-9]+]] = simulation.ref.load
 // CHECK: %[[OWNER_CG_REF:[0-9]+]] = simulation.class.field_ref %[[OWNER]][{{.*}}field_1] : !simulation.class_handle<@{{.*}}D>
 // CHECK: %[[OWNER_VALUE_REF:[0-9]+]] = simulation.class.field_ref %[[OWNER]][{{.*}}field_0] : !simulation.class_handle<@{{.*}}D>
@@ -381,5 +381,5 @@ module attributes {
 // CHECK: simulation.covergroup.sample
 // CHECK: %[[CALLER:[0-9]+]] = simulation.ref.load
 // CHECK: %[[RECEIVER:[0-9]+]] = simulation.class.cast %[[CALLER]]
-// CHECK: simulation.class.direct_call @unit_2 %[[CALLER]](%[[RECEIVER]])
+// CHECK: simulation.class.direct_call @[[OTHER]] %[[CALLER]](%[[RECEIVER]])
 // CHECK-NOT: obelisk.sv.

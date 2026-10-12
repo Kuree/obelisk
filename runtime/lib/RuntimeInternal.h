@@ -1818,10 +1818,10 @@ struct FunctionalCoverageTypeOptions {
   std::optional<uint32_t> goal;
   std::optional<uint32_t> weight;
   std::optional<bool> mergeInstances;
-  std::map<uint64_t, uint32_t> itemGoals;
-  std::map<uint64_t, uint32_t> itemWeights;
+  obelisk::coverage::detail::IndexMap<uint64_t, uint32_t> itemGoals;
+  obelisk::coverage::detail::IndexMap<uint64_t, uint32_t> itemWeights;
   /// Zero names the group; positive keys name template FunctionalItems.
-  std::map<uint64_t, std::string> comments;
+  obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
 };
 
 struct FunctionalCoverageInstanceState {
@@ -1930,7 +1930,8 @@ struct CoverageState {
   obelisk::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
                                       FunctionalCoverageTypeState>
       types;
-  std::map<uint64_t, FunctionalCoverageTypeOptions> typeOptions;
+  obelisk::coverage::detail::IndexMap<uint64_t, FunctionalCoverageTypeOptions>
+      typeOptions;
   std::unordered_map<uint64_t, FunctionalCoverageInstanceState> instances;
   std::unique_ptr<std::atomic<uint64_t>[]> lineCounters;
   std::unique_ptr<std::atomic<uint8_t>[]> lineOverflow;

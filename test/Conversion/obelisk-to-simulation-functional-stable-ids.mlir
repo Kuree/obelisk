@@ -16,6 +16,10 @@
 // CHECK: simulation.covergroup.decl @{{.*}} schema [[FIRST:[1-9][0-9]*]]
 // CHECK: simulation.covergroup.decl @{{.*}} schema [[SECOND:[1-9][0-9]*]]
 // CHECK-NOT: simulation.covergroup.decl
+// CHECK-DAG: simulation.covergroup.set_type_integer_option {{.*}} type [[FIRST]] item 0 option goal
+// CHECK-DAG: simulation.covergroup.set_type_integer_option {{.*}} type [[FIRST]] item [[FIRST_POINT:[1-9][0-9]*]] option weight
+// CHECK-DAG: simulation.covergroup.set_type_integer_option {{.*}} type [[SECOND]] item 0 option goal
+// CHECK-DAG: simulation.covergroup.set_type_integer_option {{.*}} type [[SECOND]] item [[SECOND_POINT:[1-9][0-9]*]] option weight
 // HIER-DAG: functional_type id={{[1-9][0-9]*}} name={{.*}} language={{2017|2023}} hierarchy={{.*}}Owner::first
 // HIER-DAG: functional_type id={{[1-9][0-9]*}} name={{.*}} language={{2017|2023}} hierarchy={{.*}}Owner::second
 // Each type's only sample-phase expression is its integral coverpoint result.
@@ -26,13 +30,17 @@ class Owner;
   bit sampled;
 
   covergroup first;
+    type_option.goal = 25;
     cp: coverpoint sampled {
+      type_option.weight = 2;
       bins one = {1};
     }
   endgroup
 
   covergroup second;
+    type_option.goal = 75;
     cp: coverpoint sampled {
+      type_option.weight = 3;
       bins one = {1};
     }
   endgroup
@@ -45,5 +53,10 @@ endclass
 
 module top;
   Owner owner;
-  initial owner = new;
+  initial begin
+    owner = new;
+    owner.first.cp.type_option.weight = 4;
+    $display("%0d %0d", owner.first.type_option.goal,
+             owner.second.cp.type_option.weight);
+  end
 endmodule

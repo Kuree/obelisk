@@ -57,6 +57,50 @@ UnitLowering::findSemanticCovergroup(Operation *operation) {
   return {};
 }
 
+LogicalResult UnitLowering::publishCovergroupTypeOption(
+    semantic::SVCovergroupTypeOp covergroup, Operation *item,
+    sim::CovergroupInstanceOptionKind kind, Value rhs, bool sourceSigned,
+    Location location) {
+  uint64_t itemID = 0;
+  if (item) {
+    auto stableID = item->getAttrOfType<IntegerAttr>(
+        sim::metadata::coverageFunctionalItemId);
+    if (!stableID || stableID.getValue().isZero())
+      return emitError(location)
+             << "functional coverage item type option has no typed v1 identity";
+    itemID = stableID.getValue().getZExtValue();
+  }
+  FailureOr<Type> loweredType = getNormalizedSemanticType(covergroup);
+  auto handleType = succeeded(loweredType)
+                        ? dyn_cast<sim::CovergroupHandleType>(*loweredType)
+                        : sim::CovergroupHandleType{};
+  auto declaration = handleType
+                         ? lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+                               function, handleType.getCovergroupName())
+                         : sim::SimCovergroupDeclOp{};
+  if (!declaration || !declaration.getSchemaType())
+    return emitError(location)
+           << "functional coverage type option has no typed v1 declaration";
+  Value context = function.getBody().front().getArgument(0);
+  if (kind == sim::CovergroupInstanceOptionKind::Comment) {
+    if (!isa<sim::StringType>(rhs.getType()))
+      return emitError(location)
+             << "type_option.comment requires a string value";
+    sim::SimCovergroupSetTypeStringOptionOp::create(builder, location, context,
+                                                    declaration.getSchemaType(),
+                                                    itemID, kind, rhs);
+    return success();
+  }
+  FailureOr<Value> value =
+      convert(rhs, builder.getI64Type(), sourceSigned, location, true);
+  if (failed(value))
+    return failure();
+  sim::SimCovergroupSetTypeIntegerOptionOp::create(builder, location, context,
+                                                   declaration.getSchemaType(),
+                                                   itemID, kind, *value);
+  return success();
+}
+
 FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
     semantic::SVAssignmentExpressionOp op, Operation *destination,
     Operation *source, Value rhs) {
@@ -69,6 +113,7 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
       dyn_cast<semantic::SVMemberAccessExpressionOp>(optionExpression);
   auto optionName =
       optionExpression->getAttrOfType<StringAttr>("member_name");
+  ModuleOp semanticModule = function->getParentOfType<ModuleOp>();
   SmallVector<Operation *> optionChildren;
   bool typeOption = false;
   if (option && optionName && optionName.getValue() == "option") {
@@ -80,13 +125,10 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
         optionExpression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
     auto property =
         reference ? lookupNearestSymbolFrom<semantic::SVClassPropertySymbolOp>(
-                        optionExpression, reference)
+                        semanticModule, reference)
                   : semantic::SVClassPropertySymbolOp{};
-    auto referencedPath =
-        optionExpression->getAttrOfType<StringAttr>("referenced_path");
-    if ((!property || property.getName() != "type_option") &&
-        (!referencedPath ||
-         !referencedPath.getValue().ends_with(".type_option")))
+    if (!property || property.getName() != "type_option" ||
+        !property->getParentOfType<semantic::SVCovergroupTypeOp>())
       return std::optional<Value>{};
     typeOption = true;
     optionChildren.push_back(optionExpression);
@@ -109,7 +151,7 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
     auto reference = owner->getAttrOfType<SymbolRefAttr>("referenced_symbol");
     auto property =
         reference ? lookupNearestSymbolFrom<semantic::SVClassPropertySymbolOp>(
-                        owner, reference)
+                        semanticModule, reference)
                   : semantic::SVClassPropertySymbolOp{};
     auto covergroup =
         property
@@ -125,98 +167,30 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
             property->getParentOfType<semantic::SVCoverCrossSymbolOp>()
                 .getOperation();
     }
-    auto referencedPath = owner->getAttrOfType<StringAttr>("referenced_path");
-    if ((!covergroup || !property || property.getName() != "type_option") &&
-        referencedPath) {
-      ensureCoverageInventory();
-      for (const auto &entry : semanticCovergroups) {
-        semantic::SVCovergroupTypeOp candidate = entry.second;
-        if ((Twine(getHierarchyName(candidate)) + ".type_option").str() ==
-            referencedPath.getValue()) {
-          covergroup = candidate;
-          semanticItem = nullptr;
-          break;
-        }
-        candidate->walk([&](Operation *item) {
-          if (semanticItem ||
-              !isa<semantic::SVCoverpointSymbolOp,
-                   semantic::SVCoverCrossSymbolOp>(item))
-            return;
-          if ((Twine(getHierarchyName(item)) + ".type_option").str() ==
-              referencedPath.getValue()) {
-            covergroup = candidate;
-            semanticItem = item;
-          }
-        });
-        if (semanticItem)
-          break;
-      }
-    }
     if (!covergroup) {
       emitError(location) << "functional coverage type option has no typed owner";
       return failure();
     }
-    uint64_t itemID = 0;
-    if (semanticItem) {
-      auto stableID = semanticItem->getAttrOfType<IntegerAttr>(
-          sim::metadata::coverageFunctionalItemId);
-      if (!stableID || stableID.getValue().isZero()) {
-        emitError(location)
-            << "functional coverage item type option has no typed v1 identity";
-        return failure();
-      }
-      itemID = stableID.getValue().getZExtValue();
-    }
-
-    FailureOr<Type> loweredType = getNormalizedSemanticType(covergroup);
-    auto handleType = succeeded(loweredType)
-                          ? dyn_cast<sim::CovergroupHandleType>(*loweredType)
-                          : sim::CovergroupHandleType{};
-    auto declaration = handleType
-                           ? lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
-                                 function, handleType.getCovergroupName())
-                           : sim::SimCovergroupDeclOp{};
-    if (!declaration || !declaration.getSchemaType()) {
-      emitError(location)
-          << "functional coverage type option has no typed v1 declaration";
-      return failure();
-    }
-
-    Value context = function.getBody().front().getArgument(0);
     StringRef name = fieldName.getValue();
-    if (name == "comment") {
-      if (!isa<sim::StringType>(rhs.getType())) {
-        emitError(location) << "type_option.comment requires a string value";
-        return failure();
-      }
-      sim::SimCovergroupSetTypeStringOptionOp::create(
-          builder, location, context, declaration.getSchemaType(), itemID,
-          sim::CovergroupInstanceOptionKind::Comment, rhs);
-      // type_option is also an implicitly declared static struct (19.10).
-      // Leave the result empty so lowerAssignment emits the ordinary lvalue
-      // store after publishing the coverage-service update.
-      return std::optional<Value>{};
-    }
-
     std::optional<sim::CovergroupInstanceOptionKind> kind;
-    if (name == "weight")
+    if (name == "comment")
+      kind = sim::CovergroupInstanceOptionKind::Comment;
+    else if (name == "weight")
       kind = sim::CovergroupInstanceOptionKind::Weight;
     else if (name == "goal")
       kind = sim::CovergroupInstanceOptionKind::Goal;
-    else if (name == "merge_instances" && !itemID)
+    else if (name == "merge_instances" && !semanticItem)
       kind = sim::CovergroupInstanceOptionKind::MergeInstances;
     if (!kind) {
       emitError(location) << "covergroup type option '" << name
                           << "' is not supported procedurally";
       return failure();
     }
-    FailureOr<Value> value = convert(rhs, builder.getI64Type(),
-                                     isSignedNode(source), location, true);
-    if (failed(value))
+    if (failed(publishCovergroupTypeOption(covergroup, semanticItem, *kind, rhs,
+                                           isSignedNode(source), location)))
       return failure();
-    sim::SimCovergroupSetTypeIntegerOptionOp::create(
-        builder, location, context, declaration.getSchemaType(), itemID, *kind,
-        *value);
+    // The implicitly declared static struct (19.10) also needs the ordinary
+    // lvalue store emitted by lowerAssignment.
     return std::optional<Value>{};
   }
 

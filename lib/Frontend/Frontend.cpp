@@ -5385,6 +5385,17 @@ private:
     attrs.set(slangir::CoverageOptionOp::getOwnerSymbolAttrName(operationName),
               getSemanticSymbolReference(owner));
 
+    // Type option definitions are constant expressions (19.7.1). Retain the
+    // elaborator's value even for real and string expressions so preparation
+    // can initialize the implicit static struct without executing the source
+    // expression, or reevaluating a constant function at each new().
+    if (setter.isTypeOption())
+      if (const auto *constant = assignment->right().getConstant())
+        attrs.set("obelisk.coverage.type_option_constant",
+                  builder.getStringAttr(constant->isReal()
+                                            ? formatReal(constant->real())
+                                            : formatConstant(*constant)));
+
     auto operation = slangir::CoverageOptionOp::create(
         builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
         attrs.getAttrs());

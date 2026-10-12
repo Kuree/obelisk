@@ -7000,6 +7000,23 @@ obelisk_rt_status resolveStaticFunctionalType(
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status validateFunctionalTypeOptionOwner(CoverageState &coverage,
+                                                    uint64_t typeID,
+                                                    uint64_t itemID) {
+  obelisk_rt_status status = ensureFunctionalConstructionSchemas(coverage);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (!coverage.constructionSchemas->types.count(typeID))
+    return OBELISK_RT_INVALID_DESIGN;
+  if (itemID) {
+    auto item = coverage.constructionSchemas->items.find(itemID);
+    if (item == coverage.constructionSchemas->items.end() ||
+        item->second.type != typeID)
+      return OBELISK_RT_INVALID_DESIGN;
+  }
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status
 applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
                            FunctionalCoverageTypeState &type) {
@@ -11018,11 +11035,15 @@ queryAllTypeConfigurations(CoverageState &coverage, uint64_t typeID,
     // construction there is no constructor-resolved configuration to bind and
     // no bins contributing to the type result.  In particular, do not attempt
     // to evaluate constructor-dependent options or bin expressions without
-    // their constructor values.  IEEE 1800-2023 19.11 requires the method
-    // result and optional numerator / denominator to be zero in this case;
-    // the distinct global $get_coverage query handles the no-instance case as
-    // 100 percent.
+    // their constructor values. IEEE 1800-2023 19.11 makes an empty aggregate
+    // 0 percent with positive type weight and 100 percent with zero weight;
+    // both optional counts are zero and it never contributes globally.
     result = {};
+    auto options = coverage.typeOptions.find(typeID);
+    const uint32_t weight = options != coverage.typeOptions.end()
+                                ? options->second.weight.value_or(1)
+                                : 1;
+    result.percentage = weight ? 0.0 : 100.0;
     instanceCount = 0;
     if (outTypeWeight)
       *outTypeWeight = 0;
@@ -11339,6 +11360,12 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
     // configuration.  Return the empty aggregate without speculatively
     // resolving constructor-time expressions.
     result = {};
+    auto options = coverage.typeOptions.find(typeID);
+    if (options != coverage.typeOptions.end()) {
+      auto weight = options->second.itemWeights.find(templateItem);
+      if (weight != options->second.itemWeights.end() && !weight->second)
+        result.percentage = 100.0;
+    }
     return OBELISK_RT_OK;
   }
 
@@ -12015,17 +12042,10 @@ obelisk_rt_v1_covergroup_set_type_integer_option(
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
       return OBELISK_RT_INVALID_HANDLE;
-    const bool knownType = std::any_of(
-        coverage->schema->functionalTypes.begin(),
-        coverage->schema->functionalTypes.end(),
-        [&](const auto &type) { return type.id == typeID; });
-    const bool knownItem = !itemID || std::any_of(
-        coverage->schema->functionalItems.begin(),
-        coverage->schema->functionalItems.end(), [&](const auto &item) {
-          return item.id == itemID && item.type == typeID;
-        });
-    if (!knownType || !knownItem)
-      return OBELISK_RT_INVALID_DESIGN;
+    obelisk_rt_status status =
+        validateFunctionalTypeOptionOwner(*coverage, typeID, itemID);
+    if (status != OBELISK_RT_OK)
+      return status;
 
     FunctionalCoverageTypeOptions &overrides = coverage->typeOptions[typeID];
     const uint32_t unsignedValue = static_cast<uint32_t>(value);
@@ -12042,13 +12062,38 @@ obelisk_rt_v1_covergroup_set_type_integer_option(
     } else
       overrides.mergeInstances = value != 0;
 
-    for (auto &[key, type] : coverage->types) {
-      if (key.typeID != typeID)
+    // Update only this owner in this type's bound configurations. Reapplying
+    // all item overrides after every assignment makes initialization or a
+    // sequence of item updates quadratic in the number of items.
+    indexFunctionalConfigurations(*coverage);
+    auto configurations = coverage->configurationsByType.find(typeID);
+    if (configurations == coverage->configurationsByType.end())
+      return OBELISK_RT_OK;
+    for (const auto &configuration : configurations->second) {
+      auto bound = coverage->types.find({typeID, configuration});
+      if (bound == coverage->types.end())
         continue;
-      obelisk_rt_status status =
-          applyFunctionalTypeOptions(*coverage, typeID, type);
-      if (status != OBELISK_RT_OK)
-        return status;
+      auto &type = bound->second;
+      if (!itemID) {
+        if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL)
+          type.typeGoal = unsignedValue;
+        else if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT)
+          type.typeWeight = unsignedValue;
+        else
+          type.mergeInstances = value != 0;
+        continue;
+      }
+      if (!type.queryMetadata)
+        return OBELISK_RT_INVALID_DESIGN;
+      auto position = type.queryMetadata->templateItemPositions.find(itemID);
+      if (position == type.queryMetadata->templateItemPositions.end() ||
+          position->second >= type.typeItemGoals.size() ||
+          position->second >= type.typeItemWeights.size())
+        return OBELISK_RT_INVALID_DESIGN;
+      if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL)
+        type.typeItemGoals[position->second] = unsignedValue;
+      else
+        type.typeItemWeights[position->second] = unsignedValue;
     }
     return OBELISK_RT_OK;
   }
@@ -12079,17 +12124,9 @@ obelisk_rt_v1_covergroup_set_type_string_option(
     CoverageState *coverage = coverageState(context, false);
     if (!coverage || !coverage->schema)
       return OBELISK_RT_INVALID_HANDLE;
-    const bool knownType = std::any_of(
-        coverage->schema->functionalTypes.begin(),
-        coverage->schema->functionalTypes.end(),
-        [&](const auto &type) { return type.id == typeID; });
-    const bool knownItem = !itemID || std::any_of(
-        coverage->schema->functionalItems.begin(),
-        coverage->schema->functionalItems.end(), [&](const auto &item) {
-          return item.id == itemID && item.type == typeID;
-        });
-    if (!knownType || !knownItem)
-      return OBELISK_RT_INVALID_DESIGN;
+    status = validateFunctionalTypeOptionOwner(*coverage, typeID, itemID);
+    if (status != OBELISK_RT_OK)
+      return status;
     coverage->typeOptions[typeID].comments[itemID] = std::move(copied);
     return OBELISK_RT_OK;
   }
