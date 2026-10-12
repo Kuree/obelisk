@@ -140,8 +140,12 @@ budget, and wide assignments use in-place bit insertion. Budget exhaustion
 retains the complete compiled Boolean plan. Here N counts lowered operations,
 expanded loops and array elements, bit widths and serialized constraint
 metadata. These bounds exclude work performed inside Z3 and do not imply that
-its result graph has O(N) size. Expression construction and proposal lowering
-outside these solver passes remain under review.
+its result graph has O(N) size. Constraint lowering also hashes repeated
+ordering edges, joins overlapping selected paths through per-bit adjacency,
+and schedules their latest legal layers with one sink traversal. Candidate and
+runtime-input subtree summaries share an iterative postorder cache; property
+offsets and alias target counts use indexed lookups. Other expression
+construction and proposal lowering paths remain under review.
 
 Native and WASM targets contain no Z3 library or solver calls. A simple sampler
 binds current captures and inactive bits, selects the optimal enabled soft

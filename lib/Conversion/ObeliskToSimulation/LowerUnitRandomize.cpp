@@ -22,6 +22,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/bit.h"
 
 #include <functional>
 #include <limits>
@@ -2726,6 +2727,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     solvePropertyOffset += property.width;
   }
   SmallVector<SolveBeforeEdge> solveBeforeEdges;
+  llvm::DenseSet<std::tuple<APInt, APInt, uint32_t, uint8_t>>
+      solveBeforeEdgeKeys;
+  auto appendSolveBeforeEdge = [&](const SolveBeforeEdge &edge) {
+    if (solveBeforeEdgeKeys
+            .insert({edge.beforeMask, edge.afterMask, edge.constraintBlock,
+                     static_cast<uint8_t>(edge.functionPriority)})
+            .second)
+      solveBeforeEdges.push_back(edge);
+  };
   SmallVector<APInt> solveBeforeLayerMasks;
   APInt randomAssignmentMask =
       APInt::getLowBitsSet(assignmentWidth, totalWidth);
@@ -2833,8 +2843,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         hasSolveBefore = true;
         hasFunctionPriority = true;
         SolveBeforeEdge edge{beforeMask, afterMask, solveConstraintBlock, true};
-        if (!llvm::is_contained(solveBeforeEdges, edge))
-          solveBeforeEdges.push_back(edge);
+        appendSolveBeforeEdge(edge);
       }
     }
     WalkResult result =
@@ -2879,8 +2888,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 return WalkResult::interrupt();
               }
               SolveBeforeEdge edge{lhs, rhs, solveConstraintBlock};
-              if (!llvm::is_contained(solveBeforeEdges, edge))
-                solveBeforeEdges.push_back(edge);
+              appendSolveBeforeEdge(edge);
             }
           return WalkResult::advance();
         });
@@ -2888,51 +2896,108 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
   }
   if (hasSolveBefore) {
-    // Slang's ValuePath graph treats overlapping paths as the same node. Keep
-    // each transitive overlap class together so, for example, an edge to one
-    // field of a packed slice cannot cause the other bits of that slice to be
-    // sampled in an earlier layer.
+    // 18.5.9 defers partially ordered variables to their latest legal layer.
+    // Overlapping selected bit paths cannot be sampled independently: keep
+    // each transitive overlap class together so an edge to one part of a
+    // packed slice cannot move its other bits into an earlier layer.
     SmallVector<APInt> nodes;
-    auto addNode = [&](APInt node) {
-      for (size_t index = 0; index != nodes.size();) {
-        if ((nodes[index] & node).isZero()) {
-          ++index;
-          continue;
-        }
-        node |= nodes[index];
-        nodes.erase(nodes.begin() + index);
-      }
-      nodes.push_back(node);
+    llvm::DenseMap<APInt, unsigned> nodeIds;
+    auto addNode = [&](const APInt &mask) {
+      auto [found, inserted] = nodeIds.try_emplace(mask, nodes.size());
+      if (inserted)
+        nodes.push_back(mask);
+      return found->second;
     };
+    SmallVector<std::pair<unsigned, unsigned>> edges;
     for (const SolveBeforeEdge &edge : solveBeforeEdges) {
-      addNode(edge.beforeMask);
-      addNode(edge.afterMask);
+      unsigned before = addNode(edge.beforeMask);
+      unsigned after = addNode(edge.afterMask);
+      edges.emplace_back(before, after);
     }
-    while (!nodes.empty()) {
-      APInt layer = APInt::getZero(assignmentWidth);
-      APInt remaining = APInt::getZero(assignmentWidth);
-      for (const APInt &node : nodes)
-        remaining |= node;
-      for (const APInt &node : nodes) {
-        bool hasSuccessor =
-            llvm::any_of(solveBeforeEdges, [&](const auto &edge) {
-              return !(edge.beforeMask & node).isZero() &&
-                     !(edge.afterMask & remaining).isZero();
-            });
-        if (!hasSuccessor)
-          layer |= node;
+
+    // Connect overlapping views through one owner per bit. A breadth-first
+    // traversal then finds complete overlap classes without pairwise mask
+    // comparisons or repeated merging. Work is linear in the lowered masks.
+    SmallVector<unsigned> bitOwners(totalWidth, UINT_MAX);
+    SmallVector<SmallVector<unsigned>> overlaps(nodes.size());
+    for (auto [id, mask] : llvm::enumerate(nodes)) {
+      for (unsigned word = 0; word != mask.getNumWords(); ++word) {
+        uint64_t bits = mask.getRawData()[word];
+        while (bits != 0) {
+          unsigned bit = word * 64 + llvm::countr_zero(bits);
+          unsigned &owner = bitOwners[bit];
+          if (owner == UINT_MAX)
+            owner = id;
+          else {
+            overlaps[id].push_back(owner);
+            overlaps[owner].push_back(id);
+          }
+          bits &= bits - 1;
+        }
       }
-      if (layer.isZero()) {
-        emitError(location) << "solve before ordering contains a cycle";
-        return failure();
+    }
+    SmallVector<unsigned> components(nodes.size(), UINT_MAX);
+    SmallVector<APInt> componentMasks;
+    SmallVector<unsigned> worklist;
+    for (unsigned node = 0; node != nodes.size(); ++node) {
+      if (components[node] != UINT_MAX)
+        continue;
+      unsigned component = componentMasks.size();
+      componentMasks.emplace_back(assignmentWidth, 0);
+      components[node] = component;
+      worklist.clear();
+      worklist.push_back(node);
+      for (size_t cursor = 0; cursor != worklist.size(); ++cursor) {
+        unsigned member = worklist[cursor];
+        componentMasks[component] |= nodes[member];
+        for (unsigned adjacent : overlaps[member]) {
+          if (components[adjacent] != UINT_MAX)
+            continue;
+          components[adjacent] = component;
+          worklist.push_back(adjacent);
+        }
       }
-      solveBeforeLayerMasks.push_back(layer);
-      llvm::erase_if(
-          nodes, [&](const APInt &node) { return !(node & layer).isZero(); });
+    }
+
+    SmallVector<SmallVector<unsigned>> predecessors(componentMasks.size());
+    SmallVector<unsigned> successors(componentMasks.size(), 0);
+    SmallVector<unsigned> distance(componentMasks.size(), 0);
+    for (auto [before, after] : edges) {
+      predecessors[components[after]].push_back(components[before]);
+      ++successors[components[before]];
     }
     // Peel sinks first so partially ordered fields are deferred to their
-    // latest legal layer. Unspecified fields join the final ordered group.
-    std::reverse(solveBeforeLayerMasks.begin(), solveBeforeLayerMasks.end());
+    // latest legal layer. Each edge is visited once, including parallel edges
+    // from distinct constraint blocks and function-priority records.
+    worklist.clear();
+    for (unsigned component = 0; component != componentMasks.size();
+         ++component)
+      if (successors[component] == 0)
+        worklist.push_back(component);
+    unsigned maxDistance = 0;
+    for (size_t cursor = 0; cursor != worklist.size(); ++cursor) {
+      unsigned component = worklist[cursor];
+      for (unsigned predecessor : predecessors[component]) {
+        distance[predecessor] =
+            std::max(distance[predecessor], distance[component] + 1);
+        maxDistance = std::max(maxDistance, distance[predecessor]);
+        if (--successors[predecessor] == 0)
+          worklist.push_back(predecessor);
+      }
+    }
+    if (worklist.size() != componentMasks.size()) {
+      emitError(location) << "solve before ordering contains a cycle";
+      return failure();
+    }
+    if (!componentMasks.empty()) {
+      solveBeforeLayerMasks.assign(maxDistance + 1,
+                                   APInt::getZero(assignmentWidth));
+      for (unsigned component = 0; component != componentMasks.size();
+           ++component)
+        solveBeforeLayerMasks[maxDistance - distance[component]] |=
+            componentMasks[component];
+    }
+    // Unspecified fields join the final ordered group.
     if (!solveBeforeLayerMasks.empty()) {
       APInt orderedMask = APInt::getZero(assignmentWidth);
       for (const APInt &layer : solveBeforeLayerMasks)
@@ -3005,20 +3070,50 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     return *width;
   };
-  llvm::DenseMap<Operation *, bool> candidateDependencies;
-  std::function<bool(Operation *)> dependsOnCandidate =
-      [&](Operation *expression) {
-        if (auto found = candidateDependencies.find(expression);
-            found != candidateDependencies.end())
-          return found->second;
-        bool dependent = expression->hasAttr(randomVariableAttrName);
-        for (Region &region : expression->getRegions())
+  struct ExpressionDependencies {
+    bool candidate;
+    bool runtimeInput;
+  };
+  llvm::DenseMap<Operation *, ExpressionDependencies> expressionDependencies;
+  auto dependenciesForExpression = [&](Operation *expression) {
+    SmallVector<std::pair<Operation *, bool>> worklist{{expression, false}};
+    while (!worklist.empty()) {
+      auto [node, ready] = worklist.pop_back_val();
+      if (expressionDependencies.contains(node))
+        continue;
+      if (!ready) {
+        worklist.emplace_back(node, true);
+        for (Region &region : node->getRegions())
           for (Block &block : region)
             for (Operation &child : block)
-              dependent |= dependsOnCandidate(&child);
-        candidateDependencies[expression] = dependent;
-        return dependent;
-      };
+              if (!expressionDependencies.contains(&child))
+                worklist.emplace_back(&child, false);
+        continue;
+      }
+      ExpressionDependencies dependencies{
+          node->hasAttr(randomVariableAttrName),
+          !getConstantSpelling(node) &&
+              !node->hasAttr(randomVariableAttrName) &&
+              !node->hasAttr(randomVariableBitOffsetAttrName) &&
+              isa<semantic::SVNamedValueExpressionOp,
+                  semantic::SVHierarchicalValueExpressionOp,
+                  semantic::SVMemberAccessExpressionOp,
+                  semantic::SVCallExpressionOp>(node)};
+      for (Region &region : node->getRegions())
+        for (Block &block : region)
+          for (Operation &child : block) {
+            auto nested = expressionDependencies.find(&child);
+            assert(nested != expressionDependencies.end());
+            dependencies.candidate |= nested->second.candidate;
+            dependencies.runtimeInput |= nested->second.runtimeInput;
+          }
+      expressionDependencies[node] = dependencies;
+    }
+    return expressionDependencies.lookup(expression);
+  };
+  auto dependsOnCandidate = [&](Operation *expression) {
+    return dependenciesForExpression(expression).candidate;
+  };
 #ifdef OBELISK_ENABLE_Z3
   constexpr bool rawDistWeights = true;
 #else
@@ -3866,8 +3961,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         DistPlan plan{expression, propertyIndex,
                       0,          activeProgramConstraintBlock,
                       {},         activeSoftDistSource};
-        for (unsigned index = 0; index != propertyIndex; ++index)
-          plan.propertyOffset += planned[index].width;
+        plan.propertyOffset = propertyOffsets[propertyIndex];
         SmallVector<std::pair<uint32_t, Value>> rawWeights;
         for (auto [identity, item] : llvm::enumerate(rawItems)) {
           auto endpoints = isa<semantic::SVValueRangeExpressionOp>(item.value)
@@ -4246,8 +4340,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       DistPlan plan{expression, propertyIndex,
                     0,          activeProgramConstraintBlock,
                     {},         activeSoftDistSource};
-      for (unsigned index = 0; index != propertyIndex; ++index)
-        plan.propertyOffset += planned[index].width;
+      plan.propertyOffset = propertyOffsets[propertyIndex];
       for (const PendingRange &range : pending) {
         bool weightSigned = false;
         FailureOr<std::pair<uint32_t, Value>> weight =
@@ -4387,11 +4480,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
       unsigned index = static_cast<unsigned>(indexValue.getZExtValue());
-      uint32_t offset = 0;
-      for (unsigned current = 0; current != index; ++current)
-        offset += planned[current].width;
       instruction(OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, planned[index].width,
-                  planned[index].isSigned, offset);
+                  planned[index].isSigned, propertyOffsets[index]);
       return success();
     }
     if (std::optional<StringRef> spelling = getConstantSpelling(expression)) {
@@ -4473,19 +4563,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // a conversion of runtime state once as a capture. This preserves the
       // conversion's exact signed extension/truncation while exposing a direct
       // capture endpoint to interval planning.
-      bool hasRuntimeInput = false;
-      expression->walk([&](Operation *nestedExpression) {
-        if (getConstantSpelling(nestedExpression) ||
-            nestedExpression->hasAttr(randomVariableAttrName) ||
-            nestedExpression->hasAttr(randomVariableBitOffsetAttrName))
-          return;
-        if (isa<semantic::SVNamedValueExpressionOp,
-                semantic::SVHierarchicalValueExpressionOp,
-                semantic::SVMemberAccessExpressionOp,
-                semantic::SVCallExpressionOp>(nestedExpression))
-          hasRuntimeInput = true;
-      });
-      if (!dependsOnCandidate(expression) && hasRuntimeInput &&
+      auto dependencies = dependenciesForExpression(expression);
+      if (!dependencies.candidate && dependencies.runtimeInput &&
           (!expression->hasAttr(randomArithmeticNodeAttr) ||
            expression->hasAttr(randomArithmeticPlaneAttr)))
         return captureExpression();
@@ -7060,17 +7139,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           bound.kind == solver::RandomCaptureBoundKind::UpperExclusive;
     ++materializedCaptureBounds;
   }
+  llvm::DenseMap<uint32_t, unsigned> aliasTargetCounts;
+  for (const solver::RandomVariableAlias &alias : analysis.aliases)
+    ++aliasTargetCounts[alias.targetOffset];
   for (const solver::RandomVariableAlias &alias : analysis.aliases) {
     if (!distPlans.empty())
       break;
-    bool sourceIsTarget = llvm::any_of(
-        analysis.aliases, [&](const solver::RandomVariableAlias &other) {
-          return other.targetOffset == alias.sourceOffset;
-        });
-    unsigned targetCount = llvm::count_if(
-        analysis.aliases, [&](const solver::RandomVariableAlias &other) {
-          return other.targetOffset == alias.targetOffset;
-        });
+    bool sourceIsTarget = aliasTargetCounts.contains(alias.sourceOffset);
+    unsigned targetCount = aliasTargetCounts.lookup(alias.targetOffset);
     if (alias.targetOffset != alias.sourceOffset &&
         isPropertyField(alias.targetOffset, alias.width) &&
         isPropertyField(alias.sourceOffset, alias.width) && !sourceIsTarget &&

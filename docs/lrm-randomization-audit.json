@@ -201,7 +201,8 @@
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir"
         ]
       }
     },
@@ -462,7 +463,8 @@
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir"
         ]
       }
     },
@@ -969,7 +971,7 @@
         {
           "feature": "Conditional ordered probabilities",
           "status": "partial",
-          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM compiled-plan samplers count exact existential projections for integral bitstreams, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Fixed integral array elements use the same exact masks and conditional probabilities; whole unpacked arrays and randc operands are diagnosed. Real ordering and state-dependent selected paths remain incomplete."
+          "detail": "Compiler Z3 tables and structural plans preserve ordering with arbitrary-width masks and projected keys. Native and WASM compiled-plan samplers count exact existential projections for integral bitstreams, including live captures, semantic domains, modes and optimal soft preferences; each projected value counts once regardless of its later completions. Version-2 ordering metadata carries multiword masks. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Fixed integral array elements use the same exact masks and conditional probabilities; whole unpacked arrays and randc operands are diagnosed. Real ordering and state-dependent selected paths remain incomplete. Lowering hashes repeated edges, joins transitive overlapping bit views with per-bit adjacency and schedules their latest legal layers with one sink traversal. MLIR checks a 130-field chain, duplicate and multiple-operand edges, conditional versus joint sampling after mode changes, and overlap-induced cycle diagnostics."
         },
         {
           "feature": "Randc implicit priority",
@@ -1009,7 +1011,9 @@
           "test/Build/runtime-compiled-sampler.test",
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
-          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.mlir"
         ]
       }
     },
@@ -1632,7 +1636,8 @@
           "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
-          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir"
         ]
       }
     },
