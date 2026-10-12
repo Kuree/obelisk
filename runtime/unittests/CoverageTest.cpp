@@ -657,6 +657,78 @@ TEST(CoverageRuntimeDesignTest,
 }
 
 TEST(CoverageRuntimeDesignTest,
+     MutableOptionUpdatesPreserveOwnerLocalThresholds) {
+  auto schema = makeSharedAndSelectorSchema();
+  // Serialized ID order differs from declaration order and bin ownership.
+  schema.functionalItems[0].ordinal = 1;
+  schema.functionalItems[1].ordinal = 0;
+  schema.schemaFingerprint =
+      obelisk::coverage::computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema, false);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 changed = 0, other = 0;
+  ASSERT_EQ(createFunctional(context, 10, &changed), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &other), OBELISK_RT_OK);
+  auto write = [&](uint64_t item,
+                   obelisk_rt_covergroup_instance_option_v1 option,
+                   int64_t value) {
+    ASSERT_EQ(obelisk_rt_v1_covergroup_set_integer_option(context, changed,
+                                                          item, option, value),
+              OBELISK_RT_OK);
+  };
+  write(20, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 3);
+  write(21, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 7);
+  write(22, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 0);
+  write(20, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 4);
+  write(0, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 3);
+  write(22, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 5);
+  write(0, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, 2);
+  for (auto [item, threshold, weight] :
+       {std::array<int64_t, 3>{20, 4, 3}, {21, 2, 7}, {22, 5, 0}}) {
+    int64_t value = -1;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                  context, changed, item, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST,
+                  &value),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, threshold);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                  context, changed, item, OBELISK_RT_COVERGROUP_OPTION_WEIGHT,
+                  &value),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, weight);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_get_integer_option(
+                  context, other, item, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST,
+                  &value),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, 1);
+  }
+  auto query = [&](obelisk_rt_covergroup_v1 handle, uint64_t item,
+                   double expected) {
+    double percentage = -1.0;
+    int32_t covered = -1, total = -1;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handle, item, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_DOUBLE_EQ(percentage, expected);
+  };
+  for (unsigned hit = 0; hit != 3; ++hit)
+    ASSERT_EQ(sampleFunctional(context, changed, 0, 2), OBELISK_RT_OK);
+  query(changed, 20, 0.0);
+  query(changed, 21, 100.0);
+  query(changed, 22, 0.0);
+  ASSERT_EQ(sampleFunctional(context, changed, 0, 2), OBELISK_RT_OK);
+  query(changed, 20, 50.0);
+  query(changed, 22, 0.0);
+  ASSERT_EQ(sampleFunctional(context, changed, 0, 2), OBELISK_RT_OK);
+  query(changed, 22, 100.0);
+  ASSERT_EQ(sampleFunctional(context, other, 0, 2), OBELISK_RT_OK);
+  query(other, 20, 50.0);
+  query(other, 22, 100.0);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(CoverageRuntimeDesignTest,
      OptionReadsHonorDefaultsAndRejectInvalidScopes) {
   const auto schema = makeSharedAndSelectorSchema();
   obelisk_rt_context *context = createContextForSchema(schema, false);

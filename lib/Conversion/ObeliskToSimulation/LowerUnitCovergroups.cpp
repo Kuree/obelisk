@@ -168,160 +168,162 @@ UnitLowering::resolveCovergroupOptionOwner(Operation *owner,
   return std::optional<CovergroupOptionOwner>{result};
 }
 
-FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
-    semantic::SVAssignmentExpressionOp op, Operation *destination,
-    Operation *source, Value rhs) {
-  auto field = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
-  SmallVector<Operation *> fieldChildren = getChildren(destination);
-  if (!field || fieldChildren.size() != 1)
-    return std::optional<Value>{};
+FailureOr<std::optional<UnitLowering::CapturedLValue>>
+UnitLowering::captureCovergroupOption(
+    semantic::SVMemberAccessExpressionOp field, Location location) {
+  SmallVector<Operation *> fieldChildren = getChildren(field);
+  auto fieldName = field->getAttrOfType<StringAttr>("member_name");
+  if (!fieldName || fieldChildren.size() != 1)
+    return std::optional<CapturedLValue>{};
   Operation *optionExpression = fieldChildren.front();
   auto option =
       dyn_cast<semantic::SVMemberAccessExpressionOp>(optionExpression);
-  auto optionName =
-      optionExpression->getAttrOfType<StringAttr>("member_name");
-  ModuleOp semanticModule = function->getParentOfType<ModuleOp>();
-  SmallVector<Operation *> optionChildren;
-  bool typeOption = false;
+  auto optionName = optionExpression->getAttrOfType<StringAttr>("member_name");
+  CapturedLValue captured;
+  captured.kind = CapturedLValue::Kind::CovergroupOption;
+  captured.semanticNode = field;
   if (option && optionName && optionName.getValue() == "option") {
-    optionChildren = getChildren(optionExpression);
-    if (optionChildren.size() != 1)
-      return std::optional<Value>{};
+    auto children = getChildren(option);
+    if (children.size() != 1)
+      return std::optional<CapturedLValue>{};
+    auto owner = resolveCovergroupOptionOwner(children.front(), location);
+    if (failed(owner))
+      return failure();
+    if (!*owner)
+      return std::optional<CapturedLValue>{};
+    captured.coverageItem = (**owner).item;
+    captured.coverageItemID = (**owner).itemID;
+    FailureOr<Value> receiver = lowerExpression((**owner).receiver);
+    if (failed(receiver) ||
+        !isa<sim::CovergroupHandleType>((*receiver).getType()))
+      return failure();
+    captured.container = *receiver;
   } else {
     auto reference =
         optionExpression->getAttrOfType<SymbolRefAttr>("referenced_symbol");
     auto property =
         reference ? lookupNearestSymbolFrom<semantic::SVClassPropertySymbolOp>(
-                        semanticModule, reference)
+                        function->getParentOfType<ModuleOp>(), reference)
                   : semantic::SVClassPropertySymbolOp{};
-    if (!property || property.getName() != "type_option" ||
-        !property->getParentOfType<semantic::SVCovergroupTypeOp>())
-      return std::optional<Value>{};
-    typeOption = true;
-    optionChildren.push_back(optionExpression);
-  }
-
-  Location location = getSemanticLocation(op);
-  if (op.getHasTimingControl() || op.getOperatorKind() ||
-      op.getAssignmentKind() != semantic::SVAssignmentKind::Blocking) {
-    emitError(location)
-        << "covergroup options require an untimed blocking simple assignment";
-    return failure();
-  }
-
-  Operation *owner = optionChildren.front();
-  auto fieldName = destination->getAttrOfType<StringAttr>("member_name");
-  if (!fieldName)
-    return std::optional<Value>{};
-
-  if (typeOption) {
-    auto reference = owner->getAttrOfType<SymbolRefAttr>("referenced_symbol");
-    auto property =
-        reference ? lookupNearestSymbolFrom<semantic::SVClassPropertySymbolOp>(
-                        semanticModule, reference)
-                  : semantic::SVClassPropertySymbolOp{};
-    auto covergroup =
-        property
-            ? property->getParentOfType<semantic::SVCovergroupTypeOp>()
-            : semantic::SVCovergroupTypeOp{};
-    Operation *semanticItem = nullptr;
-    if (property) {
-      semanticItem =
-          property->getParentOfType<semantic::SVCoverpointSymbolOp>()
+    if (!property || property.getName() != "type_option")
+      return std::optional<CapturedLValue>{};
+    captured.coverageGroup =
+        property->getParentOfType<semantic::SVCovergroupTypeOp>();
+    if (!captured.coverageGroup)
+      return std::optional<CapturedLValue>{};
+    captured.coverageItem =
+        property->getParentOfType<semantic::SVCoverpointSymbolOp>()
+            .getOperation();
+    if (!captured.coverageItem)
+      captured.coverageItem =
+          property->getParentOfType<semantic::SVCoverCrossSymbolOp>()
               .getOperation();
-      if (!semanticItem)
-        semanticItem =
-            property->getParentOfType<semantic::SVCoverCrossSymbolOp>()
-                .getOperation();
-    }
-    if (!covergroup) {
-      emitError(location) << "functional coverage type option has no typed owner";
+    // The static struct has real storage, but every write must also update the
+    // shared coverage profile. This capture freezes object qualifiers once.
+    FailureOr<Value> referenceValue = lowerExpression(field, /*lvalue=*/true);
+    if (failed(referenceValue))
       return failure();
-    }
-    StringRef name = fieldName.getValue();
-    std::optional<sim::CovergroupInstanceOptionKind> kind;
-    if (name == "comment")
-      kind = sim::CovergroupInstanceOptionKind::Comment;
-    else if (name == "weight")
-      kind = sim::CovergroupInstanceOptionKind::Weight;
-    else if (name == "goal")
-      kind = sim::CovergroupInstanceOptionKind::Goal;
-    else if (name == "merge_instances" && !semanticItem)
-      kind = sim::CovergroupInstanceOptionKind::MergeInstances;
-    else if (name == "distribute_first" && !semanticItem)
-      kind = sim::CovergroupInstanceOptionKind::DistributeFirst;
-    if (!kind) {
-      emitError(location) << "covergroup type option '" << name
-                          << "' is not supported procedurally";
-      return failure();
-    }
-    if (failed(publishCovergroupTypeOption(covergroup, semanticItem, *kind, rhs,
-                                           isSignedNode(source), location)))
-      return failure();
-    // The implicitly declared static struct (19.10) also needs the ordinary
-    // lvalue store emitted by lowerAssignment.
-    return std::optional<Value>{};
+    captured.reference = *referenceValue;
   }
+  using Kind = sim::CovergroupInstanceOptionKind;
+  StringRef name = fieldName.getValue();
+  std::optional<Kind> kind;
+  if (name == "weight")
+    kind = Kind::Weight;
+  else if (name == "goal")
+    kind = Kind::Goal;
+  else if (name == "comment")
+    kind = Kind::Comment;
+  else if (captured.coverageGroup) {
+    if (!captured.coverageItem && name == "merge_instances")
+      kind = Kind::MergeInstances;
+    else if (!captured.coverageItem && name == "distribute_first")
+      kind = Kind::DistributeFirst;
+  } else {
+    if (name == "at_least")
+      kind = Kind::AtLeast;
+    else if (name == "name" && !captured.coverageItem)
+      kind = Kind::Name;
+    else if (name == "cross_num_print_missing" &&
+             (!captured.coverageItem ||
+              isa<semantic::SVCoverCrossSymbolOp>(captured.coverageItem)))
+      kind = Kind::CrossNumPrintMissing;
+  }
+  if (!kind) {
+    emitError(location) << "covergroup "
+                        << (captured.coverageGroup ? "type option '"
+                                                   : "option '")
+                        << name << "' cannot be assigned procedurally";
+    return failure();
+  }
+  FailureOr<Type> type = getNormalizedSemanticType(field);
+  if (failed(type))
+    return failure();
+  captured.type = *type;
+  captured.coverageOption = *kind;
+  return std::optional<CapturedLValue>{std::move(captured)};
+}
 
-  auto resolvedOwner = resolveCovergroupOptionOwner(owner, location);
-  if (failed(resolvedOwner))
+FailureOr<Value>
+UnitLowering::loadCapturedCovergroupOption(const CapturedLValue &destination,
+                                           Location location) {
+  if (destination.coverageGroup)
+    return loadReference(destination.reference, location);
+  Value context = function.getBody().front().getArgument(0);
+  using Kind = sim::CovergroupInstanceOptionKind;
+  if (destination.coverageOption == Kind::Name ||
+      destination.coverageOption == Kind::Comment)
+    return sim::SimCovergroupGetStringOptionOp::create(
+               builder, location, context, destination.container,
+               destination.coverageItemID, destination.coverageOption)
+        .getValue();
+  Value value = sim::SimCovergroupGetIntegerOptionOp::create(
+                    builder, location, context, destination.container,
+                    destination.coverageItemID, destination.coverageOption)
+                    .getValue();
+  return convert(value, destination.type, /*sourceSigned=*/true, location,
+                 isSignedNode(destination.semanticNode));
+}
+
+LogicalResult
+UnitLowering::storeCapturedCovergroupOption(const CapturedLValue &destination,
+                                            Value value, bool sourceSigned,
+                                            Location location) {
+  FailureOr<Value> converted =
+      convert(value, destination.type, sourceSigned, location,
+              isSignedNode(destination.semanticNode));
+  if (failed(converted))
     return failure();
-  if (!*resolvedOwner)
-    return std::optional<Value>{};
-  const auto &resolved = **resolvedOwner;
-  uint64_t itemID = resolved.itemID;
-  Operation *semanticItem = resolved.item;
-  FailureOr<Value> loweredReceiver = lowerExpression(resolved.receiver);
-  if (failed(loweredReceiver) ||
-      !isa<sim::CovergroupHandleType>((*loweredReceiver).getType())) {
-    emitError(location) << "functional coverage option receiver is not a covergroup instance";
-    return failure();
+  const bool signedValue = isSignedNode(destination.semanticNode);
+  if (destination.coverageGroup) {
+    if (failed(publishCovergroupTypeOption(
+            destination.coverageGroup, destination.coverageItem,
+            destination.coverageOption, *converted, signedValue, location)))
+      return failure();
+    return storeReference(destination.reference, *converted, location);
   }
   Value context = function.getBody().front().getArgument(0);
-  StringRef name = fieldName.getValue();
-  if (name == "name") {
-    if (itemID || !isa<sim::StringType>(rhs.getType())) {
-      emitError(location) << "option.name is a covergroup string option";
-      return failure();
-    }
+  using Kind = sim::CovergroupInstanceOptionKind;
+  if (destination.coverageOption == Kind::Name) {
     sim::SimCovergroupSetNameOp::create(builder, location, context,
-                                        *loweredReceiver, rhs);
-    return std::optional<Value>{rhs};
+                                        destination.container, *converted);
+    return success();
   }
-  if (name == "comment") {
-    if (!isa<sim::StringType>(rhs.getType())) {
-      emitError(location) << "option.comment requires a string value";
-      return failure();
-    }
+  if (destination.coverageOption == Kind::Comment) {
     sim::SimCovergroupSetStringOptionOp::create(
-        builder, location, context, *loweredReceiver,
-        itemID,
-        sim::CovergroupInstanceOptionKind::Comment, rhs);
-    return std::optional<Value>{rhs};
+        builder, location, context, destination.container,
+        destination.coverageItemID, destination.coverageOption, *converted);
+    return success();
   }
-
-  std::optional<sim::CovergroupInstanceOptionKind> kind;
-  if (name == "weight")
-    kind = sim::CovergroupInstanceOptionKind::Weight;
-  else if (name == "goal")
-    kind = sim::CovergroupInstanceOptionKind::Goal;
-  else if (name == "at_least")
-    kind = sim::CovergroupInstanceOptionKind::AtLeast;
-  else if (name == "cross_num_print_missing" &&
-           (!itemID || isa<semantic::SVCoverCrossSymbolOp>(semanticItem)))
-    kind = sim::CovergroupInstanceOptionKind::CrossNumPrintMissing;
-  if (!kind) {
-    emitError(location) << "covergroup option '" << name
-                        << "' cannot be assigned procedurally";
-    return failure();
-  }
-  FailureOr<Value> value = convert(rhs, builder.getI64Type(),
-                                   isSignedNode(source), location, true);
-  if (failed(value))
+  FailureOr<Value> integer =
+      convert(*converted, builder.getI64Type(), signedValue, location,
+              /*resultSigned=*/true);
+  if (failed(integer))
     return failure();
   sim::SimCovergroupSetIntegerOptionOp::create(
-      builder, location, context, *loweredReceiver, itemID, *kind, *value);
-  return std::optional<Value>{rhs};
+      builder, location, context, destination.container,
+      destination.coverageItemID, destination.coverageOption, *integer);
+  return success();
 }
 
 FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionRead(

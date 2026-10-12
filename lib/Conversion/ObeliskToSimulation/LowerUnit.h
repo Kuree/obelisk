@@ -92,6 +92,7 @@ private:
   struct CapturedLValue {
     enum class Kind {
       Reference,
+      CovergroupOption,
       PackedDynamicSlice,
       PackedValueSlice,
       ContainerElement,
@@ -101,6 +102,7 @@ private:
       AggregateDynamicElement,
       AggregateSlice,
       StringCharacter,
+      StringValueCharacter,
       Concatenation,
     };
 
@@ -111,6 +113,13 @@ private:
     ::mlir::Value container;
     ::mlir::Value index;
     ::mlir::Value limit;
+    /// Coverage members have logical storage in the runtime. Static members
+    /// additionally retain their ordinary design reference for field reads.
+    semantic::SVCovergroupTypeOp coverageGroup;
+    ::mlir::Operation *coverageItem = nullptr;
+    uint64_t coverageItemID = 0;
+    sim::CovergroupInstanceOptionKind coverageOption =
+        sim::CovergroupInstanceOptionKind::Weight;
     /// Dynamic source indices of an unpacked aggregate slice. They are
     /// captured once with the rest of the lvalue address and replayed in
     /// left-to-right result order.
@@ -333,10 +342,16 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerCovergroupCall(semantic::SVCallExpressionOp op,
                       semantic::SVCovergroupTypeOp covergroup);
-  ::mlir::FailureOr<std::optional<::mlir::Value>>
-  lowerCovergroupOptionAssignment(semantic::SVAssignmentExpressionOp op,
-                                  ::mlir::Operation *destination,
-                                  ::mlir::Operation *source, ::mlir::Value rhs);
+  ::mlir::FailureOr<std::optional<CapturedLValue>>
+  captureCovergroupOption(semantic::SVMemberAccessExpressionOp field,
+                          ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  loadCapturedCovergroupOption(const CapturedLValue &destination,
+                               ::mlir::Location location);
+  ::mlir::LogicalResult
+  storeCapturedCovergroupOption(const CapturedLValue &destination,
+                                ::mlir::Value value, bool sourceSigned,
+                                ::mlir::Location location);
   struct CovergroupOptionOwner {
     ::mlir::Operation *receiver;
     ::mlir::Operation *item = nullptr;

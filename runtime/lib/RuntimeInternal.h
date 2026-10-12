@@ -1771,8 +1771,9 @@ struct FunctionalCoverageTypeState {
   /// Bin-construction policy frozen when this configuration was resolved.
   bool distributeFirst = false;
   uint64_t groupCrossNumPrintMissing = 0;
-  std::unordered_map<uint64_t, uint64_t> crossNumPrintMissing;
-  std::unordered_set<uint64_t> explicitCrossNumPrintMissingItems;
+  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> crossNumPrintMissing;
+  obelisk::coverage::detail::IndexSet<uint64_t>
+      explicitCrossNumPrintMissingItems;
   std::vector<uint64_t> items;
   std::vector<uint8_t> itemAggregating;
   std::vector<uint32_t> itemGoals;
@@ -1856,12 +1857,13 @@ struct FunctionalCoverageInstanceState {
   std::vector<uint32_t> itemWeights;
   /// Effective threshold for every resolved item, including zero-bin items.
   std::vector<uint64_t> itemAtLeast;
-  std::unordered_set<uint64_t> explicitAtLeastItems;
-  std::unordered_map<uint64_t, uint64_t> crossAtLeast;
+  obelisk::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
+  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> crossAtLeast;
   /// Cross print limits use template IDs because procedural selectors and
   /// persisted instance-option owners are stable across resolved schemas.
-  std::unordered_map<uint64_t, uint64_t> crossNumPrintMissing;
-  std::unordered_set<uint64_t> explicitCrossNumPrintMissingItems;
+  obelisk::coverage::detail::IndexMap<uint64_t, uint64_t> crossNumPrintMissing;
+  obelisk::coverage::detail::IndexSet<uint64_t>
+      explicitCrossNumPrintMissingItems;
   /// Mutable comments keyed by zero for the group or by template item ID.
   obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
   std::unordered_set<uint64_t> disabledItems;

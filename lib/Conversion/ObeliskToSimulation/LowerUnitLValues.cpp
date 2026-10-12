@@ -181,6 +181,15 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     destinationType = storage.getValue();
   captured.type = *destinationType;
 
+  if (auto field =
+          dyn_cast<semantic::SVMemberAccessExpressionOp>(destination)) {
+    auto coverage = captureCovergroupOption(field, location);
+    if (failed(coverage))
+      return failure();
+    if (*coverage)
+      return std::move(**coverage);
+  }
+
   if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
     SmallVector<Operation *> children = getChildren(destination);
     if (children.empty())
@@ -334,6 +343,25 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
         return captured;
       }
       if (isa<sim::StringType>(*baseType)) {
+        if (auto field = dyn_cast<semantic::SVMemberAccessExpressionOp>(
+                selection.front())) {
+          auto coverage = captureCovergroupOption(field, location);
+          if (failed(coverage))
+            return failure();
+          if (*coverage) {
+            auto index = lowerExpression(selection[1]);
+            auto normalized =
+                succeeded(index) ? convert(*index, builder.getI64Type(),
+                                           isSignedNode(selection[1]), location)
+                                 : FailureOr<Value>(failure());
+            if (failed(normalized))
+              return failure();
+            captured.kind = CapturedLValue::Kind::StringValueCharacter;
+            captured.index = *normalized;
+            captured.children.push_back(std::move(**coverage));
+            return captured;
+          }
+        }
         FailureOr<Value> base = lowerExpression(selection.front(), true);
         FailureOr<Value> index = lowerExpression(selection[1]);
         if (failed(base) || failed(index) ||
@@ -551,6 +579,17 @@ FailureOr<Value>
 UnitLowering::loadCapturedLValue(const CapturedLValue &destination,
                                  Location location) {
   switch (destination.kind) {
+  case CapturedLValue::Kind::CovergroupOption:
+    return loadCapturedCovergroupOption(destination, location);
+  case CapturedLValue::Kind::StringValueCharacter: {
+    auto string = loadCapturedLValue(destination.children.front(), location);
+    if (failed(string))
+      return failure();
+    Value character = sim::SimStringGetcOp::create(
+        builder, location, builder.getI8Type(), *string, destination.index);
+    return convert(character, destination.type, false, location,
+                   isSignedNode(destination.semanticNode));
+  }
   case CapturedLValue::Kind::Reference:
     return loadReference(destination.reference, location);
   case CapturedLValue::Kind::PackedDynamicSlice: {
@@ -877,6 +916,8 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
            lhsConstant == rhsConstant;
   }
   case CapturedLValue::Kind::StringCharacter:
+  case CapturedLValue::Kind::StringValueCharacter:
+  case CapturedLValue::Kind::CovergroupOption:
   case CapturedLValue::Kind::AggregateSlice:
   case CapturedLValue::Kind::ContainerSlice:
   case CapturedLValue::Kind::Concatenation:
@@ -912,6 +953,27 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
   if (!nonblocking || observeNonblockingWrites)
     recordImplicitWrite(destination.reference);
   switch (destination.kind) {
+  case CapturedLValue::Kind::CovergroupOption:
+    if (nonblocking)
+      return emitError(location)
+             << "coverage option updates require blocking assignments";
+    return storeCapturedCovergroupOption(destination, value, sourceSigned,
+                                         location);
+  case CapturedLValue::Kind::StringValueCharacter: {
+    if (nonblocking)
+      return emitError(location)
+             << "coverage option updates require blocking assignments";
+    auto string = loadCapturedLValue(destination.children.front(), location);
+    auto character =
+        convert(value, builder.getI8Type(), sourceSigned, location);
+    if (failed(string) || failed(character))
+      return failure();
+    Value updated = sim::SimStringPutcOp::create(
+        builder, location, sim::StringType::get(function.getContext()), *string,
+        destination.index, *character);
+    return writeCapturedLValue(destination.children.front(), updated, false,
+                               false, location);
+  }
   case CapturedLValue::Kind::Reference: {
     FailureOr<Value> converted =
         convert(value, destination.type, sourceSigned, location,
@@ -2316,10 +2378,23 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     if (!totalWidth)
       return failure();
     uint64_t trailing = *totalWidth;
+    auto hasCapturedContainer = [](const CapturedLValue &target,
+                                   auto &&self) -> bool {
+      if (target.kind == CapturedLValue::Kind::ContainerElement ||
+          target.kind == CapturedLValue::Kind::ContainerSlice ||
+          target.kind == CapturedLValue::Kind::AssociativeElement)
+        return true;
+      return llvm::any_of(target.children, [&](const CapturedLValue &child) {
+        return self(child, self);
+      });
+    };
     for (auto [childIndex, child] : llvm::enumerate(destination.children)) {
-      for (CapturedLValue &previous :
-           MutableArrayRef(destination.children).take_front(childIndex))
-        propagateCapturedContainers(previous, child);
+      // Logical coverage fields always reload their current owner value.
+      // They need no pairwise copy-on-write container propagation.
+      if (hasCapturedContainer(child, hasCapturedContainer))
+        for (CapturedLValue &previous :
+             MutableArrayRef(destination.children).take_front(childIndex))
+          propagateCapturedContainers(previous, child);
       std::optional<unsigned> childWidth = sim::getPackedWidth(child.type);
       if (!childWidth || *childWidth > trailing) {
         emitError(location) << "concatenation lvalue width is inconsistent";
@@ -2368,6 +2443,11 @@ void UnitLowering::appendCapturedValues(const CapturedLValue &destination,
     values.push_back(destination.reference);
   for (const CapturedLValue &child : destination.children)
     appendCapturedValues(child, values);
+  if (destination.kind == CapturedLValue::Kind::CovergroupOption)
+    values.push_back(destination.coverageGroup ? destination.reference
+                                               : destination.container);
+  if (destination.kind == CapturedLValue::Kind::StringValueCharacter)
+    values.push_back(destination.index);
   if (destination.kind == CapturedLValue::Kind::ContainerElement ||
       destination.kind == CapturedLValue::Kind::AssociativeElement) {
     values.push_back(destination.container);
@@ -2403,6 +2483,17 @@ LogicalResult UnitLowering::replaceCapturedValues(CapturedLValue &destination,
   for (CapturedLValue &child : destination.children) {
     if (failed(replaceCapturedValues(child, values, next)))
       return failure();
+  }
+  if (destination.kind == CapturedLValue::Kind::CovergroupOption ||
+      destination.kind == CapturedLValue::Kind::StringValueCharacter) {
+    if (next >= values.size())
+      return failure();
+    if (destination.kind == CapturedLValue::Kind::StringValueCharacter)
+      destination.index = values[next++];
+    else if (destination.coverageGroup)
+      destination.reference = values[next++];
+    else
+      destination.container = values[next++];
   }
   if (destination.kind == CapturedLValue::Kind::ContainerElement ||
       destination.kind == CapturedLValue::Kind::AssociativeElement) {
@@ -4285,12 +4376,6 @@ UnitLowering::lowerAssignment(semantic::SVAssignmentExpressionOp op) {
   }
   if (failed(rhs))
     return failure();
-  FailureOr<std::optional<Value>> coverageOption =
-      lowerCovergroupOptionAssignment(op, destination, source, *rhs);
-  if (failed(coverageOption))
-    return failure();
-  if (*coverageOption)
-    return **coverageOption;
   if (auto streaming = dyn_cast<semantic::SVStreamingConcatenationExpressionOp>(
           destination)) {
     if (compound || nonblocking || timed)

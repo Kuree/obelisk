@@ -11900,9 +11900,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
       return OBELISK_RT_INVALID_HANDLE;
     FunctionalCoverageInstanceState &instance = found->second;
     auto type = coverage->types.find({instance.typeID, instance.configuration});
-    if (type == coverage->types.end())
+    if (type == coverage->types.end() || !type->second.queryMetadata)
       return OBELISK_RT_INVALID_DESIGN;
-    if (instance.itemAtLeast.size() != type->second.items.size())
+    const auto &metadata = *type->second.queryMetadata;
+    if (instance.itemAtLeast.size() != metadata.items.size() ||
+        instance.itemGoals.size() != metadata.items.size() ||
+        instance.itemWeights.size() != metadata.items.size() ||
+        instance.bins.size() != metadata.bins.size())
       return OBELISK_RT_INVALID_DESIGN;
 
     const obelisk::coverage::ResolvedFunctionalItem *resolved = nullptr;
@@ -11912,11 +11916,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
                                             instance.configuration, itemID);
       if (!resolved)
         return OBELISK_RT_INVALID_DESIGN;
-      auto position = std::find(type->second.items.begin(),
-                                type->second.items.end(), resolved->id);
-      if (position == type->second.items.end())
+      auto position = metadata.itemPositions.find(resolved->id);
+      if (position == metadata.itemPositions.end())
         return OBELISK_RT_INVALID_DESIGN;
-      itemIndex = static_cast<size_t>(position - type->second.items.begin());
+      itemIndex = position->second;
       if (itemIndex >= instance.itemGoals.size() ||
           itemIndex >= instance.itemWeights.size() ||
           itemIndex >= instance.itemAtLeast.size())
@@ -11951,41 +11954,28 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
       return OBELISK_RT_OK;
     }
 
-    auto applyAtLeast = [&](uint64_t resolvedItem, uint64_t threshold) {
-      for (FunctionalCoverageBinState &bin : instance.bins)
-        if (bin.item == resolvedItem)
-          bin.atLeast = threshold;
-      auto cross = instance.crossAtLeast.find(resolvedItem);
+    auto applyAtLeast = [&](size_t index, uint64_t threshold) {
+      for (size_t bin : metadata.itemBins[index])
+        instance.bins[bin].atLeast = threshold;
+      auto cross = instance.crossAtLeast.find(metadata.items[index].id);
       if (cross != instance.crossAtLeast.end())
         cross->second = threshold;
     };
     if (resolved) {
       instance.explicitAtLeastItems.insert(resolved->templateItem);
       instance.itemAtLeast[itemIndex] = unsignedValue;
-      applyAtLeast(resolved->id, unsignedValue);
+      applyAtLeast(itemIndex, unsignedValue);
       return OBELISK_RT_OK;
     }
-    std::vector<const obelisk::coverage::ResolvedFunctionalItem *> items;
-    items.reserve(type->second.items.size());
-    for (uint64_t resolvedItem : type->second.items) {
-      auto item = std::find_if(
-          coverage->schema->resolvedFunctionalItems.begin(),
-          coverage->schema->resolvedFunctionalItems.end(),
-          [&](const auto &candidate) {
-            return candidate.type == instance.typeID &&
-                   candidate.configuration == instance.configuration &&
-                   candidate.id == resolvedItem;
-          });
-      if (item == coverage->schema->resolvedFunctionalItems.end())
-        return OBELISK_RT_INVALID_DESIGN;
-      items.push_back(&*item);
-    }
     instance.groupAtLeast = unsignedValue;
-    for (size_t itemIndex = 0; itemIndex != items.size(); ++itemIndex) {
-      const auto *item = items[itemIndex];
-      if (!instance.explicitAtLeastItems.count(item->templateItem)) {
+    // Item bin lists partition the instance bins. Updating a group default
+    // visits each inheriting item and bin once and preserves local overrides.
+    for (size_t itemIndex = 0; itemIndex != metadata.items.size();
+         ++itemIndex) {
+      const auto &item = metadata.items[itemIndex];
+      if (!instance.explicitAtLeastItems.count(item.templateItem)) {
         instance.itemAtLeast[itemIndex] = unsignedValue;
-        applyAtLeast(item->id, unsignedValue);
+        applyAtLeast(itemIndex, unsignedValue);
       }
     }
     return OBELISK_RT_OK;

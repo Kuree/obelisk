@@ -317,6 +317,42 @@ copies, and native/bytecode parity, together with JSON/text/HTML/LCOV output.
 The runtime and persistence format need no new operations or columns for
 these value copies; no additional runtime unit or scaling benchmark is needed.
 
+Probes of 11.4.1-2 and 19.10 next found that instance-option increments and
+compound assignments failed, while static increments changed struct storage
+without publishing the new coverage profile. Incrementing a zero type weight
+left `$get_coverage()` at 100% despite uncovered bins. Mutable fields now use
+the shared captured-lvalue lowering: one typed receiver or static reference,
+the existing arithmetic and selection conversions, and an owner-local write.
+Static writes update both the type profile and ordinary struct storage after
+conversion to the field type. Prefix/postfix results, packed partial writes,
+string character writes, and timed blocking updates follow the same path.
+Captured owners and indices cross suspension as typed continuation arguments.
+The definition-only restrictions in 19.7 and 19.7.1 still apply.
+
+The review also removed setter scans that made a sequence of item updates
+quadratic. Integral setters reuse the immutable item-position index. Threshold
+changes visit that item's indexed bin list; a group change walks each item
+and its bins once, preserving explicit item overrides. Numeric owner updates
+cost O(1), an item threshold update costs O(K) for its K bins, and a group
+threshold update costs O(I + B). Mutable threshold and cross-print maps use
+bounded radix indexes. String updates additionally cost their bytes; a static
+type update visits its bound configurations once. Coverage concatenations
+skip the pairwise propagation used for captured managed containers.
+
+The MLIR review reuses typed coverage operations and their coverage/heap
+effects, ordinary design references, arithmetic, and continuation machinery,
+consistent with [MLIR side-effect modeling](https://mlir.llvm.org/docs/Rationale/SideEffectsAndSpeculation/).
+MLIR checks cover single receiver/index evaluation, prefix/postfix SSA values,
+field-width conversion before publication, canonicalization/CSE, suspension,
+both backend ABIs, and LLVM verification. A two-instance, one-configuration
+execution fixture checks all twelve compound operators, string/packed writes,
+snapshot isolation, concurrent timed updates, and native/bytecode parity.
+Seven definition-only fields have diagnostic probes. One small runtime unit
+checks declaration ordinals different from table order, owner-local thresholds,
+explicit overrides, and instance isolation. Text, JSON, HTML, and LCOV
+generation and backend parity are checked; the wire format and ABI need no
+additional columns or ops.
+
 Constructor probes of 19.5.1 and 19.5.3 also exposed repeated table scans and
 middle-vector insertion for automatic bins and late default arrays. Resolution
 now indexes sample expressions, bin plans, transition programs, value sets,
