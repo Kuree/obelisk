@@ -11,6 +11,73 @@ const esc = s => String(s).replace(/[&<>"]/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const num = v => Number(v);
 
+// Deterministic natural name keys, independent of the browser's locale.
+const nameKey = value => String(value).toLowerCase().replace(/[0-9]+/g, digits => {
+  digits = digits.replace(/^0+/, '') || '0';
+  return '0' + digits.length.toString(16).padStart(8, '0') + ':' + digits + ';';
+});
+const ordinalKey = value => BigInt(value).toString(16).padStart(16, '0');
+const numericKeyStorage = new DataView(new ArrayBuffer(8));
+const numericKey = value => {
+  numericKeyStorage.setFloat64(0, value === 0 ? 0 : value);
+  const bits = numericKeyStorage.getBigUint64(0);
+  return (bits & (1n << 63n) ? ~bits & ((1n << 64n) - 1n)
+                            : bits ^ (1n << 63n)).toString(16).padStart(16, '0');
+};
+const compositeKey = (...keys) => keys.map(k => k.replace(/\0/g, '\0\x01')).join('\0\0');
+
+// Stable MSD radix order visits only shared key prefixes. Singleton buckets
+// finish immediately, so a single long name never multiplies every row's work.
+// Indices move during partitioning; the records move only in the final pass.
+const linearOrder = (values, key) => {
+  const keys = values.map(key);
+  let sorted = true;
+  for (let i = 1; i < keys.length; ++i)
+    if (keys[i - 1] > keys[i]) sorted = false;
+  if (sorted) return values.slice();
+  const order = Uint32Array.from(values, (_, i) => i);
+  const scratch = new Uint32Array(order.length);
+  const counts = new Uint32Array(257);
+  const offsets = new Uint32Array(257);
+  const pending = [[0, order.length, 0]];
+  const byte = (index, position) => {
+    const at = Math.floor(position / 2);
+    return at < keys[index].length
+      ? ((keys[index].charCodeAt(at) >>> (position % 2 ? 0 : 8)) & 255) + 1 : 0;
+  };
+  while (pending.length) {
+    let [begin, end, position] = pending.pop();
+    while (end - begin > 1) {
+      counts.fill(0);
+      let distinct = 0, sole = 0;
+      for (let i = begin; i < end; ++i) {
+        const b = byte(order[i], position);
+        if (!counts[b]++) { ++distinct; sole = b; }
+      }
+      if (distinct === 1) {
+        if (!sole) break;
+        ++position;
+        continue;
+      }
+      let offset = begin;
+      for (let b = 0; b < counts.length; ++b) {
+        offsets[b] = offset;
+        offset += counts[b];
+      }
+      for (let i = begin; i < end; ++i)
+        scratch[offsets[byte(order[i], position)]++] = order[i];
+      order.set(scratch.subarray(begin, end), begin);
+      offset = begin + counts[0]; // Equal end-of-key records stay in source order.
+      for (let b = 1; b < counts.length; ++b) {
+        if (counts[b] > 1) pending.push([offset, offset + counts[b], position + 1]);
+        offset += counts[b];
+      }
+      break;
+    }
+  }
+  return Array.from(order, index => values[index]);
+};
+
 // Filters shared by every view.
 const state = {test: '', uncov: false};
 
@@ -20,13 +87,12 @@ const files = new Map(d.files.map(f => [f.id, f]));
 const scopes = new Map(d.scopes.map(s => [s.id, s]));
 const scopeByName = new Map(d.scopes.map(s => [s.name, s]));
 // numbered instances and files read in order: u_2 before u_10
-const byName = new Intl.Collator(undefined, {numeric: true}).compare;
 const children = new Map();
 for (const s of d.scopes) {
   if (!children.has(s.parent)) children.set(s.parent, []);
   children.get(s.parent).push(s);
 }
-for (const kids of children.values()) kids.sort((a, b) => byName(a.name, b.name));
+for (const [id, kids] of children) children.set(id, linearOrder(kids, x => nameKey(x.name)));
 const isRoot = s => !scopes.has(s.parent) || scopes.get(s.parent).name === '$root';
 const rootScopes = d.scopes.filter(s => s.name !== '$root' && isRoot(s));
 
@@ -74,15 +140,20 @@ const endpoint = (a, high) => {
     ? 'aval=0x' + av + ',bval=0x' + bv + ',wildcard=0x' + wm
     : '0x' + av;
 };
+const valueTextCache = new Map();
 const valueText = (type, configuration, id) => {
-  const s = valueSets.get(type + '|' + configuration + '|' + id);
+  const key = type + '|' + configuration + '|' + id;
+  if (valueTextCache.has(key)) return valueTextCache.get(key);
+  const s = valueSets.get(key);
   if (!s) return 'set ' + id;
-  return s.atoms.map(a => {
+  const text = s.atoms.map(a => {
     if (num(a.kind) === 3)
       return 'real-bits[0x' + hex(a.real_low_bits) + ':0x' + hex(a.real_high_bits) + ']';
     const low = endpoint(a, false);
     return num(a.kind) === 2 ? '[' + low + ':' + endpoint(a, true) + ']' : low;
   }).join(', ');
+  valueTextCache.set(key, text);
+  return text;
 };
 const groupBy = (rows, key) => {
   const map = new Map();
@@ -111,8 +182,8 @@ const repeatText = (kind, lo, hi) => {
 };
 const transitionText = (g, b) =>
   (alternativesByBin.get(g.type + '|' + g.configuration + '|' + b.id) || []).map(a =>
-    (stepsByAlternative.get(g.type + '|' + g.configuration + '|' + a.id) || [])
-      .sort((x, y) => num(x.ordinal) - num(y.ordinal))
+    linearOrder(stepsByAlternative.get(g.type + '|' + g.configuration + '|' + a.id) || [],
+                x => ordinalKey(x.ordinal))
       .map(s => {
         const t = templateSteps.get(b.template_bin + '|' + a.template_alternative_ordinal + '|' + s.ordinal);
         return valueText(g.type, g.configuration, s.value_set) +
@@ -156,40 +227,84 @@ const automaticContains = (g, i, components) => {
   }
   return false;
 };
-const tupleSetText = (g, id) => (tuplesBySet.get(id) || []).map(t => '<' +
-  (componentsByTuple.get(t.id) || [])
-    .sort((a, b) => num(a.ordinal) - num(b.ordinal))
-    .map(c => c.bin !== '0'
-      ? (resolvedBins.get(g.type + '|' + g.configuration + '|' + c.bin)?.name || c.bin)
-      : valueText(g.type, g.configuration, c.value_set))
-    .join(',') + '>').join(', ');
+const tupleTextCache = new Map();
+const tupleSetText = (g, id) => {
+  const key = g.type + '|' + g.configuration + '|' + id;
+  if (tupleTextCache.has(key)) return tupleTextCache.get(key);
+  const text = (tuplesBySet.get(id) || []).map(t => '<' +
+    linearOrder(componentsByTuple.get(t.id) || [], x => ordinalKey(x.ordinal))
+      .map(c => c.bin !== '0'
+        ? (resolvedBins.get(g.type + '|' + g.configuration + '|' + c.bin)?.name || c.bin)
+        : valueText(g.type, g.configuration, c.value_set))
+      .join(',') + '>').join(', ');
+  tupleTextCache.set(key, text);
+  return text;
+};
 const selectorText = (g, i, root) => {
-  const render = (id, active) => {
-    if (active.has(id)) return '<cycle>';
-    const n = selectorNodes.get(id);
-    if (!n) return 'selector ' + id;
-    const next = new Set(active);
-    next.add(id);
-    const ops = (selectorOperands.get(id) || []).map(v => render(v, next));
-    const kind = num(n.kind);
-    if (kind === 1)
-      return 'binsof(' + (templateItems.get(n.target) || n.target) +
-             (n.bin !== '0' ? '.' + (templateBins.get(n.bin) || n.bin) : '') + ')';
-    if (kind === 2) return '!(' + ops[0] + ')';
-    if (kind === 3 || kind === 4) return '(' + ops.join(kind === 3 ? ' && ' : ' || ') + ')';
-    const binding = selectorBindings.get(g.type + '|' + g.configuration + '|' + i.id + '|' + id);
-    if (kind === 5)
-      return 'intersect {' +
-             (binding && binding.tuple_set !== '0' ? tupleSetText(g, binding.tuple_set)
-              : binding ? valueText(g.type, g.configuration, binding.value_set)
-              : 'set ' + n.value_set) + '}';
-    if (kind === 6) return 'all tuples';
-    if (kind === 7)
-      return (ops[0] || 'all tuples') + ' with expression ' +
-             (binding ? binding.with_expression : n.with_expression);
-    return 'selector ' + id;
+  // Labels remain brief; the complete selector graph stays in the payload.
+  // Bound both traversal and output, including wide operand lists and DAGs.
+  const maxNodes = 512, maxLength = 2048;
+  const pieces = [], active = new Set(), pending = [{id: root}];
+  let nodes = 0, remainingNodes = maxNodes - 1, length = 0, truncated = false;
+  const append = text => {
+    text = String(text);
+    const remaining = maxLength - length;
+    if (text.length > remaining) { text = text.slice(0, remaining); truncated = true; }
+    pieces.push(text);
+    length += text.length;
   };
-  return render(root, new Set());
+  while (pending.length && !truncated) {
+    const frame = pending.pop();
+    if (frame.text !== undefined) { append(frame.text); continue; }
+    if (frame.leave !== undefined) { active.delete(frame.leave); continue; }
+    if (++nodes > maxNodes) { truncated = true; break; }
+    const id = frame.id;
+    if (active.has(id)) { append('<cycle>'); continue; }
+    const n = selectorNodes.get(id);
+    if (!n) { append('selector ' + id); continue; }
+    active.add(id);
+    pending.push({leave: id});
+    const ops = selectorOperands.get(id) || [], kind = num(n.kind);
+    const binding = selectorBindings.get(g.type + '|' + g.configuration + '|' + i.id + '|' + id);
+    if (kind === 1) {
+      append('binsof('); append(templateItems.get(n.target) || n.target);
+      if (n.bin !== '0') { append('.'); append(templateBins.get(n.bin) || n.bin); }
+      append(')');
+    } else if (kind === 2) {
+      append('!(');
+      pending.push({text: ')'});
+      if (remainingNodes) { --remainingNodes; pending.push({id: ops[0]}); }
+      else append('...');
+    } else if (kind === 3 || kind === 4) {
+      append('(');
+      pending.push({text: ')'});
+      const count = Math.min(ops.length, remainingNodes);
+      remainingNodes -= count;
+      if (count !== ops.length) pending.push({text: '...'});
+      for (let index = count; index-- > 0;) {
+        if (index + 1 < ops.length) pending.push({text: kind === 3 ? ' && ' : ' || '});
+        pending.push({id: ops[index]});
+      }
+    } else if (kind === 5) {
+      append('intersect {');
+      append(binding && binding.tuple_set !== '0' ? tupleSetText(g, binding.tuple_set)
+             : binding ? valueText(g.type, g.configuration, binding.value_set)
+             : 'set ' + n.value_set);
+      append('}');
+    } else if (kind === 6) {
+      append('all tuples');
+    } else if (kind === 7) {
+      pending.push({text: ' with expression ' +
+                         (binding ? binding.with_expression : n.with_expression)});
+      if (ops.length && remainingNodes) {
+        --remainingNodes;
+        pending.push({id: ops[0]});
+      } else pending.push({text: ops.length ? '...' : 'all tuples'});
+    } else {
+      append('selector ' + id);
+    }
+  }
+  return pieces.join('') + (truncated ? '...' : '');
 };
 const binName = (g, i, b) => num(b.kind) === 2 ? b.name + ' = ' + transitionText(g, b)
   : num(b.kind) === 3 && b.cross_selector !== '0' ? b.name + ' = ' + selectorText(g, i, b.cross_selector)
@@ -274,9 +389,8 @@ function uniqueContributions() {
       awardCritical(value.contributors, value.atLeast, 'functional');
     }
   }
-  return [...ranking.values()].sort((a, b) =>
-    (b.line + b.toggle + b.functional) - (a.line + a.toggle + a.functional) ||
-    a.name.localeCompare(b.name) || a.uuid.localeCompare(b.uuid));
+  return linearOrder([...ranking.values()], x => compositeKey(
+    numericKey(-(x.line + x.toggle + x.functional)), nameKey(x.name), x.uuid));
 }
 
 /* -------------------------------------------------------------- totals */
@@ -299,10 +413,12 @@ for (const f of d.files) {
   }
   dir.files.push(f);
 }
-(function sortTree(dir) {
-  dir.files.sort((a, b) => byName(a.path, b.path));
-  for (const sub of dir.dirs.values()) sortTree(sub);
-})(fileTree);
+const pendingDirectories = [fileTree];
+while (pendingDirectories.length) {
+  const dir = pendingDirectories.pop();
+  dir.files = linearOrder(dir.files, x => nameKey(x.path));
+  for (const sub of dir.dirs.values()) pendingDirectories.push(sub);
+}
 
 // Totals for every scope, file and directory, computed in one pass and kept
 // until the "Hits from" test changes. A source line (file:line) is covered
@@ -643,7 +759,7 @@ function renderSide(route) {
 
   if (d.functional_types.length) {
     h += '<h3>Covergroups</h3>';
-    const types = [...d.functional_types].sort((a, b) => byName(a.hierarchy, b.hierarchy));
+    const types = linearOrder(d.functional_types, x => nameKey(x.hierarchy));
     h += level('covergroups', types, t => route[0] === 'cg' && route[1] === t.id,
                t => link(cgHref(t), esc(t.hierarchy), state.test ? undefined : num(t.percent)));
   }
@@ -652,7 +768,7 @@ function renderSide(route) {
   const curFile = route[0] === 'file' ? (files.get(route[1]) || {}).path || '' : '';
   const walkDir = (dir, path, depth) => {
     let out = '';
-    for (let [name, sub] of [...dir.dirs.entries()].sort((a, b) => byName(a[0], b[0]))) {
+    for (let [name, sub] of linearOrder([...dir.dirs.entries()], x => nameKey(x[0]))) {
       let full = path + name + '/';
       // show single-child chains as one row: rtl/core/alu
       while (!sub.files.length && sub.dirs.size === 1) {
@@ -738,7 +854,7 @@ function viewSummary() {
   }
 
   const cgRows = [];
-  for (const t of [...d.functional_types].sort((a, b) => byName(a.hierarchy, b.hierarchy))) {
+  for (const t of linearOrder(d.functional_types, x => nameKey(x.hierarchy))) {
     if (state.uncov && num(t.percent) >= 100) continue;
     cgRows.push(row([`<a href="${cgHref(t)}" class="mono">${esc(t.hierarchy)}</a>`, {num: groupsOfType(t).length},
                      state.test ? pctCell(null) : pctCell(num(t.percent)), {num: t.goal + '%'}, esc(t.comment)]));
@@ -806,8 +922,8 @@ function viewScope(name, focusSignal) {
     h += '<h2>Covergroups</h2>' + table(['Covergroup', 'Coverage'], cgs.map(x =>
       row([`<a href="${cgHref(x)}" class="mono">${esc(x.name)}</a>`, state.test ? pctCell(null) : pctCell(num(x.percent))])));
 
-  const pts = [...(pointsByScope.get(s.id) || [])]
-    .sort((a, b) => byName(a.file, b.file) || num(a.line) - num(b.line) || num(a.column) - num(b.column));
+  const pts = linearOrder(pointsByScope.get(s.id) || [], x => compositeKey(
+    nameKey(x.file), ordinalKey(x.line), ordinalKey(x.column)));
   const shared = new Map();
   for (const p of pts) shared.set(p.file + ':' + p.line, (shared.get(p.file + ':' + p.line) || 0) + 1);
   const pointRows = [];
@@ -821,7 +937,7 @@ function viewScope(name, focusSignal) {
   }
   if (pointRows.length) h += '<h2>Statements</h2>' + table(['Location', 'Code', '#Hits', 'Status', 'Hit by'], pointRows);
 
-  const signals = [...(togglesByScope.get(s.id) || [])].sort((a, b) => byName(a.name, b.name));
+  const signals = linearOrder(togglesByScope.get(s.id) || [], x => nameKey(x.name));
   const signalRows = [];
   for (const x of signals) {
     const states = x.bits.map(b => {
