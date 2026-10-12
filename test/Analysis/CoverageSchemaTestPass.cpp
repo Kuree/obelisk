@@ -240,7 +240,16 @@ private:
          << " flags=" << formal.flags << " width=" << formal.bitWidth
          << " signedness=" << raw(formal.signedness)
          << " ordinal=" << formal.ordinal
-         << " default_expression=" << formal.defaultExpression << '\n';
+         << " default_expression=" << formal.defaultExpression
+         << " value_type=" << formal.valueType << '\n';
+    for (const coverage::FunctionalContainerType &container :
+         db.functionalContainerTypes)
+      os << "functional_container_type id=" << container.id
+         << " kind=" << raw(container.kind)
+         << " key_kind=" << raw(container.keyKind)
+         << " element_type=" << container.elementType
+         << " key_width=" << container.keyWidth
+         << " bound=" << container.bound << '\n';
     for (const coverage::FunctionalValueSet &set : db.functionalValueSets)
       os << "functional_value_set id=" << set.id << " item=" << set.item
          << " atoms=" << set.atomCount << " width=" << set.bitWidth

@@ -2430,6 +2430,18 @@ void jsonReport(
           out.attribute("signedness", static_cast<uint32_t>(formal.signedness));
           out.attribute("ordinal", formal.ordinal);
           out.attribute("default_expression", formal.defaultExpression);
+          out.attribute("value_type", formal.valueType);
+        });
+    });
+    out.attributeArray("functional_container_types", [&] {
+      for (const auto &type : database.functionalContainerTypes)
+        out.object([&] {
+          out.attribute("id", type.id);
+          out.attribute("kind", static_cast<uint32_t>(type.kind));
+          out.attribute("key_kind", static_cast<uint32_t>(type.keyKind));
+          out.attribute("element_type", type.elementType);
+          out.attribute("key_width", type.keyWidth);
+          out.attribute("bound", type.bound);
         });
     });
     out.attributeArray("functional_item_templates", [&] {

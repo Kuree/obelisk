@@ -176,19 +176,7 @@ static_assert(static_cast<uint32_t>(sim::StochasticQueueAction::Exam) ==
               OBELISK_RT_STOCHASTIC_QUEUE_EXAM);
 
 static uint64_t stableTypeID(Type type, uint32_t descriptorFlags = 0) {
-  std::string spelling;
-  llvm::raw_string_ostream stream(spelling);
-  type.print(stream);
-  stream.flush();
-  uint64_t hash = obelisk_stable_hash(spelling.data(), spelling.size());
-  // Keep the established IDs for ordinary type descriptors, but distinguish
-  // context-dependent ABI flags such as signed wildcard keys. Type spellings
-  // cannot contain NUL, so the sentinel keeps this suffix unambiguous.
-  if (descriptorFlags != 0) {
-    hash = obelisk_stable_hash_append_byte(hash, 0);
-    hash = obelisk_stable_hash_append_uint_le(hash, descriptorFlags, 4);
-  }
-  return hash ? hash : 1;
+  return sim::getStableStorageTypeID(type, descriptorFlags);
 }
 
 FailureOr<simlowering::ContainerElementDescriptor>

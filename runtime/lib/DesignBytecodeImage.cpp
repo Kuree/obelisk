@@ -1230,6 +1230,8 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) &&
            (numeric(output(0)) || string(output(0)) || argumentRef(output(0)) ||
+            (managed(output(0)) && output(0)->width == 64 &&
+             output(0)->size == 8) ||
             (output(0) && output(0)->kind == OBELISK_RT_DBREG_REAL64));
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_SAMPLE:
     if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 0 ||
@@ -1237,7 +1239,7 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     for (uint32_t index = 2; index != site.inputCount; ++index)
       if (!numeric(input(index)) && !floating(input(index)) &&
-          !string(input(index)))
+          !string(input(index)) && !managed(input(index)))
         return false;
     return true;
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_INSTANCE_QUERY:

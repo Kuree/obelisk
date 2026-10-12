@@ -1988,6 +1988,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     llvm::DenseMap<uint64_t, Operation *> binOwners;
     llvm::DenseMap<uint64_t, Operation *> expressionOwners;
     llvm::DenseMap<uint64_t, Operation *> formalOwners;
+    llvm::DenseMap<Type, uint64_t> containerTypeIDs;
+    llvm::DenseMap<uint64_t, Type> containerTypesByID;
     llvm::DenseMap<uint64_t, Operation *> selectorOwners;
     struct PendingValueSet {
       coverage::FunctionalValueSet set;
@@ -2540,7 +2542,54 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   ? coverage::FunctionalFormalDirection::Ref
                   : coverage::FunctionalFormalDirection::Input;
           descriptor.ordinal = ordinal;
-          if (isa<sim::StringType>(*normalized)) {
+          if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                  *normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::Container;
+            auto [entry, inserted] =
+                containerTypeIDs.try_emplace(*normalized, 0);
+            if (inserted) {
+              coverage::FunctionalContainerType layout;
+              layout.id = sim::getStableStorageTypeID(*normalized);
+              auto [previousType, unique] =
+                  containerTypesByID.try_emplace(layout.id, *normalized);
+              if (!unique && previousType->second != *normalized) {
+                formal.emitError("functional container type ID collision");
+                signalPassFailure();
+                return;
+              }
+              Type element;
+              if (auto array = dyn_cast<sim::DynamicArrayType>(*normalized)) {
+                layout.kind = coverage::FunctionalContainerKind::DynamicArray;
+                element = array.getElementType();
+              } else if (auto queue = dyn_cast<sim::QueueType>(*normalized)) {
+                layout.kind = coverage::FunctionalContainerKind::Queue;
+                layout.bound = queue.getBound();
+                element = queue.getElementType();
+              } else {
+                auto array = cast<sim::AssocArrayType>(*normalized);
+                layout.kind =
+                    coverage::FunctionalContainerKind::AssociativeArray;
+                element = array.getElementType();
+                Type key = array.getKeyType();
+                using KeyKind = coverage::FunctionalContainerKeyKind;
+                layout.keyKind = array.getWildcardIndex()    ? KeyKind::Wildcard
+                                 : isa<sim::StringType>(key) ? KeyKind::String
+                                 : isa<sim::ClassHandleType>(key)
+                                     ? KeyKind::Class
+                                 : isa<sim::ProcessType>(key) ? KeyKind::Process
+                                 : array.getSignedKey() ? KeyKind::Signed
+                                                        : KeyKind::Unsigned;
+                if (layout.keyKind == KeyKind::Unsigned ||
+                    layout.keyKind == KeyKind::Signed)
+                  layout.keyWidth = sim::getPackedWidth(key).value_or(0);
+              }
+              layout.elementType = sim::getStableStorageTypeID(element);
+              entry->second = layout.id;
+              schema.functionalContainerTypes.push_back(layout);
+            }
+            descriptor.valueType = entry->second;
+          } else if (isa<sim::StringType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::String;
             descriptor.signedness = coverage::CoverageSignedness::NotApplicable;
@@ -4632,6 +4681,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       return coverageOrderKey(entry.id);
     });
     sortCoverageRecords(schema.functionalBins, [](const auto &entry) {
+      return coverageOrderKey(entry.id);
+    });
+    sortCoverageRecords(schema.functionalContainerTypes, [](const auto &entry) {
       return coverageOrderKey(entry.id);
     });
     sortCoverageRecords(schema.functionalFormals, [](const auto &entry) {

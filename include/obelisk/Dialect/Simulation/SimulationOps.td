@@ -1118,8 +1118,8 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
     illegal precedence, and cross tuple/selector processing.
 
     Integral and four-state sampled values remain typed values; predicates are
-    i1 and real coverpoint samples are f64. A string value may occur only for
-    the once-evaluated default of a string formal on an overridden sample()
+    i1 and real coverpoint samples are f64. A string or container value may occur only for
+    the once-evaluated default of a corresponding formal on an overridden sample()
     method; matching consumes the derived coverpoint and guard results. This
     batch form ensures that a sampled expression or iff predicate is evaluated
     once per sampling event even when several bins, transition steps, or
@@ -1129,7 +1129,8 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                        SimCovergroupHandleType:$handle,
                        Variadic<AnyTypeOf<[AnySignlessInteger,
                                            SimLogicType, SimStringType,
-                                           F64]>>:$values,
+                                           SimDynamicArrayType, SimQueueType,
+                                           SimAssocArrayType, F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
     $context `,` $handle

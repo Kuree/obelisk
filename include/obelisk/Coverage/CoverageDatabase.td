@@ -145,6 +145,23 @@ def ExpressionSet      : CoverageExpressionResultKind<"Set", 4>;
 def ExpressionTupleSet : CoverageExpressionResultKind<"TupleSet", 5>;
 def ExpressionString   : CoverageExpressionResultKind<"String", 6>;
 def ExpressionTupleQueue : CoverageExpressionResultKind<"TupleQueue", 7>;
+def ExpressionContainer : CoverageExpressionResultKind<"Container", 8>;
+
+class CoverageFunctionalContainerKind<string cppName_, int value_>
+    : CoverageEnumValue<cppName_, value_>;
+def ContainerDynamicArray : CoverageFunctionalContainerKind<"DynamicArray", 1>;
+def ContainerQueue : CoverageFunctionalContainerKind<"Queue", 2>;
+def ContainerAssociativeArray : CoverageFunctionalContainerKind<"AssociativeArray", 3>;
+
+class CoverageFunctionalContainerKeyKind<string cppName_, int value_>
+    : CoverageEnumValue<cppName_, value_>;
+def ContainerKeyNone : CoverageFunctionalContainerKeyKind<"None", 0>;
+def ContainerKeyUnsigned : CoverageFunctionalContainerKeyKind<"Unsigned", 1>;
+def ContainerKeySigned : CoverageFunctionalContainerKeyKind<"Signed", 2>;
+def ContainerKeyString : CoverageFunctionalContainerKeyKind<"String", 3>;
+def ContainerKeyClass : CoverageFunctionalContainerKeyKind<"Class", 4>;
+def ContainerKeyProcess : CoverageFunctionalContainerKeyKind<"Process", 5>;
+def ContainerKeyWildcard : CoverageFunctionalContainerKeyKind<"Wildcard", 6>;
 
 class CoverageSignedness<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -300,6 +317,7 @@ def ResolvedCrossAutomaticNodes : CoverageSection<"ResolvedCrossAutomaticNodes",
 def ResolvedCrossAutomaticEdges : CoverageSection<"ResolvedCrossAutomaticEdges", 55, 32>;
 def FunctionalFormals          : CoverageSection<"FunctionalFormals", 56, 64, 0, 1>;
 def ResolvedInstanceOptions    : CoverageSection<"ResolvedInstanceOptions", 57, 64>;
+def FunctionalContainerTypes : CoverageSection<"FunctionalContainerTypes", 58, 40, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -366,7 +384,16 @@ def DomainFunctionalFormalDirection : CoverageFieldDomain<
 def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
     "FunctionalExpressionResultKind", "Enum",
     [ExpressionBoolean, ExpressionIntegral, ExpressionReal, ExpressionSet,
-     ExpressionTupleSet, ExpressionString, ExpressionTupleQueue]>;
+     ExpressionTupleSet, ExpressionString, ExpressionTupleQueue,
+     ExpressionContainer]>;
+def DomainFunctionalContainerKind : CoverageFieldDomain<
+    "FunctionalContainerKind", "Enum",
+    [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray]>;
+def DomainFunctionalContainerKeyKind : CoverageFieldDomain<
+    "FunctionalContainerKeyKind", "Enum",
+    [ContainerKeyNone, ContainerKeyUnsigned, ContainerKeySigned,
+     ContainerKeyString, ContainerKeyClass, ContainerKeyProcess,
+     ContainerKeyWildcard]>;
 def DomainCoverageSignedness : CoverageFieldDomain<
     "CoverageSignedness", "Enum",
     [CoverageUnsigned, CoverageSigned, CoverageNotApplicable]>;
@@ -431,6 +458,7 @@ def DomainFunctionalItems : CoverageFieldDomain<"FunctionalItems", "StableRef", 
 def DomainFunctionalBins : CoverageFieldDomain<"FunctionalBins", "StableRef", [], 9>;
 def DomainFunctionalExpressions : CoverageFieldDomain<"FunctionalExpressions", "StableRef", [], 30>;
 def DomainFunctionalFormals : CoverageFieldDomain<"FunctionalFormals", "StableRef", [], 56>;
+def DomainFunctionalContainerTypes : CoverageFieldDomain<"FunctionalContainerTypes", "StableRef", [], 58>;
 def DomainFunctionalValueSets : CoverageFieldDomain<"FunctionalValueSets", "StableRef", [], 27>;
 def DomainFunctionalValueAtoms : CoverageFieldDomain<"FunctionalValueAtoms", "Range", [], 28>;
 def DomainFunctionalValueLimbs : CoverageFieldDomain<"FunctionalValueLimbs", "Range", [], 29>;
@@ -1307,13 +1335,30 @@ def FFDefaultExpression : CoverageField<"DefaultExpression", "default_expression
   let semantic = "StableIDRef"; let domain = DomainFunctionalExpressions;
   let nullable = 1;
 }
-def FFReserved : CoverageField<"Reserved", "reserved", 56, CovU64> {
-  let semantic = "ReservedZero";
+def FFValueType : CoverageField<"ValueType", "value_type", 56, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainFunctionalContainerTypes;
+  let nullable = 1;
 }
 def FunctionalFormalRecord : CoverageRecord<"FunctionalFormalRecord",
     FunctionalFormals,
     [FFId, FFType, FFName, FFKind, FFDirection, FFResultKind, FFFlags,
-     FFBitWidth, FFSignedness, FFOrdinal, FFDefaultExpression, FFReserved]>;
+     FFBitWidth, FFSignedness, FFOrdinal, FFDefaultExpression, FFValueType]>;
+
+def FCTId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainFunctionalContainerTypes;
+}
+def FCTKind : CoverageField<"Kind", "kind", 8, CovU32> {
+  let semantic = "Enum"; let domain = DomainFunctionalContainerKind;
+}
+def FCTKeyKind : CoverageField<"KeyKind", "key_kind", 12, CovU32> {
+  let semantic = "Enum"; let domain = DomainFunctionalContainerKeyKind;
+}
+def FCTElementType : CoverageField<"ElementType", "element_type", 16, CovU64>;
+def FCTKeyWidth : CoverageField<"KeyWidth", "key_width", 24, CovU64>;
+def FCTBound : CoverageField<"Bound", "bound", 32, CovU64>;
+def FunctionalContainerTypeRecord : CoverageRecord<"FunctionalContainerTypeRecord",
+    FunctionalContainerTypes,
+    [FCTId, FCTKind, FCTKeyKind, FCTElementType, FCTKeyWidth, FCTBound]>;
 
 def FCType      : CoverageField<"Type", "type", 0, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainFunctionalTypes;

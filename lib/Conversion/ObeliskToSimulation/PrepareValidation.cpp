@@ -878,13 +878,18 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         Type scalar =
             succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
         const bool string = succeeded(type) && isa<sim::StringType>(*type);
+        const bool container =
+            succeeded(type) &&
+            isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+                *type);
         if ((formal.getDirection() != semantic::SVArgumentDirection::In &&
              formal.getDirection() != semantic::SVArgumentDirection::Ref) ||
-            (!scalar && !(succeeded(type) && (*type).isF64()) && !string) ||
+            (!scalar && !(succeeded(type) && (*type).isF64()) && !string &&
+             !container) ||
             (scalar && !isa<IntegerType, sim::LogicType>(scalar))) {
           emitError(getSemanticLocation(formal))
               << "coverage formals must be input or ref values with signless "
-                 "integer, four-state logic, real, or string type";
+                 "integer, four-state logic, real, string, or container type";
           invalid = true;
         }
       }

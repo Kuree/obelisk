@@ -4325,6 +4325,10 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       records.getAllDerivedDefinitions("CoverageFunctionalFormalDirection");
   auto expressionResults =
       records.getAllDerivedDefinitions("CoverageExpressionResultKind");
+  auto containerKinds =
+      records.getAllDerivedDefinitions("CoverageFunctionalContainerKind");
+  auto containerKeyKinds =
+      records.getAllDerivedDefinitions("CoverageFunctionalContainerKeyKind");
   auto signedness = records.getAllDerivedDefinitions("CoverageSignedness");
   auto arrayModes =
       records.getAllDerivedDefinitions("CoverageBinArrayMode");
@@ -4547,7 +4551,10 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       !validateEnumDomain("FunctionalExpressionRole", expressionRoles) ||
       !validateEnumDomain("FunctionalFormalKind", formalKinds) ||
       !validateEnumDomain("FunctionalFormalDirection", formalDirections) ||
-      !validateEnumDomain("FunctionalExpressionResultKind", expressionResults) ||
+      !validateEnumDomain("FunctionalExpressionResultKind",
+                          expressionResults) ||
+      !validateEnumDomain("FunctionalContainerKind", containerKinds) ||
+      !validateEnumDomain("FunctionalContainerKeyKind", containerKeyKinds) ||
       !validateEnumDomain("CoverageSignedness", signedness) ||
       !validateEnumDomain("FunctionalBinArrayMode", arrayModes) ||
       !validateEnumDomain("FunctionalBinDistributionKind", distributions) ||
@@ -4839,6 +4846,8 @@ bool emitCoverageDecls(const RecordKeeper &records, raw_ostream &os) {
            "CoverageFunctionalFormalDirection");
   emitEnum("FunctionalExpressionResultKind",
            "CoverageExpressionResultKind");
+  emitEnum("FunctionalContainerKind", "CoverageFunctionalContainerKind");
+  emitEnum("FunctionalContainerKeyKind", "CoverageFunctionalContainerKeyKind");
   emitEnum("CoverageSignedness", "CoverageSignedness");
   emitEnum("FunctionalBinArrayMode", "CoverageBinArrayMode");
   emitEnum("FunctionalBinDistributionKind",

@@ -116,6 +116,15 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
     }
     return uint64_t{0};
   };
+  llvm::DenseMap<Type, uint64_t> storageTypeIDs;
+  auto storageTypeMatches = [&](Type type, uint64_t expected) {
+    if (!expected)
+      return true;
+    auto [entry, inserted] = storageTypeIDs.try_emplace(type, 0);
+    if (inserted)
+      entry->second = sim::getStableStorageTypeID(type);
+    return entry->second == expected;
+  };
   auto valueMatches = [](Type type,
                          coverage::FunctionalExpressionResultKind kind,
                          uint32_t width, uint32_t flags = 0) {
@@ -130,6 +139,9 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return type.isF64();
     case coverage::FunctionalExpressionResultKind::String:
       return isa<sim::StringType>(type);
+    case coverage::FunctionalExpressionResultKind::Container:
+      return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+          type);
     case coverage::FunctionalExpressionResultKind::TupleQueue: {
       auto queue = dyn_cast<sim::QueueType>(type);
       return queue && queue.getBound() == 0 &&
@@ -263,7 +275,11 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
         return failure();
       }
       if (!valueMatches(values[supplied].getType(), expression->resultKind,
-                        expression->bitWidth, expression->flags)) {
+                        expression->bitWidth, expression->flags) ||
+          (expression->resultKind ==
+               coverage::FunctionalExpressionResultKind::Container &&
+           !storageTypeMatches(values[supplied].getType(),
+                               formals.lookup(expression->owner)->valueType))) {
         operation->emitError()
             << "has a type-mismatched " << label << " FunctionalExpression ID "
             << expression->id << " at result ordinal "
@@ -317,7 +333,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
                   : arguments[index].getType();
           if (rawID <= 0 || static_cast<uint64_t>(rawID) != formal->id ||
               !valueMatches(argumentType, formal->resultKind,
-                            formal->bitWidth)) {
+                            formal->bitWidth) ||
+              !storageTypeMatches(argumentType, formal->valueType)) {
             create.emitError()
                 << "constructor FunctionalFormal batch is reordered, "
                    "wrong-owner, or type-mismatched at schema ordinal "
@@ -345,7 +362,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
           (reference && found->second->direction !=
                             coverage::FunctionalFormalDirection::Ref) ||
           !valueMatches(result, found->second->resultKind,
-                        found->second->bitWidth)) {
+                        found->second->bitWidth) ||
+          !storageTypeMatches(result, found->second->valueType)) {
         read.emitError("has a nonexistent, wrong-owner, or type-mismatched "
                        "constructor FunctionalFormal ID");
         invalid = true;

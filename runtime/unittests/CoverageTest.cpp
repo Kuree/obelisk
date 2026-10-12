@@ -2252,6 +2252,112 @@ TEST(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(CoverageRuntimeDesignTest, ContainerFormalsRetainSnapshotsAndLiveStorage) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalContainerTypes.push_back(
+      {800, FunctionalContainerKind::DynamicArray,
+       FunctionalContainerKeyKind::None, 99, 0, 0});
+  schema.functionalFormals = {
+      {70, 10, "snapshot", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Input,
+       FunctionalExpressionResultKind::Container, 0, 0,
+       CoverageSignedness::NotApplicable, 0, 0, 800},
+      {71, 10, "live", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Ref,
+       FunctionalExpressionResultKind::Container, 0, 0,
+       CoverageSignedness::NotApplicable, 1, 0, 800}};
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  const obelisk_rt_element_type_v1 element{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 99, 0, 0, 4, 4, 32, nullptr};
+  obelisk_rt_object_v1 *frozen = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &frozen),
+            OBELISK_RT_OK);
+  uint32_t initial = 3;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, frozen, 0, &initial, nullptr),
+            OBELISK_RT_OK);
+  uint64_t word = obelisk_rt_managed_word_from_object(frozen), storage = 0;
+  const obelisk_rt_managed_root_slot_v1 root{
+      0, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER, 0};
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc_with_typed_roots(
+                context, 64, reinterpret_cast<const uint8_t *>(&word), nullptr,
+                &root, 1, &storage),
+            OBELISK_RT_OK);
+  std::array<obelisk_rt_functional_value_v1, 2> formals{
+      {{70, 0, 0, nullptr, nullptr, frozen, 0,
+        OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 0},
+       {71, 64, 8, nullptr, nullptr, nullptr, storage,
+        OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0}}};
+  obelisk_rt_covergroup_v1 handle = 0;
+  auto create = [&] {
+    return obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+                                           formals.size(), nullptr, 0, &handle);
+  };
+  auto original = formals[0];
+  for (auto [kind, typeID, bound] :
+       {std::tuple{uint32_t{OBELISK_RT_CONTAINER_QUEUE}, uint64_t{99},
+                   uint64_t{4}},
+        std::tuple{uint32_t{OBELISK_RT_CONTAINER_DYNAMIC_ARRAY}, uint64_t{100},
+                   uint64_t{0}}}) {
+    obelisk_rt_object_v1 *wrong = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                  lane, kind, typeID, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32,
+                  nullptr, 0, 1, bound, &wrong),
+              OBELISK_RT_OK);
+    formals[0].owner = wrong;
+    EXPECT_EQ(create(), OBELISK_RT_INVALID_DESIGN);
+  }
+  formals[0] = original;
+  ASSERT_EQ(create(), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *updated = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &updated),
+            OBELISK_RT_OK);
+  initial = 7;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, updated, 0, &initial, nullptr),
+            OBELISK_RT_OK);
+  word = obelisk_rt_managed_word_from_object(updated);
+  uint8_t dummy = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, storage, 0, 64, 8, 0,
+                OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr),
+            OBELISK_RT_OK);
+  // The constructor retains automatic storage and the captured array after
+  // the caller relinquishes both. Collection must trace the complete values.
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, storage, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  for (auto [id, expected] : {std::pair{uint64_t{70}, uint32_t{3}},
+                              std::pair{uint64_t{71}, uint32_t{7}}}) {
+    uint64_t actual = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id,
+                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 64, 8, nullptr,
+                  nullptr, 0, &actual, nullptr),
+              OBELISK_RT_OK);
+    uint32_t value = 0;
+    ASSERT_EQ(
+        obelisk_rt_v1_container_read(
+            obelisk_rt_object_from_managed_word(actual), 0, &value, nullptr),
+        OBELISK_RT_OK);
+    EXPECT_EQ(value, expected);
+    actual = UINT64_MAX;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id,
+                  OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER, 32, 8, nullptr,
+                  nullptr, 0, &actual, nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(actual, UINT64_MAX);
+  }
+  obelisk_rt_managed_execution_leave(lane, entered);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(CoverageRuntimeDesignTest,
      ConflictingTypeProfileDoesNotPublishConfiguration) {
   using namespace obelisk::coverage;

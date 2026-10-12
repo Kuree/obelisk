@@ -19,6 +19,10 @@
 
 namespace obelisk::sim {
 
+/// Stable runtime storage descriptor ID for a normalized simulation type.
+uint64_t getStableStorageTypeID(::mlir::Type type,
+                                uint32_t descriptorFlags = 0);
+
 /// Bit width of a normalized packed simulation value, which is either a
 /// signless builtin integer or an exact four-state `!simulation.logic`.
 /// Returns `std::nullopt` for every other type.

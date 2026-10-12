@@ -1743,10 +1743,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (!handle || !formal || site.inputCount != 2 || site.outputCount != 1)
       return OBELISK_RT_INVALID_BYTECODE;
     Layout output = layoutAt(image, frame.function, outputRegister(0));
+    bool container = output.kind == OBELISK_RT_DBREG_MANAGED &&
+                     output.width == 64 && output.size == 8;
     bool reference = output.kind == OBELISK_RT_DBREG_ARGUMENT_REF;
     if (reference && (output.width != 192 || output.size != 24))
       return OBELISK_RT_INVALID_BYTECODE;
-    uint32_t kind = reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
+    uint32_t kind = container   ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+                    : reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
                     : output.kind == OBELISK_RT_DBREG_REAL64
                         ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
                     : output.kind == OBELISK_RT_DBREG_STRING
@@ -1757,7 +1760,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (output.kind != OBELISK_RT_DBREG_BITS &&
         output.kind != OBELISK_RT_DBREG_LOGIC &&
         output.kind != OBELISK_RT_DBREG_REAL64 &&
-        output.kind != OBELISK_RT_DBREG_STRING && !reference)
+        output.kind != OBELISK_RT_DBREG_STRING && !reference && !container)
       return OBELISK_RT_INVALID_BYTECODE;
     uint64_t size = output.kind == OBELISK_RT_DBREG_REAL64
                         ? sizeof(double)

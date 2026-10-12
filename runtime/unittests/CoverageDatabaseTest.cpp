@@ -1769,8 +1769,8 @@ TEST(CoverageDatabaseTest, GeneratedFixedFieldDiagnosticsAreExact) {
   check(SectionKind::FunctionalFormals, 20, 99, Status::InvalidEnum, "kind");
   check(SectionKind::FunctionalFormals, 24, 99, Status::InvalidEnum,
         "direction");
-  check(SectionKind::FunctionalFormals, 56, 1, Status::InvalidDatabase,
-        "reserved");
+  check(SectionKind::FunctionalFormals, 56, 1, Status::InvalidReference,
+        "value_type");
 }
 
 TEST(CoverageDatabaseTest, RejectsOtherVersionsAndUnknownSections) {
@@ -3087,6 +3087,61 @@ TEST(CoverageDatabaseTest,
   ASSERT_EQ(serialize(db, before), Status::Ok);
   EXPECT_EQ(discardTestDetail(invalid), Status::InvalidReference);
   EXPECT_EQ(invalid.counters.front().entity, 0u);
+}
+
+TEST(CoverageDatabaseTest, ContainerFormalLayoutsRoundTripAndValidate) {
+  Database db = makeTypedDatabase();
+  db.functionalContainerTypes = {
+      {1000, FunctionalContainerKind::Queue, FunctionalContainerKeyKind::None,
+       99, 0, 4},
+      {1001, FunctionalContainerKind::AssociativeArray,
+       FunctionalContainerKeyKind::Signed, 99, 32, 0}};
+  auto &formal = db.functionalFormals.front();
+  formal.resultKind = FunctionalExpressionResultKind::Container;
+  formal.bitWidth = 0;
+  formal.signedness = CoverageSignedness::NotApplicable;
+  formal.valueType = 1000;
+  for (auto &expression : db.functionalExpressions)
+    if (expression.id == formal.defaultExpression) {
+      expression.resultKind = formal.resultKind;
+      expression.bitWidth = 0;
+      expression.signedness = formal.signedness;
+    }
+  db.schemaFingerprint = {};
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image), Status::Ok);
+  Database decoded;
+  ASSERT_EQ(parse(image.data(), image.size(), decoded), Status::Ok);
+  ASSERT_EQ(decoded.functionalContainerTypes.size(), 2u);
+  EXPECT_EQ(decoded.functionalContainerTypes[0].bound, 4u);
+  EXPECT_EQ(decoded.functionalContainerTypes[1].keyWidth, 32u);
+  EXPECT_EQ(decoded.functionalFormals[0].valueType, 1000u);
+  EXPECT_EQ(computeSchemaFingerprint(decoded), computeSchemaFingerprint(db));
+  auto bad = db;
+  bad.functionalFormals[0].valueType = 999;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalFormals[1].valueType = 1000;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalContainerTypes[0].keyKind = FunctionalContainerKeyKind::String;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalContainerTypes[1].keyWidth = 0;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalContainerTypes[1].bound = 1;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalContainerTypes[0].elementType = 0;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalContainerTypes[0].bound = 5;
+  EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
+  bad = db;
+  std::reverse(bad.functionalContainerTypes.begin(),
+               bad.functionalContainerTypes.end());
+  EXPECT_EQ(validate(bad), Status::UnsortedOrDuplicate);
 }
 
 } // namespace

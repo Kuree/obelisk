@@ -605,6 +605,8 @@ Status planSections(const Database &db, const StringTable &strings,
   OBELISK_COVERAGE_PLAN(FunctionalFormals, db.functionalFormals.size());
   OBELISK_COVERAGE_PLAN(ResolvedInstanceOptions,
                         db.resolvedInstanceOptions.size());
+  OBELISK_COVERAGE_PLAN(FunctionalContainerTypes,
+                        db.functionalContainerTypes.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1520,6 +1522,7 @@ Status encodeSections(const Database &db, const StringTable &strings,
           p, static_cast<uint32_t>(v.signedness));
       FunctionalFormalRecord::setOrdinal(p, v.ordinal);
       FunctionalFormalRecord::setDefaultExpression(p, v.defaultExpression);
+      FunctionalFormalRecord::setValueType(p, v.valueType);
     });
   }
   Bytes &rio = add(SectionKind::ResolvedInstanceOptions,
@@ -1539,6 +1542,18 @@ Status encodeSections(const Database &db, const StringTable &strings,
                                                    strings.get(v.stringValue));
       ResolvedInstanceOptionRecord::setValue(p, v.value);
       ResolvedInstanceOptionRecord::setFlags(p, v.flags);
+    });
+  Bytes &containerTypes = add(SectionKind::FunctionalContainerTypes,
+                              db.functionalContainerTypes.size());
+  for (const auto &v : db.functionalContainerTypes)
+    containerTypes.record<FunctionalContainerTypeRecord>([&](uint8_t *p) {
+      FunctionalContainerTypeRecord::setId(p, v.id);
+      FunctionalContainerTypeRecord::setKind(p, static_cast<uint32_t>(v.kind));
+      FunctionalContainerTypeRecord::setKeyKind(
+          p, static_cast<uint32_t>(v.keyKind));
+      FunctionalContainerTypeRecord::setElementType(p, v.elementType);
+      FunctionalContainerTypeRecord::setKeyWidth(p, v.keyWidth);
+      FunctionalContainerTypeRecord::setBound(p, v.bound);
     });
   finish();
   if (!allGood || sectionIndex != sections.size())
@@ -1988,6 +2003,16 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, static_cast<uint32_t>(v.signedness));
     hashScalar(h, v.ordinal);
     hashScalar(h, v.defaultExpression);
+    hashScalar(h, v.valueType);
+  }
+  for (const auto &v : db.functionalContainerTypes) {
+    hashScalar(h, uint32_t(58));
+    hashScalar(h, v.id);
+    hashScalar(h, static_cast<uint32_t>(v.kind));
+    hashScalar(h, static_cast<uint32_t>(v.keyKind));
+    hashScalar(h, v.elementType);
+    hashScalar(h, v.keyWidth);
+    hashScalar(h, v.bound);
   }
   return h.finish();
 }
@@ -3395,6 +3420,31 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     return true;
   };
 
+  IndexMap<uint64_t, const FunctionalContainerType *> containerTypesByID;
+  uint64_t previousContainerType = 0;
+  for (const auto &type : db.functionalContainerTypes) {
+    if (!type.id || type.id <= previousContainerType)
+      return fail(Status::UnsortedOrDuplicate,
+                  "functional_container_type_order");
+    previousContainerType = type.id;
+    const bool associative =
+        type.kind == FunctionalContainerKind::AssociativeArray;
+    const bool integerKey =
+        type.keyKind == FunctionalContainerKeyKind::Unsigned ||
+        type.keyKind == FunctionalContainerKeyKind::Signed;
+    if (!enumBetween(type.kind, FunctionalContainerKind::DynamicArray,
+                     FunctionalContainerKind::AssociativeArray) ||
+        !enumBetween(type.keyKind, FunctionalContainerKeyKind::None,
+                     FunctionalContainerKeyKind::Wildcard) ||
+        !type.elementType ||
+        (associative ? type.keyKind == FunctionalContainerKeyKind::None
+                     : type.keyKind != FunctionalContainerKeyKind::None) ||
+        (integerKey ? !type.keyWidth : bool(type.keyWidth)) ||
+        (type.kind != FunctionalContainerKind::Queue && type.bound))
+      return fail(Status::InvalidReference, "functional_container_type");
+    containerTypesByID.emplace(type.id, &type);
+  }
+
   if (!uniqueNonzero(db.functionalFormals,
                      [](const auto &v) { return v.id; }) ||
       !std::is_sorted(db.functionalFormals.begin(), db.functionalFormals.end(),
@@ -3417,7 +3467,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Boolean ||
         formal.resultKind == FunctionalExpressionResultKind::Integral ||
         formal.resultKind == FunctionalExpressionResultKind::Real ||
-        formal.resultKind == FunctionalExpressionResultKind::String;
+        formal.resultKind == FunctionalExpressionResultKind::String ||
+        formal.resultKind == FunctionalExpressionResultKind::Container;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3426,6 +3477,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !enumBetween(formal.direction, FunctionalFormalDirection::Input,
                      FunctionalFormalDirection::Ref) ||
         !scalar ||
+        (formal.resultKind == FunctionalExpressionResultKind::Container
+             ? !containerTypesByID.count(formal.valueType)
+             : bool(formal.valueType)) ||
         !enumBetween(formal.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         (integral &&
@@ -3672,7 +3726,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::TupleQueue) ||
+                     FunctionalExpressionResultKind::Container) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -7797,7 +7851,23 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                       static_cast<CoverageSignedness>(
                           FunctionalFormalRecord::getSignedness(p)),
                       FunctionalFormalRecord::getOrdinal(p),
-                      FunctionalFormalRecord::getDefaultExpression(p)});
+                      FunctionalFormalRecord::getDefaultExpression(p),
+                      FunctionalFormalRecord::getValueType(p)});
+                 return Status::Ok;
+               });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::FunctionalContainerTypes,
+               [&](const auto &, uint64_t, const uint8_t *p) {
+                 result.functionalContainerTypes.push_back(
+                     {FunctionalContainerTypeRecord::getId(p),
+                      static_cast<FunctionalContainerKind>(
+                          FunctionalContainerTypeRecord::getKind(p)),
+                      static_cast<FunctionalContainerKeyKind>(
+                          FunctionalContainerTypeRecord::getKeyKind(p)),
+                      FunctionalContainerTypeRecord::getElementType(p),
+                      FunctionalContainerTypeRecord::getKeyWidth(p),
+                      FunctionalContainerTypeRecord::getBound(p)});
                  return Status::Ok;
                });
     if (st != Status::Ok)

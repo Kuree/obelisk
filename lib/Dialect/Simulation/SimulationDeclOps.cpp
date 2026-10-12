@@ -1538,9 +1538,11 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
   Type result = getResult().getType();
   if (auto ref = dyn_cast<ArgumentRefType>(result))
     result = ref.getElementType();
-  if (!getPackedWidth(result) && !result.isF64() && !isa<StringType>(result))
-    return emitOpError("requires an integral, real, or string formal value or "
-                       "argument reference");
+  if (!getPackedWidth(result) && !result.isF64() &&
+      !isa<StringType, DynamicArrayType, QueueType, AssocArrayType>(result))
+    return emitOpError(
+        "requires an integral, real, string, or container formal value or "
+        "argument reference");
   return success();
 }
 
@@ -1568,12 +1570,14 @@ LogicalResult SimCovergroupSampleOp::verify() {
   for (auto [index, value] : llvm::enumerate(getValues())) {
     Type type = value.getType();
     if (!type.isSignlessIntOrIndex() || isa<IndexType>(type)) {
-      if (isa<LogicType, StringType>(type) || type.isF64())
+      if (isa<LogicType, StringType, DynamicArrayType, QueueType,
+              AssocArrayType>(type) ||
+          type.isF64())
         continue;
       return emitOpError()
              << "sample value " << index
              << " must have signless integer, !simulation.logic, "
-                "!simulation.string, or f64 type, but has "
+                "!simulation.string, container, or f64 type, but has "
              << type;
     }
   }

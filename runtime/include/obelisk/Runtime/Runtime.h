@@ -4823,10 +4823,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_REAL = 3,
   OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF = 4,
   OBELISK_RT_FUNCTIONAL_VALUE_STRING = 5,
-  // One transient managed sequential container. `owner` carries a dynamic
-  // array or queue object (or null for an empty value); every other payload
-  // field is zero. The schema result kind supplies the logical element shape.
-  // covergroup_create consumes it synchronously and never retains the handle.
+  // A managed container in `owner` (or null for an empty value), with every
+  // other payload field zero. Set and TupleQueue expressions are consumed
+  // synchronously. Container constructor formals retain captured array and
+  // queue values using their shared schema type descriptor.
   OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER = 6
 };
 typedef struct obelisk_rt_functional_value_v1 {

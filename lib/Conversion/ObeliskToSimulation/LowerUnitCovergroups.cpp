@@ -707,8 +707,12 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
               : FailureOr<Value>(failure());
       if (failed(converted))
         return failure();
-      arguments.push_back(*converted);
-      values[path] = *converted;
+      FailureOr<Value> snapshot =
+          cloneSequentialValue(*converted, getSemanticLocation(actual));
+      if (failed(snapshot))
+        return failure();
+      arguments.push_back(*snapshot);
+      values[path] = *snapshot;
       lvalues.erase(path);
       coverageInputs[path] = {formal, builder.getInsertionBlock()};
     }
@@ -2230,7 +2234,11 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
               : FailureOr<Value>(failure());
       if (failed(converted))
         return failure();
-      boundValue = *converted;
+      FailureOr<Value> snapshot =
+          cloneSequentialValue(*converted, getSemanticLocation(actual));
+      if (failed(snapshot))
+        return failure();
+      boundValue = *snapshot;
       lvalues.erase(path);
       coverageInputs[path] = {formal, builder.getInsertionBlock()};
     }

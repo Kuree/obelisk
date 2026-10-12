@@ -39,6 +39,22 @@ using namespace mlir;
 
 namespace obelisk::sim {
 
+uint64_t getStableStorageTypeID(Type type, uint32_t descriptorFlags) {
+  std::string spelling;
+  llvm::raw_string_ostream stream(spelling);
+  type.print(stream);
+  stream.flush();
+  uint64_t hash = obelisk_stable_hash(spelling.data(), spelling.size());
+  // Keep the established IDs for ordinary type descriptors, but distinguish
+  // context-dependent ABI flags such as signed wildcard keys. Type spellings
+  // cannot contain NUL, so the sentinel keeps this suffix unambiguous.
+  if (descriptorFlags != 0) {
+    hash = obelisk_stable_hash_append_byte(hash, 0);
+    hash = obelisk_stable_hash_append_uint_le(hash, descriptorFlags, 4);
+  }
+  return hash ? hash : 1;
+}
+
 bool isNormalizedValueType(Type type) {
   if (auto integer = dyn_cast<IntegerType>(type))
     return integer.isSignless();

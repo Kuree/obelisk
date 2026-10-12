@@ -185,7 +185,7 @@ module {
         attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
       %raw = arith.constant 1 : i64
       %value = arith.index_cast %raw : i64 to index
-      // expected-error @+1 {{operand #2 must be variadic of signless integer or fixed-width exact four-state packed value or nullable immutable managed SystemVerilog string or 64-bit float, but got 'index'}}
+      // expected-error @+1 {{operand #2 must be variadic of signless integer or fixed-width exact four-state packed value or nullable immutable managed SystemVerilog string or managed SystemVerilog dynamic array value or managed SystemVerilog queue value or managed SystemVerilog associative array value or 64-bit float, but got 'index'}}
       simulation.covergroup.sample %ctx, %handle values [%value] ids [9]
         : (!simulation.context,
            !simulation.covergroup_handle<@cg>, index) -> ()

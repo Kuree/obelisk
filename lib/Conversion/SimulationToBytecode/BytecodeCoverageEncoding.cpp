@@ -107,7 +107,9 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
       if (auto reference = dyn_cast<sim::ArgumentRefType>(formal.getType())) {
         Type element = reference.getElementType();
         auto packed = sim::getPackedWidth(element);
-        if (element.isF64() || isa<sim::StringType>(element))
+        if (element.isF64() ||
+            isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
+                sim::AssocArrayType>(element))
           width = 64;
         else if (packed)
           width = *packed;

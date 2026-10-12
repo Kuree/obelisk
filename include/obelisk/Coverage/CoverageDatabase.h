@@ -300,9 +300,21 @@ struct FunctionalFormal {
   CoverageSignedness signedness = CoverageSignedness::NotApplicable;
   uint32_t ordinal = 0;
   uint64_t defaultExpression = 0;
+  uint64_t valueType = 0;
 };
 
 inline constexpr uint32_t FunctionalFormalHasDefault = uint32_t{1} << 0;
+
+/// Shared layout metadata for managed array and queue formals. IDs use the
+/// normalized simulation type; element IDs use the runtime storage descriptor.
+struct FunctionalContainerType {
+  uint64_t id = 0;
+  FunctionalContainerKind kind = FunctionalContainerKind::DynamicArray;
+  FunctionalContainerKeyKind keyKind = FunctionalContainerKeyKind::None;
+  uint64_t elementType = 0;
+  uint64_t keyWidth = 0;
+  uint64_t bound = 0;
+};
 
 struct TransitionProgram {
   uint64_t bin = 0;
@@ -847,6 +859,7 @@ struct Database {
   std::vector<FunctionalValueLimb> functionalValueLimbs;
   std::vector<FunctionalExpression> functionalExpressions;
   std::vector<FunctionalFormal> functionalFormals;
+  std::vector<FunctionalContainerType> functionalContainerTypes;
   std::vector<FunctionalBinPlan> functionalBinPlans;
   std::vector<FunctionalTupleSet> functionalTupleSets;
   std::vector<FunctionalTuple> functionalTupleSetTuples;
