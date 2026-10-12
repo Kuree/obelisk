@@ -366,7 +366,9 @@ class ObeliskSimUnrollBoundedLoopsPass
         collect(loop, collect);
       // Construction has a separate hard ceiling, not a profitability cutoff.
       // It bounds a disposable expansion even if all of it could fold away.
-      constexpr uint64_t maximumConstruction = 16384;
+      // Verilator's --unroll-stmts default bounds a nest's unrolled output at
+      // 30000 AST nodes; one replicated operation is about one such node.
+      constexpr uint64_t maximumConstruction = 30000;
       std::optional<uint64_t> baselineCost;
       bool changed = false;
       for (CFGLoop *root : roots) {

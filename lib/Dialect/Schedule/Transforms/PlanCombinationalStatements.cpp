@@ -290,7 +290,7 @@ public:
     auto statementLimit =
         schedule::get<schedule::Field::MaxStatementOps>(module);
     uint64_t statementBudget =
-        statementLimit ? statementLimit.getUInt() : 73728;
+        statementLimit ? statementLimit.getUInt() : 262144;
     SmallVector<Attribute> fusions;
     unsigned dataflowCount = 0;
     for (const auto &[leader, component] : closedComponents) {

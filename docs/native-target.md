@@ -306,7 +306,7 @@ drivers retain their original scheduling.
 Hierarchy boundaries and the legacy 64-bit dirty-mask limit do not restrict a
 proved DAG. Genuine value feedback, incomplete assignments, state-dependent
 resumption, or unproved termination retain their existing execution. The
-`schedule.native.max_statement_ops` budget defaults to 73728 for data-dependence
+`schedule.native.max_statement_ops` budget defaults to 262144 for data-dependence
 plans, separately from the ordinary inline budget, and charges each reduced
 executable slice, including reconstructed private versions. These are compile-time
 certificates and transformations: no runtime
@@ -517,14 +517,17 @@ Unavailable Z3, exhausted budgets, and unknown answers retain the bounds check.
 
 At `-O3`, `obelisk-sim-unroll-bounded-loops` replicates small, finite loop
 nests before four-state expansion and compute-graph construction. Its
-`maximum-loop-size` option limits simplified weighted simulation cost per nest;
-zero disables replication. Admission evaluates a disposable expansion with
+`maximum-loop-size` option limits simplified weighted simulation cost per nest
+(default 16384); zero disables replication. Admission evaluates a disposable expansion with
 sparse constant propagation, dead-branch elimination,
 array-index folding, SROA, mem2reg, and CSE. The charge is the original nest's
 weighted cost plus the difference between the normalized candidate and baseline
 function costs, so it credits simplifications caused by unrolling without
-crediting unrelated existing dead code. A separate construction ceiling bounds
-intermediate copies as well as the final expansion. The pass skips root
+crediting unrelated existing dead code. A separate construction ceiling of 30000
+operations bounds intermediate copies as well as the final expansion. Each loop
+is limited to 64 iterations. These limits follow Verilator's `--unroll-count`
+(64) and `--unroll-stmts` (30000 AST nodes); on RSD one replicated operation
+matches about one Verilator node, and the weighted cost about half of one. The pass skips root
 initializers, initial/final blocks, and port initialization. It validates the
 whole nest, replicates outer loops first, folds dependent inner bounds, and
 commits only if every inner copy can be replicated. SCCP, canonicalization,

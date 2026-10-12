@@ -18,7 +18,7 @@ def ObeliskSimSimplifyBodiesPass
 def ObeliskSimUnrollBoundedLoopsPass
     : Pass<"obelisk-sim-unroll-bounded-loops", "obelisk::sim::SimFuncOp"> {
   let summary = "Unroll small constant-trip, non-suspending CFG loops";
-  let options = [Option<"maximumLoopSize", "maximum-loop-size", "uint64_t", "64",
+  let options = [Option<"maximumLoopSize", "maximum-loop-size", "uint64_t", "16384",
                         "Maximum simplified weighted cost per complete loop nest "
                         "before packed expansion (zero disables unrolling)">];
   let dependentDialects = ["mlir::arith::ArithDialect",
