@@ -349,7 +349,8 @@ bool isUnary(uint8_t opcode) {
   return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
           opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
          opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
-         opcode == OBELISK_RT_RANDOM_CLOG2_V1;
+         opcode == OBELISK_RT_RANDOM_CLOG2_V1 ||
+         obelisk::random::isRealInstruction(opcode);
 }
 
 bool isBinary(uint8_t opcode) {
@@ -428,7 +429,12 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                  OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
+                 OBELISK_RT_RANDOM_PROGRAM_HAS_REAL |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) != 0)
+    return false;
+  bool real = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) != 0;
+  if (real && (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
+                !(flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)))
     return false;
   if ((encodedDist != weighted) || (weighted && encodedPriority))
     return false;
@@ -558,6 +564,12 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     instruction.width = read32(cursor + 4);
     instruction.operand = read32(cursor + 8);
     instruction.auxiliary = read32(cursor + 12);
+    if (obelisk::random::isRealInstruction(instruction.opcode) &&
+        (!real || stackWidths.empty() ||
+         !obelisk::random::validRealInstruction(
+             instruction.opcode, instruction.width, instruction.flags,
+             instruction.operand, instruction.auxiliary, stackWidths.back())))
+      return false;
     if (read16(cursor + 2) != 0 || instruction.width == 0 ||
         (instruction.flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
       return false;

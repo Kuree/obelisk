@@ -4734,6 +4734,9 @@ struct obelisk_rt_random_state_v1 {
 // Arithmetic is bit-blasted by compiler Z3; the target needs no Z3 dependency.
 // A versioned trailer bounds the original residual and the plan independently.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN UINT32_C(512)
+// Typed IEEE operations require an exact compiled plan and stateful uniform
+// sampling. They are never evaluated by the legacy integral interpreter.
+#define OBELISK_RT_RANDOM_PROGRAM_HAS_REAL UINT32_C(1024)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_HEADER_SIZE UINT16_C(4)
 #define OBELISK_RT_RANDOM_SOLVE_EDGE_SIZE UINT16_C(24)
 // V2 edges contain ceil(aggregate_width/64) little-endian words for each
@@ -4830,7 +4833,20 @@ typedef enum obelisk_rt_random_opcode_v1 {
   // Operand is the slot index; flags and auxiliary/immediate are zero.
   // Width must equal the stored value's width (these operations do not cast).
   OBELISK_RT_RANDOM_STORE_VALUE_V1 = 45,
-  OBELISK_RT_RANDOM_LOAD_VALUE_V1 = 46
+  OBELISK_RT_RANDOM_LOAD_VALUE_V1 = 46,
+  // Mark equal-width integer payloads as IEEE binary32/binary64 values.
+  OBELISK_RT_RANDOM_REAL32_BITS_V1 = 47,
+  OBELISK_RT_RANDOM_REAL64_BITS_V1 = 48,
+  // Decode signed half-minimum-subnormal coordinates. Clients constrain
+  // property domains with REAL_RANK_VALID independently of user constraints.
+  OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1 = 49,
+  OBELISK_RT_RANDOM_REAL64_FROM_RANK_V1 = 50,
+  // Convert an integral or IEEE operand to the declared IEEE precision.
+  // SIGNED describes an integral input. Floating conversion uses IEEE RNE.
+  OBELISK_RT_RANDOM_REAL_CAST_V1 = 51,
+  OBELISK_RT_RANDOM_REAL_RANK_VALID_V1 = 52,
+  // Recover a bitcast payload. Computed NaN payload semantics remain open.
+  OBELISK_RT_RANDOM_REAL_TO_BITS_V1 = 53
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called

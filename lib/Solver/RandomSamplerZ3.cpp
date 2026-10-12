@@ -36,6 +36,8 @@ uint64_t read64(const uint8_t *p) {
 struct Bits {
   Z3_ast value;
   unsigned width;
+  bool real = false;
+  Z3_ast representation = nullptr;
 };
 
 class BitVectorFormula {
@@ -66,6 +68,14 @@ public:
   }
 
   Z3_ast resize(Bits input, unsigned width, bool signedValue = false) {
+    if (input.real) {
+      if (width != 32 && width != 64)
+        return nullptr;
+      return input.width == width
+                 ? input.value
+                 : Z3_mk_fpa_to_fp_float(context, rounding(), input.value,
+                                         realSort(width));
+    }
     if (input.width == width)
       return input.value;
     Z3_ast result =
@@ -83,6 +93,8 @@ public:
   }
 
   Z3_ast truth(Bits input) {
+    if (input.real)
+      return Z3_mk_not(context, Z3_mk_fpa_is_zero(context, input.value));
     return Z3_mk_not(context,
                      Z3_mk_eq(context, input.value, constant(0, input.width)));
   }
@@ -104,6 +116,28 @@ public:
   }
 
   Bits unary(uint8_t opcode, Bits input, unsigned width, bool sign) {
+    if (opcode >= OBELISK_RT_RANDOM_REAL32_BITS_V1 &&
+        opcode <= OBELISK_RT_RANDOM_REAL_TO_BITS_V1)
+      return realUnary(opcode, input, width, sign);
+    if (input.real) {
+      if (opcode == OBELISK_RT_RANDOM_LOGICAL_NOT_V1)
+        return boolean(Z3_mk_not(context, truth(input)), width);
+      if ((opcode == OBELISK_RT_RANDOM_POS_V1 ||
+           opcode == OBELISK_RT_RANDOM_NEG_V1) &&
+          (width == 32 || width == 64)) {
+        Z3_ast value = resize(input, width);
+        Z3_ast representation =
+            input.width == width ? input.representation : nullptr;
+        if (opcode == OBELISK_RT_RANDOM_NEG_V1)
+          value = Z3_mk_fpa_neg(context, value);
+        if (representation && opcode == OBELISK_RT_RANDOM_NEG_V1)
+          representation =
+              Z3_mk_bvxor(context, representation,
+                          constant(uint64_t{1} << (width - 1), width));
+        return {value, width, true, representation};
+      }
+      return {nullptr, width};
+    }
     Z3_ast result = nullptr;
     switch (opcode) {
     case OBELISK_RT_RANDOM_CAST_V1:
@@ -219,6 +253,8 @@ public:
   }
 
   Bits binary(uint8_t opcode, Bits lhs, Bits rhs, unsigned width, bool sign) {
+    if (lhs.real || rhs.real)
+      return realBinary(opcode, lhs, rhs, width);
     unsigned commonWidth = std::max(lhs.width, rhs.width);
     Z3_ast a = resize(lhs, commonWidth, sign);
     Z3_ast b = resize(rhs, commonWidth, sign);
@@ -354,7 +390,187 @@ public:
     return {result, width};
   }
 
+  Z3_sort realSort(unsigned width) {
+    return Z3_mk_fpa_sort(context, width == 32 ? 8 : 11, width == 32 ? 24 : 53);
+  }
+
+  Z3_ast rounding() { return Z3_mk_fpa_round_nearest_ties_to_even(context); }
+
+  Z3_ast rankValid(Bits input) {
+    bool shortReal = input.width == OBELISK_RT_REAL32_RANK_BITS;
+    unsigned fraction = shortReal ? 23 : 52;
+    unsigned exponent = shortReal ? 254 : 2046;
+    Z3_ast maximum = Z3_mk_bvshl(
+        context, constant((uint64_t{1} << (fraction + 1)) - 1, input.width),
+        constant(exponent, input.width));
+    return conjunction(
+        Z3_mk_bvsle(context, Z3_mk_bvneg(context, maximum), input.value),
+        Z3_mk_bvsle(context, input.value, maximum));
+  }
+
+  Bits realUnary(uint8_t opcode, Bits input, unsigned width, bool sign) {
+    bool format = width == 32 || width == 64;
+    if (opcode == OBELISK_RT_RANDOM_REAL_RANK_VALID_V1) {
+      if (input.real || sign || width != 1 ||
+          (input.width != OBELISK_RT_REAL32_RANK_BITS &&
+           input.width != OBELISK_RT_REAL64_RANK_BITS))
+        return {nullptr, width};
+      return boolean(rankValid(input));
+    }
+    if (!format)
+      return {nullptr, width};
+    hasReal = true;
+    if (opcode == OBELISK_RT_RANDOM_REAL_CAST_V1) {
+      Z3_ast value =
+          input.real ? resize(input, width)
+          : sign ? Z3_mk_fpa_to_fp_signed(context, rounding(), input.value,
+                                          realSort(width))
+                 : Z3_mk_fpa_to_fp_unsigned(context, rounding(), input.value,
+                                            realSort(width));
+      return {value, width, true,
+              input.real && input.width == width ? input.representation
+                                                 : nullptr};
+    }
+    if (opcode == OBELISK_RT_RANDOM_REAL_TO_BITS_V1) {
+      if (!input.real || input.width != width || sign)
+        return {nullptr, width};
+      // Preserve payloads of bitcasts and rank decoders. Floating arithmetic
+      // can produce platform-dependent NaN payloads; do not invent a model.
+      return {input.representation, width};
+    }
+    if (input.real || sign)
+      return {nullptr, width};
+    if (opcode == OBELISK_RT_RANDOM_REAL32_BITS_V1 ||
+        opcode == OBELISK_RT_RANDOM_REAL64_BITS_V1) {
+      if (input.width != width ||
+          width != (opcode == OBELISK_RT_RANDOM_REAL32_BITS_V1 ? 32u : 64u))
+        return {nullptr, width};
+      return {Z3_mk_fpa_to_fp_bv(context, input.value, realSort(width)), width,
+              true, input.value};
+    }
+    unsigned rankWidth =
+        width == 32 ? OBELISK_RT_REAL32_RANK_BITS : OBELISK_RT_REAL64_RANK_BITS;
+    if ((opcode != OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1 &&
+         opcode != OBELISK_RT_RANDOM_REAL64_FROM_RANK_V1) ||
+        input.width != rankWidth ||
+        width != (opcode == OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1 ? 32u : 64u))
+      return {nullptr, width};
+    unsigned fraction = width == 32 ? 23 : 52;
+    unsigned exponent = width == 32 ? 8 : 11;
+    Z3_ast signBit =
+        Z3_mk_extract(context, rankWidth - 1, rankWidth - 1, input.value);
+    Z3_ast negative = Z3_mk_eq(context, signBit, constant(1, 1));
+    Z3_ast magnitude = Z3_mk_ite(
+        context, negative, Z3_mk_bvneg(context, input.value), input.value);
+    // A balanced highest-set-bit tree visits every coordinate bit once and
+    // avoids a width-dependent compiler or WASM recursion depth.
+    struct Prefix {
+      Z3_ast present, highest;
+    };
+    std::vector<Prefix> prefixes;
+    for (unsigned bit = 0; bit != rankWidth; ++bit)
+      prefixes.push_back(
+          {Z3_mk_eq(context, Z3_mk_extract(context, bit, bit, magnitude),
+                    constant(1, 1)),
+           constant(bit + 1, exponent + 1)});
+    while (prefixes.size() > 1) {
+      size_t next = 0;
+      for (size_t i = 0; i < prefixes.size(); i += 2) {
+        Prefix value = prefixes[i];
+        if (i + 1 != prefixes.size()) {
+          Prefix high = prefixes[i + 1];
+          value = {
+              disjunction(value.present, high.present),
+              Z3_mk_ite(context, high.present, high.highest, value.highest)};
+        }
+        prefixes[next++] = value;
+      }
+      prefixes.resize(next);
+    }
+    Z3_ast highest =
+        Z3_mk_ite(context, prefixes.front().present, prefixes.front().highest,
+                  constant(0, exponent + 1));
+    Z3_ast normal =
+        Z3_mk_bvugt(context, highest, constant(fraction + 1, exponent + 1));
+    Z3_ast shift = Z3_mk_ite(
+        context, normal,
+        Z3_mk_bvsub(context, highest, constant(fraction + 1, exponent + 1)),
+        constant(1, exponent + 1));
+    Z3_ast shifted = Z3_mk_bvlshr(context, magnitude,
+                                  resize({shift, exponent + 1}, rankWidth));
+    Z3_ast storedExponent =
+        Z3_mk_ite(context, normal, resize({shift, exponent + 1}, exponent),
+                  constant(0, exponent));
+    Z3_ast payload = Z3_mk_concat(
+        context, signBit,
+        Z3_mk_concat(context, storedExponent,
+                     Z3_mk_extract(context, fraction - 1, 0, shifted)));
+    return {Z3_mk_fpa_to_fp_bv(context, payload, realSort(width)), width, true,
+            payload};
+  }
+
+  Bits realBinary(uint8_t opcode, Bits lhs, Bits rhs, unsigned width) {
+    switch (opcode) {
+    case OBELISK_RT_RANDOM_LOGICAL_AND_V1:
+      return boolean(conjunction(truth(lhs), truth(rhs)), width);
+    case OBELISK_RT_RANDOM_LOGICAL_OR_V1:
+      return boolean(disjunction(truth(lhs), truth(rhs)), width);
+    case OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1:
+      return boolean(Z3_mk_implies(context, truth(lhs), truth(rhs)), width);
+    case OBELISK_RT_RANDOM_LOGICAL_EQUIV_V1:
+      return boolean(Z3_mk_eq(context, truth(lhs), truth(rhs)), width);
+    }
+    if (!lhs.real || !rhs.real)
+      return {nullptr, width};
+    unsigned precision = std::max(lhs.width, rhs.width);
+    Z3_ast a = resize(lhs, precision), b = resize(rhs, precision);
+    Z3_ast predicate = nullptr;
+    switch (opcode) {
+    case OBELISK_RT_RANDOM_EQ_V1:
+      predicate = Z3_mk_fpa_eq(context, a, b);
+      break;
+    case OBELISK_RT_RANDOM_NE_V1:
+      predicate = Z3_mk_not(context, Z3_mk_fpa_eq(context, a, b));
+      break;
+    case OBELISK_RT_RANDOM_GE_V1:
+      predicate = Z3_mk_fpa_geq(context, a, b);
+      break;
+    case OBELISK_RT_RANDOM_GT_V1:
+      predicate = Z3_mk_fpa_gt(context, a, b);
+      break;
+    case OBELISK_RT_RANDOM_LE_V1:
+      predicate = Z3_mk_fpa_leq(context, a, b);
+      break;
+    case OBELISK_RT_RANDOM_LT_V1:
+      predicate = Z3_mk_fpa_lt(context, a, b);
+      break;
+    }
+    if (predicate)
+      return boolean(predicate, width);
+    if (width != 32 && width != 64)
+      return {nullptr, width};
+    a = resize(lhs, width);
+    b = resize(rhs, width);
+    Z3_ast value = nullptr;
+    switch (opcode) {
+    case OBELISK_RT_RANDOM_ADD_V1:
+      value = Z3_mk_fpa_add(context, rounding(), a, b);
+      break;
+    case OBELISK_RT_RANDOM_SUB_V1:
+      value = Z3_mk_fpa_sub(context, rounding(), a, b);
+      break;
+    case OBELISK_RT_RANDOM_MUL_V1:
+      value = Z3_mk_fpa_mul(context, rounding(), a, b);
+      break;
+    case OBELISK_RT_RANDOM_DIV_V1:
+      value = Z3_mk_fpa_div(context, rounding(), a, b);
+      break;
+    }
+    return {value, width, true};
+  }
+
   Z3_context context = nullptr;
+  bool hasReal = false;
   std::unordered_map<Z3_ast, Bits> popcounts;
   struct CardinalityInputs {
     std::vector<Z3_ast> positive, negative;
@@ -364,7 +580,7 @@ public:
 };
 
 inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
-                              std::vector<Z3_ast> &formulas) {
+                              std::vector<Z3_ast> &formulas, bool real) {
   Z3_goal goal = Z3_mk_goal(context, false, false, false);
   Z3_goal_inc_ref(context, goal);
   Z3_goal_assert(context, goal, predicate);
@@ -388,7 +604,15 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   Z3_tactic_inc_ref(context, cardFirst);
   Z3_tactic first = Z3_tactic_and_then(context, cardFirst, blast);
   Z3_tactic_inc_ref(context, first);
-  Z3_tactic tactic = Z3_tactic_and_then(context, first, simplify);
+  Z3_tactic floating = nullptr, floatingFirst = nullptr;
+  if (real) {
+    floating = Z3_mk_tactic(context, "fpa2bv");
+    Z3_tactic_inc_ref(context, floating);
+    floatingFirst = Z3_tactic_and_then(context, floating, first);
+    Z3_tactic_inc_ref(context, floatingFirst);
+  }
+  Z3_tactic tactic =
+      Z3_tactic_and_then(context, real ? floatingFirst : first, simplify);
   Z3_tactic_inc_ref(context, tactic);
   Z3_apply_result result = Z3_tactic_apply(context, tactic, goal);
   bool valid = result && Z3_get_error_code(context) == Z3_OK;
@@ -404,6 +628,10 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   if (result)
     Z3_apply_result_dec_ref(context, result);
   Z3_tactic_dec_ref(context, tactic);
+  if (real) {
+    Z3_tactic_dec_ref(context, floatingFirst);
+    Z3_tactic_dec_ref(context, floating);
+  }
   Z3_tactic_dec_ref(context, first);
   Z3_tactic_dec_ref(context, cardFirst);
   Z3_tactic_dec_ref(context, unate);
@@ -448,7 +676,8 @@ public:
 
   bool lower(Z3_ast predicate, ID &result) {
     std::vector<Z3_ast> formulas;
-    if (!bitBlastPredicate(formula.context, predicate, formulas))
+    if (!bitBlastPredicate(formula.context, predicate, formulas,
+                           formula.hasReal))
       return false;
     result = 1;
     for (Z3_ast atom : formulas) {
@@ -710,6 +939,13 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     bool sign = (instructionFlags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
+    if (random::isRealInstruction(opcode)) {
+      if (!(read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) ||
+          stack.empty() ||
+          !random::validRealInstruction(opcode, bits, instructionFlags, operand,
+                                        auxiliary, stack.back().width))
+        return std::nullopt;
+    }
     if (!bits)
       return std::nullopt;
     if (opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
@@ -776,14 +1012,27 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
       stack.pop_back();
       Bits condition = stack.back();
       stack.pop_back();
+      if (yes.real != no.real || (yes.real && bits != 32 && bits != 64))
+        return std::nullopt;
+      Z3_ast yesValue = f.resize(yes, bits, sign);
+      Z3_ast noValue = f.resize(no, bits, sign);
+      if (!yesValue || !noValue)
+        return std::nullopt;
+      Z3_ast representation =
+          yes.real && yes.representation && no.representation &&
+                  yes.width == bits && no.width == bits
+              ? Z3_mk_ite(f.context, f.truth(condition), yes.representation,
+                          no.representation)
+              : nullptr;
       stack.push_back(
-          {Z3_mk_ite(f.context, f.truth(condition), f.resize(yes, bits, sign),
-                     f.resize(no, bits, sign)),
-           bits});
+          {Z3_mk_ite(f.context, f.truth(condition), yesValue, noValue), bits,
+           yes.real, representation});
     } else if ((opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
                 opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
                opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
-               opcode == OBELISK_RT_RANDOM_CLOG2_V1) {
+               opcode == OBELISK_RT_RANDOM_CLOG2_V1 ||
+               (opcode >= OBELISK_RT_RANDOM_REAL32_BITS_V1 &&
+                opcode <= OBELISK_RT_RANDOM_REAL_TO_BITS_V1)) {
       if (stack.empty())
         return std::nullopt;
       Bits value = stack.back();

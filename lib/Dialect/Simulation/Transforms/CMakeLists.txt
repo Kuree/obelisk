@@ -1,5 +1,6 @@
 add_mlir_dialect_library(ObeliskSimulationTransforms
   AliasPortConnections.cpp
+  CompileRandomPlans.cpp
   DevirtualizeClassCalls.cpp
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
@@ -21,10 +22,18 @@ add_mlir_dialect_library(ObeliskSimulationTransforms
   ObeliskIR
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
+  ObeliskSolver
   MLIRAnalysis
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRIR
   MLIRPass
   MLIRTransforms
+)
+
+target_include_directories(ObeliskSimulationTransforms PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
+)
+target_include_directories(obj.ObeliskSimulationTransforms PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
 )

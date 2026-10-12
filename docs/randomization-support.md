@@ -199,8 +199,20 @@ extremes; they do not choose IEEE encodings with equal probability. Empty
 intervals preserve the destination and RNG, and singleton intervals need no
 draw. MLIR regressions cover both precisions, subnormal and normal boundaries,
 finite extremes, interval density and invalid arguments at O0 and O3. The leaf
-operations still need source lowering and compiler proof integration; joint
-real/integral relations and complete real probability semantics remain open.
+operations still need source lowering. Compiler Z3 now compiles typed IEEE
+comparisons, arithmetic, integral conversions, logical operations and selection
+into the same parameterized Boolean plans as integral constraints. Explicit
+numeric-rank decoders preserve both zero encodings; callers emit independent
+finite-domain constraints. Bitcasts retain their original payloads. Arithmetic
+and precision conversions use round-to-nearest, ties-to-even. Bitcasts of
+computed arithmetic are diagnosed while their platform-dependent NaN semantics
+remain open. The Simulation plan pass rejects unsupported or ill-typed
+expressions, and both
+target readers require an exact uniform plan for IEEE programs. MLIR tests
+cover live captures, disabled constraints, frozen inputs, soft priorities and
+rank decoding in native, bytecode and WASM execution. Efficient full-coordinate
+predicates, source property admission, joint real/integral distributions and
+complete real probability semantics remain open.
 
 The compiler appends `HAS_SAMPLER_PLAN` bundles and opts into exact sampling
 through the existing `SMT_UNIFORM` C ABI flag. The legacy flag name is retained

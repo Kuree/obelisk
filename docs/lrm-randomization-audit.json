@@ -245,7 +245,7 @@
         {
           "feature": "Real random variables",
           "status": "missing",
-          "detail": "Source real and shortreal constraint lowering remains missing. Native and WASM targets provide finite numeric rank conversions and interval sampling leaves, with spacing-weighted cells, subnormals, signed zero, finite endpoint clipping and transactional failures. MLIR tests cover both precisions at O0/O3, including the 18.4.1 numeric-density example. The leaves still need source lowering and compiler proof integration; joint real/integral relations and complete real probability semantics remain open."
+          "detail": "Source real and shortreal constraint lowering remains missing. Native and WASM targets provide finite numeric rank conversions and interval sampling leaves, with spacing-weighted cells, subnormals, signed zero, finite endpoint clipping and transactional failures. Compiler Z3 additionally compiles typed IEEE comparisons, arithmetic, integral conversions, logical operations, selection and numeric-rank decoders into parameterized Boolean plans. Ill-typed operations and computed arithmetic payload bitcasts are diagnosed; targets require exact uniform plans and never interpret IEEE constraints as integers. MLIR tests cover both precisions at O0/O3, the 18.4.1 numeric-density example, live captures, modes, frozen inputs, soft priorities and malformed wire formats. Efficient full-coordinate predicates, source property admission, joint real/integral distributions and complete real probability semantics remain open."
         },
         {
           "feature": "Rand object handles",
@@ -272,7 +272,8 @@
           "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp",
           "runtime/lib/RealRandom.h",
-          "runtime/lib/RandReal.cpp"
+          "runtime/lib/RandReal.cpp",
+          "lib/Dialect/Simulation/Transforms/CompileRandomPlans.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -299,7 +300,10 @@
           "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
-          "test/Runtime/random-real-rank-sampling.mlir"
+          "test/Runtime/random-real-rank-sampling.mlir",
+          "test/Dialect/Simulation/Transforms/simulation-compile-random-real-plans-invalid.mlir",
+          "test/Runtime/simulation-random-real-plan-runtime.mlir",
+          "test/Runtime/random-real-plan-validation.mlir"
         ]
       }
     },

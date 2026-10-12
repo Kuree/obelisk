@@ -5,6 +5,20 @@
 
 include "mlir/Pass/PassBase.td"
 
+def ObeliskSimCompileRandomPlansPass
+    : Pass<"obelisk-sim-compile-random-plans", "mlir::ModuleOp"> {
+  let summary = "Compile parameterized random arithmetic into exact Boolean plans";
+  let description = [{
+    Materializes missing plans for stateful uniform Simulation random solves,
+    including typed IEEE arithmetic and numeric real coordinates. Existing
+    compiled bundles are retained. Compiler Z3 performs all bit blasting;
+    native, bytecode and WASM targets only bind inputs and sample exact ranks.
+    Unsupported expressions are diagnosed instead of retaining an incomplete
+    search or interpreting floating arithmetic with integral semantics.
+  }];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+}
+
 def ObeliskSimSimplifyBodiesPass
     : Pass<"obelisk-sim-simplify-bodies", "obelisk::sim::SimDesignOp"> {
   let summary =

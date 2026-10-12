@@ -166,7 +166,8 @@ bool isUnary(uint8_t opcode) {
   return (opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
           opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
          opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
-         opcode == OBELISK_RT_RANDOM_CLOG2_V1;
+         opcode == OBELISK_RT_RANDOM_CLOG2_V1 ||
+         obelisk::random::isRealInstruction(opcode);
 }
 
 bool isBinary(uint8_t opcode) {
@@ -201,10 +202,16 @@ bool validateInstruction(const Instruction &instruction,
                          std::vector<unsigned> &stackWidths,
                          std::vector<unsigned> &temporaryWidths,
                          size_t &maxDepth, bool &sawHard, bool &sawSoft,
-                         uint64_t &softPriorities) {
+                         uint64_t &softPriorities, bool real) {
   size_t depth = stackWidths.size();
   if (instruction.width == 0 || instruction.width > 64 ||
       (instruction.flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
+    return false;
+  if (obelisk::random::isRealInstruction(instruction.opcode) &&
+      (!real || stackWidths.empty() ||
+       !obelisk::random::validRealInstruction(
+           instruction.opcode, instruction.width, instruction.flags,
+           instruction.operand, instruction.immediate, stackWidths.back())))
     return false;
   switch (instruction.opcode) {
   case OBELISK_RT_RANDOM_PUSH_VARIABLE_V1:
@@ -590,8 +597,14 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                           OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
+                          OBELISK_RT_RANDOM_PROGRAM_HAS_REAL |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)) !=
             0)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    bool real = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) != 0;
+    if (real &&
+        (!(programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
+         !(programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)))
       return OBELISK_RT_INVALID_ARGUMENT;
     size_t bundleSize = static_cast<size_t>(programSize);
     if (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) {
@@ -697,7 +710,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       if (cursor[3] != 0 ||
           !validateInstruction(instruction, aggregateWidth, encodedCaptures,
                                stackWidths, temporaryWidths, maxDepth, sawHard,
-                               sawSoft, softPriorities))
+                               sawSoft, softPriorities, real))
         return OBELISK_RT_INVALID_ARGUMENT;
       instructions.push_back(instruction);
       cursor += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;

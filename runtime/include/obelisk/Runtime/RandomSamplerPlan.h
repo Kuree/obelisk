@@ -13,6 +13,40 @@
 
 namespace obelisk::random {
 
+inline bool isRealInstruction(unsigned opcode) {
+  return opcode >= OBELISK_RT_RANDOM_REAL32_BITS_V1 &&
+         opcode <= OBELISK_RT_RANDOM_REAL_TO_BITS_V1;
+}
+
+/// The host and both target program readers share the scalar/rank wire shape.
+/// Typed operand provenance is additionally checked while compiling the plan.
+inline bool validRealInstruction(unsigned opcode, unsigned width,
+                                 unsigned flags, unsigned operand,
+                                 uint64_t auxiliary, unsigned inputWidth) {
+  if (!isRealInstruction(opcode) || operand || auxiliary || !inputWidth ||
+      (flags && (opcode != OBELISK_RT_RANDOM_REAL_CAST_V1 ||
+                 flags != OBELISK_RT_RANDOM_INSTRUCTION_SIGNED)))
+    return false;
+  switch (opcode) {
+  case OBELISK_RT_RANDOM_REAL32_BITS_V1:
+    return width == 32 && inputWidth == 32;
+  case OBELISK_RT_RANDOM_REAL64_BITS_V1:
+    return width == 64 && inputWidth == 64;
+  case OBELISK_RT_RANDOM_REAL32_FROM_RANK_V1:
+    return width == 32 && inputWidth == OBELISK_RT_REAL32_RANK_BITS;
+  case OBELISK_RT_RANDOM_REAL64_FROM_RANK_V1:
+    return width == 64 && inputWidth == OBELISK_RT_REAL64_RANK_BITS;
+  case OBELISK_RT_RANDOM_REAL_RANK_VALID_V1:
+    return width == 1 && (inputWidth == OBELISK_RT_REAL32_RANK_BITS ||
+                          inputWidth == OBELISK_RT_REAL64_RANK_BITS);
+  case OBELISK_RT_RANDOM_REAL_TO_BITS_V1:
+    return (width == 32 || width == 64) && inputWidth == width;
+  case OBELISK_RT_RANDOM_REAL_CAST_V1:
+    return width == 32 || width == 64;
+  }
+  return false;
+}
+
 /// A complemented-edge AND graph. Handles 0 and 1 are false and true; the low
 /// bit of every other handle negates its node. The compiler performs all
 /// bit-vector arithmetic before writing this pointer-free, little-endian plan.
