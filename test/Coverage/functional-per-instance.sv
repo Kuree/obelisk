@@ -41,8 +41,8 @@ endmodule
 // implementation to omit it. The option is nevertheless resolved and
 // reported independently for every constructor configuration.
 // REPORT: functional: 50.00% (2/4)
-// REPORT: instance $auto$1: 50.00% (1/2) [per_instance=true]
-// REPORT: instance $auto$2: 50.00% (1/2) [per_instance=false]
+// REPORT: instance $auto$1: 50.00% (1/2) [per_instance=true, distribute_first=false]
+// REPORT: instance $auto$2: 50.00% (1/2) [per_instance=false, distribute_first=false]
 // JSON: "name":"$auto$1","configuration":
 // JSON: "per_instance":true
 // JSON: "name":"$auto$2","configuration":

@@ -181,6 +181,8 @@ FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionAssignment(
       kind = sim::CovergroupInstanceOptionKind::Goal;
     else if (name == "merge_instances" && !semanticItem)
       kind = sim::CovergroupInstanceOptionKind::MergeInstances;
+    else if (name == "distribute_first" && !semanticItem)
+      kind = sim::CovergroupInstanceOptionKind::DistributeFirst;
     if (!kind) {
       emitError(location) << "covergroup type option '" << name
                           << "' is not supported procedurally";

@@ -986,6 +986,9 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
       if (options.mergeInstances)
         appendTypeUnsignedOption(typeID, Owner::Group, Option::MergeInstances,
                                  *options.mergeInstances ? 1 : 0);
+      if (options.distributeFirst)
+        appendTypeUnsignedOption(typeID, Owner::Group, Option::DistributeFirst,
+                                 *options.distributeFirst ? 1 : 0);
       for (const auto &[item, value] : options.itemGoals)
         appendTypeUnsignedOption(item, Owner::Item, Option::Goal, value);
       for (const auto &[item, value] : options.itemWeights)
@@ -2188,7 +2191,8 @@ staticFunctionalTypeProfiles(const obelisk::coverage::Database &schema) {
   for (const auto &row : schema.functionalConfigurations)
     profiles[row.type];
   for (const auto &row : schema.functionalConfigurationOptions) {
-    if (row.scope != FunctionalOptionScopeKind::Type)
+    if (row.scope != FunctionalOptionScopeKind::Type ||
+        row.option == FunctionalConfigurationOptionKind::DistributeFirst)
       continue;
     uint64_t fallback =
         row.option == FunctionalConfigurationOptionKind::Goal     ? 100
@@ -2370,6 +2374,7 @@ obelisk_rt_status indexFunctionalConfigurations(CoverageState &coverage) {
     }
     coverage.configurationsByType = std::move(prepared);
     coverage.configurationKeys = std::move(keys);
+    coverage.payloadlessConfigurations = {};
     coverage.configurationIndexSchema = coverage.schema.get();
     coverage.indexedConfigurations =
         coverage.schema->functionalConfigurations.size();
@@ -2492,6 +2497,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   std::optional<uint64_t> groupAutoBinMax;
   std::optional<bool> groupCrossRetainAutoBins;
   bool groupDistributeFirst = false;
+  std::optional<size_t> distributeFirstRow;
   double groupRealInterval = 1.0;
   for (const FunctionalOptionPlan &plan : schema.functionalOptionPlans) {
     const bool group =
@@ -2643,6 +2649,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       if (plan.scope != FunctionalOptionScopeKind::Type)
         return OBELISK_RT_INVALID_DESIGN;
       groupDistributeFirst = value != 0;
+      distributeFirstRow = configurationOptionRows.size() - 1;
     }
     if (group && plan.scope == FunctionalOptionScopeKind::Instance) {
       switch (plan.option) {
@@ -2713,6 +2720,27 @@ obelisk_rt_status resolveStaticFunctionalType(
       return OBELISK_RT_INVALID_DESIGN;
     }
   }
+  // 19.5.1.1 captures the current distribution policy at construction. A
+  // procedural update must override the elaborated definition, change the
+  // configuration identity, and leave every previously resolved bin intact.
+  auto overrides = context->coverage->typeOptions.find(typeID);
+  if (overrides != context->coverage->typeOptions.end() &&
+      overrides->second.distributeFirst)
+    groupDistributeFirst = *overrides->second.distributeFirst;
+  if (distributeFirstRow)
+    configurationOptionRows[*distributeFirstRow].value = groupDistributeFirst;
+  else
+    configurationOptionRows.push_back(
+        {typeID,
+         {},
+         typeID,
+         FunctionalConfigurationOptionOwnerKind::Group,
+         FunctionalOptionScopeKind::Type,
+         FunctionalConfigurationOptionKind::DistributeFirst,
+         FunctionalConfigurationValueKind::Boolean,
+         0,
+         groupDistributeFirst,
+         {}});
   auto effectiveAtLeast = [&](uint64_t item) {
     auto found = itemAtLeast.find(item);
     if (found != itemAtLeast.end())
@@ -7148,6 +7176,11 @@ obelisk_rt_status createResolvedFunctionalType(
       if (option.value > 1)
         return OBELISK_RT_INVALID_DESIGN;
       type.mergeInstances = option.value != 0;
+    } else if (option.scope == Scope::Type &&
+               option.option == Option::DistributeFirst) {
+      if (option.value > 1)
+        return OBELISK_RT_INVALID_DESIGN;
+      type.distributeFirst = option.value != 0;
     } else if (option.scope == Scope::Type && option.option == Option::Strobe) {
       if (option.value > 1)
         return OBELISK_RT_INVALID_DESIGN;
@@ -7860,13 +7893,34 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
   if (!coverage.schema)
     return OBELISK_RT_INVALID_DESIGN;
   indexFunctionalConfigurations(coverage);
-  if (!expressions && !expressionCount) {
+  const bool payloadless = !expressionCount;
+  auto overrides = coverage.typeOptions.find(typeID);
+  const std::optional<bool> distributeFirst =
+      overrides == coverage.typeOptions.end()
+          ? std::nullopt
+          : overrides->second.distributeFirst;
+  const std::pair<uint64_t, uint32_t> payloadlessKey{
+      typeID, distributeFirst ? (*distributeFirst ? 1u : 0u) : 2u};
+  auto cachePayloadless = [&](const obelisk::coverage::Digest &configuration) {
+    if (payloadless)
+      coverage.payloadlessConfigurations[payloadlessKey] = configuration;
+  };
+  if (payloadless) {
+    auto cached = coverage.payloadlessConfigurations.find(payloadlessKey);
+    if (cached != coverage.payloadlessConfigurations.end())
+      return bindResolvedFunctionalType(coverage, typeID, cached->second,
+                                        result);
     auto configurations = coverage.configurationsByType.find(typeID);
-    if (configurations != coverage.configurationsByType.end()) {
-      if (configurations->second.size() != 1)
-        return OBELISK_RT_INVALID_DESIGN;
-      return bindResolvedFunctionalType(coverage, typeID,
-                                        configurations->second.front(), result);
+    if (configurations != coverage.configurationsByType.end() &&
+        configurations->second.size() == 1) {
+      auto status = bindResolvedFunctionalType(
+          coverage, typeID, configurations->second.front(), result);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (!distributeFirst || result->distributeFirst == *distributeFirst) {
+        cachePayloadless(result->configuration);
+        return OBELISK_RT_OK;
+      }
     }
   }
 
@@ -7888,6 +7942,7 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
   FunctionalCoverageTypeKey key{typeID, exact};
   auto existing = coverage.types.find(key);
   if (existing != coverage.types.end()) {
+    cachePayloadless(exact);
     result = &existing->second;
     return OBELISK_RT_OK;
   }
@@ -7944,6 +7999,7 @@ bindFunctionalType(obelisk_rt_context *context, CoverageState &coverage,
   if (append)
     appendPreparedConfiguration(*coverage.schema, prepared);
   result = &insertion.first->second;
+  cachePayloadless(exact);
   return OBELISK_RT_OK;
 }
 
@@ -12030,11 +12086,13 @@ obelisk_rt_v1_covergroup_set_type_integer_option(
   if (!context || !typeID || value < 0 ||
       (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
        option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
-       option != OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES) ||
+       option != OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
+       option != OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) ||
       (option == OBELISK_RT_COVERGROUP_OPTION_GOAL && value > 100) ||
       (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
        static_cast<uint64_t>(value) > UINT32_MAX) ||
-      (option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
+      ((option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
+        option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) &&
        (itemID || value > 1)))
     return OBELISK_RT_INVALID_ARGUMENT;
   OBELISK_RT_TRY {
@@ -12048,6 +12106,10 @@ obelisk_rt_v1_covergroup_set_type_integer_option(
       return status;
 
     FunctionalCoverageTypeOptions &overrides = coverage->typeOptions[typeID];
+    if (option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) {
+      overrides.distributeFirst = value != 0;
+      return OBELISK_RT_OK;
+    }
     const uint32_t unsignedValue = static_cast<uint32_t>(value);
     if (option == OBELISK_RT_COVERGROUP_OPTION_GOAL) {
       if (itemID)
@@ -13670,15 +13732,11 @@ obelisk_rt_v1_coverage_load(obelisk_rt_context *context, const char *path,
     }
     // Live instances are bound to an exact resolved configuration. Loading a
     // database while they exist may add runs but must not replace that schema.
+    IndexSet<FunctionalCoverageTypeKey> retainedConfigurations;
+    for (const auto &row : combined.functionalConfigurations)
+      retainedConfigurations.insert({row.type, row.configuration});
     for (const auto &boundType : coverage->types) {
-      uint64_t typeID = boundType.first.typeID;
-      const auto &type = boundType.second;
-      if (std::none_of(combined.functionalConfigurations.begin(),
-                       combined.functionalConfigurations.end(),
-                       [&](const auto &entry) {
-                         return entry.type == typeID &&
-                                entry.configuration == type.configuration;
-                       }))
+      if (!retainedConfigurations.count(boundType.first))
         return OBELISK_RT_INVALID_DESIGN;
     }
     auto committedSchema =

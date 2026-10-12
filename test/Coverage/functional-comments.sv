@@ -43,7 +43,7 @@ module top;
 endmodule
 
 // REPORT: type comment: "functional <group> type & comment"
-// REPORT: instance $auto$1: 50.00% (1/2) [per_instance=false]
+// REPORT: instance $auto$1: 50.00% (1/2) [per_instance=false, distribute_first=false]
 // REPORT-NEXT: comment:
 // REPORT: coverpoint cp: 1/2 (50.00%)
 // REPORT-NEXT: comment: "functional >point< & comment"

@@ -2853,6 +2853,87 @@ TEST(CoverageDatabaseTest, RejectsConflictingStaticTypeOptionsAcrossConfigs) {
   EXPECT_EQ(before, after);
 }
 
+TEST(CoverageDatabaseTest, DistributionPolicyMayVaryBetweenConstructions) {
+  Database first = makeTypedDatabase();
+  first.functionalConfigurationOptions.insert(
+      first.functionalConfigurationOptions.begin(),
+      {10,
+       first.functionalConfigurations.front().configuration,
+       10,
+       FunctionalConfigurationOptionOwnerKind::Group,
+       FunctionalOptionScopeKind::Type,
+       FunctionalConfigurationOptionKind::DistributeFirst,
+       FunctionalConfigurationValueKind::Boolean,
+       0,
+       0,
+       {}});
+  rekeyOnlyConfiguration(first);
+  first.resolvedInstanceOptions.push_back(
+      {first.runs.front().uuid,
+       0,
+       10,
+       FunctionalConfigurationOptionOwnerKind::Group,
+       FunctionalConfigurationOptionKind::DistributeFirst,
+       FunctionalConfigurationValueKind::Unsigned,
+       {},
+       0,
+       0});
+  Database second = first;
+  assignSecondRun(second);
+  second.functionalConfigurationOptions.front().value = 1;
+  second.resolvedInstanceOptions.front().value = 1;
+  rekeyOnlyConfiguration(second);
+  Diagnostic diagnostic;
+  ASSERT_EQ(merge(first, second, false, &diagnostic), Status::Ok)
+      << (diagnostic.field ? diagnostic.field : "") << ": "
+      << diagnostic.detail;
+  ASSERT_EQ(first.functionalConfigurations.size(), 2u);
+  ASSERT_EQ(validate(first), Status::Ok);
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(first, image), Status::Ok);
+  Database restored;
+  ASSERT_EQ(parse(image.data(), image.size(), restored), Status::Ok);
+  EXPECT_EQ(restored.functionalConfigurations.size(), 2u);
+  ASSERT_EQ(restored.resolvedInstanceOptions.size(), 2u);
+  ASSERT_EQ(discardTestDetail(restored), Status::Ok);
+  EXPECT_EQ(restored.runs.size(), 1u);
+  EXPECT_EQ(restored.functionalConfigurations.size(), 2u);
+  EXPECT_TRUE(restored.resolvedInstanceOptions.empty());
+}
+
+TEST(CoverageDatabaseTest, DistributionOverridesValidateScopeAndValue) {
+  Database db = makeTypedDatabase();
+  ResolvedInstanceOption option;
+  option.run = db.runs.front().uuid;
+  option.owner = db.functionalTypes.front().id;
+  option.ownerKind = FunctionalConfigurationOptionOwnerKind::Group;
+  option.option = FunctionalConfigurationOptionKind::DistributeFirst;
+  option.valueKind = FunctionalConfigurationValueKind::Unsigned;
+  for (uint64_t value : {uint64_t{0}, uint64_t{1}}) {
+    option.value = value;
+    db.resolvedInstanceOptions = {option};
+    ASSERT_EQ(validate(db), Status::Ok);
+    std::vector<uint8_t> image;
+    ASSERT_EQ(serialize(db, image), Status::Ok);
+    Database restored;
+    ASSERT_EQ(parse(image.data(), image.size(), restored), Status::Ok);
+    EXPECT_EQ(restored.resolvedInstanceOptions.front().value, value);
+  }
+  option.value = 2;
+  db.resolvedInstanceOptions = {option};
+  EXPECT_EQ(validate(db), Status::InvalidDatabase);
+  option.value = 1;
+  option.owner = db.functionalItems.front().id;
+  option.ownerKind = FunctionalConfigurationOptionOwnerKind::Item;
+  db.resolvedInstanceOptions = {option};
+  EXPECT_EQ(validate(db), Status::InvalidDatabase);
+  option.owner = 0;
+  option.ownerKind = FunctionalConfigurationOptionOwnerKind::Group;
+  option.instance = db.resolvedInstances.front().id;
+  db.resolvedInstanceOptions = {option};
+  EXPECT_EQ(validate(db), Status::InvalidDatabase);
+}
+
 TEST(CoverageDatabaseTest, DiscardDetailRemapsAndSaturatesRunPayloads) {
   Database first = makeTypedDatabase();
   ResolvedInstanceOption typeGoal;

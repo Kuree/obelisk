@@ -1706,7 +1706,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                    option && value &&
                    (*option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT ||
                     *option == OBELISK_RT_COVERGROUP_OPTION_GOAL ||
-                    *option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES)
+                    *option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
+                    *option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST)
                ? obelisk_rt_v1_covergroup_set_type_integer_option(
                      context, *type, *item, static_cast<uint32_t>(*option),
                      static_cast<int64_t>(*value))

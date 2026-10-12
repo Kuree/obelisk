@@ -274,6 +274,7 @@ struct ReportData {
     bool hasMutableCrossNumPrintMissing = false;
     bool hasMutableComment = false;
     bool perInstance = false;
+    bool distributeFirst = false;
     uint64_t covered = 0;
     uint64_t total = 0;
     llvm::APInt coveredWide = llvm::APInt(1, 0);
@@ -289,6 +290,9 @@ struct ReportData {
     uint64_t weight = 1;
     bool mergeInstances = false;
     bool hasProfile = false;
+    /// Final procedural values are run-local metadata, independent of each
+    /// instance's captured bin-construction policy and of coverage scoring.
+    std::vector<std::pair<UUID, bool>> distributeFirstOverrides;
     std::vector<std::tuple<uint64_t, uint64_t, uint64_t, std::string>>
         itemOptions;
     double percentage = 0.0;
@@ -965,6 +969,12 @@ ReportData analyze(const Database &database, const std::string &test) {
             ? findTemplateItem(option.owner)
             : nullptr;
     const uint64_t typeID = item ? item->type : option.owner;
+    if (!item &&
+        option.option == FunctionalConfigurationOptionKind::DistributeFirst) {
+      report.functionalTypes[typeID].distributeFirstOverrides.emplace_back(
+          option.run, option.value != 0);
+      continue;
+    }
     auto profilePosition = runTypeOptions.find({option.run, typeID});
     if (profilePosition == runTypeOptions.end())
       continue;
@@ -1064,6 +1074,12 @@ ReportData analyze(const Database &database, const std::string &test) {
                               FunctionalOptionScopeKind::Instance,
                               FunctionalConfigurationOptionKind::PerInstance,
                               0) != 0;
+      group.distributeFirst =
+          configurationOption(
+              index, configuration, instance.type,
+              FunctionalConfigurationOptionOwnerKind::Group,
+              FunctionalOptionScopeKind::Type,
+              FunctionalConfigurationOptionKind::DistributeFirst, 0) != 0;
       report.functionalInstances.push_back(std::move(group));
     }
     size_t index = position->second;
@@ -2012,6 +2028,12 @@ void textReport(llvm::raw_ostream &out, const Database &database,
           << (typeReport.mergeInstances ? "true" : "false") << '\n';
       if (!typeReport.comment.empty())
         out << "    type comment: " << json(typeReport.comment) << '\n';
+      for (const auto &[run, value] : typeReport.distributeFirstOverrides) {
+        const Run *metadata = findRun(report, run);
+        out << "    type distribute_first: " << (value ? "true" : "false")
+            << " [test " << json(metadata ? metadata->name : std::string{})
+            << "]\n";
+      }
       for (size_t instanceIndex : typeReport.instances) {
         const auto &instance = report.functionalInstances[instanceIndex];
         out << "    instance "
@@ -2020,7 +2042,8 @@ void textReport(llvm::raw_ostream &out, const Database &database,
             << integerText(instance.coveredWide) << '/'
             << integerText(instance.totalWide)
             << ") [per_instance=" << (instance.perInstance ? "true" : "false")
-            << "]\n";
+            << ", distribute_first="
+            << (instance.distributeFirst ? "true" : "false") << "]\n";
         if (!instance.comment.empty())
           out << "      comment: " << json(instance.comment) << '\n';
         for (const auto &item : instance.items) {
@@ -2379,6 +2402,16 @@ void jsonReport(
           out.attribute("merge_instances",
                         computed != report.functionalTypes.end() &&
                             computed->second.mergeInstances);
+          out.attributeArray("distribute_first_overrides", [&] {
+            if (computed == report.functionalTypes.end())
+              return;
+            for (const auto &[run, value] :
+                 computed->second.distributeFirstOverrides)
+              out.object([&] {
+                out.attribute("run", formatUUID(run));
+                out.attribute("value", value);
+              });
+          });
         });
       }
     });
@@ -2966,6 +2999,7 @@ void jsonReport(
           out.attribute("goal", instance.goal);
           out.attribute("weight", instance.weight);
           out.attribute("per_instance", instance.perInstance);
+          out.attribute("distribute_first", instance.distributeFirst);
           out.attribute("cross_num_print_missing",
                         instance.groupCrossNumPrintMissing);
           jsonAPIntAttribute(out, "covered", instance.coveredWide);

@@ -216,6 +216,47 @@ code stays independent of MLIR and LLVM. This follows the analysis-lifetime and
 declarative-definition guidance in [MLIR pass management](https://mlir.llvm.org/docs/PassManagement/)
 and [MLIR operation definitions](https://mlir.llvm.org/docs/DefiningDialects/Operations/).
 
+A procedural `type_option.distribute_first` probe found that legal assignments
+were rejected. IEEE 19.7.1 permits these updates, while 19.5.1.1 captures the
+distribution/filter order when each instance is constructed. The typed option
+now publishes its elaborated definition at startup and accepts group-level
+procedural updates. Each constructor records the effective boolean in its
+configuration fingerprint; omitted defaults and an explicit procedural false
+share the same resolved row. Existing bins and counters stay immutable. Static
+profile validation excludes this construction policy while retaining checks
+for scoring options and definition-only options.
+
+The context-wide policy uses bounded numeric indexes. An assignment changes
+one scalar without visiting existing configurations, instances, or bins. A
+constructor without expression payloads caches the exact configuration for
+each of its three possible override states (unset, false, true); repeated
+construction uses bounded lookups. Schema replacement invalidates this cache.
+Loading with live configurations validates their retained keys through one
+linear index build and bounded membership checks, avoiding a configurations
+times live-configurations scan. The cache regression loads two configurations
+while live instances exist, then constructs again using the current policy.
+Resolution adds one option row or updates its already indexed ordinal, without
+a nested search. The persistence codec retains construction-time policy rows
+and separate run-local mutable type-option rows using the existing enum and
+record columns, so its version and layout stay unchanged.
+
+The coverage tool shows the captured `distribute_first` boolean per instance
+in JSON, text, and HTML. Final procedural values appear as run-local
+`distribute_first_overrides` on JSON/HTML types and as type metadata in text;
+different construction policies do not create scoring-profile conflicts.
+Discarding test detail removes final run-local policy overrides while retaining
+both captured construction policies; it cannot manufacture a final static
+value for the combined executions. Merging differing final policies preserves
+each run's metadata and leaves instance scores unchanged.
+LCOV continues to project line coverage. The small executable regression checks
+all four report generators, load, merge, and native/bytecode parity. MLIR
+regressions verify startup/write/construction ordering through canonicalization
+and CSE, reject point and instance owners, check both backend ABIs, and verify
+the resulting LLVM IR. The option remains a TableGen enum with typed operands
+and coverage-resource read/write effects, following
+[MLIR ODS](https://mlir.llvm.org/docs/DefiningDialects/Operations/) and
+[memory effect interfaces](https://mlir.llvm.org/doxygen/SideEffectInterfaces_8h.html).
+
 The coverage-related regression suite probes existing coverage semantics; it
 does not certify complete implementation of every feature in the LRM.
 

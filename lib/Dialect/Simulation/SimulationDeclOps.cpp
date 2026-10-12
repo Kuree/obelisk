@@ -1590,7 +1590,8 @@ LogicalResult SimCovergroupSetIntegerOptionOp::verify() {
   if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
     return failure();
   if (getOption() == CovergroupInstanceOptionKind::Comment ||
-      getOption() == CovergroupInstanceOptionKind::MergeInstances)
+      getOption() == CovergroupInstanceOptionKind::MergeInstances ||
+      getOption() == CovergroupInstanceOptionKind::DistributeFirst)
     return emitOpError("requires an integral option kind");
   return success();
 }
@@ -1599,7 +1600,8 @@ LogicalResult SimCovergroupGetIntegerOptionOp::verify() {
   if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
     return failure();
   if (getOption() == CovergroupInstanceOptionKind::Comment ||
-      getOption() == CovergroupInstanceOptionKind::MergeInstances)
+      getOption() == CovergroupInstanceOptionKind::MergeInstances ||
+      getOption() == CovergroupInstanceOptionKind::DistributeFirst)
     return emitOpError("requires an integral instance-option kind");
   return success();
 }
@@ -1617,7 +1619,8 @@ LogicalResult SimCovergroupSetTypeIntegerOptionOp::verify() {
       getOption() == CovergroupInstanceOptionKind::AtLeast ||
       getOption() == CovergroupInstanceOptionKind::CrossNumPrintMissing ||
       (getItem() &&
-       getOption() == CovergroupInstanceOptionKind::MergeInstances))
+       (getOption() == CovergroupInstanceOptionKind::MergeInstances ||
+        getOption() == CovergroupInstanceOptionKind::DistributeFirst)))
     return emitOpError("requires a valid integral type-option owner and kind");
   return success();
 }

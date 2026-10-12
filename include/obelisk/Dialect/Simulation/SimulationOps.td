@@ -1247,6 +1247,8 @@ def SimCovergroupSetTypeIntegerOptionOp
     `type` and `item` are stable v1 schema identities. `item` is zero for the
     covergroup or a positive template FunctionalItem ID. The update applies
     immediately to cumulative queries and to configurations resolved later.
+    The group-only `distribute_first` option affects future bin construction;
+    existing configurations and counters remain intact.
   }];
   let arguments = (ins SimContextType:$context,
                        I64Attr:$typeId,

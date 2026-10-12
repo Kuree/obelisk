@@ -513,6 +513,8 @@ LogicalResult materializeCovergroupTypeOptionInitializers(
           publish = sim::CovergroupInstanceOptionKind::Comment;
         else if (name == "merge_instances")
           publish = sim::CovergroupInstanceOptionKind::MergeInstances;
+        else if (name == "distribute_first")
+          publish = sim::CovergroupInstanceOptionKind::DistributeFirst;
       }
       if (publish) {
         initializer->setAttr(coverageTypeOptionInitializerOwnerAttrName,

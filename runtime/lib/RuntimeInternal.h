@@ -1768,6 +1768,8 @@ struct FunctionalCoverageTypeState {
   bool mergeInstances = false;
   bool getInstCoverage = false;
   bool strobe = false;
+  /// Bin-construction policy frozen when this configuration was resolved.
+  bool distributeFirst = false;
   uint64_t groupCrossNumPrintMissing = 0;
   std::unordered_map<uint64_t, uint64_t> crossNumPrintMissing;
   std::unordered_set<uint64_t> explicitCrossNumPrintMissingItems;
@@ -1812,12 +1814,13 @@ template <> struct IndexKey<::FunctionalCoverageTypeKey> {
 
 /// Mutable type-option state is context-wide and keyed only by stable schema
 /// identities. It is deliberately separate from resolved configurations so a
-/// procedural assignment updates already-bound configurations and is also
-/// inherited by configurations constructed later.
+/// procedural assignment affects subsequent queries or, for distribute_first,
+/// subsequent constructors without rewriting already constructed bins.
 struct FunctionalCoverageTypeOptions {
   std::optional<uint32_t> goal;
   std::optional<uint32_t> weight;
   std::optional<bool> mergeInstances;
+  std::optional<bool> distributeFirst;
   obelisk::coverage::detail::IndexMap<uint64_t, uint32_t> itemGoals;
   obelisk::coverage::detail::IndexMap<uint64_t, uint32_t> itemWeights;
   /// Zero names the group; positive keys name template FunctionalItems.
@@ -1926,6 +1929,12 @@ struct CoverageState {
   obelisk::coverage::detail::IndexSet<FunctionalCoverageTypeKey>
       configurationKeys;
   size_t indexedConfigurations = 0;
+  /// Empty expression batches have only three possible mutable construction
+  /// states: no override, false, or true. Cache their exact configuration keys
+  /// rather than resolving bins or scanning prior configurations at every new.
+  obelisk::coverage::detail::IndexMap<std::pair<uint64_t, uint32_t>,
+                                      obelisk::coverage::Digest>
+      payloadlessConfigurations;
   uint64_t nextInstance = 1;
   obelisk::coverage::detail::IndexMap<FunctionalCoverageTypeKey,
                                       FunctionalCoverageTypeState>

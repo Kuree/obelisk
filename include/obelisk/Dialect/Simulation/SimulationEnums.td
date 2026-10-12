@@ -5,9 +5,8 @@
 
 include "mlir/IR/EnumAttr.td"
 
-// Mutable instance options whose post-construction assignment affects live
-// functional-coverage queries. Keep these values aligned with the sole v1
-// runtime ABI; definition-only options are deliberately absent.
+// Mutable functional-coverage options. Keep these values aligned with the sole
+// v1 runtime ABI; verification restricts type-only options to their owners.
 def SimCovergroupOptionWeight
     : I32EnumAttrCase<"Weight", 1, "weight">;
 def SimCovergroupOptionGoal
@@ -21,13 +20,16 @@ def SimCovergroupOptionMergeInstances
 def SimCovergroupOptionCrossNumPrintMissing
     : I32EnumAttrCase<"CrossNumPrintMissing", 6,
                       "cross_num_print_missing">;
+def SimCovergroupOptionDistributeFirst
+    : I32EnumAttrCase<"DistributeFirst", 7, "distribute_first">;
 def SimCovergroupInstanceOptionKind
     : I32EnumAttr<"CovergroupInstanceOptionKind",
                   "mutable functional-coverage option", [
         SimCovergroupOptionWeight, SimCovergroupOptionGoal,
         SimCovergroupOptionComment, SimCovergroupOptionAtLeast,
         SimCovergroupOptionMergeInstances,
-        SimCovergroupOptionCrossNumPrintMissing
+        SimCovergroupOptionCrossNumPrintMissing,
+        SimCovergroupOptionDistributeFirst
       ]> {
   let cppNamespace = "::obelisk::sim";
 }

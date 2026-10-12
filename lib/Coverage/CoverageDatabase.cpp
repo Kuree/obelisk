@@ -4578,6 +4578,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     const bool comment = option.option == InstanceOption::Comment;
     const bool mergeInstances = option.option == InstanceOption::MergeInstances;
+    const bool distributeFirst =
+        option.option == InstanceOption::DistributeFirst;
     const bool crossNumPrintMissing =
         option.option == InstanceOption::CrossNumPrintMissing;
     const bool allowed =
@@ -4585,7 +4587,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         option.option == InstanceOption::Goal || comment ||
         (!typeOption && option.option == InstanceOption::AtLeast) ||
         (!typeOption && crossNumPrintMissing && (group || itemIsCross)) ||
-        (typeOption && group && mergeInstances);
+        (typeOption && group && (mergeInstances || distributeFirst));
     if (!allowed)
       return fail(Status::InvalidDatabase, "resolved_instance_option.option");
     if ((comment && option.valueKind != InstanceValue::String) ||
@@ -4597,7 +4599,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         (option.option == InstanceOption::Weight &&
          option.value > UINT32_MAX) ||
         (crossNumPrintMissing && option.value > INT32_MAX) ||
-        (mergeInstances && option.value > 1))
+        ((mergeInstances || distributeFirst) && option.value > 1))
       return fail(Status::InvalidDatabase, "resolved_instance_option.value");
   }
   if (!std::is_sorted(
@@ -4907,7 +4909,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
            std::pair<TypeOptionValue, size_t>>
       typeProfiles;
   for (const auto &option : db.functionalConfigurationOptions) {
-    if (option.scope != FunctionalOptionScopeKind::Type)
+    // Unlike scoring options, distribute_first is captured by each constructor
+    // (19.5.1.1) and may change procedurally between constructions (19.7.1).
+    if (option.scope != FunctionalOptionScopeKind::Type ||
+        option.option == FunctionalConfigurationOptionKind::DistributeFirst)
       continue;
     uint64_t templateOwner = option.type;
     if (option.ownerKind == FunctionalConfigurationOptionOwnerKind::Item) {
@@ -8231,6 +8236,12 @@ static Status discardTestDetailInPlace(Database &destination,
            ResolvedInstanceOption>
       aggregateOptions;
   for (auto option : destination.resolvedInstanceOptions) {
+    // Final distribution-policy edits describe a particular run, not an
+    // aggregate execution. Keep the captured configuration policies below;
+    // discarding run detail must not invent a final value by taking their max.
+    if (!option.instance &&
+        option.option == FunctionalConfigurationOptionKind::DistributeFirst)
+      continue;
     if (option.instance) {
       auto remapped = remappedInstances.find({option.run, option.instance});
       if (remapped == remappedInstances.end()) {

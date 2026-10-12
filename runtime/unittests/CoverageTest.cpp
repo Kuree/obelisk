@@ -1800,9 +1800,12 @@ TEST(CoverageRuntimeDesignTest,
   Database saved = saveCoverage(context, "type-profile-transaction");
   ASSERT_EQ(saved.functionalConfigurations.size(), 1u);
   EXPECT_EQ(saved.resolvedInstances.size(), 2u);
-  ASSERT_EQ(saved.functionalConfigurationOptions.size(), 1u);
-  EXPECT_EQ(saved.functionalConfigurationOptions.front().stringValue,
+  ASSERT_EQ(saved.functionalConfigurationOptions.size(), 2u);
+  EXPECT_EQ(saved.functionalConfigurationOptions.back().stringValue,
             "same static comment");
+  EXPECT_EQ(saved.functionalConfigurationOptions.front().option,
+            FunctionalConfigurationOptionKind::DistributeFirst);
+  EXPECT_EQ(saved.functionalConfigurationOptions.front().value, 0u);
   obelisk_rt_v1_context_destroy(context);
 }
 
@@ -1871,9 +1874,14 @@ TEST(CoverageRuntimeDesignTest, InvalidUtf8CommentDoesNotPublishResolvedState) {
   EXPECT_NE(accepted, 0u);
   Database afterSuccess = saveCoverage(context, "valid-comment");
   ASSERT_EQ(afterSuccess.functionalConfigurations.size(), 1u);
-  ASSERT_EQ(afterSuccess.functionalConfigurationOptions.size(), 1u);
-  EXPECT_EQ(afterSuccess.functionalConfigurationOptions[0].stringValue,
-            "valid comment");
+  ASSERT_EQ(afterSuccess.functionalConfigurationOptions.size(), 2u);
+  auto storedComment = std::find_if(
+      afterSuccess.functionalConfigurationOptions.begin(),
+      afterSuccess.functionalConfigurationOptions.end(), [](const auto &row) {
+        return row.option == FunctionalConfigurationOptionKind::Comment;
+      });
+  ASSERT_NE(storedComment, afterSuccess.functionalConfigurationOptions.end());
+  EXPECT_EQ(storedComment->stringValue, "valid comment");
   ASSERT_EQ(afterSuccess.resolvedInstances.size(), 1u);
   EXPECT_EQ(afterSuccess.resolvedInstances[0].id, accepted);
   obelisk_rt_v1_context_destroy(context);
@@ -1966,6 +1974,104 @@ TEST(CoverageRuntimeDesignTest,
   EXPECT_EQ(obelisk_rt_v1_covergroup_type_query(
                 context, 10, 22, &percentage, &covered, &total),
             OBELISK_RT_INVALID_DESIGN);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(CoverageRuntimeDesignTest, DistributionUpdatesReusePayloadlessConfigs) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  std::array<obelisk_rt_covergroup_v1, 4> handles{};
+  ASSERT_EQ(createFunctional(context, 10, &handles[0]), OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handles[0], 0, 2), OBELISK_RT_OK);
+  for (size_t ordinal = 1; ordinal != handles.size(); ++ordinal) {
+    ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                  context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST,
+                  ordinal % 2),
+              OBELISK_RT_OK);
+    ASSERT_EQ(createFunctional(context, 10, &handles[ordinal]), OBELISK_RT_OK);
+  }
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_set_type_integer_option(
+          context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 0),
+      OBELISK_RT_OK);
+  for (size_t ordinal = 0; ordinal != handles.size(); ++ordinal) {
+    double percentage = -1;
+    int32_t covered = -1, total = -1;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handles[ordinal], 0, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, ordinal == 0 ? 2 : 0);
+    EXPECT_EQ(total, 3);
+  }
+  EXPECT_EQ(
+      obelisk_rt_v1_covergroup_set_type_integer_option(
+          context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 2),
+      OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(
+      obelisk_rt_v1_covergroup_set_type_integer_option(
+          context, 10, 20, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
+      OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(
+      obelisk_rt_v1_covergroup_set_type_integer_option(
+          context, 11, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
+      OBELISK_RT_INVALID_DESIGN);
+  Database saved = saveCoverage(context, "distribution-cache");
+  ASSERT_EQ(saved.functionalConfigurations.size(), 2u);
+  ASSERT_EQ(saved.resolvedInstances.size(), handles.size());
+  EXPECT_EQ(saved.resolvedInstances[0].configuration,
+            saved.resolvedInstances[2].configuration);
+  EXPECT_EQ(saved.resolvedInstances[1].configuration,
+            saved.resolvedInstances[3].configuration);
+  EXPECT_NE(saved.resolvedInstances[0].configuration,
+            saved.resolvedInstances[1].configuration);
+  ASSERT_EQ(saved.functionalConfigurationOptions.size(), 2u);
+  EXPECT_NE(saved.functionalConfigurationOptions[0].value,
+            saved.functionalConfigurationOptions[1].value);
+  auto current = std::find_if(
+      saved.resolvedInstanceOptions.begin(),
+      saved.resolvedInstanceOptions.end(), [](const auto &row) {
+        return !row.instance &&
+               row.option == FunctionalConfigurationOptionKind::DistributeFirst;
+      });
+  ASSERT_NE(current, saved.resolvedInstanceOptions.end());
+  EXPECT_EQ(current->value, 0u);
+  // Load both policies while live configurations and constructor-cache entries
+  // exist. A later constructor must still select its current policy by key.
+  obelisk_rt_context *loaded = createContextForSchema(schema);
+  ASSERT_NE(loaded, nullptr);
+  ASSERT_EQ(finalizeCoverage(loaded, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 first = 0, second = 0, third = 0;
+  ASSERT_EQ(createFunctional(loaded, 10, &first), OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_set_type_integer_option(
+          loaded, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 1),
+      OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(loaded, 10, &second), OBELISK_RT_OK);
+  const auto path =
+      std::filesystem::temp_directory_path() /
+      ("obelisk-distribution-load-" +
+       std::to_string(
+           std::chrono::steady_clock::now().time_since_epoch().count()) +
+       ".obcov");
+  const std::string pathText = path.string();
+  ASSERT_EQ(writeFileAtomically(pathText, saved), Status::Ok);
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_load(loaded, pathText.data(), pathText.size()),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_set_type_integer_option(
+          loaded, 10, 0, OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST, 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(loaded, 10, &third), OBELISK_RT_OK);
+  Database reloaded = saveCoverage(loaded, "distribution-reloaded");
+  EXPECT_EQ(reloaded.functionalConfigurations.size(), 2u);
+  EXPECT_EQ(reloaded.resolvedInstances.size(), handles.size() + 3);
+  obelisk_rt_v1_context_destroy(loaded);
+  std::error_code ignored;
+  std::filesystem::remove(path, ignored);
   obelisk_rt_v1_context_destroy(context);
 }
 

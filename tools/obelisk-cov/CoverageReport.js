@@ -925,11 +925,17 @@ function viewCovergroup(tid, openItem) {
           `<h1>covergroup ${esc(t.name)}<span class="sub">${state.test ? '' : pctCell(num(t.percent)) + ' · '}` +
           `goal ${esc(t.goal)}% · weight ${esc(t.weight)}${t.merge_instances ? ' · merge_instances' : ''}</span></h1>`;
   if (t.comment) h += `<p class="note">${esc(t.comment)}</p>`;
+  for (const o of t.distribute_first_overrides) {
+    if (state.test && o.run !== state.test) continue;
+    h += `<p class="note">Type distribute_first=${o.value ? 'true' : 'false'} ` +
+         `(${esc(runLabels.get(o.run) || o.run)})</p>`;
+  }
   if (state.test)
     h += '<p class="note">Percentages are weighted across all tests; bins show hits from the selected test.</p>';
   for (const g of groupsOfType(t)) {
     h += `<h2>Instance <span class="mono">${esc(g.name || '<unnamed>')}</span> ` +
          `<span class="sub">${state.test ? '' : pctCell(num(g.percent))}</span></h2>`;
+    h += `<p class="note">Bin construction: distribute_first=${g.distribute_first ? 'true' : 'false'}</p>`;
     if (g.comment) h += `<p class="note">${esc(g.comment)}</p>`;
     h += '<div class="head-row"><span></span><span>Item</span><span>Kind</span><span>Coverage</span>' +
          '<span class="num">Bins</span><span>Details</span></div>';

@@ -133,8 +133,8 @@ endmodule
 // REPORT-DAG: type merged ({{[0-9]+}}): 100.00%
 // REPORT-DAG: type options: goal 100, weight 0, merge_instances true
 // REPORT-DAG: type options: goal 100, weight 0, merge_instances false
-// REPORT-DAG: instance renamed-empty: 0.00% (0/0) [per_instance=true]
-// REPORT-DAG: instance zero-empty: 100.00% (0/0) [per_instance=true]
+// REPORT-DAG: instance renamed-empty: 0.00% (0/0) [per_instance=true, distribute_first=false]
+// REPORT-DAG: instance zero-empty: 100.00% (0/0) [per_instance=true, distribute_first=false]
 // REPORT-DAG: coverpoint cp: 2/2 (100.00%)
 // INSPECT: runs: 2
 // INSPECT: functional-types: 5
@@ -150,4 +150,4 @@ endmodule
 // EMPTY-REPORT-DAG: type weighted ({{[0-9]+}}): 0.00%
 // EMPTY-REPORT-DAG: type weightless_type ({{[0-9]+}}): 100.00%
 // EMPTY-REPORT-DAG: type merged ({{[0-9]+}}): 100.00%
-// EMPTY-REPORT-DAG: instance zero-empty: 100.00% (0/0) [per_instance=true]
+// EMPTY-REPORT-DAG: instance zero-empty: 100.00% (0/0) [per_instance=true, distribute_first=false]

@@ -51,7 +51,8 @@ const run = (uuid, name) => ({
 });
 const covergroup = (fields) => ({
   id: '50', scope: '20', name: 'cg', hierarchy: 'top.cg', percent: 100, goal: '100',
-  weight: '1', comment: '', merge_instances: false, ...fields,
+  weight: '1', comment: '', merge_instances: false,
+  distribute_first_overrides: [], ...fields,
 });
 
 // Render one route; returns its HTML with the text and table rows in it.
@@ -143,7 +144,9 @@ const view = (report, route) => {
 {
   const data = emptyReport();
   data.runs = [run('run-a', 'transition-test')];
-  data.functional_types = [covergroup({})];
+  data.functional_types = [covergroup({
+    distribute_first_overrides: [{run: 'run-a', value: false}],
+  })];
   data.functional_item_templates = [{id: '60', name: 'cp'}];
   data.functional_bin_templates = [{id: '70', name: 'round_trip'}];
   data.transition_steps = [
@@ -167,6 +170,7 @@ const view = (report, route) => {
   ];
   data.functional_instance_groups = [{
     type: '50', configuration: '500', name: 'instance', percent: 100, comment: '',
+    distribute_first: true,
     items: [{
       id: '160', template_item: '60', kind: '1', name: 'cp', comment: '', type_comment: '',
       hierarchy: 'top.cg.instance.cp', targets: [], covered: '1', total: '1', percent: 100,
@@ -183,6 +187,8 @@ const view = (report, route) => {
     }],
   }];
   const cg = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/cp');
+  assert.ok(cg.segments.has('Type distribute_first=false (transition-test)'));
+  assert.ok(cg.segments.has('Bin construction: distribute_first=true'));
   assert.deepEqual(cg.rows[0], [
     'round_trip = 0x5 => [0x8:0x9][*2:4]', 'transition',
     '18446744073709551615 (saturated)', '1', 'covered', 'transition-test',
