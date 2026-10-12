@@ -50,7 +50,7 @@ public:
     // inventory before the ordinary post-lowering DCE and inliner.
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>())
-      function->removeAttr(sim::metadata::coverageRetainedCodeUnits);
+      function->removeAttr(sim::metadata::coverageRetainedSymbols);
     bool invalid = false;
     for (sim::SimFuncOp function :
          design.getBody().front().getOps<sim::SimFuncOp>()) {

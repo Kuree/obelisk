@@ -34,6 +34,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
@@ -8954,6 +8955,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     return success();
   };
 
+  llvm::SetVector<Attribute> retainedCoverageSymbols;
   auto freezeCallContract = [&](semantic::SVCallExpressionOp call) {
     // Virtual-interface calls are frozen while the original semantic tree is
     // still intact.  Clones inherit this contract and must not try to resolve
@@ -8995,19 +8997,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     // the always-live root. A design-level pass removes this transient
     // inventory after LowerUnit replaces the semantic calls with executable
     // simulation.call ops.
-    if (call->getParentOfType<semantic::SVCovergroupTypeOp>()) {
-      SmallVector<Attribute> retained;
-      if (auto existing = rootInitializer->getAttrOfType<ArrayAttr>(
-              sim::metadata::coverageRetainedCodeUnits))
-        llvm::append_range(retained, existing);
-      FlatSymbolRefAttr symbol =
-          FlatSymbolRefAttr::get(context, target->second);
-      if (!llvm::is_contained(retained, symbol)) {
-        retained.push_back(symbol);
-        rootInitializer->setAttr(sim::metadata::coverageRetainedCodeUnits,
-                                 builder.getArrayAttr(retained));
-      }
-    }
+    bool coverageCall =
+        bool(call->getParentOfType<semantic::SVCovergroupTypeOp>());
+    if (coverageCall)
+      retainedCoverageSymbols.insert(
+          FlatSymbolRefAttr::get(context, target->second));
     if (auto targetSubroutine =
             dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
         targetSubroutine && getOwningClass(targetSubroutine) &&
@@ -9026,6 +9020,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (FlatSymbolRefAttr method =
               classMethodSymbols.lookup(targetSubroutine)) {
         call->setAttr("simulation.class_method", method);
+        if (coverageCall)
+          retainedCoverageSymbols.insert(method);
         if (targetSubroutine.getIsVirtual().value_or(false)) {
           call->setAttr("simulation.class_slot",
                         builder.getI64IntegerAttr(
@@ -9182,22 +9178,14 @@ void ObeliskSimPreparePass::runOnOperation() {
   // early SymbolDCE by attaching ordinary symbol uses to the always-live root;
   // the materialization pass removes this transient inventory after it emits
   // the actual observer.bind operations.
-  SmallVector<Attribute> retainedCoverageCodeUnits;
-  if (auto existing = rootInitializer->getAttrOfType<ArrayAttr>(
-          sim::metadata::coverageRetainedCodeUnits))
-    llvm::append_range(retainedCoverageCodeUnits, existing);
   semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
     covergroup->walk([&](Operation *nested) {
       auto evaluator =
           nested->getAttrOfType<FlatSymbolRefAttr>("simulation.observer");
-      if (evaluator &&
-          !llvm::is_contained(retainedCoverageCodeUnits, evaluator))
-        retainedCoverageCodeUnits.push_back(evaluator);
+      if (evaluator)
+        retainedCoverageSymbols.insert(evaluator);
     });
   });
-  if (!retainedCoverageCodeUnits.empty())
-    rootInitializer->setAttr(sim::metadata::coverageRetainedCodeUnits,
-                             builder.getArrayAttr(retainedCoverageCodeUnits));
 
   auto constructorSourceFor = [](semantic::SVClassTypeOp classType) {
     for (Operation *child : getChildren(classType)) {
@@ -13401,8 +13389,13 @@ void ObeliskSimPreparePass::runOnOperation() {
       methods[method.getSymName()] = method;
     });
     llvm::StringMap<SmallVector<Attribute>> targetsByMethod;
-    llvm::DenseMap<Operation *, llvm::DenseSet<Attribute>> targetsByFunction;
-    design.walk([&](semantic::SVCallExpressionOp call) {
+    llvm::DenseMap<Operation *, llvm::SetVector<Attribute>> targetsByFunction;
+    llvm::DenseSet<std::pair<Operation *, Operation *>>
+        retainedDispatchFamilies;
+    // Covergroup templates remain in the semantic root until LowerUnit
+    // materializes sample helpers. Their virtual/interface calls are outside
+    // the design body but require the same compatible implementation roots.
+    module.walk([&](semantic::SVCallExpressionOp call) {
       if (!call->hasAttr("simulation.class_virtual"))
         return;
       auto reference =
@@ -13426,24 +13419,30 @@ void ObeliskSimPreparePass::runOnOperation() {
           cached->second.push_back(
               FlatSymbolRefAttr::get(context, target.getSymName()));
       }
-      if (sim::SimFuncOp function = call->getParentOfType<sim::SimFuncOp>())
+      if (sim::SimFuncOp function = call->getParentOfType<sim::SimFuncOp>();
+          function &&
+          retainedDispatchFamilies.insert({function, method}).second)
         targetsByFunction[function].insert(cached->second.begin(),
                                            cached->second.end());
+      if (call->getParentOfType<semantic::SVCovergroupTypeOp>() &&
+          retainedDispatchFamilies.insert({nullptr, method}).second)
+        retainedCoverageSymbols.insert(cached->second.begin(),
+                                       cached->second.end());
     });
     for (auto &[operation, targetSet] : targetsByFunction) {
-      SmallVector<Attribute> targets(targetSet.begin(), targetSet.end());
-      llvm::sort(targets, [](Attribute lhs, Attribute rhs) {
-        return cast<FlatSymbolRefAttr>(lhs).getValue() <
-               cast<FlatSymbolRefAttr>(rhs).getValue();
-      });
       sim::SimFuncOp function = cast<sim::SimFuncOp>(operation);
       OpBuilder markerBuilder =
           OpBuilder::atBlockBegin(&function.getBody().front());
-      sim::SimClassDispatchTargetsOp::create(markerBuilder, function.getLoc(),
-                                             builder.getArrayAttr(targets));
+      sim::SimClassDispatchTargetsOp::create(
+          markerBuilder, function.getLoc(),
+          builder.getArrayAttr(targetSet.getArrayRef()));
     }
   }
 
+  if (!retainedCoverageSymbols.empty())
+    rootInitializer->setAttr(
+        sim::metadata::coverageRetainedSymbols,
+        builder.getArrayAttr(retainedCoverageSymbols.getArrayRef()));
   sim::SimReturnOp::create(rootBuilder, module.getLoc(), ValueRange{});
 }
 

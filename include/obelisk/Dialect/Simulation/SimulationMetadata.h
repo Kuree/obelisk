@@ -170,13 +170,14 @@ inline constexpr llvm::StringLiteral coverageLinePointIndex =
 /// Number of line counters expected by the embedded schema.
 inline constexpr llvm::StringLiteral coverageLinePointCount =
     "obelisk.coverage.line_point_count";
-/// Symbol uses that keep code units required by coverage instrumentation alive
+/// Symbol uses that keep symbols required by coverage instrumentation alive
 /// through the post-inventory devirtualization and SymbolDCE pipeline. This
 /// includes code units owning line obligations and callees referenced by
-/// functional constructor/sample expressions before their helpers exist. The
+/// functional constructor/sample expressions before their helpers exist,
+/// together with their class method descriptors. The
 /// references are physical compiler metadata, not schema or merge identities.
-inline constexpr llvm::StringLiteral coverageRetainedCodeUnits =
-    "obelisk.coverage.retained_code_units";
+inline constexpr llvm::StringLiteral coverageRetainedSymbols =
+    "obelisk.coverage.retained_symbols";
 /// Ordered flat-toggle bindings attached to source-visible declarations.
 /// Each dictionary contains base, low, and width i64 fields; aliases may bind
 /// multiple coverage ranges to one canonical state range.

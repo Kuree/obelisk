@@ -1566,7 +1566,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     auto method =
         op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_method");
     auto declaration =
-        method ? lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(op, method)
+        method ? lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(function,
+                                                                    method)
                : sim::SimClassMethodDeclOp{};
     if (declaration) {
       Type targetType = sim::ClassHandleType::get(function.getContext(),
