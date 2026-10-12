@@ -226,7 +226,7 @@
         {
           "feature": "Unpacked arrays, queues, and associative arrays",
           "status": "partial",
-          "detail": "Fixed unpacked arrays of packed integral elements use exact logical bitstreams for class and scope randomization, including multidimensional, descending, ascending and negative ranges. Enum domains apply independently to each element. One-dimensional dynamic arrays and queues retain specialized plans. Per-element randc histories and modes, non-integral leaves, general indexed constraints and associative arrays remain incomplete."
+          "detail": "Fixed unpacked arrays of packed integral elements use exact logical bitstreams for class and scope randomization, including multidimensional, descending, ascending and negative ranges. Enum domains and live modes apply independently to each element. Ordinary state-selected fixed-array paths compile to balanced Z3 selection plans with frozen X/Z and precise guard masks. One-dimensional dynamic arrays and queues retain specialized plans. Per-element randc histories, dynamic container modes, non-integral leaves, generalized selected-path function ordering and associative arrays remain incomplete."
         },
         {
           "feature": "Unpacked structs with member rand qualifiers",
@@ -275,7 +275,9 @@
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
         ]
       }
     },
@@ -813,7 +815,7 @@
         {
           "feature": "Index-dependent guards",
           "status": "partial",
-          "detail": "Fixed foreach is expanded before planning, and state FALSE/TRUE guards suppress known invalid array accesses through the full Figure 18-3 algebra. Runtime state bounds include signed, wide and unknown indices. Complete runtime-sized candidate solving remains open."
+          "detail": "Fixed foreach is expanded before planning. State-selected fixed random-array elements use balanced compiler selection plans with exact leaf mode and dependency masks, including independent static sibling references. The Figure 18-3 algebra suppresses invalid accesses only through state FALSE/TRUE or disabled blocks. Signed, wide, unknown and out-of-bounds indices retain structural errors across two-state casts. Complete runtime-sized candidate solving remains open."
         }
       ],
       "evidence": {
@@ -828,13 +830,17 @@
           "lib/Conversion/ObeliskToSimulation/PrepareRandomIteration.h",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
           "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
           "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
         ]
       }
     },
@@ -1100,7 +1106,7 @@
         {
           "feature": "FALSE/TRUE/ERROR/RANDOM guard algebra",
           "status": "partial",
-          "detail": "The complete Figure 18-3 truth tables are implemented with safe compiler captures and hard creation-validity predicates in native and WASM solving. Only state TRUE/FALSE suppress errors; RANDOM cannot hide them. Null handles, handle comparisons, fixed/state dynamic array and queue bounds, known invalid random-array slices, state tagged-union arms, guarded body errors, disabled blocks and frozen variables are covered. Unused function inputs retain evaluation errors and source RANDOM classification. Live guard reference and argument masks preserve independent Z3 function-priority stages after sifting. General candidate-dependent accesses, unknown-plane mixtures and complete runtime-sized foreach encoding remain open."
+          "detail": "The complete Figure 18-3 truth tables are implemented with safe compiler captures and hard creation-validity predicates in native and WASM solving. Only state TRUE/FALSE suppress errors; RANDOM cannot hide them. Null handles, handle comparisons, fixed/state dynamic array and queue bounds, known invalid random-array slices, state-selected fixed random-array elements with exact live dependency masks, state tagged-union arms, guarded body errors, disabled blocks and frozen variables are covered. Unused function inputs retain evaluation errors and source RANDOM classification. Live guard reference and argument masks preserve independent Z3 function-priority stages after sifting. General candidate-dependent accesses and computed operand selections, unknown-plane mixtures and complete runtime-sized foreach encoding remain open."
         }
       ],
       "evidence": {
@@ -1116,7 +1122,8 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
-          "runtime/lib/RandModelCount.h"
+          "runtime/lib/RandModelCount.h",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -1154,7 +1161,9 @@
           "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
         ]
       }
     },
@@ -1507,7 +1516,9 @@
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
         ]
       }
     },
@@ -1679,7 +1690,7 @@
         {
           "feature": "Scope variable types",
           "status": "partial",
-          "detail": "Packed integral, enum, and packed aggregates work; dynamic containers, class handles, and non-packed types remain incomplete."
+          "detail": "Packed integral, enum, packed aggregates and fixed unpacked arrays of integral leaves work. Ordinary state indices select exact array paths, including 65-bit elements and multidimensional logical bitstreams. Bounds failures preserve all scope assignments. Dynamic containers, class handles and non-integral aggregates remain incomplete."
         },
         {
           "feature": "Scope failure commit behavior",
@@ -1698,12 +1709,16 @@
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
-          "runtime/include/obelisk/Runtime/RandomDomain.h"
+          "runtime/include/obelisk/Runtime/RandomDomain.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
           "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
         ]
       }
     },
@@ -1737,11 +1752,15 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
-          "test/Conversion/obelisk-to-simulation-std-randomize.mlir"
+          "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
         ]
       }
     },

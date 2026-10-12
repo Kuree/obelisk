@@ -48,9 +48,24 @@ persistent per-element `rand_mode`, with multidimensional subarray setters,
 static sharing, and resets through the dynamic class hierarchy. Disabled
 four-state leaves preserve their X/Z symbols on successful commits. Queries
 require singular elements. Per-element cyclic histories, dynamic array modes,
-non-integral leaves, and state-dependent constraint indices remain open. A failed solve preserves the arrays. Generated proposal draws advance
+non-integral leaves, and generalized function ordering on selected paths remain
+open. A failed solve preserves the arrays. Generated proposal draws advance
 the caller's stream independently of whether the assignments are committed;
 the runtime solver's own draws remain transactional.
+
+State indices in ordinary class and scope constraints select fixed integral
+array elements through balanced compiler expressions with exact property bit
+bindings. Nested unpacked and packed dimensions retain their declared bounds
+and logical bit order. Selected elements contribute their own live modes and
+frozen X/Z symbols; other active elements do not turn a selected state value
+into a random guard. Independent sibling references still contribute their
+own random bits. Signed, negative and wide indices are compared without
+truncation. Unknown and out-of-bounds indices remain evaluation errors even
+inside two-state casts. Only state guards and disabled constraint blocks can
+discard those errors. Z3 compiles the finite selection relation into the same
+Boolean plans used by native and WASM sampling. Selections of computed unknown
+operands, runtime part-selects, and generalized selected-path function ordering
+remain open.
 
 Disabled four-state properties, qualified structure leaves, and fixed-array
 elements retain their stored X/Z symbols as state in admitted integral

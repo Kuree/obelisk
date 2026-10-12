@@ -3448,8 +3448,31 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   // Compiler Z3 receives canonical value bits and independent unknown planes.
   // The target samples Boolean plans; it never reconstructs SV arithmetic.
+  SmallVector<uint64_t> arithmeticPropertyWidths;
+  for (const Property &property : planned)
+    arithmeticPropertyWidths.push_back(property.width);
+  auto arithmeticBinding =
+      [&](Operation *expression) -> FailureOr<std::optional<unsigned>> {
+    auto path = getRandomConstraintPath(
+        expression, arithmeticPropertyWidths,
+        [&](Operation *source) -> std::optional<unsigned> {
+          auto index =
+              source->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+          if (!index || index.getValue().isNegative() ||
+              index.getValue().getActiveBits() > 64 ||
+              index.getValue().getZExtValue() >= planned.size())
+            return std::nullopt;
+          return index.getValue().getZExtValue();
+        });
+    if (failed(path))
+      return failure();
+    if (!*path || !(**path).precise || (**path).isState)
+      return std::optional<unsigned>{};
+    return std::optional<unsigned>(propertyOffsets[(**path).property] +
+                                   (**path).offset);
+  };
   RandomArithmetic arithmetic(builder.getContext(), expressionWidth,
-                              dependsOnCandidate,
+                              dependsOnCandidate, arithmeticBinding,
                               /*frozenVariables=*/!scopeRandomize);
   bool arithmeticFailure = false;
   auto arithmeticValidity = [&](Operation *expression) -> Operation * {
@@ -3469,6 +3492,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value inputs;
     Value arguments;
     Value errors;
+    // A state-selected arm or element has a live dependency mask rather than
+    // the union of every syntactically referenced random property bit.
+    bool dynamicInputs = false;
   };
   std::function<FailureOr<SafeConstraintValue>(Operation *)>
       safeConstraintValue;
@@ -5436,9 +5462,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         value = arith::AndIOp::create(builder, location, value, inactive);
         random = guardConstant(false);
       }
-      return SafeConstraintValue{
-          value,         input->errors,    random,
-          input->inputs, input->arguments, input->errors};
+      return SafeConstraintValue{value,
+                                 input->errors,
+                                 random,
+                                 input->inputs,
+                                 input->arguments,
+                                 input->errors,
+                                 input->dynamicInputs};
     }
     SmallVector<Operation *> inputs;
     for (Operation *operand : operands) {
@@ -5467,7 +5497,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       auto restore =
           llvm::scope_exit([&] { preserveArithmeticSource = saved; });
       preserveArithmeticSource |= consumesSymbols;
-      for (Operation *input : inputs) {
+      for (auto [index, input] : llvm::enumerate(inputs)) {
+        // X/Z in an address is a structural evaluation error, even if a
+        // surrounding two-state cast consumes unknown data bits. Bounds
+        // checks need the original index symbols, rather than canonical
+        // arithmetic value bits that replace those symbols with zero.
+        preserveArithmeticSource =
+            saved || consumesSymbols ||
+            (index != 0 &&
+             isa<semantic::SVElementSelectExpressionOp,
+                 semantic::SVRangeSelectExpressionOp>(expression));
         FailureOr<SafeConstraintValue> value = safeConstraintValue(input);
         if (failed(value))
           return failure();
@@ -5489,14 +5528,38 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value guardInputs = constantAssignment(inputMask);
     Value guardArguments =
         constantAssignment(sourceFunctionArguments(expression));
+    bool dynamicInputs = false;
+    if (llvm::any_of(values,
+                     [](const auto &value) { return value.dynamicInputs; }) &&
+        !expression->hasAttr(randomVariableAttrName) &&
+        !expression->hasAttr(randomVariableBitOffsetAttrName)) {
+      dynamicInputs = true;
+      APInt remainingInputs = inputMask;
+      APInt remainingArguments = sourceFunctionArguments(expression);
+      Value selectedInputs = constantAssignment64(0);
+      Value selectedArguments = constantAssignment64(0);
+      for (auto [input, value] : llvm::zip_equal(inputs, values)) {
+        // Rebuild every child contribution: an unselected element may overlap
+        // a different, independently referenced sibling's static bit range.
+        remainingInputs &= ~priorityInputs(input);
+        remainingArguments &= ~sourceFunctionArguments(input);
+        selectedInputs = unionGuardInputs(selectedInputs, value.inputs);
+        selectedArguments =
+            unionGuardInputs(selectedArguments, value.arguments);
+      }
+      guardInputs =
+          unionGuardInputs(constantAssignment(remainingInputs), selectedInputs);
+      guardArguments = unionGuardInputs(constantAssignment(remainingArguments),
+                                        selectedArguments);
+    }
     Value random =
-        inputMask.isZero()
+        matchPattern(guardInputs, m_Zero())
             ? guardConstant(false)
-            : arith::CmpIOp::create(
-                  builder, location, arith::CmpIPredicate::ne,
-                  arith::AndIOp::create(builder, location, activeGuardBits,
-                                        constantAssignment(inputMask)),
-                  constantAssignment64(0))
+            : arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                    arith::AndIOp::create(builder, location,
+                                                          activeGuardBits,
+                                                          guardInputs),
+                                    constantAssignment64(0))
                   .getResult();
 
     // A state-selected conditional evaluates only its selected arm. Retain
@@ -5544,6 +5607,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           values[0].arguments,
           unionGuardInputs(selectGuardInputs(yesEnabled, values[1].arguments),
                            selectGuardInputs(noEnabled, values[2].arguments)));
+      dynamicInputs = true;
     }
 
     Value result;
@@ -5836,6 +5900,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       result = *converted;
       errors = guardAnd(errors, value->errors);
+      if (value->dynamicInputs) {
+        random = value->random;
+        guardInputs = value->inputs;
+        guardArguments = value->arguments;
+        dynamicInputs = true;
+      }
       bool coercion = isa<semantic::SVConversionExpressionOp>(expression) &&
                       isa<IntegerType>(sim::getPackedScalarType(*resultType));
       Operation *knownExpression = arithmeticValidity(expression);
@@ -5851,6 +5921,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         if (!candidate)
           valid = guardAnd(errors, *predicate);
+        else if (value->dynamicInputs)
+          valid = guardAnd(errors, guardOr(random, *predicate));
         else {
           Value stateKnown = guardAnd(
               known->valid, guardAnd(guardNot(known->random), *predicate));
@@ -5858,8 +5930,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
       }
     }
-    SafeConstraintValue safe{result,      valid,          random,
-                             guardInputs, guardArguments, errors};
+    SafeConstraintValue safe{result,         valid,  random,       guardInputs,
+                             guardArguments, errors, dynamicInputs};
     if (!candidate && !preserveArithmeticSource && freezeSafeStateValues)
       safeStateValues[expression] = safe;
     return safe;
@@ -6776,6 +6848,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                      !isPropertyField(bound.offset, bound.width);
     if (conflicts)
       continue;
+    // This proposal optimization uses scalar intervals. Wider captures remain
+    // complete Boolean-plan parameters; narrowing one here would alias indices
+    // and incorrectly constrain otherwise legal state-valued relations.
+    if (cast<IntegerType>(programCaptures[bound.captureIndex].getType())
+            .getWidth() > 64)
+      continue;
     auto found = llvm::find_if(proposalCaptureDomains,
                                [&](const ProposalCaptureDomain &selected) {
                                  return selected.offset == bound.offset &&
@@ -6939,6 +7017,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
          llvm::ArrayRef(programInstructions)
              .slice(definition.expressionBegin,
                     definition.expressionEnd - definition.expressionBegin)) {
+      // The scalar proposal evaluator uses 64-bit intermediate values. A
+      // small random assignment can still depend on much wider state indices;
+      // retain such definitions in the complete compiler-generated plan.
+      if (assignmentWidth <= 64 && encoded.width > 64) {
+        supported = false;
+        break;
+      }
       if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
         uint32_t sourceOffset =
             canonicalProposalField(encoded.operand, encoded.width);
@@ -6955,7 +7040,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         widths.push_back(encoded.width);
       } else if (encoded.opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
-        if (encoded.operand >= programCaptures.size()) {
+        if (encoded.operand >= programCaptures.size() ||
+            (assignmentWidth <= 64 &&
+             cast<IntegerType>(programCaptures[encoded.operand].getType())
+                     .getWidth() > 64)) {
           supported = false;
           break;
         }

@@ -8,6 +8,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace obelisk::simlowering {
 
@@ -39,8 +40,10 @@ class RandomArithmetic {
 public:
   using Width = std::function<mlir::FailureOr<unsigned>(mlir::Operation *)>;
   using Candidate = std::function<bool(mlir::Operation *)>;
+  using Binding = std::function<mlir::FailureOr<std::optional<unsigned>>(
+      mlir::Operation *)>;
   RandomArithmetic(mlir::MLIRContext *context, Width width, Candidate candidate,
-                   bool frozenVariables);
+                   Binding binding, bool frozenVariables);
   ~RandomArithmetic();
 
   bool needed(mlir::Operation *expression);

@@ -5,6 +5,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
+#include <limits>
 #include <optional>
 
 using namespace mlir;
@@ -18,6 +19,7 @@ struct RandomArithmetic::Impl {
   Builder builder;
   Width width;
   Candidate candidate;
+  Binding binding;
   bool frozenVariables;
   // Temporary expressions retain the target layout used by their original
   // module, including layouts of unpacked values beneath a packed selection.
@@ -27,10 +29,11 @@ struct RandomArithmetic::Impl {
   llvm::DenseMap<Operation *, RandomArithmeticPlanes> planes;
   llvm::DenseMap<Operation *, Operation *> knownPredicates;
 
-  Impl(MLIRContext *context, Width width, Candidate candidate,
+  Impl(MLIRContext *context, Width width, Candidate candidate, Binding binding,
        bool frozenVariables)
       : builder(context), width(std::move(width)),
-        candidate(std::move(candidate)), frozenVariables(frozenVariables),
+        candidate(std::move(candidate)), binding(std::move(binding)),
+        frozenVariables(frozenVariables),
         expressions(ModuleOp::create(UnknownLoc::get(context))) {}
   ~Impl() {
     for (Operation *node : llvm::reverse(nodes))
@@ -43,7 +46,17 @@ struct RandomArithmetic::Impl {
   }
   bool fourState(Operation *source) const {
     auto type = source->getAttrOfType<TypeAttr>("semantic_type");
-    return type && isFourStateSemanticType(type.getValue());
+    if (!type)
+      return false;
+    Type element = type.getValue();
+    while (true) {
+      if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(element))
+        element = array.getElementType();
+      else if (auto array = dyn_cast<semantic::UnpackedArrayType>(element))
+        element = array.getElementType();
+      else
+        return isFourStateSemanticType(element);
+    }
   }
   Type type(unsigned precision, bool isSigned = false) {
     return semantic::IntegralType::get(builder.getContext(), precision,
@@ -147,10 +160,13 @@ struct RandomArithmetic::Impl {
   }
   Operation *cast(Operation *source, Operation *value, unsigned precision,
                   bool signedInput = false) {
+    auto sourceType = value->getAttrOfType<TypeAttr>("semantic_type");
+    bool implicit = !sourceType ||
+                    getSemanticPackedWidth(sourceType.getValue()).has_value();
     return make(
         source, semantic::SVConversionExpressionOp::getOperationName(),
         precision, signedInput,
-        {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true))},
+        {builder.getNamedAttr("is_implicit", builder.getBoolAttr(implicit))},
         {value});
   }
   Operation *select(Operation *source, Operation *condition, Operation *yes,
@@ -284,6 +300,14 @@ struct RandomArithmetic::Impl {
     bool result = frozenVariables && fourState(expression) &&
                   (expression->hasAttr(randomVariableAttrName) ||
                    expression->hasAttr(randomVariableBitOffsetAttrName));
+    // State-selected integral paths must remain symbolic instead of capturing
+    // their current element before randomization. Their finite selection is a
+    // compiler expression, including when the selected data is two-state.
+    if (candidate(expression) &&
+        isa<semantic::SVElementSelectExpressionOp,
+            semantic::SVRangeSelectExpressionOp>(expression) &&
+        !expression->hasAttr(randomVariableBitOffsetAttrName))
+      result = true;
     if (auto op = dyn_cast<semantic::SVBinaryExpressionOp>(expression)) {
       auto children = getChildren(expression);
       if (children.size() == 2) {
@@ -347,6 +371,176 @@ struct RandomArithmetic::Impl {
     return result;
   }
 
+  /// Expand a fixed random value path over its legal state-selected indices.
+  /// Each terminal path has an exact property bit binding. In particular, a
+  /// disabled selected element is STATE even if another element is active.
+  /// Z3 compiles these conditionals; no selection solver runs on the target.
+  FailureOr<std::optional<RandomArithmeticPlanes>>
+  fixedSelection(Operation *expression, unsigned precision) {
+    Operation *selection = expression;
+    SmallVector<unsigned> path;
+    while (true) {
+      auto operands = getChildren(selection);
+      if (isa<semantic::SVElementSelectExpressionOp>(selection) &&
+          operands.size() == 2 && !constant(operands[1]))
+        break;
+      if (!isa<semantic::SVElementSelectExpressionOp,
+               semantic::SVRangeSelectExpressionOp,
+               semantic::SVMemberAccessExpressionOp>(selection) ||
+          operands.empty())
+        return std::optional<RandomArithmeticPlanes>{};
+      path.push_back(0);
+      selection = operands.front();
+    }
+    auto selectedOperands = getChildren(selection);
+    auto sourceType =
+        selectedOperands.front()->getAttrOfType<TypeAttr>("semantic_type");
+    if (!sourceType)
+      return failure();
+    int64_t left, right;
+    Type source = sourceType.getValue();
+    if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(source)) {
+      left = array.getLeft();
+      right = array.getRight();
+    } else if (auto array = dyn_cast<semantic::UnpackedArrayType>(source)) {
+      left = 0;
+      right = array.getSize() - 1;
+    } else if (auto array = dyn_cast<semantic::RangedPackedArrayType>(source)) {
+      left = array.getLeft();
+      right = array.getRight();
+    } else {
+      return std::optional<RandomArithmeticPlanes>{};
+    }
+    auto sourceWidth = width(selectedOperands.front());
+    APInt extent(65, static_cast<uint64_t>(left), true);
+    extent -= APInt(65, static_cast<uint64_t>(right), true);
+    if (extent.isNegative())
+      extent = -extent;
+    ++extent;
+    if (failed(sourceWidth) || extent.getActiveBits() > 32 || extent.isZero() ||
+        extent.ugt(*sourceWidth))
+      return failure();
+
+    auto index = get(selectedOperands[1]);
+    auto indexWidth = width(selectedOperands[1]);
+    if (failed(index) || failed(indexWidth) ||
+        *indexWidth == std::numeric_limits<unsigned>::max())
+      return failure();
+    unsigned comparisonWidth =
+        std::max(64u, *indexWidth + unsigned(!sign(selectedOperands[1])));
+    auto widened =
+        resize(expression, *index, comparisonWidth, sign(selectedOperands[1]));
+    Operation *signedIndex =
+        cast(expression, widened.value, comparisonWidth, true);
+    SmallVector<std::pair<int64_t, RandomArithmeticPlanes>> alternatives;
+    int64_t first = std::min(left, right), last = std::max(left, right);
+    for (int64_t selected = first;; ++selected) {
+      Operation *branch = expression->clone();
+      expressions->getBody()->push_back(branch);
+      nodes.push_back(branch);
+      Operation *branchSelection = branch;
+      for (unsigned child : path)
+        branchSelection = getChildren(branchSelection)[child];
+      Operation *oldIndex = getChildren(branchSelection)[1];
+      Operation *knownIndex = literal(
+          expression, APInt(65, static_cast<uint64_t>(selected), true), true);
+      oldIndex->getBlock()->getOperations().insert(oldIndex->getIterator(),
+                                                   knownIndex->clone());
+      oldIndex->erase();
+      // Every now-constant intermediate selection needs its own binding too:
+      // safe reads and frozen-plane captures visit the entire address path.
+      for (Operation *boundPath = branch;;) {
+        auto offset = binding(boundPath);
+        if (failed(offset))
+          return failure();
+        if (*offset)
+          boundPath->setAttr(randomVariableBitOffsetAttrName,
+                             builder.getI64IntegerAttr(**offset));
+        auto operands = getChildren(boundPath);
+        if (!isa<semantic::SVElementSelectExpressionOp,
+                 semantic::SVRangeSelectExpressionOp,
+                 semantic::SVMemberAccessExpressionOp>(boundPath) ||
+            operands.empty())
+          break;
+        boundPath = operands.front();
+      }
+      auto data = get(branch);
+      if (failed(data))
+        return failure();
+      alternatives.push_back({selected, *data});
+      if (selected == last)
+        break;
+    }
+    // A balanced tree keeps the expression depth logarithmic. Semantic AST
+    // operands are cloned, so a linear chain would also copy preceding arms
+    // quadratically as the fixed dimension grows.
+    std::function<RandomArithmeticPlanes(unsigned, unsigned)> combine =
+        [&](unsigned begin, unsigned end) -> RandomArithmeticPlanes {
+      if (end - begin == 1)
+        return alternatives[begin].second;
+      unsigned middle = begin + (end - begin) / 2;
+      auto lower = combine(begin, middle), upper = combine(middle, end);
+      Operation *condition = binary(
+          expression, Binary::LessThan, signedIndex,
+          literal(expression,
+                  APInt(comparisonWidth,
+                        static_cast<uint64_t>(alternatives[middle].first),
+                        true),
+                  true),
+          1);
+      auto selectPlane = [&](Operation *yes, Operation *no) -> Operation * {
+        if (!yes && !no)
+          return nullptr;
+        return select(expression, condition,
+                      yes ? yes : zero(expression, precision),
+                      no ? no : zero(expression, precision), precision);
+      };
+      return {select(expression, condition, lower.value, upper.value, precision,
+                     sign(expression)),
+              selectPlane(lower.unknown, upper.unknown),
+              selectPlane(lower.highImpedance, upper.highImpedance)};
+    };
+    auto result = combine(0, alternatives.size());
+    auto boundary = [&](int64_t value) {
+      return literal(expression,
+                     APInt(comparisonWidth, static_cast<uint64_t>(value), true),
+                     true);
+    };
+    Operation *inRange = bitAnd(expression,
+                                binary(expression, Binary::GreaterThanEqual,
+                                       signedIndex, boundary(first), 1),
+                                binary(expression, Binary::LessThanEqual,
+                                       signedIndex, boundary(last), 1),
+                                1);
+    result.value =
+        select(expression, inRange, result.value, zero(expression, precision),
+               precision, sign(expression));
+    if (result.unknown || fourState(expression))
+      result.unknown =
+          select(expression, inRange,
+                 result.unknown ? result.unknown : zero(expression, precision),
+                 fourState(expression) ? ones(expression, precision)
+                                       : zero(expression, precision),
+                 precision);
+    if (result.highImpedance)
+      result.highImpedance = select(expression, inRange, result.highImpedance,
+                                    zero(expression, precision), precision);
+    if (index->unknown) {
+      Operation *invalid = nonzero(expression, index->unknown, *indexWidth);
+      result.value = select(expression, invalid, zero(expression, precision),
+                            result.value, precision, sign(expression));
+      result.unknown =
+          select(expression, invalid, ones(expression, precision),
+                 result.unknown ? result.unknown : zero(expression, precision),
+                 precision);
+      if (result.highImpedance)
+        result.highImpedance =
+            select(expression, invalid, zero(expression, precision),
+                   result.highImpedance, precision);
+    }
+    return std::optional<RandomArithmeticPlanes>(result);
+  }
+
   FailureOr<RandomArithmeticPlanes> build(Operation *expression) {
     auto precisionResult = width(expression);
     if (failed(precisionResult))
@@ -354,6 +548,8 @@ struct RandomArithmetic::Impl {
     unsigned precision = *precisionResult;
     bool signedResult = sign(expression);
     auto children = getChildren(expression);
+    if (expression->hasAttr(randomEvaluationErrorAttrName))
+      return RandomArithmeticPlanes{zero(expression, precision), nullptr};
     if (auto spelling = getConstantSpelling(expression)) {
       auto bits = parseSVInteger(*spelling, precision, expression->getLoc());
       if (failed(bits) ||
@@ -370,9 +566,6 @@ struct RandomArithmetic::Impl {
               ? nullptr
               : literal(expression, bits->value & bits->unknown)};
     }
-    if (!needed(expression))
-      return RandomArithmeticPlanes{
-          cast(expression, expression, precision, signedResult), nullptr};
     if (expression->hasAttr(randomVariableAttrName) ||
         expression->hasAttr(randomVariableBitOffsetAttrName)) {
       // Random candidates are two-state. Disabled property bits are state,
@@ -398,6 +591,19 @@ struct RandomArithmetic::Impl {
           mask(expression, cast(expression, reference, precision, signedResult),
                unknown, precision, signedResult),
           unknown, highImpedance};
+    }
+    if (!needed(expression))
+      return RandomArithmeticPlanes{
+          cast(expression, expression, precision, signedResult), nullptr};
+    if (candidate(expression) &&
+        isa<semantic::SVElementSelectExpressionOp,
+            semantic::SVRangeSelectExpressionOp,
+            semantic::SVMemberAccessExpressionOp>(expression)) {
+      auto selection = fixedSelection(expression, precision);
+      if (failed(selection))
+        return failure();
+      if (*selection)
+        return **selection;
     }
     if (isa<semantic::SVNamedValueExpressionOp,
             semantic::SVHierarchicalValueExpressionOp,
@@ -907,9 +1113,11 @@ struct RandomArithmetic::Impl {
 };
 
 RandomArithmetic::RandomArithmetic(MLIRContext *context, Width width,
-                                   Candidate candidate, bool frozenVariables)
+                                   Candidate candidate, Binding binding,
+                                   bool frozenVariables)
     : impl(std::make_unique<Impl>(context, std::move(width),
-                                  std::move(candidate), frozenVariables)) {}
+                                  std::move(candidate), std::move(binding),
+                                  frozenVariables)) {}
 RandomArithmetic::~RandomArithmetic() = default;
 bool RandomArithmetic::needed(Operation *expression) {
   return impl->needed(expression);
