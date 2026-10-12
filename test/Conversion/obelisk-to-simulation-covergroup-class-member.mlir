@@ -356,7 +356,8 @@ module attributes {
 // CHECK: %[[DEFAULT_VALUE:[0-9]+]] = simulation.argument_ref.load %[[DEFAULT_ALIAS]]
 // CHECK: simulation.covergroup.sample_enabled
 // CHECK: %[[OMITTED_RECEIVER_VALUE:[0-9]+]] = simulation.managed.load %[[DEFAULT_REF]]
-// CHECK: %[[OMITTED_SUM:[0-9]+]] = arith.addi %[[OMITTED_RECEIVER_VALUE]], %[[DEFAULT_VALUE]]
+// CHECK: %[[OMITTED_LIVE:[0-9]+]] = simulation.argument_ref.load %[[DEFAULT_ALIAS]]
+// CHECK: %[[OMITTED_SUM:[0-9]+]] = arith.addi %[[OMITTED_RECEIVER_VALUE]], %[[OMITTED_LIVE]]
 // CHECK: %[[OMITTED_EXPR:[0-9]+]] = simulation.logic.from_bits %[[OMITTED_SUM]]
 // CHECK: simulation.covergroup.sample {{.*}}values[%[[DEFAULT_VALUE]], %[[OMITTED_EXPR]]]
 // The explicit actual in other.cg.sample(bias) stays in the caller's lexical
@@ -365,9 +366,9 @@ module attributes {
 // CHECK: simulation.managed.load %[[OTHER_CG_REF]]
 // CHECK: %[[EXPLICIT_REF:[0-9]+]] = simulation.class.field_ref %arg1[{{.*}}field_0]
 // CHECK: %[[EXPLICIT_ALIAS:[0-9]+]] = simulation.argument_ref.from_managed %[[EXPLICIT_REF]]
-// CHECK: %[[EXPLICIT_VALUE:[0-9]+]] = simulation.argument_ref.load %[[EXPLICIT_ALIAS]]
 // CHECK: simulation.covergroup.sample_enabled
 // CHECK: %[[EXPLICIT_RECEIVER_VALUE:[0-9]+]] = simulation.managed.load %[[DEFAULT_REF]]
+// CHECK: %[[EXPLICIT_VALUE:[0-9]+]] = simulation.argument_ref.load %[[EXPLICIT_ALIAS]]
 // CHECK: %[[EXPLICIT_SUM:[0-9]+]] = arith.addi %[[EXPLICIT_RECEIVER_VALUE]], %[[EXPLICIT_VALUE]]
 // CHECK: %[[EXPLICIT_EXPR:[0-9]+]] = simulation.logic.from_bits %[[EXPLICIT_SUM]]
 // CHECK: simulation.covergroup.sample {{.*}}values[%[[EXPLICIT_EXPR]]]

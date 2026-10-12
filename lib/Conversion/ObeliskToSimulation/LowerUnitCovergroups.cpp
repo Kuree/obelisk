@@ -13,10 +13,22 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/StringMap.h"
 
 using namespace mlir;
 
 namespace obelisk::simlowering {
+
+namespace {
+llvm::StringMap<SmallVector<semantic::SVTransparentMemberSymbolOp>>
+indexInheritedFormalAliases(semantic::SVCovergroupTypeOp covergroup) {
+  llvm::StringMap<SmallVector<semantic::SVTransparentMemberSymbolOp>> aliases;
+  for (Operation *child : getChildren(covergroup))
+    if (auto alias = dyn_cast<semantic::SVTransparentMemberSymbolOp>(child))
+      aliases[getDebugName(alias)].push_back(alias);
+  return aliases;
+}
+} // namespace
 
 semantic::SVCovergroupTypeOp
 UnitLowering::findSemanticCovergroup(Operation *operation) {
@@ -618,12 +630,13 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
   SmallVector<int64_t> formalIDs;
   SmallVector<Value> defaultValues;
   SmallVector<int64_t> defaultExpressionIDs;
+  auto formalAliases = indexInheritedFormalAliases(covergroup);
   auto bindInheritedFormalAliases =
       [&](semantic::SVFormalArgumentSymbolOp formal, StringRef canonicalPath) {
-        for (Operation *child : getChildren(covergroup)) {
-          auto alias = dyn_cast<semantic::SVTransparentMemberSymbolOp>(child);
-          if (!alias || getDebugName(alias) != getDebugName(formal))
-            continue;
+        auto found = formalAliases.find(getDebugName(formal));
+        if (found == formalAliases.end())
+          return;
+        for (auto alias : found->second) {
           std::string aliasPath = getHierarchyName(alias).str();
           if (aliasPath == canonicalPath)
             continue;
@@ -2121,13 +2134,14 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
   SmallVector<Value> defaultValues;
   SmallVector<int64_t> defaultExpressionIDs;
   SmallVector<uint32_t> defaultResultOrdinals;
+  auto formalAliases = indexInheritedFormalAliases(covergroup);
   auto bindInheritedFormalAliases =
       [&](semantic::SVFormalArgumentSymbolOp formal, StringRef canonicalPath,
           Value boundValue) {
-        for (Operation *child : getChildren(covergroup)) {
-          auto alias = dyn_cast<semantic::SVTransparentMemberSymbolOp>(child);
-          if (!alias || getDebugName(alias) != getDebugName(formal))
-            continue;
+        auto found = formalAliases.find(getDebugName(formal));
+        if (found == formalAliases.end())
+          return;
+        for (auto alias : found->second) {
           std::string aliasPath = getHierarchyName(alias).str();
           if (aliasPath == canonicalPath)
             continue;
@@ -2169,8 +2183,10 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
         return failure();
       }
       lvalues[path] = *reference;
-      boundValue = sim::SimArgumentRefLoadOp::create(
-          builder, getSemanticLocation(actual), *type, *reference);
+      // IEEE 13.5.2 and 19.8.1: a sample ref aliases its actual throughout
+      // evaluation. Later actuals and sample expressions may write through
+      // another alias; lowerReferencedValue must load at each read.
+      boundValue = *reference;
     } else {
       FailureOr<Value> value = lowerExpression(actual);
       FailureOr<Value> converted =
@@ -2197,7 +2213,13 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
                          "FunctionalExpression identity");
         return failure();
       }
-      defaultValues.push_back(boundValue);
+      // A FormalDefault batch result is a value, even when the formal itself
+      // retains a reference. Capture that result once at default evaluation.
+      Value defaultValue = boundValue;
+      if (formal.getDirection() == semantic::SVArgumentDirection::Ref)
+        defaultValue = sim::SimArgumentRefLoadOp::create(
+            builder, getSemanticLocation(actual), *type, boundValue);
+      defaultValues.push_back(defaultValue);
       defaultExpressionIDs.push_back(
           static_cast<int64_t>(defaultID.getValue().getZExtValue()));
       auto ordinal = defaultChildren.front()->getAttrOfType<IntegerAttr>(
