@@ -718,12 +718,13 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   }
   std::unordered_map<unsigned, Z3_ast> enabled;
   std::vector<Bits> stack;
+  std::vector<Bits> temporaries;
   std::vector<std::pair<unsigned, ID>> roots;
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     unsigned opcode = p[0], bits = wide ? read32(p + 4) : p[1];
-    bool sign =
-        ((wide ? p[1] : p[2]) & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+    uint8_t instructionFlags = wide ? p[1] : p[2];
+    bool sign = (instructionFlags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
     if (!bits)
@@ -752,6 +753,16 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
           return std::nullopt;
         stack.push_back({f.constant(auxiliary, bits), bits});
       }
+    } else if (opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+      if (stack.empty() || instructionFlags != 0 || auxiliary != 0 ||
+          operand != temporaries.size() || bits != stack.back().width)
+        return std::nullopt;
+      temporaries.push_back(stack.back());
+    } else if (opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+      if (instructionFlags != 0 || auxiliary != 0 ||
+          operand >= temporaries.size() || bits != temporaries[operand].width)
+        return std::nullopt;
+      stack.push_back(temporaries[operand]);
     } else if (opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
       if (operand >= 64)
         return std::nullopt;

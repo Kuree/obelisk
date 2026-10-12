@@ -4814,7 +4814,14 @@ typedef enum obelisk_rt_random_opcode_v1 {
   OBELISK_RT_RANDOM_CLOG2_V1 = 43,
   // Pops a distribution's activation guard. Operand is the group index;
   // flags and auxiliary are zero. Valid only under SMT_WEIGHTED.
-  OBELISK_RT_RANDOM_END_DIST_GUARD_V1 = 44
+  OBELISK_RT_RANDOM_END_DIST_GUARD_V1 = 44,
+  // Keep the stack top in the next temporary slot without popping it, or
+  // push a previously stored value. Slots are immutable and are recomputed
+  // for each assignment, including across hard/soft constraint boundaries.
+  // Operand is the slot index; flags and auxiliary/immediate are zero.
+  // Width must equal the stored value's width (these operations do not cast).
+  OBELISK_RT_RANDOM_STORE_VALUE_V1 = 45,
+  OBELISK_RT_RANDOM_LOAD_VALUE_V1 = 46
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called

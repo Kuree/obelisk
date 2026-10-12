@@ -146,8 +146,17 @@ and schedules their latest legal layers with one sink traversal. Candidate and
 runtime-input subtree summaries share an iterative postorder cache; property
 offsets and alias target counts use indexed lookups. Fixed inside-array
 expansion clones each base once per emitted leaf and wraps it by moving
-preceding selections, with work linear in the generated leaf paths. Other
-expression construction and proposal lowering paths remain under review.
+preceding selections, with work linear in the generated leaf paths. Reusable
+constraint templates serialize shared candidate computations and wide literals
+once, using immutable temporary slots for subsequent uses. Both compiler Z3
+decoders retain the shared graph, and legacy target interpreters refresh those
+slots for each
+assignment. Slot indices, widths and initialization are validated before
+evaluation. The MLIR fixtures with 96 arithmetic diamonds emit 501 scalar or
+692 wide instructions instead of expanding the graph into a tree. The wide
+fixture reuses one 130-bit zero literal rather than copying its words at each
+use. Arithmetic-plane tree construction and other proposal lowering paths
+remain under review; the full O(N) generation requirement is still open.
 
 Native and WASM targets contain no Z3 library or solver calls. A simple sampler
 binds current captures and inactive bits, selects the optimal enabled soft

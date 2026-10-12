@@ -198,8 +198,11 @@ uint64_t power(uint64_t base, uint64_t exponent, unsigned width) {
 
 bool validateInstruction(const Instruction &instruction,
                          uint32_t aggregateWidth, uint32_t captureCount,
-                         size_t &depth, size_t &maxDepth, bool &sawHard,
-                         bool &sawSoft, uint64_t &softPriorities) {
+                         std::vector<unsigned> &stackWidths,
+                         std::vector<unsigned> &temporaryWidths,
+                         size_t &maxDepth, bool &sawHard, bool &sawSoft,
+                         uint64_t &softPriorities) {
+  size_t depth = stackWidths.size();
   if (instruction.width == 0 || instruction.width > 64 ||
       (instruction.flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
     return false;
@@ -216,6 +219,20 @@ bool validateInstruction(const Instruction &instruction,
     ++depth;
     break;
   case OBELISK_RT_RANDOM_PUSH_LITERAL_V1:
+    ++depth;
+    break;
+  case OBELISK_RT_RANDOM_STORE_VALUE_V1:
+    if (depth == 0 || instruction.flags != 0 || instruction.immediate != 0 ||
+        instruction.operand != temporaryWidths.size() ||
+        instruction.width != stackWidths.back())
+      return false;
+    temporaryWidths.push_back(instruction.width);
+    break;
+  case OBELISK_RT_RANDOM_LOAD_VALUE_V1:
+    if (instruction.flags != 0 || instruction.immediate != 0 ||
+        instruction.operand >= temporaryWidths.size() ||
+        instruction.width != temporaryWidths[instruction.operand])
+      return false;
     ++depth;
     break;
   case OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1:
@@ -264,6 +281,9 @@ bool validateInstruction(const Instruction &instruction,
     }
     break;
   }
+  stackWidths.resize(depth);
+  if (depth != 0)
+    stackWidths.back() = instruction.width;
   maxDepth = std::max(maxDepth, depth);
   return true;
 }
@@ -298,10 +318,12 @@ bool compare(Value lhs, Value rhs, bool isSigned, uint8_t opcode) {
 }
 
 bool evaluate(const std::vector<Instruction> &instructions,
-              std::vector<Value> &stack, uint64_t assignment,
-              uint64_t constraintMask, const uint64_t *captures, bool &hard,
+              std::vector<Value> &stack, std::vector<Value> &temporaries,
+              uint64_t assignment, uint64_t constraintMask,
+              const uint64_t *captures, bool &hard,
               std::vector<uint8_t> &soft) {
   stack.clear();
+  temporaries.clear();
   hard = true;
   std::fill(soft.begin(), soft.end(), uint8_t{1});
   for (const Instruction &instruction : instructions) {
@@ -318,6 +340,14 @@ bool evaluate(const std::vector<Instruction> &instructions,
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
       push(instruction.immediate, instruction.width);
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+      temporaries.push_back(stack.back());
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+      stack.push_back(temporaries[instruction.operand]);
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
@@ -656,7 +686,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
 
     std::vector<Instruction> instructions;
     instructions.reserve(instructionCount);
-    size_t depth = 0, maxDepth = 0;
+    std::vector<unsigned> stackWidths, temporaryWidths;
+    size_t maxDepth = 0;
     bool sawHard = false, sawSoft = false;
     uint64_t softPriorities = 0;
     const uint8_t *cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
@@ -665,8 +696,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                               read32(cursor + 4), read64(cursor + 8)};
       if (cursor[3] != 0 ||
           !validateInstruction(instruction, aggregateWidth, encodedCaptures,
-                               depth, maxDepth, sawHard, sawSoft,
-                               softPriorities))
+                               stackWidths, temporaryWidths, maxDepth, sawHard,
+                               sawSoft, softPriorities))
         return OBELISK_RT_INVALID_ARGUMENT;
       instructions.push_back(instruction);
       cursor += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
@@ -680,7 +711,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     }
     uint64_t expectedSoftPriorities =
         softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
-    if (depth != 0 || !sawHard || sawSoft != encodedSoft ||
+    if (!stackWidths.empty() || !sawHard || sawSoft != encodedSoft ||
         softPriorities != expectedSoftPriorities)
       return OBELISK_RT_INVALID_ARGUMENT;
 
@@ -1043,6 +1074,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     }
     std::vector<Value> stack;
     stack.reserve(maxDepth);
+    std::vector<Value> temporaries;
+    temporaries.reserve(temporaryWidths.size());
     auto compareSoft = [&](const std::vector<uint8_t> &lhs,
                            const std::vector<uint8_t> &rhs) {
       for (unsigned priority = softCount; priority != 0; --priority) {
@@ -1089,8 +1122,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     };
     for (uint64_t attempt = 0; attempt != attempts; ++attempt) {
       bool hard = false;
-      if (!evaluate(instructions, stack, candidate, constraintMask, captures,
-                    hard, soft))
+      if (!evaluate(instructions, stack, temporaries, candidate, constraintMask,
+                    captures, hard, soft))
         return OBELISK_RT_INVALID_ARGUMENT;
       bool satisfiesAllSoft = std::all_of(
           soft.begin(), soft.end(), [](uint8_t value) { return value != 0; });

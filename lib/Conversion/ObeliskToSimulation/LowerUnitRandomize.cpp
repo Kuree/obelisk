@@ -3395,8 +3395,43 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return success();
   };
 
+  llvm::DenseMap<Value, uint32_t> emittedTemplateValues;
+  std::function<LogicalResult(Value)> emitTemplateNode;
   std::function<LogicalResult(Value)> emitTemplateValue;
   emitTemplateValue = [&](Value value) -> LogicalResult {
+    if (auto found = emittedTemplateValues.find(value);
+        found != emittedTemplateValues.end()) {
+      instruction(OBELISK_RT_RANDOM_LOAD_VALUE_V1,
+                  cast<IntegerType>(value.getType()).getWidth(), false,
+                  found->second);
+      return success();
+    }
+    if (failed(emitTemplateNode(value)))
+      return failure();
+    // Template nodes are pure. Emit every shared candidate computation once.
+    // Variable and capture leaves use fixed-size instructions; shared wide
+    // literals also need a slot to avoid copying their word pool at each use.
+    // The postfix program now grows with graph nodes and uses, instead of
+    // recursively expanding a shared graph into an exponential tree.
+    unsigned width = cast<IntegerType>(value.getType()).getWidth();
+    bool computed =
+        templateVariableDependencies.lookup(value) &&
+        !isa<sim::SimRandomConstraintValueOp>(value.getDefiningOp());
+    bool wideLiteral =
+        width > 64 && isa<arith::ConstantOp>(value.getDefiningOp());
+    if (!value.hasOneUse() && (computed || wideLiteral)) {
+      if (emittedTemplateValues.size() >= UINT32_MAX) {
+        emitError(value.getLoc())
+            << "random constraint temporary limit exceeded";
+        return failure();
+      }
+      uint32_t slot = static_cast<uint32_t>(emittedTemplateValues.size());
+      emittedTemplateValues[value] = slot;
+      instruction(OBELISK_RT_RANDOM_STORE_VALUE_V1, width, false, slot);
+    }
+    return success();
+  };
+  emitTemplateNode = [&](Value value) -> LogicalResult {
     Operation *operation = value.getDefiningOp();
     auto resultType = dyn_cast<IntegerType>(value.getType());
     if (!operation || !resultType) {

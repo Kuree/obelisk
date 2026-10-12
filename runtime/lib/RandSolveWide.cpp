@@ -60,6 +60,7 @@ struct DomainGroup {
 struct WideProgram {
   uint32_t aggregateWidth = 0;
   uint32_t maxDepth = 0;
+  uint32_t temporaryCount = 0;
   bool hasSoft = false;
   std::vector<uint32_t> captureWidths;
   std::vector<uint64_t> captureOffsets;
@@ -542,6 +543,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   std::vector<uint8_t> literalUse(literalWordCount, 0);
   size_t depth = 0;
   size_t maxDepth = 0;
+  std::vector<uint32_t> stackWidths, temporaryWidths;
   bool sawHard = false;
   bool sawSoft = false;
   uint64_t softPriorities = 0;
@@ -578,6 +580,20 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     case OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1:
       if (instruction.width != 1 || instruction.flags != 0 ||
           instruction.operand >= 64 || instruction.auxiliary != 0)
+        return false;
+      ++depth;
+      break;
+    case OBELISK_RT_RANDOM_STORE_VALUE_V1:
+      if (depth == 0 || instruction.flags != 0 || instruction.auxiliary != 0 ||
+          instruction.operand != temporaryWidths.size() ||
+          instruction.width != stackWidths.back())
+        return false;
+      temporaryWidths.push_back(instruction.width);
+      break;
+    case OBELISK_RT_RANDOM_LOAD_VALUE_V1:
+      if (instruction.flags != 0 || instruction.auxiliary != 0 ||
+          instruction.operand >= temporaryWidths.size() ||
+          instruction.width != temporaryWidths[instruction.operand])
         return false;
       ++depth;
       break;
@@ -649,6 +665,9 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       }
       break;
     }
+    stackWidths.resize(depth);
+    if (depth != 0)
+      stackWidths.back() = instruction.width;
     maxDepth = std::max(maxDepth, depth);
     result.instructions.push_back(std::move(instruction));
   }
@@ -776,6 +795,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
                   [](uint8_t used) { return used != 1; }))
     return false;
   result.maxDepth = static_cast<uint32_t>(maxDepth);
+  result.temporaryCount = static_cast<uint32_t>(temporaryWidths.size());
   uint64_t requiredCaptureWords = 0;
   for (size_t index = 0; index != result.captureWidths.size(); ++index) {
     uint32_t logicalWidth = result.captureWidths[index];
@@ -820,9 +840,11 @@ bool compare(const WideValue &lhs, const WideValue &rhs, bool isSigned,
 
 bool evaluate(const WideProgram &program, const WideValue &assignment,
               const uint64_t *captureWords, uint64_t constraintMask,
-              std::vector<WideValue> &stack, bool &hard,
+              std::vector<WideValue> &stack,
+              std::vector<WideValue> &temporaries, bool &hard,
               std::array<uint8_t, 64> &soft) {
   stack.clear();
+  temporaries.clear();
   hard = true;
   soft.fill(1);
   for (const WideInstruction &instruction : program.instructions) {
@@ -842,6 +864,14 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_LITERAL_V1) {
       stack.push_back(instruction.literal);
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+      temporaries.push_back(stack.back());
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+      stack.push_back(temporaries[instruction.operand]);
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_PUSH_CONSTRAINT_ENABLED_V1) {
@@ -1254,10 +1284,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     std::array<uint8_t, 64> soft{};
     std::vector<WideValue> stack;
     stack.reserve(program.maxDepth);
+    std::vector<WideValue> temporaries;
+    temporaries.reserve(program.temporaryCount);
     for (uint64_t attempt = 0; attempt != attempts; ++attempt) {
       bool hard = false;
       if (!evaluate(program, candidate, captureWords, constraintMask, stack,
-                    hard, soft))
+                    temporaries, hard, soft))
         return OBELISK_RT_INVALID_ARGUMENT;
       if (hard && (!program.hasSoft || allSoft(soft))) {
         std::copy(candidate.words.begin(), candidate.words.end(),

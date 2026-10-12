@@ -647,6 +647,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
 
   std::vector<StackValue> stack;
   stack.reserve(instructionCount);
+  std::vector<StackValue> temporaries;
   mlir::Value hard = mlir::smt::BoolConstantOp::create(builder, location, true);
   bool sawHard = false;
   bool sawSoft = false;
@@ -668,6 +669,24 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         opcode != OBELISK_RT_RANDOM_END_SOFT_V1 && immediate != 0)
       return std::nullopt;
     bool signedOperation = (flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
+    if (opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
+      if (stack.empty() || flags != 0 || immediate != 0 ||
+          operand != temporaries.size() || width != stack.back().width)
+        return std::nullopt;
+      temporaries.push_back(stack.back());
+      continue;
+    }
+    if (opcode == OBELISK_RT_RANDOM_LOAD_VALUE_V1) {
+      if (flags != 0 || immediate != 0 || operand >= temporaries.size() ||
+          width != temporaries[operand].width)
+        return std::nullopt;
+      stack.push_back(temporaries[operand]);
+      // A reused expression may not form a standalone postfix slice. Keep
+      // its SMT identity and direct-variable metadata; proposal validation
+      // rejects slices whose temporaries were defined outside that slice.
+      stack.back().instructionBegin = index;
+      continue;
+    }
     if (opcode == OBELISK_RT_RANDOM_PUSH_VARIABLE_V1) {
       if (aggregateWidth == 0 || operand >= aggregateWidth ||
           width > aggregateWidth - operand)

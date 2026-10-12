@@ -380,7 +380,7 @@
         {
           "feature": "Hard boolean expression constraints",
           "status": "supported",
-          "detail": "Total packed expressions, arithmetic, bitwise operators, inside, concatenation, constant replication, and conditional expressions are compiled to MLIR and solver programs. Fixed unpacked inside-set arrays descend to integral leaf selections before compiler Z3 planning, preserving multidimensional declaration coordinates and candidate relations."
+          "detail": "Total packed expressions, arithmetic, bitwise operators, inside, concatenation, constant replication, and conditional expressions are compiled to MLIR and solver programs. Fixed unpacked inside-set arrays descend to integral leaf selections before compiler Z3 planning, preserving multidimensional declaration coordinates and candidate relations. Reusable pure template graphs preserve shared intermediates and wide literals through both compiler Z3 decoders, with instruction generation proportional to graph nodes and uses. Immutable value slots preserve exact widths and hard/soft boundaries in scalar and wide target interpreters; each candidate refreshes its slots."
         },
         {
           "feature": "Division, exponentiation, and system calls",
@@ -472,7 +472,10 @@
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
+          "test/Runtime/simulation-random-shared-template-runtime.mlir",
+          "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
+          "test/Runtime/random-program-temporaries-validation.mlir"
         ]
       }
     },
@@ -1614,7 +1617,10 @@
           "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
-          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir",
+          "test/Runtime/simulation-random-shared-template-runtime.mlir",
+          "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
+          "test/Runtime/random-program-temporaries-validation.mlir"
         ]
       }
     },
