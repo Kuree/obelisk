@@ -119,8 +119,16 @@ retains the complete circuit rather than truncating its sample space.
 
 Sampler input preparation uses linear passes over the lowered program and its
 declared bits: field boundaries use a bitmap, finished fields leave the column
-traversal, and input columns use stable buckets. Z3 constructs general
+traversal, and input columns use stable buckets. Z3 constructs fixed
 cardinality relations; host recurrences have a fixed sparse-count limit.
+Live and candidate count targets compare one shared prefix sum instead of
+enumerating every possible cardinality. Its precision is at most the 32 bits
+specified for the count functions in 20.9; consuming casts retain their modular
+results. Prefixes simplify as state and input bits are bound, allowing equal
+partial counts to share cofactors. The live 65-bit equality/inequality plan
+shrinks from 64,545 to 2,064 Boolean nodes. Its fixture covers all count values,
+signed out-of-range targets, frozen inputs, joint candidate counts, three-bit
+truncation and 130-bit captures without aliasing their high bits.
 `$clog2` tracks the highest set bit and whether lower bits are nonzero without
 rebuilding wide threshold constants. Each edge of Z3's Boolean result is visited
 once during conversion, and at most 32 atom diagrams receive bounded compiler

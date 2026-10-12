@@ -142,26 +142,16 @@ public:
     }
     case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
       unsigned countWidth = std::min(width, 32u - __builtin_clz(input.width));
-      std::vector<Bits> terms;
-      terms.reserve(input.width);
-      for (unsigned bit = 0; bit != input.width; ++bit)
-        terms.push_back({Z3_mk_extract(context, bit, bit, input.value), 1});
-      while (terms.size() > 1) {
-        size_t next = 0;
-        for (size_t index = 0; index < terms.size(); index += 2) {
-          Bits sum = terms[index];
-          if (index + 1 != terms.size()) {
-            unsigned precision = std::min(
-                countWidth, std::max(sum.width, terms[index + 1].width) + 1);
-            sum = {Z3_mk_bvadd(context, resize(sum, precision),
-                               resize(terms[index + 1], precision)),
-                   precision};
-          }
-          terms[next++] = sum;
-        }
-        terms.resize(next);
+      // A shared prefix sum takes linear construction work. Its low-to-high
+      // order also lets equal partial counts share the same cofactor after
+      // binding state and sampling a prefix of the input bits. The count
+      // precision is at most the 32-bit width of the count system functions.
+      result = constant(0, countWidth);
+      for (unsigned bit = 0; bit != input.width; ++bit) {
+        Bits selected{Z3_mk_extract(context, bit, bit, input.value), 1};
+        result = Z3_mk_bvadd(context, result, resize(selected, countWidth));
       }
-      result = resize(terms.front(), width);
+      result = resize({result, countWidth}, width);
       break;
     }
     case OBELISK_RT_RANDOM_CLOG2_V1: {
@@ -228,16 +218,6 @@ public:
     return exact[count];
   }
 
-  Z3_ast countEqual(Bits input, Z3_ast target, unsigned targetWidth) {
-    Z3_ast result = Z3_mk_false(context);
-    for (uint64_t count = 0; count <= input.width; ++count)
-      result = disjunction(
-          result,
-          conjunction(Z3_mk_eq(context, target, constant(count, targetWidth)),
-                      countEqual(input, static_cast<unsigned>(count))));
-    return result;
-  }
-
   Bits binary(uint8_t opcode, Bits lhs, Bits rhs, unsigned width, bool sign) {
     unsigned commonWidth = std::max(lhs.width, rhs.width);
     Z3_ast a = resize(lhs, commonWidth, sign);
@@ -262,8 +242,11 @@ public:
             match = Z3_mk_false(context);
           else
             match = countEqual(count->second, static_cast<unsigned>(value));
-        } else
-          match = countEqual(count->second, pair.second, commonWidth);
+        } else {
+          // Reuse the complete sum for live and candidate targets. Building
+          // a width-sized predicate for every possible count is quadratic.
+          match = Z3_mk_eq(context, pair.first, pair.second);
+        }
         if (opcode == OBELISK_RT_RANDOM_NE_V1)
           match = Z3_mk_not(context, match);
         return boolean(match, width);

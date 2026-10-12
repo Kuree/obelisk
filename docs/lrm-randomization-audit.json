@@ -203,7 +203,8 @@
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
         ]
       }
     },
@@ -477,7 +478,8 @@
           "test/Runtime/simulation-random-shared-template-runtime.mlir",
           "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
           "test/Runtime/random-program-temporaries-validation.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
         ]
       }
     },
@@ -1082,7 +1084,7 @@
         {
           "feature": "Integral system functions",
           "status": "partial",
-          "detail": "Signedness casts, clog2, countones, onehot, onehot0, isunknown and countbits participate in compiler Z3 plans and native/WASM execution. Value, unknown and high-impedance planes distinguish X from Z in admitted packed operands. Countbits combines distinct control LSBs as a set of 0/1/X/Z selectors, including live four-state controls. Casts, shifts, concatenation, replication and conditional merging preserve Z as required; undefined arithmetic and unary arithmetic on X/Z operands produce X. Clog2 consumes unsigned value bits after X/Z-to-zero conversion, including active four-state random declarations. Snapshot captures preserve frozen symbols through mode changes and checker-only calls. Scalar, 130-bit and bidirectional 32-bit MLIR regressions cover these cases. Computed packed bit-selects and constant or variable indexed part-selects retain exact X/Z counts after expanded function argument stages, concatenation, bitwise operations and undefined arithmetic. Non-integral bitstreams and system functions outside the admitted integral set remain open."
+          "detail": "Signedness casts, clog2, countones, onehot, onehot0, isunknown and countbits participate in compiler Z3 plans and native/WASM execution. Value, unknown and high-impedance planes distinguish X from Z in admitted packed operands. Countbits combines distinct control LSBs as a set of 0/1/X/Z selectors, including live four-state controls. Casts, shifts, concatenation, replication and conditional merging preserve Z as required; undefined arithmetic and unary arithmetic on X/Z operands produce X. Clog2 consumes unsigned value bits after X/Z-to-zero conversion, including active four-state random declarations. Snapshot captures preserve frozen symbols through mode changes and checker-only calls. Scalar, 130-bit and bidirectional 32-bit MLIR regressions cover these cases. Computed packed bit-selects and constant or variable indexed part-selects retain exact X/Z counts after expanded function argument stages, concatenation, bitwise operations and undefined arithmetic. Non-integral bitstreams and system functions outside the admitted integral set remain open. Live and candidate count targets reuse one prefix sum with linear construction work rather than enumerating all cardinalities. Equal partial counts share cofactors; a 65-bit equality/inequality plan emits 2,064 Boolean nodes. MLIR checks cover every count, signed out-of-range targets, frozen modes, joint counts, consuming three-bit casts and 130-bit targets whose high bits cannot alias legal counts."
         },
         {
           "feature": "Scope-randomization user functions",
@@ -1158,7 +1160,8 @@
           "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
         ]
       }
     },
@@ -1624,7 +1627,8 @@
           "test/Runtime/simulation-random-shared-template-runtime.mlir",
           "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
           "test/Runtime/random-program-temporaries-validation.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
         ]
       }
     },
