@@ -15,11 +15,53 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
 
+#include <array>
+
 using namespace mlir;
 
 namespace obelisk::simlowering {
 
 namespace {
+// Expression ordinals may be sparse and span the full uint32_t range. Sort
+// indices by the fixed-width (phase, ordinal) key in O(N) time and space,
+// without moving the expressions' candidate and iterator payloads.
+SmallVector<size_t> getExpressionOrder(ArrayRef<uint64_t> keys) {
+  SmallVector<size_t> order;
+  order.reserve(keys.size());
+  if (keys.empty())
+    return order;
+  bool sorted = true;
+  uint64_t previous = keys.front();
+  uint64_t differingBits = 0;
+  for (auto [index, key] : llvm::enumerate(keys)) {
+    order.push_back(index);
+    sorted &= previous <= key;
+    differingBits |= key ^ keys.front();
+    previous = key;
+  }
+  if (sorted)
+    return order;
+
+  SmallVector<size_t> scratch(keys.size());
+  for (unsigned shift = 0; shift < 64; shift += 8) {
+    if (!((differingBits >> shift) & 0xff))
+      continue;
+    std::array<size_t, 256> offsets{};
+    for (uint64_t key : keys)
+      ++offsets[(key >> shift) & 0xff];
+    size_t offset = 0;
+    for (size_t &count : offsets) {
+      size_t next = offset + count;
+      count = offset;
+      offset = next;
+    }
+    for (size_t index : order)
+      scratch[offsets[(keys[index] >> shift) & 0xff]++] = index;
+    order.swap(scratch);
+  }
+  return order;
+}
+
 llvm::StringMap<SmallVector<semantic::SVTransparentMemberSymbolOp>>
 indexInheritedFormalAliases(semantic::SVCovergroupTypeOp covergroup) {
   llvm::StringMap<SmallVector<semantic::SVTransparentMemberSymbolOp>> aliases;
@@ -860,15 +902,16 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
   });
   if (inventoryResult.wasInterrupted())
     return failure();
-  llvm::sort(constructorExpressions, [](const ConstructorExpression &lhs,
-                                        const ConstructorExpression &rhs) {
-    return std::tie(lhs.phase, lhs.ordinal) < std::tie(rhs.phase, rhs.ordinal);
-  });
+  auto expressionKeys = llvm::map_to_vector(
+      constructorExpressions, [](const ConstructorExpression &entry) {
+        return (uint64_t{entry.phase} << 32) | entry.ordinal;
+      });
   SmallVector<Value> constructorValues(defaultValues);
   SmallVector<int64_t> expressionIDs(defaultExpressionIDs);
   std::optional<std::pair<uint32_t, uint32_t>> previousPosition;
   llvm::DenseSet<uint64_t> seenExpressionIDs;
-  for (const ConstructorExpression &entry : constructorExpressions) {
+  for (size_t index : getExpressionOrder(expressionKeys)) {
+    const ConstructorExpression &entry = constructorExpressions[index];
     Operation *expression = entry.expression;
     const std::pair position{entry.phase, entry.ordinal};
     if (previousPosition && *previousPosition >= position) {
