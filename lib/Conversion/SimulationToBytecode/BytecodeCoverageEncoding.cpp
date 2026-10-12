@@ -9,6 +9,23 @@ namespace obelisk::bytecode {
 
 std::optional<LogicalResult>
 Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
+  if (auto op = dyn_cast<sim::SimCovergroupOptionReferenceOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicCovergroupOptionReference,
+        {reg(plan, op.getHandle()), emitU64Constant(plan, op.getItem()),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getOption())),
+         reg(plan, op.getMask()), reg(plan, op.getIndex()),
+         emitU64Constant(plan, op.getCharacter())},
+        {reg(plan, op.getResult())});
+  if (auto op = dyn_cast<sim::SimCovergroupTypeOptionReferenceOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicCovergroupTypeOptionReference,
+        {reg(plan, op.getReference()), emitU64Constant(plan, op.getTypeId()),
+         emitU64Constant(plan, op.getItem()),
+         emitU64Constant(plan, static_cast<uint32_t>(op.getOption())),
+         reg(plan, op.getMask()), reg(plan, op.getIndex()),
+         emitU64Constant(plan, op.getCharacter())},
+        {reg(plan, op.getResult())});
   if (auto op = dyn_cast<sim::SimCoveragePointHitOp>(operation))
     return emitIntrinsicRegisters(
         plan, kIntrinsicCoveragePointHit,

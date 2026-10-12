@@ -353,6 +353,47 @@ explicit overrides, and instance isolation. Text, JSON, HTML, and LCOV
 generation and backend parity are checked; the wire format and ABI need no
 additional columns or ops.
 
+Probes of 10.4.2 and 19.7 then found that valid nonblocking option assignments
+were rejected during lowering. Instance and static options now capture typed
+managed reference paths and reuse the ordinary managed NBA queue. Integral
+paths contain positioned i64 patch bits and a mask; strings carry tagged
+managed words, and character paths retain the evaluated index. Partial writes
+read the live field at commit so successive NBAs preserve untouched bits.
+String selection preserves X/Z indices as invalid rather than clearing the
+unknown bits to zero; invalid indices and NUL writes leave the string unchanged.
+Static commits publish both the runtime type profile and the ordinary field
+storage, after conversion to the declared field width. Receivers, indices,
+RHS values, delay expressions and event repetition counts are captured once.
+Program assignments use Re-NBA. Definition-only option restrictions still
+apply, and schema verification rejects foreign owners and point-only misuse
+of cross options.
+
+The managed update calendar uses separate monotone radix heaps for NBA and
+Re-NBA. The key is the fixed-width pair `(due time, enqueue sequence)`; an
+update crosses at most 128 buckets over its lifetime. Enqueue and removal
+therefore cost O(N) in aggregate for N updates, including distinct delayed
+deadlines. Deadline inspection never advances the lower bound. Redistribution
+reserves all destination storage before moving entries, preserving scheduled
+GC roots on allocation failure. Mixed barriers index each pending native,
+bytecode and event vector tail once, then compact consumed entries once.
+They avoid scanning or shifting a whole pending vector per managed write.
+Cancellation leaves positions stable until compaction. The option setter
+costs described above and string byte counts remain additional work.
+
+The MLIR review adds explicit heap allocation/read/write effects to path
+construction, precise managed collection points in both backends, and typed
+element/storage and schema-owner verification. This follows
+[MLIR side-effect guidance](https://mlir.llvm.org/docs/Rationale/SideEffectsAndSpeculation/)
+and [ODS verification guidance](https://mlir.llvm.org/docs/DefiningDialects/Operations/).
+Small MLIR checks run canonicalization/CSE, both lowerings, LLVM verification,
+and malformed owner/type/scope diagnostics. Two short execution fixtures
+exercise FIFO whole/partial writes, clipped and unknown selections, captured
+strings, delayed/event/repeated-event assignments and Re-NBA. A seven-update
+runtime fixture forces GC between enqueue and commit. Text, JSON, HTML and
+LCOV preserve the existing option rows and agree across native and bytecode.
+The bounded update-count probe in `benchmark/coverage` is outside unit/lit
+tests; it varies writes and deadlines in one configuration.
+
 Constructor probes of 19.5.1 and 19.5.3 also exposed repeated table scans and
 middle-vector insertion for automatic bins and late default arrays. Resolution
 now indexes sample expressions, bin plans, transition programs, value sets,

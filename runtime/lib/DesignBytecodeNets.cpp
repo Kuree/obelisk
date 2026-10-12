@@ -609,7 +609,8 @@ void cancelNetBit(obelisk_rt_context *context, uint64_t destination,
   // delayed driver from this same vector. Marking the superseded net event
   // avoids invalidating the scheduler's current reference; barrier scans
   // ignore the tombstone and a later compaction removes it.
-  if (context->schedulerApplyingNativeUpdate) {
+  if (context->schedulerApplyingNativeUpdate ||
+      context->schedulerDrainingNBAQueues) {
     for (ScheduledNBA &update : context->scheduledNBAs)
       if (update.inertialNetBit == destination &&
           (!preserveInitialProjection || !update.inertialNetInitialProjection))
@@ -634,10 +635,12 @@ void cancelNetGroup(obelisk_rt_context *context, uint64_t group) {
     if (update.inertialNetCancelGroup != group)
       continue;
     destinations.push_back(update.inertialNetBit);
-    if (context->schedulerApplyingNativeUpdate)
+    if (context->schedulerApplyingNativeUpdate ||
+        context->schedulerDrainingNBAQueues)
       update.cancelled = true;
   }
-  if (!context->schedulerApplyingNativeUpdate)
+  if (!context->schedulerApplyingNativeUpdate &&
+      !context->schedulerDrainingNBAQueues)
     context->scheduledNBAs.erase(
         std::remove_if(context->scheduledNBAs.begin(),
                        context->scheduledNBAs.end(),

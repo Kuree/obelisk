@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <limits>
+#include <type_traits>
 
 using namespace mlir;
 
@@ -162,6 +163,73 @@ public:
     Value path =
         LLVM::LoadOp::create(rewriter, op.getLoc(), pointer, output, 8);
     rewriter.replaceOp(op, managedObjectHandle(rewriter, op.getLoc(), path));
+    return success();
+  }
+
+private:
+  uint64_t stateBitCount;
+};
+
+template <typename OptionOp>
+class CovergroupOptionReferenceConversion final
+    : public OpConversionPattern<OptionOp> {
+public:
+  CovergroupOptionReferenceConversion(const TypeConverter &converter,
+                                      MLIRContext *context,
+                                      uint64_t stateBitCount)
+      : OpConversionPattern<OptionOp>(converter, context),
+        stateBitCount(stateBitCount) {}
+
+  LogicalResult matchAndRewrite(
+      OptionOp op,
+      typename OpConversionPattern<OptionOp>::OneToNOpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Location location = op.getLoc();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Type i64 = rewriter.getI64Type();
+    auto [context, lane] = managedContextAndLane(rewriter, location);
+    Value zero = llvmConstant(rewriter, location, i64, 0);
+    Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
+    Value handle = zero, type = zero, owner = null, payload = zero;
+    Value managed = llvmConstant(rewriter, location, rewriter.getI32Type(), 0);
+    Value valueState = null, unknownState = null, bitCount = zero;
+    if constexpr (std::is_same_v<OptionOp,
+                                 sim::SimCovergroupTypeOptionReferenceOp>) {
+      auto reference = unpackArgumentReference(rewriter, location,
+                                               adaptor.getReference().front());
+      type = llvmConstant(rewriter, location, i64, op.getTypeId());
+      owner = managedObjectPointer(rewriter, location, reference.owner);
+      payload = reference.payload;
+      managed = reference.managed;
+      valueState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                             "__obelisk_state_value");
+      unknownState = LLVM::AddressOfOp::create(rewriter, location, pointer,
+                                               "__obelisk_state_unknown");
+      bitCount = llvmConstant(rewriter, location, i64, stateBitCount);
+    } else {
+      handle = adaptor.getHandle().front();
+    }
+    Value output = entryAlloca(rewriter, location, pointer, 1, 8);
+    LLVM::StoreOp::create(rewriter, location, null, output, 8);
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, location, TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(
+                rewriter.getContext(),
+                "obelisk_rt_v1_reference_path_covergroup_option_create"),
+            ValueRange{lane, handle, type,
+                       llvmConstant(rewriter, location, i64, op.getItem()),
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    static_cast<uint32_t>(op.getOption())),
+                       adaptor.getMask().front(), adaptor.getIndex().front(),
+                       llvmConstant(rewriter, location, rewriter.getI32Type(),
+                                    op.getCharacter()),
+                       owner, payload, managed, valueState, unknownState,
+                       bitCount, output})
+            .getResult();
+    reportManagedStatus(rewriter, location, context, status);
+    Value path = LLVM::LoadOp::create(rewriter, location, pointer, output, 8);
+    rewriter.replaceOp(op, managedObjectHandle(rewriter, location, path));
     return success();
   }
 
@@ -943,6 +1011,11 @@ void populateManagedReferenceToLLVMConversionPatterns(
       converter, context, stateBitCount);
   patterns.add<ReferencePathStringCharacterConversion>(converter, context,
                                                        stateBitCount);
+  patterns.add<
+      CovergroupOptionReferenceConversion<sim::SimCovergroupOptionReferenceOp>,
+      CovergroupOptionReferenceConversion<
+          sim::SimCovergroupTypeOptionReferenceOp>>(converter, context,
+                                                    stateBitCount);
   patterns.add<ReferencePathAggregateElementConversion>(
       converter, context, dataLayout, stateBitCount);
   patterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(

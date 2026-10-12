@@ -2282,6 +2282,12 @@ ABI_FUNCTION(obelisk_rt_v1_reference_path_assoc_create,
                                    obelisk_rt_object_v1 *, uint64_t, uint32_t,
                                    uint8_t *, uint8_t *, uint64_t,
                                    obelisk_rt_object_v1 **));
+ABI_FUNCTION(obelisk_rt_v1_reference_path_covergroup_option_create,
+             obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *, uint64_t, uint64_t,
+                                   uint64_t, uint32_t, uint64_t, int64_t,
+                                   uint32_t, obelisk_rt_object_v1 *, uint64_t,
+                                   uint32_t, uint8_t *, uint8_t *, uint64_t,
+                                   obelisk_rt_object_v1 **));
 ABI_FUNCTION(obelisk_rt_v1_reference_path_string_character_create,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                    obelisk_rt_string_v1, int64_t,

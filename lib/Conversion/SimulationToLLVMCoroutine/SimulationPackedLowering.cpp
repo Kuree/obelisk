@@ -1156,6 +1156,8 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimArgumentRefFromRefOp, sim::SimArgumentRefFromManagedOp,
         sim::SimArgumentRefRetypeOp, sim::SimReferencePathIndexOp,
         sim::SimReferencePathAssocOp, sim::SimReferencePathStringCharacterOp,
+        sim::SimCovergroupOptionReferenceOp,
+        sim::SimCovergroupTypeOptionReferenceOp,
         sim::SimReferencePathAggregateElementOp, sim::SimArgumentRefFromPathOp,
         sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
         sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,

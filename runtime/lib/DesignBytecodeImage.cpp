@@ -890,6 +890,22 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && string(input(0)) &&
            twoStateBits(input(1), 64) && argumentRef(input(2)) &&
            managed(output(0));
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE:
+    if (signature.flags != 0 || site.inputCount != 6 || site.outputCount != 1 ||
+        !managed(output(0)))
+      return false;
+    for (uint32_t index = 0; index != 6; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE:
+    if (signature.flags != 0 || site.inputCount != 7 || site.outputCount != 1 ||
+        !argumentRef(input(0)) || !managed(output(0)))
+      return false;
+    for (uint32_t index = 1; index != 7; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_AGGREGATE_ELEMENT:
     if (signature.flags != 0 || site.inputCount != 15 ||
         site.outputCount != 1 || !argumentRef(input(0)) ||

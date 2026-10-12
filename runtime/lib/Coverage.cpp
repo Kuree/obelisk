@@ -11875,6 +11875,52 @@ obelisk_rt_v1_covergroup_set_name(obelisk_rt_context *context,
   }
 }
 
+obelisk_rt_status obelisk_rt_covergroup_validate_option_reference(
+    obelisk_rt_context *context, uint64_t handle, uint64_t typeID,
+    uint64_t itemID, uint32_t option) {
+  if (!context || ((handle == 0) == (typeID == 0)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *coverage = coverageState(context, false);
+    if (!coverage || !coverage->schema)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (typeID) {
+      if (option != OBELISK_RT_COVERGROUP_OPTION_WEIGHT &&
+          option != OBELISK_RT_COVERGROUP_OPTION_GOAL &&
+          option != OBELISK_RT_COVERGROUP_OPTION_COMMENT &&
+          ((option != OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES &&
+            option != OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST) ||
+           itemID))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      return validateFunctionalTypeOptionOwner(*coverage, typeID, itemID);
+    }
+    auto instance = coverage->instances.find(handle);
+    if (instance == coverage->instances.end())
+      return OBELISK_RT_INVALID_HANDLE;
+    const auto *item =
+        itemID
+            ? findResolvedFunctionalItem(*coverage, instance->second.typeID,
+                                         instance->second.configuration, itemID)
+            : nullptr;
+    if (itemID && !item)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (option == OBELISK_RT_COVERGROUP_OPTION_WEIGHT ||
+        option == OBELISK_RT_COVERGROUP_OPTION_GOAL ||
+        option == OBELISK_RT_COVERGROUP_OPTION_AT_LEAST ||
+        option == OBELISK_RT_COVERGROUP_OPTION_COMMENT ||
+        (option == OBELISK_RT_COVERGROUP_OPTION_NAME && !item) ||
+        (option == OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING &&
+         (!item || item->kind == obelisk::coverage::FunctionalItemKind::Cross)))
+      return OBELISK_RT_OK;
+    return OBELISK_RT_INVALID_ARGUMENT;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_set_integer_option(
     obelisk_rt_context *context, obelisk_rt_covergroup_v1 handle,
     uint64_t itemID, obelisk_rt_covergroup_instance_option_v1 option,

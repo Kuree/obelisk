@@ -352,6 +352,14 @@ private:
   storeCapturedCovergroupOption(const CapturedLValue &destination,
                                 ::mlir::Value value, bool sourceSigned,
                                 ::mlir::Location location);
+  ::mlir::LogicalResult enqueueCapturedCovergroupOption(
+      const CapturedLValue &destination, ::mlir::Value value,
+      ::mlir::Value mask, ::mlir::Value index, bool character,
+      ::mlir::Location location, ::mlir::Value delay);
+  ::mlir::FailureOr<::mlir::Value>
+  insertCapturedPackedSlice(const CapturedLValue &selection, ::mlir::Value base,
+                            ::mlir::Value replacement,
+                            ::mlir::Location location);
   struct CovergroupOptionOwner {
     ::mlir::Operation *receiver;
     ::mlir::Operation *item = nullptr;

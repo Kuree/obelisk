@@ -1647,6 +1647,58 @@ LogicalResult SimCovergroupSetTypeStringOptionOp::verify() {
   return success();
 }
 
+static LogicalResult verifyOptionReference(Operation *op, Type result,
+                                           CovergroupInstanceOptionKind kind,
+                                           bool character) {
+  bool string = kind == CovergroupInstanceOptionKind::Comment ||
+                kind == CovergroupInstanceOptionKind::Name;
+  Type element = cast<ReferencePathType>(result).getElementType();
+  Type expected = string && !character
+                      ? Type(StringType::get(op->getContext()))
+                      : IntegerType::get(op->getContext(), character ? 8 : 64);
+  if ((character && !string) || element != expected)
+    return op->emitOpError("has an incompatible option path element type");
+  return success();
+}
+
+LogicalResult SimCovergroupOptionReferenceOp::verify() {
+  if (failed(verifyCovergroupHandle(*this, getHandle().getType())))
+    return failure();
+  using Kind = CovergroupInstanceOptionKind;
+  if (getOption() != Kind::Weight && getOption() != Kind::Goal &&
+      getOption() != Kind::AtLeast && getOption() != Kind::Comment &&
+      getOption() != Kind::CrossNumPrintMissing &&
+      (getOption() != Kind::Name || getItem()))
+    return emitOpError("requires a mutable instance option kind and owner");
+  return verifyOptionReference(*this, getResult().getType(), getOption(),
+                               getCharacter());
+}
+
+LogicalResult SimCovergroupTypeOptionReferenceOp::verify() {
+  using Kind = CovergroupInstanceOptionKind;
+  if (!getTypeId() ||
+      (getOption() != Kind::Weight && getOption() != Kind::Goal &&
+       getOption() != Kind::Comment && getOption() != Kind::MergeInstances &&
+       getOption() != Kind::DistributeFirst) ||
+      (getItem() && (getOption() == Kind::MergeInstances ||
+                     getOption() == Kind::DistributeFirst)))
+    return emitOpError("requires a mutable type option kind and owner");
+  Type storage =
+      cast<ArgumentRefType>(getReference().getType()).getElementType();
+  Type expected =
+      getOption() == Kind::Comment
+          ? Type(StringType::get((*this)->getContext()))
+          : IntegerType::get((*this)->getContext(),
+                             getOption() == Kind::MergeInstances ||
+                                     getOption() == Kind::DistributeFirst
+                                 ? 1
+                                 : 32);
+  if (storage != expected)
+    return emitOpError("has an incompatible static option storage type");
+  return verifyOptionReference(*this, getResult().getType(), getOption(),
+                               getCharacter());
+}
+
 LogicalResult SimCovergroupInstanceQueryOp::verify() {
   return verifyCovergroupHandle(*this, getHandle().getType());
 }

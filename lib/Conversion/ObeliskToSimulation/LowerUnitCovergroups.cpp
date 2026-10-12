@@ -326,6 +326,53 @@ UnitLowering::storeCapturedCovergroupOption(const CapturedLValue &destination,
   return success();
 }
 
+LogicalResult UnitLowering::enqueueCapturedCovergroupOption(
+    const CapturedLValue &destination, Value value, Value mask, Value index,
+    bool character, Location location, Value delay) {
+  Type pathType =
+      sim::ReferencePathType::get(function.getContext(), value.getType());
+  Value context = function.getBody().front().getArgument(0);
+  Value path;
+  if (destination.coverageGroup) {
+    FailureOr<Type> lowered =
+        getNormalizedSemanticType(destination.coverageGroup);
+    auto handle = succeeded(lowered)
+                      ? dyn_cast<sim::CovergroupHandleType>(*lowered)
+                      : sim::CovergroupHandleType{};
+    auto declaration = handle
+                           ? lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+                                 function, handle.getCovergroupName())
+                           : sim::SimCovergroupDeclOp{};
+    if (!declaration || !declaration.getSchemaType())
+      return emitError(location)
+             << "type option has no typed coverage declaration";
+    uint64_t itemID = 0;
+    if (destination.coverageItem) {
+      auto id = destination.coverageItem->getAttrOfType<IntegerAttr>(
+          sim::metadata::coverageFunctionalItemId);
+      if (!id || id.getValue().isZero())
+        return emitError(location) << "type option has no stable item identity";
+      itemID = id.getValue().getZExtValue();
+    }
+    auto reference =
+        toArgumentReference(destination.reference, destination.type, location);
+    if (failed(reference))
+      return failure();
+    path = sim::SimCovergroupTypeOptionReferenceOp::create(
+        builder, location, pathType, context, *reference,
+        declaration.getSchemaType(), itemID, destination.coverageOption, mask,
+        index, character);
+  } else {
+    path = sim::SimCovergroupOptionReferenceOp::create(
+        builder, location, pathType, context, destination.container,
+        destination.coverageItemID, destination.coverageOption, mask, index,
+        character);
+  }
+  sim::SimReferencePathNBAEnqueueOp::create(builder, location, value, path,
+                                            delay);
+  return success();
+}
+
 FailureOr<std::optional<Value>> UnitLowering::lowerCovergroupOptionRead(
     semantic::SVMemberAccessExpressionOp op) {
   auto fieldName = op->getAttrOfType<StringAttr>("member_name");

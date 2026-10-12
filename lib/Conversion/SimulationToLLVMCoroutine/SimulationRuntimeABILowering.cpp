@@ -513,6 +513,12 @@ void declareNativeRuntimeABI(ModuleOp module) {
       {managedPointer, managedPointer, managedI64, managedPointer, managedI64,
        managedI32, managedPointer, managedPointer, managedI64, managedPointer});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_reference_path_covergroup_option_create",
+      managedI32,
+      {managedPointer, managedI64, managedI64, managedI64, managedI32,
+       managedI64, managedI64, managedI32, managedPointer, managedI64,
+       managedI32, managedPointer, managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_reference_path_string_character_create",
       managedI32,
       {managedPointer, managedI64, managedI64, managedPointer, managedI64,

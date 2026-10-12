@@ -51,8 +51,15 @@ enum class ReferenceSelector : uint32_t {
   Index = 1,
   Associative = 2,
   StringCharacter = 3,
-  AggregateElement = 4
+  AggregateElement = 4,
+  CovergroupOption = 5,
+  CovergroupCharacter = 6
 };
+
+bool isCovergroupReference(ReferenceSelector selector) {
+  return selector == ReferenceSelector::CovergroupOption ||
+         selector == ReferenceSelector::CovergroupCharacter;
+}
 
 const obelisk_rt_element_type_v1 stringCharacterElement{
     OBELISK_RT_VERSION,
@@ -64,6 +71,33 @@ const obelisk_rt_element_type_v1 stringCharacterElement{
     1,
     8,
     nullptr};
+
+const obelisk_rt_element_type_v1 coverageIntegerElement{
+    OBELISK_RT_VERSION,
+    OBELISK_RT_ELEMENT_BITS,
+    UINT64_C(0x434f56494e543031),
+    0,
+    0,
+    sizeof(uint64_t),
+    alignof(uint64_t),
+    64,
+    nullptr};
+const obelisk_rt_trace_entry_v1 coverageStringTraceEntry{
+    0, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_STRING, nullptr};
+const obelisk_rt_trace_layout_v1 coverageStringTraceLayout{
+    OBELISK_RT_VERSION,           0,
+    sizeof(obelisk_rt_string_v1), alignof(obelisk_rt_string_v1),
+    &coverageStringTraceEntry,    1};
+const obelisk_rt_element_type_v1 coverageStringElement{
+    OBELISK_RT_VERSION,
+    OBELISK_RT_ELEMENT_STRING,
+    UINT64_C(0x434f565354523031),
+    0,
+    0,
+    sizeof(obelisk_rt_string_v1),
+    alignof(obelisk_rt_string_v1),
+    64,
+    &coverageStringTraceLayout};
 
 struct ReferencePathHeader {
   const void *descriptor;
@@ -80,12 +114,28 @@ struct ReferencePathHeader {
   uint8_t *stateUnknown;
   uint64_t stateBitCount;
   obelisk_rt_object_v1 *detachedValue;
-  int64_t aggregateLeft;
-  int64_t aggregateRight;
-  uint64_t aggregateElementSpan;
-  uint64_t aggregateOwnerBitWidth;
-  uint64_t aggregateOwnerPlaneSize;
-  uint32_t aggregateOwnerFourState;
+  struct AggregateSelector {
+    int64_t left;
+    int64_t right;
+    uint64_t elementSpan;
+    uint64_t ownerBitWidth;
+    uint64_t ownerPlaneSize;
+    uint32_t ownerFourState;
+  };
+  struct CoverageSelector {
+    uint64_t handle;
+    uint64_t type;
+    uint64_t item;
+    uint64_t mask;
+    uint32_t option;
+    uint32_t fieldWidth;
+  };
+  // Selector-specific metadata shares storage. Capturing coverage options
+  // does not increase the size of ordinary container/aggregate paths.
+  union {
+    AggregateSelector aggregate;
+    CoverageSelector coverage;
+  };
   uint32_t detached;
   uint32_t reserved;
 };
@@ -1496,7 +1546,8 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
     std::pair<ManagedTraceVisit, void *> adapter{visit, environment};
     if (path->descriptor != &referencePathDescriptorToken || !path->element ||
         (path->selector != ReferenceSelector::StringCharacter &&
-         path->selector != ReferenceSelector::AggregateElement && !path->owner))
+         path->selector != ReferenceSelector::AggregateElement &&
+         !isCovergroupReference(path->selector) && !path->owner))
       return;
     if (path->owner)
       visit(environment, path->owner);
@@ -6199,22 +6250,54 @@ static obelisk_rt_status snapshotReferencePath(obelisk_rt_object_v1 *path,
             (path->selector != ReferenceSelector::Index &&
              path->selector != ReferenceSelector::Associative &&
              path->selector != ReferenceSelector::StringCharacter &&
-             path->selector != ReferenceSelector::AggregateElement) ||
+             path->selector != ReferenceSelector::AggregateElement &&
+             !isCovergroupReference(path->selector)) ||
             (path->selector == ReferenceSelector::StringCharacter &&
              (path->owner != nullptr || path->detachedValue != nullptr ||
               path->detached != 0 ||
               (path->ownerManaged == 0 && !path->stateValue))) ||
             (path->selector == ReferenceSelector::AggregateElement &&
              (path->owner != nullptr || path->detachedValue != nullptr ||
-              path->detached != 0 || path->aggregateElementSpan == 0 ||
-              path->aggregateOwnerBitWidth == 0 ||
-              path->aggregateOwnerPlaneSize == 0 ||
-              path->aggregateOwnerFourState > 1 ||
+              path->detached != 0 || path->aggregate.elementSpan == 0 ||
+              path->aggregate.ownerBitWidth == 0 ||
+              path->aggregate.ownerPlaneSize == 0 ||
+              path->aggregate.ownerFourState > 1 ||
               (path->ownerManaged == 0 && !path->stateValue))) ||
             (path->selector != ReferenceSelector::StringCharacter &&
              path->selector != ReferenceSelector::AggregateElement &&
+             !isCovergroupReference(path->selector) &&
              (!path->owner || !path->detachedValue)))
           return OBELISK_RT_INVALID_HANDLE;
+        if (isCovergroupReference(path->selector)) {
+          bool string =
+              path->coverage.option == OBELISK_RT_COVERGROUP_OPTION_COMMENT ||
+              path->coverage.option == OBELISK_RT_COVERGROUP_OPTION_NAME;
+          bool character =
+              path->selector == ReferenceSelector::CovergroupCharacter;
+          uint32_t width =
+              string ? 64
+              : path->coverage.option ==
+                          OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
+                      path->coverage.option ==
+                          OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST
+                  ? 1
+                  : 32;
+          const auto *element = character ? &stringCharacterElement
+                                : string  ? &coverageStringElement
+                                          : &coverageIntegerElement;
+          if ((path->coverage.handle == 0) == (path->coverage.type == 0) ||
+              path->owner || path->detachedValue || path->detached ||
+              path->element != element || (character && !string) ||
+              path->coverage.fieldWidth != width ||
+              (string && path->coverage.mask) ||
+              (!string && (path->coverage.mask >> width)) ||
+              (path->coverage.type && path->ownerManaged == 0 &&
+               !path->stateValue) ||
+              (path->coverage.handle &&
+               (path->watchOwner || path->ownerPayload || path->ownerManaged ||
+                path->stateValue || path->stateUnknown || path->stateBitCount)))
+            return OBELISK_RT_INVALID_HANDLE;
+        }
         *static_cast<Snapshot *>(opaque)->output = *path;
         return OBELISK_RT_OK;
       },
@@ -6551,6 +6634,91 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_reference_path_covergroup_option_create(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t handle, uint64_t typeID,
+    uint64_t itemID, uint32_t option, uint64_t mask, int64_t index,
+    uint32_t character, obelisk_rt_object_v1 *watchOwner, uint64_t ownerPayload,
+    uint32_t ownerManaged, uint8_t *stateValue, uint8_t *stateUnknown,
+    uint64_t stateBitCount, obelisk_rt_object_v1 **outPath) {
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  bool string = option == OBELISK_RT_COVERGROUP_OPTION_COMMENT ||
+                option == OBELISK_RT_COVERGROUP_OPTION_NAME;
+  if (!context || !outPath || character > 1 || (character && !string) ||
+      ownerManaged > 2 ||
+      (typeID &&
+       ((ownerManaged == 0 && (!stateValue || watchOwner)) ||
+        (ownerManaged != 0 && (!watchOwner || obelisk_rt_managed_object_context(
+                                                  watchOwner) != context)))) ||
+      (handle && (watchOwner || ownerPayload || ownerManaged || stateValue ||
+                  stateUnknown || stateBitCount)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outPath = nullptr;
+  obelisk_rt_status status = obelisk_rt_covergroup_validate_option_reference(
+      context, handle, typeID, itemID, option);
+  if (status != OBELISK_RT_OK)
+    return status;
+  ScopedManagedRoot watchRoot(lane, &watchOwner);
+  if (watchRoot.getStatus() != OBELISK_RT_OK)
+    return watchRoot.getStatus();
+  uint32_t width =
+      string ? 64
+      : option == OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES ||
+              option == OBELISK_RT_COVERGROUP_OPTION_DISTRIBUTE_FIRST
+          ? 1
+          : 32;
+  if (typeID) {
+    uint64_t previous = 0;
+    status = obelisk_rt_v1_argument_ref_load(
+        context, stateValue, stateUnknown, stateBitCount, watchOwner,
+        ownerPayload, ownerManaged, width, (width + 7) / 8, 0,
+        string ? OBELISK_RT_ARGUMENT_VALUE_STRING
+               : OBELISK_RT_ARGUMENT_VALUE_BITS,
+        &previous, nullptr);
+    if (status != OBELISK_RT_OK)
+      return status;
+  }
+  ReferencePathHeader captured{};
+  captured.descriptor = &referencePathDescriptorToken;
+  captured.element = character ? &stringCharacterElement
+                     : string  ? &coverageStringElement
+                               : &coverageIntegerElement;
+  captured.selector = character ? ReferenceSelector::CovergroupCharacter
+                                : ReferenceSelector::CovergroupOption;
+  captured.index = index;
+  captured.watchOwner = watchOwner;
+  captured.ownerPayload = ownerPayload;
+  captured.ownerManaged = ownerManaged;
+  captured.stateValue = stateValue;
+  captured.stateUnknown = stateUnknown;
+  captured.stateBitCount = stateBitCount;
+  captured.coverage.handle = handle;
+  captured.coverage.type = typeID;
+  captured.coverage.item = itemID;
+  captured.coverage.option = option;
+  captured.coverage.fieldWidth = width;
+  captured.coverage.mask = string ? 0 : mask & ((uint64_t{1} << width) - 1);
+  obelisk_rt_object_v1 *path = nullptr;
+  status = obelisk_rt_managed_allocate(
+      lane, OBELISK_RT_MANAGED_REFERENCE_PATH, sizeof(ReferencePathHeader),
+      alignof(ReferencePathHeader), &referencePathDescriptorToken, &path);
+  if (status != OBELISK_RT_OK)
+    return status;
+  status = obelisk_rt_managed_object_access(
+      path, OBELISK_RT_MANAGED_REFERENCE_PATH,
+      [](void *opaque, uint8_t *object, uint64_t extent) -> obelisk_rt_status {
+        if (extent != sizeof(ReferencePathHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        *reinterpret_cast<ReferencePathHeader *>(object) =
+            *static_cast<ReferencePathHeader *>(opaque);
+        return OBELISK_RT_OK;
+      },
+      &captured);
+  if (status == OBELISK_RT_OK)
+    *outPath = path;
+  return status;
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_reference_path_string_character_create(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, int64_t index,
     obelisk_rt_object_v1 *watchOwner, uint64_t ownerPayload,
@@ -6692,12 +6860,12 @@ obelisk_rt_v1_reference_path_aggregate_element_create(
         path->stateUnknown = initialize->stateUnknown;
         path->stateBitCount = initialize->stateBitCount;
         path->detachedValue = nullptr;
-        path->aggregateLeft = initialize->left;
-        path->aggregateRight = initialize->right;
-        path->aggregateElementSpan = initialize->elementSpan;
-        path->aggregateOwnerBitWidth = initialize->ownerBitWidth;
-        path->aggregateOwnerPlaneSize = initialize->ownerPlaneSize;
-        path->aggregateOwnerFourState = initialize->ownerFourState;
+        path->aggregate.left = initialize->left;
+        path->aggregate.right = initialize->right;
+        path->aggregate.elementSpan = initialize->elementSpan;
+        path->aggregate.ownerBitWidth = initialize->ownerBitWidth;
+        path->aggregate.ownerPlaneSize = initialize->ownerPlaneSize;
+        path->aggregate.ownerFourState = initialize->ownerFourState;
         path->detached = 0;
         return OBELISK_RT_OK;
       },
@@ -6751,22 +6919,23 @@ referenceElementBitWidth(const obelisk_rt_element_type_v1 *element) {
 
 static bool aggregateReferenceOffset(const ReferencePathHeader &path,
                                      uint64_t &offset) {
-  bool descending = path.aggregateLeft >= path.aggregateRight;
-  if ((descending &&
-       (path.index > path.aggregateLeft || path.index < path.aggregateRight)) ||
+  bool descending = path.aggregate.left >= path.aggregate.right;
+  if ((descending && (path.index > path.aggregate.left ||
+                      path.index < path.aggregate.right)) ||
       (!descending &&
-       (path.index < path.aggregateLeft || path.index > path.aggregateRight)))
+       (path.index < path.aggregate.left || path.index > path.aggregate.right)))
     return false;
-  uint64_t ordinal = descending ? static_cast<uint64_t>(path.aggregateLeft) -
-                                      static_cast<uint64_t>(path.index)
-                                : static_cast<uint64_t>(path.index) -
-                                      static_cast<uint64_t>(path.aggregateLeft);
-  if (ordinal > UINT64_MAX / path.aggregateElementSpan)
+  uint64_t ordinal = descending
+                         ? static_cast<uint64_t>(path.aggregate.left) -
+                               static_cast<uint64_t>(path.index)
+                         : static_cast<uint64_t>(path.index) -
+                               static_cast<uint64_t>(path.aggregate.left);
+  if (ordinal > UINT64_MAX / path.aggregate.elementSpan)
     return false;
-  offset = ordinal * path.aggregateElementSpan;
+  offset = ordinal * path.aggregate.elementSpan;
   uint64_t width = referenceElementBitWidth(path.element);
-  return offset <= path.aggregateOwnerBitWidth &&
-         width <= path.aggregateOwnerBitWidth - offset;
+  return offset <= path.aggregate.ownerBitWidth &&
+         width <= path.aggregate.ownerBitWidth - offset;
 }
 
 static void copyBitRange(uint8_t *destination, uint64_t destinationOffset,
@@ -6901,7 +7070,7 @@ ensureReferencePathCurrent(obelisk_rt_object_v1 *path,
                            ReferencePathHeader &snapshot) {
   if (snapshot.selector == ReferenceSelector::StringCharacter ||
       snapshot.selector == ReferenceSelector::AggregateElement ||
-      snapshot.detached)
+      isCovergroupReference(snapshot.selector) || snapshot.detached)
     return OBELISK_RT_OK;
   if (snapshot.ownerManaged == 0 && !snapshot.stateValue)
     return OBELISK_RT_OK;
@@ -6954,6 +7123,113 @@ ensureReferencePathCurrent(obelisk_rt_object_v1 *path,
   return status;
 }
 
+static obelisk_rt_status
+loadCoverageOptionReference(obelisk_rt_gc_lane_v1 *lane,
+                            const ReferencePathHeader &path, uint64_t &value) {
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  bool string = path.coverage.option == OBELISK_RT_COVERGROUP_OPTION_COMMENT ||
+                path.coverage.option == OBELISK_RT_COVERGROUP_OPTION_NAME;
+  value = 0;
+  if (path.coverage.type)
+    return obelisk_rt_v1_argument_ref_load(
+        context, path.stateValue, path.stateUnknown, path.stateBitCount,
+        path.watchOwner, path.ownerPayload, path.ownerManaged,
+        path.coverage.fieldWidth, (path.coverage.fieldWidth + 7) / 8, 0,
+        string ? OBELISK_RT_ARGUMENT_VALUE_STRING
+               : OBELISK_RT_ARGUMENT_VALUE_BITS,
+        &value, nullptr);
+  if (string)
+    return obelisk_rt_v1_covergroup_get_string_option(
+        lane, path.coverage.handle, path.coverage.item, path.coverage.option,
+        &value);
+  int64_t integer = 0;
+  obelisk_rt_status status = obelisk_rt_v1_covergroup_get_integer_option(
+      context, path.coverage.handle, path.coverage.item, path.coverage.option,
+      &integer);
+  value = static_cast<uint64_t>(integer);
+  return status;
+}
+
+static obelisk_rt_status
+storeCoverageOptionReference(obelisk_rt_gc_lane_v1 *lane,
+                             const ReferencePathHeader &path,
+                             const void *replacement) {
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  bool string = path.coverage.option == OBELISK_RT_COVERGROUP_OPTION_COMMENT ||
+                path.coverage.option == OBELISK_RT_COVERGROUP_OPTION_NAME;
+  obelisk_rt_status status = OBELISK_RT_OK;
+  uint64_t value = 0;
+  std::optional<ScopedManagedWordRoot> valueRoot;
+  if (string) {
+    valueRoot.emplace(lane, &value);
+    if (valueRoot->getStatus() != OBELISK_RT_OK)
+      return valueRoot->getStatus();
+  }
+  if (path.selector == ReferenceSelector::CovergroupCharacter) {
+    status = loadCoverageOptionReference(lane, path, value);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (path.index < 0 ||
+        static_cast<uint64_t>(path.index) >= obelisk_rt_v1_string_length(value))
+      return OBELISK_RT_OK;
+    obelisk_rt_string_v1 updated = 0;
+    ScopedManagedWordRoot updatedRoot(lane, &updated);
+    if (updatedRoot.getStatus() != OBELISK_RT_OK)
+      return updatedRoot.getStatus();
+    status = obelisk_rt_v1_string_putc(
+        lane, value, path.index, *static_cast<const uint8_t *>(replacement),
+        &updated);
+    if (status != OBELISK_RT_OK)
+      return status;
+    value = updated;
+  } else if (string) {
+    std::memcpy(&value, replacement, sizeof(value));
+  } else {
+    if (!path.coverage.mask)
+      return OBELISK_RT_OK;
+    // Preserve other bits written by earlier NBAs or blocking assignments.
+    // A full-field update needs no read of the previous value.
+    uint64_t all = (uint64_t{1} << path.coverage.fieldWidth) - 1;
+    if (path.coverage.mask != all) {
+      status = loadCoverageOptionReference(lane, path, value);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    uint64_t bits = 0;
+    std::memcpy(&bits, replacement, sizeof(bits));
+    value = ((value & ~path.coverage.mask) | (bits & path.coverage.mask)) & all;
+  }
+  int64_t integer = path.coverage.fieldWidth == 1 ? static_cast<int64_t>(value)
+                                                  : static_cast<int32_t>(value);
+  if (path.coverage.type)
+    status = string ? obelisk_rt_v1_covergroup_set_type_string_option(
+                          context, path.coverage.type, path.coverage.item,
+                          path.coverage.option, value)
+                    : obelisk_rt_v1_covergroup_set_type_integer_option(
+                          context, path.coverage.type, path.coverage.item,
+                          path.coverage.option, integer);
+  else if (path.coverage.option == OBELISK_RT_COVERGROUP_OPTION_NAME)
+    status =
+        obelisk_rt_v1_covergroup_set_name(context, path.coverage.handle, value);
+  else if (string)
+    status = obelisk_rt_v1_covergroup_set_string_option(
+        context, path.coverage.handle, path.coverage.item, path.coverage.option,
+        value);
+  else
+    status = obelisk_rt_v1_covergroup_set_integer_option(
+        context, path.coverage.handle, path.coverage.item, path.coverage.option,
+        integer);
+  if (status != OBELISK_RT_OK || !path.coverage.type)
+    return status;
+  return obelisk_rt_v1_argument_ref_store(
+      context, path.stateValue, path.stateUnknown, path.stateBitCount,
+      path.watchOwner, path.ownerPayload, path.ownerManaged,
+      path.coverage.fieldWidth, (path.coverage.fieldWidth + 7) / 8, 0,
+      string ? OBELISK_RT_ARGUMENT_VALUE_STRING
+             : OBELISK_RT_ARGUMENT_VALUE_BITS,
+      &value, nullptr);
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
                                   void *outUnknown, uint32_t *outPresent) {
@@ -6968,6 +7244,27 @@ obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
   status = ensureReferencePathCurrent(path, snapshot);
   if (status != OBELISK_RT_OK)
     return status;
+  if (isCovergroupReference(snapshot.selector)) {
+    obelisk_rt_context *context = obelisk_rt_managed_object_context(path);
+    ManagedExecutionScope execution(context);
+    if (execution.getStatus() != OBELISK_RT_OK)
+      return execution.getStatus();
+    obelisk_rt_gc_lane_v1 *lane = execution.getLane();
+    uint64_t value = 0;
+    status = loadCoverageOptionReference(lane, snapshot, value);
+    if (status != OBELISK_RT_OK)
+      return status;
+    *outPresent = 1;
+    if (snapshot.selector == ReferenceSelector::CovergroupCharacter) {
+      *outPresent =
+          snapshot.index >= 0 && static_cast<uint64_t>(snapshot.index) <
+                                     obelisk_rt_v1_string_length(value);
+      *static_cast<uint8_t *>(outValue) =
+          obelisk_rt_v1_string_getc(value, snapshot.index);
+    } else
+      std::memcpy(outValue, &value, sizeof(value));
+    return OBELISK_RT_OK;
+  }
   if (snapshot.detached) {
     *outPresent = 1;
     return accessBuffer(
@@ -6993,16 +7290,16 @@ obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
       return OBELISK_RT_OK;
     OBELISK_RT_TRY {
       std::vector<uint8_t> owner(
-          static_cast<size_t>(snapshot.aggregateOwnerPlaneSize));
+          static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
       std::vector<uint8_t> unknown;
-      if (snapshot.aggregateOwnerFourState)
-        unknown.resize(static_cast<size_t>(snapshot.aggregateOwnerPlaneSize));
+      if (snapshot.aggregate.ownerFourState)
+        unknown.resize(static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
       status = obelisk_rt_v1_argument_ref_load(
           obelisk_rt_managed_object_context(path), snapshot.stateValue,
           snapshot.stateUnknown, snapshot.stateBitCount, snapshot.watchOwner,
           snapshot.ownerPayload, snapshot.ownerManaged,
-          snapshot.aggregateOwnerBitWidth, snapshot.aggregateOwnerPlaneSize,
-          snapshot.aggregateOwnerFourState, OBELISK_RT_ARGUMENT_VALUE_BITS,
+          snapshot.aggregate.ownerBitWidth, snapshot.aggregate.ownerPlaneSize,
+          snapshot.aggregate.ownerFourState, OBELISK_RT_ARGUMENT_VALUE_BITS,
           owner.data(), unknown.empty() ? nullptr : unknown.data());
       if (status != OBELISK_RT_OK)
         return status;
@@ -7074,6 +7371,8 @@ obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
   status = ensureReferencePathCurrent(path, snapshot);
   if (status != OBELISK_RT_OK)
     return status;
+  if (isCovergroupReference(snapshot.selector))
+    return storeCoverageOptionReference(lane, snapshot, value);
   if (snapshot.detached) {
     std::vector<uint8_t> prepared;
     status = prepareElementValue(lane, obelisk_rt_managed_lane_context(lane),
@@ -7094,17 +7393,17 @@ obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
       return OBELISK_RT_OK;
     OBELISK_RT_TRY {
       std::vector<uint8_t> owner(
-          static_cast<size_t>(snapshot.aggregateOwnerPlaneSize));
+          static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
       std::vector<uint8_t> ownerUnknown;
-      if (snapshot.aggregateOwnerFourState)
+      if (snapshot.aggregate.ownerFourState)
         ownerUnknown.resize(
-            static_cast<size_t>(snapshot.aggregateOwnerPlaneSize));
+            static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
       obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
       status = obelisk_rt_v1_argument_ref_load(
           context, snapshot.stateValue, snapshot.stateUnknown,
           snapshot.stateBitCount, snapshot.watchOwner, snapshot.ownerPayload,
-          snapshot.ownerManaged, snapshot.aggregateOwnerBitWidth,
-          snapshot.aggregateOwnerPlaneSize, snapshot.aggregateOwnerFourState,
+          snapshot.ownerManaged, snapshot.aggregate.ownerBitWidth,
+          snapshot.aggregate.ownerPlaneSize, snapshot.aggregate.ownerFourState,
           OBELISK_RT_ARGUMENT_VALUE_BITS, owner.data(),
           ownerUnknown.empty() ? nullptr : ownerUnknown.data());
       if (status != OBELISK_RT_OK)
@@ -7118,8 +7417,8 @@ obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
       return obelisk_rt_v1_argument_ref_store(
           context, snapshot.stateValue, snapshot.stateUnknown,
           snapshot.stateBitCount, snapshot.watchOwner, snapshot.ownerPayload,
-          snapshot.ownerManaged, snapshot.aggregateOwnerBitWidth,
-          snapshot.aggregateOwnerPlaneSize, snapshot.aggregateOwnerFourState,
+          snapshot.ownerManaged, snapshot.aggregate.ownerBitWidth,
+          snapshot.aggregate.ownerPlaneSize, snapshot.aggregate.ownerFourState,
           OBELISK_RT_ARGUMENT_VALUE_BITS, owner.data(),
           ownerUnknown.empty() ? nullptr : ownerUnknown.data());
     }

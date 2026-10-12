@@ -351,9 +351,10 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
           if (*coverage) {
             auto index = lowerExpression(selection[1]);
             auto normalized =
-                succeeded(index) ? convert(*index, builder.getI64Type(),
-                                           isSignedNode(selection[1]), location)
-                                 : FailureOr<Value>(failure());
+                succeeded(index)
+                    ? toContainerIndex(*index, isSignedNode(selection[1]),
+                                       location)
+                    : FailureOr<Value>(failure());
             if (failed(normalized))
               return failure();
             captured.kind = CapturedLValue::Kind::StringValueCharacter;
@@ -945,6 +946,45 @@ void UnitLowering::propagateCapturedContainers(const CapturedLValue &source,
     propagateCapturedContainers(child, destination);
 }
 
+FailureOr<Value>
+UnitLowering::insertCapturedPackedSlice(const CapturedLValue &selection,
+                                        Value base, Value replacement,
+                                        Location location) {
+  Type unpaddedType = base.getType();
+  if (selection.padding) {
+    FailureOr<Value> padded =
+        padSelectionWindow(base, selection.padding, location);
+    if (failed(padded))
+      return failure();
+    base = *padded;
+  }
+  Value updated;
+  if (selection.index) {
+    if (isa<sim::LogicType>(base.getType()))
+      updated =
+          sim::SimLogicDynInsertOp::create(builder, location, base.getType(),
+                                           base, replacement, selection.index);
+    else
+      updated =
+          sim::SimBitsDynInsertOp::create(builder, location, base.getType(),
+                                          base, replacement, selection.index);
+  } else if (isa<sim::LogicType>(base.getType())) {
+    updated = sim::SimLogicInsertOp::create(
+        builder, location, base.getType(), base, replacement,
+        builder.getI64IntegerAttr(selection.lowBit));
+  } else {
+    Value low =
+        arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                  builder.getI64IntegerAttr(selection.lowBit));
+    updated = sim::SimBitsDynInsertOp::create(builder, location, base.getType(),
+                                              base, replacement, low);
+  }
+  if (selection.padding)
+    return unpadSelectionWindow(updated, selection.padding, unpaddedType,
+                                location);
+  return updated;
+}
+
 LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                                                 Value value, bool sourceSigned,
                                                 bool nonblocking,
@@ -954,15 +994,39 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     recordImplicitWrite(destination.reference);
   switch (destination.kind) {
   case CapturedLValue::Kind::CovergroupOption:
-    if (nonblocking)
-      return emitError(location)
-             << "coverage option updates require blocking assignments";
+    if (nonblocking) {
+      auto converted = convert(value, destination.type, sourceSigned, location,
+                               isSignedNode(destination.semanticNode));
+      if (failed(converted))
+        return failure();
+      Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+      Value mask = zero;
+      if (!isa<sim::StringType>(destination.type)) {
+        auto width = sim::getPackedWidth(destination.type);
+        if (!width || *width > 32)
+          return failure();
+        mask = arith::ConstantIntOp::create(builder, location,
+                                            (uint64_t{1} << *width) - 1, 64);
+        converted = convert(*converted, builder.getI64Type(), false, location);
+        if (failed(converted))
+          return failure();
+      }
+      return enqueueCapturedCovergroupOption(destination, *converted, mask,
+                                             zero, false, location, delay);
+    }
     return storeCapturedCovergroupOption(destination, value, sourceSigned,
                                          location);
   case CapturedLValue::Kind::StringValueCharacter: {
-    if (nonblocking)
-      return emitError(location)
-             << "coverage option updates require blocking assignments";
+    if (nonblocking) {
+      auto character =
+          convert(value, builder.getI8Type(), sourceSigned, location);
+      if (failed(character))
+        return failure();
+      Value zero = arith::ConstantIntOp::create(builder, location, 0, 64);
+      return enqueueCapturedCovergroupOption(
+          destination.children.front(), *character, zero, destination.index,
+          true, location, delay);
+    }
     auto string = loadCapturedLValue(destination.children.front(), location);
     auto character =
         convert(value, builder.getI8Type(), sourceSigned, location);
@@ -1788,6 +1852,66 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     if (failed(replacement))
       return failure();
 
+    if (nonblocking) {
+      // Position both patch bits and their write mask through the captured
+      // selection chain. No option read belongs to the enqueueing region:
+      // untouched bits must come from the field when this NBA commits.
+      SmallVector<const CapturedLValue *> selections;
+      const CapturedLValue *root = &destination;
+      while (root->kind == CapturedLValue::Kind::PackedValueSlice &&
+             root->children.size() == 1) {
+        selections.push_back(root);
+        root = &root->children.front();
+      }
+      if (root->kind == CapturedLValue::Kind::CovergroupOption) {
+        auto constant = [&](Type type, bool ones) -> FailureOr<Value> {
+          auto width = sim::getPackedWidth(type);
+          if (!width)
+            return failure();
+          APInt bits = ones ? APInt::getAllOnes(*width) : APInt(*width, 0);
+          if (auto integer = dyn_cast<IntegerType>(type))
+            return Value(arith::ConstantOp::create(
+                builder, location, integer,
+                builder.getIntegerAttr(integer, bits)));
+          if (auto logic = dyn_cast<sim::LogicType>(type)) {
+            Type plane = builder.getIntegerType(*width);
+            return Value(sim::SimLogicConstantOp::create(
+                builder, location, logic, builder.getIntegerAttr(plane, bits),
+                builder.getIntegerAttr(plane, APInt(*width, 0))));
+          }
+          return failure();
+        };
+        FailureOr<Value> mask = constant((*replacement).getType(), true);
+        if (failed(mask))
+          return failure();
+        Value patch = *replacement;
+        for (const CapturedLValue *selection : selections) {
+          FailureOr<Value> zero =
+              constant(selection->children.front().type, false);
+          if (failed(zero))
+            return failure();
+          FailureOr<Value> positioned =
+              insertCapturedPackedSlice(*selection, *zero, patch, location);
+          FailureOr<Value> positionedMask =
+              insertCapturedPackedSlice(*selection, *zero, *mask, location);
+          if (failed(positioned) || failed(positionedMask))
+            return failure();
+          patch = *positioned;
+          mask = *positionedMask;
+        }
+        auto bits = convert(patch, builder.getI64Type(), false, location);
+        auto positionedMask =
+            convert(*mask, builder.getI64Type(), false, location);
+        if (failed(bits) || failed(positionedMask))
+          return failure();
+        Value zero =
+            arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                      builder.getI64IntegerAttr(0));
+        return enqueueCapturedCovergroupOption(*root, *bits, *positionedMask,
+                                               zero, false, location, delay);
+      }
+    }
+
     // Reify a statically selected fixed-aggregate path as an exact ordinary
     // reference. Its element type is the view boundary used by the bounded
     // packed-slice NBA path, so an overhang cannot reach an adjacent member.
@@ -1864,47 +1988,11 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     FailureOr<Value> baseScalar = toPackedScalar(*baseValue, location);
     if (failed(baseScalar))
       return failure();
-    Type unpaddedType = (*baseScalar).getType();
-    if (destination.padding) {
-      FailureOr<Value> padded =
-          padSelectionWindow(*baseScalar, destination.padding, location);
-      if (failed(padded))
-        return failure();
-      baseScalar = *padded;
-    }
-
-    Value updated;
-    if (destination.index) {
-      if (isa<sim::LogicType>((*baseScalar).getType()))
-        updated = sim::SimLogicDynInsertOp::create(
-            builder, location, (*baseScalar).getType(), *baseScalar,
-            *replacement, destination.index);
-      else
-        updated = sim::SimBitsDynInsertOp::create(
-            builder, location, (*baseScalar).getType(), *baseScalar,
-            *replacement, destination.index);
-    } else if (isa<sim::LogicType>((*baseScalar).getType())) {
-      updated = sim::SimLogicInsertOp::create(
-          builder, location, (*baseScalar).getType(), *baseScalar, *replacement,
-          builder.getI64IntegerAttr(destination.lowBit));
-    } else {
-      Value low = arith::ConstantOp::create(
-          builder, location, builder.getI64Type(),
-          builder.getI64IntegerAttr(destination.lowBit));
-      updated = sim::SimBitsDynInsertOp::create(builder, location,
-                                                (*baseScalar).getType(),
-                                                *baseScalar, *replacement, low);
-    }
-    if (destination.padding) {
-      // Whatever the write placed outside the value stays in the padding and
-      // is dropped here, leaving only the bits that were in range.
-      FailureOr<Value> narrowed = unpadSelectionWindow(
-          updated, destination.padding, unpaddedType, location);
-      if (failed(narrowed))
-        return failure();
-      updated = *narrowed;
-    }
-    FailureOr<Value> rebuilt = convert(updated, base.type, false, location,
+    FailureOr<Value> updated = insertCapturedPackedSlice(
+        destination, *baseScalar, *replacement, location);
+    if (failed(updated))
+      return failure();
+    FailureOr<Value> rebuilt = convert(*updated, base.type, false, location,
                                        isSignedNode(base.semanticNode));
     if (failed(rebuilt))
       return failure();

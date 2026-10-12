@@ -1221,6 +1221,7 @@ def SimCovergroupGetIntegerOptionOp
 
 def SimCovergroupGetStringOptionOp
     : SimOp<"covergroup.get_string_option", [
+        SimAllocatesManagedStorage,
         MemoryEffects<[MemRead<SimCoverageResource>,
                        MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
       ]> {
@@ -2449,6 +2450,58 @@ def SimReferencePathNBAEnqueueOp : SimOp<"reference_path.nba.enqueue", [
                        Optional<SimTimeType>:$delay);
   let assemblyFormat = [{$value `to` $destination (`after` $delay^)? attr-dict
     `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupOptionReferenceOp
+    : SimOp<"covergroup.option_reference", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimCoverageResource>, MemRead<SimHeapResource>,
+                       MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture an instance option for a deferred owner-local write";
+  let description = [{
+    Captures the typed receiver, stable item selector and either a positioned
+    integral mask or a string-character index. Integer paths carry i64 patch
+    bits; whole strings and character paths carry string and i8 respectively.
+    The current field is read only when a masked/character update commits.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimCovergroupHandleType:$handle, I64Attr:$item,
+                       SimCovergroupInstanceOptionKind:$option,
+                       I64:$mask, I64:$index, BoolAttr:$character);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat = [{
+    $context `,` $handle `item` $item `option` $option `mask` $mask
+    `index` $index `character` $character attr-dict `:`
+    type($context) `,` qualified(type($handle)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupTypeOptionReferenceOp
+    : SimOp<"covergroup.type_option_reference", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimCoverageResource>, MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemAlloc<SimHeapResource>,
+                       MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "capture a static option and its storage for a deferred write";
+  let description = [{
+    Retains the ordinary static field reference as well as the stable type and
+    item identities. Commit publishes the converted option and updates its
+    ordinary storage, preserving numeric masks and string-character writes.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       SimArgumentRefType:$reference, I64Attr:$typeId,
+                       I64Attr:$item, SimCovergroupInstanceOptionKind:$option,
+                       I64:$mask, I64:$index, BoolAttr:$character);
+  let results = (outs SimReferencePathType:$result);
+  let assemblyFormat = [{
+    $context `,` $reference `type` $typeId `item` $item `option` $option
+    `mask` $mask `index` $index `character` $character attr-dict `:`
+    type($context) `,` qualified(type($reference)) `->` qualified(type($result))
+  }];
   let hasVerifier = 1;
 }
 

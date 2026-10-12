@@ -2381,6 +2381,48 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
                                                  : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE:
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE: {
+    bool typeOption = signature.id ==
+                      OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE;
+    uint32_t first = typeOption ? 1 : 0;
+    std::array<std::optional<uint64_t>, 6> inputs;
+    for (uint32_t index = 0; index != inputs.size(); ++index)
+      inputs[index] = scalar(first + index);
+    if (std::any_of(inputs.begin(), inputs.end(),
+                    [](const auto &value) { return !value; }) ||
+        *inputs[2] > UINT32_MAX || *inputs[5] > 1)
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_object_v1 *watchOwner = nullptr;
+    uint64_t ownerPayload = 0;
+    uint32_t ownerManaged = 0;
+    if (typeOption && !readArgumentRef(inputRegister(0), watchOwner,
+                                       ownerPayload, ownerManaged))
+      return OBELISK_RT_INVALID_BYTECODE;
+    obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    uint8_t *stateValue =
+        typeOption && !context->stateValue.empty()
+            ? reinterpret_cast<uint8_t *>(context->stateValue.data())
+            : nullptr;
+    uint8_t *stateUnknown =
+        typeOption && !context->stateUnknown.empty()
+            ? reinterpret_cast<uint8_t *>(context->stateUnknown.data())
+            : nullptr;
+    obelisk_rt_object_v1 *path = nullptr;
+    obelisk_rt_status status =
+        obelisk_rt_v1_reference_path_covergroup_option_create(
+            lane, typeOption ? 0 : *inputs[0], typeOption ? *inputs[0] : 0,
+            *inputs[1], static_cast<uint32_t>(*inputs[2]), *inputs[3],
+            static_cast<int64_t>(*inputs[4]), static_cast<uint32_t>(*inputs[5]),
+            watchOwner, ownerPayload, ownerManaged, stateValue, stateUnknown,
+            typeOption ? image.stateBitCount : 0, &path);
+    if (status != OBELISK_RT_OK)
+      return status;
+    return writeManaged(outputRegister(0), path) ? OBELISK_RT_OK
+                                                 : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_REFERENCE_PATH_STRING_CHARACTER: {
     auto index = scalar(1);
     obelisk_rt_object_v1 *watchOwner = nullptr;

@@ -1464,8 +1464,10 @@ uint64_t nextPeriodicRuntimeDeadlineUnlocked(obelisk_rt_context *context) {
       considerDeadline(update.dueTime);
   if (!context->scheduledInertialPathNBAs.empty())
     considerDeadline(context->scheduledInertialPathNBAs.begin()->first.first);
-  for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
-    considerDeadline(update.dueTime);
+  for (uint32_t region : {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+    if (const ScheduledManagedNBA *update =
+            context->scheduledManagedNBAs.front(region))
+      considerDeadline(update->dueTime);
   for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
     considerDeadline(event.dueTime);
   if (const ReplaceableEventFeatureState *replaceable =

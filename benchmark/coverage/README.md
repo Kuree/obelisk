@@ -146,3 +146,27 @@ text, JSON, HTML, and LCOV report fields agreed after normalizing run metadata,
 both for this probe and the mixed automatic/default compiler probe. Unit
 regressions use four coverpoints, twelve resolved bins, and two instances;
 oversized-domain regressions reject before allocating or enumerating values.
+
+## Bounded option NBA probe
+
+`option-nba-scaling.sv` queues mixed ordinary and coverage-option NBAs, packed
+partial writes, and one distinct future deadline per iteration. It uses one
+configuration and one instance, defaults to 32 iterations, and rejects counts
+above 1024. It is outside the unit and lit suites. Each process is bounded:
+
+```sh
+build/tools/driver/obelisk --std=1800-2023 -O0 --target=native \
+  --coverage=functional -o build/coverage-option-nba-scaling \
+  benchmark/coverage/option-nba-scaling.sv
+timeout 1s build/coverage-option-nba-scaling +N=1024
+```
+
+The final weight and ordinary variable must both equal `N - 1`. Compare a
+short geometric sequence sequentially with identical compiler flags. Timings
+include process setup; they are observations, not unit-test timing assertions.
+
+On ARM64 Release with native `-O0`, medians from three sequential processes
+per count were 5.86 ms for 128 writes, 3.09 ms for 512 writes, 7.01 ms for
+2,048 writes and 10.52 ms for 4,096 writes. Setup overhead and scheduler
+variation dominate the smallest counts. The bounded observations support the
+queue traversal review; they do not establish overall compiler linearity.

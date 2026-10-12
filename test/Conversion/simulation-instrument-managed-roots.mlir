@@ -36,6 +36,9 @@ module attributes {
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "roots"
     simulation.code_unit.decl 2 in 0 function hierarchy "bulk"
     simulation.code_unit.decl 3 in 0 function hierarchy "cross_create"
+    simulation.code_unit.decl 4 in 0 function hierarchy "option_snapshot"
+    simulation.code_unit.decl 5 in 0 function hierarchy "option_reference"
+    simulation.code_unit.decl 6 in 0 function hierarchy "type_option_reference"
     simulation.class.decl @Object id 1 {
       is_abstract = false, is_final = true, is_interface = false
     }
@@ -83,6 +86,37 @@ module attributes {
         payloads [%queue] argument_count 0 formal_ids [] expression_ids [7]
         : (!cross_queue) -> !simulation.covergroup_handle<@cg>
       simulation.return
+    }
+
+    simulation.func @option_snapshot(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %handle: !simulation.covergroup_handle<@cg> {simulation.capture_kind = 1 : i32},
+        %live: !simulation.string {simulation.capture_kind = 1 : i32}) -> !simulation.string
+        attributes {code_unit_id = 4 : i64, entry_kind = 8 : i32} {
+      %snapshot = simulation.covergroup.get_string_option %ctx, %handle item 0 option comment : !simulation.context, !simulation.covergroup_handle<@cg>
+      simulation.return %live : !simulation.string
+    }
+
+    simulation.func @option_reference(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %handle: !simulation.covergroup_handle<@cg> {simulation.capture_kind = 1 : i32},
+        %live: !simulation.string {simulation.capture_kind = 1 : i32}) -> !simulation.string
+        attributes {code_unit_id = 5 : i64, entry_kind = 8 : i32} {
+      %zero = arith.constant 0 : i64
+      %mask = arith.constant 4294967295 : i64
+      %path = simulation.covergroup.option_reference %ctx, %handle item 0 option weight mask %mask index %zero character false : !simulation.context, !simulation.covergroup_handle<@cg> -> !simulation.reference_path<i64>
+      simulation.return %live : !simulation.string
+    }
+
+    simulation.func @type_option_reference(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %ref: !simulation.argument_ref<i32> {simulation.capture_kind = 1 : i32},
+        %live: !simulation.string {simulation.capture_kind = 1 : i32}) -> !simulation.string
+        attributes {code_unit_id = 6 : i64, entry_kind = 8 : i32} {
+      %zero = arith.constant 0 : i64
+      %mask = arith.constant 4294967295 : i64
+      %path = simulation.covergroup.type_option_reference %ctx, %ref type 1 item 0 option weight mask %mask index %zero character false : !simulation.context, !simulation.argument_ref<i32> -> !simulation.reference_path<i64>
+      simulation.return %live : !simulation.string
     }
   }
 }
@@ -142,3 +176,16 @@ module attributes {
 // POLLED-NOT: root_bind
 // POLLED-NOT: gc.root_range
 // POLLED: simulation.return
+
+// Coverage string snapshots and both option-path factories can collect.
+// Unrelated live strings must be refreshed before each allocation operation.
+// CHECK-LABEL: simulation.func @option_snapshot
+// CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 2
+// CHECK-NEXT: %{{.*}} = simulation.covergroup.get_string_option
+// CHECK-LABEL: simulation.func @option_reference
+// CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 2
+// CHECK: %{{.*}} = simulation.covergroup.option_reference
+// CHECK-LABEL: simulation.func @type_option_reference
+// CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 2
+// CHECK: simulation.class.root_bind %{{.*}} to %{{.*}} at {{[0-9]+}} exact kinds 9
+// CHECK: %{{.*}} = simulation.covergroup.type_option_reference

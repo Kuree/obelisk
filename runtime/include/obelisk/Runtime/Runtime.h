@@ -1329,6 +1329,9 @@ enum {
       UINT32_C(0x00010479),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_INTEGER_OPTION = UINT32_C(0x0001047a),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_GET_STRING_OPTION = UINT32_C(0x0001047b),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE = UINT32_C(0x0001047c),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE =
+      UINT32_C(0x0001047d),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -3046,6 +3049,19 @@ obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
     uint64_t owner_payload, uint32_t owner_managed, uint8_t *state_value,
     uint8_t *state_unknown, uint64_t state_bit_count,
     obelisk_rt_object_v1 **out_path);
+// Capture a mutable coverage option for the ordinary managed NBA queue.
+// Exactly one of handle/type_id is nonzero. A type option also captures its
+// ordinary static storage using the argument-reference binding. Integer patch
+// values are i64 bit patterns with a positioned mask; character values are
+// bytes at a captured index. Whole strings remain tagged managed words.
+obelisk_rt_status obelisk_rt_v1_reference_path_covergroup_option_create(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t handle, uint64_t type_id,
+    uint64_t item_id, uint32_t option, uint64_t mask, int64_t index,
+    uint32_t character, obelisk_rt_object_v1 *watch_owner,
+    uint64_t owner_payload, uint32_t owner_managed, uint8_t *state_value,
+    uint8_t *state_unknown, uint64_t state_bit_count,
+    obelisk_rt_object_v1 **out_path);
+
 obelisk_rt_status obelisk_rt_v1_reference_path_string_character_create(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_string_v1 string, int64_t index,
     obelisk_rt_object_v1 *watch_owner, uint64_t owner_payload,

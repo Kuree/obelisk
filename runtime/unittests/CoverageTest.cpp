@@ -1,5 +1,6 @@
 //===- CoverageTest.cpp - Functional coverage runtime tests --------------===//
 
+#include "../lib/RuntimeInternal.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
 #include "obelisk/Runtime/Runtime.h"
 
@@ -787,6 +788,124 @@ TEST(CoverageRuntimeDesignTest,
                 context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX,
                 nullptr),
             OBELISK_RT_INVALID_ARGUMENT);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(CoverageRuntimeDesignTest, OptionNBAsKeepCapturedPathsAndStringsRooted) {
+  const auto schema = makeSharedAndSelectorSchema();
+  obelisk_rt_context *context = createContextForSchema(schema, false);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *path = nullptr;
+  obelisk_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
+  obelisk_rt_string_v1 text = 0;
+  obelisk_rt_gc_managed_root_range_v1 textRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_push(lane, &textRoot, &text, 1),
+            OBELISK_RT_OK);
+  auto capture = [&](uint64_t item,
+                     obelisk_rt_covergroup_instance_option_v1 option,
+                     uint64_t mask, int64_t index, bool character) {
+    return obelisk_rt_v1_reference_path_covergroup_option_create(
+        lane, handle, 0, item, option, mask, index, character, nullptr, 0, 0,
+        nullptr, nullptr, 0, &path);
+  };
+  auto enqueue = [&](const void *value, uint64_t size, uint64_t delay = 0) {
+    return obelisk_rt_v1_scheduler_managed_nba(context, path, UINT64_MAX, value,
+                                               nullptr, size, delay);
+  };
+  uint64_t bits = 16;
+  ASSERT_EQ(
+      capture(0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, UINT32_MAX, 0, false),
+      OBELISK_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+  bits = 3;
+  ASSERT_EQ(capture(0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 15, 0, false),
+            OBELISK_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+  bits = 0;
+  ASSERT_EQ(capture(0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, 2, 0, false),
+            OBELISK_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+  constexpr char message[] = "whole rhs snapshot";
+  ASSERT_EQ(
+      obelisk_rt_v1_string_create(lane, message, sizeof(message) - 1, &text),
+      OBELISK_RT_OK);
+  ASSERT_EQ(capture(20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, 0, 0, false),
+            OBELISK_RT_OK);
+  ASSERT_EQ(enqueue(&text, sizeof(text)), OBELISK_RT_OK);
+  uint8_t character = 'W';
+  ASSERT_EQ(capture(20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, 0, 0, true),
+            OBELISK_RT_OK);
+  ASSERT_EQ(enqueue(&character, sizeof(character)), OBELISK_RT_OK);
+  bits = 2;
+  ASSERT_EQ(
+      capture(20, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, UINT32_MAX, 0, false),
+      OBELISK_RT_OK);
+  ASSERT_EQ(enqueue(&bits, sizeof(bits), 2), OBELISK_RT_OK);
+  // A static option path retains the normal field binding as well as the
+  // type identity. Its profile and ordinary storage must commit together.
+  std::array<uint8_t, 4> storage{50, 0, 0, 0};
+  ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
+                context, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_reference_path_covergroup_option_create(
+                lane, 0, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, UINT32_MAX,
+                0, 0, nullptr, 0, 0, storage.data(), nullptr, 32, &path),
+            OBELISK_RT_OK);
+  bits = 80;
+  ASSERT_EQ(enqueue(&bits, sizeof(bits)), OBELISK_RT_OK);
+  EXPECT_EQ(capture(20, OBELISK_RT_COVERGROUP_OPTION_CROSS_NUM_PRINT_MISSING,
+                    UINT32_MAX, 0, false),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(path, nullptr);
+  EXPECT_EQ(capture(0, OBELISK_RT_COVERGROUP_OPTION_AUTO_BIN_MAX, UINT32_MAX, 0,
+                    false),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(path, nullptr);
+  // Only scheduled roots now keep the captured paths and heap string alive.
+  path = nullptr;
+  text = 0;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  int64_t weight = -1;
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_get_integer_option(
+          context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, &weight),
+      OBELISK_RT_OK);
+  EXPECT_EQ(weight, 1);
+  EXPECT_EQ(storage[0], 50);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_get_integer_option(
+          context, handle, 0, OBELISK_RT_COVERGROUP_OPTION_WEIGHT, &weight),
+      OBELISK_RT_OK);
+  EXPECT_EQ(weight, 17);
+  ASSERT_EQ(
+      obelisk_rt_v1_covergroup_get_integer_option(
+          context, handle, 20, OBELISK_RT_COVERGROUP_OPTION_AT_LEAST, &weight),
+      OBELISK_RT_OK);
+  EXPECT_EQ(weight, 2);
+  EXPECT_EQ(storage[0], 80);
+  ASSERT_EQ(obelisk_rt_v1_covergroup_get_string_option(
+                lane, handle, 20, OBELISK_RT_COVERGROUP_OPTION_COMMENT, &text),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  char scratch[8];
+  const char *bytes = nullptr;
+  uint64_t size = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_view(text, scratch, &bytes, &size),
+            OBELISK_RT_OK);
+  EXPECT_EQ(std::string(bytes, size), "Whole rhs snapshot");
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(lane, &textRoot),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+  obelisk_rt_managed_execution_leave(lane, entered);
   obelisk_rt_v1_context_destroy(context);
 }
 

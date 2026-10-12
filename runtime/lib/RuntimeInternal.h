@@ -9,6 +9,7 @@
 #include "DesignBytecodeImage.h"
 #include "ExceptionSupport.h"
 #include "StrengthFormat.h"
+#include "TimedUpdateQueue.h"
 #include "obelisk/Coverage/CoverageDatabase.h"
 #include "obelisk/Runtime/EvalNBAQueue.h"
 #include "obelisk/Runtime/ReadySet.h"
@@ -1980,6 +1981,12 @@ obelisk_rt_status
 obelisk_rt_covergroup_strobe_unlocked(obelisk_rt_context *context,
                                       uint64_t handle, bool &strobe);
 
+// Validate immutable ownership and the procedural mutability of an option
+// before capturing a deferred write. Exactly one of handle/typeID is nonzero.
+obelisk_rt_status obelisk_rt_covergroup_validate_option_reference(
+    obelisk_rt_context *context, uint64_t handle, uint64_t typeID,
+    uint64_t itemID, uint32_t option);
+
 /// Record a committed canonical state transition. The caller owns the context
 /// mutex. Covered aliases are intentionally represented by separate bindings.
 void obelisk_rt_coverage_record_transition_unlocked(
@@ -2237,7 +2244,9 @@ struct obelisk_rt_context {
   std::vector<uint64_t> nativeScheduleGeneratedNBAOffsets;
   bool nativeScheduleGeneratedBatchEligible = false;
   bool nativeScheduleHasGeneratedNBAAccumulators = false;
-  std::vector<ScheduledManagedNBA> scheduledManagedNBAs;
+  TimedUpdateQueue<ScheduledManagedNBA> scheduledManagedNBAs;
+  // Mixed barriers retain vector positions until one final compaction.
+  bool schedulerDrainingNBAQueues = false;
   std::vector<ScheduledDesignNBA> scheduledDesignNBAs;
   std::vector<ScheduledDesignEvent> scheduledDesignEvents;
   ScheduledPassSwitchEvents scheduledPassSwitchEvents;

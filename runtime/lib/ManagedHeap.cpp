@@ -3522,10 +3522,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
   if (referencePath) {
     if (planeSize > UINT64_MAX / 8)
       return OBELISK_RT_INVALID_ARGUMENT;
-    obelisk_rt_status shape = obelisk_rt_reference_path_shape(
-        destination, planeSize, planeSize * 8, unknown != nullptr, 0);
-    if (shape != OBELISK_RT_OK)
-      return shape;
   }
   const obelisk_rt_element_type_v1 *referenceElement = nullptr;
   if (referencePath) {
@@ -3533,6 +3529,14 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
         obelisk_rt_reference_path_element(destination, &referenceElement);
     if (elementStatus != OBELISK_RT_OK)
       return elementStatus;
+    bool managed =
+        referenceElement->kind == OBELISK_RT_ELEMENT_STRING ||
+        referenceElement->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
+        referenceElement->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
+    obelisk_rt_status shape = obelisk_rt_reference_path_shape(
+        destination, planeSize, planeSize * 8, unknown != nullptr, managed);
+    if (shape != OBELISK_RT_OK)
+      return shape;
   }
   const obelisk_rt_trace_layout_v1 *layout =
       referencePath ? referenceElement->trace

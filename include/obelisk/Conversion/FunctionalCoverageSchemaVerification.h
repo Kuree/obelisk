@@ -33,6 +33,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
             sim::SimCovergroupStopOp, sim::SimCovergroupSetIntegerOptionOp,
             sim::SimCovergroupGetIntegerOptionOp,
             sim::SimCovergroupSetStringOptionOp,
+            sim::SimCovergroupOptionReferenceOp,
+            sim::SimCovergroupTypeOptionReferenceOp,
             sim::SimCovergroupInstanceQueryOp, sim::SimCovergroupTypeQueryOp>(
             op);
   });
@@ -167,10 +169,11 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return ref.getElementType();
     return {};
   };
+  SymbolTableCollection symbolTables;
   auto declarationType = [&](Operation *op, sim::CovergroupHandleType handle) {
     auto reference = handle.getCovergroupName();
     auto declaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+        symbolTables.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
             op, reference);
     return declaration ? declaration.getSchemaType() : uint64_t{0};
   };
@@ -372,6 +375,23 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       uint64_t type = declarationType(set, set.getHandle().getType());
       if (failed(verifyQueryItem(set, type, set.getItem())))
         invalid = true;
+    } else if (auto path =
+                   dyn_cast<sim::SimCovergroupOptionReferenceOp>(operation)) {
+      uint64_t type = declarationType(path, path.getHandle().getType());
+      if (failed(verifyQueryItem(path, type, path.getItem())))
+        invalid = true;
+      else if (path.getOption() ==
+                   sim::CovergroupInstanceOptionKind::CrossNumPrintMissing &&
+               path.getItem() &&
+               items.find(path.getItem())->second->kind !=
+                   coverage::FunctionalItemKind::Cross) {
+        path.emitError("requires a covergroup or cross option owner");
+        invalid = true;
+      }
+    } else if (auto path = dyn_cast<sim::SimCovergroupTypeOptionReferenceOp>(
+                   operation)) {
+      if (failed(verifyQueryItem(path, path.getTypeId(), path.getItem())))
+        invalid = true;
     } else if (auto set = dyn_cast<sim::SimCovergroupSetTypeIntegerOptionOp>(
                    operation)) {
       if (failed(verifyQueryItem(set, set.getTypeId(), set.getItem())))
@@ -388,7 +408,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
     } else if (auto query =
                    dyn_cast<sim::SimCovergroupTypeQueryOp>(operation)) {
       auto declaration =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+          symbolTables.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
               query, query.getDeclarationAttr());
       uint64_t type = declaration ? declaration.getSchemaType() : uint64_t{0};
       if (failed(verifyQueryItem(query, type, query.getItem())))

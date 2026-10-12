@@ -43,6 +43,70 @@ thread_local obelisk_rt_context *lockedNativeAOTContext = nullptr;
 
 namespace {
 
+// Each vector tail is indexed once during a mixed barrier. Indexed leaves are
+// stable while callbacks append work; consumed slots are removed in one pass.
+// This also handles native updates transferred from a delayed path calendar,
+// whose sequence can precede the vector's last element.
+struct DueUpdateCursor {
+  using Index = obelisk::coverage::detail::IndexMap<uint64_t, size_t>;
+  Index ordered;
+  Index::iterator next = ordered.end();
+  std::vector<uint8_t> consumed;
+  size_t scanned = 0;
+
+  template <typename Update>
+  std::optional<size_t> peek(const std::vector<Update> &entries, uint64_t time,
+                             uint32_t region) {
+    consumed.resize(entries.size());
+    for (; scanned != entries.size(); ++scanned) {
+      const Update &entry = entries[scanned];
+      if (entry.dueTime <= time && entry.execRegion == region) {
+        auto inserted = ordered.emplace(entry.sequence, scanned).first;
+        if (next == ordered.end() || entry.sequence < next->first)
+          next = inserted;
+      }
+    }
+    if constexpr (std::is_same_v<Update, ScheduledNBA>)
+      while (next != ordered.end() && entries[next->second].cancelled)
+        ++next;
+    return next == ordered.end() ? std::nullopt
+                                 : std::optional<size_t>(next->second);
+  }
+  void consume() {
+    consumed[next->second] = 1;
+    ++next;
+  }
+  template <typename Update> void compact(std::vector<Update> &entries) {
+    size_t ordinal = 0;
+    entries.erase(std::remove_if(
+                      entries.begin(), entries.end(),
+                      [&](const Update &entry) {
+                        size_t current = ordinal++;
+                        if constexpr (std::is_same_v<Update, ScheduledNBA>)
+                          if (entry.cancelled && entry.retainedAutomaticID == 0)
+                            return true;
+                        return current < consumed.size() && consumed[current];
+                      }),
+                  entries.end());
+  }
+};
+
+struct MixedNBABarrierQueues {
+  obelisk_rt_context *context;
+  DueUpdateCursor native, design, events;
+  explicit MixedNBABarrierQueues(obelisk_rt_context *context)
+      : context(context) {
+    assert(!context->schedulerDrainingNBAQueues);
+    context->schedulerDrainingNBAQueues = true;
+  }
+  ~MixedNBABarrierQueues() {
+    native.compact(context->scheduledNBAs);
+    design.compact(context->scheduledDesignNBAs);
+    events.compact(context->scheduledDesignEvents);
+    context->schedulerDrainingNBAQueues = false;
+  }
+};
+
 constexpr uint64_t kProcessAllocationMagic = UINT64_C(0x4f42454c4652414d);
 
 struct ProcessAllocationMetadata {
@@ -667,8 +731,12 @@ bool obelisk_rt_current_time_queue_pending_unlocked(
                                 entry.execRegion < OBELISK_RT_REGION_POSTPONED;
                        });
   };
-  if (hasDueBeforeReadOnly(context->scheduledManagedNBAs) ||
-      hasDueBeforeReadOnly(context->scheduledDesignNBAs) ||
+  for (uint32_t region : {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+    if (const ScheduledManagedNBA *update =
+            context->scheduledManagedNBAs.front(region);
+        update && update->dueTime <= now)
+      return true;
+  if (hasDueBeforeReadOnly(context->scheduledDesignNBAs) ||
       hasDueBeforeReadOnly(context->scheduledDesignEvents))
     return true;
   if (const ReplaceableEventFeatureState *replaceable =
@@ -2754,7 +2822,12 @@ uint32_t nextDueNBABarrierRegionUnlocked(const obelisk_rt_context *context,
           context->schedulerTime)
     barrierRegion = std::min(barrierRegion,
                              static_cast<uint32_t>(OBELISK_RT_REGION_ACTIVE));
-  considerBarrier(context->scheduledManagedNBAs);
+  for (uint32_t region : {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+    if (const ScheduledManagedNBA *entry =
+            context->scheduledManagedNBAs.front(region);
+        entry && entry->dueTime <= context->schedulerTime &&
+        schedulerRegionEligible(context, region))
+      barrierRegion = std::min(barrierRegion, region);
   considerBarrier(context->scheduledDesignNBAs);
   considerBarrier(context->scheduledDesignEvents);
   if (const ReplaceableEventFeatureState *replaceable =
@@ -4634,6 +4707,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           }
         };
         auto currentPathUpdate = [&](const ScheduledNBA &update) {
+          if (update.cancelled)
+            return false;
           if (!update.inertialPathDriver)
             return true;
           if (update.inertialPathStrengthPair) {
@@ -4925,33 +5000,24 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             }
           }
           context->scheduledNBAs.resize(retained);
-        } else
+        } else {
+          MixedNBABarrierQueues queues(context);
           for (;;) {
             uint64_t nativeSequence = UINT64_MAX;
             size_t nativeIndex = 0;
-            for (size_t index = 0; index != context->scheduledNBAs.size();
-                 ++index) {
-              const ScheduledNBA &update = context->scheduledNBAs[index];
-              if (!update.cancelled &&
-                  update.dueTime <= context->schedulerTime &&
-                  update.execRegion == barrierRegion &&
-                  update.sequence < nativeSequence) {
-                nativeSequence = update.sequence;
-                nativeIndex = index;
-              }
+            if (auto index =
+                    queues.native.peek(context->scheduledNBAs,
+                                       context->schedulerTime, barrierRegion)) {
+              nativeIndex = *index;
+              nativeSequence = context->scheduledNBAs[*index].sequence;
             }
             uint64_t eventSequence = UINT64_MAX;
             size_t eventIndex = 0;
-            for (size_t index = 0;
-                 index != context->scheduledDesignEvents.size(); ++index) {
-              const ScheduledDesignEvent &event =
-                  context->scheduledDesignEvents[index];
-              if (event.dueTime <= context->schedulerTime &&
-                  event.execRegion == barrierRegion &&
-                  event.sequence < eventSequence) {
-                eventSequence = event.sequence;
-                eventIndex = index;
-              }
+            if (auto index =
+                    queues.events.peek(context->scheduledDesignEvents,
+                                       context->schedulerTime, barrierRegion)) {
+              eventIndex = *index;
+              eventSequence = context->scheduledDesignEvents[*index].sequence;
             }
             uint64_t replaceableSequence = UINT64_MAX;
             ReplaceableEventFeatureState *replaceable =
@@ -4979,30 +5045,17 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             }
             uint64_t designSequence = UINT64_MAX;
             size_t designIndex = 0;
-            for (size_t index = 0; index != context->scheduledDesignNBAs.size();
-                 ++index) {
-              const ScheduledDesignNBA &update =
-                  context->scheduledDesignNBAs[index];
-              if (update.dueTime <= context->schedulerTime &&
-                  update.execRegion == barrierRegion &&
-                  update.sequence < designSequence) {
-                designSequence = update.sequence;
-                designIndex = index;
-              }
+            if (auto index =
+                    queues.design.peek(context->scheduledDesignNBAs,
+                                       context->schedulerTime, barrierRegion)) {
+              designIndex = *index;
+              designSequence = context->scheduledDesignNBAs[*index].sequence;
             }
             uint64_t managedSequence = UINT64_MAX;
-            size_t managedIndex = 0;
-            for (size_t index = 0;
-                 index != context->scheduledManagedNBAs.size(); ++index) {
-              const ScheduledManagedNBA &update =
-                  context->scheduledManagedNBAs[index];
-              if (update.dueTime <= context->schedulerTime &&
-                  update.execRegion == barrierRegion &&
-                  update.sequence < managedSequence) {
-                managedSequence = update.sequence;
-                managedIndex = index;
-              }
-            }
+            if (const ScheduledManagedNBA *update =
+                    context->scheduledManagedNBAs.front(barrierRegion);
+                update && update->dueTime <= context->schedulerTime)
+              managedSequence = update->sequence;
             uint64_t pathSequence = UINT64_MAX;
             auto pathUpdate = context->scheduledInertialPathNBAs.end();
             if (barrierRegion == OBELISK_RT_REGION_ACTIVE &&
@@ -5061,8 +5114,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
                   context->nativeAutomaticStates.erase(found);
                 }
               }
-              context->scheduledNBAs.erase(context->scheduledNBAs.begin() +
-                                           nativeIndex);
+              queues.native.consume();
             } else if (sequence == pathSequence) {
               ScheduledNBA update = std::move(pathUpdate->second);
               context->scheduledInertialPathNBAs.erase(pathUpdate);
@@ -5080,10 +5132,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               if (context->schedulerStatus != OBELISK_RT_OK)
                 return context->schedulerStatus;
             } else if (sequence == managedSequence) {
-              obelisk_rt_status status = obelisk_rt_apply_managed_nba(
-                  context, context->scheduledManagedNBAs[managedIndex]);
-              context->scheduledManagedNBAs.erase(
-                  context->scheduledManagedNBAs.begin() + managedIndex);
+              ScheduledManagedNBA update =
+                  context->scheduledManagedNBAs.pop(barrierRegion);
+              obelisk_rt_status status =
+                  obelisk_rt_apply_managed_nba(context, update);
               if (status != OBELISK_RT_OK)
                 return status;
             } else if (sequence == passSequence) {
@@ -5124,8 +5176,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               uint32_t retainedAutomaticID =
                   context->scheduledDesignEvents[eventIndex]
                       .retainedAutomaticID;
-              context->scheduledDesignEvents.erase(
-                  context->scheduledDesignEvents.begin() + eventIndex);
+              queues.events.consume();
               EventState &event = context->events[stableID];
               if (++event.generation == 0)
                 event.generation = 1;
@@ -5174,10 +5225,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             } else {
               if (!applyDesign(context->scheduledDesignNBAs[designIndex]))
                 return OBELISK_RT_INVALID_HANDLE;
-              context->scheduledDesignNBAs.erase(
-                  context->scheduledDesignNBAs.begin() + designIndex);
+              queues.design.consume();
             }
           }
+        }
         if ((changed || eventTriggered) && ++context->schedulerEpoch == 0)
           context->schedulerEpoch = 1;
         if (context->schedulerSlotProgress == maxSlotProgress) {
@@ -5256,9 +5307,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             considerTime(update.dueTime);
         if (!context->scheduledInertialPathNBAs.empty())
           considerTime(context->scheduledInertialPathNBAs.begin()->first.first);
-        for (const ScheduledManagedNBA &update : context->scheduledManagedNBAs)
-          if (update.dueTime > context->schedulerTime)
-            considerTime(update.dueTime);
+        for (uint32_t region :
+             {OBELISK_RT_REGION_NBA, OBELISK_RT_REGION_RE_NBA})
+          if (const ScheduledManagedNBA *update =
+                  context->scheduledManagedNBAs.front(region))
+            considerTime(update->dueTime);
         for (const ScheduledDesignEvent &event : context->scheduledDesignEvents)
           if (event.dueTime > context->schedulerTime)
             considerTime(event.dueTime);
