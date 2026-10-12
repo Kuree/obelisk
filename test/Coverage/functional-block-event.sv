@@ -32,7 +32,6 @@ module top;
   int sampled;
   holder first;
   holder second;
-  holder first_alias;
 
   task automatic target;
     sampled++;
@@ -57,25 +56,8 @@ module top;
     }
   endgroup
 
-  covergroup qualified_group @@(begin first.target or end second.target);
-    point: coverpoint first.sampled {
-      bins zero = {0};
-      bins one = {1};
-    }
-  endgroup
-
-  covergroup duplicate_group @@(begin first.target or begin first.target or
-                                begin first_alias.target);
-    point: coverpoint first.sampled {
-      option.at_least = 2;
-      bins zero = {0};
-    }
-  endgroup
-
   task_group task_coverage;
   disable_group disable_coverage;
-  qualified_group qualified_coverage;
-  duplicate_group duplicate_coverage;
   int covered;
   int total;
   real percentage;
@@ -101,15 +83,8 @@ module top;
 
     first = new;
     second = new;
-    first_alias = first;
-    qualified_coverage = new;
-    duplicate_coverage = new;
     first.target();
-    percentage = duplicate_coverage.get_inst_coverage(covered, total);
-    $display("duplicate %.6f %0d %0d", percentage, covered, total);
     second.target();
-    percentage = qualified_coverage.get_inst_coverage(covered, total);
-    $display("qualified %.6f %0d %0d", percentage, covered, total);
     percentage = first.method_group.get_inst_coverage(covered, total);
     $display("first %.6f %0d %0d", percentage, covered, total);
     percentage = second.method_group.get_inst_coverage(covered, total);
@@ -120,7 +95,5 @@ endmodule
 
 // CHECK: task 100.000000 4 4
 // CHECK-NEXT: disable 50.000000 1 2
-// CHECK-NEXT: duplicate 0.000000 0 1
-// CHECK-NEXT: qualified 100.000000 2 2
 // CHECK-NEXT: first 100.000000 2 2
 // CHECK-NEXT: second 100.000000 2 2

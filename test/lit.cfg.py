@@ -32,16 +32,10 @@ config.excludes = [
 llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
 config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
+# The test driver lowers resource limits so tests can reach them with small
+# inputs (see test/Support/DriverTestMain.cpp).
 config.substitutions.append(
-    ("%protect-obelisk", config.obelisk_protect_test_executable)
-)
-# The same test driver lowers resource limits so tests can reach them with
-# small inputs (see test/Support/ProtectedEnvelopeTestMain.cpp).
-config.substitutions.append(
-    ("%test-obelisk", config.obelisk_protect_test_executable)
-)
-config.substitutions.append(
-    ("%protect-inline-wipe-test", config.obelisk_protect_inline_wipe_test_executable)
+    ("%test-obelisk", config.obelisk_test_driver_executable)
 )
 config.substitutions.append(
     ("%host-c-runtime-test", config.obelisk_host_c_runtime_test_executable)

@@ -13,7 +13,6 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -23,8 +22,6 @@ class MLIRContext;
 } // namespace mlir
 
 namespace obelisk::frontend {
-
-class ProtectedEnvelopeProvider;
 
 enum class MinTypMax : uint8_t {
   Min,
@@ -70,10 +67,6 @@ struct FrontendOptions {
   std::optional<std::string> timeScale;
   std::optional<uint32_t> numThreads;
   bool collectCoverageSourceFiles = false;
-  std::shared_ptr<const ProtectedEnvelopeProvider> protectedEnvelopeProvider;
-  uint32_t maxProtectedEnvelopeDepth = 64;
-  uint64_t maxProtectedEnvelopeBytes = 64 * 1024 * 1024;
-  uint32_t maxProtectedEnvelopeCount = 4096;
   SDFResourceLimits sdfLimits;
 };
 

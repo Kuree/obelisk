@@ -1,5 +1,8 @@
-// RUN: %protect-obelisk -I%S -emit-obelisk %s | obelisk-opt --verify-each | FileCheck %s --check-prefix=IR
-// RUN: %protect-obelisk -I%S -O0 %s -o %t
+// XFAIL: *
+// Upstream Slang v11.0 has no decryption or protected-source redaction API.
+// Keep this source case visible without downstream Slang patches.
+// RUN: %obelisk -I%S -emit-obelisk %s | obelisk-opt --verify-each | FileCheck %s --check-prefix=IR
+// RUN: %obelisk -I%S -O0 %s -o %t
 // RUN: %t | FileCheck %s --check-prefix=OUTPUT
 
 `pragma protect data_method="x-caesar", data_keyname="rot13"

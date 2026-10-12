@@ -1,3 +1,7 @@
+// XFAIL: *
+// IEEE 1800-2023 19.4.1 allows a derived cross to replace a base cross
+// with the same name. Slang v11.0 diagnoses this as a redefinition.
+
 // RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
 // RUN:   | FileCheck %s --check-prefix=IR
 // RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \

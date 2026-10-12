@@ -1045,10 +1045,6 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
           : obelisk::frontend::LanguageVersion::IEEE1800_2023;
   for (std::string argument : args.getAllArgValues(OPT_Xslang))
     options.slangArgs.push_back(std::move(argument));
-  options.protectedEnvelopeProvider = config.provider;
-  options.maxProtectedEnvelopeDepth = config.maxDepth;
-  options.maxProtectedEnvelopeBytes = config.maxBytes;
-  options.maxProtectedEnvelopeCount = config.maxCount;
   options.sdfLimits = config.sdfLimits;
   return options;
 }

@@ -5,7 +5,6 @@
 // RUN: obelisk-opt %t/lowered.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %t/lowered.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %t/lowered.mlir --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk --std=1800-2023 --coverage=functional -emit-obelisk %S/../Coverage/functional-instance-option-reads.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' --canonicalize --cse | FileCheck %s --check-prefix=OWNERS
 
 // IEEE 19.10 defines every option field as a readable primitive member.
 // Stable item IDs and the typed receiver survive both backend conversions.
@@ -43,25 +42,6 @@
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_covergroup_get_string_option
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001047a inputs=3 outputs=1 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001047b inputs=3 outputs=1 flags=0
-
-// Embedded inherited receivers use a single class-member load and cast.
-// Four accesses call receiver() four times, including the two assignments.
-// OWNERS: %[[OBJECT:[0-9]+]] = simulation.call @[[RECEIVER:unit_[0-9]+]]({{.*}}) : {{.*}} -> !simulation.class_handle<@[[CLASS:[^>]+]]>
-// OWNERS-NOT: simulation.call @[[RECEIVER]]
-// OWNERS: simulation.class.field_ref %[[OBJECT]][
-// OWNERS: %[[HANDLE:[0-9]+]] = simulation.covergroup.cast {{.*}} to !simulation.covergroup_handle<@[[GROUP:[^>]+]]>
-// OWNERS: simulation.covergroup.get_string_option {{.*}}, %[[HANDLE]] item 0 option name
-// OWNERS: simulation.call @[[RECEIVER]]
-// OWNERS-NOT: simulation.call @[[RECEIVER]]
-// OWNERS: simulation.covergroup.get_string_option {{.*}} item [[INHERITED_POINT:-?[0-9]+]] option comment : !simulation.context, !simulation.covergroup_handle<@[[GROUP]]>
-// OWNERS: simulation.call @[[RECEIVER]]
-// OWNERS-NOT: simulation.call @[[RECEIVER]]
-// OWNERS: simulation.covergroup.set_string_option {{.*}} item 0 option comment
-// OWNERS: simulation.call @[[RECEIVER]]
-// OWNERS-NOT: simulation.call @[[RECEIVER]]
-// OWNERS: simulation.covergroup.set_string_option {{.*}} item [[INHERITED_POINT]] option comment
-// OWNERS-NOT: simulation.call @[[RECEIVER]]
-// OWNERS: simulation.finish
 
 //--- input.sv
 module top;

@@ -171,17 +171,10 @@ if(OBELISK_INCLUDE_TESTS AND NOT EMSCRIPTEN)
 endif()
 
 if(OBELISK_INCLUDE_TESTS)
-  set_source_files_properties(
-    ${PROJECT_SOURCE_DIR}/test/Support/ProtectedEnvelopeTestProvider.cpp
-    PROPERTIES COMPILE_OPTIONS "-fexceptions")
-  add_llvm_executable(obelisk-protect-test EXCLUDE_FROM_ALL
+  add_llvm_executable(obelisk-test-driver EXCLUDE_FROM_ALL
     PARTIAL_SOURCES_INTENDED
-    ${PROJECT_SOURCE_DIR}/test/Support/ProtectedEnvelopeTestMain.cpp
-    ${PROJECT_SOURCE_DIR}/test/Support/ProtectedEnvelopeTestProvider.cpp
+    ${PROJECT_SOURCE_DIR}/test/Support/DriverTestMain.cpp
     ${OBELISK_DRIVER_COMMON_SOURCES}
   )
-  target_include_directories(obelisk-protect-test PRIVATE
-    ${PROJECT_SOURCE_DIR}/test/Support
-  )
-  obelisk_configure_driver(obelisk-protect-test)
+  obelisk_configure_driver(obelisk-test-driver)
 endif()

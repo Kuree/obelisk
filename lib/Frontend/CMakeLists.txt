@@ -1,7 +1,3 @@
-# Clause 34 providers are user callbacks and may throw. Keep exception cleanup
-# enabled in this boundary translation unit so cleartext RAII remains effective.
-set_source_files_properties(Frontend.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
-
 add_subdirectory(SourceTokens)
 
 add_mlir_library(ObeliskFrontend

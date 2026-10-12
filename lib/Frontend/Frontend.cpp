@@ -1,7 +1,6 @@
 //===- Frontend.cpp - slang semantic AST to Slang dialect importer -------===//
 
 #include "obelisk/Frontend/Frontend.h"
-#include "obelisk/Frontend/ProtectedEnvelope.h"
 
 #include "SDF.h"
 
@@ -34,7 +33,6 @@
 #include "slang/ast/types/TypePrinter.h"
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
-#include "slang/parsing/ProtectEnvelope.h"
 #include "slang/syntax/AllSyntax.h"
 #include "slang/util/OS.h"
 #include "slang/util/VersionInfo.h"
@@ -72,117 +70,6 @@ using CaseProd = RandSeqProductionSymbol::CaseProd;
 
 namespace obelisk::frontend {
 namespace {
-
-ProtectedEncoding mapProtectEncoding(slang::parsing::ProtectEncoding value) {
-  switch (value) {
-  case slang::parsing::ProtectEncoding::UUEncode:
-    return ProtectedEncoding::UUEncode;
-  case slang::parsing::ProtectEncoding::Base64:
-    return ProtectedEncoding::Base64;
-  case slang::parsing::ProtectEncoding::QuotedPrintable:
-    return ProtectedEncoding::QuotedPrintable;
-  case slang::parsing::ProtectEncoding::Raw:
-    return ProtectedEncoding::Raw;
-  }
-  llvm_unreachable("unknown Slang protected encoding");
-}
-
-ProtectedBlockKind mapProtectBlockKind(slang::parsing::ProtectBlockKind value) {
-  switch (value) {
-  case slang::parsing::ProtectBlockKind::Data:
-    return ProtectedBlockKind::Data;
-  case slang::parsing::ProtectBlockKind::Digest:
-    return ProtectedBlockKind::Digest;
-  case slang::parsing::ProtectBlockKind::Key:
-    return ProtectedBlockKind::Key;
-  case slang::parsing::ProtectBlockKind::DataPublicKey:
-    return ProtectedBlockKind::DataPublicKey;
-  case slang::parsing::ProtectBlockKind::DataDecryptKey:
-    return ProtectedBlockKind::DataDecryptKey;
-  case slang::parsing::ProtectBlockKind::DigestPublicKey:
-    return ProtectedBlockKind::DigestPublicKey;
-  case slang::parsing::ProtectBlockKind::DigestDecryptKey:
-    return ProtectedBlockKind::DigestDecryptKey;
-  case slang::parsing::ProtectBlockKind::KeyPublicKey:
-    return ProtectedBlockKind::KeyPublicKey;
-  }
-  llvm_unreachable("unknown Slang protected block kind");
-}
-
-slang::parsing::ProtectEnvelopeStatus
-mapProtectStatus(ProtectedEnvelopeStatus value) {
-  switch (value) {
-  case ProtectedEnvelopeStatus::Success:
-    return slang::parsing::ProtectEnvelopeStatus::Success;
-  case ProtectedEnvelopeStatus::ProviderUnavailable:
-    return slang::parsing::ProtectEnvelopeStatus::ProviderUnavailable;
-  case ProtectedEnvelopeStatus::Rejected:
-    return slang::parsing::ProtectEnvelopeStatus::Rejected;
-  case ProtectedEnvelopeStatus::InvalidData:
-    return slang::parsing::ProtectEnvelopeStatus::InvalidData;
-  case ProtectedEnvelopeStatus::ResourceLimit:
-    return slang::parsing::ProtectEnvelopeStatus::ResourceLimit;
-  }
-  llvm_unreachable("unknown protected-envelope status");
-}
-
-class SlangProtectEnvelopeAdapter final
-    : public slang::parsing::ProtectEnvelopeDecryptor {
-public:
-  explicit SlangProtectEnvelopeAdapter(
-      std::shared_ptr<const ProtectedEnvelopeProvider> provider)
-      : provider(std::move(provider)) {}
-
-  slang::parsing::ProtectEnvelopeResult
-  decrypt(const slang::parsing::ProtectEnvelope &input) const override {
-    SmallVector<ProtectedEnvelopeRecord> records;
-    records.reserve(input.records.size());
-    for (const slang::parsing::ProtectEnvelopeRecord &inputRecord :
-         input.records) {
-      ProtectedEnvelopeRecord record;
-      switch (inputRecord.recordKind) {
-      case slang::parsing::ProtectRecordKind::Expression:
-        record.recordKind = ProtectedRecordKind::Expression;
-        record.name = inputRecord.name;
-        record.value = inputRecord.value;
-        break;
-      case slang::parsing::ProtectRecordKind::EncodedBlock:
-        record.recordKind = ProtectedRecordKind::EncodedBlock;
-        record.name = inputRecord.name;
-        record.blockKind = mapProtectBlockKind(inputRecord.blockKind);
-        record.encoding = mapProtectEncoding(inputRecord.encoding);
-        record.expectedBytes = inputRecord.expectedBytes;
-        record.encodedText = inputRecord.encodedText;
-        break;
-      }
-      records.push_back(std::move(record));
-    }
-
-    ProtectedEnvelopeResult result = provider->decrypt({records});
-    slang::parsing::ProtectEnvelopeResult converted;
-    converted.status = mapProtectStatus(result.status);
-    // Allocate exactly once before copying Clause 34.3.2 plaintext so an
-    // internal SmallVector growth cannot abandon a decrypted allocation.
-    converted.source.reserve(result.source.size());
-    converted.source.append(result.source.begin(), result.source.end());
-    result.clear();
-    return converted;
-  }
-
-private:
-  std::shared_ptr<const ProtectedEnvelopeProvider> provider;
-};
-
-void installProtectedEnvelopeProvider(slang::driver::Driver &driver,
-                                      const FrontendOptions &options) {
-  driver.options.maxProtectEnvelopeDepth = options.maxProtectedEnvelopeDepth;
-  driver.options.maxProtectEnvelopeBytes = options.maxProtectedEnvelopeBytes;
-  driver.options.maxProtectEnvelopeCount = options.maxProtectedEnvelopeCount;
-  if (options.protectedEnvelopeProvider)
-    driver.options.protectEnvelopeDecryptor =
-        std::make_shared<SlangProtectEnvelopeAdapter>(
-            options.protectedEnvelopeProvider);
-}
 
 std::string formatReal(double value) {
   std::array<char, 64> buffer;
@@ -6259,6 +6146,10 @@ buildSlangArguments(ArrayRef<std::string> inputs,
        {"index-oob", "range-oob", "range-width-oob", "format-too-many-args"})
     result.emplace_back(("-Wno-error=" + warning).str());
   appendValues(result, "-W", options.warningOptions);
+  // Clause 34 decryption is outside the frontend's supported surface. Use
+  // Slang's ordinary diagnostic policy instead of silently skipping source,
+  // after the user's options so that no warning option can skip it either.
+  result.emplace_back("-Werror=protected-envelope");
   appendValues(result, "--suppress-warnings", options.suppressWarningsPaths);
 
   appendFlag(result, "--single-unit", options.singleUnit);
@@ -6330,7 +6221,6 @@ preprocessSystemVerilog(ArrayRef<std::string> inputFilenames,
         driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) &&
         driver.processOptions();
     if (succeeded) {
-      installProtectedEnvelopeProvider(driver, options);
       succeeded = driver.runPreprocessor(flags);
     }
     output = slang::OS::capturedStdout;
@@ -6359,7 +6249,6 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   if (!driver.parseCommandLine(static_cast<int>(argv.size()), argv.data()) ||
       !driver.processOptions())
     return failure();
-  installProtectedEnvelopeProvider(driver, options);
   if (!driver.parseAllSources())
     return failure();
 
