@@ -3074,6 +3074,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     bool candidate;
     bool runtimeInput;
   };
+  RandomArithmetic *arithmeticGraph = nullptr;
   llvm::DenseMap<Operation *, ExpressionDependencies> expressionDependencies;
   auto dependenciesForExpression = [&](Operation *expression) {
     SmallVector<std::pair<Operation *, bool>> worklist{{expression, false}};
@@ -3083,11 +3084,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         continue;
       if (!ready) {
         worklist.emplace_back(node, true);
-        for (Region &region : node->getRegions())
-          for (Block &block : region)
-            for (Operation &child : block)
-              if (!expressionDependencies.contains(&child))
-                worklist.emplace_back(&child, false);
+        if (arithmeticGraph && arithmeticGraph->isNode(node)) {
+          for (Operation *child : arithmeticGraph->operands(node))
+            if (!expressionDependencies.contains(child))
+              worklist.emplace_back(child, false);
+        } else {
+          for (Region &region : node->getRegions())
+            for (Block &block : region)
+              for (Operation &child : block)
+                if (!expressionDependencies.contains(&child))
+                  worklist.emplace_back(&child, false);
+        }
         continue;
       }
       ExpressionDependencies dependencies{
@@ -3099,14 +3106,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                   semantic::SVHierarchicalValueExpressionOp,
                   semantic::SVMemberAccessExpressionOp,
                   semantic::SVCallExpressionOp>(node)};
-      for (Region &region : node->getRegions())
-        for (Block &block : region)
-          for (Operation &child : block) {
-            auto nested = expressionDependencies.find(&child);
-            assert(nested != expressionDependencies.end());
-            dependencies.candidate |= nested->second.candidate;
-            dependencies.runtimeInput |= nested->second.runtimeInput;
-          }
+      auto addChild = [&](Operation *child) {
+        auto nested = expressionDependencies.find(child);
+        assert(nested != expressionDependencies.end());
+        dependencies.candidate |= nested->second.candidate;
+        dependencies.runtimeInput |= nested->second.runtimeInput;
+      };
+      if (arithmeticGraph && arithmeticGraph->isNode(node)) {
+        for (Operation *child : arithmeticGraph->operands(node))
+          addChild(child);
+      } else {
+        for (Region &region : node->getRegions())
+          for (Block &block : region)
+            for (Operation &child : block)
+              addChild(&child);
+      }
       expressionDependencies[node] = dependencies;
     }
     return expressionDependencies.lookup(expression);
@@ -3395,6 +3409,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return success();
   };
 
+  uint64_t programTemporaryCount = 0;
   llvm::DenseMap<Value, uint32_t> emittedTemplateValues;
   std::function<LogicalResult(Value)> emitTemplateNode;
   std::function<LogicalResult(Value)> emitTemplateValue;
@@ -3420,12 +3435,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     bool wideLiteral =
         width > 64 && isa<arith::ConstantOp>(value.getDefiningOp());
     if (!value.hasOneUse() && (computed || wideLiteral)) {
-      if (emittedTemplateValues.size() >= UINT32_MAX) {
+      if (programTemporaryCount >= UINT32_MAX) {
         emitError(value.getLoc())
             << "random constraint temporary limit exceeded";
         return failure();
       }
-      uint32_t slot = static_cast<uint32_t>(emittedTemplateValues.size());
+      uint32_t slot = static_cast<uint32_t>(programTemporaryCount++);
       emittedTemplateValues[value] = slot;
       instruction(OBELISK_RT_RANDOM_STORE_VALUE_V1, width, false, slot);
     }
@@ -3612,6 +3627,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   RandomArithmetic arithmetic(builder.getContext(), expressionWidth,
                               dependsOnCandidate, arithmeticBinding,
                               /*frozenVariables=*/!scopeRandomize);
+  arithmeticGraph = &arithmetic;
   bool arithmeticFailure = false;
   auto arithmeticValidity = [&](Operation *expression) -> Operation * {
     if (isa<semantic::SVDistExpressionOp>(expression))
@@ -3638,7 +3654,39 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       safeConstraintValue;
   std::function<FailureOr<Value>(Operation *)> constraintCreationValid;
   std::function<LogicalResult(Operation *)> emitProgramExpression;
+  std::function<LogicalResult(Operation *)> emitProgramNode;
+  llvm::DenseMap<Operation *, uint32_t> emittedArithmeticValues;
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
+    if (arithmeticFailure)
+      return failure();
+    if (auto found = emittedArithmeticValues.find(expression);
+        found != emittedArithmeticValues.end()) {
+      auto width = expressionWidth(expression);
+      if (failed(width))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_LOAD_VALUE_V1, *width, false,
+                  found->second);
+      return success();
+    }
+    if (failed(emitProgramNode(expression)))
+      return failure();
+    if (arithmetic.isNode(expression) && arithmetic.isShared(expression) &&
+        !expression->hasAttr(randomArithmeticPlaneAttr)) {
+      auto width = expressionWidth(expression);
+      if (failed(width))
+        return failure();
+      if (programTemporaryCount >= UINT32_MAX) {
+        emitError(getSemanticLocation(expression))
+            << "random constraint temporary limit exceeded";
+        return failure();
+      }
+      uint32_t slot = static_cast<uint32_t>(programTemporaryCount++);
+      emittedArithmeticValues[expression] = slot;
+      instruction(OBELISK_RT_RANDOM_STORE_VALUE_V1, *width, false, slot);
+    }
+    return success();
+  };
+  emitProgramNode = [&](Operation *expression) -> LogicalResult {
     if (arithmeticFailure)
       return failure();
     if (!isa<semantic::SVDistExpressionOp>(expression) &&
@@ -4531,7 +4579,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       literalInstruction(*width, isSignedNode(expression), parsed->value);
       return success();
     }
-    SmallVector<Operation *> nested = getChildren(expression);
+    SmallVector<Operation *> nested = arithmetic.operands(expression);
     if (isa<semantic::SVMinTypMaxExpressionOp>(expression)) {
       auto selected = expression->getAttrOfType<IntegerAttr>("selected_index");
       if (nested.size() != 3 || !selected || selected.getValue().isNegative() ||
@@ -4544,6 +4592,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return emitProgramExpression(nested[selected.getValue().getZExtValue()]);
     }
     auto captureExpression = [&]() -> LogicalResult {
+      // Consult the bank before lowering the source. In particular, a shared
+      // frozen-plane projection must not rematerialize its address, snapshot
+      // and active-bit mask once for every graph edge that reads the capture.
+      Operation *key = arithmetic.canonical(expression);
+      if (auto found = programExpressionCaptures.find(key);
+          found != programExpressionCaptures.end()) {
+        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
+                    isSignedNode(expression), found->second);
+        return success();
+      }
       FailureOr<SafeConstraintValue> safe = safeConstraintValue(expression);
       FailureOr<Value> value = succeeded(safe) ? FailureOr<Value>(safe->value)
                                                : FailureOr<Value>(failure());
@@ -4564,13 +4622,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // originates in an active property. Repeated projections of the same
       // immutable state value must reuse one program input, rather than grow
       // the native capture buffer for every copied expression occurrence.
-      Operation *key = arithmetic.canonical(expression);
-      if (auto found = programExpressionCaptures.find(key);
-          found != programExpressionCaptures.end()) {
-        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
-                    isSignedNode(expression), found->second);
-        return success();
-      }
       // Preserve the scalar runtime ABI for captures that fit in one word.
       // Wider v2 captures retain their source width for compile-time-assisted
       // materialization (and for the wide runtime ABI added separately).
@@ -5531,6 +5582,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   llvm::DenseMap<Operation *, SafeConstraintValue> safeStateValues;
   llvm::DenseMap<Operation *, SafeConstraintValue> safeRawStateValues;
+  llvm::DenseMap<Operation *, SafeConstraintValue> safeArithmeticValues;
+  llvm::DenseMap<Operation *, SafeConstraintValue> safeRawArithmeticValues;
+  unsigned safeEvaluationDepth = 0;
   bool freezeSafeStateValues = true;
   bool preserveArithmeticSource = false;
   llvm::SmallDenseSet<Value> nonNullReceivers;
@@ -5541,8 +5595,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   safeConstraintValue =
       [&](Operation *expression) -> FailureOr<SafeConstraintValue> {
+    // Every recursive evaluation appends straight-line values and guarded
+    // reads followed by their merge blocks. Shared plane values therefore
+    // dominate later uses in this evaluation. Start a fresh bank for the next
+    // root: candidate bindings and enclosing control flow may have changed.
+    if (safeEvaluationDepth++ == 0) {
+      safeArithmeticValues.clear();
+      safeRawArithmeticValues.clear();
+    }
+    auto finishEvaluation = llvm::scope_exit([&] { --safeEvaluationDepth; });
+    bool graphNode = arithmetic.isNode(expression);
+    auto &graphValues = preserveArithmeticSource ? safeRawArithmeticValues
+                                                 : safeArithmeticValues;
+    if (graphNode)
+      if (auto found = graphValues.find(expression); found != graphValues.end())
+        return found->second;
     bool candidate = dependsOnCandidate(expression);
-    // Plane construction copies immutable source expressions. Reuse their
+    // Plane construction retains immutable source expressions. Reuse their
     // pre-solve captures by structural identity, including beneath a case or
     // wildcard comparison that needs the original X/Z symbols. Keep those
     // raw captures separate from normalized arithmetic values.
@@ -5556,7 +5625,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FailureOr<Type> resultType = getNormalizedSemanticType(expression);
     if (failed(resultType))
       return failure();
-    SmallVector<Operation *> operands = getChildren(expression);
+    SmallVector<Operation *> operands = arithmetic.operands(expression);
     if (auto plane =
             expression->getAttrOfType<IntegerAttr>(randomArithmeticPlaneAttr)) {
       if (operands.size() != 1 || plane.getInt() < 0 ||
@@ -5673,6 +5742,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                input->dynamicInputs};
       if (stateKey && freezeSafeStateValues)
         stateValues[stateKey] = safe;
+      if (graphNode)
+        graphValues[expression] = safe;
       return safe;
     }
     SmallVector<Operation *> inputs;
@@ -5737,15 +5808,24 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // unknown data values. Their structural evaluation must still succeed.
       valid = guardAnd(values.front().valid, errors);
     }
-    APInt inputMask = priorityInputs(expression);
+    APInt inputMask = graphNode ? APInt::getZero(assignmentWidth)
+                                : priorityInputs(expression);
     Value guardInputs = constantAssignment(inputMask);
     Value guardArguments =
-        constantAssignment(sourceFunctionArguments(expression));
+        graphNode ? constantAssignment64(0)
+                  : constantAssignment(sourceFunctionArguments(expression));
     bool dynamicInputs = false;
-    if (llvm::any_of(values,
-                     [](const auto &value) { return value.dynamicInputs; }) &&
-        !expression->hasAttr(randomVariableAttrName) &&
-        !expression->hasAttr(randomVariableBitOffsetAttrName)) {
+    if (graphNode) {
+      for (const SafeConstraintValue &value : values) {
+        guardInputs = unionGuardInputs(guardInputs, value.inputs);
+        guardArguments = unionGuardInputs(guardArguments, value.arguments);
+        dynamicInputs |= value.dynamicInputs;
+      }
+    } else if (llvm::any_of(
+                   values,
+                   [](const auto &value) { return value.dynamicInputs; }) &&
+               !expression->hasAttr(randomVariableAttrName) &&
+               !expression->hasAttr(randomVariableBitOffsetAttrName)) {
       dynamicInputs = true;
       APInt remainingInputs = inputMask;
       APInt remainingArguments = sourceFunctionArguments(expression);
@@ -6108,7 +6188,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                     guardOr(*baseNonzero, guardNot(negative))));
       }
       SmallVector<std::pair<Operation *, Value>> previous;
-      for (auto [input, value] : llvm::zip_equal(inputs, values)) {
+      auto captureOperands = graphNode ? getChildren(expression) : inputs;
+      for (auto [input, value] : llvm::zip_equal(captureOperands, values)) {
         previous.push_back({input, expressionCaptures.lookup(input)});
         expressionCaptures[input] = value.value;
       }
@@ -6207,6 +6288,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              guardArguments, errors, dynamicInputs};
     if (stateKey && freezeSafeStateValues)
       stateValues[stateKey] = safe;
+    if (graphNode)
+      graphValues[expression] = safe;
     return safe;
   };
   constraintCreationValid = [&](Operation *constraint) -> FailureOr<Value> {

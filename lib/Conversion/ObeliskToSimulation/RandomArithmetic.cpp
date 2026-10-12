@@ -26,6 +26,8 @@ struct RandomArithmetic::Impl {
   // module, including layouts of unpacked values beneath a packed selection.
   OwningOpRef<ModuleOp> expressions;
   SmallVector<Operation *> nodes;
+  llvm::DenseMap<Operation *, SmallVector<Operation *>> edges;
+  llvm::DenseMap<Operation *, unsigned> uses;
   llvm::DenseMap<Operation *, bool> needs;
   llvm::DenseMap<Operation *, RandomArithmeticPlanes> planes;
   llvm::DenseMap<Operation *, Operation *> knownPredicates;
@@ -45,6 +47,12 @@ struct RandomArithmetic::Impl {
   SmallVector<std::unique_ptr<CanonicalExpression>> canonicalNodes;
   llvm::DenseMap<Operation *, Operation *> canonicalValues;
 
+  SmallVector<Operation *> operands(Operation *expression) {
+    if (auto found = edges.find(expression); found != edges.end())
+      return found->second;
+    return getChildren(expression);
+  }
+
   Operation *canonical(Operation *expression) {
     if (auto found = canonicalValues.find(expression);
         found != canonicalValues.end())
@@ -52,7 +60,7 @@ struct RandomArithmetic::Impl {
     auto node = std::make_unique<CanonicalExpression>();
     node->expression = expression;
     node->attributes = expression->getAttrDictionary();
-    for (Operation *child : getChildren(expression))
+    for (Operation *child : operands(expression))
       node->children.push_back(canonical(child));
     llvm::FoldingSetNodeID id;
     node->Profile(id);
@@ -102,6 +110,31 @@ struct RandomArithmetic::Impl {
                                        isSigned, false, precision - 1, 0,
                                        semantic::SVIntegralFlavor::Bit);
   }
+  void bindOperands(Operation *node, ArrayRef<Operation *> operands) {
+    assert(node->getNumRegions() == 1 && node->getRegion(0).empty());
+    auto *block = new Block();
+    node->getRegion(0).push_back(block);
+    edges[node].append(operands.begin(), operands.end());
+    // The semantic lowerer consumes a region's children, rather than SSA
+    // operands. Use capture-only formal operands in that region and retain
+    // the real edges separately. Cloning an operand here would expand the
+    // value/X/Z DAG into an exponentially large expression tree.
+    for (Operation *operand : operands) {
+      OperationState state(operand->getLoc(),
+                           UnrealizedConversionCastOp::getOperationName());
+      state.addAttribute("node_id", operand->getAttr("node_id"));
+      state.addAttribute("semantic_type", operand->getAttr("semantic_type"));
+      state.addAttribute("is_signed", builder.getBoolAttr(sign(operand)));
+      state.addAttribute(randomArithmeticOperandAttr, builder.getUnitAttr());
+      // Replication and other structural lowerers inspect the spelling of a
+      // constant operand before reading its captured SSA value.
+      if (auto spelling = getConstantSpelling(operand))
+        state.addAttribute("simulation.constant_value",
+                           builder.getStringAttr(*spelling));
+      block->push_back(Operation::create(state));
+      ++uses[operand];
+    }
+  }
   Operation *make(Operation *source, StringRef name, unsigned precision,
                   bool isSigned, ArrayRef<NamedAttribute> attributes,
                   ArrayRef<Operation *> operands) {
@@ -114,11 +147,9 @@ struct RandomArithmetic::Impl {
       state.addAttribute(randomFunctionExpressionAttrName,
                          builder.getUnitAttr());
     state.addAttributes(attributes);
-    auto *region = state.addRegion();
-    region->push_back(new Block());
-    for (Operation *operand : operands)
-      region->front().push_back(operand->clone());
+    state.addRegion();
     Operation *node = Operation::create(state);
+    bindOperands(node, operands);
     if (auto module = source->getParentOfType<ModuleOp>())
       if (auto layout = module->getAttr("llvm.data_layout"))
         expressions->getOperation()->setAttr("llvm.data_layout", layout);
@@ -161,7 +192,7 @@ struct RandomArithmetic::Impl {
     if (failed(precision))
       return std::nullopt;
     if (!spelling) {
-      auto children = getChildren(expression);
+      auto children = operands(expression);
       if (isa<semantic::SVConversionExpressionOp>(expression) &&
           children.size() == 1) {
         auto bits = constant(children.front());
@@ -317,7 +348,7 @@ struct RandomArithmetic::Impl {
   }
   Operation *integralCall(Operation *source, StringRef name, Operation *input,
                           unsigned precision, bool isSigned = false) {
-    Operation *node = source->clone();
+    Operation *node = source->cloneWithoutRegions();
     expressions->getBody()->push_back(node);
     nodes.push_back(node);
     node->setAttr(randomArithmeticNodeAttr, builder.getUnitAttr());
@@ -325,8 +356,7 @@ struct RandomArithmetic::Impl {
     node->setAttr("callee_name", builder.getStringAttr(name));
     node->setAttr("argument_count", builder.getI64IntegerAttr(1));
     node->setAttr("defaulted_arguments", builder.getDenseI64ArrayAttr({0}));
-    node->getRegion(0).front().clear();
-    node->getRegion(0).front().push_back(input->clone());
+    bindOperands(node, {input});
     return node;
   }
   bool needed(Operation *expression) {
@@ -1464,6 +1494,15 @@ RandomArithmetic::RandomArithmetic(MLIRContext *context, Width width,
 RandomArithmetic::~RandomArithmetic() = default;
 Operation *RandomArithmetic::canonical(Operation *expression) {
   return impl->canonical(expression);
+}
+SmallVector<Operation *> RandomArithmetic::operands(Operation *expression) {
+  return impl->operands(expression);
+}
+bool RandomArithmetic::isNode(Operation *expression) const {
+  return impl->edges.contains(expression);
+}
+bool RandomArithmetic::isShared(Operation *expression) const {
+  return impl->uses.lookup(expression) > 1;
 }
 bool RandomArithmetic::needed(Operation *expression) {
   return impl->needed(expression);

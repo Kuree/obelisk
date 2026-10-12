@@ -202,7 +202,8 @@
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
         ]
       }
     },
@@ -380,7 +381,7 @@
         {
           "feature": "Hard boolean expression constraints",
           "status": "supported",
-          "detail": "Total packed expressions, arithmetic, bitwise operators, inside, concatenation, constant replication, and conditional expressions are compiled to MLIR and solver programs. Fixed unpacked inside-set arrays descend to integral leaf selections before compiler Z3 planning, preserving multidimensional declaration coordinates and candidate relations. Reusable pure template graphs preserve shared intermediates and wide literals through both compiler Z3 decoders, with instruction generation proportional to graph nodes and uses. Immutable value slots preserve exact widths and hard/soft boundaries in scalar and wide target interpreters; each candidate refreshes its slots."
+          "detail": "Total packed expressions, arithmetic, bitwise operators, inside, concatenation, constant replication, and conditional expressions are compiled to MLIR and solver programs. Fixed unpacked inside-set arrays descend to integral leaf selections before compiler Z3 planning, preserving multidimensional declaration coordinates and candidate relations. Reusable pure template graphs preserve shared intermediates and wide literals through both compiler Z3 decoders, with instruction generation proportional to graph nodes and uses. Immutable value slots preserve exact widths and hard/soft boundaries in scalar and wide target interpreters; each candidate refreshes its slots. Compiler value/X/Z plane construction retains shared operands instead of cloning expression trees. Candidate checks bind shallow lowering templates and reuse each plane node within one evaluation; fresh evaluation banks preserve candidate bindings and control-flow dominance. A 96-element four-state membership set emits 2794 instructions and agrees with native and bytecode semantics across frozen symbols, mode changes, consuming casts, wildcard absorption and inverse solving."
         },
         {
           "feature": "Division, exponentiation, and system calls",
@@ -475,7 +476,8 @@
           "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
           "test/Runtime/simulation-random-shared-template-runtime.mlir",
           "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
-          "test/Runtime/random-program-temporaries-validation.mlir"
+          "test/Runtime/random-program-temporaries-validation.mlir",
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
         ]
       }
     },
@@ -1245,7 +1247,8 @@
           "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
         ]
       }
     },
@@ -1620,7 +1623,8 @@
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
           "test/Runtime/simulation-random-shared-template-runtime.mlir",
           "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
-          "test/Runtime/random-program-temporaries-validation.mlir"
+          "test/Runtime/random-program-temporaries-validation.mlir",
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir"
         ]
       }
     },

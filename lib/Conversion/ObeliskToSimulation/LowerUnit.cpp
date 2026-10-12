@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "LowerUnit.h"
+#include "RandomArithmetic.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/OutputItemFlags.h"
@@ -2650,6 +2651,11 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (!lvalue) {
     if (Value captured = expressionCaptures.lookup(op))
       return captured;
+    if (op->hasAttr(randomArithmeticOperandAttr)) {
+      emitError(op->getLoc())
+          << "random arithmetic formal operand was not bound before lowering";
+      return failure();
+    }
     if (auto count =
             op->getAttrOfType<IntegerAttr>(randomEvaluationInputsAttrName)) {
       // Constraint creation has already evaluated the retained input

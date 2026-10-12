@@ -16,6 +16,8 @@ inline constexpr llvm::StringLiteral randomArithmeticNodeAttr =
     "simulation.random_arithmetic_node";
 inline constexpr llvm::StringLiteral randomArithmeticPlaneAttr =
     "simulation.random_arithmetic_plane";
+inline constexpr llvm::StringLiteral randomArithmeticOperandAttr =
+    "simulation.random_arithmetic_operand";
 
 enum class RandomArithmeticPlane : int32_t {
   Value,
@@ -25,9 +27,10 @@ enum class RandomArithmeticPlane : int32_t {
   FrozenHighImpedance,
 };
 
-/// Compiler-only, two-state expressions for IEEE integral arithmetic. A null
-/// unknown plane means every bit is known. Unknown value bits are canonical
-/// zero, so a two-state cast can consume them without a target-side solver.
+/// Compiler-only, two-state expression graphs for IEEE integral arithmetic. A
+/// null unknown plane means every bit is known. Unknown value bits are
+/// canonical zero, so a two-state cast can consume them without a target-side
+/// solver.
 struct RandomArithmeticPlanes {
   mlir::Operation *value;
   mlir::Operation *unknown;
@@ -47,7 +50,13 @@ public:
   ~RandomArithmetic();
 
   bool needed(mlir::Operation *expression);
-  /// Intern immutable expression trees without rewalking shared subtrees.
+  /// The generated operations are shallow lowering templates. Their region
+  /// contains formal operands; the actual graph edges are returned here and
+  /// must be bound before calling ordinary semantic expression lowering.
+  llvm::SmallVector<mlir::Operation *> operands(mlir::Operation *expression);
+  bool isNode(mlir::Operation *expression) const;
+  bool isShared(mlir::Operation *expression) const;
+  /// Intern immutable expression graphs without rewalking shared subgraphs.
   /// Safe captures can reuse a value across copies of the same expression.
   mlir::Operation *canonical(mlir::Operation *expression);
   mlir::FailureOr<RandomArithmeticPlanes> get(mlir::Operation *expression);
