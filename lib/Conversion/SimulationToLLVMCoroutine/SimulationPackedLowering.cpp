@@ -1015,6 +1015,9 @@ LogicalResult lowerPackedSimulationOperations(
         function->removeAttr(nativeTwoStateBlockUnknownsAttr);
       });
   NativeStateLayout cleanEvalLayout = makeCleanEvalStateLayout(stateLayout);
+  auto classLowering = collectNativeClassLowering(module);
+  if (failed(classLowering))
+    return failure();
   auto populatePackedPatterns = [&](SimulationToStandardTypeConverter &c,
                                     RewritePatternSet &patterns,
                                     bool cleanEval = false,
@@ -1043,8 +1046,8 @@ LogicalResult lowerPackedSimulationOperations(
         experimentalTwoState, stateAccesses, locals);
     populateOverrideToLLVMConversionPatterns(patterns, c, stateLayout.bitCount,
                                              dataLayout);
-    populateManagedToLLVMConversionPatterns(patterns, c, dataLayout,
-                                            stateLayout.bitCount);
+    populateManagedToLLVMConversionPatterns(
+        patterns, c, dataLayout, stateLayout.bitCount, *classLowering);
     populateDriverToLLVMConversionPatterns(patterns, c, selectedLayout);
     populateNBAToLLVMConversionPatterns(
         patterns, c, stateLayout.bitCount, staticNBAPlan, &selectedLayout,

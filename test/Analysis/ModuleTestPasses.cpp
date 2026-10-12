@@ -453,8 +453,8 @@ public:
 
 /// Replaces each operation carrying `test.replicate = N` with N copies in
 /// place. Copy k replaces `#` with k in every string and symbol name inside
-/// it, so the copies of a symbol and of its references stay distinct and
-/// consistent, and adds k times each stride of a `test.replicate_stride`
+/// it, including those in types such as class handles, so the copies of a
+/// symbol and of its references stay distinct and consistent, and adds k times each stride of a `test.replicate_stride`
 /// dictionary to the integer attribute of that name on the same operation or
 /// on its function arguments. Copy k uses copy k of an earlier operation
 /// replicated as many times, as an unrolled loop body would. An optional
@@ -574,7 +574,7 @@ private:
     });
     replacer.recursivelyReplaceElementsIn(copy, /*replaceAttrs=*/true,
                                           /*replaceLocs=*/false,
-                                          /*replaceTypes=*/false);
+                                          /*replaceTypes=*/true);
     return success();
   }
 };

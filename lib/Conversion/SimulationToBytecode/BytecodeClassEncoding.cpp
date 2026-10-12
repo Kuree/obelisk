@@ -28,11 +28,12 @@ LogicalResult Encoder::prepareClassLayouts() {
   for (sim::SimClassMethodDeclOp method :
        design.getBody().front().getOps<sim::SimClassMethodDeclOp>()) {
     auto owner = classIDs.find(method.getOwner());
-    sim::SimClassDeclOp ownerDeclaration =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-            method, method.getOwnerAttr());
-    if (owner == classIDs.end() || !ownerDeclaration)
+    // The shared layout already indexes every class. A fresh symbol lookup
+    // here would scan the whole design for every method declaration.
+    const auto *ownerLayout = layouts->lookup(method.getOwner());
+    if (owner == classIDs.end() || !ownerLayout)
       return method.emitOpError("managed method owner is missing");
+    sim::SimClassDeclOp ownerDeclaration = ownerLayout->declaration;
     classMethodDispatch[method.getSymName()] = {
         owner->second, method.getInterfaceOrdinal().value_or(UINT64_MAX),
         ownerDeclaration.getIsInterface()};

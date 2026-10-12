@@ -316,25 +316,28 @@ public:
 class ClassFieldRefConversion final
     : public OpConversionPattern<sim::SimClassFieldRefOp> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  ClassFieldRefConversion(const TypeConverter &converter, MLIRContext *context,
+                          const NativeClassLowering &classes)
+      : OpConversionPattern(converter, context), classes(classes) {}
   LogicalResult
   matchAndRewrite(sim::SimClassFieldRefOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getObject().size() != 1)
       return failure();
-    auto field = SymbolTable::lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
-        op, op.getFieldAttr());
-    if (!field || !field.getOffset())
+    auto field = classes.fieldOffsets.find(op);
+    if (field == classes.fieldOffsets.end())
       return op.emitError("managed class field has no native offset");
     SmallVector<Value> values{
         adaptor.getObject().front(),
-        arith::ConstantOp::create(
-            rewriter, op.getLoc(), rewriter.getI64Type(),
-            rewriter.getI64IntegerAttr(*field.getOffset()))};
+        arith::ConstantOp::create(rewriter, op.getLoc(), rewriter.getI64Type(),
+                                  rewriter.getI64IntegerAttr(field->second))};
     SmallVector<ValueRange> replacements{ValueRange(values)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();
   }
+
+private:
+  const NativeClassLowering &classes;
 };
 
 class ManagedWatchConversion final
@@ -532,8 +535,10 @@ class ClassVirtualCallConversion final
 public:
   ClassVirtualCallConversion(const TypeConverter &converter,
                              MLIRContext *context,
-                             const llvm::DataLayout &dataLayout)
-      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+                             const llvm::DataLayout &dataLayout,
+                             const NativeClassLowering &classes)
+      : OpConversionPattern(converter, context), dataLayout(dataLayout),
+        classes(classes) {}
 
   LogicalResult
   matchAndRewrite(sim::SimClassVirtualCallOp op, OneToNOpAdaptor adaptor,
@@ -624,23 +629,16 @@ public:
         lane, managedObjectPointer(rewriter, op.getLoc(),
                                    adaptor.getReceiver().front())};
     StringRef invokeName = "obelisk_rt_v1_method_invoke";
-    auto method =
-        SymbolTable::lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
-            op, op.getMethodAttr());
-    auto owner =
-        method ? SymbolTable::lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-                     method, method.getOwnerAttr())
-               : sim::SimClassDeclOp{};
-    if (!method || !owner)
+    auto dispatch = classes.dispatches.find(op);
+    if (dispatch == classes.dispatches.end())
       return op.emitError("virtual method descriptor is missing");
-    if (owner.getIsInterface()) {
-      if (!method.getInterfaceOrdinalAttr())
-        return op.emitError("interface method has no dispatch ordinal");
+    const auto &target = dispatch->second;
+    if (target.isInterface) {
       invokeName = "obelisk_rt_v1_interface_method_invoke";
       invokeArguments.push_back(
-          llvmConstant(rewriter, op.getLoc(), i64, owner.getId()));
-      invokeArguments.push_back(llvmConstant(rewriter, op.getLoc(), i64,
-                                             *method.getInterfaceOrdinal()));
+          llvmConstant(rewriter, op.getLoc(), i64, target.ownerID));
+      invokeArguments.push_back(
+          llvmConstant(rewriter, op.getLoc(), i64, target.interfaceOrdinal));
     } else {
       invokeArguments.push_back(
           llvmConstant(rewriter, op.getLoc(), i64, op.getSlot()));
@@ -681,9 +679,49 @@ public:
 
 private:
   const llvm::DataLayout &dataLayout;
+  const NativeClassLowering &classes;
 };
 
 } // namespace
+
+FailureOr<NativeClassLowering> collectNativeClassLowering(ModuleOp module) {
+  NativeClassLowering classes;
+  SymbolTableCollection symbols;
+  WalkResult result = module.walk([&](Operation *operation) -> WalkResult {
+    if (auto op = dyn_cast<sim::SimClassFieldRefOp>(operation)) {
+      auto field = symbols.lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+          op, op.getFieldAttr());
+      if (!field || !field.getOffset()) {
+        op.emitError("managed class field has no native offset");
+        return WalkResult::interrupt();
+      }
+      classes.fieldOffsets.try_emplace(op, *field.getOffset());
+    } else if (auto op = dyn_cast<sim::SimClassVirtualCallOp>(operation)) {
+      auto method = symbols.lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(
+          op, op.getMethodAttr());
+      auto owner = method
+                       ? symbols.lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                             method, method.getOwnerAttr())
+                       : sim::SimClassDeclOp{};
+      if (!method || !owner) {
+        op.emitError("virtual method descriptor is missing");
+        return WalkResult::interrupt();
+      }
+      if (owner.getIsInterface() && !method.getInterfaceOrdinalAttr()) {
+        op.emitError("interface method has no dispatch ordinal");
+        return WalkResult::interrupt();
+      }
+      classes.dispatches.try_emplace(
+          op, NativeClassLowering::Dispatch{
+                  owner.getId(), method.getInterfaceOrdinal().value_or(0),
+                  owner.getIsInterface()});
+    }
+    return WalkResult::advance();
+  });
+  if (result.wasInterrupted())
+    return failure();
+  return classes;
+}
 
 LogicalResult
 materializeManagedMethodThunks(ModuleOp module,
@@ -919,22 +957,22 @@ materializeManagedMethodThunks(ModuleOp module,
   return success();
 }
 
-void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
-                                             TypeConverter &converter,
-                                             const llvm::DataLayout &dataLayout,
-                                             uint64_t stateBitCount) {
+void populateManagedToLLVMConversionPatterns(
+    RewritePatternSet &patterns, TypeConverter &converter,
+    const llvm::DataLayout &dataLayout, uint64_t stateBitCount,
+    const NativeClassLowering &classes) {
   MLIRContext *context = patterns.getContext();
-  patterns.add<ClassNullConversion, ManagedNullConversion,
-               ManagedIdentityEqualConversion<sim::SimSemaphoreEqualOp>,
-               ManagedIdentityEqualConversion<sim::SimMailboxEqualOp>,
-               ManagedWatchNullConversion, ManagedIsNullConversion,
-               EventNullConversion, ClassAllocConversion, ClassCopyConversion,
-               ClassIsInstanceConversion, ClassIdConversion,
-               ClassCastConversion, ClassFieldRefConversion,
-               ManagedWatchConversion, ClassRootBindConversion,
-               ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
-               ManagedObjectOutputConversion<sim::SimWeakGetOp>,
-               WeakClearConversion, GCSafepointConversion>(converter, context);
+  patterns
+      .add<ClassNullConversion, ManagedNullConversion,
+           ManagedIdentityEqualConversion<sim::SimSemaphoreEqualOp>,
+           ManagedIdentityEqualConversion<sim::SimMailboxEqualOp>,
+           ManagedWatchNullConversion, ManagedIsNullConversion,
+           EventNullConversion, ClassAllocConversion, ClassCopyConversion,
+           ClassIsInstanceConversion, ClassIdConversion, ClassCastConversion,
+           ManagedWatchConversion, ClassRootBindConversion,
+           ManagedObjectOutputConversion<sim::SimWeakCreateOp>,
+           ManagedObjectOutputConversion<sim::SimWeakGetOp>,
+           WeakClearConversion, GCSafepointConversion>(converter, context);
   populateManagedContainerToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout);
   populateManagedCoverageToLLVMConversionPatterns(patterns, converter,
@@ -942,7 +980,9 @@ void populateManagedToLLVMConversionPatterns(RewritePatternSet &patterns,
   populateManagedReferenceToLLVMConversionPatterns(patterns, converter,
                                                    dataLayout, stateBitCount);
   populateManagedStringToLLVMConversionPatterns(patterns, converter);
-  patterns.add<ClassVirtualCallConversion>(converter, context, dataLayout);
+  patterns.add<ClassFieldRefConversion>(converter, context, classes);
+  patterns.add<ClassVirtualCallConversion>(converter, context, dataLayout,
+                                           classes);
 }
 
 } // namespace obelisk::detail

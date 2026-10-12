@@ -1733,11 +1733,14 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
     }
   }
   SmallVector<sim::SimCallOp> observerCalls;
-  module.walk([&](sim::SimCallOp call) {
-    if (SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
-            call, call.getCalleeAttr()))
-      observerCalls.push_back(call);
-  });
+  {
+    SymbolTableCollection callSymbols;
+    module.walk([&](sim::SimCallOp call) {
+      if (callSymbols.lookupNearestSymbolFrom<func::FuncOp>(
+              call, call.getCalleeAttr()))
+        observerCalls.push_back(call);
+    });
+  }
   for (auto call : observerCalls) {
     OpBuilder builder(call);
     SmallVector<Value> arguments;
@@ -1756,23 +1759,33 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
     call.replaceAllUsesWith(native.getResults());
     call.erase();
   }
-  SmallVector<sim::SimClassMethodDeclOp> methods;
-  module.walk(
-      [&](sim::SimClassMethodDeclOp method) { methods.push_back(method); });
-  for (auto method : methods) {
+  SmallVector<std::pair<sim::SimClassMethodDeclOp, TypeAttr>> methods;
+  module.walk([&](sim::SimClassMethodDeclOp method) {
+    methods.emplace_back(method, TypeAttr{});
+  });
+  // Resolve through one symbol index before replacing declarations. Drop the
+  // index before mutation so no cached symbol entries outlive their operations.
+  {
+    SymbolTableCollection methodSymbols;
+    for (auto &[method, nativeType] : methods) {
+      if (!method.getImplementationAttr())
+        continue;
+      auto implementation =
+          methodSymbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
+              method, method.getImplementationAttr());
+      if (!implementation)
+        return method.emitError("native method implementation is missing");
+      nativeType = TypeAttr::get(implementation.getFunctionType());
+    }
+  }
+  for (auto [method, nativeType] : methods) {
     OpBuilder builder(method);
     OperationState state(method.getLoc(),
                          schedule::NativeMethodOp::getOperationName());
     state.addAttributes(method->getAttrs());
     auto native = cast<schedule::NativeMethodOp>(builder.create(state));
-    if (method.getImplementationAttr()) {
-      auto implementation =
-          SymbolTable::lookupNearestSymbolFrom<sim::SimFuncOp>(
-              method, method.getImplementationAttr());
-      if (!implementation)
-        return method.emitError("native method implementation is missing");
-      native.setNativeTypeAttr(TypeAttr::get(implementation.getFunctionType()));
-    }
+    if (nativeType)
+      native.setNativeTypeAttr(nativeType);
     method.erase();
   }
   module.walk([&](LLVM::CallOp call) {

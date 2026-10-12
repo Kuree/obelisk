@@ -387,10 +387,23 @@ void emitManagedRootRangePop(mlir::OpBuilder &builder, mlir::Location location,
 mlir::LogicalResult materializeDPIThunks(mlir::ModuleOp module);
 mlir::LogicalResult materializeDPIExportWrappers(mlir::ModuleOp module);
 mlir::LogicalResult materializeNativeDPIExportThunks(mlir::ModuleOp module);
-void populateManagedToLLVMConversionPatterns(mlir::RewritePatternSet &patterns,
-                                             mlir::TypeConverter &converter,
-                                             const llvm::DataLayout &dataLayout,
-                                             uint64_t stateBitCount);
+/// Immutable class metadata resolved once before parallel function conversion.
+/// Operation keys survive until their corresponding conversion pattern runs.
+struct NativeClassLowering {
+  struct Dispatch {
+    uint64_t ownerID = 0;
+    uint64_t interfaceOrdinal = 0;
+    bool isInterface = false;
+  };
+  llvm::DenseMap<mlir::Operation *, uint64_t> fieldOffsets;
+  llvm::DenseMap<mlir::Operation *, Dispatch> dispatches;
+};
+mlir::FailureOr<NativeClassLowering>
+collectNativeClassLowering(mlir::ModuleOp module);
+void populateManagedToLLVMConversionPatterns(
+    mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter,
+    const llvm::DataLayout &dataLayout, uint64_t stateBitCount,
+    const NativeClassLowering &classes);
 void populateManagedStringToLLVMConversionPatterns(
     mlir::RewritePatternSet &patterns, mlir::TypeConverter &converter);
 void populateManagedContainerToLLVMConversionPatterns(
