@@ -1180,6 +1180,20 @@ ABI_FUNCTION(obelisk_rt_v1_random_state_next64,
 ABI_FUNCTION(obelisk_rt_v1_random_state_bounded,
              obelisk_rt_status (*)(obelisk_rt_random_state_v1 *, uint64_t,
                                    uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_real64_to_rank,
+             obelisk_rt_status (*)(double, uint64_t *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_real32_to_rank,
+             obelisk_rt_status (*)(float, uint64_t *, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_random_real64_from_rank,
+             obelisk_rt_status (*)(const uint64_t *, uint64_t, double *));
+ABI_FUNCTION(obelisk_rt_v1_random_real32_from_rank,
+             obelisk_rt_status (*)(const uint64_t *, uint64_t, float *));
+ABI_FUNCTION(obelisk_rt_v1_random_real64_interval,
+             obelisk_rt_status (*)(obelisk_rt_random_state_v1 *, double, double,
+                                   uint32_t, double *, uint32_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_real32_interval,
+             obelisk_rt_status (*)(obelisk_rt_random_state_v1 *, float, float,
+                                   uint32_t, float *, uint32_t *));
 ABI_FUNCTION(obelisk_rt_v1_sampled_read,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
                                    uint8_t *, uint8_t *));

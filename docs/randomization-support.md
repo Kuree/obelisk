@@ -189,6 +189,19 @@ require exponential work for
 complex Boolean relations; the compiler's preparation budget does not bound
 runtime correctness.
 
+Real and shortreal source randomization remains missing. Its target backend
+now provides finite numeric coordinates and interval sampling in both native
+and WASM archives. Coordinates use half the least positive subnormal as their
+quantum, with 2,100 signed bits for real and 279 for shortreal. Decoding rounds
+towards zero and retains both zero encodings. Interval leaves weight each
+admitted value by the size of its numeric coordinate cell, clipping the finite
+extremes; they do not choose IEEE encodings with equal probability. Empty
+intervals preserve the destination and RNG, and singleton intervals need no
+draw. MLIR regressions cover both precisions, subnormal and normal boundaries,
+finite extremes, interval density and invalid arguments at O0 and O3. The leaf
+operations still need source lowering and compiler proof integration; joint
+real/integral relations and complete real probability semantics remain open.
+
 The compiler appends `HAS_SAMPLER_PLAN` bundles and opts into exact sampling
 through the existing `SMT_UNIFORM` C ABI flag. The legacy flag name is retained
 for byte-format compatibility; it requires a compiled plan rather than Z3.

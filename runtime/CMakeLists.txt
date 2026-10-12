@@ -35,6 +35,7 @@ set(_obelisk_runtime_common_sources
   lib/Random.cpp
   lib/RandSolve.cpp
   lib/RandSamplePlan.cpp
+  lib/RandReal.cpp
   lib/RandSolveWide.cpp
   lib/Runtime.cpp
   lib/Sampled.cpp

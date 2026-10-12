@@ -4647,6 +4647,15 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_MULTIPLIER UINT64_C(6364136223846793005)
 #define OBELISK_RT_RANDOM_DEFAULT_INCREMENT UINT64_C(1442695040888963407)
 
+// Signed coordinates in half-minimum-subnormal units. These representations
+// retain every finite value and signed zero without host big-integer types.
+#define OBELISK_RT_REAL64_RANK_BITS UINT32_C(2100)
+#define OBELISK_RT_REAL64_RANK_WORDS UINT32_C(33)
+#define OBELISK_RT_REAL32_RANK_BITS UINT32_C(279)
+#define OBELISK_RT_REAL32_RANK_WORDS UINT32_C(5)
+#define OBELISK_RT_REAL_LOWER_OPEN UINT32_C(1)
+#define OBELISK_RT_REAL_UPPER_OPEN UINT32_C(2)
+
 // Versioned stack program executed by the constrained-random fallback. The
 // byte representation is explicitly little-endian and does not use these C
 // types as an in-memory wire format. Version 1 has a 24-byte header followed by
@@ -5238,6 +5247,28 @@ uint64_t obelisk_rt_v1_random_state_next64(obelisk_rt_random_state_v1 *state);
 obelisk_rt_status
 obelisk_rt_v1_random_state_bounded(obelisk_rt_random_state_v1 *state,
                                    uint64_t bound, uint64_t *out_value);
+// Coordinates use canonical little-endian 64-bit words and zero padding above
+// RANK_BITS. Nonfinite values and ranks outside the finite range are rejected;
+// failed conversions preserve the destination. Decoding rounds towards zero.
+obelisk_rt_status obelisk_rt_v1_random_real64_to_rank(
+    double value, uint64_t *out_words, uint64_t word_count);
+obelisk_rt_status obelisk_rt_v1_random_real32_to_rank(
+    float value, uint64_t *out_words, uint64_t word_count);
+obelisk_rt_status obelisk_rt_v1_random_real64_from_rank(
+    const uint64_t *words, uint64_t word_count, double *out_value);
+obelisk_rt_status obelisk_rt_v1_random_real32_from_rank(
+    const uint64_t *words, uint64_t word_count, float *out_value);
+// Sample an interval with mass proportional to numeric spacing. Default
+// bounds are closed; OPEN flags exclude their endpoints. A singleton needs
+// no draw. An empty finite interval returns OK with success=0, preserving the
+// value and RNG. Invalid arguments preserve all outputs. These are leaf
+// operations for compiler interval plans; they do not interpret constraints.
+obelisk_rt_status obelisk_rt_v1_random_real64_interval(
+    obelisk_rt_random_state_v1 *state, double lower, double upper, uint32_t flags,
+    double *out_value, uint32_t *out_success);
+obelisk_rt_status obelisk_rt_v1_random_real32_interval(
+    obelisk_rt_random_state_v1 *state, float lower, float upper, uint32_t flags,
+    float *out_value, uint32_t *out_success);
 uint32_t obelisk_rt_v1_import_id(const uint8_t *symbol, uint64_t symbol_size);
 obelisk_rt_status obelisk_rt_v1_context_register_import(
     obelisk_rt_context *context, uint32_t import_id,

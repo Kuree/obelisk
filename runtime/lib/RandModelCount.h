@@ -40,6 +40,10 @@ public:
 
   bool zero() const { return words.empty(); }
 
+  uint64_t word(size_t index) const {
+    return index < words.size() ? words[index] : 0;
+  }
+
   int compare(const ModelCount &other) const {
     if (words.size() != other.words.size())
       return words.size() < other.words.size() ? -1 : 1;
@@ -162,13 +166,13 @@ public:
     return rank;
   }
 
-private:
   unsigned bitWidth() const {
     return zero() ? 0
                   : static_cast<unsigned>((words.size() - 1) * 64 + 64 -
                                           __builtin_clzll(words.back()));
   }
 
+private:
   void normalize() {
     while (!words.empty() && words.back() == 0)
       words.pop_back();

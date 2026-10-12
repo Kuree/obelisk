@@ -157,6 +157,7 @@ native_members = [
     "Random.o",
     "RandSolve.o",
     "RandSamplePlan.o",
+    "RandReal.o",
     "RandSolveWide.o",
     "Runtime.o",
     "Sampled.o",
