@@ -328,6 +328,7 @@ prepareManagedClassInventory(ModuleOp module,
   // Interface requirements share Patricia subtrees just like runtime indexes.
   using Requirements =
       obelisk::runtime::DescriptorMap<sim::SimClassMethodDeclOp>;
+  Requirements::MergeCache requirementMerges;
   llvm::StringMap<Requirements> interfaceRequirements;
   llvm::StringMap<uint8_t> interfaceState;
   struct InterfaceFrame {
@@ -354,8 +355,8 @@ prepareManagedClassInventory(ModuleOp module,
           pending.push_back({base});
           continue;
         }
-        frame.requirements =
-            frame.requirements.merge(interfaceRequirements[base.getSymName()]);
+        frame.requirements = frame.requirements.merge(
+            interfaceRequirements[base.getSymName()], requirementMerges);
         ++frame.base;
         continue;
       }
@@ -396,7 +397,8 @@ prepareManagedClassInventory(ModuleOp module,
     }
     for (auto interface : layouts[declaration.getSymName()].interfaces)
       state.requirements = state.requirements.merge(
-          interfaceRequirements[interface.declaration.getSymName()]);
+          interfaceRequirements[interface.declaration.getSymName()],
+          requirementMerges);
     size_t implemented = state.requirements.countMatches(
         state.signatures, matches, [](auto, auto implementation) {
           return implementation && !implementation.getIsPure() &&

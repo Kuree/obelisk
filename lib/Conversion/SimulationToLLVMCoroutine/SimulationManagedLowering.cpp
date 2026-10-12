@@ -682,17 +682,20 @@ materializeManagedMethodThunks(ModuleOp module,
   Type i64 = IntegerType::get(context, 64);
 
   SymbolTableCollection symbolTables;
+  // One module index serves all thunk replacements. A direct module lookup
+  // would scan the growing descriptor and method inventory for every method.
+  SymbolTable &moduleSymbols = symbolTables.getSymbolTable(module);
   llvm::DataLayout localDataLayout(dataLayout.getStringRepresentation());
   llvm::LLVMContext llvmContext;
   for (schedule::NativeMethodOp method : methods) {
     std::string thunkName = managedMethodThunkName(method.getSymName());
-    if (auto declaration = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName)) {
+    if (auto declaration = moduleSymbols.lookup<LLVM::LLVMFuncOp>(thunkName)) {
       auto expected = LLVM::LLVMFunctionType::get(
           i32, {pointer, pointer, pointer, pointer, i32, pointer, i64}, false);
       if (!declaration.isExternal() ||
           declaration.getFunctionType() != expected)
         return declaration.emitError("incompatible native method declaration");
-      declaration.erase();
+      moduleSymbols.erase(declaration);
     }
     OpBuilder builder(context);
     if (method.getIsTask()) {
@@ -737,6 +740,7 @@ materializeManagedMethodThunks(ModuleOp module,
               i32, {pointer, pointer, pointer, pointer, i32, pointer, i64},
               false),
           LLVM::Linkage::Internal);
+      moduleSymbols.insert(thunk);
       copyNativePartition(helper, thunk);
       Block *entry = thunk.addEntryBlock(builder);
       Block *invoke = new Block;
@@ -824,6 +828,7 @@ materializeManagedMethodThunks(ModuleOp module,
             i32, {pointer, pointer, pointer, pointer, i32, pointer, i64},
             false),
         LLVM::Linkage::Internal);
+    moduleSymbols.insert(thunk);
     copyNativePartition(implementation, thunk);
     Block *entry = thunk.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);

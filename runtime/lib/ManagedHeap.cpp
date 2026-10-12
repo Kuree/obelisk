@@ -701,20 +701,36 @@ public:
           !equivalent(found->second.descriptor, *base))
         return nullptr;
       inventory.requirements =
-          inventory.requirements.merge(found->second.requirements);
-      inventory.bindings = inventory.bindings.merge(found->second.bindings);
+          mergeRequirements(inventory.requirements, found->second.requirements);
+      inventory.bindings =
+          mergeBindings(inventory.bindings, found->second.bindings);
       ++frame.base;
     }
     return &states.at(interface->interface_id);
   }
-  void commit() { additions.clear(); }
+  Requirements mergeRequirements(const Requirements &left,
+                                 const Requirements &right) {
+    return left.merge(right, requirementMerges);
+  }
+  Bindings mergeBindings(const Bindings &left, const Bindings &right) {
+    return left.merge(right, bindingMerges);
+  }
+  void commit() {
+    requirementMerges.commit();
+    bindingMerges.commit();
+    additions.clear();
+  }
   void rollback() {
+    requirementMerges.rollback();
+    bindingMerges.rollback();
     for (uint64_t id : additions)
       states.erase(id);
     additions.clear();
   }
 
 private:
+  Requirements::MergeCache requirementMerges;
+  Bindings::MergeCache bindingMerges;
   std::unordered_map<uint64_t, Inventory> states;
   std::vector<uint64_t> additions;
 };
@@ -780,8 +796,10 @@ public:
       const auto *inventory = interfaceValidation.get(&interface);
       if (!inventory)
         return nullptr;
-      result.interfaces = result.interfaces.merge(inventory->bindings);
-      result.requirements = result.requirements.merge(inventory->requirements);
+      result.interfaces = interfaceValidation.mergeBindings(
+          result.interfaces, inventory->bindings);
+      result.requirements = interfaceValidation.mergeRequirements(
+          result.requirements, inventory->requirements);
     }
     result.missing =
         result.requirements.size() -

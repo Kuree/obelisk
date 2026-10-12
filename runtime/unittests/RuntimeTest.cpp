@@ -6859,4 +6859,160 @@ TEST(ManagedHeap, ReusesInterfaceChecksAcrossSiblingMethodOverrides) {
   EXPECT_EQ(comparisons, count);
 }
 
+TEST(ManagedHeap, SharesMergesAcrossGrowingInterfaceParents) {
+  struct CountedValue {
+    uint64_t value = 0;
+    size_t *copies = nullptr;
+    CountedValue() = default;
+    CountedValue(uint64_t value, size_t *copies)
+        : value(value), copies(copies) {}
+    CountedValue(const CountedValue &other)
+        : value(other.value), copies(other.copies) {
+      if (copies)
+        ++*copies;
+    }
+    CountedValue(CountedValue &&) = default;
+    CountedValue &operator=(CountedValue &&) = default;
+    bool operator==(const CountedValue &other) const {
+      return value == other.value;
+    }
+  };
+  using Map = obelisk::runtime::DescriptorMap<CountedValue>;
+  for (size_t count : {32, 64}) {
+    size_t copies = 0;
+    Map left, right;
+    Map::MergeCache cache;
+    std::vector<Map> inventories;
+    inventories.reserve(count);
+    constexpr uint64_t first = UINT64_C(1) << 48;
+    for (size_t index = 0; index != count; ++index) {
+      left = left.set(first + index * 2, {index * 2 + 1, &copies});
+      right = right.set(first + index * 2 + 1, {index * 2 + 2, &copies});
+      inventories.push_back(left.merge(right, cache));
+      EXPECT_EQ(inventories.back().size(), (index + 1) * 2);
+    }
+    // Two evolving parents previously took count^2 merge visits. Only the
+    // changed bounded-width Patricia paths introduce new subproblems now.
+    EXPECT_LE(cache.size(), count * 8);
+    EXPECT_LE(copies, count * 4);
+    for (size_t index = 0; index != count; ++index) {
+      const auto *last = inventories[index].find(first + index * 2 + 1);
+      ASSERT_NE(last, nullptr);
+      EXPECT_EQ(last->value, index * 2 + 2);
+      EXPECT_EQ(inventories[index].find(first + (index + 1) * 2), nullptr);
+    }
+    size_t entries = cache.size();
+    size_t previousCopies = copies;
+    EXPECT_EQ(left.merge(right, cache).size(), count * 2);
+    EXPECT_EQ(cache.size(), entries);
+    EXPECT_EQ(copies, previousCopies);
+  }
+}
+
+TEST(ManagedHeap, RollsBackMergedInventoriesAndPreservesParentPrecedence) {
+  using Map = obelisk::runtime::DescriptorMap<uint64_t>;
+  Map left, right;
+  left = left.set(1, 7).set(2, 9);
+  right = right.set(1, 11).set(3, 13);
+  Map::MergeCache cache;
+  Map inventory = left.merge(right, cache);
+  ASSERT_NE(inventory.find(1), nullptr);
+  EXPECT_EQ(*inventory.find(1), 7u);
+  EXPECT_EQ(inventory.size(), 3u);
+  cache.commit();
+  size_t committed = cache.size();
+  Map reversed = right.merge(left, cache);
+  ASSERT_NE(reversed.find(1), nullptr);
+  EXPECT_EQ(*reversed.find(1), 11u);
+  EXPECT_GT(cache.size(), committed);
+  cache.rollback();
+  EXPECT_EQ(cache.size(), committed);
+
+  // A repaired unpublished contract must use its new value after rollback.
+  right = right.set(1, 17);
+  inventory = right.merge(left, cache);
+  ASSERT_NE(inventory.find(1), nullptr);
+  EXPECT_EQ(*inventory.find(1), 17u);
+  cache.rollback();
+  EXPECT_EQ(cache.size(), committed);
+  inventory = left.merge(right, cache);
+  EXPECT_EQ(*inventory.find(1), 7u);
+}
+
+TEST_F(ManagedHeapTest, RegistersGrowingInterfaceParentsAndRepairsFailedMerge) {
+  constexpr size_t count = 8;
+  using Interface = obelisk_rt_interface_descriptor_v1;
+  std::array<Interface, count> left{}, right{}, joins{};
+  std::array<std::array<const Interface *, 1>, count> leftBases{}, rightBases{};
+  std::array<std::array<const Interface *, 2>, count> joinBases{};
+  std::array<std::array<uint64_t, 2>, count> signatures{};
+  std::array<std::array<obelisk_rt_method_descriptor_v1, 2>, count> methods{};
+  std::array<obelisk_rt_class_descriptor_v1, count> classes{};
+  auto destroy = [&](obelisk_rt_context *) {
+    TearDown();
+    lane = nullptr;
+    context = nullptr;
+  };
+  std::unique_ptr<obelisk_rt_context, decltype(destroy)> cleanup(context,
+                                                                 destroy);
+  for (size_t index = 0; index != count; ++index) {
+    signatures[index] = {2000 + index * 2, 2001 + index * 2};
+    if (index) {
+      leftBases[index][0] = &left[index - 1];
+      rightBases[index][0] = &right[index - 1];
+    }
+    left[index] = {500 + index * 2, &signatures[index][0], 1,
+                   index ? leftBases[index].data() : nullptr, index ? 1u : 0u};
+    right[index] = {501 + index * 2, &signatures[index][1], 1,
+                    index ? rightBases[index].data() : nullptr,
+                    index ? 1u : 0u};
+    joinBases[index] = {&left[index], &right[index]};
+    joins[index] = {600 + index, nullptr, 0, joinBases[index].data(), 2};
+    for (size_t side = 0; side != 2; ++side) {
+      methods[index][side] = nodeMethods[0];
+      methods[index][side].signature_id = signatures[index][side];
+      methods[index][side].slot = index * 2 + side;
+    }
+    classes[index] = nodeDescriptor;
+    classes[index].class_id = 700 + index;
+    classes[index].base = index ? &classes[index - 1] : nullptr;
+    classes[index].methods = methods[index].data();
+    classes[index].method_count = 2;
+    classes[index].interfaces = &joins[index];
+    classes[index].interface_count = 1;
+    if (index + 1 == count) {
+      // Roll back both requirement and interface-binding merges, then repair
+      // the still-unpublished method and retry against committed ancestors.
+      methods[index][1].signature_id = 9000;
+      EXPECT_EQ(obelisk_rt_v1_class_register(context, &classes[index]),
+                OBELISK_RT_INVALID_ARGUMENT);
+      methods[index][1].signature_id = signatures[index][1];
+    }
+    ASSERT_EQ(obelisk_rt_v1_class_register(context, &classes[index]),
+              OBELISK_RT_OK);
+  }
+  obelisk_rt_object_v1 *object = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &classes.back(), &object),
+            OBELISK_RT_OK);
+  const obelisk_rt_method_descriptor_v1 *resolved = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_interface_method_resolve(
+                object, left.front().interface_id, 0, signatures.front()[0],
+                &resolved),
+            OBELISK_RT_OK);
+  EXPECT_EQ(resolved, &methods.front()[0]);
+  ASSERT_EQ(obelisk_rt_v1_interface_method_resolve(
+                object, right.back().interface_id, 0, signatures.back()[1],
+                &resolved),
+            OBELISK_RT_OK);
+  EXPECT_EQ(resolved, &methods.back()[1]);
+  auto target = nodeDescriptor;
+  target.flags = OBELISK_RT_CLASS_ABSTRACT | OBELISK_RT_CLASS_INTERFACE;
+  for (const Interface &interface : joins) {
+    target.class_id = interface.interface_id;
+    EXPECT_EQ(obelisk_rt_v1_object_is_instance(object, &target), 1u);
+  }
+  target.class_id = 999;
+  EXPECT_EQ(obelisk_rt_v1_object_is_instance(object, &target), 0u);
+}
+
 } // namespace

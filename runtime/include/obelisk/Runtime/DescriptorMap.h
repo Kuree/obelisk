@@ -41,7 +41,6 @@ public:
     additions.clear();
   }
 
-private:
   struct Hash {
     size_t operator()(Key key) const {
       size_t left = std::hash<const void *>{}(key.left);
@@ -50,6 +49,8 @@ private:
                      (left << 6) + (left >> 2));
     }
   };
+
+private:
   std::unordered_map<Key, size_t, Hash> counts;
   std::vector<Key> additions;
 };
@@ -68,6 +69,30 @@ template <typename Value> class DescriptorMap {
   };
   Ptr root;
 
+public:
+  // Cache immutable unions across inheritance edges. Retain both inputs so
+  // pointer keys cannot be reused after an unpublished inventory is released.
+  // Registration rolls back new entries before discarding failed metadata.
+  class MergeCache {
+    friend class DescriptorMap;
+    struct Entry {
+      Ptr left, right, result;
+    };
+    using Key = DescriptorMatchCache::Key;
+    std::unordered_map<Key, Entry, DescriptorMatchCache::Hash> entries;
+    std::vector<Key> additions;
+
+  public:
+    size_t size() const { return entries.size(); }
+    void commit() { additions.clear(); }
+    void rollback() {
+      for (Key key : additions)
+        entries.erase(key);
+      additions.clear();
+    }
+  };
+
+private:
   explicit DescriptorMap(Ptr root) : root(std::move(root)) {}
 
   static uint64_t above(uint64_t key, uint64_t mask) {
@@ -162,11 +187,22 @@ template <typename Value> class DescriptorMap {
     cache.insert(key, count);
     return count;
   }
-  static Ptr merge(const Ptr &left, const Ptr &right) {
+  static Ptr merge(const Ptr &left, const Ptr &right, MergeCache &cache) {
     if (!right || left == right)
       return left;
     if (!left)
       return right;
+    DescriptorMatchCache::Key key{left.get(), right.get()};
+    auto found = cache.entries.find(key);
+    if (found != cache.entries.end())
+      return found->second.result;
+    Ptr result = mergeUncached(left, right, cache);
+    cache.additions.push_back(key);
+    cache.entries.emplace(key, typename MergeCache::Entry{left, right, result});
+    return result;
+  }
+  static Ptr mergeUncached(const Ptr &left, const Ptr &right,
+                           MergeCache &cache) {
     if (!right->mask) {
       const Node *found = left.get();
       while (found && found->mask) {
@@ -183,19 +219,19 @@ template <typename Value> class DescriptorMap {
     }
     if (left->mask > right->mask && matches(right->prefix, *left)) {
       if (right->prefix & left->mask) {
-        Ptr next = merge(left->right, right);
+        Ptr next = merge(left->right, right, cache);
         return next == left->right
                    ? left
                    : branch(left->prefix, left->mask, left->left, next);
       }
-      Ptr next = merge(left->left, right);
+      Ptr next = merge(left->left, right, cache);
       return next == left->left
                  ? left
                  : branch(left->prefix, left->mask, next, left->right);
     }
     if (left->mask == right->mask && left->prefix == right->prefix) {
-      Ptr first = merge(left->left, right->left);
-      Ptr second = merge(left->right, right->right);
+      Ptr first = merge(left->left, right->left, cache);
+      Ptr second = merge(left->right, right->right, cache);
       return first == left->left && second == left->right
                  ? left
                  : branch(left->prefix, left->mask, first, second);
@@ -203,9 +239,9 @@ template <typename Value> class DescriptorMap {
     if (left->mask < right->mask && matches(left->prefix, *right)) {
       if (left->prefix & right->mask) {
         return branch(right->prefix, right->mask, right->left,
-                      merge(left, right->right));
+                      merge(left, right->right, cache));
       }
-      return branch(right->prefix, right->mask, merge(left, right->left),
+      return branch(right->prefix, right->mask, merge(left, right->left, cache),
                     right->right);
     }
     return link(right->prefix, right, left);
@@ -232,10 +268,11 @@ public:
     return node ? &node->value : nullptr;
   }
   const Value *first() const { return lowerBound(0); }
-  // Union keeps existing values and shares unchanged subtrees. Adopting a
-  // parent index never enumerates its inherited entries.
-  DescriptorMap merge(const DescriptorMap &other) const {
-    return DescriptorMap(merge(root, other.root));
+  // Union keeps existing values and shares unchanged subtrees. Reuse the
+  // inventory's cache so growing multiple-parent chains do not repeatedly
+  // merge every inherited entry.
+  DescriptorMap merge(const DescriptorMap &other, MergeCache &cache) const {
+    return DescriptorMap(merge(root, other.root, cache));
   }
   template <typename Other, typename Match>
   size_t countMatches(const DescriptorMap<Other> &other,
