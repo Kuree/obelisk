@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -29,6 +30,41 @@
 
 namespace obelisk::solver {
 namespace {
+
+uint64_t variableKey(uint32_t offset, unsigned width) {
+  return (static_cast<uint64_t>(offset) << 32) | width;
+}
+
+/// Choose the lowest-offset representative of each undirected component in
+/// one traversal, without repeated union-find or whole-variable scans.
+std::vector<size_t>
+connectedComponents(const std::vector<std::vector<size_t>> &neighbors,
+                    llvm::ArrayRef<SMTVariable> variables) {
+  std::vector<size_t> roots(variables.size(), SIZE_MAX);
+  std::vector<size_t> pending;
+  for (size_t seed = 0; seed != roots.size(); ++seed) {
+    if (roots[seed] != SIZE_MAX)
+      continue;
+    size_t begin = pending.size();
+    size_t representative = seed;
+    roots[seed] = seed;
+    pending.push_back(seed);
+    for (size_t next = begin; next != pending.size(); ++next) {
+      size_t index = pending[next];
+      if (variables[index].offset < variables[representative].offset)
+        representative = index;
+      for (size_t neighbor : neighbors[index]) {
+        if (roots[neighbor] != SIZE_MAX)
+          continue;
+        roots[neighbor] = seed;
+        pending.push_back(neighbor);
+      }
+    }
+    for (size_t next = begin; next != pending.size(); ++next)
+      roots[pending[next]] = representative;
+  }
+  return roots;
+}
 
 z3::expr bitVectorValue(z3::context &context, const llvm::APInt &value) {
   // Passing fixed-size words avoids quadratic conversion of a wide APInt
@@ -58,6 +94,38 @@ public:
   explicit Z3SMTShim(z3::context &context) : context(context) {}
 
   std::optional<z3::expr> translate(mlir::Value value) {
+    auto cached = expressions.find(value);
+    if (cached != expressions.end())
+      return values[cached->second];
+    struct Frame {
+      mlir::Value value;
+      unsigned nextOperand = 0;
+    };
+    std::vector<Frame> pending{{value}};
+    while (!pending.empty()) {
+      Frame &frame = pending.back();
+      if (expressions.contains(frame.value)) {
+        pending.pop_back();
+        continue;
+      }
+      mlir::Operation *operation = frame.value.getDefiningOp();
+      if (!operation)
+        return std::nullopt;
+      if (frame.nextOperand != operation->getNumOperands()) {
+        mlir::Value operand = operation->getOperand(frame.nextOperand++);
+        if (!expressions.contains(operand))
+          pending.push_back({operand});
+        continue;
+      }
+      if (!translateReady(frame.value))
+        return std::nullopt;
+      pending.pop_back();
+    }
+    return values[expressions.lookup(value)];
+  }
+
+private:
+  std::optional<z3::expr> translateReady(mlir::Value value) {
     auto cached = expressions.find(value);
     if (cached != expressions.end())
       return values[cached->second];
@@ -208,7 +276,6 @@ public:
     return result;
   }
 
-private:
   template <typename Fn>
   std::optional<z3::expr> translateBinary(mlir::Value lhs, mlir::Value rhs,
                                           Fn &&combine) {
@@ -311,15 +378,29 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
   try {
     z3::context context;
     Z3SMTShim shim(context);
-    std::optional<z3::expr> hard = shim.translate(smt->hard);
-    if (!hard)
-      return analysis;
     z3::solver solver(context);
     z3::params parameters(context);
     parameters.set("random_seed", 0u);
     parameters.set("rlimit", static_cast<unsigned>(
                                  std::min<uint64_t>(resourceLimit, UINT_MAX)));
     solver.set(parameters);
+    // Unequal domain masks describe disjoint cubes only when no value matches
+    // two records. Prove that with a linear prefix formula, independently of
+    // the user's hard constraints; those may otherwise hide malformed records.
+    for (mlir::Value overlap : smt->domainOverlaps) {
+      std::optional<z3::expr> predicate = shim.translate(overlap);
+      if (!predicate)
+        return analysis;
+      solver.push();
+      solver.add(*predicate);
+      z3::check_result overlapResult = solver.check();
+      solver.pop();
+      if (overlapResult != z3::unsat)
+        return analysis;
+    }
+    std::optional<z3::expr> hard = shim.translate(smt->hard);
+    if (!hard)
+      return analysis;
     solver.push();
     solver.add(*hard);
     z3::check_result result = solver.check();
@@ -412,50 +493,46 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // Each non-canonical field can then be copied from one representative.
     // Prove the complete extracted relation once more against the SMT formula
     // before exposing it to lowering; unknown remains conservative.
-    std::vector<size_t> parents(smt->variables.size());
-    for (size_t index = 0; index != parents.size(); ++index)
-      parents[index] = index;
-    auto findRoot = [&](size_t index) {
-      while (parents[index] != index) {
-        parents[index] = parents[parents[index]];
-        index = parents[index];
-      }
-      return index;
-    };
+    llvm::DenseMap<uint64_t, size_t> variableIndices;
+    for (auto [index, variable] : llvm::enumerate(smt->variables))
+      variableIndices.try_emplace(variableKey(variable.offset, variable.width),
+                                  index);
     auto variableIndex = [&](const SMTVariable &candidate) {
-      auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
-                                [&](const SMTVariable &variable) {
-                                  return variable.offset == candidate.offset &&
-                                         variable.width == candidate.width;
-                                });
-      return static_cast<size_t>(found - smt->variables.begin());
+      auto found =
+          variableIndices.find(variableKey(candidate.offset, candidate.width));
+      return found == variableIndices.end() ? smt->variables.size()
+                                            : found->second;
     };
+    auto findVariable = [&](uint32_t offset,
+                            unsigned width) -> const SMTVariable * {
+      auto found = variableIndices.find(variableKey(offset, width));
+      return found == variableIndices.end() ? nullptr
+                                            : &smt->variables[found->second];
+    };
+    std::vector<std::vector<size_t>> aliasNeighbors(smt->variables.size());
     for (const SMTVariableEquality &equality : smt->directEqualities) {
       size_t lhs = variableIndex(equality.lhs);
       size_t rhs = variableIndex(equality.rhs);
       if (lhs == smt->variables.size() || rhs == smt->variables.size())
         continue;
-      lhs = findRoot(lhs);
-      rhs = findRoot(rhs);
       if (lhs == rhs)
         continue;
-      if (smt->variables[rhs].offset < smt->variables[lhs].offset)
-        std::swap(lhs, rhs);
-      parents[rhs] = lhs;
+      aliasNeighbors[lhs].push_back(rhs);
+      aliasNeighbors[rhs].push_back(lhs);
     }
+    std::vector<size_t> parents =
+        connectedComponents(aliasNeighbors, smt->variables);
+    auto findRoot = [&](size_t index) { return parents[index]; };
 
     // Select one deterministic, separately proven definition per target.
     // Alias classes that contain exactly one such target use it as their
     // representative, allowing a definition to feed every equal field.
     std::vector<const SMTVariableDefinition *> definitions;
+    llvm::DenseSet<uint64_t> definedTargets;
     for (const SMTVariableDefinition &definition : smt->directDefinitions) {
-      if (std::any_of(definitions.begin(), definitions.end(),
-                      [&](const SMTVariableDefinition *selected) {
-                        return selected->target.offset ==
-                                   definition.target.offset &&
-                               selected->target.width ==
-                                   definition.target.width;
-                      }))
+      uint64_t key =
+          variableKey(definition.target.offset, definition.target.width);
+      if (definedTargets.contains(key))
         continue;
       std::optional<z3::expr> target = shim.translate(definition.target.bits);
       std::optional<z3::expr> expression =
@@ -466,6 +543,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       if (checkWith(*target != *expression) != z3::unsat)
         continue;
       definitions.push_back(&definition);
+      definedTargets.insert(key);
     }
 
     std::vector<unsigned> classDefinitionCounts(parents.size());
@@ -540,6 +618,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     std::vector<unsigned> indegrees(definitions.size());
     std::vector<bool> eligible(definitions.size());
     std::vector<bool> selfDependent(definitions.size());
+    std::vector<size_t> lastDependent(definitions.size(), SIZE_MAX);
     for (size_t index = 0; index != definitions.size(); ++index) {
       size_t target = definitionTargetIndices[index];
       if (target == smt->variables.size())
@@ -560,44 +639,56 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         std::optional<size_t> dependencyDefinition =
             classDefinitions[dependencyRoot];
         if (!dependencyDefinition || *dependencyDefinition == index ||
-            std::find(dependents[*dependencyDefinition].begin(),
-                      dependents[*dependencyDefinition].end(),
-                      index) != dependents[*dependencyDefinition].end())
+            lastDependent[*dependencyDefinition] == index)
           continue;
+        lastDependent[*dependencyDefinition] = index;
         dependents[*dependencyDefinition].push_back(index);
         ++indegrees[index];
       }
     }
 
-    std::vector<bool> emitted(definitions.size());
-    for (size_t count = 0; count != definitions.size(); ++count) {
-      size_t index = 0;
-      while (index != definitions.size() &&
-             (emitted[index] || !eligible[index] || selfDependent[index] ||
-              indegrees[index] != 0))
-        ++index;
-      if (index == definitions.size())
-        break;
-      emitted[index] = true;
+    std::vector<size_t> readyDefinitions;
+    for (size_t index = 0; index != definitions.size(); ++index)
+      if (eligible[index] && !selfDependent[index] && indegrees[index] == 0)
+        readyDefinitions.push_back(index);
+    std::vector<const SMTVariableDefinition *> emittedDefinitions;
+    for (size_t next = 0; next != readyDefinitions.size(); ++next) {
+      size_t index = readyDefinitions[next];
       const SMTVariableDefinition &definition = *definitions[index];
       analysis.definitions.push_back(
           {definition.target.offset, definition.target.width,
            definition.expressionBegin, definition.expressionEnd});
+      emittedDefinitions.push_back(&definition);
       for (size_t dependent : dependents[index])
-        --indegrees[dependent];
+        if (--indegrees[dependent] == 0 && eligible[dependent] &&
+            !selfDependent[dependent])
+          readyDefinitions.push_back(dependent);
     }
 
+    unsigned aggregateWidth =
+        mlir::cast<mlir::smt::BitVectorType>(smt->assignment.getType())
+            .getWidth();
+    std::vector<uint32_t> finiteCoverage(static_cast<size_t>(aggregateWidth) +
+                                         1);
+    for (const SMTFiniteDomain &domain : smt->finiteDomains) {
+      uint64_t end =
+          static_cast<uint64_t>(domain.target.offset) + domain.target.width;
+      for (uint64_t bit = domain.target.offset; bit != end; ++bit)
+        finiteCoverage[bit + 1] = 1;
+    }
+    for (size_t bit = 1; bit != finiteCoverage.size(); ++bit)
+      finiteCoverage[bit] += finiteCoverage[bit - 1];
     auto overlapsFiniteDomain = [&](const SMTVariable &variable) {
       uint64_t variableEnd =
           static_cast<uint64_t>(variable.offset) + variable.width;
-      return llvm::any_of(
-          smt->finiteDomains, [&](const SMTFiniteDomain &domain) {
-            uint64_t domainEnd = static_cast<uint64_t>(domain.target.offset) +
-                                 domain.target.width;
-            return variable.offset < domainEnd &&
-                   domain.target.offset < variableEnd;
-          });
+      return finiteCoverage[variableEnd] != finiteCoverage[variable.offset];
     };
+    llvm::DenseSet<uint64_t> signedBoundTargets;
+    for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds)
+      if (bound.isSigned)
+        signedBoundTargets.insert(
+            variableKey(bound.target.offset, bound.target.width));
+    llvm::DenseMap<uint64_t, bool> domainSignedness;
     for (const SMTVariable &variable : smt->variables) {
       // The generated finite-domain sampler reproduces these predicates
       // exactly. An enclosing min/max interval is redundant for a pure domain
@@ -617,11 +708,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       std::optional<z3::expr> bits = shim.translate(variable.bits);
       if (!bits)
         continue;
-      bool isSigned = llvm::any_of(
-          smt->directCaptureBounds, [&](const SMTVariableCaptureBound &bound) {
-            return bound.isSigned && bound.target.offset == variable.offset &&
-                   bound.target.width == variable.width;
-          });
+      uint64_t key = variableKey(variable.offset, variable.width);
+      bool isSigned = signedBoundTargets.contains(key);
       z3::expr projectedBits =
           isSigned ? *bits ^ bitVectorValue(context, llvm::APInt::getOneBitSet(
                                                          variable.width,
@@ -674,9 +762,11 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         continue;
       llvm::APInt maximum = lower;
       llvm::APInt fullMaximum = llvm::APInt::getAllOnes(variable.width);
-      if (!minimum.isZero() || maximum != fullMaximum)
+      if (!minimum.isZero() || maximum != fullMaximum) {
         analysis.domains.push_back(
             {variable.offset, variable.width, minimum, maximum, isSigned});
+        domainSignedness.try_emplace(key, isSigned);
+      }
     }
 
     // Preserve at most one direct capture bound in each direction per
@@ -684,10 +774,6 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     // comparisons, and this implication proof keeps malformed or
     // unexpectedly transformed SMT shapes from crossing the solver API
     // boundary.
-    auto isLowerCaptureBound = [](RandomCaptureBoundKind kind) {
-      return kind == RandomCaptureBoundKind::LowerInclusive ||
-             kind == RandomCaptureBoundKind::LowerExclusive;
-    };
     auto convertCaptureBoundKind = [](SMTCaptureBoundKind kind) {
       switch (kind) {
       case SMTCaptureBoundKind::LowerInclusive:
@@ -701,36 +787,37 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
       llvm_unreachable("unknown SMT capture bound kind");
     };
+    llvm::DenseSet<uint64_t> aliasedTargets;
+    for (const RandomVariableAlias &alias : analysis.aliases) {
+      aliasedTargets.insert(variableKey(alias.targetOffset, alias.width));
+      aliasedTargets.insert(variableKey(alias.sourceOffset, alias.width));
+    }
+    llvm::DenseSet<uint64_t> emittedTargets;
+    for (const RandomVariableDefinition &definition : analysis.definitions)
+      emittedTargets.insert(
+          variableKey(definition.targetOffset, definition.width));
+    struct SelectedCaptureBounds {
+      bool isSigned;
+      bool hasLower;
+      bool hasUpper;
+    };
+    llvm::DenseMap<uint64_t, SelectedCaptureBounds> selectedCaptureBounds;
     for (const SMTVariableCaptureBound &bound : smt->directCaptureBounds) {
       RandomCaptureBoundKind kind = convertCaptureBoundKind(bound.kind);
-      bool conflicts =
-          overlapsFiniteDomain(bound.target) ||
-          llvm::any_of(analysis.domains,
-                       [&](const RandomVariableDomain &domain) {
-                         return domain.offset == bound.target.offset &&
-                                domain.width == bound.target.width &&
-                                domain.isSigned != bound.isSigned;
-                       }) ||
-          llvm::any_of(analysis.captureBounds,
-                       [&](const RandomVariableCaptureBound &selected) {
-                         return selected.offset == bound.target.offset &&
-                                selected.width == bound.target.width &&
-                                (selected.isSigned != bound.isSigned ||
-                                 isLowerCaptureBound(selected.kind) ==
-                                     isLowerCaptureBound(kind));
-                       }) ||
-          llvm::any_of(analysis.aliases,
-                       [&](const RandomVariableAlias &alias) {
-                         return (alias.targetOffset == bound.target.offset ||
-                                 alias.sourceOffset == bound.target.offset) &&
-                                alias.width == bound.target.width;
-                       }) ||
-          llvm::any_of(analysis.definitions,
-                       [&](const RandomVariableDefinition &definition) {
-                         return definition.targetOffset ==
-                                    bound.target.offset &&
-                                definition.width == bound.target.width;
-                       });
+      uint64_t key = variableKey(bound.target.offset, bound.target.width);
+      auto domain = domainSignedness.find(key);
+      auto selected = selectedCaptureBounds.find(key);
+      bool isLower = kind == RandomCaptureBoundKind::LowerInclusive ||
+                     kind == RandomCaptureBoundKind::LowerExclusive;
+      bool conflicts = overlapsFiniteDomain(bound.target) ||
+                       (domain != domainSignedness.end() &&
+                        domain->second != bound.isSigned) ||
+                       (selected != selectedCaptureBounds.end() &&
+                        (selected->second.isSigned != bound.isSigned ||
+                         (isLower ? selected->second.hasLower
+                                  : selected->second.hasUpper))) ||
+                       aliasedTargets.contains(key) ||
+                       emittedTargets.contains(key);
       if (conflicts || bound.captureIndex >= smt->captures.size())
         continue;
       std::optional<z3::expr> predicate = shim.translate(bound.predicate);
@@ -739,6 +826,12 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       analysis.captureBounds.push_back({bound.target.offset, bound.target.width,
                                         bound.captureIndex, kind,
                                         bound.isSigned});
+      auto entry = selectedCaptureBounds.try_emplace(
+          key, SelectedCaptureBounds{bound.isSigned, false, false});
+      if (isLower)
+        entry.first->second.hasLower = true;
+      else
+        entry.first->second.hasUpper = true;
     }
 
     // The bounds and aliases above already prove hard => proposal. Prove the
@@ -755,12 +848,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       proposal = proposal && *predicate;
     }
     for (const RandomVariableDomain &domain : analysis.domains) {
-      auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
-                                [&](const SMTVariable &variable) {
-                                  return variable.offset == domain.offset &&
-                                         variable.width == domain.width;
-                                });
-      if (found == smt->variables.end()) {
+      const SMTVariable *found = findVariable(domain.offset, domain.width);
+      if (!found) {
         translatedProposal = false;
         break;
       }
@@ -781,13 +870,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
           z3::ule(projectedBits, bitVectorValue(context, domain.upper));
     }
     for (const RandomVariableCaptureBound &bound : analysis.captureBounds) {
-      auto found = std::find_if(smt->variables.begin(), smt->variables.end(),
-                                [&](const SMTVariable &variable) {
-                                  return variable.offset == bound.offset &&
-                                         variable.width == bound.width;
-                                });
-      if (found == smt->variables.end() ||
-          bound.captureIndex >= smt->captures.size()) {
+      const SMTVariable *found = findVariable(bound.offset, bound.width);
+      if (!found || bound.captureIndex >= smt->captures.size()) {
         translatedProposal = false;
         break;
       }
@@ -819,19 +903,9 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
     }
     for (const RandomVariableAlias &alias : analysis.aliases) {
-      auto target =
-          std::find_if(smt->variables.begin(), smt->variables.end(),
-                       [&](const SMTVariable &variable) {
-                         return variable.offset == alias.targetOffset &&
-                                variable.width == alias.width;
-                       });
-      auto source =
-          std::find_if(smt->variables.begin(), smt->variables.end(),
-                       [&](const SMTVariable &variable) {
-                         return variable.offset == alias.sourceOffset &&
-                                variable.width == alias.width;
-                       });
-      if (target == smt->variables.end() || source == smt->variables.end()) {
+      const SMTVariable *target = findVariable(alias.targetOffset, alias.width);
+      const SMTVariable *source = findVariable(alias.sourceOffset, alias.width);
+      if (!target || !source) {
         translatedProposal = false;
         break;
       }
@@ -843,19 +917,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
       }
       proposal = proposal && (*targetBits == *sourceBits);
     }
-    for (const RandomVariableDefinition &definition : analysis.definitions) {
-      auto found = std::find_if(
-          smt->directDefinitions.begin(), smt->directDefinitions.end(),
-          [&](const SMTVariableDefinition &candidate) {
-            return candidate.target.offset == definition.targetOffset &&
-                   candidate.target.width == definition.width &&
-                   candidate.expressionBegin == definition.expressionBegin &&
-                   candidate.expressionEnd == definition.expressionEnd;
-          });
-      if (found == smt->directDefinitions.end()) {
-        translatedProposal = false;
-        break;
-      }
+    for (const SMTVariableDefinition *found : emittedDefinitions) {
       std::optional<z3::expr> targetBits = shim.translate(found->target.bits);
       std::optional<z3::expr> expression = shim.translate(found->expression);
       if (!targetBits || !expression) {
@@ -960,25 +1022,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     if (analyzeComponents)
       analysis.hasConstraintComponentPartition = true;
     if (analyzeComponents && !smt->variables.empty()) {
-      std::vector<size_t> componentParents(smt->variables.size());
-      for (size_t index = 0; index != componentParents.size(); ++index)
-        componentParents[index] = index;
-      auto findComponentRoot = [&](size_t index) {
-        while (componentParents[index] != index) {
-          componentParents[index] = componentParents[componentParents[index]];
-          index = componentParents[index];
-        }
-        return index;
-      };
-      auto mergeComponents = [&](size_t lhs, size_t rhs) {
-        lhs = findComponentRoot(lhs);
-        rhs = findComponentRoot(rhs);
-        if (lhs == rhs)
-          return;
-        if (smt->variables[rhs].offset < smt->variables[lhs].offset)
-          std::swap(lhs, rhs);
-        componentParents[rhs] = lhs;
-      };
+      std::vector<std::vector<size_t>> componentNeighbors(
+          smt->variables.size());
       for (const SMTHardConstraint &constraint : smt->hardConstraints) {
         if (constraint.dependencies.empty())
           continue;
@@ -988,10 +1033,18 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         for (const SMTVariable &dependency :
              llvm::ArrayRef(constraint.dependencies).drop_front()) {
           size_t other = variableIndex(dependency);
-          if (other != smt->variables.size())
-            mergeComponents(first, other);
+          if (other != smt->variables.size() && other != first) {
+            componentNeighbors[first].push_back(other);
+            componentNeighbors[other].push_back(first);
+          }
         }
       }
+
+      std::vector<size_t> componentParents =
+          connectedComponents(componentNeighbors, smt->variables);
+      auto findComponentRoot = [&](size_t index) {
+        return componentParents[index];
+      };
 
       std::vector<std::vector<size_t>> componentVariables(
           smt->variables.size());
@@ -1008,6 +1061,22 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
               &constraint);
       }
 
+      // Full-width component masks and up to sixteen table rows can expand
+      // quadratically for many tiny components. Limit that optional output by
+      // the same linear budget as dependency discovery. The complete Boolean
+      // sampler still represents every component when tables are skipped.
+      uint64_t componentCount =
+          llvm::count_if(componentConstraints,
+                         [](const auto &items) { return !items.empty(); });
+      uint64_t assignmentWords =
+          (static_cast<uint64_t>(aggregateWidth) + 63) / 64;
+      uint64_t wordsPerComponent =
+          assignmentWords * (maxAssignmentTableSize + 2);
+      if (componentCount > smt->proposalWorkLimit / wordsPerComponent) {
+        analysis.hasConstraintComponentPartition = false;
+        return analysis;
+      }
+
       for (size_t root = 0; root != componentVariables.size(); ++root) {
         if (componentConstraints[root].empty())
           continue;
@@ -1017,9 +1086,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         llvm::APInt componentMask = llvm::APInt::getZero(assignmentWidth);
         for (size_t variableNumber : componentVariables[root]) {
           const SMTVariable &variable = smt->variables[variableNumber];
-          componentMask |=
-              llvm::APInt::getLowBitsSet(assignmentWidth, variable.width)
-                  .shl(variable.offset);
+          componentMask.setBits(variable.offset,
+                                variable.offset + variable.width);
         }
         analysis.constraintComponentMasks.push_back(componentMask);
       }
@@ -1049,9 +1117,8 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         for (size_t variableNumber : componentVariables[root]) {
           const SMTVariable &variable = smt->variables[variableNumber];
           componentWidth += variable.width;
-          componentMask |=
-              llvm::APInt::getLowBitsSet(assignmentWidth, variable.width)
-                  .shl(variable.offset);
+          componentMask.setBits(variable.offset,
+                                variable.offset + variable.width);
         }
         if (componentWidth > maxEnumeratedAssignmentWidth) {
           allConstrainedComponentsComplete = false;
@@ -1124,7 +1191,7 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
               translatedComponent = false;
               break;
             }
-            assignment |= value->zext(assignmentWidth).shl(variable.offset);
+            assignment.insertBits(*value, variable.offset);
             different = different ||
                         (bits != bitVectorValue(enumerationContext, *value));
           }
@@ -1195,23 +1262,25 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
         llvm::APInt tableMask = llvm::APInt::getZero(assignmentWidth);
         for (const RandomAssignmentTable &table : analysis.assignmentTables)
           tableMask |= table.mask;
-        auto variableMask = [&](uint32_t offset, uint32_t width) {
-          return llvm::APInt::getLowBitsSet(assignmentWidth, width).shl(offset);
+        std::vector<uint32_t> tableCoverage(
+            static_cast<size_t>(assignmentWidth) + 1);
+        for (size_t bit = 0; bit != assignmentWidth; ++bit)
+          tableCoverage[bit + 1] = tableCoverage[bit] + tableMask[bit];
+        auto overlapsTable = [&](uint32_t offset, uint32_t width) {
+          uint64_t end = static_cast<uint64_t>(offset) + width;
+          return tableCoverage[end] != tableCoverage[offset];
         };
         llvm::erase_if(analysis.domains, [&](const RandomVariableDomain &item) {
-          return !(variableMask(item.offset, item.width) & tableMask).isZero();
+          return overlapsTable(item.offset, item.width);
         });
         llvm::erase_if(analysis.aliases, [&](const RandomVariableAlias &item) {
-          return !(((variableMask(item.targetOffset, item.width) |
-                     variableMask(item.sourceOffset, item.width)) &
-                    tableMask)
-                       .isZero());
+          return overlapsTable(item.targetOffset, item.width) ||
+                 overlapsTable(item.sourceOffset, item.width);
         });
-        llvm::erase_if(
-            analysis.definitions, [&](const RandomVariableDefinition &item) {
-              return !(variableMask(item.targetOffset, item.width) & tableMask)
-                          .isZero();
-            });
+        llvm::erase_if(analysis.definitions,
+                       [&](const RandomVariableDefinition &item) {
+                         return overlapsTable(item.targetOffset, item.width);
+                       });
 
         bool equivalentCompleteProposal =
             sawConstrainedComponent && allConstrainedComponentsComplete &&

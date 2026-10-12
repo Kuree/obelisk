@@ -153,7 +153,10 @@ struct RandomProgramAnalysis {
 /// `preferGlobalAssignmentTable` also attempts bounded global enumeration when
 /// a structural proposal is already exact; clients that need the joint
 /// conditional distribution, such as `solve before`, can request that stronger
-/// result. The API deliberately exposes no Z3 types.
+/// result. Optional dependency and component-table metadata has a linear work
+/// and output budget in the lowered constraint size, including bit widths.
+/// Exhaustion can omit metadata or return Unknown; the complete compiled
+/// Boolean sampler remains available. The API deliberately exposes no Z3 types.
 RandomProgramAnalysis
 analyzeRandomProgram(const uint8_t *program, size_t programSize,
                      uint64_t resourceLimit = 100000,

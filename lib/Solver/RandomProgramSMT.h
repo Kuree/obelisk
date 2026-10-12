@@ -89,6 +89,12 @@ struct RandomProgramSMT {
   std::vector<SMTVariableCaptureBound> directCaptureBounds;
   std::vector<SMTVariableEquality> directEqualities;
   std::vector<SMTVariableDefinition> directDefinitions;
+  /// Predicates that must be unsatisfiable independently of the hard formula
+  /// before overlapping semantic-domain records can be ruled out.
+  std::vector<mlir::Value> domainOverlaps;
+  /// Linear budget for optional dependency and component-table metadata.
+  /// Exhaustion leaves the complete compiled Boolean sampler available.
+  uint64_t proposalWorkLimit = 0;
 };
 
 std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,

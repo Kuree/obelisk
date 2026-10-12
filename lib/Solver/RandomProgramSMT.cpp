@@ -13,14 +13,16 @@
 #include "mlir/IR/Verifier.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <string>
 #include <utility>
@@ -118,16 +120,39 @@ StackValue booleanValue(
           std::move(directCaptureBound)};
 }
 
-bool containsVariable(mlir::Value expression, const SMTVariable &variable) {
+uint64_t variableKey(uint32_t offset, unsigned width) {
+  return (static_cast<uint64_t>(offset) << 32) | width;
+}
+
+struct ReferenceBudget {
+  uint64_t remaining;
+  bool exceeded = false;
+
+  bool consume() {
+    if (remaining != 0) {
+      --remaining;
+      return true;
+    }
+    exceeded = true;
+    return false;
+  }
+};
+
+bool containsVariable(mlir::Value expression, const SMTVariable &variable,
+                      ReferenceBudget &budget) {
   auto target = mlir::dyn_cast_or_null<mlir::smt::ExtractOp>(
       variable.bits.getDefiningOp());
   if (!target)
     return true;
   llvm::SmallPtrSet<mlir::Operation *, 16> visited;
-  std::function<bool(mlir::Value)> visit = [&](mlir::Value value) {
+  llvm::SmallVector<mlir::Value> pending{expression};
+  while (!pending.empty()) {
+    if (!budget.consume())
+      return true;
+    mlir::Value value = pending.pop_back_val();
     mlir::Operation *operation = value.getDefiningOp();
     if (!operation || !visited.insert(operation).second)
-      return false;
+      continue;
     if (auto extract = mlir::dyn_cast<mlir::smt::ExtractOp>(operation)) {
       unsigned width =
           mlir::cast<mlir::smt::BitVectorType>(value.getType()).getWidth();
@@ -139,22 +164,9 @@ bool containsVariable(mlir::Value expression, const SMTVariable &variable) {
           targetLow < high)
         return true;
     }
-    return llvm::any_of(operation->getOperands(), visit);
-  };
-  return visit(expression);
-}
-
-bool containsValue(mlir::Value expression, mlir::Value target) {
-  llvm::SmallPtrSet<mlir::Operation *, 16> visited;
-  std::function<bool(mlir::Value)> visit = [&](mlir::Value value) {
-    if (value == target)
-      return true;
-    mlir::Operation *operation = value.getDefiningOp();
-    if (!operation || !visited.insert(operation).second)
-      return false;
-    return llvm::any_of(operation->getOperands(), visit);
-  };
-  return visit(expression);
+    llvm::append_range(pending, operation->getOperands());
+  }
+  return false;
 }
 
 bool isUnary(uint8_t opcode) {
@@ -360,8 +372,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
 
   if (hasSolveBefore) {
-    std::vector<llvm::APInt> propertyMasks;
-    std::vector<std::pair<llvm::APInt, llvm::APInt>> solveEdges;
+    llvm::DenseMap<llvm::APInt, unsigned> maskIds;
+    std::vector<unsigned> bitOwners(aggregateWidth, UINT_MAX);
+    std::vector<std::vector<unsigned>> successors;
+    std::vector<unsigned> indegrees;
     const uint8_t *edge = program + solveEdgesOffset;
     auto readMask = [&]() -> std::optional<llvm::APInt> {
       llvm::SmallVector<uint64_t> words;
@@ -372,6 +386,28 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       if (aggregateWidth % 64 && (words.back() >> (aggregateWidth % 64)) != 0)
         return std::nullopt;
       return llvm::APInt(aggregateWidth, words);
+    };
+    auto registerMask =
+        [&](const llvm::APInt &mask) -> std::optional<unsigned> {
+      auto found = maskIds.find(mask);
+      if (found != maskIds.end())
+        return found->second;
+      unsigned id = successors.size();
+      for (unsigned word = 0; word != mask.getNumWords(); ++word) {
+        uint64_t bits = mask.getRawData()[word];
+        while (bits != 0) {
+          uint64_t bit =
+              static_cast<uint64_t>(word) * 64 + llvm::countr_zero(bits);
+          if (bitOwners[bit] != UINT_MAX)
+            return std::nullopt;
+          bitOwners[bit] = id;
+          bits &= bits - 1;
+        }
+      }
+      maskIds.try_emplace(mask, id);
+      successors.emplace_back();
+      indegrees.push_back(0);
+      return id;
     };
     for (uint32_t index = 0; index != solveEdgeCount; ++index) {
       auto before = readMask(), after = readMask();
@@ -386,33 +422,23 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            constraintBlock >= 64))
         return std::nullopt;
-      for (const llvm::APInt &propertyMask : {beforeMask, afterMask}) {
-        for (const llvm::APInt &existing : propertyMasks)
-          if (existing != propertyMask && !(existing & propertyMask).isZero())
-            return std::nullopt;
-        if (!llvm::is_contained(propertyMasks, propertyMask))
-          propertyMasks.push_back(propertyMask);
-      }
-      solveEdges.emplace_back(beforeMask, afterMask);
-    }
-
-    std::vector<llvm::APInt> remaining = propertyMasks;
-    while (!remaining.empty()) {
-      std::vector<llvm::APInt> layer;
-      for (const llvm::APInt &propertyMask : remaining) {
-        bool hasPredecessor = llvm::any_of(solveEdges, [&](const auto &edge) {
-          return edge.second == propertyMask &&
-                 llvm::is_contained(remaining, edge.first);
-        });
-        if (!hasPredecessor)
-          layer.push_back(propertyMask);
-      }
-      if (layer.empty())
+      auto beforeId = registerMask(beforeMask),
+           afterId = registerMask(afterMask);
+      if (!beforeId || !afterId)
         return std::nullopt;
-      llvm::erase_if(remaining, [&](const llvm::APInt &propertyMask) {
-        return llvm::is_contained(layer, propertyMask);
-      });
+      successors[*beforeId].push_back(*afterId);
+      ++indegrees[*afterId];
     }
+    std::vector<unsigned> ready;
+    for (unsigned id = 0; id != indegrees.size(); ++id)
+      if (indegrees[id] == 0)
+        ready.push_back(id);
+    for (size_t next = 0; next != ready.size(); ++next)
+      for (unsigned successor : successors[ready[next]])
+        if (--indegrees[successor] == 0)
+          ready.push_back(successor);
+    if (ready.size() != successors.size())
+      return std::nullopt;
   }
 
   if (hasDist) {
@@ -491,6 +517,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     uint32_t targetOffset = 0;
     uint32_t width = 0;
     std::vector<DomainPattern> patterns;
+    llvm::DenseSet<llvm::APInt> equalMaskValues;
+    bool needsOverlapProof = false;
   };
   std::vector<DomainGroup> domainGroups(domainGroupCount);
   if (hasDomains) {
@@ -519,23 +547,22 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       info.seen = true;
       info.targetOffset = targetOffset;
       info.width = width;
-      for (const DomainPattern &other : info.patterns)
-        if (((value ^ other.value) & (mask & other.mask)).isZero())
-          return std::nullopt;
+      if (!info.patterns.empty() && mask != info.patterns.front().mask)
+        info.needsOverlapProof = true;
+      if (!info.needsOverlapProof && !info.equalMaskValues.insert(value).second)
+        return std::nullopt;
       info.patterns.push_back({mask, value});
     }
     if (llvm::any_of(domainGroups,
                      [](const DomainGroup &group) { return !group.seen; }))
       return std::nullopt;
-    for (auto [index, group] : llvm::enumerate(domainGroups)) {
-      uint64_t groupEnd =
-          static_cast<uint64_t>(group.targetOffset) + group.width;
-      for (const DomainGroup &other :
-           llvm::ArrayRef(domainGroups).drop_front(index + 1)) {
-        uint64_t otherEnd =
-            static_cast<uint64_t>(other.targetOffset) + other.width;
-        if (group.targetOffset < otherEnd && other.targetOffset < groupEnd)
+    std::vector<bool> domainBits(aggregateWidth);
+    for (const DomainGroup &group : domainGroups) {
+      uint64_t end = static_cast<uint64_t>(group.targetOffset) + group.width;
+      for (uint64_t bit = group.targetOffset; bit != end; ++bit) {
+        if (domainBits[bit])
           return std::nullopt;
+        domainBits[bit] = true;
       }
     }
   }
@@ -583,6 +610,41 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         builder, location, bitVectorType(captureWidths[index]),
         builder.getStringAttr("capture_" + std::to_string(index))));
 
+  llvm::DenseMap<mlir::Value, uint32_t> captureIndices;
+  for (auto [index, capture] : llvm::enumerate(captures))
+    captureIndices.try_emplace(capture, index);
+  llvm::DenseMap<uint64_t, size_t> variableIndices;
+  auto registerVariable = [&](uint32_t offset, unsigned width) {
+    uint64_t key = variableKey(offset, width);
+    auto found = variableIndices.find(key);
+    if (found != variableIndices.end())
+      return result.variables[found->second];
+    mlir::Value bits = mlir::smt::ExtractOp::create(
+        builder, location, bitVectorType(width), offset, assignment);
+    variableIndices.try_emplace(key, result.variables.size());
+    result.variables.push_back({offset, width, bits});
+    return result.variables.back();
+  };
+  // Dependency lists can themselves be quadratic for many overlapping views.
+  // They optimize the legacy proposal only; the exact sampling plan does not
+  // require them. Bound their discovery and output by the lowered bit count.
+  uint64_t workUnits = programSize;
+  auto addWorkUnits = [&](uint64_t units) {
+    workUnits = units > UINT64_MAX - workUnits ? UINT64_MAX : workUnits + units;
+  };
+  addWorkUnits(aggregateWidth);
+  for (uint32_t index = 0; index != instructionCount; ++index) {
+    auto decoded = decodeInstruction(index);
+    if (!decoded)
+      return std::nullopt;
+    addWorkUnits(decoded->width);
+  }
+  for (const DomainGroup &group : domainGroups)
+    addWorkUnits(static_cast<uint64_t>(group.width) * group.patterns.size());
+  result.proposalWorkLimit =
+      workUnits > UINT64_MAX / 64 ? UINT64_MAX : workUnits * 64;
+  ReferenceBudget referenceBudget{result.proposalWorkLimit};
+
   std::vector<StackValue> stack;
   stack.reserve(instructionCount);
   mlir::Value hard = mlir::smt::BoolConstantOp::create(builder, location, true);
@@ -610,17 +672,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       if (aggregateWidth == 0 || operand >= aggregateWidth ||
           width > aggregateWidth - operand)
         return std::nullopt;
-      mlir::Value bits = mlir::smt::ExtractOp::create(
-          builder, location, bitVectorType(width), operand, assignment);
-      stack.push_back({bits, width, SMTVariable{operand, width, bits},
-                       std::nullopt, index});
-      auto found = std::find_if(
-          result.variables.begin(), result.variables.end(),
-          [&](const SMTVariable &variable) {
-            return variable.offset == operand && variable.width == width;
-          });
-      if (found == result.variables.end())
-        result.variables.push_back({operand, width, bits});
+      SMTVariable variable = registerVariable(operand, width);
+      stack.push_back({variable.bits, width, variable, std::nullopt, index});
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_PUSH_CAPTURE_V1) {
@@ -906,15 +959,18 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             SMTVariableEquality{*lhs.directVariable, *rhs.directVariable};
       if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
           lhs.directVariable && !rhs.directVariable &&
-          !containsVariable(rhs.bits, *lhs.directVariable))
+          !containsVariable(rhs.bits, *lhs.directVariable, referenceBudget))
         directDefinition = SMTVariableDefinition{*lhs.directVariable, rhs.bits,
                                                  rhs.instructionBegin, index};
       else if (opcode == OBELISK_RT_RANDOM_EQ_V1 && lhs.width == rhs.width &&
                rhs.directVariable && !lhs.directVariable &&
-               !containsVariable(lhs.bits, *rhs.directVariable))
+               !containsVariable(lhs.bits, *rhs.directVariable,
+                                 referenceBudget))
         directDefinition =
             SMTVariableDefinition{*rhs.directVariable, lhs.bits,
                                   lhs.instructionBegin, rhs.instructionBegin};
+      if (referenceBudget.exceeded)
+        return std::nullopt;
 
       // Direct comparisons against one capture describe a runtime interval.
       // Retain that shape so lowering can normalize strict endpoints and
@@ -925,10 +981,10 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
             value.bits.getDefiningOp());
         if (!extract || extract.getLowBit() != 0)
           return std::nullopt;
-        auto found = llvm::find(captures, extract.getInput());
-        if (found == captures.end())
+        auto found = captureIndices.find(extract.getInput());
+        if (found == captureIndices.end())
           return std::nullopt;
-        return static_cast<uint32_t>(found - captures.begin());
+        return found->second;
       };
       if (lhs.width == rhs.width && (opcode == OBELISK_RT_RANDOM_GE_V1 ||
                                      opcode == OBELISK_RT_RANDOM_GT_V1 ||
@@ -1130,27 +1186,24 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       softPriorities != expectedSoftPriorities)
     return std::nullopt;
   for (const DomainGroup &group : domainGroups) {
-    mlir::Value field = mlir::smt::ExtractOp::create(
-        builder, location, bitVectorType(group.width), group.targetOffset,
-        assignment);
-    auto found = llvm::find_if(result.variables, [&](const SMTVariable &item) {
-      return item.offset == group.targetOffset && item.width == group.width;
-    });
-    if (found == result.variables.end()) {
-      result.variables.push_back({group.targetOffset, group.width, field});
-    } else {
-      field = found->bits;
-    }
+    mlir::Value field = registerVariable(group.targetOffset, group.width).bits;
     mlir::Value member =
         mlir::smt::BoolConstantOp::create(builder, location, false);
+    mlir::Value overlap = member;
     for (const DomainPattern &pattern : group.patterns) {
       mlir::Value masked = mlir::smt::BVAndOp::create(
           builder, location, field, constant(builder, location, pattern.mask));
       mlir::Value matches =
           mlir::smt::EqOp::create(builder, location, masked,
                                   constant(builder, location, pattern.value));
+      if (group.needsOverlapProof)
+        overlap = mlir::smt::OrOp::create(
+            builder, location, overlap,
+            mlir::smt::AndOp::create(builder, location, member, matches));
       member = mlir::smt::OrOp::create(builder, location, member, matches);
     }
+    if (group.needsOverlapProof)
+      result.domainOverlaps.push_back(overlap);
     hard = mlir::smt::AndOp::create(builder, location, hard, member);
     result.hardConstraints.push_back({member, {}, false});
     result.finiteDomains.push_back(
@@ -1159,32 +1212,73 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   result.assignment = assignment;
   result.captures = std::move(captures);
   result.hard = hard;
+  std::vector<std::vector<size_t>> variablesForBit(aggregateWidth);
+  for (auto [index, variable] : llvm::enumerate(result.variables)) {
+    uint64_t end = static_cast<uint64_t>(variable.offset) + variable.width;
+    for (uint64_t bit = variable.offset; bit != end; ++bit)
+      variablesForBit[bit].push_back(index);
+  }
+  std::vector<uint64_t> variableGenerations(result.variables.size());
+  uint64_t generation = 0;
+  auto collectReferences = [&](mlir::Value expression,
+                               std::vector<SMTVariable> &dependencies,
+                               bool &hasCapture) {
+    ++generation;
+    llvm::SmallPtrSet<mlir::Operation *, 16> visited;
+    llvm::SmallVector<mlir::Value> pending{expression};
+    while (!pending.empty()) {
+      if (!referenceBudget.consume())
+        return false;
+      mlir::Value value = pending.pop_back_val();
+      if (captureIndices.contains(value))
+        hasCapture = true;
+      mlir::Operation *operation = value.getDefiningOp();
+      if (!operation || !visited.insert(operation).second)
+        continue;
+      if (auto extract = mlir::dyn_cast<mlir::smt::ExtractOp>(operation);
+          extract && extract.getInput() == assignment) {
+        uint64_t begin = extract.getLowBit();
+        unsigned width =
+            mlir::cast<mlir::smt::BitVectorType>(value.getType()).getWidth();
+        for (uint64_t bit = begin; bit != begin + width; ++bit) {
+          if (!referenceBudget.consume())
+            return false;
+          for (size_t index : variablesForBit[bit]) {
+            if (!referenceBudget.consume())
+              return false;
+            if (variableGenerations[index] == generation)
+              continue;
+            variableGenerations[index] = generation;
+            dependencies.push_back(result.variables[index]);
+          }
+        }
+      }
+      llvm::append_range(pending, llvm::reverse(operation->getOperands()));
+    }
+    return true;
+  };
   for (SMTHardConstraint &constraint : result.hardConstraints) {
-    for (const SMTVariable &variable : result.variables)
-      if (containsVariable(constraint.expression, variable))
-        constraint.dependencies.push_back(variable);
-    constraint.hasCapture =
-        llvm::any_of(result.captures, [&](mlir::Value capture) {
-          return containsValue(constraint.expression, capture);
-        });
+    if (!collectReferences(constraint.expression, constraint.dependencies,
+                           constraint.hasCapture))
+      return std::nullopt;
   }
   for (SMTSoftConstraint &constraint : result.softConstraints) {
-    for (const SMTVariable &variable : result.variables)
-      if (containsVariable(constraint.expression, variable))
-        constraint.dependencies.push_back(variable);
-    if (constraint.directDefinition)
-      for (const SMTVariable &variable : result.variables)
-        if (containsVariable(constraint.directDefinition->expression, variable))
-          constraint.directDefinition->dependencies.push_back(variable);
-    constraint.hasCapture =
-        llvm::any_of(result.captures, [&](mlir::Value capture) {
-          return containsValue(constraint.expression, capture);
-        });
+    if (!collectReferences(constraint.expression, constraint.dependencies,
+                           constraint.hasCapture))
+      return std::nullopt;
+    bool unusedCapture = false;
+    if (constraint.directDefinition &&
+        !collectReferences(constraint.directDefinition->expression,
+                           constraint.directDefinition->dependencies,
+                           unusedCapture))
+      return std::nullopt;
   }
-  for (SMTVariableDefinition &definition : result.directDefinitions)
-    for (const SMTVariable &variable : result.variables)
-      if (containsVariable(definition.expression, variable))
-        definition.dependencies.push_back(variable);
+  for (SMTVariableDefinition &definition : result.directDefinitions) {
+    bool unusedCapture = false;
+    if (!collectReferences(definition.expression, definition.dependencies,
+                           unusedCapture))
+      return std::nullopt;
+  }
   mlir::smt::AssertOp::create(builder, location, hard);
   mlir::smt::YieldOp::create(builder, location);
   if (mlir::failed(mlir::verify(*result.module)))

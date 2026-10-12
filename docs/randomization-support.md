@@ -126,8 +126,22 @@ rebuilding wide threshold constants. Each edge of Z3's Boolean result is visited
 once during conversion, and at most 32 atom diagrams receive bounded compiler
 preparation. Larger atom sets retain their exact circuits. Reading and emitting
 Z3's result costs O(M) for its M nodes and edges; Z3 can produce a graph larger
-than the lowered input. This is not a claim that all compiler generation paths
-are linear: the legacy structural proposal analysis remains under review.
+than the lowered input.
+
+The structural proposal decoder indexes variables, captures and solve-order
+masks. It validates ordering and schedules definitions with linear graph
+traversals. Dependency discovery visits each constraint once and indexes all
+overlapping variable views by bit; a linear work budget stops optional metadata
+when dense overlap would expand it excessively. Equal-mask semantic domains
+use hashed values, while Z3 proves unequal-mask records disjoint with a shared
+prefix formula. The SMT-to-Z3 shim visits each SSA edge once with an explicit
+stack. Component masks and bounded assignment tables have a linear output
+budget, and wide assignments use in-place bit insertion. Budget exhaustion
+retains the complete compiled Boolean plan. Here N counts lowered operations,
+expanded loops and array elements, bit widths and serialized constraint
+metadata. These bounds exclude work performed inside Z3 and do not imply that
+its result graph has O(N) size. Expression construction and proposal lowering
+outside these solver passes remain under review.
 
 Native and WASM targets contain no Z3 library or solver calls. A simple sampler
 binds current captures and inactive bits, selects the optimal enabled soft

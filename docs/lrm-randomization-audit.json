@@ -148,7 +148,8 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "runtime/include/obelisk/Runtime/RandomDomain.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
+          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -196,7 +197,10 @@
           "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
         ]
       }
     },
@@ -399,7 +403,8 @@
           "runtime/lib/RandModelCount.h",
           "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
+          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -452,7 +457,10 @@
           "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
         ]
       }
     },
@@ -978,7 +986,8 @@
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/lib/RandModelCount.h",
           "lib/Solver/RandomSamplerZ3.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-definition-reverse.mlir",
@@ -995,7 +1004,10 @@
           "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir",
           "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
           "test/Runtime/random-sampler-plan-validation.mlir",
-          "test/Build/runtime-compiled-sampler.test"
+          "test/Build/runtime-compiled-sampler.test",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
         ]
       }
     },
@@ -1549,7 +1561,8 @@
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
+          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
@@ -1574,7 +1587,10 @@
           "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
         ]
       }
     },
@@ -1603,12 +1619,16 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
           "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
         ]
       }
     },

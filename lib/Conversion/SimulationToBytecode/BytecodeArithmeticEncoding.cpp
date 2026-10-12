@@ -62,6 +62,29 @@ Encoder::encodeArithmeticOperation(FunctionPlan &plan, Operation *operation) {
     return binary(LShr, op.getResult(), op.getLhs(), op.getRhs());
   if (auto op = dyn_cast<arith::ShRSIOp>(operation))
     return binary(AShr, op.getResult(), op.getLhs(), op.getRhs());
+  auto minMax = [&](Value result, Value lhs, Value rhs,
+                    obelisk_rt_design_compare_kind predicate) {
+    uint32_t condition =
+        temporary(plan, IntegerType::get(operation->getContext(), 1));
+    if (condition == kInvalidRegister)
+      return failure();
+    emit({Compare, predicate, condition, reg(plan, lhs), reg(plan, rhs)});
+    emit({Select, OBELISK_RT_DB_SELECT_BINARY, reg(plan, result),
+          reg(plan, lhs), reg(plan, rhs), condition});
+    return success();
+  };
+  if (auto op = dyn_cast<arith::MinUIOp>(operation))
+    return minMax(op.getResult(), op.getLhs(), op.getRhs(),
+                  OBELISK_RT_DB_CMP_ULT);
+  if (auto op = dyn_cast<arith::MaxUIOp>(operation))
+    return minMax(op.getResult(), op.getLhs(), op.getRhs(),
+                  OBELISK_RT_DB_CMP_UGT);
+  if (auto op = dyn_cast<arith::MinSIOp>(operation))
+    return minMax(op.getResult(), op.getLhs(), op.getRhs(),
+                  OBELISK_RT_DB_CMP_SLT);
+  if (auto op = dyn_cast<arith::MaxSIOp>(operation))
+    return minMax(op.getResult(), op.getLhs(), op.getRhs(),
+                  OBELISK_RT_DB_CMP_SGT);
   if (auto op = dyn_cast<arith::CmpIOp>(operation)) {
     obelisk_rt_design_compare_kind predicate = OBELISK_RT_DB_CMP_EQ;
     switch (op.getPredicate()) {
