@@ -1059,12 +1059,13 @@ private:
     if (auto caseStatement = dyn_cast<semantic::SVCaseStatementOp>(statement)) {
       // 12.5 evaluates the selector first, then the labels in source order,
       // and executes only the first matching item. Wildcard comparisons
-      // compile into exact value/X/Z planes under 12.5.1. Set membership,
-      // pattern matching and qualifier reports need their own implementation.
-      if (caseStatement.getConditionKind() ==
-              semantic::SVCaseCondition::Inside ||
-          caseStatement.getCheckKind() != semantic::SVUniquePriorityCheck::None)
+      // compile into exact value/X/Z planes under 12.5.1. Case-inside uses
+      // RHS-only wildcard membership under 12.5.4; an X result does not match.
+      // Pattern matching and qualifier reports need their own implementation.
+      if (caseStatement.getCheckKind() != semantic::SVUniquePriorityCheck::None)
         return failure();
+      bool inside =
+          caseStatement.getConditionKind() == semantic::SVCaseCondition::Inside;
       auto children = getChildren(statement);
       auto labelCounts = caseStatement.getItemLabelCounts();
       uint64_t itemCount = caseStatement.getItemCount();
@@ -1084,10 +1085,28 @@ private:
         return failure();
       auto comparisons = ArrayRef(children).take_front(1 + totalLabels);
       auto bodies = ArrayRef(children).take_back(statementCount);
+      SmallVector<Operation *> comparisonOperands;
+      for (Operation *operand : comparisons) {
+        if (auto range =
+                dyn_cast<semantic::SVValueRangeExpressionOp>(operand)) {
+          auto bounds = getChildren(operand);
+          if (!inside ||
+              range.getRangeKind() != semantic::SVValueRangeKind::Simple ||
+              bounds.size() != 2 ||
+              (isUnboundedEndpoint(bounds[0]) &&
+               isUnboundedEndpoint(bounds[1])))
+            return failure();
+          for (Operation *bound : bounds)
+            if (!isUnboundedEndpoint(bound))
+              comparisonOperands.push_back(bound);
+        } else {
+          comparisonOperands.push_back(operand);
+        }
+      }
       uint64_t comparisonWidth = 0;
       bool comparisonSigned = true;
       bool comparisonFourState = false;
-      for (Operation *operand : comparisons) {
+      for (Operation *operand : comparisonOperands) {
         auto type = operand->getAttrOfType<TypeAttr>("semantic_type");
         FailureOr<Type> normalized =
             type ? normalizeSemanticType(type.getValue(),
@@ -1165,6 +1184,34 @@ private:
         return failure();
       SmallVector<Operation *> labels;
       for (Operation *label : comparisons.drop_front()) {
+        if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(label)) {
+          auto bounds = getChildren(label);
+          SmallVector<Operation *> endpoints;
+          for (auto [index, bound] : llvm::enumerate(bounds)) {
+            if (isUnboundedEndpoint(bound)) {
+              // 11.4.13: '$' denotes the minimum/maximum of the selector's
+              // common case type. It contributes no evaluation input.
+              std::string bits(comparisonWidth, index == 0 ? '0' : '1');
+              if (comparisonSigned)
+                bits.front() = index == 0 ? '1' : '0';
+              endpoints.push_back(
+                  literal(bound, comparisonType,
+                          std::to_string(comparisonWidth) + "'b" + bits));
+              continue;
+            }
+            FailureOr<Operation *> value = contextValue(bound);
+            if (failed(value))
+              return failure();
+            endpoints.push_back(*value);
+          }
+          labels.push_back(make(
+              label, semantic::SVValueRangeExpressionOp::getOperationName(),
+              label->getAttrOfType<TypeAttr>("semantic_type"),
+              {builder.getNamedAttr("range_kind",
+                                    label->getAttr("range_kind"))},
+              endpoints));
+          continue;
+        }
         FailureOr<Operation *> value = contextValue(label);
         if (failed(value))
           return failure();
@@ -1173,6 +1220,9 @@ private:
       TypeAttr predicateType = TypeAttr::get(
           semantic::IntegralType::get(builder.getContext(), 1, false, false, 0,
                                       0, semantic::SVIntegralFlavor::Bit));
+      TypeAttr membershipType = TypeAttr::get(
+          semantic::IntegralType::get(builder.getContext(), 1, false, true, 0,
+                                      0, semantic::SVIntegralFlavor::Logic));
       Environment unmatchedValues = environment;
       FailureOr<Operation *> unmatched =
           caseStatement.getHasDefault()
@@ -1193,18 +1243,26 @@ private:
         // evaluation errors in labels after an earlier match.
         for (int64_t count = labelCounts[item]; count != 0; --count) {
           --labelIndex;
-          Operation *matches = make(
-              statement, semantic::SVBinaryExpressionOp::getOperationName(),
-              predicateType,
-              {builder.getNamedAttr(
-                   "operator_kind",
-                   builder.getI32IntegerAttr(static_cast<int32_t>(
-                       semantic::SVBinaryOperator::CaseEquality))),
-               builder.getNamedAttr(
-                   randomFunctionCaseConditionAttrName,
-                   builder.getI32IntegerAttr(static_cast<int32_t>(
-                       caseStatement.getConditionKind())))},
-              {*selector, labels[labelIndex]});
+          Operation *matches =
+              inside
+                  ? make(statement,
+                         semantic::SVInsideExpressionOp::getOperationName(),
+                         membershipType,
+                         {builder.getNamedAttr("item_count",
+                                               builder.getI64IntegerAttr(1))},
+                         {*selector, labels[labelIndex]})
+                  : make(statement,
+                         semantic::SVBinaryExpressionOp::getOperationName(),
+                         predicateType,
+                         {builder.getNamedAttr(
+                              "operator_kind",
+                              builder.getI32IntegerAttr(static_cast<int32_t>(
+                                  semantic::SVBinaryOperator::CaseEquality))),
+                          builder.getNamedAttr(
+                              randomFunctionCaseConditionAttrName,
+                              builder.getI32IntegerAttr(static_cast<int32_t>(
+                                  caseStatement.getConditionKind())))},
+                         {*selector, labels[labelIndex]});
           selection = branch(statement, matches, *result, selection);
         }
       }

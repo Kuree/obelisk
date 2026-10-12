@@ -200,7 +200,8 @@
           "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
-          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
         ]
       }
     },
@@ -460,7 +461,8 @@
           "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
-          "test/Runtime/simulation-bytecode-integer-minmax.mlir"
+          "test/Runtime/simulation-bytecode-integer-minmax.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
         ]
       }
     },
@@ -1048,7 +1050,7 @@
         {
           "feature": "Side-effect-free user functions",
           "status": "partial",
-          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Constant repeat loops and same-width logical right-shift for loops have exact expansions, including the LRM count_ones example, lexical break/continue, early returns, local reinitialization and standalone updates. Counts follow 12.7.2 after typed casts; negative/X/Z counts execute zero times. The policy is 256 iterations per loop and 4096 expanded bodies per call. Packed case, casex and casez statements preserve first-match ordering, grouped labels, defaults, fallthrough, early returns and lexical loop exits. Comparisons use common width and signedness under 12.5, unbased literals fill the context, frozen and mixed random/state X/Z comparisons remain exact, and labels after an earlier match retain short-circuit error guards. Normal case consumes complete symbols; casex/casez ignore the designated symbols in either operand. Procedural ===/!== and ==?/!=? use distinct symbol comparison planes, including consuming result casts and 130-bit operands. Integral inside combines wildcard member and inclusive-range predicates with four-state OR. Nested selectors retain symbols and label-error guards through safe capture; empty live dependency masks remain state under nesting. General dynamic, larger and unbounded loops, set membership/pattern cases, case qualifier reports, non-integral comparisons, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
+          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Constant repeat loops and same-width logical right-shift for loops have exact expansions, including the LRM count_ones example, lexical break/continue, early returns, local reinitialization and standalone updates. Counts follow 12.7.2 after typed casts; negative/X/Z counts execute zero times. The policy is 256 iterations per loop and 4096 expanded bodies per call. Packed case, casex, casez and case-inside statements preserve first-match ordering, grouped labels, defaults, fallthrough, early returns and lexical loop exits. Comparisons use common width and signedness under 12.5, unbased literals fill the context, frozen and mixed random/state X/Z comparisons remain exact, and labels after an earlier match retain short-circuit error guards. Normal case consumes complete symbols; casex/casez ignore the designated symbols in either operand. Procedural ===/!== and ==?/!=? use distinct symbol comparison planes, including consuming result casts and 130-bit operands. Integral inside combines wildcard member and inclusive simple-range predicates with four-state OR, including dollar endpoints. Case-inside uses asymmetric wildcard membership and takes only known true comparisons, preserving first-match label evaluation. Nested selectors retain symbols and label-error guards through safe capture; empty live dependency masks remain state under nesting. General dynamic, larger and unbounded loops, unpacked-array membership, tolerance ranges and pattern cases, case qualifier reports, non-integral comparisons, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
         },
         {
           "feature": "Function body state reads",
@@ -1068,7 +1070,7 @@
         {
           "feature": "Scope-randomization user functions",
           "status": "partial",
-          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and compiled-plan stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Packed case, casex and casez statements share class first-match expansion, typed comparisons, state error guards and 130-bit return handling. Instance receiver plans, general loops, set membership/pattern cases, case qualifier reports and other general function bodies remain incomplete."
+          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and compiled-plan stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Packed case, casex, casez and case-inside statements share class first-match expansion, typed comparisons, state error guards and 130-bit return handling. Instance receiver plans, general loops, unpacked-array membership, tolerance ranges and pattern cases, case qualifier reports and other general function bodies remain incomplete."
         }
       ],
       "evidence": {
@@ -1134,7 +1136,8 @@
           "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
         ]
       }
     },
@@ -1218,7 +1221,8 @@
           "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
         ]
       }
     },
@@ -1808,7 +1812,8 @@
           "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir"
         ]
       }
     },

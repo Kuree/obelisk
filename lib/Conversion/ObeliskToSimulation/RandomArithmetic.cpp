@@ -786,17 +786,32 @@ struct RandomArithmetic::Impl {
     RandomArithmeticPlanes result{zero(expression, 1), nullptr};
     for (Operation *item : ArrayRef(operands).drop_front()) {
       RandomArithmeticPlanes match;
-      if (isa<semantic::SVValueRangeExpressionOp>(item)) {
+      if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
         auto bounds = getChildren(item);
-        if (bounds.size() != 2)
+        if (range.getRangeKind() != semantic::SVValueRangeKind::Simple ||
+            bounds.size() != 2)
           return failure();
-        auto low = get(bounds[0]), high = get(bounds[1]);
+        bool unboundedLow = isUnboundedEndpoint(bounds[0]);
+        bool unboundedHigh = isUnboundedEndpoint(bounds[1]);
+        if (unboundedLow && unboundedHigh)
+          return failure();
+        auto low =
+            unboundedLow
+                ? FailureOr<RandomArithmeticPlanes>(
+                      RandomArithmeticPlanes{zero(expression, 1), nullptr})
+                : get(bounds[0]);
+        auto high =
+            unboundedHigh
+                ? FailureOr<RandomArithmeticPlanes>(
+                      RandomArithmeticPlanes{zero(expression, 1), nullptr})
+                : get(bounds[1]);
         if (failed(low) || failed(high))
           return failure();
         unsigned precision = std::max(
             {*width(input->value), *width(low->value), *width(high->value)});
-        bool commonSigned =
-            sign(operands.front()) && sign(bounds[0]) && sign(bounds[1]);
+        bool commonSigned = sign(operands.front()) &&
+                            (unboundedLow || sign(bounds[0])) &&
+                            (unboundedHigh || sign(bounds[1]));
         auto value = resize(expression, *input, precision, commonSigned);
         auto lower = resize(expression, *low, precision, commonSigned);
         auto upper = resize(expression, *high, precision, commonSigned);
@@ -810,8 +825,12 @@ struct RandomArithmetic::Impl {
           return RandomArithmeticPlanes{mask(expression, bits, unknown, 1),
                                         unknown};
         };
-        auto lowerMatch = compare(Binary::GreaterThanEqual, lower);
-        auto upperMatch = compare(Binary::LessThanEqual, upper);
+        auto lowerMatch =
+            unboundedLow ? RandomArithmeticPlanes{ones(expression, 1), nullptr}
+                         : compare(Binary::GreaterThanEqual, lower);
+        auto upperMatch =
+            unboundedHigh ? RandomArithmeticPlanes{ones(expression, 1), nullptr}
+                          : compare(Binary::LessThanEqual, upper);
         match.value = bitAnd(expression, lowerMatch.value, upperMatch.value, 1);
         match.unknown = bitOr(
             expression,

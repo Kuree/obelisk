@@ -2976,6 +2976,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   SmallVector<EncodedInstruction> programInstructions;
   SmallVector<Value> programCaptures;
+  llvm::DenseMap<Operation *, uint32_t> programExpressionCaptures;
   auto instruction = [&](uint8_t opcode, unsigned width, bool isSigned = false,
                          uint32_t operand = 0, uint64_t immediate = 0) {
     programInstructions.push_back(
@@ -4434,6 +4435,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                "not executable yet";
         return failure();
       }
+      // The capture is a pre-solve parameter, even when a frozen symbol plane
+      // originates in an active property. Repeated projections of the same
+      // immutable state value must reuse one program input, rather than grow
+      // the native capture buffer for every copied expression occurrence.
+      Operation *key = arithmetic.canonical(expression);
+      if (auto found = programExpressionCaptures.find(key);
+          found != programExpressionCaptures.end()) {
+        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
+                    isSignedNode(expression), found->second);
+        return success();
+      }
       // Preserve the scalar runtime ABI for captures that fit in one word.
       // Wider v2 captures retain their source width for compile-time-assisted
       // materialization (and for the wide runtime ABI added separately).
@@ -4446,6 +4458,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       uint32_t capture = static_cast<uint32_t>(programCaptures.size());
       programCaptures.push_back(*extended);
+      programExpressionCaptures[key] = capture;
       instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, *width,
                   isSignedNode(expression), capture);
       return success();
@@ -4924,16 +4937,29 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       for (Operation *item : ArrayRef(nested).drop_front()) {
         if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
           SmallVector<Operation *> endpoints = getChildren(range);
-          if (endpoints.size() != 2 ||
-              failed(emitProgramExpression(nested.front())) ||
-              failed(emitProgramExpression(endpoints[0])))
+          if (range.getRangeKind() != semantic::SVValueRangeKind::Simple ||
+              endpoints.size() != 2)
             return failure();
-          instruction(OBELISK_RT_RANDOM_GE_V1, 1, isSignedNode(nested.front()));
-          if (failed(emitProgramExpression(nested.front())) ||
-              failed(emitProgramExpression(endpoints[1])))
+          bool unboundedLow = isUnboundedEndpoint(endpoints[0]);
+          bool unboundedHigh = isUnboundedEndpoint(endpoints[1]);
+          if (unboundedLow && unboundedHigh)
             return failure();
-          instruction(OBELISK_RT_RANDOM_LE_V1, 1, isSignedNode(nested.front()));
-          instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          if (!unboundedLow) {
+            if (failed(emitProgramExpression(nested.front())) ||
+                failed(emitProgramExpression(endpoints[0])))
+              return failure();
+            instruction(OBELISK_RT_RANDOM_GE_V1, 1,
+                        isSignedNode(nested.front()));
+          }
+          if (!unboundedHigh) {
+            if (failed(emitProgramExpression(nested.front())) ||
+                failed(emitProgramExpression(endpoints[1])))
+              return failure();
+            instruction(OBELISK_RT_RANDOM_LE_V1, 1,
+                        isSignedNode(nested.front()));
+          }
+          if (!unboundedLow && !unboundedHigh)
+            instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
         } else {
           if (failed(emitProgramExpression(nested.front())) ||
               failed(emitProgramExpression(item)))
@@ -5539,7 +5565,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         continue;
       } else if (isa<semantic::SVValueRangeExpressionOp>(operand)) {
         auto endpoints = getChildren(operand);
-        llvm::append_range(inputs, endpoints);
+        for (Operation *endpoint : endpoints)
+          if (!isUnboundedEndpoint(endpoint))
+            inputs.push_back(endpoint);
       } else {
         inputs.push_back(operand);
       }
