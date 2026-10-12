@@ -34,7 +34,8 @@ constexpr llvm::StringLiteral automaticOwnerReleaseInstrumentedAttr =
 bool isReferenceView(Operation *operation) {
   return isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
              schedule::NativeWordViewOp, sim::SimRefSubelementOp,
-             sim::SimRefArrayElementOp>(operation);
+             sim::SimRefArrayElementOp, sim::SimArgumentRefFromRefOp,
+             sim::SimArgumentRefRetypeOp>(operation);
 }
 
 llvm::SetVector<Value> collectReferenceFamily(Value root) {
@@ -46,7 +47,7 @@ llvm::SetVector<Value> collectReferenceFamily(Value root) {
       Operation *user = use.getOwner();
       if (isReferenceView(user)) {
         for (Value result : user->getResults())
-          if (isa<sim::RefType>(result.getType()))
+          if (isa<sim::RefType, sim::ArgumentRefType>(result.getType()))
             family.insert(result);
       }
       auto branch = dyn_cast<BranchOpInterface>(user);
@@ -286,8 +287,11 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
       return false;
     };
     auto representativeAt = [&](Operation *operation) -> Value {
+      // Erasing a reference preserves its owner's lifetime, but releasing
+      // that owner still requires an ordinary storage reference.
       for (Value reference : family)
-        if (dominance.dominates(reference, operation))
+        if (isa<sim::RefType>(reference.getType()) &&
+            dominance.dominates(reference, operation))
           return reference;
       return {};
     };

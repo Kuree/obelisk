@@ -666,6 +666,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     std::string path;
     Value value;
     Value lvalue;
+    CoverageInputBinding input;
   };
   SmallVector<SavedFormal> saved;
   SmallVector<Value> arguments;
@@ -682,11 +683,18 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
           std::string aliasPath = getHierarchyName(alias).str();
           if (aliasPath == canonicalPath)
             continue;
-          saved.push_back(
-              {aliasPath, values.lookup(aliasPath), lvalues.lookup(aliasPath)});
+          saved.push_back({aliasPath, values.lookup(aliasPath),
+                           lvalues.lookup(aliasPath),
+                           coverageInputs.lookup(aliasPath)});
           values[aliasPath] = values.lookup(canonicalPath);
           if (Value reference = lvalues.lookup(canonicalPath))
             lvalues[aliasPath] = reference;
+          else
+            lvalues.erase(aliasPath);
+          if (auto input = coverageInputs.lookup(canonicalPath); input.formal)
+            coverageInputs[aliasPath] = input;
+          else
+            coverageInputs.erase(aliasPath);
         }
       };
   for (auto [index, formal, actual] : llvm::enumerate(formals, actuals)) {
@@ -700,7 +708,8 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       return failure();
     }
     std::string path = getHierarchyName(formal).str();
-    saved.push_back({path, values.lookup(path), lvalues.lookup(path)});
+    saved.push_back({path, values.lookup(path), lvalues.lookup(path),
+                     coverageInputs.lookup(path)});
     if (formal.getDirection() == semantic::SVArgumentDirection::Ref) {
       FailureOr<Value> destination = lowerExpression(actual, true);
       if (failed(destination))
@@ -717,6 +726,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       // IEEE 19.3: constructor refs track their actual storage. Other actuals
       // may mutate it before option and bin expressions are evaluated.
       values[path] = *reference;
+      coverageInputs.erase(path);
     } else {
       FailureOr<Value> value = lowerExpression(actual);
       FailureOr<Value> converted =
@@ -728,6 +738,8 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
         return failure();
       arguments.push_back(*converted);
       values[path] = *converted;
+      lvalues.erase(path);
+      coverageInputs[path] = {formal, builder.getInsertionBlock()};
     }
     bindInheritedFormalAliases(formal, path);
     formalIDs.push_back(static_cast<int64_t>(id.getValue().getZExtValue()));
@@ -766,6 +778,10 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
         lvalues[entry.path] = entry.lvalue;
       else
         lvalues.erase(entry.path);
+      if (entry.input.formal)
+        coverageInputs[entry.path] = entry.input;
+      else
+        coverageInputs.erase(entry.path);
     }
   });
 
@@ -2175,6 +2191,7 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
     std::string path;
     Value value;
     Value lvalue;
+    CoverageInputBinding input;
   };
   SmallVector<SavedFormal> savedFormals;
   SmallVector<Value> defaultValues;
@@ -2191,11 +2208,18 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
           std::string aliasPath = getHierarchyName(alias).str();
           if (aliasPath == canonicalPath)
             continue;
-          savedFormals.push_back(
-              {aliasPath, values.lookup(aliasPath), lvalues.lookup(aliasPath)});
+          savedFormals.push_back({aliasPath, values.lookup(aliasPath),
+                                  lvalues.lookup(aliasPath),
+                                  coverageInputs.lookup(aliasPath)});
           values[aliasPath] = boundValue;
           if (Value reference = lvalues.lookup(canonicalPath))
             lvalues[aliasPath] = reference;
+          else
+            lvalues.erase(aliasPath);
+          if (auto input = coverageInputs.lookup(canonicalPath); input.formal)
+            coverageInputs[aliasPath] = input;
+          else
+            coverageInputs.erase(aliasPath);
         }
       };
   for (auto [index, formal, actual] :
@@ -2204,7 +2228,8 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
     if (failed(type))
       return failure();
     std::string path = getHierarchyName(formal).str();
-    savedFormals.push_back({path, values.lookup(path), lvalues.lookup(path)});
+    savedFormals.push_back({path, values.lookup(path), lvalues.lookup(path),
+                            coverageInputs.lookup(path)});
 
     // IEEE 1800-2017 13.5.3 evaluates an omitted default in the scope that
     // contains the declaration.  For a covergroup embedded in a class that
@@ -2233,6 +2258,7 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
       // evaluation. Later actuals and sample expressions may write through
       // another alias; lowerReferencedValue must load at each read.
       boundValue = *reference;
+      coverageInputs.erase(path);
     } else {
       FailureOr<Value> value = lowerExpression(actual);
       FailureOr<Value> converted =
@@ -2243,6 +2269,8 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
       if (failed(converted))
         return failure();
       boundValue = *converted;
+      lvalues.erase(path);
+      coverageInputs[path] = {formal, builder.getInsertionBlock()};
     }
     values[path] = boundValue;
     bindInheritedFormalAliases(formal, path, boundValue);
@@ -2289,6 +2317,10 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
         lvalues[saved.path] = saved.lvalue;
       else
         lvalues.erase(saved.path);
+      if (saved.input.formal)
+        coverageInputs[saved.path] = saved.input;
+      else
+        coverageInputs.erase(saved.path);
     }
   });
 
@@ -2325,10 +2357,11 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
     std::string path;
     Value value;
     Value lvalue;
+    CoverageInputBinding input;
   };
   SmallVector<SavedConstructorFormal> savedConstructorFormals;
   llvm::scope_exit restoreConstructorFormals([&] {
-    for (const auto &[path, value, lvalue] : savedConstructorFormals) {
+    for (const auto &[path, value, lvalue, input] : savedConstructorFormals) {
       if (value)
         values[path] = value;
       else
@@ -2337,15 +2370,26 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
         lvalues[path] = lvalue;
       else
         lvalues.erase(path);
+      if (input.formal)
+        coverageInputs[path] = input;
+      else
+        coverageInputs.erase(path);
     }
   });
   auto formalAliases = indexInheritedFormalAliases(covergroup);
-  auto bindConstructorFormal = [&](StringRef path, Value value, bool ref) {
-    savedConstructorFormals.push_back(
-        {path.str(), values.lookup(path), lvalues.lookup(path)});
+  auto bindConstructorFormal = [&](StringRef path, Value value,
+                                   semantic::SVFormalArgumentSymbolOp formal) {
+    savedConstructorFormals.push_back({path.str(), values.lookup(path),
+                                       lvalues.lookup(path),
+                                       coverageInputs.lookup(path)});
     values[path] = value;
-    if (ref)
+    if (formal.getDirection() == semantic::SVArgumentDirection::Ref) {
       lvalues[path] = value;
+      coverageInputs.erase(path);
+    } else {
+      lvalues.erase(path);
+      coverageInputs[path] = {formal, builder.getInsertionBlock()};
+    }
   };
   for (Operation *child : getChildren(covergroup)) {
     auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
@@ -2368,13 +2412,13 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
         ref ? sim::ArgumentRefType::get(builder.getContext(), *type) : *type;
     Value value = sim::SimCovergroupFormalReadOp::create(
         builder, getSemanticLocation(formal), result, context, handle, id);
-    bindConstructorFormal(path, value, ref);
+    bindConstructorFormal(path, value, formal);
     auto found = formalAliases.find(getDebugName(formal));
     if (found != formalAliases.end())
       for (auto alias : found->second) {
         StringRef aliasPath = getHierarchyName(alias);
         if (aliasPath != path)
-          bindConstructorFormal(aliasPath, value, ref);
+          bindConstructorFormal(aliasPath, value, formal);
       }
   }
 

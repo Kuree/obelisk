@@ -741,6 +741,13 @@ private:
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> lvalueExpressionCaptures;
   ::llvm::StringMap<::mlir::Value> values;
   ::llvm::StringMap<::mlir::Value> lvalues;
+  struct CoverageInputBinding {
+    ::mlir::Operation *formal = nullptr;
+    ::mlir::Block *block = nullptr;
+  };
+  // Input formals start as SSA snapshots. Only address-taken inputs need a
+  // local copy; aliases share the canonical formal's copy in its binding block.
+  ::llvm::StringMap<CoverageInputBinding> coverageInputs;
   /// Stable lexical cells used only when binding outlined observers. Ordinary
   /// expressions and fork branches retain their value-oriented bindings.
   ::llvm::StringMap<::mlir::Value> observerCaptureOverrides;

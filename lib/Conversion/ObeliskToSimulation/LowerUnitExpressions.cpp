@@ -576,7 +576,39 @@ FailureOr<Value>
 UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   Location location = getSemanticLocation(op);
   Value value;
-  if (lvalue)
+  auto input = coverageInputs.lookup(path);
+  if (input.formal) {
+    StringRef canonicalPath = getHierarchyName(input.formal);
+    Value reference = lvalues.lookup(canonicalPath);
+    if (!reference && lvalue) {
+      Value snapshot = values.lookup(canonicalPath);
+      if (!snapshot || !input.block) {
+        emitError(location) << "coverage input has no bound snapshot: " << path;
+        return failure();
+      }
+      // A first address use can occur inside a conditional expression. Place
+      // the copy in the activation's binding block so it dominates every arm,
+      // while loop iterations and separate calls still get independent copies.
+      OpBuilder::InsertionGuard guard(builder);
+      if (!input.block->empty() &&
+          input.block->back().hasTrait<OpTrait::IsTerminator>())
+        builder.setInsertionPoint(&input.block->back());
+      else
+        builder.setInsertionPointToEnd(input.block);
+      reference = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), snapshot.getType()),
+          snapshot);
+      lvalues[canonicalPath] = reference;
+    }
+    // A sample input is its own variable: helpers may modify that copy through
+    // a ref. Subsequent value and alias reads must observe the same storage.
+    if (reference)
+      value = reference;
+    else if (!lvalue)
+      value = values.lookup(canonicalPath);
+  }
+  if (!value && lvalue)
     if (auto node = op->getAttrOfType<IntegerAttr>("node_id"))
       value = nodeLvalues.lookup(node.getValue().getZExtValue());
   if (!value)

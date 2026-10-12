@@ -81,6 +81,35 @@ module {
     ^done:
       simulation.return
     }
+
+    simulation.code_unit.decl 6 in 0 function hierarchy "reference_lifetimes.argument_alias"
+    simulation.code_unit.decl 7 in 0 function hierarchy "reference_lifetimes.observe_alias"
+    simulation.func @observe_alias(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %reference: !simulation.argument_ref<i64> {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 7 : i64} {
+      %value = simulation.argument_ref.load %reference : !simulation.argument_ref<i64> -> i64
+      simulation.return
+    }
+
+    // An exact alias can outlive its conversion to argument_ref, including
+    // after retyping and forwarding through block arguments. Keep the same
+    // owner alive until the final call, and release ordinary storage once.
+    simulation.func @argument_alias(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %initial: i64 {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
+      %local = simulation.ref.alloc %initial : i64 -> !simulation.ref<i64>
+      %alias = simulation.argument_ref.from_ref %local : !simulation.ref<i64> -> !simulation.argument_ref<i64>
+      simulation.call @observe_alias(%ctx, %alias) : (!simulation.context, !simulation.argument_ref<i64>) -> ()
+      cf.br ^next
+    ^next:
+      %retyped = simulation.argument_ref.retype %alias : !simulation.argument_ref<i64> -> !simulation.argument_ref<i64>
+      cf.br ^last(%retyped : !simulation.argument_ref<i64>)
+    ^last(%forwarded: !simulation.argument_ref<i64>):
+      simulation.call @observe_alias(%ctx, %forwarded) : (!simulation.context, !simulation.argument_ref<i64>) -> ()
+      simulation.return
+    }
   }
 }
 
@@ -99,6 +128,7 @@ module {
 // CHECK-LABEL: simulation.func @shared_exit
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%{{.*}}, %{{.*}} : !simulation.ref<i64>, !simulation.ref<i64>), ^[[CLEANUP:.*]](%{{.*}}, %{{.*}} : !simulation.ref<i64>, !simulation.ref<i64>)
 // CHECK-COUNT-2: simulation.ref.release_owner
+
 // CHECK: ^[[CLEANUP]](%[[A:.*]]: !simulation.ref<i64>, %[[B:.*]]: !simulation.ref<i64>):
 // CHECK-NEXT: simulation.ref.release_owner %[[A]]
 // CHECK-NEXT: simulation.ref.release_owner %[[B]]
@@ -108,3 +138,15 @@ module {
 // CHECK: simulation.ref.alloc
 // CHECK-SAME: obelisk.owner_release_instrumented
 // CHECK-COUNT-2: simulation.ref.release_owner
+
+// CHECK-LABEL: simulation.func @argument_alias
+// CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
+// CHECK-SAME: obelisk.owner_release_instrumented
+// CHECK: simulation.argument_ref.from_ref %[[LOCAL]]
+// CHECK: simulation.call @observe_alias
+// CHECK-NOT: simulation.ref.release_owner
+// CHECK: simulation.argument_ref.retype
+// CHECK-NOT: simulation.ref.release_owner
+// CHECK: simulation.call @observe_alias
+// CHECK-NEXT: simulation.ref.release_owner %[[LOCAL]]
+// CHECK-NEXT: simulation.return
