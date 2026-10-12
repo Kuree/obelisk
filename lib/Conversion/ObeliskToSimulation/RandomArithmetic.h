@@ -47,6 +47,9 @@ public:
   ~RandomArithmetic();
 
   bool needed(mlir::Operation *expression);
+  /// Intern immutable expression trees without rewalking shared subtrees.
+  /// Safe captures can reuse a value across copies of the same expression.
+  mlir::Operation *canonical(mlir::Operation *expression);
   mlir::FailureOr<RandomArithmeticPlanes> get(mlir::Operation *expression);
   mlir::FailureOr<mlir::Operation *> known(mlir::Operation *expression);
 

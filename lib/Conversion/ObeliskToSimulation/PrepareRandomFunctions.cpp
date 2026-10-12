@@ -1058,10 +1058,11 @@ private:
     }
     if (auto caseStatement = dyn_cast<semantic::SVCaseStatementOp>(statement)) {
       // 12.5 evaluates the selector first, then the labels in source order,
-      // and executes only the first matching item. Qualifier reports and
-      // wildcard/pattern matching need their own staged implementation.
-      if (caseStatement.getConditionKind() !=
-              semantic::SVCaseCondition::Normal ||
+      // and executes only the first matching item. Wildcard comparisons
+      // compile into exact value/X/Z planes under 12.5.1. Set membership,
+      // pattern matching and qualifier reports need their own implementation.
+      if (caseStatement.getConditionKind() ==
+              semantic::SVCaseCondition::Inside ||
           caseStatement.getCheckKind() != semantic::SVUniquePriorityCheck::None)
         return failure();
       auto children = getChildren(statement);
@@ -1196,9 +1197,13 @@ private:
               statement, semantic::SVBinaryExpressionOp::getOperationName(),
               predicateType,
               {builder.getNamedAttr(
-                  "operator_kind",
-                  builder.getI32IntegerAttr(static_cast<int32_t>(
-                      semantic::SVBinaryOperator::CaseEquality)))},
+                   "operator_kind",
+                   builder.getI32IntegerAttr(static_cast<int32_t>(
+                       semantic::SVBinaryOperator::CaseEquality))),
+               builder.getNamedAttr(
+                   randomFunctionCaseConditionAttrName,
+                   builder.getI32IntegerAttr(static_cast<int32_t>(
+                       caseStatement.getConditionKind())))},
               {*selector, labels[labelIndex]});
           selection = branch(statement, matches, *result, selection);
         }

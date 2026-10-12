@@ -12,7 +12,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #include "z3++.h"
@@ -32,9 +31,15 @@ namespace obelisk::solver {
 namespace {
 
 z3::expr bitVectorValue(z3::context &context, const llvm::APInt &value) {
-  llvm::SmallString<128> decimal;
-  value.toString(decimal, 10, /*Signed=*/false);
-  return context.bv_val(decimal.c_str(), value.getBitWidth());
+  // Passing fixed-size words avoids quadratic conversion of a wide APInt
+  // into a decimal numeral before entering Z3.
+  unsigned count = value.getNumWords();
+  unsigned highWidth = value.getBitWidth() - (count - 1) * 64;
+  const uint64_t *words = value.getRawData();
+  z3::expr result = context.bv_val(words[count - 1], highWidth);
+  while (--count)
+    result = z3::concat(result, context.bv_val(words[count - 1], 64));
+  return result;
 }
 
 std::optional<llvm::APInt> bitVectorNumeral(const z3::expr &value,
@@ -232,15 +237,14 @@ private:
       }
       return result;
     }
-    for (size_t left = 0; left != inputs.size(); ++left)
-      for (size_t right = left + 1; right != inputs.size(); ++right) {
-        auto lhs = translate(inputs[left]);
-        auto rhs = translate(inputs[right]);
-        if (!lhs || !rhs)
-          return std::nullopt;
-        result = result && (*lhs != *rhs);
-      }
-    return result;
+    z3::expr_vector distinctInputs(context);
+    for (mlir::Value input : inputs) {
+      auto current = translate(input);
+      if (!current)
+        return std::nullopt;
+      distinctInputs.push_back(*current);
+    }
+    return z3::distinct(distinctInputs);
   }
 
   std::optional<z3::expr> translateBooleanRange(mlir::ValueRange inputs,

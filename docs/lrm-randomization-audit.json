@@ -195,7 +195,8 @@
           "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
         ]
       }
     },
@@ -374,7 +375,7 @@
         {
           "feature": "Division, exponentiation, and system calls",
           "status": "partial",
-          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. Disabled four-state scalar properties, fixed-array elements and qualified structure leaves bind their stored unknown symbols through compiler captures masked by the live active-bit inventory. Candidate checks use the pre-solve snapshot; active random candidates remain two-state. Packed bit-selects and constant or variable indexed part-selects preserve separate value, X and Z planes, including computed operands from admitted functions, concatenation and undefined arithmetic. Widened signed address arithmetic retains declared coordinates and both indexed directions without truncation. General system functions and non-integral selections remain open."
+          "detail": "Variable and state division/remainder, signed integral exponents, Table 11-4 parity and reciprocals, wide operands, and undefined-result planes are compiled into Z3 sampling plans. Uncoerced undefined values fail, while two-state casts and known absorbing bits retain LRM arithmetic semantics. Disabled four-state scalar properties, fixed-array elements and qualified structure leaves bind their stored unknown symbols through compiler captures masked by the live active-bit inventory. Candidate checks use the pre-solve snapshot; active random candidates remain two-state. Packed bit-selects and constant or variable indexed part-selects preserve separate value, X and Z planes, including computed operands from admitted functions, concatenation and undefined arithmetic. Widened signed address arithmetic retains declared coordinates and both indexed directions without truncation. Case, wildcard equality and integral inside use exact symbol planes, including frozen properties, typed ranges, known absorbing matches and active argument stages. General system functions and non-integral selections remain open."
         },
         {
           "feature": "Named and multiple constraint blocks",
@@ -397,7 +398,8 @@
           "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
           "runtime/lib/RandModelCount.h",
           "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -444,7 +446,13 @@
           "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
         ]
       }
     },
@@ -1028,7 +1036,7 @@
         {
           "feature": "Side-effect-free user functions",
           "status": "partial",
-          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Constant repeat loops and same-width logical right-shift for loops have exact expansions, including the LRM count_ones example, lexical break/continue, early returns, local reinitialization and standalone updates. Counts follow 12.7.2 after typed casts; negative/X/Z counts execute zero times. The policy is 256 iterations per loop and 4096 expanded bodies per call. Ordinary packed case statements preserve first-match ordering, grouped labels, defaults, fallthrough, early returns and lexical loop exits. Comparisons use common width and signedness under 12.5, unbased literals fill the context, state X/Z comparisons remain exact, and labels after an earlier match retain short-circuit error guards. General dynamic, larger and unbounded loops, wildcard/pattern cases, case qualifier reports, mixed unknown-plane comparisons, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
+          "detail": "Expression returns, blocking result assignments, nested calls, and virtual receiver dispatch are supported. Automatic statement bodies support packed locals and constants, typed initializers, blocking and compound assignments, mutable input copies, blocks, if/else, early returns, return-variable assignments and fallthrough. Executed unused initializers retain errors; state branch guards preserve procedural four-state truth. Persistent and nonlocal writes, const writes, and static result reads before initialization are rejected. Constant repeat loops and same-width logical right-shift for loops have exact expansions, including the LRM count_ones example, lexical break/continue, early returns, local reinitialization and standalone updates. Counts follow 12.7.2 after typed casts; negative/X/Z counts execute zero times. The policy is 256 iterations per loop and 4096 expanded bodies per call. Packed case, casex and casez statements preserve first-match ordering, grouped labels, defaults, fallthrough, early returns and lexical loop exits. Comparisons use common width and signedness under 12.5, unbased literals fill the context, frozen and mixed random/state X/Z comparisons remain exact, and labels after an earlier match retain short-circuit error guards. Normal case consumes complete symbols; casex/casez ignore the designated symbols in either operand. Procedural ===/!== and ==?/!=? use distinct symbol comparison planes, including consuming result casts and 130-bit operands. Integral inside combines wildcard member and inclusive-range predicates with four-state OR. Nested selectors retain symbols and label-error guards through safe capture; empty live dependency masks remain state under nesting. General dynamic, larger and unbounded loops, set membership/pattern cases, case qualifier reports, non-integral comparisons, non-integral locals, selected local lvalues, candidate-selected evaluation errors and other receivers remain incomplete."
         },
         {
           "feature": "Function body state reads",
@@ -1048,7 +1056,7 @@
         {
           "feature": "Scope-randomization user functions",
           "status": "partial",
-          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and compiled-plan stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Ordinary packed case statements share class first-match expansion, typed comparisons, state error guards and 130-bit return handling. Instance receiver plans, general loops, wildcard/pattern cases, case qualifier reports and other general function bodies remain incomplete."
+          "detail": "Scope randomization shares class expression and automatic statement-body function validation, packed path priority analysis and compiled-plan stages. Module/package and other non-instance functions support nested calls, actual-argument priority, frozen body state reads, output/ref restrictions, cycle diagnostics, packed locals, branches, early returns and 130-bit results. Finite repeat and right-shift loop bodies use the same one-way stages, including stateless static-lifetime functions and std::randomize calls. Packed case, casex and casez statements share class first-match expansion, typed comparisons, state error guards and 130-bit return handling. Instance receiver plans, general loops, set membership/pattern cases, case qualifier reports and other general function bodies remain incomplete."
         }
       ],
       "evidence": {
@@ -1108,7 +1116,13 @@
           "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
         ]
       }
     },
@@ -1119,7 +1133,7 @@
         {
           "feature": "State-only guards",
           "status": "partial",
-          "detail": "Integral state predicates and handle comparisons are evaluated safely before solving, including null and bounds checks. Mixed unknown-plane predicates and non-integral solving remain open. State-selected function body branches validate only the selected arm, including executed unused initializers. Procedural unknown truth is false; a known one bit remains true."
+          "detail": "Integral state predicates and handle comparisons are evaluated safely before solving, including null and bounds checks. Unknown-plane predicates outside admitted integral normalization and non-integral solving remain open. State-selected function body branches validate only the selected arm, including executed unused initializers. Procedural unknown truth is false; a known one bit remains true."
         },
         {
           "feature": "FALSE/TRUE/ERROR/RANDOM guard algebra",
@@ -1187,7 +1201,12 @@
           "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir"
         ]
       }
     },
@@ -1529,7 +1548,8 @@
           "runtime/include/obelisk/Runtime/RandomDomain.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
@@ -1548,7 +1568,13 @@
           "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
         ]
       }
     },
@@ -1581,7 +1607,8 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
-          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
         ]
       }
     },
@@ -1743,7 +1770,8 @@
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/PrepareRandomFunctions.cpp",
           "lib/Conversion/ObeliskToSimulation/SemanticUtils.cpp",
-          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp"
+          "lib/Conversion/ObeliskToSimulation/LowerUnitExpressions.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
@@ -1754,7 +1782,13 @@
           "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir"
         ]
       }
     },

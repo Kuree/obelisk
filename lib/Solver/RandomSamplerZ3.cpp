@@ -140,24 +140,44 @@ public:
         parity = Z3_mk_not(context, parity);
       return boolean(parity, width);
     }
-    case OBELISK_RT_RANDOM_COUNT_ONES_V1:
+    case OBELISK_RT_RANDOM_COUNT_ONES_V1: {
+      unsigned countWidth = std::min(width, 32u - __builtin_clz(input.width));
+      std::vector<Bits> terms;
+      terms.reserve(input.width);
+      for (unsigned bit = 0; bit != input.width; ++bit)
+        terms.push_back({Z3_mk_extract(context, bit, bit, input.value), 1});
+      while (terms.size() > 1) {
+        size_t next = 0;
+        for (size_t index = 0; index < terms.size(); index += 2) {
+          Bits sum = terms[index];
+          if (index + 1 != terms.size()) {
+            unsigned precision = std::min(
+                countWidth, std::max(sum.width, terms[index + 1].width) + 1);
+            sum = {Z3_mk_bvadd(context, resize(sum, precision),
+                               resize(terms[index + 1], precision)),
+                   precision};
+          }
+          terms[next++] = sum;
+        }
+        terms.resize(next);
+      }
+      result = resize(terms.front(), width);
+      break;
+    }
+    case OBELISK_RT_RANDOM_CLOG2_V1: {
       result = constant(0, width);
+      Z3_ast lowerNonzero = Z3_mk_false(context);
       for (unsigned bit = 0; bit != input.width; ++bit) {
-        Bits selected{Z3_mk_extract(context, bit, bit, input.value), 1};
-        result = Z3_mk_bvadd(context, result, resize(selected, width));
+        Z3_ast selected =
+            truth({Z3_mk_extract(context, bit, bit, input.value), 1});
+        Z3_ast atBit =
+            Z3_mk_ite(context, lowerNonzero, constant(uint64_t(bit) + 1, width),
+                      constant(bit, width));
+        result = Z3_mk_ite(context, selected, atBit, result);
+        lowerNonzero = disjunction(lowerNonzero, selected);
       }
       break;
-    case OBELISK_RT_RANDOM_CLOG2_V1:
-      result = constant(0, width);
-      for (unsigned bit = 0; bit != input.width; ++bit) {
-        std::vector<uint64_t> threshold((input.width - 1) / 64 + 1, 0);
-        threshold[bit / 64] = uint64_t{1} << (bit % 64);
-        result = Z3_mk_ite(context,
-                           Z3_mk_bvugt(context, input.value,
-                                       words(threshold.data(), input.width)),
-                           constant(bit + 1, width), result);
-      }
-      break;
+    }
     default:
       break;
     }
@@ -167,13 +187,33 @@ public:
     return {result, width};
   }
 
-  /// Cardinality equalities use a counting recurrence instead of an adder
-  /// circuit. Z3 still simplifies and bit-blasts this exact formula, but a
-  /// sparse wide count now has a compact prefix plan at compilation time.
+  /// Generate fixed sparse counts directly in linear time. Delegate general
+  /// cardinality construction to Z3 rather than building a quadratic table
+  /// in the host. Unate lowering preserves the prefix structure that a target
+  /// sampler can simplify after binding the live count.
   Z3_ast countEqual(Bits input, unsigned count) {
     bool complement = count > input.width / 2;
     if (complement)
       count = input.width - count;
+    if (count > 8) {
+      auto [found, inserted] = cardinalityInputs.try_emplace(input.value);
+      auto &args = found->second;
+      if (inserted) {
+        args.positive.reserve(input.width);
+        args.negative.reserve(input.width);
+        args.coefficients.assign(input.width, 1);
+        for (unsigned bit = 0; bit != input.width; ++bit) {
+          Z3_ast selected =
+              truth({Z3_mk_extract(context, bit, bit, input.value), 1});
+          args.positive.push_back(selected);
+          args.negative.push_back(Z3_mk_not(context, selected));
+        }
+      }
+      // Complementing caps the API's signed bound at UINT_MAX / 2.
+      return Z3_mk_pbeq(context, input.width,
+                        (complement ? args.negative : args.positive).data(),
+                        args.coefficients.data(), static_cast<int>(count));
+    }
     std::vector<Z3_ast> exact(count + 1, Z3_mk_false(context));
     exact[0] = Z3_mk_true(context);
     for (unsigned bit = 0; bit != input.width; ++bit) {
@@ -189,21 +229,12 @@ public:
   }
 
   Z3_ast countEqual(Bits input, Z3_ast target, unsigned targetWidth) {
-    std::vector<Z3_ast> exact(input.width + 1, Z3_mk_false(context));
-    exact[0] = Z3_mk_true(context);
-    for (unsigned bit = 0; bit != input.width; ++bit) {
-      Z3_ast selected =
-          truth({Z3_mk_extract(context, bit, bit, input.value), 1});
-      for (unsigned k = bit + 1; k != 0; --k)
-        exact[k] = Z3_mk_ite(context, selected, exact[k - 1], exact[k]);
-      exact[0] = conjunction(Z3_mk_not(context, selected), exact[0]);
-    }
     Z3_ast result = Z3_mk_false(context);
-    for (unsigned k = 0; k <= input.width; ++k)
+    for (uint64_t count = 0; count <= input.width; ++count)
       result = disjunction(
           result,
-          conjunction(Z3_mk_eq(context, target, constant(k, targetWidth)),
-                      exact[k]));
+          conjunction(Z3_mk_eq(context, target, constant(count, targetWidth)),
+                      countEqual(input, static_cast<unsigned>(count))));
     return result;
   }
 
@@ -226,11 +257,12 @@ public:
         Z3_ast simplified = Z3_simplify(context, pair.second);
         Z3_ast match;
         if (Z3_get_ast_kind(context, simplified) == Z3_NUMERAL_AST &&
-            Z3_get_numeral_uint64(context, simplified, &value))
-          match = value > count->second.width
-                      ? Z3_mk_false(context)
-                      : countEqual(count->second, static_cast<unsigned>(value));
-        else
+            Z3_get_numeral_uint64(context, simplified, &value)) {
+          if (value > count->second.width)
+            match = Z3_mk_false(context);
+          else
+            match = countEqual(count->second, static_cast<unsigned>(value));
+        } else
           match = countEqual(count->second, pair.second, commonWidth);
         if (opcode == OBELISK_RT_RANDOM_NE_V1)
           match = Z3_mk_not(context, match);
@@ -341,6 +373,11 @@ public:
 
   Z3_context context = nullptr;
   std::unordered_map<Z3_ast, Bits> popcounts;
+  struct CardinalityInputs {
+    std::vector<Z3_ast> positive, negative;
+    std::vector<int> coefficients;
+  };
+  std::unordered_map<Z3_ast, CardinalityInputs> cardinalityInputs;
 };
 
 inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
@@ -352,7 +389,21 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   Z3_tactic_inc_ref(context, simplify);
   Z3_tactic blast = Z3_mk_tactic(context, "bit-blast");
   Z3_tactic_inc_ref(context, blast);
-  Z3_tactic first = Z3_tactic_and_then(context, simplify, blast);
+  Z3_tactic cardinality = Z3_mk_tactic(context, "card2bv");
+  Z3_tactic_inc_ref(context, cardinality);
+  Z3_params parameters = Z3_mk_params(context);
+  Z3_params_inc_ref(context, parameters);
+  Z3_params_set_bool(
+      context, parameters,
+      Z3_mk_string_symbol(context, "keep_cardinality_constraints"), false);
+  Z3_params_set_symbol(context, parameters,
+                       Z3_mk_string_symbol(context, "cardinality.encoding"),
+                       Z3_mk_string_symbol(context, "unate"));
+  Z3_tactic unate = Z3_tactic_using_params(context, cardinality, parameters);
+  Z3_tactic_inc_ref(context, unate);
+  Z3_tactic cardFirst = Z3_tactic_and_then(context, simplify, unate);
+  Z3_tactic_inc_ref(context, cardFirst);
+  Z3_tactic first = Z3_tactic_and_then(context, cardFirst, blast);
   Z3_tactic_inc_ref(context, first);
   Z3_tactic tactic = Z3_tactic_and_then(context, first, simplify);
   Z3_tactic_inc_ref(context, tactic);
@@ -371,6 +422,10 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
     Z3_apply_result_dec_ref(context, result);
   Z3_tactic_dec_ref(context, tactic);
   Z3_tactic_dec_ref(context, first);
+  Z3_tactic_dec_ref(context, cardFirst);
+  Z3_tactic_dec_ref(context, unate);
+  Z3_params_dec_ref(context, parameters);
+  Z3_tactic_dec_ref(context, cardinality);
   Z3_tactic_dec_ref(context, blast);
   Z3_tactic_dec_ref(context, simplify);
   Z3_goal_dec_ref(context, goal);
@@ -428,9 +483,13 @@ public:
 private:
   bool convert(Z3_ast predicate, ID &result) {
     Z3_context context = formula.context;
-    std::vector<Z3_ast> pending{predicate};
+    struct Frame {
+      Z3_ast value;
+      unsigned nextChild = 0;
+    };
+    std::vector<Frame> pending{{predicate}};
     while (!pending.empty()) {
-      Z3_ast value = pending.back();
+      Z3_ast value = pending.back().value;
       if (converted.count(value)) {
         pending.pop_back();
         continue;
@@ -440,10 +499,10 @@ private:
       Z3_app app = Z3_to_app(context, value);
       unsigned arity = Z3_get_app_num_args(context, app);
       bool ready = true;
-      for (unsigned index = 0; index != arity; ++index) {
-        Z3_ast child = Z3_get_app_arg(context, app, index);
+      while (pending.back().nextChild != arity) {
+        Z3_ast child = Z3_get_app_arg(context, app, pending.back().nextChild++);
         if (!converted.count(child)) {
-          pending.push_back(child);
+          pending.push_back({child});
           ready = false;
           break;
         }
@@ -515,26 +574,37 @@ public:
   /// optimization budget is exhausted.
   void prepare(std::vector<std::pair<unsigned, ID>> &roots,
                const std::vector<unsigned> &boundaries) {
+    // Each diagram attempt traverses the shared circuit. Bound the number of
+    // attempts globally so many atoms cannot cause quadratic compiler work.
+    // Skipping this optimization preserves the exact Boolean sampling plan.
+    if (roots.size() > 32)
+      return;
     auto nodes = circuit.getNodes();
     struct Input {
       uint32_t column, source;
     };
     std::vector<Input> inputs;
+    std::vector<unsigned> columns(boundaries.back());
+    for (size_t field = 1; field != boundaries.size(); ++field)
+      for (unsigned bit = boundaries[field - 1]; bit != boundaries[field];
+           ++bit)
+        columns[bit] = bit - boundaries[field - 1];
+    std::vector<std::vector<Input>> byColumn;
     for (uint32_t index = 1; index != nodes.size(); ++index) {
       const auto &node = nodes[index];
       if (node.opcode == PlanOpcode::And)
         continue;
       uint32_t column = 0;
-      if (node.opcode == PlanOpcode::RandomBit) {
-        auto field =
-            std::upper_bound(boundaries.begin(), boundaries.end(), node.a);
-        column = node.a - *(field - 1);
-      } else if (node.opcode == PlanOpcode::CaptureBit)
+      if (node.opcode == PlanOpcode::RandomBit)
+        column = columns[node.a];
+      else if (node.opcode == PlanOpcode::CaptureBit)
         column = node.b;
-      inputs.push_back({column, index});
+      if (byColumn.size() <= column)
+        byColumn.resize(size_t(column) + 1);
+      byColumn[column].push_back({column, index});
     }
-    std::stable_sort(inputs.begin(), inputs.end(),
-                     [](auto a, auto b) { return a.column < b.column; });
+    for (const auto &column : byColumn)
+      inputs.insert(inputs.end(), column.begin(), column.end());
     // One bounded diagram per atom preserves independent function stages and
     // dynamic soft priorities. Joint satisfiability is handled after binding
     // the live parameters, without freezing one compiler-selected model.
@@ -598,7 +668,8 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     return std::nullopt;
   PlanBuilder builder;
   auto &f = builder.formula;
-  std::vector<unsigned> boundaries{0, width};
+  std::vector<bool> boundary(size_t(width) + 1, false);
+  boundary[0] = boundary[width] = true;
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     if (p[0] != OBELISK_RT_RANDOM_PUSH_VARIABLE_V1)
@@ -607,23 +678,32 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     unsigned offset = read32(p + (wide ? 8 : 4));
     if (!bits || offset > width || bits > width - offset)
       return std::nullopt;
-    boundaries.push_back(offset);
-    boundaries.push_back(offset + bits);
+    boundary[offset] = boundary[offset + bits] = true;
   }
-  std::sort(boundaries.begin(), boundaries.end());
-  boundaries.erase(std::unique(boundaries.begin(), boundaries.end()),
-                   boundaries.end());
-  unsigned maximum = 0;
-  for (size_t field = 1; field != boundaries.size(); ++field)
-    maximum = std::max(maximum, boundaries[field] - boundaries[field - 1]);
+  std::vector<unsigned> boundaries;
+  for (size_t bit = 0; bit != boundary.size(); ++bit)
+    if (boundary[bit])
+      boundaries.push_back(static_cast<unsigned>(bit));
   std::vector<Z3_ast> randomBits(width);
   unsigned ordinal = 0;
-  for (unsigned column = 0; column != maximum; ++column)
-    for (size_t field = 1; field != boundaries.size(); ++field) {
+  // Keep only unfinished fields in the column traversal. Each declared bit
+  // is visited once even when one wide field follows many narrow fields.
+  std::vector<size_t> next(boundaries.size());
+  for (size_t field = 0; field != next.size(); ++field)
+    next[field] = field + 1;
+  size_t first = 1;
+  for (unsigned column = 0; first != boundaries.size(); ++column) {
+    size_t *link = &first;
+    while (*link != boundaries.size()) {
+      size_t field = *link;
       unsigned bit = boundaries[field - 1] + column;
-      if (bit < boundaries[field])
-        randomBits[bit] = builder.input(PlanOpcode::RandomBit, bit, ordinal++);
+      randomBits[bit] = builder.input(PlanOpcode::RandomBit, bit, ordinal++);
+      if (bit + 1 == boundaries[field])
+        *link = next[field];
+      else
+        link = &next[field];
     }
+  }
   // An empty random argument set is a singleton assignment space. Its
   // constraints still have state/mode inputs, but no zero-width Z3 bit-vector.
   Z3_ast variable = width ? builder.pack(randomBits) : nullptr;

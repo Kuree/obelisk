@@ -907,6 +907,17 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       break;
     case Binary::CaseEquality:
       compare = sim::CompareKind::CaseEq;
+      // Expanded constraint cases retain their 12.5.1 comparison semantics
+      // while safe captures inspect the original symbols before plane
+      // normalization. This also applies beneath a symbol-consuming parent.
+      if (auto condition = op->getAttrOfType<IntegerAttr>(
+              randomFunctionCaseConditionAttrName)) {
+        auto kind = static_cast<semantic::SVCaseCondition>(condition.getInt());
+        if (kind == semantic::SVCaseCondition::WildcardXOrZ)
+          compare = sim::CompareKind::CaseXZEq;
+        else if (kind == semantic::SVCaseCondition::WildcardJustZ)
+          compare = sim::CompareKind::CaseZEq;
+      }
       break;
     case Binary::CaseInequality:
       compare = sim::CompareKind::CaseNe;
@@ -943,7 +954,9 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       // four-state plane, which is what the op requires of these kinds, and
       // let the conversion below narrow the result to the expression type.
       bool caseComparison = *compare == sim::CompareKind::CaseEq ||
-                            *compare == sim::CompareKind::CaseNe;
+                            *compare == sim::CompareKind::CaseNe ||
+                            *compare == sim::CompareKind::CaseZEq ||
+                            *compare == sim::CompareKind::CaseXZEq;
       Type comparedType =
           caseComparison
               ? builder.getI1Type()

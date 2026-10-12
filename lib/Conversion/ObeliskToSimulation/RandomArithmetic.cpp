@@ -4,6 +4,7 @@
 #include "Detail.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <limits>
 #include <optional>
@@ -28,6 +29,44 @@ struct RandomArithmetic::Impl {
   llvm::DenseMap<Operation *, bool> needs;
   llvm::DenseMap<Operation *, RandomArithmeticPlanes> planes;
   llvm::DenseMap<Operation *, Operation *> knownPredicates;
+  llvm::DenseMap<Operation *, std::optional<APInt>> constants;
+  struct CanonicalExpression : llvm::FoldingSetNode {
+    Operation *expression;
+    DictionaryAttr attributes;
+    SmallVector<Operation *> children;
+    void Profile(llvm::FoldingSetNodeID &id) const {
+      id.AddString(expression->getName().getStringRef());
+      id.AddPointer(attributes.getAsOpaquePointer());
+      for (Operation *child : children)
+        id.AddPointer(child);
+    }
+  };
+  llvm::FoldingSet<CanonicalExpression> canonicalExpressions;
+  SmallVector<std::unique_ptr<CanonicalExpression>> canonicalNodes;
+  llvm::DenseMap<Operation *, Operation *> canonicalValues;
+
+  Operation *canonical(Operation *expression) {
+    if (auto found = canonicalValues.find(expression);
+        found != canonicalValues.end())
+      return found->second;
+    auto node = std::make_unique<CanonicalExpression>();
+    node->expression = expression;
+    node->attributes = expression->getAttrDictionary();
+    for (Operation *child : getChildren(expression))
+      node->children.push_back(canonical(child));
+    llvm::FoldingSetNodeID id;
+    node->Profile(id);
+    void *position;
+    CanonicalExpression *found =
+        canonicalExpressions.FindNodeOrInsertPos(id, position);
+    Operation *value = found ? found->expression : expression;
+    if (!found) {
+      canonicalExpressions.InsertNode(node.get(), position);
+      canonicalNodes.push_back(std::move(node));
+    }
+    canonicalValues[expression] = value;
+    return value;
+  }
 
   Impl(MLIRContext *context, Width width, Candidate candidate, Binding binding,
        bool frozenVariables)
@@ -109,6 +148,14 @@ struct RandomArithmetic::Impl {
     return literal(source, APInt::getAllOnes(precision));
   }
   std::optional<APInt> constant(Operation *expression) {
+    Operation *key = canonical(expression);
+    if (auto found = constants.find(key); found != constants.end())
+      return found->second;
+    auto value = constantValue(expression);
+    constants[key] = value;
+    return value;
+  }
+  std::optional<APInt> constantValue(Operation *expression) {
     auto spelling = getConstantSpelling(expression);
     auto precision = width(expression);
     if (failed(precision))
@@ -288,18 +335,13 @@ struct RandomArithmetic::Impl {
     auto semanticType = expression->getAttrOfType<TypeAttr>("semantic_type");
     if (!semanticType || !getSemanticPackedWidth(semanticType.getValue()))
       return false;
-    if (auto found = needs.find(expression); found != needs.end())
+    Operation *key = canonical(expression);
+    if (auto found = needs.find(key); found != needs.end())
       return found->second;
-    if (auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(expression);
-        binary && !candidate(expression) &&
-        (binary.getOperatorKind() == Binary::CaseEquality ||
-         binary.getOperatorKind() == Binary::CaseInequality))
-      // Expanded procedural case comparisons consume complete X/Z symbols.
-      // Source-level four-state constraint comparisons are rejected earlier.
-      return false;
-    bool result = frozenVariables && fourState(expression) &&
-                  (expression->hasAttr(randomVariableAttrName) ||
-                   expression->hasAttr(randomVariableBitOffsetAttrName));
+    bool result = expression->hasAttr(randomFunctionCaseConditionAttrName) ||
+                  (frozenVariables && fourState(expression) &&
+                   (expression->hasAttr(randomVariableAttrName) ||
+                    expression->hasAttr(randomVariableBitOffsetAttrName)));
     // State-selected integral paths must remain symbolic instead of capturing
     // their current element before randomization. Their finite selection is a
     // compiler expression, including when the selected data is two-state.
@@ -343,7 +385,7 @@ struct RandomArithmetic::Impl {
       for (Operation *child : children)
         result |= needed(child);
     }
-    needs[expression] = result;
+    needs[key] = result;
     return result;
   }
   RandomArithmeticPlanes truth(Operation *source,
@@ -358,7 +400,8 @@ struct RandomArithmetic::Impl {
   }
 
   FailureOr<RandomArithmeticPlanes> get(Operation *expression) {
-    if (auto found = planes.find(expression); found != planes.end())
+    Operation *key = canonical(expression);
+    if (auto found = planes.find(key); found != planes.end())
       return found->second;
     auto result = build(expression);
     if (succeeded(result)) {
@@ -366,7 +409,7 @@ struct RandomArithmetic::Impl {
         result->unknown = nullptr;
       if (isZero(result->highImpedance))
         result->highImpedance = nullptr;
-      planes[expression] = *result;
+      planes[key] = *result;
     }
     return result;
   }
@@ -670,6 +713,141 @@ struct RandomArithmetic::Impl {
         highImpedance};
   }
 
+  RandomArithmeticPlanes symbolComparison(Operation *expression, Binary kind,
+                                          RandomArithmeticPlanes left,
+                                          RandomArithmeticPlanes right,
+                                          unsigned operationWidth) {
+    bool caseComparison =
+        kind == Binary::CaseEquality || kind == Binary::CaseInequality;
+    Operation *unknown = nullptr;
+    Operation *value = nullptr;
+    auto plane = [&](Operation *value) {
+      return value ? value : zero(expression, operationWidth);
+    };
+    Operation *different = binary(expression, Binary::BinaryXor, left.value,
+                                  right.value, operationWidth);
+    if (caseComparison) {
+      // Case equality consumes complete symbols and always produces a
+      // known predicate. casex/casez ignore the selected symbol in either
+      // operand, unlike ==? which takes wildcards only from its RHS.
+      different =
+          bitOr(expression, different,
+                binary(expression, Binary::BinaryXor, plane(left.unknown),
+                       plane(right.unknown), operationWidth),
+                operationWidth);
+      different =
+          bitOr(expression, different,
+                binary(expression, Binary::BinaryXor, plane(left.highImpedance),
+                       plane(right.highImpedance), operationWidth),
+                operationWidth);
+      if (auto condition = expression->getAttrOfType<IntegerAttr>(
+              randomFunctionCaseConditionAttrName)) {
+        auto kind = static_cast<semantic::SVCaseCondition>(condition.getInt());
+        if (kind == semantic::SVCaseCondition::WildcardXOrZ)
+          different = mask(
+              expression, different,
+              bitOr(expression, left.unknown, right.unknown, operationWidth),
+              operationWidth);
+        else if (kind == semantic::SVCaseCondition::WildcardJustZ)
+          different = mask(expression, different,
+                           bitOr(expression, left.highImpedance,
+                                 right.highImpedance, operationWidth),
+                           operationWidth);
+      }
+      value = nonzero(expression, different, operationWidth);
+      if (kind == Binary::CaseEquality)
+        value = notBool(expression, value);
+      return RandomArithmeticPlanes{value, nullptr};
+    }
+    Operation *mismatch = nonzero(
+        expression,
+        mask(expression, different,
+             bitOr(expression, left.unknown, right.unknown, operationWidth),
+             operationWidth),
+        operationWidth);
+    Operation *unmatchedUnknown =
+        mask(expression, plane(left.unknown), right.unknown, operationWidth);
+    unknown = bitAnd(expression,
+                     nonzero(expression, unmatchedUnknown, operationWidth),
+                     notBool(expression, mismatch), 1);
+    value = kind == Binary::WildcardEquality
+                ? notBool(expression, bitOr(expression, mismatch, unknown, 1))
+                : mismatch;
+    return RandomArithmeticPlanes{mask(expression, value, unknown, 1), unknown};
+  }
+
+  FailureOr<RandomArithmeticPlanes> inside(Operation *expression) {
+    auto operands = getChildren(expression);
+    if (operands.size() < 2)
+      return failure();
+    auto input = get(operands.front());
+    if (failed(input))
+      return failure();
+    RandomArithmeticPlanes result{zero(expression, 1), nullptr};
+    for (Operation *item : ArrayRef(operands).drop_front()) {
+      RandomArithmeticPlanes match;
+      if (isa<semantic::SVValueRangeExpressionOp>(item)) {
+        auto bounds = getChildren(item);
+        if (bounds.size() != 2)
+          return failure();
+        auto low = get(bounds[0]), high = get(bounds[1]);
+        if (failed(low) || failed(high))
+          return failure();
+        unsigned precision = std::max(
+            {*width(input->value), *width(low->value), *width(high->value)});
+        bool commonSigned =
+            sign(operands.front()) && sign(bounds[0]) && sign(bounds[1]);
+        auto value = resize(expression, *input, precision, commonSigned);
+        auto lower = resize(expression, *low, precision, commonSigned);
+        auto upper = resize(expression, *high, precision, commonSigned);
+        auto compare = [&](Binary kind, RandomArithmeticPlanes bound) {
+          Operation *unknown = nonzero(
+              expression,
+              bitOr(expression, value.unknown, bound.unknown, precision),
+              precision);
+          Operation *bits =
+              binary(expression, kind, value.value, bound.value, 1);
+          return RandomArithmeticPlanes{mask(expression, bits, unknown, 1),
+                                        unknown};
+        };
+        auto lowerMatch = compare(Binary::GreaterThanEqual, lower);
+        auto upperMatch = compare(Binary::LessThanEqual, upper);
+        match.value = bitAnd(expression, lowerMatch.value, upperMatch.value, 1);
+        match.unknown = bitOr(
+            expression,
+            bitAnd(expression, lowerMatch.unknown,
+                   bitOr(expression, upperMatch.value, upperMatch.unknown, 1),
+                   1),
+            bitAnd(expression, upperMatch.unknown,
+                   bitOr(expression, lowerMatch.value, lowerMatch.unknown, 1),
+                   1),
+            1);
+      } else {
+        auto entry = get(item);
+        if (failed(entry))
+          return failure();
+        unsigned precision =
+            std::max(*width(input->value), *width(entry->value));
+        bool commonSigned = sign(operands.front()) && sign(item);
+        match = symbolComparison(
+            expression, Binary::WildcardEquality,
+            resize(expression, *input, precision, commonSigned),
+            resize(expression, *entry, precision, commonSigned), precision);
+      }
+      // 11.4.13 specifies a four-state OR over the member comparisons: a
+      // known match absorbs other unknown results, while unmatched unknown
+      // left-hand symbols remain X. RHS symbols are wildcard selectors.
+      result.unknown = bitOr(expression,
+                             bitAnd(expression, result.unknown,
+                                    notBool(expression, match.value), 1),
+                             bitAnd(expression, match.unknown,
+                                    notBool(expression, result.value), 1),
+                             1);
+      result.value = bitOr(expression, result.value, match.value, 1);
+    }
+    return result;
+  }
+
   FailureOr<RandomArithmeticPlanes> build(Operation *expression) {
     auto precisionResult = width(expression);
     if (failed(precisionResult))
@@ -772,6 +950,8 @@ struct RandomArithmetic::Impl {
                           signedResult);
       return result;
     }
+    if (isa<semantic::SVInsideExpressionOp>(expression))
+      return inside(expression);
     if (!candidate(expression) &&
         !isa<semantic::SVConversionExpressionOp, semantic::SVUnaryExpressionOp,
              semantic::SVBinaryExpressionOp,
@@ -974,10 +1154,15 @@ struct RandomArithmetic::Impl {
                    kind == Binary::LogicalShiftRight ||
                    kind == Binary::ArithmeticShiftRight;
       bool power = kind == Binary::Power;
+      bool caseComparison =
+          kind == Binary::CaseEquality || kind == Binary::CaseInequality;
+      bool wildcardComparison = kind == Binary::WildcardEquality ||
+                                kind == Binary::WildcardInequality;
       bool comparison =
-          kind == Binary::Equality || kind == Binary::Inequality ||
-          kind == Binary::LessThan || kind == Binary::LessThanEqual ||
-          kind == Binary::GreaterThan || kind == Binary::GreaterThanEqual;
+          caseComparison || wildcardComparison || kind == Binary::Equality ||
+          kind == Binary::Inequality || kind == Binary::LessThan ||
+          kind == Binary::LessThanEqual || kind == Binary::GreaterThan ||
+          kind == Binary::GreaterThanEqual;
       unsigned operationWidth =
           comparison ? std::max(*width(left.value), *width(right.value))
                      : precision;
@@ -988,6 +1173,8 @@ struct RandomArithmetic::Impl {
       Operation *unknown = nullptr;
       Operation *highImpedance = nullptr;
       Operation *value = nullptr;
+      if (caseComparison || wildcardComparison)
+        return symbolComparison(expression, kind, left, right, operationWidth);
       if (kind == Binary::BinaryAnd || kind == Binary::BinaryOr) {
         if (kind == Binary::BinaryAnd) {
           unknown = bitOr(expression,
@@ -1233,8 +1420,8 @@ struct RandomArithmetic::Impl {
   FailureOr<Operation *> known(Operation *expression) {
     if (!needed(expression))
       return static_cast<Operation *>(nullptr);
-    if (auto found = knownPredicates.find(expression);
-        found != knownPredicates.end())
+    Operation *key = canonical(expression);
+    if (auto found = knownPredicates.find(key); found != knownPredicates.end())
       return found->second;
     auto result = get(expression);
     if (failed(result))
@@ -1244,7 +1431,7 @@ struct RandomArithmetic::Impl {
             ? notBool(expression, nonzero(expression, result->unknown,
                                           *width(result->value)))
             : nullptr;
-    knownPredicates[expression] = predicate;
+    knownPredicates[key] = predicate;
     return predicate;
   }
 };
@@ -1256,6 +1443,9 @@ RandomArithmetic::RandomArithmetic(MLIRContext *context, Width width,
                                   std::move(candidate), std::move(binding),
                                   frozenVariables)) {}
 RandomArithmetic::~RandomArithmetic() = default;
+Operation *RandomArithmetic::canonical(Operation *expression) {
+  return impl->canonical(expression);
+}
 bool RandomArithmetic::needed(Operation *expression) {
   return impl->needed(expression);
 }

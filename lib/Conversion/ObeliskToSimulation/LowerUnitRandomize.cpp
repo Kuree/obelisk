@@ -3004,13 +3004,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     return *width;
   };
-  auto dependsOnCandidate = [&](Operation *expression) {
-    bool dependent = false;
-    expression->walk([&](Operation *nested) {
-      dependent |= nested->hasAttr(randomVariableAttrName);
-    });
-    return dependent;
-  };
+  llvm::DenseMap<Operation *, bool> candidateDependencies;
+  std::function<bool(Operation *)> dependsOnCandidate =
+      [&](Operation *expression) {
+        if (auto found = candidateDependencies.find(expression);
+            found != candidateDependencies.end())
+          return found->second;
+        bool dependent = expression->hasAttr(randomVariableAttrName);
+        for (Region &region : expression->getRegions())
+          for (Block &block : region)
+            for (Operation &child : block)
+              dependent |= dependsOnCandidate(&child);
+        candidateDependencies[expression] = dependent;
+        return dependent;
+      };
 #ifdef OBELISK_ENABLE_Z3
   constexpr bool rawDistWeights = true;
 #else
@@ -5221,9 +5228,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               nested->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
         uint64_t index = variable.getValue().getZExtValue();
         if (index < planned.size()) {
-          uint64_t offset = 0;
-          for (unsigned property = 0; property != index; ++property)
-            offset += planned[property].width;
+          uint64_t offset = propertyOffsets[index];
           references.push_back({offset, planned[index].width, {}});
           return WalkResult::skip();
         }
@@ -5241,28 +5246,71 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint32_t maskCapture = 0;
   };
   SmallVector<PriorityInputRecord> priorityInputRecords;
-  auto sourceReferences = [&](Operation *source) {
+  // Summarize immutable subtrees once. Safe captures and plane projections
+  // request these inventories at every node; walking each complete subtree
+  // again would make a nested constraint quadratic in its lowered size.
+  llvm::DenseMap<Operation *, APInt> referenceInventories;
+  std::function<APInt(Operation *)> sourceReferences = [&](Operation *source) {
+    if (auto found = referenceInventories.find(source);
+        found != referenceInventories.end())
+      return found->second;
     APInt inputs = APInt::getZero(assignmentWidth);
-    for (const SoftReference &reference : collectSoftReferences(source))
-      if (!reference.symbol)
-        inputs |= APInt::getLowBitsSet(assignmentWidth, reference.width)
-                      .shl(reference.offset);
-    return inputs;
-  };
-  auto sourceFunctionArguments = [&](Operation *source) {
-    APInt inputs = APInt::getZero(assignmentWidth);
-    source->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
-      if (auto mask =
-              nested->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName)) {
-        inputs |= mask.getValue().zextOrTrunc(assignmentWidth);
-        return WalkResult::skip();
+    bool descend = true;
+    if (auto mask =
+            source->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName))
+      inputs = mask.getValue().zextOrTrunc(assignmentWidth);
+    else if (source->hasAttr(randomFunctionStateAttrName))
+      descend = false;
+    else {
+      if (auto offset = source->getAttrOfType<IntegerAttr>(
+              randomVariableBitOffsetAttrName)) {
+        auto type = source->getAttrOfType<TypeAttr>("semantic_type");
+        auto width =
+            type ? getSemanticBitstreamWidth(type.getValue()) : std::nullopt;
+        if (width) {
+          inputs |= APInt::getLowBitsSet(assignmentWidth, *width)
+                        .shl(offset.getValue().getZExtValue());
+          descend = false;
+        }
       }
-      if (nested->hasAttr(randomFunctionStateAttrName))
-        return WalkResult::skip();
-      return WalkResult::advance();
-    });
+      if (descend)
+        if (auto variable =
+                source->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+          uint64_t index = variable.getValue().getZExtValue();
+          if (index < planned.size()) {
+            inputs |=
+                APInt::getLowBitsSet(assignmentWidth, planned[index].width)
+                    .shl(propertyOffsets[index]);
+            descend = false;
+          }
+        }
+    }
+    if (descend)
+      for (Region &region : source->getRegions())
+        for (Block &block : region)
+          for (Operation &child : block)
+            inputs |= sourceReferences(&child);
+    referenceInventories[source] = inputs;
     return inputs;
   };
+  llvm::DenseMap<Operation *, APInt> argumentInventories;
+  std::function<APInt(Operation *)> sourceFunctionArguments =
+      [&](Operation *source) {
+        if (auto found = argumentInventories.find(source);
+            found != argumentInventories.end())
+          return found->second;
+        APInt inputs = APInt::getZero(assignmentWidth);
+        if (auto mask =
+                source->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName))
+          inputs = mask.getValue().zextOrTrunc(assignmentWidth);
+        else if (!source->hasAttr(randomFunctionStateAttrName))
+          for (Region &region : source->getRegions())
+            for (Block &block : region)
+              for (Operation &child : block)
+                inputs |= sourceFunctionArguments(&child);
+        argumentInventories[source] = inputs;
+        return inputs;
+      };
   auto priorityInputs = [&](Operation *source) {
     if (auto inputs =
             source->getAttrOfType<IntegerAttr>(randomPriorityInputsAttrName))
@@ -5320,6 +5368,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return arith::OrIOp::create(builder, location, lhs, rhs);
   };
   auto selectGuardInputs = [&](Value condition, Value inputs) -> Value {
+    if (matchPattern(inputs, m_Zero()))
+      return inputs;
     if (matchPattern(condition, m_One()))
       return inputs;
     if (matchPattern(condition, m_Zero()))
@@ -5336,6 +5386,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                     positive ? *predicate : guardNot(*predicate));
   };
   llvm::DenseMap<Operation *, SafeConstraintValue> safeStateValues;
+  llvm::DenseMap<Operation *, SafeConstraintValue> safeRawStateValues;
   bool freezeSafeStateValues = true;
   bool preserveArithmeticSource = false;
   llvm::SmallDenseSet<Value> nonNullReceivers;
@@ -5347,9 +5398,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   safeConstraintValue =
       [&](Operation *expression) -> FailureOr<SafeConstraintValue> {
     bool candidate = dependsOnCandidate(expression);
-    if (!candidate && !preserveArithmeticSource)
-      if (auto found = safeStateValues.find(expression);
-          found != safeStateValues.end())
+    // Plane construction copies immutable source expressions. Reuse their
+    // pre-solve captures by structural identity, including beneath a case or
+    // wildcard comparison that needs the original X/Z symbols. Keep those
+    // raw captures separate from normalized arithmetic values.
+    Operation *stateKey =
+        candidate ? nullptr : arithmetic.canonical(expression);
+    auto &stateValues =
+        preserveArithmeticSource ? safeRawStateValues : safeStateValues;
+    if (stateKey)
+      if (auto found = stateValues.find(stateKey); found != stateValues.end())
         return found->second;
     FailureOr<Type> resultType = getNormalizedSemanticType(expression);
     if (failed(resultType))
@@ -5462,13 +5520,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         value = arith::AndIOp::create(builder, location, value, inactive);
         random = guardConstant(false);
       }
-      return SafeConstraintValue{value,
-                                 input->errors,
-                                 random,
-                                 input->inputs,
-                                 input->arguments,
-                                 input->errors,
-                                 input->dynamicInputs};
+      SafeConstraintValue safe{value,
+                               input->errors,
+                               random,
+                               input->inputs,
+                               input->arguments,
+                               input->errors,
+                               input->dynamicInputs};
+      if (stateKey && freezeSafeStateValues)
+        stateValues[stateKey] = safe;
+      return safe;
     }
     SmallVector<Operation *> inputs;
     for (Operation *operand : operands) {
@@ -5488,10 +5549,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value errors = guardConstant(true);
     auto caseComparison = dyn_cast<semantic::SVBinaryExpressionOp>(expression);
     bool consumesSymbols =
-        caseComparison && (caseComparison.getOperatorKind() ==
-                               semantic::SVBinaryOperator::CaseEquality ||
-                           caseComparison.getOperatorKind() ==
-                               semantic::SVBinaryOperator::CaseInequality);
+        isa<semantic::SVInsideExpressionOp>(expression) ||
+        (caseComparison &&
+         (caseComparison.getOperatorKind() ==
+              semantic::SVBinaryOperator::CaseEquality ||
+          caseComparison.getOperatorKind() ==
+              semantic::SVBinaryOperator::CaseInequality ||
+          caseComparison.getOperatorKind() ==
+              semantic::SVBinaryOperator::WildcardEquality ||
+          caseComparison.getOperatorKind() ==
+              semantic::SVBinaryOperator::WildcardInequality));
     {
       bool saved = preserveArithmeticSource;
       auto restore =
@@ -5992,8 +6059,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     SafeConstraintValue safe{result,         valid,  random,       guardInputs,
                              guardArguments, errors, dynamicInputs};
-    if (!candidate && !preserveArithmeticSource && freezeSafeStateValues)
-      safeStateValues[expression] = safe;
+    if (stateKey && freezeSafeStateValues)
+      stateValues[stateKey] = safe;
     return safe;
   };
   constraintCreationValid = [&](Operation *constraint) -> FailureOr<Value> {
