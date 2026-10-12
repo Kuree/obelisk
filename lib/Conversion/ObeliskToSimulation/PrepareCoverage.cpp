@@ -2570,7 +2570,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   ? coverage::FunctionalFormalDirection::Ref
                   : coverage::FunctionalFormalDirection::Input;
           descriptor.ordinal = ordinal;
-          if (auto handle = dyn_cast<sim::CovergroupHandleType>(*normalized)) {
+          if (isa<sim::ProcessType>(*normalized)) {
+            descriptor.resultKind =
+                coverage::FunctionalExpressionResultKind::Process;
+          } else if (auto handle =
+                         dyn_cast<sim::CovergroupHandleType>(*normalized)) {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::Covergroup;
             descriptor.valueType = covergroupTypeIDs.lookup(

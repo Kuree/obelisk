@@ -199,6 +199,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return isa<sim::EventType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Covergroup:
       return isa<sim::CovergroupHandleType>(type) && width == 0;
+    case coverage::FunctionalExpressionResultKind::Process:
+      return isa<sim::ProcessType>(type) && width == 0;
     case coverage::FunctionalExpressionResultKind::Container:
       return isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
           type);

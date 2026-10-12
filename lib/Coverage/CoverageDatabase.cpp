@@ -3543,7 +3543,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::ClassHandle ||
         formal.resultKind == FunctionalExpressionResultKind::Chandle ||
         formal.resultKind == FunctionalExpressionResultKind::Event ||
-        formal.resultKind == FunctionalExpressionResultKind::Covergroup;
+        formal.resultKind == FunctionalExpressionResultKind::Covergroup ||
+        formal.resultKind == FunctionalExpressionResultKind::Process;
     auto key = std::make_pair(formal.type, static_cast<uint32_t>(formal.kind));
     if (!findFunctionalType(formal.type) || !text(formal.name) ||
         formal.name.empty() ||
@@ -3801,8 +3802,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
               FunctionalExpressionResultKind::ClassHandle ||
           expression.resultKind == FunctionalExpressionResultKind::Chandle ||
           expression.resultKind == FunctionalExpressionResultKind::Event ||
-          expression.resultKind ==
-              FunctionalExpressionResultKind::Covergroup) &&
+          expression.resultKind == FunctionalExpressionResultKind::Covergroup ||
+          expression.resultKind == FunctionalExpressionResultKind::Process) &&
          (expression.ownerKind != FunctionalExpressionOwnerKind::Formal ||
           expression.role != FunctionalExpressionRole::FormalDefault)) ||
         !ownerExists || !validFlags || !validContract || !ownerType ||
@@ -3819,7 +3820,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Covergroup) ||
+                     FunctionalExpressionResultKind::Process) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,

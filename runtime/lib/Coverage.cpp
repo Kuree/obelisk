@@ -8186,6 +8186,13 @@ uint64_t formalValueType(const CoverageState &coverage, uint64_t formal) {
              : found->second;
 }
 
+bool validateProcessFormal(obelisk_rt_context *context, uint64_t handle) {
+  if (!handle)
+    return true;
+  obelisk_rt_process_state state = OBELISK_RT_PROCESS_FINISHED;
+  return obelisk_rt_v1_process_status(context, handle, &state) == OBELISK_RT_OK;
+}
+
 bool validateCovergroupFormal(obelisk_rt_context *context, uint64_t handle,
                               uint64_t type) {
   CoverageState *coverage = coverageState(context, false);
@@ -8269,7 +8276,8 @@ bool validateValue(
     width = 1;
   else if ((result == Result::String || result == Result::Container ||
             result == Result::ClassHandle || result == Result::Chandle ||
-            result == Result::Event || result == Result::Covergroup) &&
+            result == Result::Event || result == Result::Covergroup ||
+            result == Result::Process) &&
            reference)
     width = sizeof(obelisk_rt_string_v1) * 8;
   if (!value.id)
@@ -8285,7 +8293,7 @@ bool validateValue(
              (value.argument_ref_kind != 2 ||
               validateAggregateFormal(context, value.owner, aggregateType));
     if (result != Result::Container && result != Result::ClassHandle &&
-        result != Result::Covergroup)
+        result != Result::Covergroup && result != Result::Process)
       return true;
     const uint8_t *stateValue =
         context->nativeStateValue
@@ -8302,23 +8310,31 @@ bool validateValue(
     if (obelisk_rt_v1_argument_ref_load(
             context, stateValue, stateUnknown, stateBits, value.owner,
             value.payload, value.argument_ref_kind, 64, 8, 0,
-            result == Result::Covergroup ? OBELISK_RT_ARGUMENT_VALUE_BITS
-                                         : OBELISK_RT_ARGUMENT_VALUE_CLASS,
+            result == Result::Covergroup || result == Result::Process
+                ? OBELISK_RT_ARGUMENT_VALUE_BITS
+                : OBELISK_RT_ARGUMENT_VALUE_CLASS,
             &word, nullptr) != OBELISK_RT_OK)
       return false;
     if (result == Result::Covergroup)
       return validateCovergroupFormal(context, word, covergroupType);
+    if (result == Result::Process)
+      return validateProcessFormal(context, word);
     auto *object = obelisk_rt_object_from_managed_word(word);
     return obelisk_rt_managed_word_from_object(object) == word &&
            (result == Result::ClassHandle
                 ? validateClassFormal(context, object, classType)
                 : validateContainerFormal(context, object, containerType));
   }
-  if (result == Result::Covergroup)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP &&
+  if (result == Result::Covergroup || result == Result::Process)
+    return value.kind == (result == Result::Process
+                              ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
+                              : OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP) &&
            !value.bit_width && !value.value_size && !value.value &&
            !value.unknown && !value.owner && !value.argument_ref_kind &&
-           validateCovergroupFormal(context, value.payload, covergroupType);
+           (result == Result::Process
+                ? validateProcessFormal(context, value.payload)
+                : validateCovergroupFormal(context, value.payload,
+                                           covergroupType));
   if (result == Result::Chandle || result == Result::Event)
     return value.kind == (result == Result::Event
                               ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
@@ -8393,7 +8409,8 @@ void snapshotValue(const obelisk_rt_functional_value_v1 &source,
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
       source.kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
-      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP)
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
+      source.kind == OBELISK_RT_FUNCTIONAL_VALUE_PROCESS)
     return;
   // Strings are immutable values. The context's service-root enumerator
   // retains this captured managed word independently of the caller's storage.
@@ -13302,6 +13319,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     bool covergroup =
         formal.resultKind ==
         obelisk::coverage::FunctionalExpressionResultKind::Covergroup;
+    bool process = formal.resultKind ==
+                   obelisk::coverage::FunctionalExpressionResultKind::Process;
+    auto validOpaqueHandle = [&](uint64_t word) {
+      return process ? validateProcessFormal(context, word)
+                     : validateCovergroupFormal(
+                           context, word, formalValueType(*coverage, formalID));
+    };
     auto loadReference = [&](uint64_t width, uint64_t size, uint32_t fourState,
                              uint32_t valueKind, void *value, void *unknown) {
       const uint8_t *stateValue =
@@ -13328,14 +13352,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
            formal.kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_AGGREGATE) ||
           bitWidth != 192 || valueSize != 24 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
-      if (covergroup) {
+      if (covergroup || process) {
         uint64_t word = 0;
         obelisk_rt_status status = loadReference(
             64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr);
         if (status != OBELISK_RT_OK)
           return status;
-        if (!validateCovergroupFormal(context, word,
-                                      formalValueType(*coverage, formalID)))
+        if (!validOpaqueHandle(word))
           return OBELISK_RT_INVALID_HANDLE;
       }
       std::array<uint64_t, 3> reference{
@@ -13358,10 +13381,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                    obelisk::coverage::FunctionalExpressionResultKind::Chandle;
     bool event = formal.resultKind ==
                  obelisk::coverage::FunctionalExpressionResultKind::Event;
-    if (chandle || event || covergroup) {
-      if (kind != (covergroup ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
-                   : event    ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
-                              : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
+    if (chandle || event || covergroup || process) {
+      if (kind != (process      ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
+                   : covergroup ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
+                   : event      ? OBELISK_RT_FUNCTIONAL_VALUE_EVENT
+                                : OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE) ||
           bitWidth != 64 || valueSize != 8 || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
     } else if (container || classHandle) {
@@ -13381,6 +13405,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CHANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_EVENT ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_PROCESS ||
                formal.bitWidth != bitWidth || formal.valueSize != valueSize)
       return OBELISK_RT_INVALID_DESIGN;
     uint32_t storedKind = formal.kind;
@@ -13388,16 +13413,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
           kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
-          !classHandle && !chandle && !event && !covergroup)
+          !classHandle && !chandle && !event && !covergroup && !process)
         return OBELISK_RT_INVALID_ARGUMENT;
-      if (covergroup) {
+      if (covergroup || process) {
         uint64_t word = 0;
         obelisk_rt_status status = loadReference(
             64, 8, 0, OBELISK_RT_ARGUMENT_VALUE_BITS, &word, nullptr);
         if (status != OBELISK_RT_OK)
           return status;
-        if (!validateCovergroupFormal(context, word,
-                                      formalValueType(*coverage, formalID)))
+        if (!validOpaqueHandle(word))
           return OBELISK_RT_INVALID_HANDLE;
         std::memcpy(outValue, &word, sizeof(word));
         return OBELISK_RT_OK;
@@ -13421,7 +13445,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
       if (status != OBELISK_RT_OK)
         return status;
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
-    } else if (chandle || event || covergroup)
+    } else if (chandle || event || covergroup || process)
       std::memcpy(outValue, &formal.payload, sizeof(formal.payload));
     else
       std::memcpy(outValue, formal.value.data(),

@@ -2351,8 +2351,13 @@ obelisk_rt_v1_process_status(obelisk_rt_context *context,
         *outState = OBELISK_RT_PROCESS_RUNNING;
         return OBELISK_RT_OK;
       }
-      ScheduledProcess *process = findScheduledProcess(context, token);
-      if (!process || !process->instance)
+      auto indexed = context->scheduledProcessIndices.find(token);
+      if (indexed == context->scheduledProcessIndices.end() ||
+          indexed->second >= context->scheduledProcesses.size())
+        return OBELISK_RT_INVALID_HANDLE;
+      const ScheduledProcess *process =
+          &context->scheduledProcesses[indexed->second];
+      if (process->token != token || !process->instance)
         return OBELISK_RT_INVALID_HANDLE;
       *outState = process->explicitlySuspended
                       ? OBELISK_RT_PROCESS_EXPLICITLY_SUSPENDED

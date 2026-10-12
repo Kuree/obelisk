@@ -1542,11 +1542,11 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
       !(isa<ArgumentRefType>(getResult().getType()) &&
         isAggregateType(result)) &&
       !isa<StringType, DynamicArrayType, QueueType, AssocArrayType,
-           ClassHandleType, ChandleType, EventType, CovergroupHandleType>(
-          result))
+           ClassHandleType, ChandleType, EventType, CovergroupHandleType,
+           ProcessType>(result))
     return emitOpError(
         "requires an integral, real, string, container, class, chandle, event, "
-        "or covergroup formal value or "
+        "covergroup, or process formal value or "
         "argument reference");
   return success();
 }
@@ -1577,7 +1577,7 @@ LogicalResult SimCovergroupSampleOp::verify() {
     if (!type.isSignlessIntOrIndex() || isa<IndexType>(type)) {
       if (isa<LogicType, StringType, DynamicArrayType, QueueType,
               AssocArrayType, ClassHandleType, ChandleType, EventType,
-              CovergroupHandleType>(type) ||
+              CovergroupHandleType, ProcessType>(type) ||
           (isa<ReferencePathType>(type) &&
            isAggregateType(cast<ReferencePathType>(type).getElementType()) &&
            !getPackedScalarType(
@@ -1587,7 +1587,7 @@ LogicalResult SimCovergroupSampleOp::verify() {
       return emitOpError() << "sample value " << index
                            << " must have signless integer, !simulation.logic, "
                               "!simulation.string, container, class handle, "
-                              "chandle, event, covergroup, or "
+                              "chandle, event, covergroup, process, or "
                               "f64 type, but has "
                            << type;
     }

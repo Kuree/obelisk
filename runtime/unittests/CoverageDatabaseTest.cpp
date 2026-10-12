@@ -3249,6 +3249,34 @@ TEST(CoverageDatabaseTest,
   EXPECT_NE(computeSchemaFingerprint(bad), computeSchemaFingerprint(db));
 }
 
+TEST(CoverageDatabaseTest, ProcessFormalsRoundTripWithSharedIdentityType) {
+  Database db = makeTypedDatabase();
+  auto &formal = db.functionalFormals.front();
+  formal.resultKind = FunctionalExpressionResultKind::Process;
+  formal.bitWidth = 0;
+  formal.signedness = CoverageSignedness::NotApplicable;
+  for (auto &expression : db.functionalExpressions)
+    if (expression.id == formal.defaultExpression) {
+      expression.resultKind = formal.resultKind;
+      expression.bitWidth = 0;
+      expression.signedness = formal.signedness;
+    }
+  db.schemaFingerprint = {};
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(db, image), Status::Ok);
+  Database decoded;
+  ASSERT_EQ(parse(image.data(), image.size(), decoded), Status::Ok);
+  EXPECT_EQ(decoded.functionalFormals.front().resultKind,
+            FunctionalExpressionResultKind::Process);
+  EXPECT_EQ(computeSchemaFingerprint(decoded), computeSchemaFingerprint(db));
+  auto bad = db;
+  bad.functionalFormals.front().bitWidth = 64;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+  bad = db;
+  bad.functionalFormals.front().valueType = 99;
+  EXPECT_EQ(validate(bad), Status::InvalidReference);
+}
+
 TEST(CoverageDatabaseTest, EventFormalsRoundTripWithCanonicalIdentityType) {
   Database db = makeTypedDatabase();
   auto &formal = db.functionalFormals.front();
