@@ -289,31 +289,44 @@ private:
   uint64_t stateBitCount;
 };
 
+template <typename Op>
 class ReferencePathAggregateElementConversion final
-    : public OpConversionPattern<sim::SimReferencePathAggregateElementOp> {
+    : public OpConversionPattern<Op> {
 public:
   ReferencePathAggregateElementConversion(const TypeConverter &converter,
                                           MLIRContext *context,
                                           const llvm::DataLayout &dataLayout,
                                           uint64_t stateBitCount)
-      : OpConversionPattern(converter, context), dataLayout(dataLayout),
+      : OpConversionPattern<Op>(converter, context), dataLayout(dataLayout),
         stateBitCount(stateBitCount) {}
 
   LogicalResult
-  matchAndRewrite(sim::SimReferencePathAggregateElementOp op,
-                  OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getOwnerReference().size() != 1 ||
-        adaptor.getIndex().size() != 1)
+    if (adaptor.getOwnerReference().size() != 1)
       return failure();
-    Type ownerType = op.getOwnerReference().getType().getElementType();
-    llvm::DataLayout local(dataLayout.getStringRepresentation());
-    llvm::LLVMContext llvmContext;
-    FailureOr<analysis::SimulationStorageProperties> ownerStorage =
-        analysis::getSimulationStorageProperties(ownerType, local, llvmContext);
-    std::optional<unsigned> ownerWidth = nativeStateWidth(ownerType);
-    if (failed(ownerStorage) || !ownerWidth)
-      return failure();
+    uint64_t ownerWidth, ownerSize;
+    bool ownerFourState;
+    if constexpr (std::is_same_v<Op, sim::SimReferencePathAggregateSliceOp>) {
+      ownerWidth = op.getOwnerBitWidth();
+      ownerSize = op.getOwnerPlaneSize();
+      ownerFourState = op.getOwnerFourState();
+    } else {
+      if (adaptor.getIndex().size() != 1)
+        return failure();
+      Type ownerType = op.getOwnerReference().getType().getElementType();
+      llvm::DataLayout local(dataLayout.getStringRepresentation());
+      llvm::LLVMContext llvmContext;
+      auto storage = analysis::getSimulationStorageProperties(ownerType, local,
+                                                              llvmContext);
+      auto width = nativeStateWidth(ownerType);
+      if (failed(storage) || !width)
+        return failure();
+      ownerWidth = *width;
+      ownerSize = storage->size;
+      ownerFourState = storage->fourState;
+    }
 
     Location location = op.getLoc();
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
@@ -341,6 +354,19 @@ public:
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, location, i64, value);
     };
+    Value index;
+    uint64_t left, right, span;
+    if constexpr (std::is_same_v<Op, sim::SimReferencePathAggregateSliceOp>) {
+      index = c64(op.getBitOffset());
+      left = 0;
+      right = ownerWidth - 1;
+      span = 1;
+    } else {
+      index = adaptor.getIndex().front();
+      left = op.getLeft();
+      right = op.getRight();
+      span = op.getElementSpan();
+    }
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{i32},
@@ -355,13 +381,13 @@ public:
                 valueState,
                 unknownState,
                 c64(stateBitCount),
-                adaptor.getIndex().front(),
-                c64(op.getLeft()),
-                c64(op.getRight()),
-                c64(op.getElementSpan()),
-                c64(*ownerWidth),
-                c64(ownerStorage->size),
-                c32(ownerStorage->fourState),
+                index,
+                c64(left),
+                c64(right),
+                c64(span),
+                c64(ownerWidth),
+                c64(ownerSize),
+                c32(ownerFourState),
                 c64(op.getTypeId()),
                 c32(static_cast<uint32_t>(op.getElementKind())),
                 c32(static_cast<uint32_t>(op.getElementFlags())),
@@ -1016,7 +1042,10 @@ void populateManagedReferenceToLLVMConversionPatterns(
       CovergroupOptionReferenceConversion<
           sim::SimCovergroupTypeOptionReferenceOp>>(converter, context,
                                                     stateBitCount);
-  patterns.add<ReferencePathAggregateElementConversion>(
+  patterns.add<ReferencePathAggregateElementConversion<
+                   sim::SimReferencePathAggregateElementOp>,
+               ReferencePathAggregateElementConversion<
+                   sim::SimReferencePathAggregateSliceOp>>(
       converter, context, dataLayout, stateBitCount);
   patterns.add<ArgumentRefLoadConversion, ArgumentRefStoreConversion>(
       converter, context, dataLayout, stateBitCount);

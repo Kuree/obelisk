@@ -572,6 +572,30 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
   return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
 }
 
+bool UnitLowering::isBorrowedAggregate(Operation *base) {
+  while (isa<semantic::SVMemberAccessExpressionOp,
+             semantic::SVElementSelectExpressionOp>(base)) {
+    SmallVector<Operation *> children = getChildren(base);
+    if (children.empty())
+      return false;
+    base = children.front();
+  }
+  auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(base);
+  if (!named)
+    return false;
+  StringRef path = named.getReferencedPath();
+  if (coverageInputs.lookup(path).formal)
+    return true;
+  Value reference;
+  if (auto node = named->getAttrOfType<IntegerAttr>("node_id"))
+    reference = nodeLvalues.lookup(node.getValue().getZExtValue());
+  if (!reference)
+    reference = lvalues.lookup(path);
+  return reference &&
+         isa<sim::ManagedRefType, sim::ArgumentRefType,
+             sim::ReferencePathType>(reference.getType());
+}
+
 FailureOr<Value>
 UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   Location location = getSemanticLocation(op);
@@ -3649,6 +3673,42 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
       return field;
     return loadReference(field, location);
   }
+  if (isa<sim::ManagedRefType, sim::ArgumentRefType, sim::ReferencePathType>(
+          inputValueType)) {
+    Type aggregate = getReferenceElementType(*input);
+    const auto *layout = loweringInputs.getAggregateMembers(aggregate);
+    if (!layout || ordinal >= layout->members.size() ||
+        sim::getAggregateElementType(aggregate, ordinal) != *resultType) {
+      emitError(location)
+          << "member reference has no matching fixed aggregate layout";
+      return failure();
+    }
+    if (isTaggedUnionType(aggregate)) {
+      auto loaded = loadReference(*input, location);
+      if (failed(loaded) ||
+          failed(guardTaggedUnionMember(*loaded, ordinal, location)))
+        return failure();
+    }
+    auto owner = toArgumentReference(*input, aggregate, location);
+    if (failed(owner))
+      return failure();
+    const auto &member = layout->members[ordinal];
+    const auto &descriptor = *member.element;
+    Value path = sim::SimReferencePathAggregateSliceOp::create(
+        builder, location,
+        sim::ReferencePathType::get(function.getContext(), *resultType),
+        function.getBody().front().getArgument(0), *owner, member.bitOffset,
+        layout->owner.bitWidth ? layout->owner.bitWidth
+                               : layout->owner.valueSize * 8,
+        layout->owner.valueSize,
+        bool(static_cast<uint32_t>(layout->owner.flags) &
+             static_cast<uint32_t>(sim::ElementFlags::FourState)),
+        descriptor.typeID, descriptor.kind, descriptor.flags,
+        descriptor.valueSize, descriptor.alignment, descriptor.bitWidth,
+        builder.getDenseI64ArrayAttr(descriptor.traceOffsets),
+        builder.getDenseI32ArrayAttr(descriptor.traceKinds));
+    return lvalue ? FailureOr<Value>(path) : loadReference(path, location);
+  }
   if (auto driver = dyn_cast<sim::DriverType>(inputValueType)) {
     if (sim::getAggregateElementType(driver.getElementType(), ordinal) !=
         *resultType) {
@@ -5078,8 +5138,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
       return failure();
     }
     Value container = *input;
-    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
-            container.getType())) {
+    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType,
+            sim::ReferencePathType>(container.getType())) {
       FailureOr<Value> loaded = loadReference(container, location);
       if (failed(loaded))
         return failure();
@@ -5148,8 +5208,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     auto range = cast<semantic::SVRangeSelectExpressionOp>(op);
     auto resultArray = cast<sim::UnpackedArrayType>(*resultType);
     Value aggregate = *input;
-    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
-            aggregate.getType())) {
+    if (isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType,
+            sim::ReferencePathType>(aggregate.getType())) {
       FailureOr<Value> loaded = loadReference(aggregate, location);
       if (failed(loaded))
         return failure();
@@ -5181,8 +5241,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     if (auto array = dyn_cast<sim::AssocArrayType>(sourceValueType)) {
       Value container = *input;
       bool isReference =
-          isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
-              container.getType());
+          isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType,
+              sim::ReferencePathType>(container.getType());
       if (isReference) {
         FailureOr<Value> loaded = loadReference(container, location);
         if (failed(loaded))
@@ -5247,8 +5307,8 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   if (element && isa<sim::DynamicArrayType, sim::QueueType>(sourceValueType)) {
     Value container = *input;
     bool isReference =
-        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType>(
-            container.getType());
+        isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType,
+            sim::ReferencePathType>(container.getType());
     if (isReference) {
       FailureOr<Value> loaded = loadReference(container, location);
       if (failed(loaded))

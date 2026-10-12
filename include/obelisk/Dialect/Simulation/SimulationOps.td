@@ -2616,6 +2616,33 @@ def SimReferencePathAggregateElementOp
   let hasVerifier = 1;
 }
 
+def SimReferencePathAggregateSliceOp
+    : SimOp<"reference_path.aggregate_slice", [
+        SimAllocatesManagedStorage,
+        MemoryEffects<[MemRead<SimStorageResource>,
+                       MemRead<SimHeapResource>, MemAlloc<SimHeapResource>, MemWrite<SimHeapResource>]>
+      ]> {
+  let summary = "retain a typed bit window within a fixed aggregate reference";
+  let arguments = (ins
+    SimContextType:$context,
+    SimArgumentRefType:$owner_reference,
+    I64Attr:$bit_offset,
+    I64Attr:$owner_bit_width,
+    I64Attr:$owner_plane_size,
+    BoolAttr:$owner_four_state,
+    I64Attr:$type_id,
+    SimElementKindAttr:$element_kind,
+    SimElementFlagsAttr:$element_flags,
+    I64Attr:$value_size,
+    I64Attr:$alignment,
+    I64Attr:$bit_width,
+    DenseI64ArrayAttr:$trace_offsets,
+    DenseI32ArrayAttr:$trace_kinds
+  );
+  let results = (outs SimReferencePathType:$result);
+  let hasVerifier = 1;
+}
+
 def SimArgumentRefFromPathOp
     : SimOp<"argument_ref.from_path", [Pure]> {
   let summary = "erase a managed reference path into an exact-alias formal";

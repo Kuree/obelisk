@@ -4,6 +4,7 @@
 #ifndef OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_UNITLOWERINGINPUTS_H
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_UNITLOWERINGINPUTS_H
 
+#include "ContainerElementDescriptor.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/SymbolTable.h"
@@ -14,6 +15,7 @@
 #include "llvm/ADT/StringMap.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace obelisk::simlowering {
@@ -28,6 +30,16 @@ public:
     mlir::FunctionType type;
     bool voidFunction;
   };
+
+  struct AggregateMember {
+    uint64_t bitOffset;
+    const ContainerElementDescriptor *element;
+  };
+  struct AggregateMembers {
+    ContainerElementDescriptor owner;
+    llvm::SmallVector<AggregateMember> members;
+  };
+  const AggregateMembers *getAggregateMembers(mlir::Type type) const;
 
   explicit UnitLoweringInputs(mlir::Operation *module);
 
@@ -55,6 +67,9 @@ private:
   // Other symbol tables belong to immutable semantic declarations; MLIR's
   // locked collection synchronizes their lazy construction, without rescanning
   // the mutable design block on every lookup.
+  llvm::DenseMap<mlir::Type, std::unique_ptr<ContainerElementDescriptor>>
+      memberElements;
+  llvm::DenseMap<mlir::Type, AggregateMembers> aggregateMembers;
   mutable mlir::SymbolTableCollection symbols;
   mutable mlir::LockedSymbolTableCollection lockedSymbols;
   llvm::DenseMap<mlir::Operation *, Callable> callables;

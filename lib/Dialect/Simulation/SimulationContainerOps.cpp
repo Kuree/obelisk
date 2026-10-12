@@ -31,8 +31,10 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/ADT/bit.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -902,14 +904,33 @@ bool getManagedHandleSlots(Type type,
         if (auto unpacked = dyn_cast<UnpackedUnionType>(nestedType))
           overlapping = !unpacked.getIsTagged();
         unsigned count = getAggregateNumElements(nestedType);
+        bool prefixLayout =
+            !getStorageLayout(nestedType) &&
+            (isa<UnpackedStructType>(nestedType) ||
+             (isa<UnpackedUnionType>(nestedType) && !overlapping));
+        uint64_t nextOffset = 0;
         auto collectElement = [&](unsigned index) {
-          std::optional<std::pair<uint64_t, uint64_t>> child =
-              getAggregateProvenanceSubelement(nestedType, index);
+          Type element = getAggregateElementType(nestedType, index);
+          std::optional<std::pair<uint64_t, uint64_t>> child;
+          if (prefixLayout) {
+            auto span = getElementStorageSpan(element);
+            auto alignment = getProvenanceAlignment(element);
+            if (!span || !alignment || !*alignment ||
+                nextOffset > UINT64_MAX - (*alignment - 1))
+              return false;
+            uint64_t offset = llvm::alignTo(nextOffset, *alignment);
+            if (*span > UINT64_MAX - offset)
+              return false;
+            nextOffset = offset + *span;
+            child = std::pair<uint64_t, uint64_t>{offset, *span};
+          } else {
+            child = getAggregateProvenanceSubelement(nestedType, index);
+          }
           if (!child ||
               child->first > std::numeric_limits<uint64_t>::max() - baseOffset)
             return false;
-          return collect(getAggregateElementType(nestedType, index),
-                         baseOffset + child->first, conditional || overlapping);
+          return collect(element, baseOffset + child->first,
+                         conditional || overlapping);
         };
         unsigned first = 0;
         if (count && isa<PackedArrayType, UnpackedArrayType>(nestedType)) {
@@ -943,11 +964,31 @@ bool getManagedHandleSlots(Type type,
   // cannot be dereferenced as handles. A coincidental live-object identity is
   // retained conservatively, which is the same safe policy used for an
   // ordinary two-state arm whose bits happen to equal a live identity.
-  llvm::sort(slots.begin() + originalSize, slots.end(),
-             [](const ManagedHandleSlot &lhs, const ManagedHandleSlot &rhs) {
-               return std::tie(lhs.bitOffset, lhs.kindMask, lhs.conditional) <
-                      std::tie(rhs.bitOffset, rhs.kindMask, rhs.conditional);
-             });
+  auto ordered =
+      llvm::MutableArrayRef<ManagedHandleSlot>(slots).drop_front(originalSize);
+  if (!llvm::is_sorted(ordered, [](const auto &a, const auto &b) {
+        return a.bitOffset < b.bitOffset;
+      })) {
+    // Fixed-width offsets need eight stable byte passes. Sorting only offsets
+    // is enough: the fold below combines every kind and condition at that slot.
+    llvm::SmallVector<ManagedHandleSlot> scratch(ordered.size());
+    auto input = ordered;
+    llvm::MutableArrayRef<ManagedHandleSlot> output(scratch);
+    for (unsigned shift = 0; shift != 64; shift += 8) {
+      std::array<size_t, 256> counts{};
+      for (const auto &slot : input)
+        ++counts[(slot.bitOffset >> shift) & 255];
+      size_t offset = 0;
+      for (size_t &count : counts) {
+        size_t size = count;
+        count = offset;
+        offset += size;
+      }
+      for (const auto &slot : input)
+        output[counts[(slot.bitOffset >> shift) & 255]++] = slot;
+      std::swap(input, output);
+    }
+  }
   size_t output = originalSize;
   for (size_t index = originalSize; index != slots.size(); ++index) {
     ManagedHandleSlot slot = slots[index];

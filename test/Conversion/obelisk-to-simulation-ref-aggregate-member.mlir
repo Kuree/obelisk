@@ -37,6 +37,7 @@ module {
 
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: %[[REFERENCE:arg[0-9]+]]: !simulation.argument_ref<
-// CHECK: %[[OLD:.*]] = simulation.argument_ref.load %[[REFERENCE]]
-// CHECK: %[[UPDATED:.*]] = simulation.aggregate.insert {{.*}} into %[[OLD]][0]
-// CHECK: simulation.argument_ref.store %[[UPDATED]] to %[[REFERENCE]]
+// CHECK: %[[PATH:.*]] = simulation.reference_path.aggregate_slice {{.*}}, %[[REFERENCE]]
+// CHECK: %[[FIELD:.*]] = simulation.argument_ref.from_path %[[PATH]]
+// CHECK-NOT: simulation.aggregate.insert
+// CHECK: simulation.argument_ref.store {{.*}} to %[[FIELD]]

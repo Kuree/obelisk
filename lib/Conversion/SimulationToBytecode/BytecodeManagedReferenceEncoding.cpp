@@ -37,13 +37,24 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
         plan, kIntrinsicReferencePathStringCharacter,
         {op.getString(), op.getIndex(), op.getOwnerReference()},
         {op.getResult()});
-  if (auto op = dyn_cast<sim::SimReferencePathAggregateElementOp>(operation)) {
-    Type ownerType = op.getOwnerReference().getType().getElementType();
-    FailureOr<ManagedValueStorage> ownerStorage =
-        getManagedValueStorage(ownerType, dataLayout);
-    std::optional<uint32_t> ownerWidth = simulationWidth(ownerType);
-    if (failed(ownerStorage) || !ownerWidth)
-      return op.emitOpError("aggregate owner has no bytecode layout");
+  auto encodeAggregateProjection = [&](auto op) -> LogicalResult {
+    using Op = decltype(op);
+    uint64_t ownerWidth, ownerSize;
+    bool ownerFourState;
+    if constexpr (std::is_same_v<Op, sim::SimReferencePathAggregateSliceOp>) {
+      ownerWidth = op.getOwnerBitWidth();
+      ownerSize = op.getOwnerPlaneSize();
+      ownerFourState = op.getOwnerFourState();
+    } else {
+      Type ownerType = op.getOwnerReference().getType().getElementType();
+      auto storage = getManagedValueStorage(ownerType, dataLayout);
+      auto width = simulationWidth(ownerType);
+      if (failed(storage) || !width)
+        return op.emitOpError("aggregate owner has no bytecode layout");
+      ownerWidth = *width;
+      ownerSize = storage->planeSize;
+      ownerFourState = storage->fourState;
+    }
     SmallVector<uint8_t> traceSlots;
     for (auto [offset, kind] :
          llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
@@ -51,15 +62,25 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
       append32(traceSlots, static_cast<uint32_t>(kind));
       append32(traceSlots, 0);
     }
+    uint32_t index;
+    uint64_t left, right, span;
+    if constexpr (std::is_same_v<Op, sim::SimReferencePathAggregateSliceOp>) {
+      index = emitU64Constant(plan, op.getBitOffset());
+      left = 0;
+      right = ownerWidth - 1;
+      span = 1;
+    } else {
+      index = reg(plan, op.getIndex());
+      left = op.getLeft();
+      right = op.getRight();
+      span = op.getElementSpan();
+    }
     return emitIntrinsicRegisters(
         plan, kIntrinsicReferencePathAggregateElement,
-        {reg(plan, op.getOwnerReference()), reg(plan, op.getIndex()),
-         emitU64Constant(plan, op.getLeft()),
-         emitU64Constant(plan, op.getRight()),
-         emitU64Constant(plan, op.getElementSpan()),
-         emitU64Constant(plan, *ownerWidth),
-         emitU64Constant(plan, ownerStorage->planeSize),
-         emitU64Constant(plan, ownerStorage->fourState),
+        {reg(plan, op.getOwnerReference()), index, emitU64Constant(plan, left),
+         emitU64Constant(plan, right), emitU64Constant(plan, span),
+         emitU64Constant(plan, ownerWidth), emitU64Constant(plan, ownerSize),
+         emitU64Constant(plan, ownerFourState),
          emitU64Constant(plan, op.getTypeId()),
          emitU64Constant(plan, static_cast<uint32_t>(op.getElementKind())),
          emitU64Constant(plan, static_cast<uint32_t>(op.getElementFlags())),
@@ -68,7 +89,11 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
          emitU64Constant(plan, op.getBitWidth()),
          emitBytesConstant(plan, traceSlots)},
         {reg(plan, op.getResult())});
-  }
+  };
+  if (auto op = dyn_cast<sim::SimReferencePathAggregateElementOp>(operation))
+    return encodeAggregateProjection(op);
+  if (auto op = dyn_cast<sim::SimReferencePathAggregateSliceOp>(operation))
+    return encodeAggregateProjection(op);
   if (auto op = dyn_cast<sim::SimReferencePathAssocOp>(operation))
     return emitIntrinsic(plan, kIntrinsicReferencePathAssoc,
                          {op.getArray(), op.getKey(), op.getOwnerReference()},

@@ -748,6 +748,14 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::interrupt();
       return WalkResult::advance();
     }
+    if (auto path =
+            dyn_cast<sim::SimReferencePathAggregateSliceOp>(operation)) {
+      if (failed(reserveTrace(path.getLoc(), "__obelisk_element_trace_",
+                              path.getTypeId(), path.getTraceOffsets(),
+                              path.getTraceKinds())))
+        return WalkResult::interrupt();
+      return WalkResult::advance();
+    }
     if (auto create = dyn_cast<sim::SimMailboxCreateOp>(operation)) {
       if (failed(reserveTrace(create.getLoc(),
                               "__obelisk_mailbox_element_trace_",
@@ -1158,7 +1166,8 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimReferencePathAssocOp, sim::SimReferencePathStringCharacterOp,
         sim::SimCovergroupOptionReferenceOp,
         sim::SimCovergroupTypeOptionReferenceOp,
-        sim::SimReferencePathAggregateElementOp, sim::SimArgumentRefFromPathOp,
+        sim::SimReferencePathAggregateElementOp,
+        sim::SimReferencePathAggregateSliceOp, sim::SimArgumentRefFromPathOp,
         sim::SimArgumentRefLoadOp, sim::SimArgumentRefStoreOp,
         sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
         sim::SimWeakCreateOp, sim::SimWeakGetOp, sim::SimWeakClearOp,

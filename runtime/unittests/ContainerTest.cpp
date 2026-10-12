@@ -2007,4 +2007,177 @@ TEST_F(ManagedValueTest, ReferencePathsResolveAgainAfterContainerMutation) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedValueTest, RepeatedCapturesShareStorageAfterQueueRemoval) {
+  obelisk_rt_object_v1 *queue = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &wordElement, UINT64_MAX, &queue),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 queueRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &queueRoot, &queue),
+            OBELISK_RT_OK);
+  uint64_t value = 41;
+  ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &value, nullptr),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *path = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                lane, queue, 0, nullptr, 0, 0, nullptr, nullptr, 0, &path),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *alias = nullptr;
+  for (unsigned capture = 0; capture != 32; ++capture) {
+    ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                  lane, queue, 0, nullptr, 0, 0, nullptr, nullptr, 0, &alias),
+              OBELISK_RT_OK);
+    EXPECT_EQ(alias, path); // Repeated captures allocate one element snapshot.
+  }
+  ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 1, &value, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                lane, queue, 1, nullptr, 0, 0, nullptr, nullptr, 0, &alias),
+            OBELISK_RT_OK);
+  EXPECT_EQ(alias, path);
+  uint32_t present = 0;
+  ASSERT_EQ(obelisk_rt_v1_queue_pop(queue, 0, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  value = 99;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_store(lane, alias, &value, nullptr),
+            OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_load(path, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 99u);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, EqualAssociativeKeysShareOnlyTheLiveCapture) {
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create(lane, &wordElement,
+                                       OBELISK_RT_ASSOC_KEY_STRING, 0, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+  constexpr char text[] = "equal keys with distinct non-interned storage";
+  obelisk_rt_string_v1 keys[2] = {};
+  obelisk_rt_object_v1 *paths[2] = {};
+  for (unsigned index = 0; index != 2; ++index) {
+    ASSERT_EQ(
+        obelisk_rt_v1_string_create(lane, text, sizeof(text) - 1, &keys[index]),
+        OBELISK_RT_OK);
+    obelisk_rt_assoc_key_v1 key{};
+    key.kind = OBELISK_RT_ASSOC_KEY_STRING;
+    key.string = keys[index];
+    ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(
+                  lane, array, &key, nullptr, 0, 0, nullptr, nullptr, 0,
+                  &paths[index]),
+              OBELISK_RT_OK);
+  }
+  EXPECT_EQ(paths[0], paths[1]);
+  obelisk_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &paths[0]),
+            OBELISK_RT_OK);
+  uint64_t value = 41;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_store(lane, paths[0], &value, nullptr),
+            OBELISK_RT_OK);
+  obelisk_rt_assoc_key_v1 key{};
+  key.kind = OBELISK_RT_ASSOC_KEY_STRING;
+  key.string = keys[0];
+  ASSERT_EQ(obelisk_rt_v1_assoc_delete(array, &key), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  value = 99;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_store(lane, paths[1], &value, nullptr),
+            OBELISK_RT_OK);
+  uint32_t present = 0;
+  value = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_load(paths[0], &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(value, 99u);
+  obelisk_rt_object_v1 *fresh = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(
+                lane, array, &key, nullptr, 0, 0, nullptr, nullptr, 0, &fresh),
+            OBELISK_RT_OK);
+  EXPECT_NE(fresh, paths[0]);
+  value = 1;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_load(fresh, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 0u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, AggregateWindowsPreservePlanesAndDetachedAliases) {
+  const obelisk_rt_element_type_v1 recordElement{OBELISK_RT_VERSION,
+                                                 OBELISK_RT_ELEMENT_AGGREGATE,
+                                                 9300,
+                                                 OBELISK_RT_ELEMENT_FOUR_STATE,
+                                                 0,
+                                                 8,
+                                                 1,
+                                                 64,
+                                                 nullptr};
+  obelisk_rt_object_v1 *queue = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_queue_create(lane, &recordElement, UINT64_MAX, &queue),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 queueRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &queueRoot, &queue),
+            OBELISK_RT_OK);
+  uint64_t original = UINT64_C(0x12345678abcd9876);
+  uint64_t unknown = UINT64_C(0x5555555555555555);
+  ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &original, &unknown),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *parent = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                lane, queue, 0, nullptr, 0, 0, nullptr, nullptr, 0, &parent),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 parentRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &parentRoot, &parent),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *views[2] = {};
+  obelisk_rt_gc_root_v1 viewRoots[2] = {};
+  for (unsigned index = 0; index != 2; ++index) {
+    ASSERT_EQ(obelisk_rt_v1_reference_path_aggregate_element_create(
+                  lane, parent, 0, 2, nullptr, nullptr, 0, 5, 0, 63, 1, 64, 8,
+                  1, 9301, OBELISK_RT_ELEMENT_BITS, 0, 1, 1, 7, nullptr, 0,
+                  &views[index]),
+              OBELISK_RT_OK);
+    ASSERT_EQ(
+        obelisk_rt_v1_gc_root_push(lane, &viewRoots[index], &views[index]),
+        OBELISK_RT_OK);
+  }
+  uint8_t selected = 0x65;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_store(lane, views[0], &selected, nullptr),
+      OBELISK_RT_OK);
+  uint64_t actual = 0, actualUnknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read(queue, 0, &actual, &actualUnknown),
+            OBELISK_RT_OK);
+  uint64_t mask = UINT64_C(0x7f) << 5;
+  EXPECT_EQ(actual, (original & ~mask) | (uint64_t{selected} << 5));
+  EXPECT_EQ(actualUnknown, unknown & ~mask);
+  uint32_t present = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_queue_pop(queue, 0, &actual, &actualUnknown, &present),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  selected = 0x36;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_store(lane, views[0], &selected, nullptr),
+      OBELISK_RT_OK);
+  selected = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_load(views[1], &selected, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(selected, 0x36);
+  for (unsigned index = 2; index != 0; --index)
+    EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &viewRoots[index - 1]),
+              OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &parentRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
+}
+
 } // namespace

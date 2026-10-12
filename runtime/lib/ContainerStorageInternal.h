@@ -44,11 +44,15 @@ struct ContainerHeader {
   obelisk_rt_object_v1 *referenceBuffer;
   uint64_t referenceCount;
   uint64_t referenceCapacity;
+  // Open-addressed index into referenceBuffer. The registry owns weak handles;
+  // the index stores only hashes and ordinals, so it needs no element tracer.
+  obelisk_rt_object_v1 *referenceIndex;
+  uint64_t referenceIndexCapacity;
 };
 
 static_assert(sizeof(BufferHeader) == 16);
 static_assert(sizeof(AssocSlot) == 32);
-static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 128 : 112));
+static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 144 : 128));
 
 inline uint64_t elementStride(const obelisk_rt_element_type_v1 *element) {
   return element->value_size *

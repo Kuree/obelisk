@@ -8,6 +8,7 @@
 #ifndef OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_LOWERUNIT_H
 #define OBELISK_LIB_CONVERSION_OBELISKTOSIMULATION_LOWERUNIT_H
 
+#include "ContainerElementDescriptor.h"
 #include "Detail.h"
 #include "UnitLoweringInputs.h"
 
@@ -27,20 +28,6 @@
 #include <vector>
 
 namespace obelisk::simlowering {
-
-struct ContainerElementDescriptor {
-  uint64_t typeID;
-  sim::ElementKind kind;
-  sim::ElementFlags flags;
-  uint64_t valueSize;
-  uint64_t alignment;
-  uint64_t bitWidth;
-  ::mlir::SmallVector<int64_t, 2> traceOffsets;
-  ::mlir::SmallVector<int32_t, 2> traceKinds;
-};
-
-::mlir::FailureOr<ContainerElementDescriptor>
-describeContainerElement(::mlir::Type type, ::mlir::Location location);
 
 uint64_t getStableTypeID(::mlir::Type type, uint32_t descriptorFlags = 0);
 
@@ -670,6 +657,9 @@ private:
   traverseAssoc(::mlir::Value array, ::mlir::Value key, int32_t direction,
                 bool endpoint, ::mlir::Location location);
   ::mlir::Type getReferenceElementType(::mlir::Value reference) const;
+  /// Whether selections of \p base address storage this unit only borrows
+  /// through a coverage snapshot or a managed, formal or escaping reference.
+  bool isBorrowedAggregate(::mlir::Operation *base);
   ::mlir::FailureOr<::mlir::Value> loadReference(::mlir::Value reference,
                                                  ::mlir::Location location);
   ::mlir::LogicalResult storeReference(::mlir::Value reference,

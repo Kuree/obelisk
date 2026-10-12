@@ -466,6 +466,20 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
     if (failed(memberBaseType))
       return failure();
     auto unpackedUnion = dyn_cast<sim::UnpackedUnionType>(*memberBaseType);
+    // A field of a borrowed struct is written through its aggregate window.
+    // Fields of owned storage and container elements keep the structured
+    // read-modify-write below.
+    if (isa<sim::UnpackedStructType>(*memberBaseType) &&
+        isBorrowedAggregate(members.front())) {
+      FailureOr<Value> reference = lowerExpression(destination, true);
+      if (failed(reference) ||
+          !isa<sim::RefType, sim::DriverType, sim::ManagedRefType,
+               sim::ArgumentRefType, sim::ReferencePathType>(
+              reference->getType()))
+        return failure();
+      captured.reference = *reference;
+      return captured;
+    }
     Value frozenReceiver;
     if (auto named =
             dyn_cast<semantic::SVNamedValueExpressionOp>(members.front())) {

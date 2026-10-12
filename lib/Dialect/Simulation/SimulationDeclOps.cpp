@@ -2504,6 +2504,33 @@ LogicalResult SimReferencePathAggregateElementOp::verify() {
   return success();
 }
 
+LogicalResult SimReferencePathAggregateSliceOp::verify() {
+  if (!isAggregateType(getOwnerReference().getType().getElementType()))
+    return emitOpError("owner reference must refer to a fixed aggregate");
+  if (getValueSize() > UINT64_MAX / 8)
+    return emitOpError("selected element size overflows the bit layout");
+  uint64_t width = getBitWidth() ? getBitWidth() : getValueSize() * 8;
+  if (!getOwnerBitWidth() || !getOwnerPlaneSize() ||
+      getOwnerPlaneSize() > UINT64_MAX / 8 ||
+      getOwnerBitWidth() > getOwnerPlaneSize() * 8 ||
+      getBitOffset() > getOwnerBitWidth() ||
+      width > getOwnerBitWidth() - getBitOffset())
+    return emitOpError("selected bit window is outside the owner layout");
+  if (!getTypeId() || !getValueSize() || !getAlignment() ||
+      (getAlignment() & (getAlignment() - 1)) ||
+      getValueSize() % getAlignment() != 0 || width > getValueSize() * 8 ||
+      getTraceOffsets().size() != getTraceKinds().size())
+    return emitOpError("selected element metadata is invalid");
+  auto resultWidth = getPackedWidth(getResult().getType().getElementType());
+  if (resultWidth && *resultWidth != width)
+    return emitOpError("selected bit width must match the result element type");
+  bool fourState = static_cast<uint32_t>(getElementFlags()) &
+                   static_cast<uint32_t>(ElementFlags::FourState);
+  if (fourState && !getOwnerFourState())
+    return emitOpError("four-state selection requires an owner unknown plane");
+  return success();
+}
+
 LogicalResult SimArgumentRefFromPathOp::verify() {
   if (!haveCompatibleArgumentRefLayout(getInput().getType().getElementType(),
                                        getResult().getType().getElementType()))

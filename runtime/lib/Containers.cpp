@@ -541,6 +541,10 @@ OBELISK_RT_FEATURE_HELPER obelisk_rt_status allocateBufferWithoutSafepoint(
 
 uint64_t physicalIndex(const ContainerHeader &header, uint64_t logical);
 
+static obelisk_rt_status indexContainerReferences(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container,
+    obelisk_rt_object_v1 *addedPath = nullptr, uint64_t addedOrdinal = 0);
+
 obelisk_rt_status registerContainerReference(obelisk_rt_gc_lane_v1 *lane,
                                              obelisk_rt_object_v1 *container,
                                              obelisk_rt_object_v1 *path) {
@@ -630,8 +634,11 @@ obelisk_rt_status registerContainerReference(obelisk_rt_gc_lane_v1 *lane,
           return OBELISK_RT_OK;
         },
         &publish);
-    if (status != OBELISK_RT_OK || !publish.retry)
+    if (status != OBELISK_RT_OK)
       return status;
+    if (!publish.retry)
+      return indexContainerReferences(lane, container, path,
+                                      snapshot.referenceCount);
   }
 }
 
@@ -733,6 +740,8 @@ obelisk_rt_status mutateSequentialReferences(
         return status;
     }
     header.referenceCount = retained;
+    header.referenceIndex = nullptr;
+    header.referenceIndexCapacity = 0;
     return OBELISK_RT_OK;
   });
 }
@@ -787,6 +796,8 @@ obelisk_rt_status swapSequentialReferences(obelisk_rt_object_v1 *container,
         return status;
     }
     header.referenceCount = retained;
+    header.referenceIndex = nullptr;
+    header.referenceIndexCapacity = 0;
     return OBELISK_RT_OK;
   });
 }
@@ -865,6 +876,8 @@ obelisk_rt_status initializeContainer(obelisk_rt_gc_lane_v1 *lane,
           header->referenceBuffer = nullptr;
           header->referenceCount = 0;
           header->referenceCapacity = 0;
+          header->referenceIndex = nullptr;
+          header->referenceIndexCapacity = 0;
           return OBELISK_RT_OK;
         },
         &initialize);
@@ -937,6 +950,8 @@ obelisk_rt_status initializeAssoc(obelisk_rt_gc_lane_v1 *lane,
           header->referenceBuffer = nullptr;
           header->referenceCount = 0;
           header->referenceCapacity = 0;
+          header->referenceIndex = nullptr;
+          header->referenceIndexCapacity = 0;
           return OBELISK_RT_OK;
         },
         &initialize);
@@ -1441,6 +1456,7 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
     visit(environment, header->ordered);
     visit(environment, header->defaultValue);
     visit(environment, header->referenceBuffer);
+    visit(environment, header->referenceIndex);
     std::pair<ManagedTraceVisit, void *> adapter{visit, environment};
     if (header->referenceBuffer && header->referenceCount != 0 &&
         header->referenceCount <= header->referenceCapacity &&
@@ -4689,6 +4705,8 @@ static obelisk_rt_status detachAllAssocReferences(obelisk_rt_object_v1 *array,
         return status;
     }
     header.referenceCount = retained;
+    header.referenceIndex = nullptr;
+    header.referenceIndexCapacity = 0;
     return OBELISK_RT_OK;
   });
 }
@@ -5696,6 +5714,8 @@ detachAssocReferences(obelisk_rt_object_v1 *array, ContainerHeader &header,
         return status;
     }
     header.referenceCount = retained;
+    header.referenceIndex = nullptr;
+    header.referenceIndexCapacity = 0;
     return OBELISK_RT_OK;
   });
 }
@@ -6361,6 +6381,274 @@ obelisk_rt_status obelisk_rt_reference_path_element(
 }
 
 static obelisk_rt_status
+ensureReferencePathCurrent(obelisk_rt_object_v1 *path,
+                           ReferencePathHeader &snapshot);
+static bool aggregateReferenceOffset(const ReferencePathHeader &path,
+                                     uint64_t &offset);
+
+namespace {
+
+struct ReferenceIndexSlot {
+  uint64_t hash;
+  uint64_t ordinalPlusOne;
+};
+
+struct ReferenceBinding {
+  obelisk_rt_object_v1 *owner;
+  uint64_t payload;
+  uint32_t managed;
+  uint64_t bitOffset = 0;
+};
+
+static bool referenceBinding(const ReferencePathHeader &path,
+                             ReferenceBinding &binding) {
+  binding = {path.watchOwner, path.ownerPayload, path.ownerManaged};
+  // Independently captured member views still denote the same variable.
+  // Normalize their physical binding for lookup, retaining the original typed
+  // view in the path itself for checked loads and managed lifetime tracing.
+  while (binding.managed == 2) {
+    ReferencePathHeader parent;
+    if (snapshotReferencePath(binding.owner, parent) != OBELISK_RT_OK)
+      return false;
+    if (parent.selector != ReferenceSelector::AggregateElement)
+      break;
+    uint64_t offset = 0;
+    if (!aggregateReferenceOffset(parent, offset) ||
+        offset > UINT64_MAX - binding.bitOffset)
+      return false;
+    binding.bitOffset += offset;
+    binding.owner = parent.watchOwner;
+    binding.payload = parent.ownerPayload;
+    binding.managed = parent.ownerManaged;
+  }
+  if (binding.managed == 0) {
+    if (binding.bitOffset > INT64_MAX)
+      return false;
+    binding.payload = obelisk_rt_v1_native_handle_offset(
+        binding.payload, static_cast<int64_t>(binding.bitOffset));
+    binding.bitOffset = 0;
+  } else if (binding.managed == 1 && (binding.bitOffset & 7) == 0) {
+    uint64_t bytes = binding.bitOffset / 8;
+    if (bytes > UINT64_MAX - binding.payload)
+      return false;
+    binding.payload += bytes;
+    binding.bitOffset = 0;
+  }
+  return true;
+}
+
+static obelisk_rt_status referenceIdentityHash(const ReferencePathHeader &path,
+                                               uint64_t &hash) {
+  ReferenceBinding binding;
+  if (!referenceBinding(path, binding))
+    return OBELISK_RT_INVALID_HANDLE;
+  hash = OBELISK_STABLE_HASH_OFFSET_BASIS;
+  auto append = [&](uint64_t word) {
+    hash = obelisk_stable_hash_append_uint_le(hash, word, 8);
+  };
+  append(static_cast<uint32_t>(path.selector));
+  append(reinterpret_cast<uintptr_t>(binding.owner));
+  append(binding.payload);
+  append(binding.managed);
+  append(binding.bitOffset);
+  append(reinterpret_cast<uintptr_t>(path.stateValue));
+  append(reinterpret_cast<uintptr_t>(path.stateUnknown));
+  append(path.stateBitCount);
+  if (path.selector == ReferenceSelector::Index) {
+    append(static_cast<uint64_t>(path.index));
+  } else {
+    append(path.key.kind);
+    append(path.key.width);
+    append(path.key.value);
+    append(path.key.unknown);
+    for (obelisk_rt_string_v1 word : {path.key.string, path.keyUnknown}) {
+      StringView view;
+      obelisk_rt_status status = readString(word, view);
+      if (status != OBELISK_RT_OK)
+        return status;
+      append(view.hash);
+      append(view.size);
+    }
+  }
+  hash = mixAssocHash(hash);
+  return OBELISK_RT_OK;
+}
+
+static bool sameReferenceIdentity(const ReferencePathHeader &left,
+                                  const ReferencePathHeader &right) {
+  ReferenceBinding a, b;
+  if (!referenceBinding(left, a) || !referenceBinding(right, b))
+    return false;
+  if (left.selector != right.selector || left.owner != right.owner ||
+      a.owner != b.owner || a.payload != b.payload || a.managed != b.managed ||
+      a.bitOffset != b.bitOffset || left.stateValue != right.stateValue ||
+      left.stateUnknown != right.stateUnknown ||
+      left.stateBitCount != right.stateBitCount)
+    return false;
+  if (left.selector == ReferenceSelector::Index)
+    return left.index == right.index;
+  if (left.key.kind != right.key.kind || left.key.width != right.key.width ||
+      left.key.value != right.key.value ||
+      left.key.unknown != right.key.unknown)
+    return false;
+  auto sameString = [](obelisk_rt_string_v1 lhs, obelisk_rt_string_v1 rhs) {
+    if (lhs == rhs)
+      return true;
+    StringView a, b;
+    return readString(lhs, a) == OBELISK_RT_OK &&
+           readString(rhs, b) == OBELISK_RT_OK && a.size == b.size &&
+           std::memcmp(a.bytes, b.bytes, static_cast<size_t>(a.size)) == 0;
+  };
+  return sameString(left.key.string, right.key.string) &&
+         sameString(left.keyUnknown, right.keyUnknown);
+}
+
+static obelisk_rt_status indexContainerReferences(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container,
+    obelisk_rt_object_v1 *addedPath, uint64_t addedOrdinal) {
+  ContainerHeader header;
+  obelisk_rt_status status = snapshotHeader(container, header);
+  if (status != OBELISK_RT_OK || header.referenceCount == 0)
+    return status;
+  bool rebuild = !header.referenceIndex ||
+                 header.referenceCount > header.referenceIndexCapacity / 2;
+  uint64_t capacity = header.referenceIndexCapacity;
+  obelisk_rt_object_v1 *index = header.referenceIndex;
+  if (rebuild) {
+    capacity = 4;
+    while (header.referenceCount > capacity / 2) {
+      if (capacity > UINT64_MAX / 2)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      capacity *= 2;
+    }
+    status = allocateBuffer(lane, capacity, sizeof(ReferenceIndexSlot), &index);
+    if (status != OBELISK_RT_OK)
+      return status;
+  } else if (!addedPath) {
+    return OBELISK_RT_OK;
+  }
+  status = accessBuffer(index, [&](uint8_t *data, uint64_t bytes) {
+    if (capacity > bytes / sizeof(ReferenceIndexSlot))
+      return OBELISK_RT_INVALID_HANDLE;
+    auto *slots = reinterpret_cast<ReferenceIndexSlot *>(data);
+    if (rebuild)
+      std::memset(slots, 0, capacity * sizeof(ReferenceIndexSlot));
+    auto insert = [&](obelisk_rt_object_v1 *path, uint64_t ordinal) {
+      ReferencePathHeader snapshot;
+      obelisk_rt_status result = snapshotReferencePath(path, snapshot);
+      if (result != OBELISK_RT_OK)
+        return result;
+      if (snapshot.detached || snapshot.owner != container)
+        return OBELISK_RT_OK;
+      uint64_t hash = 0;
+      result = referenceIdentityHash(snapshot, hash);
+      if (result != OBELISK_RT_OK)
+        return result;
+      uint64_t slot = hash & (capacity - 1);
+      while (slots[slot].ordinalPlusOne)
+        slot = (slot + 1) & (capacity - 1);
+      slots[slot] = {hash, ordinal + 1};
+      return OBELISK_RT_OK;
+    };
+    if (!rebuild)
+      return insert(addedPath, addedOrdinal);
+    return accessBuffer(header.referenceBuffer, [&](uint8_t *registry,
+                                                    uint64_t registryBytes) {
+      if (header.referenceCount > registryBytes / sizeof(void *))
+        return OBELISK_RT_INVALID_HANDLE;
+      auto **references = reinterpret_cast<obelisk_rt_object_v1 **>(registry);
+      for (uint64_t ordinal = 0; ordinal != header.referenceCount; ++ordinal) {
+        obelisk_rt_object_v1 *path = nullptr;
+        obelisk_rt_status result =
+            obelisk_rt_v1_weak_get(references[ordinal], &path);
+        if (result != OBELISK_RT_OK)
+          return result;
+        if (path && (result = insert(path, ordinal)) != OBELISK_RT_OK)
+          return result;
+      }
+      return OBELISK_RT_OK;
+    });
+  });
+  if (status != OBELISK_RT_OK || !rebuild)
+    return status;
+  struct Publish {
+    obelisk_rt_object_v1 *index;
+    uint64_t capacity;
+  } publish{index, capacity};
+  return obelisk_rt_managed_object_access(
+      container, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *opaque, uint8_t *data, uint64_t extent) {
+        if (extent != sizeof(ContainerHeader))
+          return OBELISK_RT_INVALID_HANDLE;
+        auto *publish = static_cast<Publish *>(opaque);
+        auto *header = reinterpret_cast<ContainerHeader *>(data);
+        header->referenceIndex = publish->index;
+        header->referenceIndexCapacity = publish->capacity;
+        return OBELISK_RT_OK;
+      },
+      &publish);
+}
+
+static obelisk_rt_status findContainerReference(
+    obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *container,
+    const ReferencePathHeader &wanted, obelisk_rt_object_v1 **outPath) {
+  obelisk_rt_status status = indexContainerReferences(lane, container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  ContainerHeader owner;
+  status = snapshotHeader(container, owner);
+  if (status != OBELISK_RT_OK || owner.referenceCount == 0)
+    return status;
+  uint64_t hash = 0;
+  status = referenceIdentityHash(wanted, hash);
+  if (status != OBELISK_RT_OK)
+    return status;
+  return accessBuffer(owner.referenceIndex, [&](uint8_t *data, uint64_t bytes) {
+    if (owner.referenceIndexCapacity > bytes / sizeof(ReferenceIndexSlot))
+      return OBELISK_RT_INVALID_HANDLE;
+    auto *slots = reinterpret_cast<ReferenceIndexSlot *>(data);
+    return accessBuffer(owner.referenceBuffer, [&](uint8_t *registry,
+                                                   uint64_t registryBytes) {
+      if (owner.referenceCount > registryBytes / sizeof(void *))
+        return OBELISK_RT_INVALID_HANDLE;
+      auto **references = reinterpret_cast<obelisk_rt_object_v1 **>(registry);
+      uint64_t slot = hash & (owner.referenceIndexCapacity - 1);
+      while (slots[slot].ordinalPlusOne) {
+        uint64_t ordinal = slots[slot].ordinalPlusOne - 1;
+        if (ordinal >= owner.referenceCount)
+          return OBELISK_RT_INVALID_HANDLE;
+        if (slots[slot].hash == hash) {
+          obelisk_rt_object_v1 *path = nullptr;
+          obelisk_rt_status result =
+              obelisk_rt_v1_weak_get(references[ordinal], &path);
+          if (result != OBELISK_RT_OK)
+            return result;
+          ReferencePathHeader snapshot;
+          if (path) {
+            result = snapshotReferencePath(path, snapshot);
+            if (result != OBELISK_RT_OK)
+              return result;
+            if (!snapshot.detached && sameReferenceIdentity(snapshot, wanted)) {
+              result = ensureReferencePathCurrent(path, snapshot);
+              if (result != OBELISK_RT_OK)
+                return result;
+              if (!snapshot.detached) {
+                *outPath = path;
+                return OBELISK_RT_OK;
+              }
+            }
+          }
+        }
+        slot = (slot + 1) & (owner.referenceIndexCapacity - 1);
+      }
+      return OBELISK_RT_OK;
+    });
+  });
+}
+
+} // namespace
+
+static obelisk_rt_status
 allocateDetachedValue(obelisk_rt_gc_lane_v1 *lane,
                       const obelisk_rt_element_type_v1 *element,
                       obelisk_rt_object_v1 **outValue) {
@@ -6397,6 +6685,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_index_create(
   if (status != OBELISK_RT_OK ||
       owner.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
     return status == OBELISK_RT_OK ? OBELISK_RT_INVALID_ARGUMENT : status;
+  ReferencePathHeader wanted{};
+  wanted.owner = container;
+  wanted.selector = ReferenceSelector::Index;
+  wanted.watchOwner = watchOwner;
+  wanted.ownerPayload = ownerPayload;
+  wanted.ownerManaged = ownerManaged;
+  wanted.stateValue = stateValue;
+  wanted.stateUnknown = stateUnknown;
+  wanted.stateBitCount = stateBitCount;
+  wanted.index = index;
+  status = findContainerReference(lane, container, wanted, outPath);
+  if (status != OBELISK_RT_OK || *outPath)
+    return status;
   ScopedManagedRoot ownerRoot(lane, &container);
   if (ownerRoot.getStatus() != OBELISK_RT_OK)
     return ownerRoot.getStatus();
@@ -6544,6 +6845,37 @@ extern "C" obelisk_rt_status obelisk_rt_v1_reference_path_assoc_create(
   ScopedManagedWordRoot keyUnknownRoot(lane, &keyUnknown);
   if (keyUnknownRoot.getStatus() != OBELISK_RT_OK)
     return keyUnknownRoot.getStatus();
+  ReferencePathHeader wanted{};
+  wanted.owner = array;
+  wanted.selector = ReferenceSelector::Associative;
+  wanted.watchOwner = watchOwner;
+  wanted.ownerPayload = ownerPayload;
+  wanted.ownerManaged = ownerManaged;
+  wanted.stateValue = stateValue;
+  wanted.stateUnknown = stateUnknown;
+  wanted.stateBitCount = stateBitCount;
+  wanted.key = *key;
+  wanted.keyUnknown = keyUnknown;
+  if (owner.keyKind == OBELISK_RT_ASSOC_KEY_STRING) {
+    wanted.key.value = 0;
+    wanted.key.unknown = 0;
+    wanted.key.string = keyRootValue;
+  } else if (owner.keyKind == OBELISK_RT_ASSOC_KEY_CLASS ||
+             owner.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+    wanted.key.object = normalized.object;
+    wanted.key.unknown = 0;
+    wanted.key.string = 0;
+  } else if (owner.keyWidth <= 64) {
+    wanted.key.value = normalized.integral;
+    wanted.key.string = 0;
+  } else {
+    wanted.key.value = 0;
+    wanted.key.unknown = 0;
+    wanted.key.string = keyRootValue;
+  }
+  status = findContainerReference(lane, array, wanted, outPath);
+  if (status != OBELISK_RT_OK || *outPath)
+    return status;
   obelisk_rt_object_v1 *detachedValue = nullptr;
   status = allocateDetachedValue(lane, owner.element, &detachedValue);
   if (status != OBELISK_RT_OK)
@@ -7230,6 +7562,225 @@ storeCoverageOptionReference(obelisk_rt_gc_lane_v1 *lane,
       &value, nullptr);
 }
 
+// A projection touches only its selected bits. Parent projections compose
+// offsets until a state slot, class field, or container element is reached.
+// No whole-owner temporary is needed for a member read or write.
+static obelisk_rt_status
+accessReferenceWindow(obelisk_rt_context *context, obelisk_rt_gc_lane_v1 *lane,
+                      uint8_t *stateValue, uint8_t *stateUnknown,
+                      uint64_t stateBits, obelisk_rt_object_v1 *owner,
+                      uint64_t payload, uint32_t managed, uint64_t ownerWidth,
+                      uint64_t ownerSize, bool ownerFourState, uint64_t offset,
+                      uint64_t width, bool fourState, uint8_t *value,
+                      uint8_t *unknown, bool store) {
+  if (!width || offset > ownerWidth || width > ownerWidth - offset ||
+      ownerSize > SIZE_MAX ||
+      ownerSize < ownerWidth / 8 + ((ownerWidth & 7) != 0) ||
+      (fourState && (!ownerFourState || !unknown)))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  uint64_t size = width / 8 + ((width & 7) != 0);
+  auto accessPlanes = [&](uint8_t *data, uint8_t *bval) -> obelisk_rt_status {
+    if (ownerFourState && !bval)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (store) {
+      copyBitRange(data, offset, value, 0, width);
+      if (ownerFourState) {
+        if (fourState)
+          copyBitRange(bval, offset, unknown, 0, width);
+        else
+          for (uint64_t bit = offset; bit != offset + width; ++bit)
+            bval[bit / 8] &= static_cast<uint8_t>(~(uint8_t{1} << (bit & 7)));
+      }
+    } else {
+      std::memset(value, 0, static_cast<size_t>(size));
+      copyBitRange(value, 0, data, offset, width);
+      if (fourState) {
+        std::memset(unknown, 0, static_cast<size_t>(size));
+        copyBitRange(unknown, 0, bval, offset, width);
+      }
+    }
+    return OBELISK_RT_OK;
+  };
+  if (managed == 0) {
+    if (offset > INT64_MAX)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t selected = obelisk_rt_v1_native_handle_offset(
+        payload, static_cast<int64_t>(offset));
+    if (!selected && payload)
+      return OBELISK_RT_INVALID_HANDLE;
+    if (!store)
+      return obelisk_rt_v1_argument_ref_load(
+          context, stateValue, stateUnknown, stateBits, nullptr, selected, 0,
+          width, size, fourState, OBELISK_RT_ARGUMENT_VALUE_BITS, value,
+          unknown);
+    std::vector<uint8_t> zeros;
+    if (ownerFourState && !fourState)
+      zeros.resize(static_cast<size_t>(size));
+    return obelisk_rt_v1_argument_ref_store(
+        context, stateValue, stateUnknown, stateBits, nullptr, selected, 0,
+        width, size, ownerFourState, OBELISK_RT_ARGUMENT_VALUE_BITS, value,
+        fourState       ? unknown
+        : zeros.empty() ? nullptr
+                        : zeros.data());
+  }
+  if (managed == 1) {
+    uint64_t byteOffset = offset / 8;
+    uint64_t windowSize = (offset % 8 + width + 7) / 8;
+    if (byteOffset > UINT64_MAX - payload ||
+        (ownerFourState && ownerSize > UINT64_MAX - payload - byteOffset))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    std::vector<uint8_t> bytes(static_cast<size_t>(windowSize));
+    std::vector<uint8_t> bval;
+    if (ownerFourState)
+      bval.resize(static_cast<size_t>(windowSize));
+    uint64_t address = payload + byteOffset;
+    auto status =
+        obelisk_rt_v1_object_read(owner, address, bytes.data(), windowSize);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (ownerFourState) {
+      status = obelisk_rt_v1_object_read(owner, address + ownerSize,
+                                         bval.data(), windowSize);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    uint64_t originalOffset = offset;
+    offset %= 8;
+    status = accessPlanes(bytes.data(), bval.empty() ? nullptr : bval.data());
+    offset = originalOffset;
+    if (status != OBELISK_RT_OK || !store)
+      return status;
+    status =
+        obelisk_rt_v1_object_write(owner, address, bytes.data(), windowSize);
+    if (status == OBELISK_RT_OK && ownerFourState)
+      status = obelisk_rt_v1_object_write(owner, address + ownerSize,
+                                          bval.data(), windowSize);
+    return status;
+  }
+  if (managed != 2 || !owner ||
+      obelisk_rt_managed_object_context(owner) != context)
+    return OBELISK_RT_INVALID_HANDLE;
+  ReferencePathHeader path;
+  auto status = snapshotReferencePath(owner, path);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (path.element->value_size != ownerSize ||
+      referenceElementBitWidth(path.element) != ownerWidth ||
+      bool(path.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) !=
+          ownerFourState)
+    return OBELISK_RT_ARGUMENT_MISMATCH;
+  status = ensureReferencePathCurrent(owner, path);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (path.selector == ReferenceSelector::AggregateElement && !path.detached) {
+    uint64_t parentOffset = 0;
+    if (!aggregateReferenceOffset(path, parentOffset))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    return accessReferenceWindow(
+        context, lane, path.stateValue, path.stateUnknown, path.stateBitCount,
+        path.watchOwner, path.ownerPayload, path.ownerManaged,
+        path.aggregate.ownerBitWidth, path.aggregate.ownerPlaneSize,
+        path.aggregate.ownerFourState, parentOffset + offset, width, fourState,
+        value, unknown, store);
+  }
+  auto accessSlot = [&](uint8_t *data, uint64_t extent,
+                        uint64_t start) -> obelisk_rt_status {
+    uint64_t stride = elementStride(path.element);
+    if (start > extent || stride > extent - start)
+      return OBELISK_RT_INVALID_HANDLE;
+    return accessPlanes(data + start,
+                        ownerFourState ? data + start + ownerSize : nullptr);
+  };
+  if (path.detached)
+    return accessBuffer(path.detachedValue,
+                        [&](uint8_t *data, uint64_t extent) {
+                          return accessSlot(data, extent, 0);
+                        });
+  ContainerHeader container;
+  status = snapshotHeader(path.owner, container);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (container.element != path.element)
+    return OBELISK_RT_ARGUMENT_MISMATCH;
+  auto accessAbsent = [&]() -> obelisk_rt_status {
+    if (!store)
+      return accessBuffer(path.detachedValue,
+                          [&](uint8_t *data, uint64_t extent) {
+                            return accessSlot(data, extent, 0);
+                          });
+    if (!lane)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    // Creating a record needs its default siblings as well as this field.
+    // Publish outside the buffer access: insertion may replace that buffer.
+    std::vector<uint8_t> prepared(elementStride(path.element));
+    obelisk_rt_status result =
+        accessBuffer(path.detachedValue, [&](uint8_t *data, uint64_t extent) {
+          if (prepared.size() > extent)
+            return OBELISK_RT_INVALID_HANDLE;
+          std::memcpy(prepared.data(), data, prepared.size());
+          return accessSlot(prepared.data(), prepared.size(), 0);
+        });
+    if (result != OBELISK_RT_OK)
+      return result;
+    return obelisk_rt_v1_reference_path_store(
+        lane, owner, prepared.data(),
+        ownerFourState ? prepared.data() + ownerSize : nullptr);
+  };
+  if (path.selector == ReferenceSelector::Index) {
+    if (path.index < 0 || static_cast<uint64_t>(path.index) >= container.size) {
+      if (store) {
+        if (path.index < 0 || container.kind != OBELISK_RT_CONTAINER_QUEUE ||
+            static_cast<uint64_t>(path.index) > container.size) {
+          if (container.kind == OBELISK_RT_CONTAINER_QUEUE)
+            warnIgnoredQueueWrite(false);
+          return OBELISK_RT_OK;
+        }
+        if (queueIsFull(container)) {
+          warnIgnoredQueueWrite(true);
+          return OBELISK_RT_OK;
+        }
+      }
+      return accessAbsent();
+    }
+    uint64_t start =
+        physicalIndex(container, static_cast<uint64_t>(path.index)) *
+        elementStride(path.element);
+    return accessBuffer(container.buffer, [&](uint8_t *data, uint64_t extent) {
+      return accessSlot(data, extent, start);
+    });
+  }
+  if (path.selector == ReferenceSelector::Associative) {
+    std::vector<uint8_t> keyStorage, unknownStorage;
+    obelisk_rt_assoc_key_v1 key{};
+    status =
+        materializeReferenceAssocKey(path, keyStorage, unknownStorage, key);
+    NormalizedAssocKey normalized;
+    if (status == OBELISK_RT_OK)
+      status = normalizeAssocKey(context, container, &key, normalized);
+    if (status != OBELISK_RT_OK)
+      return status;
+    if (!container.size || normalized.ignored) {
+      if (store && normalized.ignored)
+        return OBELISK_RT_OK;
+      return accessAbsent();
+    }
+    bool absent = false;
+    status =
+        accessBuffer(container.buffer, [&](uint8_t *data, uint64_t extent) {
+          auto found = findAssocSlot(container, data, extent, normalized);
+          if (!found) {
+            absent = true;
+            return OBELISK_RT_OK;
+          }
+          uint64_t start = *found * assocSlotStride(path.element) +
+                           assocValueOffset(path.element);
+          return accessSlot(data, extent, start);
+        });
+    return status == OBELISK_RT_OK && absent ? accessAbsent() : status;
+  }
+  return OBELISK_RT_INVALID_ARGUMENT;
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
                                   void *outUnknown, uint32_t *outPresent) {
@@ -7289,32 +7840,22 @@ obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
     if (!*outPresent)
       return OBELISK_RT_OK;
     OBELISK_RT_TRY {
-      std::vector<uint8_t> owner(
-          static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
-      std::vector<uint8_t> unknown;
-      if (snapshot.aggregate.ownerFourState)
-        unknown.resize(static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
-      status = obelisk_rt_v1_argument_ref_load(
-          obelisk_rt_managed_object_context(path), snapshot.stateValue,
+      return accessReferenceWindow(
+          obelisk_rt_managed_object_context(path), nullptr, snapshot.stateValue,
           snapshot.stateUnknown, snapshot.stateBitCount, snapshot.watchOwner,
           snapshot.ownerPayload, snapshot.ownerManaged,
           snapshot.aggregate.ownerBitWidth, snapshot.aggregate.ownerPlaneSize,
-          snapshot.aggregate.ownerFourState, OBELISK_RT_ARGUMENT_VALUE_BITS,
-          owner.data(), unknown.empty() ? nullptr : unknown.data());
-      if (status != OBELISK_RT_OK)
-        return status;
-      uint64_t width = referenceElementBitWidth(snapshot.element);
-      copyBitRange(static_cast<uint8_t *>(outValue), 0, owner.data(), offset,
-                   width);
-      if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
-        copyBitRange(static_cast<uint8_t *>(outUnknown), 0, unknown.data(),
-                     offset, width);
-      return OBELISK_RT_OK;
+          snapshot.aggregate.ownerFourState, offset,
+          referenceElementBitWidth(snapshot.element),
+          snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE,
+          static_cast<uint8_t *>(outValue), static_cast<uint8_t *>(outUnknown),
+          false);
     }
     OBELISK_RT_CATCH(const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
     }
   }
+
   if (snapshot.selector == ReferenceSelector::StringCharacter) {
     obelisk_rt_string_v1 string = 0;
     status = obelisk_rt_v1_argument_ref_load(
@@ -7391,41 +7932,31 @@ obelisk_rt_v1_reference_path_store(obelisk_rt_gc_lane_v1 *lane,
     uint64_t offset = 0;
     if (!aggregateReferenceOffset(snapshot, offset))
       return OBELISK_RT_OK;
+    std::vector<uint8_t> prepared;
+    status = prepareElementValue(lane, obelisk_rt_managed_lane_context(lane),
+                                 snapshot.element, value, unknown, prepared);
+    if (status != OBELISK_RT_OK)
+      return status;
     OBELISK_RT_TRY {
-      std::vector<uint8_t> owner(
-          static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
-      std::vector<uint8_t> ownerUnknown;
-      if (snapshot.aggregate.ownerFourState)
-        ownerUnknown.resize(
-            static_cast<size_t>(snapshot.aggregate.ownerPlaneSize));
-      obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
-      status = obelisk_rt_v1_argument_ref_load(
-          context, snapshot.stateValue, snapshot.stateUnknown,
-          snapshot.stateBitCount, snapshot.watchOwner, snapshot.ownerPayload,
-          snapshot.ownerManaged, snapshot.aggregate.ownerBitWidth,
-          snapshot.aggregate.ownerPlaneSize, snapshot.aggregate.ownerFourState,
-          OBELISK_RT_ARGUMENT_VALUE_BITS, owner.data(),
-          ownerUnknown.empty() ? nullptr : ownerUnknown.data());
-      if (status != OBELISK_RT_OK)
-        return status;
-      uint64_t width = referenceElementBitWidth(snapshot.element);
-      copyBitRange(owner.data(), offset, static_cast<const uint8_t *>(value), 0,
-                   width);
-      if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
-        copyBitRange(ownerUnknown.data(), offset,
-                     static_cast<const uint8_t *>(unknown), 0, width);
-      return obelisk_rt_v1_argument_ref_store(
-          context, snapshot.stateValue, snapshot.stateUnknown,
-          snapshot.stateBitCount, snapshot.watchOwner, snapshot.ownerPayload,
-          snapshot.ownerManaged, snapshot.aggregate.ownerBitWidth,
-          snapshot.aggregate.ownerPlaneSize, snapshot.aggregate.ownerFourState,
-          OBELISK_RT_ARGUMENT_VALUE_BITS, owner.data(),
-          ownerUnknown.empty() ? nullptr : ownerUnknown.data());
+      return accessReferenceWindow(
+          obelisk_rt_managed_lane_context(lane), lane, snapshot.stateValue,
+          snapshot.stateUnknown, snapshot.stateBitCount, snapshot.watchOwner,
+          snapshot.ownerPayload, snapshot.ownerManaged,
+          snapshot.aggregate.ownerBitWidth, snapshot.aggregate.ownerPlaneSize,
+          snapshot.aggregate.ownerFourState, offset,
+          referenceElementBitWidth(snapshot.element),
+          snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE,
+          prepared.data(),
+          snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE
+              ? prepared.data() + snapshot.element->value_size
+              : nullptr,
+          true);
     }
     OBELISK_RT_CATCH(const std::bad_alloc &) {
       return OBELISK_RT_OUT_OF_MEMORY;
     }
   }
+
   if (snapshot.selector == ReferenceSelector::StringCharacter) {
     obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
     obelisk_rt_string_v1 string = 0;
