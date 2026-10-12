@@ -672,8 +672,9 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       }
       arguments.push_back(*reference);
       lvalues[path] = *reference;
-      values[path] = sim::SimArgumentRefLoadOp::create(
-          builder, getSemanticLocation(actual), *type, *reference);
+      // IEEE 19.3: constructor refs track their actual storage. Other actuals
+      // may mutate it before option and bin expressions are evaluated.
+      values[path] = *reference;
     } else {
       FailureOr<Value> value = lowerExpression(actual);
       FailureOr<Value> converted =
@@ -701,12 +702,14 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
                          "FunctionalExpression identity");
         return failure();
       }
-      // The frontend has materialized the default as this actual. Reuse the
-      // once-evaluated formal value so the default is represented in the
-      // expression batch without evaluating it a second time.  In particular,
-      // a ref formal's constructor payload is an ArgumentRef while its
-      // FormalDefault result is the scalar value loaded through that alias.
-      defaultValues.push_back(values[path]);
+      // The frontend materializes a default as this actual. Retain its one
+      // evaluation, with a value snapshot for the FormalDefault batch result
+      // even when the constructor payload itself is a live ArgumentRef.
+      Value defaultValue = values.lookup(path);
+      if (formal.getDirection() == semantic::SVArgumentDirection::Ref)
+        defaultValue = sim::SimArgumentRefLoadOp::create(
+            builder, getSemanticLocation(actual), *type, defaultValue);
+      defaultValues.push_back(defaultValue);
       defaultExpressionIDs.push_back(
           static_cast<int64_t>(defaultID.getValue().getZExtValue()));
     }
