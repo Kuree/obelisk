@@ -30,79 +30,6 @@ Key readyKey(NativeReadyUpdateOp update, SymbolTableCollection &symbols) {
   return {base, global, update.getCapacity(), update.getWord()};
 }
 using Pending = llvm::DenseMap<Key, Operation *>;
-class ReadyLattice final : public dataflow::AbstractDenseLattice {
-public:
-  using AbstractDenseLattice::AbstractDenseLattice;
-  bool reachable = false;
-  Pending pending;
-  ChangeResult merge(const Pending &incoming) {
-    if (!reachable) {
-      reachable = true;
-      pending = incoming;
-      return ChangeResult::Change;
-    }
-    SmallVector<Key> remove;
-    for (const auto &entry : pending)
-      if (incoming.lookup(entry.first) != entry.second)
-        remove.push_back(entry.first);
-    for (const auto &key : remove)
-      pending.erase(key);
-    return remove.empty() ? ChangeResult::NoChange : ChangeResult::Change;
-  }
-  ChangeResult join(const AbstractDenseLattice &rhs) override {
-    const auto &other = static_cast<const ReadyLattice &>(rhs);
-    return other.reachable ? merge(other.pending) : ChangeResult::NoChange;
-  }
-  void print(raw_ostream &os) const override { os << pending.size(); }
-};
-class ReadyDataflow final
-    : public dataflow::DenseForwardDataFlowAnalysis<ReadyLattice> {
-public:
-  ReadyDataflow(DataFlowSolver &solver, const DenseMap<Operation *, Key> &keys)
-      : DenseForwardDataFlowAnalysis(solver), keys(keys) {}
-  LogicalResult visitOperation(Operation *op, const ReadyLattice &before,
-                               ReadyLattice *after) override {
-    if (!before.reachable)
-      return success();
-    auto update = dyn_cast<NativeReadyUpdateOp>(op);
-    // Most operations pass the pending updates through unchanged; merge them
-    // without copying the map at every program point.
-    if (!update) {
-      bool barrier = !isMemoryEffectFree(op) || !isSpeculatable(op);
-      propagateIfChanged(after,
-                         after->merge(barrier ? Pending{} : before.pending));
-      return success();
-    }
-    Pending next = before.pending;
-    auto key = keys.lookup(update);
-    auto [base, global, capacity, word] = key;
-    // Distinct globals cannot alias. Opaque pointers and inconsistent layouts
-    // require materialization rather than a guessed disjoint range.
-    if (llvm::any_of(next, [&](const auto &entry) {
-          auto [otherBase, otherGlobal, otherCapacity, otherWord] = entry.first;
-          if (global && otherGlobal && global != otherGlobal)
-            return false;
-          return base != otherBase || global != otherGlobal ||
-                 capacity != otherCapacity;
-        }))
-      next.clear();
-    next[key] = op;
-    propagateIfChanged(after, after->merge(next));
-    return success();
-  }
-  void visitCallControlFlowTransfer(CallOpInterface call,
-                                    dataflow::CallControlFlowAction,
-                                    const ReadyLattice &before,
-                                    ReadyLattice *after) override {
-    (void)visitOperation(call, before, after);
-  }
-
-private:
-  const DenseMap<Operation *, Key> &keys;
-  void setToEntryState(ReadyLattice *state) override {
-    propagateIfChanged(state, state->merge(Pending{}));
-  }
-};
 } // namespace
 // Keep the existing straight-line rewrite, then preserve the remaining CFG as
 // one explicit readiness lifetime. Lowering handles observation/alias barriers
@@ -175,24 +102,48 @@ static void coalesceFunction(FunctionReadyUpdates &input) {
   auto &keys = input.keys;
   if (updates.size() < 2)
     return;
-  DataFlowSolver solver(DataFlowConfig().setInterprocedural(false));
-  solver.load<dataflow::DeadCodeAnalysis>();
-  solver.load<dataflow::SparseConstantPropagation>();
-  solver.load<ReadyDataflow>(keys);
-  if (failed(solver.initializeAndRun(operation)))
-    return;
+  // A chain links an update only to the pending update of its key earlier in
+  // its own block: CFG joins materialize at block boundaries until
+  // path-specific pending block arguments are available. Scanning each block
+  // finds exactly those, without per-point state over a whole large body.
+  DenseMap<Operation *, Operation *> previousUpdates;
+  llvm::SmallPtrSet<Block *, 16> blocks;
+  for (auto update : updates)
+    blocks.insert(update->getBlock());
+  for (Block *block : blocks) {
+    Pending pending;
+    for (Operation &op : *block) {
+      auto update = dyn_cast<NativeReadyUpdateOp>(&op);
+      if (!update) {
+        if (!isMemoryEffectFree(&op) || !isSpeculatable(&op) ||
+            op.getNumRegions())
+          pending.clear();
+        continue;
+      }
+      auto key = keys.lookup(update);
+      auto [base, global, capacity, word] = key;
+      // Distinct globals cannot alias. Opaque pointers and inconsistent
+      // layouts require materialization rather than a guessed disjoint range.
+      if (llvm::any_of(pending, [&](const auto &entry) {
+            auto [otherBase, otherGlobal, otherCapacity, otherWord] =
+                entry.first;
+            if (global && otherGlobal && global != otherGlobal)
+              return false;
+            return base != otherBase || global != otherGlobal ||
+                   capacity != otherCapacity;
+          }))
+        pending.clear();
+      if (Operation *previous = pending.lookup(key))
+        previousUpdates[update] = previous;
+      pending[key] = update;
+    }
+  }
   SmallVector<SmallVector<NativeReadyUpdateOp>> chains;
   DenseMap<Operation *, unsigned> memberships;
   for (auto update : updates) {
-    const auto *before =
-        solver.lookupState<ReadyLattice>(solver.getProgramPointBefore(update));
-    auto previous = before && before->reachable
-                        ? dyn_cast_or_null<NativeReadyUpdateOp>(
-                              before->pending.lookup(keys.lookup(update)))
-                        : NativeReadyUpdateOp{};
+    auto previous = dyn_cast_or_null<NativeReadyUpdateOp>(
+        previousUpdates.lookup(update));
     auto member = memberships.find(previous);
-    // CFG joins retain only equal reaching updates. Materialize at block
-    // boundaries until path-specific pending block arguments are available.
     unsigned chain;
     if (previous && previous->getBlock() == update->getBlock() &&
         member != memberships.end()) {
