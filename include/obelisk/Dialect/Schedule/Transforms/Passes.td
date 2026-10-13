@@ -118,7 +118,9 @@ def ObeliskSimFuseClockedKernelsPass
     whose root is written only there, is observed only by side-effect-free
     combinational processes, and is not accessed by any activation that can
     run between the kernel and the NBA region becomes a store at its
-    statement; reads after the store use a snapshot of the incoming value.
+    statement. Where a read may follow an NBA site of its root, the kernel
+    instead keeps each site's value and target operands and applies them
+    after its last member, or the read uses a snapshot of the incoming value.
     Requires VPI off and a single worker; invalidates the compute graph when
     it changes the design.
 

@@ -40,6 +40,13 @@
 // RUN: %llvm_dist/bin/clang++ %t.loop.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.loop.bc.exe
 // RUN: %t.loop.bc.exe | FileCheck %s --check-prefix=LOOP
 
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-delayed-writes.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-clocked-kernels,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.delayed.o3.o
+// RUN: %llvm_dist/bin/clang++ %t.delayed.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.delayed.o3.exe
+// RUN: %t.delayed.o3.exe | FileCheck %s --check-prefix=DELAYED
+// RUN: obelisk-opt %S/../Conversion/simulation-clocked-kernel-delayed-writes.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off require-bytecode=true},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.delayed.bc.o
+// RUN: %llvm_dist/bin/clang++ %t.delayed.bc.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.delayed.bc.exe
+// RUN: %t.delayed.bc.exe | FileCheck %s --check-prefix=DELAYED
+
 // Ten rising edges by time 100. `a <= b + 1; b <= a` swaps through old
 // values: (0,0) (1,0) (1,1) ... (5,5). `c` samples `a + b` from before the
 // tenth edge, 5 + 4. Applying `a` early would give 10.
@@ -49,6 +56,11 @@
 // old `q` of the tenth edge, also when a deferred kernel stores `q` directly
 // after the sampler has run.
 // RETAINED: {{^}}1 1{{$}}
+
+// The second edge's late read of element 3 by port 1 sees 11, not port 0's
+// 22. Both ports then write element 3; port 1's update is applied last.
+// DELAYED: {{^}}11 11{{$}}
+// DELAYED-NEXT: {{^}}33 0 33{{$}}
 
 // `r` counts the edges.
 // LOOP: {{^ *}}10{{$}}

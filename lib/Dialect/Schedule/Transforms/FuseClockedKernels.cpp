@@ -14,7 +14,8 @@
 // in the NBA region, after every Active and Inactive event of the slot (4.5).
 // Storing at the NBA statement has the same user-visible effect (4.3) when:
 //   (a) every read in the kernel that can execute after an NBA site of the
-//       root reads a snapshot of the root's incoming value instead;
+//       root sees the root's incoming value: either the kernel delays the
+//       root's updates to its end or the read uses a snapshot;
 //   (b) the kernel's NBA sites are the root's only writers, apart from static
 //       initialization and activations that cannot share the kernel's phase;
 //       a delayed NBA may land in any NBA region and always conflicts;
@@ -130,6 +131,10 @@ private:
                         "NBA roots stored at their statements"};
   Statistic snapshotRoots{this, "snapshot-roots",
                           "direct NBA roots read through a snapshot"};
+  Statistic delayedRoots{this, "delayed-roots",
+                         "direct NBA roots updated at the end of the kernel"};
+  Statistic delayedSites{this, "delayed-sites",
+                         "NBA statements delayed to the end of the kernel"};
   Statistic retainedRoots{this, "retained-roots",
                           "kernel NBA roots kept on the NBA region"};
   Statistic directSites{this, "direct-sites",
@@ -138,6 +143,12 @@ private:
 
 /// Snapshots copy the root once per activation. Wider roots keep their NBA.
 constexpr uint64_t maximumSnapshotBits = 2048;
+
+/// A delayed update keeps its value and target operands, sets a flag and
+/// tests it at the end of the kernel: about as much work as copying this many
+/// bits of a snapshot. Roots read late whose snapshot is cheaper than their
+/// delayed updates use the snapshot.
+constexpr uint64_t delayedUpdateBits = 256;
 
 struct Member {
   sim::SimFuncOp function;
@@ -319,9 +330,10 @@ void collectPreamble(Member &member) {
       member.preamble.push_back(&operation);
 }
 
-/// Roots an NBA of the current kernel activation may already have targeted.
-/// Such an NBA has not updated its root yet (4.9.4), so a direct store there
-/// would be visible early to a later read of the root.
+/// The NBA classes (roots, or individual sites) of the current kernel
+/// activation that may already have executed. Such an NBA has not updated its
+/// root yet (4.9.4), so a direct store there would be visible early to a
+/// later read of the root.
 class PendingLattice final : public dataflow::AbstractDenseLattice {
 public:
   using AbstractDenseLattice::AbstractDenseLattice;
@@ -1991,42 +2003,147 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       for (const Event &event : events[block])
         if (event.kind == EventKind::Enqueue)
           enqueues[event.operation] = event.root;
-    DataFlowSolver pending;
-    pending.load<dataflow::DeadCodeAnalysis>();
-    pending.load<dataflow::SparseConstantPropagation>();
-    pending.load<PendingNBAAnalysis>(enqueues, rootList.size());
-    if (failed(pending.initializeAndRun(kernel)))
-      unsupported.set();
     SmallVector<SmallVector<Operation *>> lateReads(rootList.size());
-    for (Block *block : blocks)
-      for (const Event &event : events[block]) {
-        if (event.kind == EventKind::Enqueue)
+    llvm::BitVector opaqueLate(rootList.size());
+    {
+      DataFlowSolver pending;
+      pending.load<dataflow::DeadCodeAnalysis>();
+      pending.load<dataflow::SparseConstantPropagation>();
+      pending.load<PendingNBAAnalysis>(enqueues, rootList.size());
+      if (failed(pending.initializeAndRun(kernel)))
+        unsupported.set();
+      for (Block *block : blocks)
+        for (const Event &event : events[block]) {
+          if (event.kind == EventKind::Enqueue)
+            continue;
+          const auto *state = pending.lookupState<PendingLattice>(
+              pending.getProgramPointBefore(event.operation));
+          // Without a state the read is unreachable; keep the NBA anyway.
+          if (!state) {
+            unsupported.set(event.root);
+            continue;
+          }
+          if (event.root >= state->roots.size() ||
+              !state->roots.test(event.root))
+            continue;
+          if (event.kind == EventKind::OpaqueRead)
+            opaqueLate.set(event.root);
+          else
+            lateReads[event.root].push_back(event.operation);
+        }
+    }
+
+    // 6. Roots read late. Each NBA site of such a root may keep its value and
+    // the operands of its target (4.9.4) in activation-local slots and set a
+    // flag instead; the kernel then applies the flagged updates after its
+    // last member, in execution order (4.6(b)), as Verilator's V3Delayed
+    // does. Every read before that sees the incoming value, at a cost that
+    // grows with the updates instead of the root. A site that may run twice
+    // in one activation would need a queue. Late reads that are views of the
+    // whole root may instead read a snapshot of its incoming value.
+    // The commit runs where the activation ends; every path there passes
+    // through the entry block and then the block the wait resumes into.
+    auto dominatesCommit = [&](Value value) {
+      Block *owner = isa<BlockArgument>(value)
+                         ? cast<BlockArgument>(value).getOwner()
+                         : value.getDefiningOp()->getBlock();
+      return owner == &entry || owner == activation;
+    };
+    // Values the commit can use directly or recreate; the others are
+    // captured at the site.
+    auto rematerializable = [&](Value value) {
+      if (dominatesCommit(value))
+        return true;
+      Operation *definition = value.getDefiningOp();
+      return definition &&
+             (definition->hasTrait<OpTrait::ConstantLike>() ||
+              isa<sim::SimContextStorageOp>(definition)) &&
+             llvm::all_of(definition->getOperands(), dominatesCommit);
+    };
+    struct DelayedSite {
+      sim::SimNBAEnqueueOp enqueue;
+      unsigned root;
+      /// Views from the target back toward its root handle.
+      SmallVector<Operation *> chain;
+      /// How many sites may run before this one; orders the commit.
+      unsigned position = 0;
+    };
+    SmallVector<DelayedSite> delays;
+    llvm::BitVector delayed(rootList.size());
+    SmallVector<uint64_t> delayedCost(rootList.size());
+    {
+      for (unsigned index = 0; index != rootList.size(); ++index)
+        if (!unsupported.test(index) &&
+            (!lateReads[index].empty() || opaqueLate.test(index)))
+          delayed.set(index);
+      SmallVector<DelayedSite> sites;
+      DenseMap<Operation *, unsigned> siteIndices;
+      for (Block *block : blocks)
+        for (const Event &event : events[block])
+          if (event.kind == EventKind::Enqueue && delayed.test(event.root)) {
+            siteIndices[event.operation] = sites.size();
+            sites.push_back(
+                {cast<sim::SimNBAEnqueueOp>(event.operation), event.root});
+          }
+      DataFlowSolver order;
+      order.load<dataflow::DeadCodeAnalysis>();
+      order.load<dataflow::SparseConstantPropagation>();
+      order.load<PendingNBAAnalysis>(siteIndices, sites.size());
+      if (!sites.empty() && failed(order.initializeAndRun(kernel)))
+        delayed.reset();
+      auto capturable = [&](Value value) {
+        return rematerializable(value) || sim::hasKnownZero(value.getType());
+      };
+      for (auto [index, site] : llvm::enumerate(sites)) {
+        if (!delayed.test(site.root))
           continue;
-        const auto *state = pending.lookupState<PendingLattice>(
-            pending.getProgramPointBefore(event.operation));
-        // Without a state the read is unreachable; keep the NBA anyway.
-        if (!state) {
-          unsupported.set(event.root);
+        const auto *state = order.lookupState<PendingLattice>(
+            order.getProgramPointBefore(site.enqueue));
+        // A site in its own past may run again before the commit.
+        bool once =
+            state && !(index < state->roots.size() && state->roots.test(index));
+        bool supported = once && capturable(site.enqueue.getValue());
+        Value target = site.enqueue.getDestination();
+        while (Operation *definition = target.getDefiningOp()) {
+          if (!isa<sim::SimRefSubelementOp, sim::SimRefArrayElementOp,
+                   sim::SimRefExtractOp, sim::SimRefDynExtractOp>(definition))
+            break;
+          site.chain.push_back(definition);
+          target = cast<ViewLikeOpInterface>(definition).getViewSource();
+          for (Value operand : definition->getOperands())
+            if (operand != target && !capturable(operand))
+              supported = false;
+        }
+        if (!supported || !rematerializable(target)) {
+          delayed.reset(site.root);
           continue;
         }
-        if (event.root >= state->roots.size() || !state->roots.test(event.root))
-          continue;
-        if (event.kind == EventKind::OpaqueRead)
-          unsupported.set(event.root);
-        else
-          lateReads[event.root].push_back(event.operation);
+        site.position = state->roots.count();
+        delayedCost[site.root] +=
+            delayedUpdateBits +
+            sim::getProvenanceSpan(site.enqueue.getValue().getType())
+                .value_or(maximumSnapshotBits);
       }
-
-    // 6. Snapshot roots whose late reads are views of the whole root.
+      for (DelayedSite &site : sites)
+        if (delayed.test(site.root))
+          delays.push_back(std::move(site));
+      // A site that may precede another has fewer sites that may precede it.
+      llvm::stable_sort(delays,
+                        [](const DelayedSite &lhs, const DelayedSite &rhs) {
+                          return lhs.position < rhs.position;
+                        });
+    }
     struct Snapshot {
       Value base;
       SmallVector<std::pair<Operation *, SmallVector<Operation *>>> reads;
     };
     DenseMap<unsigned, Snapshot> snapshots;
     for (unsigned index = 0; index != rootList.size(); ++index) {
-      if (unsupported.test(index) || lateReads[index].empty())
+      if (unsupported.test(index) || lateReads[index].empty() ||
+          opaqueLate.test(index))
         continue;
       Snapshot snapshot;
+      uint64_t snapshotBits = 0;
       bool ok = true;
       for (Operation *read : lateReads[index]) {
         Value reference = read->getOperand(0);
@@ -2052,15 +2169,22 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
           ok = false;
           break;
         }
+        snapshotBits = *span;
         if (!snapshot.base || argument)
           snapshot.base = reference;
         snapshot.reads.push_back({read, std::move(chain)});
       }
-      if (ok)
+      if (ok && delayed.test(index) && delayedCost[index] < snapshotBits)
+        ok = false;
+      if (ok) {
         snapshots[index] = std::move(snapshot);
-      else
-        unsupported.set(index);
+        delayed.reset(index);
+      }
     }
+    for (unsigned index = 0; index != rootList.size(); ++index)
+      if (!lateReads[index].empty() || opaqueLate.test(index))
+        if (!snapshots.count(index) && !delayed.test(index))
+          unsupported.set(index);
     builder.setInsertionPoint(activation->getTerminator());
     for (auto &[index, snapshot] : snapshots) {
       Value base = snapshot.base;
@@ -2102,10 +2226,11 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
       }
     }
 
-    // 8. Store at the NBA statements of every remaining root.
+    // 8. Store at the NBA statements of every remaining root, or delay them.
     for (Block *block : blocks)
       for (const Event &event : events[block]) {
-        if (event.kind != EventKind::Enqueue || unsupported.test(event.root))
+        if (event.kind != EventKind::Enqueue || unsupported.test(event.root) ||
+            delayed.test(event.root))
           continue;
         auto enqueue = cast<sim::SimNBAEnqueueOp>(event.operation);
         OpBuilder storeBuilder(enqueue);
@@ -2115,6 +2240,89 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         enqueue.erase();
         ++directSites;
       }
+    delayed.reset(unsupported);
+    if (delayed.any()) {
+      // The slots live for one activation and start unset.
+      builder.setInsertionPoint(activation->getTerminator());
+      Type flagType = builder.getI1Type();
+      auto flagReference = sim::RefType::get(builder.getContext(), flagType);
+      Value unset = arith::ConstantOp::create(builder, location,
+                                              builder.getBoolAttr(false));
+      // Every path that ends the activation commits first.
+      Block *commit = new Block;
+      kernel.getBody().push_back(commit);
+      for (Block *block : blocks)
+        for (BlockOperand &successor :
+             block->getTerminator()->getBlockOperands())
+          if (successor.get() == wait)
+            successor.set(commit);
+      OpBuilder commitBuilder = OpBuilder::atBlockEnd(commit);
+      for (DelayedSite &site : delays) {
+        if (!delayed.test(site.root))
+          continue;
+        Location siteLocation = site.enqueue.getLoc();
+        Value flag =
+            sim::SimRefAllocOp::create(builder, location, flagReference, unset);
+        llvm::MapVector<Value, Value> slots;
+        auto capture = [&](Value value) {
+          if (rematerializable(value) || slots.count(value))
+            return;
+          Value zero =
+              *sim::materializeKnownZero(builder, location, value.getType());
+          slots[value] = sim::SimRefAllocOp::create(
+              builder, location,
+              sim::RefType::get(builder.getContext(), value.getType()), zero);
+        };
+        capture(site.enqueue.getValue());
+        for (Operation *view : site.chain)
+          for (Value operand : view->getOperands())
+            if (operand != cast<ViewLikeOpInterface>(view).getViewSource())
+              capture(operand);
+        {
+          OpBuilder siteBuilder(site.enqueue);
+          for (auto &[value, slot] : slots)
+            sim::SimRefStoreOp::create(siteBuilder, siteLocation, value, slot);
+          Value set = arith::ConstantOp::create(siteBuilder, siteLocation,
+                                                siteBuilder.getBoolAttr(true));
+          sim::SimRefStoreOp::create(siteBuilder, siteLocation, set, flag);
+        }
+        Block *apply = new Block, *next = new Block;
+        kernel.getBody().push_back(apply);
+        kernel.getBody().push_back(next);
+        Value isSet = sim::SimRefLoadOp::create(commitBuilder, siteLocation,
+                                                flagType, flag);
+        cf::CondBranchOp::create(commitBuilder, siteLocation, isSet, apply,
+                                 next);
+        commitBuilder.setInsertionPointToEnd(apply);
+        IRMapping mapping;
+        for (auto &[value, slot] : slots)
+          mapping.map(value,
+                      sim::SimRefLoadOp::create(commitBuilder, siteLocation,
+                                                value.getType(), slot));
+        auto recreate = [&](Value value) {
+          if (mapping.contains(value) || dominatesCommit(value))
+            return;
+          mapping.map(
+              value, commitBuilder.clone(*value.getDefiningOp())->getResult(0));
+        };
+        for (Operation *view : llvm::reverse(site.chain)) {
+          for (Value operand : view->getOperands())
+            recreate(operand);
+          commitBuilder.clone(*view, mapping);
+        }
+        recreate(site.enqueue.getDestination());
+        recreate(site.enqueue.getValue());
+        sim::SimRefStoreOp::create(
+            commitBuilder, siteLocation,
+            mapping.lookupOrDefault(site.enqueue.getValue()),
+            mapping.lookupOrDefault(site.enqueue.getDestination()));
+        cf::BranchOp::create(commitBuilder, siteLocation, next);
+        commitBuilder.setInsertionPointToEnd(next);
+        site.enqueue.erase();
+        ++delayedSites;
+      }
+      cf::BranchOp::create(commitBuilder, location, wait);
+    }
     for (unsigned index = 0; index != rootList.size(); ++index) {
       if (unsupported.test(index))
         ++retainedRoots;
@@ -2122,6 +2330,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
         ++directRoots;
         if (snapshots.count(index))
           ++snapshotRoots;
+        if (delayed.test(index))
+          ++delayedRoots;
       }
     }
     if (report)
@@ -2129,7 +2339,8 @@ void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
                    << " members=" << count << " eligible=" << rootList.size()
                    << " retained=" << unsupported.count()
                    << " snapshots=" << snapshots.size()
-                   << " deferred=" << plan.deferred << '\n';
+                   << " deferred=" << plan.deferred
+                   << " delayed=" << delayed.count() << '\n';
   }
   if (report)
     for (auto &[reason, total] : rejections)

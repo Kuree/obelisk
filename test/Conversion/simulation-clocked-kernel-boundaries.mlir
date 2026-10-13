@@ -410,8 +410,8 @@ module attributes {obelisk.debug.native_timing} {
 // -----
 
 // A function called after the NBA reads `q` through the design context. The
-// call needs the old `q` (4.9.4) but cannot be rebased onto a snapshot, so `q`
-// keeps its NBA.
+// call needs the old `q` (4.9.4) but cannot be rebased onto a snapshot, so the
+// kernel delays the update of `q` to its end.
 
 !bit = !simulation.logic<1>
 !bitref = !simulation.ref<!bit>
@@ -456,10 +456,18 @@ module attributes {obelisk.debug.native_timing} {
     }
     // CHECK-LABEL: simulation.design @opaque_late_read
     // CHECK-LABEL: simulation.func private @__obelisk_clocked_0_1_0
-    // CHECK: simulation.nba.enqueue %{{.*}} to %[[Q:arg[0-9]+]]
+    // CHECK: %[[NEXT:.*]] = simulation.logic.unary logical_not
+    // CHECK-NEXT: simulation.ref.store %[[NEXT]] to %[[VALUE:[0-9]+]]
+    // CHECK-NEXT: %[[SET:.*]] = arith.constant true
+    // CHECK-NEXT: simulation.ref.store %[[SET]] to %[[FLAG:[0-9]+]]
     // CHECK-NEXT: %[[OLD:.*]] = simulation.call @peek
     // CHECK-NEXT: simulation.ref.store %[[OLD]] to %{{.*}}
-    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=1 snapshots=0
+    // CHECK: %[[IS:.*]] = simulation.ref.load %[[FLAG]]
+    // CHECK-NEXT: cf.cond_br %[[IS]]
+    // CHECK: %[[UPDATE:.*]] = simulation.ref.load %[[VALUE]]
+    // CHECK-NEXT: simulation.ref.store %[[UPDATE]] to %arg2
+    // CHECK-NOT: simulation.nba.enqueue
+    // REPORT-LABEL: obelisk clocked kernel: __obelisk_clocked_0_1_0 members=1 eligible=2 retained=0 snapshots=0 deferred=0 delayed=1
     simulation.func private @toggle(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %clk: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64}, %q: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 1 : i64}, %r: !bitref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64}) attributes {entry_kind = 5 : i32, code_unit_id = 3 : i64} {
       cf.br ^wait
     ^wait:
