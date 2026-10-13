@@ -46,6 +46,158 @@ namespace obelisk {
 
 namespace {
 
+struct PlannedCrossPredicate {
+  Operation *expression = nullptr;
+  coverage::CrossPredicateKind kind;
+  SmallVector<Operation *> operands;
+  uint32_t bitWidth = 0;
+  coverage::CoverageSignedness signedness;
+  uint32_t flags = 0, targetOrdinal = 0;
+};
+
+// Iterator-free subtrees are ordinary typed constructor expressions. The
+// dependent part is a topological DAG; no recursive expansion or value-domain
+// enumeration is needed to inventory it.
+std::optional<SmallVector<PlannedCrossPredicate>>
+planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
+  using Kind = coverage::CrossPredicateKind;
+  llvm::StringMap<uint32_t> targets;
+  for (auto [ordinal, path] : llvm::enumerate(targetPaths))
+    targets.try_emplace(cast<StringAttr>(path).getValue(), ordinal);
+  llvm::DenseMap<Operation *, bool> dependent;
+  predicate->walk<WalkOrder::PostOrder>([&](Operation *op) {
+    bool iterator = false;
+    if (auto reference = dyn_cast<ir::SVNamedValueExpressionOp>(op))
+      iterator = targets.contains(reference.getReferencedPath());
+    for (Operation *child : simlowering::getChildren(op))
+      iterator |= dependent.lookup(child);
+    dependent[op] = iterator;
+  });
+  SmallVector<std::pair<Operation *, bool>> pending{{predicate, false}};
+  SmallVector<PlannedCrossPredicate> result;
+  llvm::DenseMap<Operation *, PlannedCrossPredicate> plans;
+  while (!pending.empty()) {
+    auto [op, ready] = pending.pop_back_val();
+    if (ready) {
+      result.push_back(plans.lookup(op));
+      continue;
+    }
+    if (plans.contains(op))
+      continue;
+    FailureOr<Type> normalized = simlowering::getNormalizedSemanticType(op);
+    Type scalar =
+        succeeded(normalized) ? sim::getPackedScalarType(*normalized) : Type{};
+    std::optional<unsigned> width = sim::getPackedWidth(scalar);
+    if (!width || !*width || !isa<IntegerType, sim::LogicType>(scalar))
+      return std::nullopt;
+    PlannedCrossPredicate plan;
+    plan.expression = op;
+    plan.bitWidth = *width;
+    auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+    plan.signedness = semanticType && simlowering::isSignedSemanticType(
+                                          semanticType.getValue())
+                          ? coverage::CoverageSignedness::Signed
+                          : coverage::CoverageSignedness::Unsigned;
+    plan.flags = semanticType && !simlowering::isFourStateSemanticType(
+                                     semanticType.getValue())
+                     ? coverage::CrossPredicateTwoState
+                     : 0;
+    if (!dependent.lookup(op)) {
+      plan.kind = Kind::Value;
+    } else if (auto reference = dyn_cast<ir::SVNamedValueExpressionOp>(op)) {
+      auto target = targets.find(reference.getReferencedPath());
+      if (target == targets.end())
+        return std::nullopt;
+      plan.kind = Kind::Target;
+      plan.targetOrdinal = target->second;
+    } else {
+      plan.operands = simlowering::getChildren(op);
+      if (isa<ir::SVConversionExpressionOp>(op)) {
+        if (plan.operands.size() != 1)
+          return std::nullopt;
+        plan.kind = Kind::Cast;
+      } else if (auto unary = dyn_cast<ir::SVUnaryExpressionOp>(op)) {
+        if (plan.operands.size() != 1)
+          return std::nullopt;
+        switch (unary.getOperatorKind()) {
+        case ir::SVUnaryOperator::Plus:
+          plan.kind = Kind::Cast;
+          break;
+        case ir::SVUnaryOperator::LogicalNot:
+          plan.kind = Kind::LogicalNot;
+          break;
+        case ir::SVUnaryOperator::BitwiseNot:
+          plan.kind = Kind::BitNot;
+          break;
+        default:
+          return std::nullopt;
+        }
+      } else if (auto binary = dyn_cast<ir::SVBinaryExpressionOp>(op)) {
+        if (plan.operands.size() != 2)
+          return std::nullopt;
+        switch (binary.getOperatorKind()) {
+        case ir::SVBinaryOperator::Equality:
+          plan.kind = Kind::Equal;
+          break;
+        case ir::SVBinaryOperator::Inequality:
+          plan.kind = Kind::NotEqual;
+          break;
+        case ir::SVBinaryOperator::CaseEquality:
+          plan.kind = Kind::CaseEqual;
+          break;
+        case ir::SVBinaryOperator::CaseInequality:
+          plan.kind = Kind::CaseNotEqual;
+          break;
+        case ir::SVBinaryOperator::LessThan:
+          plan.kind = Kind::Less;
+          break;
+        case ir::SVBinaryOperator::LessThanEqual:
+          plan.kind = Kind::LessEqual;
+          break;
+        case ir::SVBinaryOperator::GreaterThan:
+          plan.kind = Kind::Greater;
+          break;
+        case ir::SVBinaryOperator::GreaterThanEqual:
+          plan.kind = Kind::GreaterEqual;
+          break;
+        case ir::SVBinaryOperator::LogicalAnd:
+          plan.kind = Kind::LogicalAnd;
+          break;
+        case ir::SVBinaryOperator::LogicalOr:
+          plan.kind = Kind::LogicalOr;
+          break;
+        case ir::SVBinaryOperator::BinaryAnd:
+          plan.kind = Kind::BitAnd;
+          break;
+        case ir::SVBinaryOperator::BinaryOr:
+          plan.kind = Kind::BitOr;
+          break;
+        case ir::SVBinaryOperator::BinaryXor:
+          plan.kind = Kind::BitXor;
+          break;
+        case ir::SVBinaryOperator::BinaryXnor:
+          plan.kind = Kind::BitXnor;
+          break;
+        case ir::SVBinaryOperator::Add:
+          plan.kind = Kind::Add;
+          break;
+        case ir::SVBinaryOperator::Subtract:
+          plan.kind = Kind::Subtract;
+          break;
+        default:
+          return std::nullopt;
+        }
+      } else
+        return std::nullopt;
+    }
+    plans.try_emplace(op, plan);
+    pending.emplace_back(op, true);
+    for (Operation *child : llvm::reverse(plan.operands))
+      pending.emplace_back(child, false);
+  }
+  return result;
+}
+
 Operation *peelFunctionalValueCast(Operation *expression,
                                    uint64_t effectiveWidth,
                                    Type effectiveType) {
@@ -2055,6 +2207,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       SmallVector<coverage::CrossTarget> targets;
       SmallVector<coverage::CrossBinPlan> bins;
       SmallVector<coverage::CrossSelectorNode> selectors;
+      SmallVector<coverage::CrossPredicateNode> predicates;
       SmallVector<coverage::CrossSelectorOperand> selectorOperands;
     };
     struct PendingTransitionAlternative {
@@ -3300,32 +3453,84 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                       targetPaths.size() != pending.targets.size())
                     return predicate->emitError(
                         "cross selector with has no validated iterator plan");
-                  if (failed(addFunctionalExpression(
-                          predicate, selectorID,
-                          coverage::FunctionalExpressionOwnerKind::Selector,
-                          coverage::FunctionalExpressionRole::SelectorWith,
-                          coverage::FunctionalExpressionEvaluationPhase::
-                              Constructor,
-                          0, 0,
-                          scalarPredicate
-                              ? coverage::FunctionalExpressionResultKind::
-                                    Boolean
-                              : coverage::FunctionalExpressionResultKind::
-                                    TupleQueue)))
-                    return failure();
-                  const uint64_t withExpression =
-                      predicate
-                          ->getAttrOfType<IntegerAttr>(
-                              sim::metadata::coverageFunctionalExpressionId)
-                          .getValue()
-                          .getZExtValue();
-                  if (!scalarPredicate) {
-                    predicate->setAttr(
-                        sim::metadata::coverageFunctionalCrossWithTupleType,
-                        TypeAttr::get(tupleType));
-                    predicate->setAttr(
-                        sim::metadata::coverageFunctionalCrossWithSelectorId,
-                        builder.getI64IntegerAttr(selectorID));
+                  auto program =
+                      scalarPredicate
+                          ? std::nullopt
+                          : planCrossPredicate(predicate, targetPaths);
+                  uint64_t predicateRoot = 0, withExpression = 0;
+                  if (program) {
+                    llvm::DenseMap<Operation *, uint64_t> ids;
+                    uint32_t ordinal = 0;
+                    for (const auto &entry : *program) {
+                      const uint64_t id = stableID(
+                          "functional.cross-predicate-node",
+                          (Twine(selectorID) + "." + Twine(ordinal)).str());
+                      coverage::CrossPredicateNode node;
+                      node.id = id;
+                      node.selector = selectorID;
+                      node.kind = entry.kind;
+                      node.bitWidth = entry.bitWidth;
+                      node.signedness = entry.signedness;
+                      node.ordinal = ordinal++;
+                      node.flags = entry.flags;
+                      if (!entry.operands.empty())
+                        node.left = ids.lookup(entry.operands[0]);
+                      if (entry.operands.size() > 1)
+                        node.right = ids.lookup(entry.operands[1]);
+                      if (entry.kind == coverage::CrossPredicateKind::Target)
+                        node.target =
+                            pending.targets[entry.targetOrdinal].target;
+                      if (entry.kind == coverage::CrossPredicateKind::Value) {
+                        if (failed(addFunctionalExpression(
+                                entry.expression, selectorID,
+                                coverage::FunctionalExpressionOwnerKind::
+                                    Selector,
+                                coverage::FunctionalExpressionRole::
+                                    PredicateValue,
+                                coverage::FunctionalExpressionEvaluationPhase::
+                                    Constructor,
+                                node.ordinal, 0)))
+                          return failure();
+                        node.expression =
+                            entry.expression
+                                ->getAttrOfType<IntegerAttr>(
+                                    sim::metadata::
+                                        coverageFunctionalExpressionId)
+                                .getValue()
+                                .getZExtValue();
+                      }
+                      ids.try_emplace(entry.expression, id);
+                      pending.predicates.push_back(node);
+                      predicateRoot = id;
+                    }
+                  } else {
+                    if (failed(addFunctionalExpression(
+                            predicate, selectorID,
+                            coverage::FunctionalExpressionOwnerKind::Selector,
+                            coverage::FunctionalExpressionRole::SelectorWith,
+                            coverage::FunctionalExpressionEvaluationPhase::
+                                Constructor,
+                            0, 0,
+                            scalarPredicate
+                                ? coverage::FunctionalExpressionResultKind::
+                                      Boolean
+                                : coverage::FunctionalExpressionResultKind::
+                                      TupleQueue)))
+                      return failure();
+                    withExpression =
+                        predicate
+                            ->getAttrOfType<IntegerAttr>(
+                                sim::metadata::coverageFunctionalExpressionId)
+                            .getValue()
+                            .getZExtValue();
+                    if (!scalarPredicate) {
+                      predicate->setAttr(
+                          sim::metadata::coverageFunctionalCrossWithTupleType,
+                          TypeAttr::get(tupleType));
+                      predicate->setAttr(
+                          sim::metadata::coverageFunctionalCrossWithSelectorId,
+                          builder.getI64IntegerAttr(selectorID));
+                    }
                   }
                   coverage::CrossMatchesPolicy matchesPolicy =
                       coverage::CrossMatchesPolicy::Count;
@@ -3367,7 +3572,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                            "must be a positive v1 integer");
                         return failure();
                       }
-                      if (scalarPredicate &&
+                      if ((scalarPredicate || program) &&
                           parsed->value.getActiveBits() > 64) {
                         if (failed(addFunctionalExpression(
                                 matches, selectorID,
@@ -3388,7 +3593,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                 .getZExtValue();
                       } else
                         matchesCount = parsed->value.getLimitedValue(
-                            scalarPredicate
+                            (scalarPredicate || program)
                                 ? UINT64_MAX
                                 : uint64_t{coverage::
                                                MaxFunctionalCrossWithCandidates} +
@@ -3422,7 +3627,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                        matchesExpression, firstOperand, 1,
                        coverage::CrossSelectorKind::With, selectorOrdinal++,
                        scalarPredicate ? coverage::CrossSelectorScalarWith : 0,
-                       matchesPolicy, matchesCount});
+                       matchesPolicy, matchesCount, predicateRoot});
                   return selectorID;
                 }
                 if (auto set = dyn_cast_or_null<ir::SVSetExprBinsSelectExprOp>(
@@ -4826,6 +5031,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           schema.crossSelectorNodes.size() > UINT32_MAX ||
           pending.selectors.size() >
               UINT32_MAX - schema.crossSelectorNodes.size() ||
+          schema.crossPredicateNodes.size() > UINT32_MAX ||
+          pending.predicates.size() >
+              UINT32_MAX - schema.crossPredicateNodes.size() ||
           schema.crossSelectorOperands.size() > UINT32_MAX ||
           pending.selectorOperands.size() >
               UINT32_MAX - schema.crossSelectorOperands.size()) {
@@ -4844,6 +5052,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       for (coverage::CrossSelectorNode &selector : pending.selectors)
         selector.firstOperand += operandBase;
       llvm::append_range(schema.crossSelectorNodes, pending.selectors);
+      llvm::append_range(schema.crossPredicateNodes, pending.predicates);
       llvm::append_range(schema.crossSelectorOperands,
                          pending.selectorOperands);
     }
@@ -4916,6 +5125,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     });
     sortCoverageRecords(schema.functionalBinPlans, [](const auto &entry) {
       return coverageOrderKey(entry.bin);
+    });
+    sortCoverageRecords(schema.crossPredicateNodes, [](const auto &entry) {
+      return coverageOrderKey(entry.selector, entry.ordinal);
     });
     sortCoverageRecords(schema.crossSelectorNodes, [](const auto &entry) {
       return coverageOrderKey(entry.cross, entry.ordinal);

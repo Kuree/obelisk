@@ -1,6 +1,7 @@
 #include "../../lib/Coverage/CoverageIndex.h"
 #include "../../lib/Coverage/CoverageCountProjectionIndex.h"
 #include "../../lib/Coverage/CoverageDecisionIndex.h"
+#include "../../lib/Coverage/CoveragePredicateIndex.h"
 #include "../../lib/Coverage/CoverageTransitionIndex.h"
 #include "gtest/gtest.h"
 
@@ -11,6 +12,124 @@
 #include <stdexcept>
 
 using namespace obelisk::coverage::detail;
+
+namespace {
+using PredicateKind = obelisk::coverage::CrossPredicateKind;
+using PredicateNode = obelisk::coverage::CrossPredicateNode;
+using Signedness = obelisk::coverage::CoverageSignedness;
+
+// Observe the full four-state result through case equality, rather than only
+// checking whether it would select a bin. A=0,B=1 is Z; A=1,B=1 is X.
+bool predicateResultIs(PredicateKind kind, uint64_t left, uint64_t right,
+                       uint64_t expected, uint32_t width = 1,
+                       bool isSigned = false, bool twoState = false) {
+  DecisionIndex graph(0);
+  PredicateDecisionIndex index(graph);
+  const Signedness sign = isSigned ? Signedness::Signed : Signedness::Unsigned;
+  const bool unary = kind == PredicateKind::Cast ||
+                     kind == PredicateKind::LogicalNot ||
+                     kind == PredicateKind::BitNot;
+  const uint32_t resultWidth =
+      kind >= PredicateKind::Equal && kind <= PredicateKind::LogicalOr ? 1
+                                                                       : width;
+  std::vector<PredicateNode> rows = {
+      {1, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 0, 0},
+      {2, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 1, 0},
+      {3, 1, 1, unary ? 0u : 2u, 0, 0, kind, resultWidth, sign, 2,
+       twoState ? obelisk::coverage::CrossPredicateTwoState : 0u},
+      {4, 1, 0, 0, 0, 0, PredicateKind::Value, resultWidth, sign, 3, 0},
+      {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
+       0}};
+  std::vector<const PredicateNode *> program;
+  for (const auto &row : rows)
+    program.push_back(&row);
+  auto result = index.compile(5, program, [&](const auto &node) {
+    uint64_t value = node.id == 1 ? left : node.id == 2 ? right : expected;
+    PredicateDecisionIndex::Value bits;
+    for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+      bits.aval.push_back((value >> (bit * 2)) & 1);
+      bits.bval.push_back((value >> (bit * 2 + 1)) & 1);
+    }
+    return bits;
+  });
+  EXPECT_FALSE(index.exhausted());
+  return result == 1;
+}
+} // namespace
+
+TEST(CoveragePredicateIndexTest, FourStateOperatorsFollowLRMTruthTables) {
+  for (uint64_t a = 0; a != 4; ++a)
+    for (uint64_t b = 0; b != 4; ++b) {
+      SCOPED_TRACE("a=" + std::to_string(a) + ", b=" + std::to_string(b));
+      bool known = a < 2 && b < 2;
+      uint64_t equal = known ? uint64_t(a == b) : 3;
+      uint64_t unequal = known ? uint64_t(a != b) : 3;
+      uint64_t andValue = a == 0 || b == 0 ? 0 : a == 1 && b == 1 ? 1 : 3;
+      uint64_t orValue = a == 1 || b == 1 ? 1 : a == 0 && b == 0 ? 0 : 3;
+      EXPECT_TRUE(predicateResultIs(PredicateKind::Equal, a, b, equal));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::NotEqual, a, b, unequal));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::CaseEqual, a, b, a == b));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::CaseNotEqual, a, b, a != b));
+      for (auto kind : {PredicateKind::LogicalAnd, PredicateKind::BitAnd})
+        EXPECT_TRUE(predicateResultIs(kind, a, b, andValue));
+      for (auto kind : {PredicateKind::LogicalOr, PredicateKind::BitOr})
+        EXPECT_TRUE(predicateResultIs(kind, a, b, orValue));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::BitXor, a, b, unequal));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::BitXnor, a, b, equal));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::Add, a, b, unequal));
+      EXPECT_TRUE(predicateResultIs(PredicateKind::Subtract, a, b, unequal));
+    }
+  for (uint64_t a = 0; a != 4; ++a) {
+    uint64_t inverse = a < 2 ? 1 - a : 3;
+    EXPECT_TRUE(predicateResultIs(PredicateKind::LogicalNot, a, 0, inverse));
+    EXPECT_TRUE(predicateResultIs(PredicateKind::BitNot, a, 0, inverse));
+    EXPECT_TRUE(predicateResultIs(PredicateKind::Cast, a, 0, a < 2 ? a : 0, 1,
+                                  false, true));
+  }
+  // A known mismatch makes logical equality false despite an unknown bit.
+  EXPECT_TRUE(predicateResultIs(PredicateKind::Equal, 12, 1, 0, 2));
+  // A known one makes a multibit logical operand true despite another X.
+  EXPECT_TRUE(predicateResultIs(PredicateKind::LogicalNot, 13, 0, 0, 2));
+}
+
+TEST(CoveragePredicateIndexTest, SignedComparisonAndTruncatingArithmetic) {
+  // Two-bit -1 is encoded as two known-one bits (0101 in A/B pairs).
+  EXPECT_TRUE(predicateResultIs(PredicateKind::Less, 5, 0, 1, 2, true));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::Less, 5, 0, 0, 2, false));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::GreaterEqual, 5, 0, 0, 2, true));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::Add, 5, 1, 0, 2));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::Subtract, 0, 1, 5, 2));
+}
+
+TEST(CoveragePredicateIndexTest, WideEqualityFitsABitProportionalGraphBudget) {
+  for (uint32_t width : {1u, 8u, 65u, 129u}) {
+    DecisionIndex graph(width * 2, width * 64 + 64);
+    PredicateDecisionIndex index(graph);
+    PredicateNode a{
+        1, 1, 0, 0, 0, 1, PredicateKind::Target, width, Signedness::Unsigned,
+        0, 0};
+    PredicateNode b{
+        2, 1, 0, 0, 0, 2, PredicateKind::Target, width, Signedness::Unsigned,
+        1, 0};
+    PredicateNode equal{
+        3, 1, 1, 2, 0, 0, PredicateKind::Equal, 1, Signedness::Unsigned, 2, 0};
+    auto root = index.compile(3, {&a, &b, &equal}, [&](const auto &node) {
+      PredicateDecisionIndex::Value value;
+      for (uint32_t bit = 0; bit != width; ++bit) {
+        value.aval.push_back(
+            graph.makeNode((width - bit - 1) * 2 + node.ordinal, 0, 1));
+        value.bval.push_back(0);
+      }
+      return value;
+    });
+    ASSERT_FALSE(index.exhausted()) << "width=" << width;
+    EXPECT_NE(root, 0u);
+    EXPECT_EQ(graph.intersect(root, graph.intersect(graph.makeNode(0, 0, 1),
+                                                    graph.makeNode(1, 1, 0))),
+              0u);
+    EXPECT_FALSE(index.exhausted());
+  }
+}
 
 TEST(CoverageTransitionIndexTest,
      FixedLanguagesAgreeWithExhaustiveFiniteWordOracle) {

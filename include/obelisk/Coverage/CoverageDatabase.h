@@ -462,10 +462,22 @@ struct CrossSelectorNode {
   uint32_t flags = 0;
   CrossMatchesPolicy matchesPolicy = CrossMatchesPolicy::None;
   uint64_t matchesCount = 0;
+  /// A typed symbolic predicate, alternative to the constructor with value.
+  uint64_t predicateRoot = 0;
 };
 
 /// A predicate without cross-item references has one Boolean constructor value.
 inline constexpr uint32_t CrossSelectorScalarWith = uint32_t{1} << 0;
+
+struct CrossPredicateNode {
+  uint64_t id = 0, selector = 0, left = 0, right = 0, expression = 0,
+           target = 0;
+  CrossPredicateKind kind = CrossPredicateKind::Value;
+  uint32_t bitWidth = 0;
+  CoverageSignedness signedness = CoverageSignedness::Unsigned;
+  uint32_t ordinal = 0, flags = 0;
+};
+inline constexpr uint32_t CrossPredicateTwoState = uint32_t{1} << 0;
 
 struct CrossSelectorOperand {
   uint64_t node = 0;
@@ -673,6 +685,7 @@ struct ResolvedCrossSelectorBinding {
 
 inline constexpr uint32_t ResolvedCrossSelectorScalarWith = uint32_t{1} << 0;
 inline constexpr uint32_t ResolvedCrossSelectorScalarTrue = uint32_t{1} << 1;
+inline constexpr uint32_t ResolvedCrossSelectorSymbolicWith = uint32_t{1} << 2;
 
 struct ResolvedFunctionalValueSet {
   /// The concrete language after constructor evaluation, effective-type casts,
@@ -932,6 +945,7 @@ struct Database {
   std::vector<CrossTarget> crossTargets;
   std::vector<CrossBinPlan> crossBins;
   std::vector<CrossSelectorNode> crossSelectorNodes;
+  std::vector<CrossPredicateNode> crossPredicateNodes;
   std::vector<CrossSelectorOperand> crossSelectorOperands;
   std::vector<FunctionalSourceRange> functionalSourceRanges;
   std::vector<Exclusion> exclusions;

@@ -615,6 +615,7 @@ Status planSections(const Database &db, const StringTable &strings,
                         db.functionalVirtualInterfaceTypes.size());
   OBELISK_COVERAGE_PLAN(FunctionalVirtualInterfaceScopes,
                         db.functionalVirtualInterfaceScopes.size());
+  OBELISK_COVERAGE_PLAN(CrossPredicateNodes, db.crossPredicateNodes.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1017,6 +1018,7 @@ Status encodeSections(const Database &db, const StringTable &strings,
       CrossSelectorNodeRecord::setMatchesPolicy(
           p, static_cast<uint32_t>(v.matchesPolicy));
       CrossSelectorNodeRecord::setMatchesCount(p, v.matchesCount);
+      CrossSelectorNodeRecord::setPredicateRoot(p, v.predicateRoot);
     });
   }
   Bytes &operands =
@@ -1604,6 +1606,24 @@ Status encodeSections(const Database &db, const StringTable &strings,
           FunctionalVirtualInterfaceScopeRecord::setInterfaceType(
               p, v.interfaceType);
         });
+  Bytes &predicateNodes =
+      add(SectionKind::CrossPredicateNodes, db.crossPredicateNodes.size());
+  for (const auto &v : db.crossPredicateNodes) {
+    predicateNodes.record<CrossPredicateNodeRecord>([&](uint8_t *p) {
+      CrossPredicateNodeRecord::setId(p, v.id);
+      CrossPredicateNodeRecord::setSelector(p, v.selector);
+      CrossPredicateNodeRecord::setLeft(p, v.left);
+      CrossPredicateNodeRecord::setRight(p, v.right);
+      CrossPredicateNodeRecord::setExpression(p, v.expression);
+      CrossPredicateNodeRecord::setTarget(p, v.target);
+      CrossPredicateNodeRecord::setKind(p, static_cast<uint32_t>(v.kind));
+      CrossPredicateNodeRecord::setBitWidth(p, v.bitWidth);
+      CrossPredicateNodeRecord::setSignedness(
+          p, static_cast<uint32_t>(v.signedness));
+      CrossPredicateNodeRecord::setOrdinal(p, v.ordinal);
+      CrossPredicateNodeRecord::setFlags(p, v.flags);
+    });
+  }
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -1935,6 +1955,22 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.flags);
     hashScalar(h, static_cast<uint32_t>(v.matchesPolicy));
     hashScalar(h, v.matchesCount);
+    if (v.predicateRoot)
+      hashScalar(h, v.predicateRoot);
+  }
+  for (const auto &v : db.crossPredicateNodes) {
+    hashScalar(h, uint32_t(63));
+    hashScalar(h, v.id);
+    hashScalar(h, v.selector);
+    hashScalar(h, v.left);
+    hashScalar(h, v.right);
+    hashScalar(h, v.expression);
+    hashScalar(h, v.target);
+    hashScalar(h, static_cast<uint32_t>(v.kind));
+    hashScalar(h, v.bitWidth);
+    hashScalar(h, static_cast<uint32_t>(v.signedness));
+    hashScalar(h, v.ordinal);
+    hashScalar(h, v.flags);
   }
   for (const auto &v : db.crossSelectorOperands) {
     hashScalar(h, uint32_t(25));
@@ -3774,6 +3810,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
               FunctionalExpressionEvaluationPhase::Constructor;
       break;
     }
+    case FunctionalExpressionRole::PredicateValue:
+      validContract =
+          expression.resultKind == FunctionalExpressionResultKind::Integral &&
+          expression.ownerKind == FunctionalExpressionOwnerKind::Selector &&
+          expression.ownerSubordinal == 0 &&
+          expression.evaluationPhase ==
+              FunctionalExpressionEvaluationPhase::Constructor;
+      break;
     case FunctionalExpressionRole::SelectorWith:
       validContract =
           (expression.resultKind ==
@@ -3900,7 +3944,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !enumBetween(expression.ownerKind, FunctionalExpressionOwnerKind::Type,
                      FunctionalExpressionOwnerKind::Formal) ||
         !enumBetween(expression.role, FunctionalExpressionRole::SamplingEvent,
-                     FunctionalExpressionRole::FormalDefault) ||
+                     FunctionalExpressionRole::PredicateValue) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
                      FunctionalExpressionResultKind::ShortReal) ||
@@ -4366,6 +4410,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (targetCursor != db.crossTargets.size() ||
       crossBinCursor != db.crossBins.size())
     return fail(Status::InvalidReference, "cross_ranges");
+  const auto predicatesByID = indexRecords(db.crossPredicateNodes);
+  IndexMap<std::pair<uint64_t, uint64_t>, const CrossTarget *> predicateTargets;
+  for (const auto &target : db.crossTargets)
+    predicateTargets.emplace(std::make_pair(target.cross, target.target),
+                             &target);
   if (!uniqueNonzero(db.crossSelectorNodes, [](const auto &v) { return v.id; }))
     return fail(Status::UnsortedOrDuplicate, "cross_selector_node.id");
   IndexMap<uint64_t, const CrossSelectorNode *> nodesByID;
@@ -4393,8 +4442,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !nodesByID.emplace(node.id, &node).second)
       return fail(Status::InvalidReference, "cross_selector_node");
     auto targetIsCrossed = [&](uint64_t target) {
-      return std::find(targetList->second.begin(), targetList->second.end(),
-                       target) != targetList->second.end();
+      return predicateTargets.count({node.cross, target});
     };
     auto validSet = [&](uint64_t setID) {
       const FunctionalValueSet *set = setID ? findValueSet(setID) : nullptr;
@@ -4437,13 +4485,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       break;
     case CrossSelectorKind::With:
       expectedOperands = 1;
-      validPayload = !node.target && !node.bin && !node.valueSet &&
-                     node.withExpression && !node.constructionExpression &&
-                     !node.tupleSet;
+      validPayload =
+          !node.target && !node.bin && !node.valueSet &&
+          ((node.withExpression != 0) != (node.predicateRoot != 0)) &&
+          !node.constructionExpression && !node.tupleSet;
       break;
     }
-    bool hasMatchSubject =
-        node.withExpression || node.constructionExpression || node.tupleSet;
+    bool hasMatchSubject = node.withExpression || node.predicateRoot ||
+                           node.constructionExpression || node.tupleSet;
     const FunctionalExpression *construction =
         node.constructionExpression
             ? findExpression(node.constructionExpression)
@@ -4467,6 +4516,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      ((node.flags & CrossSelectorScalarWith)
                           ? FunctionalExpressionResultKind::Boolean
                           : FunctionalExpressionResultKind::TupleQueue)) ||
+        (node.predicateRoot &&
+         (node.kind != CrossSelectorKind::With || node.flags ||
+          !lookupRecord(predicatesByID, node.predicateRoot) ||
+          lookupRecord(predicatesByID, node.predicateRoot)->selector !=
+              node.id)) ||
         !validPayload || node.operandCount != expectedOperands ||
         !validMatches ||
         ((node.matchesPolicy != CrossMatchesPolicy::None) != hasMatchSubject) ||
@@ -4498,8 +4552,101 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (operandCursor != db.crossSelectorOperands.size())
     return fail(Status::InvalidReference, "cross_selector_operand_range");
 
-  // Each decorated selector owns one constructor result: a Boolean scalar
-  // predicate or a queue of satisfying associated-value tuples.
+  if (!uniqueNonzero(db.crossPredicateNodes,
+                     [](const auto &node) { return node.id; }) ||
+      !std::is_sorted(db.crossPredicateNodes.begin(),
+                      db.crossPredicateNodes.end(),
+                      [](const auto &a, const auto &b) {
+                        return std::tie(a.selector, a.ordinal) <
+                               std::tie(b.selector, b.ordinal);
+                      }))
+    return fail(Status::UnsortedOrDuplicate, "cross_predicate_node_order");
+  IndexMap<uint64_t, uint32_t> predicateOrdinals;
+  IndexMap<std::pair<uint64_t, uint32_t>, const CrossPredicateNode *>
+      predicateValues;
+  IndexSet<uint64_t> predicateExpressions;
+  IndexMap<uint64_t, std::vector<const CrossPredicateNode *>> predicateLeaves;
+  for (const auto &node : db.crossPredicateNodes) {
+    const auto *selector = lookupRecord(selectorsByID, node.selector);
+    const auto *left = lookupRecord(predicatesByID, node.left);
+    const auto *right = lookupRecord(predicatesByID, node.right);
+    const auto *value = findExpression(node.expression);
+    const bool unary = node.kind == CrossPredicateKind::Cast ||
+                       node.kind == CrossPredicateKind::LogicalNot ||
+                       node.kind == CrossPredicateKind::BitNot;
+    const bool leaf = node.kind == CrossPredicateKind::Target ||
+                      node.kind == CrossPredicateKind::Value;
+    const bool boolean = (node.kind >= CrossPredicateKind::Equal &&
+                          node.kind <= CrossPredicateKind::LogicalOr);
+    const bool arity = leaf    ? !node.left && !node.right
+                       : unary ? node.left && !node.right
+                               : node.left && node.right;
+    auto validOperand = [&](const CrossPredicateNode *operand) {
+      return !operand || (operand->selector == node.selector &&
+                          operand->ordinal < node.ordinal);
+    };
+    bool validTarget = false;
+    if (selector && node.target) {
+      auto target = predicateTargets.find({selector->cross, node.target});
+      validTarget = target != predicateTargets.end() &&
+                    node.bitWidth == target->second->tupleBitWidth &&
+                    node.signedness == target->second->tupleSignedness;
+    }
+    if (!selector || !selector->predicateRoot || !node.bitWidth ||
+        !enumBetween(node.kind, CrossPredicateKind::Value,
+                     CrossPredicateKind::Subtract) ||
+        (node.signedness != CoverageSignedness::Signed &&
+         node.signedness != CoverageSignedness::Unsigned) ||
+        (node.flags & ~CrossPredicateTwoState) || !arity ||
+        (node.left && !left) || (node.right && !right) || !validOperand(left) ||
+        !validOperand(right) ||
+        node.ordinal != predicateOrdinals[node.selector]++ ||
+        (boolean && node.bitWidth != 1) ||
+        ((node.kind == CrossPredicateKind::Target) != (node.target != 0)) ||
+        (node.target && !validTarget) ||
+        ((node.kind == CrossPredicateKind::Value) != (node.expression != 0)) ||
+        (node.expression &&
+         (!value || value->bitWidth != node.bitWidth ||
+          value->signedness != node.signedness ||
+          !expressionIs(node.expression, node.selector,
+                        FunctionalExpressionOwnerKind::Selector,
+                        FunctionalExpressionRole::PredicateValue, node.ordinal,
+                        0))))
+      return fail(Status::InvalidReference, "cross_predicate_node");
+    if (node.kind == CrossPredicateKind::Value) {
+      predicateValues.emplace(std::make_pair(node.selector, node.ordinal),
+                              &node);
+      predicateExpressions.insert(node.expression);
+      predicateLeaves[node.selector].push_back(&node);
+    }
+  }
+  for (const auto &expression : db.functionalExpressions)
+    if (expression.role == FunctionalExpressionRole::PredicateValue &&
+        !predicateExpressions.count(expression.id))
+      return fail(Status::InvalidReference, "cross_predicate_expression");
+  IndexSet<uint64_t> reachablePredicates;
+  std::vector<uint64_t> pendingPredicates;
+  for (const auto &selector : db.crossSelectorNodes)
+    if (selector.predicateRoot)
+      pendingPredicates.push_back(selector.predicateRoot);
+  while (!pendingPredicates.empty()) {
+    uint64_t id = pendingPredicates.back();
+    pendingPredicates.pop_back();
+    if (!reachablePredicates.insert(id).second)
+      continue;
+    const auto *node = lookupRecord(predicatesByID, id);
+    if (!node)
+      return fail(Status::InvalidReference, "cross_predicate_root");
+    if (node->left)
+      pendingPredicates.push_back(node->left);
+    if (node->right)
+      pendingPredicates.push_back(node->right);
+  }
+  if (reachablePredicates.size() != db.crossPredicateNodes.size())
+    return fail(Status::InvalidReference, "cross_predicate_unreachable");
+
+  // Scalar and queued predicates own one SelectorWith result. Symbolic
+  // predicates instead own one PredicateValue for each captured leaf.
   for (const auto &node : db.crossSelectorNodes) {
     const auto &expressions = lookupRows(
         expressionsByOwner,
@@ -5198,6 +5345,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       resolvedValueSetLogicalKeys;
   IndexMap<std::tuple<uint64_t, Digest, uint64_t>, uint32_t>
       resolvedValueSetConsumers;
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t, uint32_t>,
+           const ResolvedFunctionalValueSet *>
+      resolvedPredicateValues;
+
   size_t resolvedAtomCursor = 0;
   size_t resolvedLimbCursor = 0;
   IndexSet<std::tuple<uint64_t, Digest, uint64_t>> resolvedWildcardValueSets;
@@ -5215,14 +5366,18 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     bool selectorRole =
         set.role == ResolvedFunctionalValueSetRole::SelectorIntersection;
     bool tupleRole = set.role == ResolvedFunctionalValueSetRole::TupleComponent;
+    bool predicateRole =
+        set.role == ResolvedFunctionalValueSetRole::PredicateValue;
+    auto predicate =
+        predicateValues.find({set.ownerSelector, set.ownerOrdinal});
     bool ownerValid =
         ((stateRole || transitionRole) && set.ownerBin && !set.ownerSelector &&
          ownerBin != resolvedBins.end() &&
          ((stateRole && ownerBin->second->kind == FunctionalBinKind::State) ||
           (transitionRole &&
            ownerBin->second->kind == FunctionalBinKind::Transition))) ||
-        ((selectorRole || tupleRole) && !set.ownerBin && set.ownerSelector &&
-         ownerSelector != nodesByID.end());
+        ((selectorRole || tupleRole || predicateRole) && !set.ownerBin &&
+         set.ownerSelector && ownerSelector != nodesByID.end());
     bool templateRequired =
         transitionRole || selectorRole ||
         (stateRole && ownerBin != resolvedBins.end() &&
@@ -5230,8 +5385,19 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
            (FunctionalBinAutomatic | FunctionalBinDefault)));
     if (!hasConfiguration(set.type, set.configuration) || !set.id ||
         owner == resolvedItems.end() ||
-        owner->second->kind != FunctionalItemKind::Coverpoint || !ownerValid ||
-        (!stateRole && !transitionRole && !selectorRole && !tupleRole) ||
+        (owner->second->kind != (predicateRole
+                                     ? FunctionalItemKind::Cross
+                                     : FunctionalItemKind::Coverpoint)) ||
+        !ownerValid ||
+        (!stateRole && !transitionRole && !selectorRole && !tupleRole &&
+         !predicateRole) ||
+        (predicateRole &&
+         (set.templateValueSet || set.ownerSubordinal || set.atomCount != 1 ||
+          set.kind != FunctionalValueSetKind::Integral ||
+          predicate == predicateValues.end() ||
+          predicate->second->bitWidth != set.bitWidth ||
+          predicate->second->signedness != set.signedness ||
+          ownerSelector->second->cross != owner->second->templateItem)) ||
         (templateRequired && !templateSet) ||
         (templateSet && (templateSet->item != owner->second->templateItem ||
                          set.kind != templateSet->kind ||
@@ -5267,9 +5433,16 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                  set.ownerOrdinal, set.ownerSubordinal, set.templateValueSet)
              .second)
       return fail(Status::InvalidReference, "resolved_functional_value_set");
+    if (predicateRole)
+      resolvedPredicateValues.emplace(
+          std::make_tuple(set.type, set.configuration, set.ownerSelector,
+                          set.ownerOrdinal),
+          &set);
     for (uint32_t atomIndex = 0; atomIndex != set.atomCount; ++atomIndex) {
       const ResolvedFunctionalValueAtom &atom =
           db.resolvedFunctionalValueAtoms[set.firstAtom + atomIndex];
+      if (predicateRole && atom.kind != FunctionalValueAtomKind::IntegralValue)
+        return fail(Status::InvalidReference, "cross_predicate_value");
       bool integralAtom = atom.kind == FunctionalValueAtomKind::IntegralValue ||
                           atom.kind == FunctionalValueAtomKind::IntegralRange;
       const uint32_t unboundedFlags =
@@ -5324,7 +5497,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                                limb.wildcardMask != limb.highBval ||
                                (limb.lowAval & limb.wildcardMask) ||
                                (limb.highAval & limb.wildcardMask))) ||
-            ((selectorRole || tupleRole) && limb.wildcardMask) ||
+            ((selectorRole || tupleRole || predicateRole) &&
+             limb.wildcardMask) ||
             (stateRole && ownerBin != resolvedBins.end() &&
              (ownerBin->second->flags & FunctionalBinAutomatic) &&
              (limb.lowBval || limb.highBval || limb.wildcardMask)))
@@ -6536,8 +6710,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         {binding.type, binding.configuration, binding.tupleSet});
     bool hasMatchSubject =
         node != nodesByID.end() &&
-        (node->second->withExpression || node->second->constructionExpression ||
-         node->second->tupleSet);
+        (node->second->withExpression || node->second->predicateRoot ||
+         node->second->constructionExpression || node->second->tupleSet);
     bool validMatches = (binding.matchesPolicy == CrossMatchesPolicy::None &&
                          binding.matchesCount == 0 && !hasMatchSubject) ||
                         (binding.matchesPolicy == CrossMatchesPolicy::Count &&
@@ -6578,8 +6752,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           binding.matchesCount != node->second->matchesCount)) ||
         (node->second->matchesPolicy == CrossMatchesPolicy::All &&
          binding.matchesPolicy != CrossMatchesPolicy::All) ||
-        (binding.flags & ~(ResolvedCrossSelectorScalarWith |
-                           ResolvedCrossSelectorScalarTrue)) ||
+        (binding.flags &
+         ~(ResolvedCrossSelectorScalarWith | ResolvedCrossSelectorScalarTrue |
+           ResolvedCrossSelectorSymbolicWith)) ||
+        (bool(binding.flags & ResolvedCrossSelectorSymbolicWith) !=
+         bool(node->second->predicateRoot)) ||
         (bool(binding.flags & ResolvedCrossSelectorScalarWith) !=
          bool(node->second->flags & CrossSelectorScalarWith)) ||
         ((binding.flags & ResolvedCrossSelectorScalarTrue) &&
@@ -6592,6 +6769,21 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (binding.valueSet)
       ++resolvedValueSetConsumers[{binding.type, binding.configuration,
                                    binding.valueSet}];
+    if (binding.flags & ResolvedCrossSelectorSymbolicWith) {
+      auto leaves = predicateLeaves.find(binding.node);
+      if (leaves != predicateLeaves.end())
+        for (const auto *leaf : leaves->second) {
+          auto value =
+              resolvedPredicateValues.find({binding.type, binding.configuration,
+                                            binding.node, leaf->ordinal});
+          if (value == resolvedPredicateValues.end() ||
+              value->second->item != binding.cross)
+            return fail(Status::InvalidReference,
+                        "resolved_cross_predicate_value.completeness");
+          ++resolvedValueSetConsumers[{binding.type, binding.configuration,
+                                       value->second->id}];
+        }
+    }
   }
   if (!std::is_sorted(
           db.resolvedCrossSelectorBindings.begin(),
@@ -6618,7 +6810,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       const FunctionalValueSet *set =
           node.valueSet ? findValueSet(node.valueSet) : nullptr;
       bool needsBinding =
-          node.withExpression || node.constructionExpression || node.tupleSet ||
+          node.withExpression || node.predicateRoot ||
+          node.constructionExpression || node.tupleSet ||
           node.matchesExpression ||
           (set && (set->flags & FunctionalValueSetNeedsResolution));
       if (needsBinding != (bindingKeys.count({cross->type, cross->configuration,
@@ -7890,9 +8083,30 @@ Status parse(const uint8_t *data, size_t size, Database &output,
            CrossSelectorNodeRecord::getFlags(p),
            static_cast<CrossMatchesPolicy>(
                CrossSelectorNodeRecord::getMatchesPolicy(p)),
-           CrossSelectorNodeRecord::getMatchesCount(p)});
+           CrossSelectorNodeRecord::getMatchesCount(p),
+           CrossSelectorNodeRecord::getPredicateRoot(p)});
       return Status::Ok;
     });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::CrossPredicateNodes,
+               [&](const auto &, uint64_t, const uint8_t *p) {
+                 result.crossPredicateNodes.push_back(
+                     {CrossPredicateNodeRecord::getId(p),
+                      CrossPredicateNodeRecord::getSelector(p),
+                      CrossPredicateNodeRecord::getLeft(p),
+                      CrossPredicateNodeRecord::getRight(p),
+                      CrossPredicateNodeRecord::getExpression(p),
+                      CrossPredicateNodeRecord::getTarget(p),
+                      static_cast<CrossPredicateKind>(
+                          CrossPredicateNodeRecord::getKind(p)),
+                      CrossPredicateNodeRecord::getBitWidth(p),
+                      static_cast<CoverageSignedness>(
+                          CrossPredicateNodeRecord::getSignedness(p)),
+                      CrossPredicateNodeRecord::getOrdinal(p),
+                      CrossPredicateNodeRecord::getFlags(p)});
+                 return Status::Ok;
+               });
     if (st != Status::Ok)
       return st;
     st = fixed(SectionKind::CrossSelectorOperands,

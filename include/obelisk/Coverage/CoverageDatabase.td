@@ -92,6 +92,30 @@ def CrossSelectorSet       : CoverageCrossSelectorKind<"Set", 5>;
 def CrossSelectorAllTuples : CoverageCrossSelectorKind<"AllTuples", 6>;
 def CrossSelectorWith      : CoverageCrossSelectorKind<"With", 7>;
 
+class CoverageCrossPredicateKind<string cppName_, int value_>
+    : CoverageEnumValue<cppName_, value_>;
+def CrossPredicateValue : CoverageCrossPredicateKind<"Value", 1>;
+def CrossPredicateTarget : CoverageCrossPredicateKind<"Target", 2>;
+def CrossPredicateCast : CoverageCrossPredicateKind<"Cast", 3>;
+def CrossPredicateEqual : CoverageCrossPredicateKind<"Equal", 4>;
+def CrossPredicateNotEqual : CoverageCrossPredicateKind<"NotEqual", 5>;
+def CrossPredicateCaseEqual : CoverageCrossPredicateKind<"CaseEqual", 6>;
+def CrossPredicateCaseNotEqual : CoverageCrossPredicateKind<"CaseNotEqual", 7>;
+def CrossPredicateLess : CoverageCrossPredicateKind<"Less", 8>;
+def CrossPredicateLessEqual : CoverageCrossPredicateKind<"LessEqual", 9>;
+def CrossPredicateGreater : CoverageCrossPredicateKind<"Greater", 10>;
+def CrossPredicateGreaterEqual : CoverageCrossPredicateKind<"GreaterEqual", 11>;
+def CrossPredicateLogicalNot : CoverageCrossPredicateKind<"LogicalNot", 12>;
+def CrossPredicateLogicalAnd : CoverageCrossPredicateKind<"LogicalAnd", 13>;
+def CrossPredicateLogicalOr : CoverageCrossPredicateKind<"LogicalOr", 14>;
+def CrossPredicateBitNot : CoverageCrossPredicateKind<"BitNot", 15>;
+def CrossPredicateBitAnd : CoverageCrossPredicateKind<"BitAnd", 16>;
+def CrossPredicateBitOr : CoverageCrossPredicateKind<"BitOr", 17>;
+def CrossPredicateBitXor : CoverageCrossPredicateKind<"BitXor", 18>;
+def CrossPredicateBitXnor : CoverageCrossPredicateKind<"BitXnor", 19>;
+def CrossPredicateAdd : CoverageCrossPredicateKind<"Add", 20>;
+def CrossPredicateSubtract : CoverageCrossPredicateKind<"Subtract", 21>;
+
 class CoverageExpressionOwnerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
 def ExpressionOwnerType     : CoverageExpressionOwnerKind<"Type", 1>;
@@ -120,6 +144,7 @@ def ExpressionValueAtomSingleton : CoverageExpressionRole<"ValueAtomSingleton", 
 def ExpressionValueAtomLower     : CoverageExpressionRole<"ValueAtomLower", 15>;
 def ExpressionValueAtomUpper     : CoverageExpressionRole<"ValueAtomUpper", 16>;
 def ExpressionFormalDefault      : CoverageExpressionRole<"FormalDefault", 17>;
+def ExpressionPredicateValue     : CoverageExpressionRole<"PredicateValue", 18>;
 
 class CoverageFunctionalFormalKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -250,6 +275,8 @@ def ResolvedValueSetSelectorIntersection
     : CoverageResolvedValueSetRole<"SelectorIntersection", 3>;
 def ResolvedValueSetTupleComponent
     : CoverageResolvedValueSetRole<"TupleComponent", 4>;
+def ResolvedValueSetPredicateValue
+    : CoverageResolvedValueSetRole<"PredicateValue", 5>;
 
 // The v2 envelope can be emitted to a non-seekable sink in one pass. The
 // checksum is a SHA-256 trailer over the header, directory and section bytes.
@@ -334,6 +361,8 @@ def FunctionalClassTypes : CoverageSection<"FunctionalClassTypes", 60, 16, 0, 1>
 def FunctionalVirtualInterfaceTypes : CoverageSection<"FunctionalVirtualInterfaceTypes", 61, 16, 0, 1>;
 def FunctionalVirtualInterfaceScopes : CoverageSection<"FunctionalVirtualInterfaceScopes", 62, 16, 0, 1>;
 
+def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 72, 0, 1>;
+
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
 class CoverageFieldEncoding<string cppName_, int width_> {
@@ -374,6 +403,29 @@ def DomainCrossSelectorKind : CoverageFieldDomain<
     [CrossSelectorBinsof, CrossSelectorNot, CrossSelectorAnd,
      CrossSelectorOr, CrossSelectorSet, CrossSelectorAllTuples,
      CrossSelectorWith]>;
+def DomainCrossPredicateKind : CoverageFieldDomain<
+    "CrossPredicateKind", "Enum", [
+     CrossPredicateValue,
+     CrossPredicateTarget,
+     CrossPredicateCast,
+     CrossPredicateEqual,
+     CrossPredicateNotEqual,
+     CrossPredicateCaseEqual,
+     CrossPredicateCaseNotEqual,
+     CrossPredicateLess,
+     CrossPredicateLessEqual,
+     CrossPredicateGreater,
+     CrossPredicateGreaterEqual,
+     CrossPredicateLogicalNot,
+     CrossPredicateLogicalAnd,
+     CrossPredicateLogicalOr,
+     CrossPredicateBitNot,
+     CrossPredicateBitAnd,
+     CrossPredicateBitOr,
+     CrossPredicateBitXor,
+     CrossPredicateBitXnor,
+     CrossPredicateAdd,
+     CrossPredicateSubtract]>;
 def DomainFunctionalItemKind : CoverageFieldDomain<
     "FunctionalItemKind", "Enum", [FunctionalCoverpoint, FunctionalCross]>;
 def DomainFunctionalBinKind : CoverageFieldDomain<
@@ -391,7 +443,7 @@ def DomainFunctionalExpressionRole : CoverageFieldDomain<
      ExpressionRepeatLower, ExpressionRepeatUpper, ExpressionSelectorWith,
      ExpressionSelectorMatches, ExpressionOptionRHS,
      ExpressionValueAtomSingleton, ExpressionValueAtomLower,
-     ExpressionValueAtomUpper, ExpressionFormalDefault]>;
+     ExpressionValueAtomUpper, ExpressionFormalDefault, ExpressionPredicateValue]>;
 def DomainFunctionalFormalKind : CoverageFieldDomain<
     "FunctionalFormalKind", "Enum", [FormalConstructor, FormalSample]>;
 def DomainFunctionalFormalDirection : CoverageFieldDomain<
@@ -452,7 +504,8 @@ def DomainFunctionalTupleElementMode : CoverageFieldDomain<
 def DomainResolvedFunctionalValueSetRole : CoverageFieldDomain<
     "ResolvedFunctionalValueSetRole", "Enum",
     [ResolvedValueSetStateBin, ResolvedValueSetTransitionStep,
-     ResolvedValueSetSelectorIntersection, ResolvedValueSetTupleComponent]>;
+     ResolvedValueSetSelectorIntersection, ResolvedValueSetTupleComponent,
+     ResolvedValueSetPredicateValue]>;
 def DomainMetricKind : CoverageFieldDomain<
     "MetricKind", "Enum",
     [MetricLine, MetricToggle, MetricFunctional, MetricFSM, MetricAssertion,
@@ -489,6 +542,7 @@ def DomainTransitionAlternatives : CoverageFieldDomain<"TransitionAlternatives",
 def DomainTransitionSteps : CoverageFieldDomain<"TransitionSteps", "Range", [], 21>;
 def DomainCrossTargets : CoverageFieldDomain<"CrossTargets", "Range", [], 22>;
 def DomainCrossBins : CoverageFieldDomain<"CrossBins", "Range", [], 23>;
+def DomainCrossPredicateNodes : CoverageFieldDomain<"CrossPredicateNodes", "StableRef", [], 63>;
 def DomainCrossSelectorNodes : CoverageFieldDomain<"CrossSelectorNodes", "StableRef", [], 24>;
 def DomainCrossSelectorOperands : CoverageFieldDomain<"CrossSelectorOperands", "Range", [], 25>;
 def DomainSparseCrossTupleComponents : CoverageFieldDomain<"SparseCrossTupleComponents", "Range", [], 26>;
@@ -1124,14 +1178,15 @@ def CSNMatchesPolicy : CoverageField<"MatchesPolicy", "matches_policy", 92, CovU
   let semantic = "Enum"; let domain = DomainCrossMatchesPolicy;
 }
 def CSNMatchesCount : CoverageField<"MatchesCount", "matches_count", 96, CovU64>;
-def CSNReserved : CoverageField<"Reserved", "reserved", 104, CovU64> {
-  let semantic = "ReservedZero";
+def CSNPredicateRoot : CoverageField<"PredicateRoot", "predicate_root", 104, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainCrossPredicateNodes;
+  let nullable = 1;
 }
 def CrossSelectorNodeRecord : CoverageRecord<"CrossSelectorNodeRecord", CrossSelectorNodes,
     [CSNId, CSNCross, CSNTarget, CSNBin, CSNValueSet, CSNWithExpression,
      CSNConstruction, CSNTupleSet, CSNMatchesExpression, CSNFirstOp,
      CSNOpCount, CSNKind, CSNOrdinal, CSNFlags, CSNMatchesPolicy,
-     CSNMatchesCount, CSNReserved]>;
+     CSNMatchesCount, CSNPredicateRoot]>;
 
 def CSOCNode    : CoverageField<"Node", "node", 0, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainCrossSelectorNodes;
@@ -1646,7 +1701,7 @@ def RCSBMatchesPolicy : CoverageField<"MatchesPolicy", "matches_policy", 80, Cov
   let semantic = "Enum"; let domain = DomainCrossMatchesPolicy;
 }
 def RCSBFlags     : CoverageField<"Flags", "flags", 84, CovU32> {
-  let semantic = "Flags"; let validMask = 3;
+  let semantic = "Flags"; let validMask = 7;
 }
 def RCSBMatchesCount : CoverageField<"MatchesCount", "matches_count", 88, CovU64>;
 def ResolvedCrossSelectorBindingRecord : CoverageRecord<
@@ -2127,3 +2182,39 @@ def ResolvedTransitionExpansionGroupRecord : CoverageRecord<
     ResolvedTransitionExpansionGroups,
     [REGType, REGConfig, REGItem, REGTemplate, REGTemplateAlternative,
      REGFirst, REGCount, REGFlags, REGExpansionCount]>;
+
+// Symbolic cross-with expressions, in operand-before-user order.
+def CPNId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainCrossPredicateNodes;
+}
+def CPNSelector : CoverageField<"Selector", "selector", 8, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainCrossSelectorNodes;
+}
+def CPNLeft : CoverageField<"Left", "left", 16, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainCrossPredicateNodes; let nullable = 1;
+}
+def CPNRight : CoverageField<"Right", "right", 24, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainCrossPredicateNodes; let nullable = 1;
+}
+def CPNExpression : CoverageField<"Expression", "expression", 32, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainFunctionalExpressions; let nullable = 1;
+}
+def CPNTarget : CoverageField<"Target", "target", 40, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainFunctionalItems; let nullable = 1;
+}
+def CPNKind : CoverageField<"Kind", "kind", 48, CovU32> {
+  let semantic = "Enum"; let domain = DomainCrossPredicateKind;
+}
+def CPNBitWidth : CoverageField<"BitWidth", "bit_width", 52, CovU32>;
+def CPNSignedness : CoverageField<"Signedness", "signedness", 56, CovU32> {
+  let semantic = "Enum"; let domain = DomainCoverageSignedness;
+}
+def CPNOrdinal : CoverageField<"Ordinal", "ordinal", 60, CovU32>;
+def CPNFlags : CoverageField<"Flags", "flags", 64, CovU32> {
+  let semantic = "Flags"; let validMask = 1;
+}
+def CPNReserved : CoverageField<"Reserved", "reserved", 68, CovU32> {
+  let semantic = "ReservedZero";
+}
+def CrossPredicateNodeRecord : CoverageRecord<"CrossPredicateNodeRecord", CrossPredicateNodes,
+    [CPNId, CPNSelector, CPNLeft, CPNRight, CPNExpression, CPNTarget, CPNKind, CPNBitWidth, CPNSignedness, CPNOrdinal, CPNFlags, CPNReserved]>;

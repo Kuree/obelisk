@@ -44,7 +44,7 @@
 // SCHEMA-DAG: cross_selector id=[[ALL:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[ALL_SET:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=3 matches_count=0
 // SCHEMA-DAG: cross_selector id=[[HUGE:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[HUGE_SET:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=268435457
 // SCHEMA-DAG: cross_selector id=[[FILTER_SET:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[FILTER_QUEUE:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=2
-// SCHEMA-DAG: cross_selector id=[[FILTER:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=7 {{.*}} with_expression=[[FILTER_WITH:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=2
+// SCHEMA-DAG: cross_selector id=[[FILTER:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=7 {{.*}} with_expression=0 {{.*}} matches_expression=0 matches_policy=2 matches_count=2 flags=0 predicate_root=[[FILTER_ROOT:[1-9][0-9]*]]
 // SCHEMA-DAG: functional_expression id=[[OMITTED_SET]] owner=[[OMITTED]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[COUNT_SET]] owner=[[COUNT]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[DYNAMIC_SET]] owner=[[DYNAMIC]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
@@ -52,7 +52,7 @@
 // SCHEMA-DAG: functional_expression id=[[ALL_SET]] owner=[[ALL]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[HUGE_SET]] owner=[[HUGE]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[FILTER_QUEUE]] owner=[[FILTER_SET]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
-// SCHEMA-DAG: functional_expression id=[[FILTER_WITH]] owner=[[FILTER]] owner_kind=4 role=11 result_kind=7 {{.*}} phase=1
+// SCHEMA-DAG: cross_predicate id=[[FILTER_ROOT]] selector=[[FILTER]] {{.*}} kind=4 width=1
 
 // The queue-valued constructor expressions are ordinary covergroup-create
 // payloads. Native lowering passes each managed word through the descriptor's

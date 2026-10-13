@@ -6,6 +6,7 @@
 #include "../../lib/Coverage/CoverageCountProjectionIndex.h"
 #include "../../lib/Coverage/CoverageDecisionIndex.h"
 #include "../../lib/Coverage/CoverageIndex.h"
+#include "../../lib/Coverage/CoveragePredicateIndex.h"
 #include "../../lib/Coverage/CoverageTransitionIndex.h"
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
@@ -2375,6 +2376,9 @@ struct FunctionalCoverageSetQueryIndex {
       crossPlans, tupleSets;
   IndexMap<std::pair<uint64_t, uint64_t>, size_t> bindings, targetOrdinals;
   IndexMap<uint64_t, std::vector<size_t>> alternatives;
+  IndexMap<uint64_t, std::vector<const obelisk::coverage::CrossPredicateNode *>>
+      predicatePrograms;
+  IndexMap<std::pair<uint64_t, uint32_t>, const Set *> predicateValues;
   IndexMap<uint64_t, std::vector<uint64_t>> exclusionSets;
   IndexSet<uint64_t> shortRealItems, transitionValueItems;
   IndexMap<DomainKey, std::unique_ptr<Graph>> graphs;
@@ -2401,6 +2405,14 @@ struct FunctionalCoverageSetQueryIndex {
     indexRows(schema.resolvedFunctionalValueSets, sets);
     indexRows(schema.resolvedFunctionalItems, items);
     indexRows(schema.resolvedFunctionalTupleSets, tupleSets);
+    for (const auto &node : schema.crossPredicateNodes)
+      predicatePrograms[node.selector].push_back(&node);
+    for (const auto &[id, ordinal] : sets) {
+      const auto &set = schema.resolvedFunctionalValueSets[ordinal];
+      if (set.role == ResolvedFunctionalValueSetRole::PredicateValue)
+        predicateValues.emplace(
+            std::make_pair(set.ownerSelector, set.ownerOrdinal), &set);
+    }
     for (const auto &[id, ordinal] : items)
       templateItems.emplace(
           schema.resolvedFunctionalItems[ordinal].templateItem, ordinal);
@@ -2861,8 +2873,10 @@ struct PreparedCrossValueIndex {
   using CompiledSet = FunctionalCoverageSetQueryIndex::CompiledSet;
   struct Axis {
     uint64_t item = 0;
-    uint32_t width = 0, binFirst = 0, binWidth = 0, bFirst = 0, aFirst = 0,
-             valueFirst = 0;
+    uint32_t width = 0, binFirst = 0, binWidth = 0;
+    bool fourState = false;
+    std::vector<uint32_t> avalVariables, bvalVariables, valueAvalVariables,
+        valueBvalVariables;
     obelisk::coverage::CoverageSignedness signedness;
     Graph *source = nullptr;
     Root relation = 0;
@@ -2879,6 +2893,7 @@ struct PreparedCrossValueIndex {
   std::shared_ptr<Graph> sampleGraph;
   std::shared_ptr<FunctionalCoverageCrossSelection> sampleSelection;
   std::unique_ptr<CountImage> countImage;
+  std::unique_ptr<obelisk::coverage::detail::PredicateDecisionIndex> predicates;
   IndexMap<uint64_t, size_t> targetAxes;
   IndexMap<uint64_t, Root> selectors;
   Root universe = 1;
@@ -2896,7 +2911,8 @@ struct PreparedCrossValueIndex {
         (valueImage && valueImage->exhausted()) ||
         (binImage && binImage->exhausted()) ||
         (sampleImage && sampleImage->exhausted()) ||
-        (sampleGraph && sampleGraph->exhausted()))
+        (sampleGraph && sampleGraph->exhausted()) ||
+        (predicates && predicates->exhausted()))
       status = OBELISK_RT_OUT_OF_RESOURCES;
     return status == OBELISK_RT_OK;
   }
@@ -2973,6 +2989,7 @@ struct PreparedCrossValueIndex {
       axis.item = item->id;
       axis.width = target.tupleBitWidth;
       axis.signedness = target.tupleSignedness;
+      axis.fourState = target.tupleFlags & CrossTargetDomainFourState;
       auto bins = prepared.binsByItem.find(axis.item);
       uint64_t last = bins == prepared.binsByItem.end() || bins->second.empty()
                           ? 0
@@ -2987,10 +3004,6 @@ struct PreparedCrossValueIndex {
         status = OBELISK_RT_OUT_OF_RESOURCES;
         return false;
       }
-      axis.binFirst = relationWidth;
-      axis.bFirst = relationWidth + axis.binWidth;
-      axis.aFirst = axis.bFirst + axis.width;
-      axis.valueFirst = valueWidth;
       relationWidth += axis.binWidth + uint64_t{axis.width} * 2;
       valueWidth += uint64_t{axis.width} * 2;
       FunctionalCoverageSetQueryIndex::DomainKey domain = {
@@ -3006,16 +3019,41 @@ struct PreparedCrossValueIndex {
     }
     relation = std::make_unique<Graph>(relationWidth);
     values = std::make_unique<Graph>(valueWidth);
+    uint32_t labelVariable = 0;
+    std::vector<std::pair<uint32_t, uint32_t>> physicalBits;
+    for (auto &axis : axes) {
+      axis.binFirst = labelVariable;
+      labelVariable += axis.binWidth;
+      axis.avalVariables.resize(axis.width);
+      axis.bvalVariables.resize(axis.width);
+      axis.valueAvalVariables.resize(axis.width);
+      axis.valueBvalVariables.resize(axis.width);
+      for (uint32_t bit = 0; bit != axis.width; ++bit)
+        physicalBits.emplace_back(&axis - axes.data(), bit);
+    }
+    detail::sortByKey(
+        physicalBits.begin(), physicalBits.end(),
+        [](const auto &bit) { return std::make_pair(~bit.second, bit.first); });
+    uint32_t relationVariable = labelVariable, valueVariable = 0;
+    for (const auto &physical : physicalBits)
+      for (uint32_t plane = 0; plane != 2; ++plane) {
+        auto &axis = axes[physical.first];
+        const uint32_t bit = physical.second;
+        (plane ? axis.avalVariables : axis.bvalVariables)[bit] =
+            relationVariable++;
+        (plane ? axis.valueAvalVariables : axis.valueBvalVariables)[bit] =
+            valueVariable++;
+      }
     std::vector<uint32_t> binVariables(relationWidth, UINT32_MAX),
         valueVariables(relationWidth, UINT32_MAX);
     for (auto &axis : axes) {
       std::vector<uint32_t> avalVariables(axis.width),
           bvalVariables(axis.width);
       for (uint32_t bit = 0; bit != axis.width; ++bit) {
-        avalVariables[bit] = axis.aFirst + bit;
-        bvalVariables[bit] = axis.bFirst + bit;
-        valueVariables[axis.bFirst + bit] = axis.valueFirst + bit;
-        valueVariables[axis.aFirst + bit] = axis.valueFirst + axis.width + bit;
+        avalVariables[axis.width - bit - 1] = axis.avalVariables[bit];
+        bvalVariables[axis.width - bit - 1] = axis.bvalVariables[bit];
+        valueVariables[axis.avalVariables[bit]] = axis.valueAvalVariables[bit];
+        valueVariables[axis.bvalVariables[bit]] = axis.valueBvalVariables[bit];
       }
       for (uint32_t bit = 0; bit != axis.binWidth; ++bit)
         binVariables[axis.binFirst + bit] = axis.binFirst + bit;
@@ -3048,7 +3086,73 @@ struct PreparedCrossValueIndex {
                                               prepared.maximumMatchCount);
     valueImage =
         std::make_unique<Image>(*relation, *values, std::move(valueVariables));
+    predicates =
+        std::make_unique<obelisk::coverage::detail::PredicateDecisionIndex>(
+            *relation);
     return check();
+  }
+
+  Root predicate(const obelisk::coverage::CrossSelectorNode &selector) {
+    using namespace obelisk::coverage;
+    using Predicate = detail::PredicateDecisionIndex;
+    const auto &schema = prepared.database();
+    auto &queries = prepared.query();
+    auto program = queries.predicatePrograms.find(selector.id);
+    if (program == queries.predicatePrograms.end()) {
+      status = OBELISK_RT_INVALID_DESIGN;
+      return 0;
+    }
+    return predicates->compile(
+        selector.predicateRoot, program->second,
+        [&](const CrossPredicateNode &node) {
+          Predicate::Value value;
+          if (node.kind == CrossPredicateKind::Target) {
+            auto target = targetAxes.find(node.target);
+            if (target == targetAxes.end()) {
+              status = OBELISK_RT_INVALID_DESIGN;
+              return value;
+            }
+            const auto &axis = axes[target->second];
+            value.aval.resize(axis.width);
+            value.bval.resize(axis.width);
+            value.isSigned = axis.signedness == CoverageSignedness::Signed;
+            for (uint32_t bit = 0; bit != axis.width; ++bit) {
+              value.aval[bit] =
+                  relation->makeNode(axis.avalVariables[bit], 0, 1);
+              value.bval[bit] =
+                  axis.fourState
+                      ? relation->makeNode(axis.bvalVariables[bit], 0, 1)
+                      : 0;
+              if (value.isSigned && bit + 1 == axis.width)
+                value.aval[bit] = relation->subtract(1, value.aval[bit]);
+            }
+            Predicate::resize(value, node.bitWidth, value.isSigned);
+          } else {
+            auto found =
+                queries.predicateValues.find({node.selector, node.ordinal});
+            if (found == queries.predicateValues.end()) {
+              status = OBELISK_RT_INVALID_DESIGN;
+              return value;
+            }
+            const auto &set = *found->second;
+            if (set.atomCount != 1 || set.bitWidth != node.bitWidth) {
+              status = OBELISK_RT_INVALID_DESIGN;
+              return value;
+            }
+            const auto &atom =
+                schema.resolvedFunctionalValueAtoms[set.firstAtom];
+            value.aval.resize(node.bitWidth);
+            value.bval.resize(node.bitWidth);
+            for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+              const auto &limb =
+                  schema
+                      .resolvedFunctionalValueLimbs[atom.firstLimb + bit / 64];
+              value.aval[bit] = (limb.lowAval >> (bit % 64)) & 1;
+              value.bval[bit] = (limb.lowBval >> (bit % 64)) & 1;
+            }
+          }
+          return value;
+        });
   }
 
   Root tupleValues(const obelisk::coverage::ResolvedFunctionalTupleSet &set) {
@@ -3191,14 +3295,17 @@ struct PreparedCrossValueIndex {
         status = OBELISK_RT_INVALID_DESIGN;
         return 0;
       }
-      if (node->withExpression && node->id != outerWith) {
+      if ((node->withExpression || node->predicateRoot) &&
+          node->id != outerWith) {
         const auto *binding = queries.binding(resolvedCross, node->id);
         if (!binding) {
           status = OBELISK_RT_INVALID_DESIGN;
           return 0;
         }
         Root accepted = 0;
-        if (binding->flags & ResolvedCrossSelectorScalarWith)
+        if (binding->flags & ResolvedCrossSelectorSymbolicWith)
+          accepted = predicate(*node);
+        else if (binding->flags & ResolvedCrossSelectorScalarWith)
           accepted = (binding->flags & ResolvedCrossSelectorScalarTrue) ? 1 : 0;
         else {
           const auto *set = queries.lookup(queries.tupleSets,
@@ -3292,6 +3399,7 @@ struct PreparedCrossValueIndex {
         if ((aval[byte] & ~used[byte]) || (bval && (bval[byte] & ~used[byte])))
           return OBELISK_RT_INVALID_DESIGN;
       Root tuple = 1;
+      std::vector<std::pair<uint32_t, bool>> assignments;
       for (size_t index = axes.size(); index != 0; --index) {
         const auto &axis = axes[index - 1];
         const auto &target =
@@ -3309,11 +3417,15 @@ struct PreparedCrossValueIndex {
                 bit == axis.width - 1)
               one = !one;
             uint32_t variable =
-                (plane ? axis.bFirst : axis.aFirst) + axis.width - bit - 1;
-            tuple = one ? relation->makeNode(variable, 0, tuple)
-                        : relation->makeNode(variable, tuple, 0);
+                (plane ? axis.bvalVariables : axis.avalVariables)[bit];
+            assignments.emplace_back(variable, one);
           }
       }
+      sortByKey(assignments.begin(), assignments.end(),
+                [](const auto &entry) { return ~entry.first; });
+      for (const auto &[variable, one] : assignments)
+        tuple = one ? relation->makeNode(variable, 0, tuple)
+                    : relation->makeNode(variable, tuple, 0);
       accepted = relation->unite(accepted, tuple);
       if (!check())
         return status;
@@ -3373,16 +3485,16 @@ struct PreparedCrossValueIndex {
         const auto &axis = axes[ordinal];
         const auto &target =
             prepared.database().crossTargets[plan.firstTarget + ordinal];
-        uint32_t avalFirst =
-            values->getWidth() - axis.valueFirst - axis.width * 2;
-        uint32_t bvalFirst = values->getWidth() - axis.valueFirst - axis.width;
+
         for (uint32_t bit = 0; bit != axis.width; ++bit) {
-          bool aval = read(avalFirst + bit);
+          bool aval =
+              read(values->getWidth() - 1 - axis.valueAvalVariables[bit]);
           if (axis.signedness == CoverageSignedness::Signed &&
               bit == axis.width - 1)
             aval = !aval;
           write(result.value, target.tupleBitOffset + bit, aval);
-          bool bval = read(bvalFirst + bit);
+          bool bval =
+              read(values->getWidth() - 1 - axis.valueBvalVariables[bit]);
           if (bval && !result.fourState)
             return OBELISK_RT_INVALID_DESIGN;
           if (result.fourState)
@@ -3677,6 +3789,9 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     schema.crossSelectorNodes.push_back(node);
     owners.emplace(std::make_pair(Owner::Selector, row.id), type);
   }
+  for (const auto &row : source.crossPredicateNodes)
+    schemaFor(owners.at(std::make_pair(Owner::Selector, row.selector)))
+        .crossPredicateNodes.push_back(row);
   for (const auto &row : source.functionalTupleSets) {
     auto &schema = schemaFor(itemTypes.at(row.cross));
     auto set = row;
@@ -6958,6 +7073,9 @@ obelisk_rt_status resolveStaticFunctionalType(
     tupleIDs.insert(tuple.id);
 
   std::vector<ResolvedCrossSelectorBinding> resolvedSelectorBindingRows;
+  const auto programsBySelector =
+      detail::groupRecords(schema.crossPredicateNodes,
+                           [](const auto &node) { return node.selector; });
   for (const CrossSelectorNode &node : schema.crossSelectorNodes) {
     auto resolvedCross = resolvedItems.find(node.cross);
     if (resolvedCross == resolvedItems.end())
@@ -7197,7 +7315,72 @@ obelisk_rt_status resolveStaticFunctionalType(
     CrossMatchesPolicy resolvedMatchesPolicy = CrossMatchesPolicy::None;
     uint64_t resolvedMatchesCount = 0;
     uint32_t resolvedBindingFlags = 0;
-    if (node.flags & CrossSelectorScalarWith) {
+    if (node.predicateRoot) {
+      resolvedBindingFlags = ResolvedCrossSelectorSymbolicWith;
+      resolvedMatchesPolicy = node.matchesPolicy;
+      resolvedMatchesCount = node.matchesCount;
+      if (node.matchesExpression) {
+        const auto *descriptor = expressionSchema(node.matchesExpression);
+        const auto *value = expressionValue(node.matchesExpression);
+        FunctionalInteger integer;
+        bool unknown = false;
+        if (!descriptor || !value ||
+            !decodeFunctionalInteger(*value, descriptor->signedness, integer,
+                                     unknown) ||
+            unknown || integer.negative || integer.magnitude.empty())
+          return OBELISK_RT_INVALID_DESIGN;
+        if (integer.magnitude.size() > 1)
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        resolvedMatchesCount = integer.magnitude.front();
+      }
+      for (const auto &operand :
+           detail::lookupRows(programsBySelector, node.id)) {
+        if (operand.kind != CrossPredicateKind::Value)
+          continue;
+        const auto *value = expressionValue(operand.expression);
+        if (!value || value->bit_width != operand.bitWidth || !value->value ||
+            (value->kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+             value->kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE))
+          return OBELISK_RT_INVALID_DESIGN;
+        uint64_t id =
+            resolvedFunctionalID("functional.resolved.predicate-value", typeID,
+                                 node.id, operand.ordinal, valueSetIDs);
+        if (!id)
+          return OBELISK_RT_INVALID_DESIGN;
+        valueSetIDs.insert(id);
+        PendingSet pending;
+        pending.set.type = typeID;
+        pending.set.id = id;
+        pending.set.item = resolvedCross->second;
+        pending.set.atomCount = 1;
+        pending.set.bitWidth = operand.bitWidth;
+        pending.set.kind = FunctionalValueSetKind::Integral;
+        pending.set.signedness = operand.signedness;
+        pending.set.ownerSelector = node.id;
+        pending.set.ownerOrdinal = operand.ordinal;
+        pending.set.role = ResolvedFunctionalValueSetRole::PredicateValue;
+        uint32_t limbCount = (uint64_t{operand.bitWidth} + 63) / 64;
+        const auto *aval = static_cast<const uint8_t *>(value->value);
+        const auto *bval = static_cast<const uint8_t *>(value->unknown);
+        for (uint32_t limb = 0; limb != limbCount; ++limb) {
+          uint64_t a = 0, b = 0;
+          for (uint32_t byte = 0;
+               byte != 8 && uint64_t{limb} * 8 + byte < value->value_size;
+               ++byte) {
+            uint64_t offset = uint64_t{limb} * 8 + byte;
+            a |= uint64_t{aval[offset]} << (byte * 8);
+            if (bval)
+              b |= uint64_t{bval[offset]} << (byte * 8);
+          }
+          pending.limbs.push_back({id, 0, limb, a, b, a, b, 0});
+        }
+        pending.atoms.push_back({id, 0, 0, 0, limbCount, 0,
+                                 FunctionalValueAtomKind::IntegralValue,
+                                 FunctionalValueAtomLowerInclusive |
+                                     FunctionalValueAtomUpperInclusive});
+        pendingSets.push_back(std::move(pending));
+      }
+    } else if (node.flags & CrossSelectorScalarWith) {
       const auto *predicate = expressionValue(node.withExpression);
       if (!predicate ||
           (predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
@@ -7573,7 +7756,14 @@ obelisk_rt_status resolveStaticFunctionalType(
   std::vector<ResolvedFunctionalValueSet> resolvedSetRows;
   std::vector<ResolvedFunctionalValueAtom> resolvedAtomRows;
   std::vector<ResolvedFunctionalValueLimb> resolvedLimbRows;
+  const uint64_t valueRecordLimit =
+      std::min<uint64_t>(UINT32_MAX, ParseLimits{}.maxRecords);
+  if (pendingSets.size() > valueRecordLimit)
+    return OBELISK_RT_OUT_OF_RESOURCES;
   for (PendingSet &pending : pendingSets) {
+    if (pending.atoms.size() > valueRecordLimit - resolvedAtomRows.size() ||
+        pending.limbs.size() > valueRecordLimit - resolvedLimbRows.size())
+      return OBELISK_RT_OUT_OF_RESOURCES;
     pending.set.firstAtom = resolvedAtomRows.size();
     for (auto atom : pending.atoms) {
       atom.firstLimb += resolvedLimbRows.size();
@@ -10404,7 +10594,7 @@ bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
     worklist.pop_back();
     if (!visited.insert(node->id).second)
       continue;
-    if (node->withExpression)
+    if (node->withExpression || node->predicateRoot)
       return true;
     for (uint32_t ordinal = 0; ordinal != node->operandCount; ++ordinal) {
       if (uint64_t{node->firstOperand} + ordinal >=
@@ -10582,12 +10772,26 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
     } else {
       return OBELISK_RT_INVALID_DESIGN;
     }
-    if (!base || (!node.withExpression && !node.constructionExpression))
+    if (!base || (!node.withExpression && !node.predicateRoot &&
+                  !node.constructionExpression))
       return finish(base);
 
     auto binding = bindingFor(node.id);
     if (!binding || binding->withExpression != node.withExpression)
       return OBELISK_RT_INVALID_DESIGN;
+    if (binding->flags & ResolvedCrossSelectorSymbolicWith) {
+      PreparedFunctionalConstruction index;
+      initializeSelectionIndex(index, schema, setQueries, type, configuration,
+                               suppressedTransitionAlternatives);
+      auto kernel = selectionKernel(index, *plan);
+      if (!kernel->check())
+        return kernel->status;
+      auto selected = kernel->select(node, resolvedCross, 0);
+      auto root = kernel->sampleRoot(selected);
+      if (!kernel->check())
+        return kernel->status;
+      return finish(kernel->sampleSelection->matches(root, binTuple));
+    }
     if (binding->flags & ResolvedCrossSelectorScalarWith) {
       if (!(binding->flags & ResolvedCrossSelectorScalarTrue))
         return finish(false);

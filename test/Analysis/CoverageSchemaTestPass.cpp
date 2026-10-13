@@ -233,6 +233,17 @@ private:
          << " matches_expression=" << node.matchesExpression
          << " matches_policy=" << raw(node.matchesPolicy)
          << " matches_count=" << node.matchesCount << " flags=" << node.flags
+         << " predicate_root=" << node.predicateRoot << '\n';
+    for (const coverage::CrossPredicateNode &predicate :
+         db.crossPredicateNodes)
+      os << "cross_predicate id=" << predicate.id
+         << " selector=" << predicate.selector << " left=" << predicate.left
+         << " right=" << predicate.right
+         << " expression=" << predicate.expression
+         << " target=" << predicate.target << " kind=" << raw(predicate.kind)
+         << " width=" << predicate.bitWidth
+         << " signedness=" << raw(predicate.signedness)
+         << " ordinal=" << predicate.ordinal << " flags=" << predicate.flags
          << '\n';
     for (const coverage::CrossSelectorOperand &operand :
          db.crossSelectorOperands)

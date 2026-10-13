@@ -582,6 +582,28 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
     assert.ok(rendered.rows[0][0].includes(
       'all tuples with constructor predicate ' + truth + ' matches 18446744073709551615'));
   }
+
+  // Symbolic predicates render their typed DAG and captured constructor value.
+  const symbolic = data.cross_selector_nodes.find(row => row.id === '7');
+  symbolic.with_expression = '0';
+  symbolic.predicate_root = '82';
+  scalar.flags = '4';
+  data.cross_predicate_nodes = [
+    {id:'80', selector:'7', kind:'2', target:'60'},
+    {id:'81', selector:'7', kind:'1', expression:'200', ordinal:'0'},
+    {id:'82', selector:'7', kind:'8', left:'80', right:'81'},
+  ];
+  data.resolved_functional_value_sets.push({
+    ...valueSet('94', [{kind:'1', limbs:[limb({low_aval:'5'})]}]),
+    role:'5', owner_selector:'7', owner_ordinal:'0',
+  });
+  const symbolicView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(symbolicView.rows[0][0].includes(
+    'all tuples with (cp < 0x5) matches 18446744073709551615'), symbolicView.rows[0][0]);
+  data.cross_predicate_nodes[2].left = '82';
+  const bounded = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(bounded.rows[0][0].includes('...'));
+  assert.ok(bounded.rows[0][0].length < 2048);
 }
 
 // With merge_instances, an inherited item that does not aggregate earns its

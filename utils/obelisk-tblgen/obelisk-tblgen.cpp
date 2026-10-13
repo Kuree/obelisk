@@ -4315,6 +4315,8 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       records.getAllDerivedDefinitions("CoverageCrossRetainAutoPolicy");
   auto selectors =
       records.getAllDerivedDefinitions("CoverageCrossSelectorKind");
+  auto predicates =
+      records.getAllDerivedDefinitions("CoverageCrossPredicateKind");
   auto expressionOwners =
       records.getAllDerivedDefinitions("CoverageExpressionOwnerKind");
   auto expressionRoles =
@@ -4547,6 +4549,7 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       !validateEnumDomain("FunctionalValueAtomKind", valueAtoms) ||
       !validateEnumDomain("CrossRetainAutoPolicy", retainPolicies) ||
       !validateEnumDomain("CrossSelectorKind", selectors) ||
+      !validateEnumDomain("CrossPredicateKind", predicates) ||
       !validateEnumDomain("FunctionalExpressionOwnerKind", expressionOwners) ||
       !validateEnumDomain("FunctionalExpressionRole", expressionRoles) ||
       !validateEnumDomain("FunctionalFormalKind", formalKinds) ||
@@ -4839,6 +4842,7 @@ bool emitCoverageDecls(const RecordKeeper &records, raw_ostream &os) {
   emitEnum("FunctionalValueAtomKind", "CoverageValueAtomKind");
   emitEnum("CrossRetainAutoPolicy", "CoverageCrossRetainAutoPolicy");
   emitEnum("CrossSelectorKind", "CoverageCrossSelectorKind");
+  emitEnum("CrossPredicateKind", "CoverageCrossPredicateKind");
   emitEnum("FunctionalExpressionOwnerKind", "CoverageExpressionOwnerKind");
   emitEnum("FunctionalExpressionRole", "CoverageExpressionRole");
   emitEnum("FunctionalFormalKind", "CoverageFunctionalFormalKind");

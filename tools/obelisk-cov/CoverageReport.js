@@ -240,6 +240,42 @@ const tupleSetText = (g, id) => {
   tupleTextCache.set(key, text);
   return text;
 };
+const predicateNodes = new Map((d.cross_predicate_nodes || []).map(n => [n.id, n]));
+const predicateOperands = new Map(d.resolved_functional_value_sets.filter(s => num(s.role) === 5).map(
+  s => [s.type + '|' + s.configuration + '|' + s.owner_selector + '|' + s.owner_ordinal, s.id]));
+const predicateTextCache = new Map();
+const predicateText = (g, root) => {
+  const key = g.type + '|' + g.configuration + '|' + root;
+  if (predicateTextCache.has(key)) return predicateTextCache.get(key);
+  const operators = {4:'==',5:'!=',6:'===',7:'!==',8:'<',9:'<=',10:'>',11:'>=',13:'&&',14:'||',16:'&',17:'|',18:'^',19:'~^',20:'+',21:'-'};
+  const pending = [{id:root}], pieces = [];
+  let visits = 0, length = 0;
+  const append = value => { value = String(value); pieces.push(value.slice(0, Math.max(0, 1024 - length))); length += value.length; };
+  while (pending.length && visits < 128 && length < 1024) {
+    const frame = pending.pop();
+    if (frame.text !== undefined) { append(frame.text); continue; }
+    ++visits;
+    const n = predicateNodes.get(frame.id);
+    if (!n) { append('predicate ' + frame.id); continue; }
+    const kind = num(n.kind);
+    if (kind === 1) {
+      const value = predicateOperands.get(g.type + '|' + g.configuration + '|' + n.selector + '|' + n.ordinal);
+      append(value ? valueText(g.type, g.configuration, value) : 'operand ' + n.expression);
+    } else if (kind === 2) append(templateItems.get(n.target) || n.target);
+    else if (kind === 3 || kind === 12 || kind === 15) {
+      append(kind === 3 ? n.bit_width + "'(" : kind === 12 ? '!(' : '~(');
+      pending.push({text:')'}, {id:n.left});
+    } else {
+      append('(');
+      pending.push({text:')'}, {id:n.right}, {text:' ' + (operators[kind] || '?') + ' '}, {id:n.left});
+    }
+  }
+  const label = pieces.join('');
+  const text = pending.length || length > 1024
+    ? label.slice(0, 1021) + '...' : label;
+  predicateTextCache.set(key, text);
+  return text;
+};
 const selectorText = (g, i, root) => {
   // Labels remain brief; the complete selector graph stays in the payload.
   // Bound both traversal and output, including wide operand lists and DAGs.
@@ -295,7 +331,9 @@ const selectorText = (g, i, root) => {
       append('all tuples');
     } else if (kind === 7) {
       const count = binding ? (tuplesBySet.get(binding.tuple_set) || []).length : 0;
-      const subject = binding && (num(binding.flags) & 1)
+      const subject = n.predicate_root && n.predicate_root !== '0'
+        ? predicateText(g, n.predicate_root)
+        : binding && (num(binding.flags) & 1)
         ? 'constructor predicate ' + ((num(binding.flags) & 2) ? 'true' : 'false')
         : binding && binding.tuple_set !== '0'
           ? count + ' satisfying value tuple' + (count === 1 ? '' : 's')

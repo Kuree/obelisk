@@ -2610,6 +2610,7 @@ void jsonReport(
           out.attribute("bin", node.bin);
           out.attribute("value_set", node.valueSet);
           out.attribute("with_expression", node.withExpression);
+          out.attribute("predicate_root", node.predicateRoot);
           out.attribute("construction_expression", node.constructionExpression);
           out.attribute("tuple_set", node.tupleSet);
           out.attribute("matches_expression", node.matchesExpression);
@@ -2619,6 +2620,22 @@ void jsonReport(
           out.attribute("matches_policy",
                         static_cast<uint32_t>(node.matchesPolicy));
           out.attribute("matches_count", node.matchesCount);
+          out.attribute("flags", node.flags);
+        });
+    });
+    out.attributeArray("cross_predicate_nodes", [&] {
+      for (const auto &node : database.crossPredicateNodes)
+        out.object([&] {
+          out.attribute("id", node.id);
+          out.attribute("selector", node.selector);
+          out.attribute("left", node.left);
+          out.attribute("right", node.right);
+          out.attribute("expression", node.expression);
+          out.attribute("target", node.target);
+          out.attribute("kind", static_cast<uint32_t>(node.kind));
+          out.attribute("bit_width", node.bitWidth);
+          out.attribute("signedness", static_cast<uint32_t>(node.signedness));
+          out.attribute("ordinal", node.ordinal);
           out.attribute("flags", node.flags);
         });
     });
@@ -3467,6 +3484,7 @@ int main(int argc, char **argv) {
         << "\nfunctional-types: " << database.functionalTypes.size()
         << "\nfunctional-formals: " << database.functionalFormals.size()
         << "\nfunctional-expressions: " << database.functionalExpressions.size()
+        << "\ncross-predicate-nodes: " << database.crossPredicateNodes.size()
         << "\nfunctional-item-templates: " << database.functionalItems.size()
         << "\nfunctional-bin-templates: " << database.functionalBins.size()
         << "\nfunctional-configurations: "

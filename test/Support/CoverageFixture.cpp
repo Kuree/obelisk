@@ -69,7 +69,7 @@ int main(int argc, char **argv) {
   Database db;
   db.producer = "coverage-fixture";
   if (mode == "construction-preparation" || mode == "construction-with" ||
-      mode == "construction-with-scalar") {
+      mode == "construction-with-scalar" || mode == "construction-symbolic") {
     db.scopes.push_back({1, 0, "top", 0, "top"});
     db.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
     db.functionalItems = {{20, 10, "point", FunctionalItemKind::Coverpoint, 0,
@@ -139,7 +139,8 @@ int main(int argc, char **argv) {
     selector.target = 20;
     selector.kind = CrossSelectorKind::Binsof;
     db.crossSelectorNodes.push_back(selector);
-    if (mode == "construction-with" || mode == "construction-with-scalar") {
+    if (mode == "construction-with" || mode == "construction-with-scalar" ||
+        mode == "construction-symbolic") {
       db.crossBins.front().rootSelector = 72;
       for (uint32_t ordinal = 0; ordinal != 2; ++ordinal) {
         CrossSelectorNode with;
@@ -168,6 +169,29 @@ int main(int argc, char **argv) {
         predicate.evaluationPhase =
             FunctionalExpressionEvaluationPhase::Constructor;
         predicate.resultOrdinal = 2 + ordinal;
+        if (mode == "construction-symbolic") {
+          auto &selector = db.crossSelectorNodes.back();
+          selector.withExpression = 0;
+          selector.predicateRoot = 302 + ordinal * 3;
+          predicate.role = FunctionalExpressionRole::PredicateValue;
+          predicate.resultKind = FunctionalExpressionResultKind::Integral;
+          predicate.bitWidth = 65;
+          predicate.signedness = CoverageSignedness::Unsigned;
+          predicate.ownerOrdinal = 1;
+          const uint64_t base = 300 + ordinal * 3;
+          db.crossPredicateNodes.push_back(
+              {base, selector.id, 0, 0, 0, 20, CrossPredicateKind::Target, 65,
+               CoverageSignedness::Unsigned, 0, CrossPredicateTwoState});
+          db.crossPredicateNodes.push_back(
+              {base + 1, selector.id, 0, 0, predicate.id, 0,
+               CrossPredicateKind::Value, 65, CoverageSignedness::Unsigned, 1,
+               CrossPredicateTwoState});
+          db.crossPredicateNodes.push_back(
+              {base + 2, selector.id, base, base + 1, 0, 0,
+               ordinal ? CrossPredicateKind::GreaterEqual
+                       : CrossPredicateKind::Less,
+               1, CoverageSignedness::Unsigned, 2, CrossPredicateTwoState});
+        }
         db.functionalExpressions.push_back(predicate);
       }
     }
