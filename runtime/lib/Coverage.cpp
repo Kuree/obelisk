@@ -11130,8 +11130,31 @@ markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
       continue;
     }
     auto exclusions = exclusionsByItem.find(bin.item);
-    if (exclusions == exclusionsByItem.end())
+    if (exclusions == exclusionsByItem.end()) {
+      // Real array partitions may contain no values in the sample precision,
+      // even without an ignore/illegal declaration (19.5.1, 19.11.1). Scan
+      // endpoints once, stopping at the first nonempty interval; no value
+      // enumeration or persistent query index is needed.
+      if (subject->kind == FunctionalValueSetKind::Real) {
+        bool empty = true;
+        bool shortReal = shortRealItems.count(bin.item);
+        for (uint32_t ordinal = 0; ordinal != subject->atomCount; ++ordinal) {
+          StateCoverageInterval interval;
+          if (!makeStateCoverageInterval(
+                  schema, *subject,
+                  schema.resolvedFunctionalValueAtoms[subject->firstAtom +
+                                                      ordinal],
+                  shortReal, interval) ||
+              !interval.empty) {
+            empty = false;
+            break;
+          }
+        }
+        if (empty)
+          bin.flags |= FunctionalBinEmpty;
+      }
       continue;
+    }
     auto &group = exclusions->second;
     if (group.numeric && sameDomain(*subject, *group.type)) {
       remaining[binIndex] = subject->atomCount;

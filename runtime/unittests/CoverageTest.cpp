@@ -6201,6 +6201,106 @@ TEST_F(CoverageRuntimeDesignTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       RealIntervalsWithoutExclusionsRespectSamplePrecisionAndOpenEndpoints) {
+  using namespace obelisk::coverage;
+  constexpr uint32_t lower = FunctionalValueAtomLowerInclusive;
+  constexpr uint32_t both = lower | FunctionalValueAtomUpperInclusive;
+  double nextFloat =
+      std::nextafter(1.0f, std::numeric_limits<float>::infinity());
+  double nextNextFloat = std::nextafter(static_cast<float>(nextFloat),
+                                        std::numeric_limits<float>::infinity());
+  double spacing = nextFloat - 1.0;
+  struct Interval {
+    double low, high;
+    uint32_t flags;
+  };
+  const std::array<Interval, 6> intervals{{
+      {1, nextFloat, lower | FunctionalValueAtomRealRange},
+      {1, nextFloat, FunctionalValueAtomRealRange},
+      {1 + spacing / 4, 1 + spacing * 3 / 4,
+       both | FunctionalValueAtomRealRange},
+      {nextFloat, nextFloat, both},
+      {nextFloat, nextNextFloat, lower | FunctionalValueAtomRealRange},
+      {1, std::nextafter(1.0, std::numeric_limits<double>::infinity()),
+       FunctionalValueAtomRealRange},
+  }};
+  for (bool shortReal : {false, true}) {
+    SCOPED_TRACE(::testing::Message() << "shortreal=" << shortReal);
+    Database schema = makeFunctionalSchema();
+    schema.functionalItems.resize(1);
+    schema.functionalBins.clear();
+    schema.functionalValueSets.clear();
+    schema.functionalValueAtoms.clear();
+    schema.functionalValueLimbs.clear();
+    schema.functionalBinPlans.clear();
+    schema.functionalExpressions.resize(1);
+    auto &sample = schema.functionalExpressions.front();
+    sample.resultKind = shortReal ? FunctionalExpressionResultKind::ShortReal
+                                  : FunctionalExpressionResultKind::Real;
+    sample.bitWidth = 0;
+    sample.signedness = CoverageSignedness::NotApplicable;
+    for (uint32_t ordinal = 0; ordinal != intervals.size(); ++ordinal) {
+      const auto &interval = intervals[ordinal];
+      uint64_t bin = 30 + ordinal, set = 50 + ordinal;
+      std::string name = "bin" + std::to_string(bin);
+      schema.functionalBins.push_back({bin, 20, name, FunctionalBinKind::State,
+                                       0, 1, ordinal, "top.cg.first." + name});
+      schema.functionalValueSets.push_back(
+          {set, 20, ordinal, 1, 64, FunctionalValueSetKind::Real, 0,
+           CoverageSignedness::NotApplicable, 0});
+      uint64_t lowBits, highBits;
+      std::memcpy(&lowBits, &interval.low, sizeof(lowBits));
+      std::memcpy(&highBits, &interval.high, sizeof(highBits));
+      schema.functionalValueAtoms.push_back(
+          {set, lowBits, highBits, 0, 0, 0,
+           FunctionalValueAtomKind::RealInterval, interval.flags, 0, 0});
+      schema.functionalBinPlans.push_back({bin, set});
+    }
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    obelisk_rt_context *context = createContextForSchema(schema, false);
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+    for (double value : {1.0, nextFloat}) {
+      float narrow = value;
+      obelisk_rt_functional_value_v1 packet{
+          60,
+          shortReal ? 32u : 64u,
+          shortReal ? sizeof(narrow) : sizeof(value),
+          shortReal ? static_cast<const void *>(&narrow) : &value,
+          nullptr,
+          nullptr,
+          0,
+          shortReal ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+                    : OBELISK_RT_FUNCTIONAL_VALUE_REAL,
+          0};
+      ASSERT_EQ(obelisk_rt_v1_covergroup_sample(context, handle, &packet, 1),
+                OBELISK_RT_OK);
+    }
+    const auto &bins = context->coverage->instances.at(handle).bins;
+    ASSERT_EQ(bins.size(), intervals.size());
+    for (uint32_t ordinal = 0; ordinal != bins.size(); ++ordinal) {
+      bool precisionGap = ordinal == 1 || ordinal == 2;
+      bool emptyAtBothPrecisions = ordinal == 5;
+      EXPECT_EQ(bool(bins[ordinal].flags & FunctionalBinEmpty),
+                emptyAtBothPrecisions || (shortReal && precisionGap));
+      EXPECT_EQ(bins[ordinal].count,
+                precisionGap || emptyAtBothPrecisions ? 0u : 1u);
+    }
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handle, 20, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, 3);
+    EXPECT_EQ(total, shortReal ? 3 : 5);
+    EXPECT_DOUBLE_EQ(percentage, shortReal ? 100.0 : 60.0);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
        RealExclusionUnionsRespectPrecisionAdjacencyOpenBoundsAndSignedZero) {
   using namespace obelisk::coverage;
   constexpr uint32_t lower = FunctionalValueAtomLowerInclusive;
