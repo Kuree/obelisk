@@ -68,7 +68,8 @@ int main(int argc, char **argv) {
 
   Database db;
   db.producer = "coverage-fixture";
-  if (mode == "construction-preparation" || mode == "construction-with") {
+  if (mode == "construction-preparation" || mode == "construction-with" ||
+      mode == "construction-with-scalar") {
     db.scopes.push_back({1, 0, "top", 0, "top"});
     db.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
     db.functionalItems = {{20, 10, "point", FunctionalItemKind::Coverpoint, 0,
@@ -138,7 +139,7 @@ int main(int argc, char **argv) {
     selector.target = 20;
     selector.kind = CrossSelectorKind::Binsof;
     db.crossSelectorNodes.push_back(selector);
-    if (mode == "construction-with") {
+    if (mode == "construction-with" || mode == "construction-with-scalar") {
       db.crossBins.front().rootSelector = 72;
       for (uint32_t ordinal = 0; ordinal != 2; ++ordinal) {
         CrossSelectorNode with;
@@ -149,6 +150,8 @@ int main(int argc, char **argv) {
         with.operandCount = 1;
         with.kind = CrossSelectorKind::With;
         with.ordinal = 1 + ordinal;
+        if (mode == "construction-with-scalar")
+          with.flags = CrossSelectorScalarWith;
         with.matchesPolicy =
             ordinal ? CrossMatchesPolicy::All : CrossMatchesPolicy::Count;
         with.matchesCount = ordinal ? 0 : 2;
@@ -159,7 +162,9 @@ int main(int argc, char **argv) {
         predicate.owner = with.id;
         predicate.ownerKind = FunctionalExpressionOwnerKind::Selector;
         predicate.role = FunctionalExpressionRole::SelectorWith;
-        predicate.resultKind = FunctionalExpressionResultKind::TupleQueue;
+        predicate.resultKind = mode == "construction-with-scalar"
+                                   ? FunctionalExpressionResultKind::Boolean
+                                   : FunctionalExpressionResultKind::TupleQueue;
         predicate.evaluationPhase =
             FunctionalExpressionEvaluationPhase::Constructor;
         predicate.resultOrdinal = 2 + ordinal;

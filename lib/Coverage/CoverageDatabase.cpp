@@ -3776,7 +3776,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     case FunctionalExpressionRole::SelectorWith:
       validContract =
-          expression.resultKind == FunctionalExpressionResultKind::TupleQueue &&
+          (expression.resultKind ==
+               FunctionalExpressionResultKind::TupleQueue ||
+           expression.resultKind == FunctionalExpressionResultKind::Boolean) &&
           expression.ownerKind == FunctionalExpressionOwnerKind::Selector &&
           expression.ownerOrdinal == 0 && expression.ownerSubordinal == 0 &&
           expression.evaluationPhase ==
@@ -4382,7 +4384,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     uint32_t kind = static_cast<uint32_t>(node.kind);
     if (!cross || cross->kind != FunctionalItemKind::Cross ||
         targetList == targetsByCross.end() ||
-        node.ordinal != expectedNodeOrdinal++ || node.flags != 0 ||
+        node.ordinal != expectedNodeOrdinal++ ||
+        (node.flags & ~CrossSelectorScalarWith) ||
+        ((node.flags & CrossSelectorScalarWith) && !node.withExpression) ||
         !knownCrossSelectorKind(kind) || node.firstOperand != operandCursor ||
         !checkedRange(node.firstOperand, node.operandCount,
                       db.crossSelectorOperands.size()) ||
@@ -4458,7 +4462,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !node.matchesExpression &&
         node.matchesCount > ParseLimits{}.maxRecords + 1)
       validMatches = false;
-    if (!validPayload || node.operandCount != expectedOperands ||
+    const auto *with = findExpression(node.withExpression);
+    if ((with && with->resultKind !=
+                     ((node.flags & CrossSelectorScalarWith)
+                          ? FunctionalExpressionResultKind::Boolean
+                          : FunctionalExpressionResultKind::TupleQueue)) ||
+        !validPayload || node.operandCount != expectedOperands ||
         !validMatches ||
         ((node.matchesPolicy != CrossMatchesPolicy::None) != hasMatchSubject) ||
         !expressionIs(node.withExpression, node.id,
@@ -4489,8 +4498,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (operandCursor != db.crossSelectorOperands.size())
     return fail(Status::InvalidReference, "cross_selector_operand_range");
 
-  // Each decorated selector owns exactly one constructor queue. Its contents
-  // are satisfying associated-value tuples, independent of target type width.
+  // Each decorated selector owns one constructor result: a Boolean scalar
+  // predicate or a queue of satisfying associated-value tuples.
   for (const auto &node : db.crossSelectorNodes) {
     const auto &expressions = lookupRows(
         expressionsByOwner,
@@ -6392,7 +6401,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         (!set.templateTupleSet && !node->second->constructionExpression &&
          !node->second->withExpression) ||
         (node->second->withExpression &&
-         (set.templateTupleSet ||
+         ((node->second->flags & CrossSelectorScalarWith) ||
+          set.templateTupleSet ||
           set.elementMode != FunctionalTupleElementMode::ValueTuple ||
           set.tupleCount > MaxFunctionalCrossWithCandidates)) ||
         set.firstTuple != resolvedTupleCursor ||
@@ -6536,8 +6546,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                          binding.matchesCount == 0 && hasMatchSubject);
     bool needsTuple =
         node != nodesByID.end() &&
-        (node->second->withExpression || node->second->constructionExpression ||
-         node->second->tupleSet);
+        ((node->second->withExpression &&
+          !(node->second->flags & CrossSelectorScalarWith)) ||
+         node->second->constructionExpression || node->second->tupleSet);
     bool needsValueSet = node != nodesByID.end() && node->second->valueSet &&
                          (findValueSet(node->second->valueSet)->flags &
                           FunctionalValueSetNeedsResolution);
@@ -6567,7 +6578,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           binding.matchesCount != node->second->matchesCount)) ||
         (node->second->matchesPolicy == CrossMatchesPolicy::All &&
          binding.matchesPolicy != CrossMatchesPolicy::All) ||
-        binding.flags != 0 ||
+        (binding.flags & ~(ResolvedCrossSelectorScalarWith |
+                           ResolvedCrossSelectorScalarTrue)) ||
+        (bool(binding.flags & ResolvedCrossSelectorScalarWith) !=
+         bool(node->second->flags & CrossSelectorScalarWith)) ||
+        ((binding.flags & ResolvedCrossSelectorScalarTrue) &&
+         !(binding.flags & ResolvedCrossSelectorScalarWith)) ||
         !bindingKeys
              .emplace(binding.type, binding.configuration, binding.cross,
                       binding.node)

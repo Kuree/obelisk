@@ -361,7 +361,10 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
     size_t supplied = 0;
     for (const coverage::FunctionalExpression *expression : expected) {
       if (primitive &&
-          expression->role == coverage::FunctionalExpressionRole::SelectorWith)
+          expression->role ==
+              coverage::FunctionalExpressionRole::SelectorWith &&
+          expression->resultKind ==
+              coverage::FunctionalExpressionResultKind::TupleQueue)
         continue;
       bool isDefault =
           expression->role == coverage::FunctionalExpressionRole::FormalDefault;

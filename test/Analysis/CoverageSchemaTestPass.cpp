@@ -232,7 +232,8 @@ private:
          << " tuple_set=" << node.tupleSet
          << " matches_expression=" << node.matchesExpression
          << " matches_policy=" << raw(node.matchesPolicy)
-         << " matches_count=" << node.matchesCount << '\n';
+         << " matches_count=" << node.matchesCount << " flags=" << node.flags
+         << '\n';
     for (const coverage::CrossSelectorOperand &operand :
          db.crossSelectorOperands)
       os << "cross_selector_operand node=" << operand.node

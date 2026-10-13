@@ -464,6 +464,9 @@ struct CrossSelectorNode {
   uint64_t matchesCount = 0;
 };
 
+/// A predicate without cross-item references has one Boolean constructor value.
+inline constexpr uint32_t CrossSelectorScalarWith = uint32_t{1} << 0;
+
 struct CrossSelectorOperand {
   uint64_t node = 0;
   uint64_t operand = 0;
@@ -667,6 +670,9 @@ struct ResolvedCrossSelectorBinding {
   uint32_t flags = 0;
   uint64_t matchesCount = 0;
 };
+
+inline constexpr uint32_t ResolvedCrossSelectorScalarWith = uint32_t{1} << 0;
+inline constexpr uint32_t ResolvedCrossSelectorScalarTrue = uint32_t{1} << 1;
 
 struct ResolvedFunctionalValueSet {
   /// The concrete language after constructor evaluation, effective-type casts,

@@ -1740,6 +1740,8 @@ struct FunctionalCoverageBinState {
   bool excluded = false;
 };
 
+struct FunctionalCoverageCrossSelection;
+
 struct FunctionalCoverageCrossState {
   struct TargetConstraint {
     uint32_t targetOrdinal = 0;
@@ -1753,6 +1755,8 @@ struct FunctionalCoverageCrossState {
   struct ExplicitBin {
     uint64_t bin = 0;
     std::vector<Rectangle> alternatives;
+    std::shared_ptr<const FunctionalCoverageCrossSelection> selection;
+    uint64_t selectionRoot = 0;
   };
 
   uint64_t id = 0;

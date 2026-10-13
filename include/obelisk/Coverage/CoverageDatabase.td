@@ -1118,7 +1118,7 @@ def CSNKind     : CoverageField<"Kind", "kind", 80, CovU32> {
 }
 def CSNOrdinal  : CoverageField<"Ordinal", "ordinal", 84, CovU32>;
 def CSNFlags    : CoverageField<"Flags", "flags", 88, CovU32> {
-  let semantic = "Flags"; let validMask = 0;
+  let semantic = "Flags"; let validMask = 1;
 }
 def CSNMatchesPolicy : CoverageField<"MatchesPolicy", "matches_policy", 92, CovU32> {
   let semantic = "Enum"; let domain = DomainCrossMatchesPolicy;
@@ -1646,7 +1646,7 @@ def RCSBMatchesPolicy : CoverageField<"MatchesPolicy", "matches_policy", 80, Cov
   let semantic = "Enum"; let domain = DomainCrossMatchesPolicy;
 }
 def RCSBFlags     : CoverageField<"Flags", "flags", 84, CovU32> {
-  let semantic = "Flags"; let validMask = 0;
+  let semantic = "Flags"; let validMask = 3;
 }
 def RCSBMatchesCount : CoverageField<"MatchesCount", "matches_count", 88, CovU64>;
 def ResolvedCrossSelectorBindingRecord : CoverageRecord<

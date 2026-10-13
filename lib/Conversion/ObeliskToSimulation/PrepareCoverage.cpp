@@ -3290,6 +3290,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   }
 
                   Operation *predicate = operands[1];
+                  auto scalarAttr = predicate->getAttrOfType<BoolAttr>(
+                      sim::metadata::coverageFunctionalCrossWithScalar);
+                  const bool scalarPredicate =
+                      scalarAttr && scalarAttr.getValue();
                   auto targetPaths = predicate->getAttrOfType<ArrayAttr>(
                       sim::metadata::coverageFunctionalCrossWithTargetPaths);
                   if (!targetPaths ||
@@ -3303,8 +3307,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           coverage::FunctionalExpressionEvaluationPhase::
                               Constructor,
                           0, 0,
-                          coverage::FunctionalExpressionResultKind::
-                              TupleQueue)))
+                          scalarPredicate
+                              ? coverage::FunctionalExpressionResultKind::
+                                    Boolean
+                              : coverage::FunctionalExpressionResultKind::
+                                    TupleQueue)))
                     return failure();
                   const uint64_t withExpression =
                       predicate
@@ -3312,12 +3319,14 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                               sim::metadata::coverageFunctionalExpressionId)
                           .getValue()
                           .getZExtValue();
-                  predicate->setAttr(
-                      sim::metadata::coverageFunctionalCrossWithTupleType,
-                      TypeAttr::get(tupleType));
-                  predicate->setAttr(
-                      sim::metadata::coverageFunctionalCrossWithSelectorId,
-                      builder.getI64IntegerAttr(selectorID));
+                  if (!scalarPredicate) {
+                    predicate->setAttr(
+                        sim::metadata::coverageFunctionalCrossWithTupleType,
+                        TypeAttr::get(tupleType));
+                    predicate->setAttr(
+                        sim::metadata::coverageFunctionalCrossWithSelectorId,
+                        builder.getI64IntegerAttr(selectorID));
+                  }
                   coverage::CrossMatchesPolicy matchesPolicy =
                       coverage::CrossMatchesPolicy::Count;
                   uint64_t matchesCount = 1;
@@ -3358,9 +3367,32 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                            "must be a positive v1 integer");
                         return failure();
                       }
-                      matchesCount = parsed->value.getLimitedValue(
-                          uint64_t{coverage::MaxFunctionalCrossWithCandidates} +
-                          1);
+                      if (scalarPredicate &&
+                          parsed->value.getActiveBits() > 64) {
+                        if (failed(addFunctionalExpression(
+                                matches, selectorID,
+                                coverage::FunctionalExpressionOwnerKind::
+                                    Selector,
+                                coverage::FunctionalExpressionRole::
+                                    SelectorMatches,
+                                coverage::FunctionalExpressionEvaluationPhase::
+                                    Constructor,
+                                0, 0)))
+                          return failure();
+                        matchesExpression =
+                            matches
+                                ->getAttrOfType<IntegerAttr>(
+                                    sim::metadata::
+                                        coverageFunctionalExpressionId)
+                                .getValue()
+                                .getZExtValue();
+                      } else
+                        matchesCount = parsed->value.getLimitedValue(
+                            scalarPredicate
+                                ? UINT64_MAX
+                                : uint64_t{coverage::
+                                               MaxFunctionalCrossWithCandidates} +
+                                      1);
                     } else {
                       if (failed(addFunctionalExpression(
                               matches, selectorID,
@@ -3388,7 +3420,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   pending.selectors.push_back(
                       {selectorID, itemID, 0, 0, 0, withExpression, 0, 0,
                        matchesExpression, firstOperand, 1,
-                       coverage::CrossSelectorKind::With, selectorOrdinal++, 0,
+                       coverage::CrossSelectorKind::With, selectorOrdinal++,
+                       scalarPredicate ? coverage::CrossSelectorScalarWith : 0,
                        matchesPolicy, matchesCount});
                   return selectorID;
                 }

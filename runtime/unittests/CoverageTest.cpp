@@ -1773,6 +1773,81 @@ TEST(CoverageDatabaseTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       ScalarCrossWithCountsPerBinAndPersistsCompactBindings) {
+  using namespace obelisk::coverage;
+  // Each split first-target bin has two values; the other target has four.
+  // These few contexts exercise distinct semantics without a configuration
+  // sweep.
+  for (auto [policy, count, truth, unknown, selected] :
+       {std::tuple{CrossMatchesPolicy::Count, uint64_t{8}, uint8_t{1},
+                   uint8_t{0}, true},
+        std::tuple{CrossMatchesPolicy::Count, uint64_t{9}, uint8_t{1},
+                   uint8_t{0}, false},
+        std::tuple{CrossMatchesPolicy::Count, UINT64_MAX, uint8_t{1},
+                   uint8_t{0}, false},
+        std::tuple{CrossMatchesPolicy::All, uint64_t{0}, uint8_t{1}, uint8_t{0},
+                   true},
+        std::tuple{CrossMatchesPolicy::All, uint64_t{0}, uint8_t{0}, uint8_t{0},
+                   false},
+        std::tuple{CrossMatchesPolicy::All, uint64_t{0}, uint8_t{1}, uint8_t{1},
+                   false}}) {
+    Database schema = makeCrossWithSchema(policy, count, true);
+    schema.crossPlans.front().retainAutoPolicy = CrossRetainAutoPolicy::Retain;
+    schema.crossSelectorNodes.front().flags = CrossSelectorScalarWith;
+    auto &descriptor = schema.functionalExpressions.back();
+    ASSERT_EQ(descriptor.id, 100u);
+    descriptor.resultKind = FunctionalExpressionResultKind::Boolean;
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    ASSERT_EQ(validate(schema), Status::Ok);
+    obelisk_rt_context *local = createContextForSchema(schema, false);
+    ASSERT_NE(local, nullptr);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_functional_value_v1 predicate = {
+        100,
+        1,
+        1,
+        &truth,
+        unknown ? &unknown : nullptr,
+        nullptr,
+        0,
+        unknown ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
+                : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        0};
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
+                                              1, &handle),
+              OBELISK_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), OBELISK_RT_OK);
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  local, handle, 22, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, 1);
+    EXPECT_EQ(total, selected ? 1 : 2);
+    Database saved = saveCoverage(local, "scalar-with");
+    ASSERT_EQ(validate(saved), Status::Ok);
+    EXPECT_TRUE(saved.resolvedFunctionalTupleSets.empty());
+    EXPECT_TRUE(saved.resolvedFunctionalTupleSetTuples.empty());
+    ASSERT_EQ(saved.resolvedCrossSelectorBindings.size(), 1u);
+    auto &binding = saved.resolvedCrossSelectorBindings.front();
+    EXPECT_EQ(binding.tupleSet, 0u);
+    EXPECT_EQ(binding.matchesCount, count);
+    EXPECT_EQ(binding.flags,
+              ResolvedCrossSelectorScalarWith |
+                  ((truth && !unknown) ? ResolvedCrossSelectorScalarTrue : 0));
+    EXPECT_LE(saved.resolvedCrossAutomaticNodes.size(), 2u);
+    EXPECT_LE(saved.resolvedCrossAutomaticEdges.size(), 3u);
+    // Reject both unknown flag bits and a Boolean truth flag without its tag.
+    binding.flags = uint32_t{1} << 2;
+    EXPECT_EQ(validate(saved), Status::InvalidReference);
+    binding.flags = ResolvedCrossSelectorScalarTrue;
+    EXPECT_EQ(validate(saved), Status::InvalidReference);
+    obelisk_rt_v1_context_destroy(local);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossValuesPreserveSharedSelectorCorrelations) {
   using namespace obelisk::coverage;
   Database schema = makeSharedAndSelectorSchema();
@@ -2264,6 +2339,79 @@ struct CrossWithQueue {
   }
   ~CrossWithQueue() { close(); }
 };
+
+TEST_F(CoverageRuntimeDesignTest,
+       PreparedScalarChildResolvesBeforeIteratorParent) {
+  using namespace obelisk::coverage;
+  for (auto [count, truth, expected] :
+       {std::tuple{uint64_t{8}, uint8_t{1}, uint64_t{16}},
+        std::tuple{uint64_t{9}, uint8_t{1}, uint64_t{0}},
+        std::tuple{uint64_t{8}, uint8_t{0}, uint64_t{0}}}) {
+    Database schema =
+        makeCrossWithSchema(CrossMatchesPolicy::Count, count, true);
+    schema.crossSelectorNodes.front().flags = CrossSelectorScalarWith;
+    schema.functionalExpressions.back().resultKind =
+        FunctionalExpressionResultKind::Boolean;
+    CrossSelectorNode parent;
+    parent.id = 71;
+    parent.cross = 22;
+    parent.kind = CrossSelectorKind::With;
+    parent.withExpression = 101;
+    parent.operandCount = 1;
+    parent.ordinal = 1;
+    parent.matchesPolicy = CrossMatchesPolicy::All;
+    schema.crossSelectorNodes.push_back(parent);
+    schema.crossSelectorOperands.push_back({71, 70, 0});
+    schema.crossBins.front().rootSelector = 71;
+    auto descriptor = schema.functionalExpressions.back();
+    descriptor.id = 101;
+    descriptor.owner = 71;
+    descriptor.resultOrdinal = 1;
+    descriptor.resultKind = FunctionalExpressionResultKind::TupleQueue;
+    schema.functionalExpressions.push_back(descriptor);
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    ASSERT_EQ(validate(schema), Status::Ok);
+    obelisk_rt_context *local = createContextForSchema(schema, false);
+    ASSERT_NE(local, nullptr);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_functional_value_v1 scalar = {
+        100,     1,       1, &truth,
+        nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        0};
+    uint64_t token = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_prepare(local, 10, &scalar, 1, &token),
+              OBELISK_RT_OK);
+    CoverageTupleQueueSnapshot candidates;
+    ASSERT_EQ(obelisk_rt_coverage_prepared_candidates(local, token, 71, 16,
+                                                      candidates),
+              OBELISK_RT_OK);
+    EXPECT_EQ(candidates.count, expected);
+    CrossWithQueue all;
+    all.initialize(local, true);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 71, all.queue),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_release_preparation(local, token),
+              OBELISK_RT_OK);
+    auto queue = all.payload();
+    queue.id = 101;
+    std::array<obelisk_rt_functional_value_v1, 2> predicates{scalar, queue};
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
+                                              predicates.data(),
+                                              predicates.size(), &handle),
+              OBELISK_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 2), OBELISK_RT_OK);
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  local, handle, 22, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, expected ? 1 : 0);
+    EXPECT_EQ(total, expected ? 1 : 0);
+    all.close();
+    obelisk_rt_v1_context_destroy(local);
+  }
+}
 
 TEST_F(CoverageRuntimeDesignTest,
        PreparedNestedWithCountsPerBinAndRestoresWholeBinValues) {

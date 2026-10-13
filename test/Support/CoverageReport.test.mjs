@@ -570,6 +570,18 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   const cg = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.equal(cg.rows[0][0], 'sel = (binsof(cp.low) && !(all tuples) && (intersect {0x5} || ' +
     'all tuples with 1 satisfying value tuple matches all || intersect {<low,0x5>} || selector 9 || !(<cycle>)))');
+
+  // Scalar predicates have no materialized value tuples, including wide counts.
+  const scalar = data.resolved_cross_selector_bindings.find(row => row.node === '7');
+  scalar.tuple_set = '0';
+  scalar.matches_policy = '2';
+  scalar.matches_count = '18446744073709551615';
+  for (const [flags, truth] of [['1', 'false'], ['3', 'true']]) {
+    scalar.flags = flags;
+    const rendered = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(rendered.rows[0][0].includes(
+      'all tuples with constructor predicate ' + truth + ' matches 18446744073709551615'));
+  }
 }
 
 // With merge_instances, an inherited item that does not aggregate earns its

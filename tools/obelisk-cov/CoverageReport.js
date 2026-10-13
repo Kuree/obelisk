@@ -295,9 +295,11 @@ const selectorText = (g, i, root) => {
       append('all tuples');
     } else if (kind === 7) {
       const count = binding ? (tuplesBySet.get(binding.tuple_set) || []).length : 0;
-      const subject = binding && binding.tuple_set !== '0'
-        ? count + ' satisfying value tuple' + (count === 1 ? '' : 's')
-        : 'expression ' + n.with_expression;
+      const subject = binding && (num(binding.flags) & 1)
+        ? 'constructor predicate ' + ((num(binding.flags) & 2) ? 'true' : 'false')
+        : binding && binding.tuple_set !== '0'
+          ? count + ' satisfying value tuple' + (count === 1 ? '' : 's')
+          : 'expression ' + n.with_expression;
       const policy = binding || n;
       const matches = num(policy.matches_policy) === 3 ? 'all' : policy.matches_count;
       pending.push({text: ' with ' + subject + ' matches ' + matches});

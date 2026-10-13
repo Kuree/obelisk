@@ -235,6 +235,7 @@ struct CoverageWithCandidatePlan {
 
 struct CrossWithCandidatePlan {
   SmallVector<std::string> targetPaths;
+  bool scalar = true;
 };
 
 /// Verify the implicit CrossQueueType shape required by 19.6.1.3 and
@@ -424,6 +425,8 @@ FailureOr<CrossWithCandidatePlan> buildCrossWithCandidatePlan(
       return;
     if (!targetPaths.contains(reference.getReferencedPath()))
       invalidIterator = true;
+    else
+      plan.scalar = false;
   });
   if (invalidIterator) {
     predicate->emitError("cross selector with predicate may reference only "
@@ -1155,6 +1158,9 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             paths.reserve(plan->targetPaths.size());
             for (StringRef path : plan->targetPaths)
               paths.push_back(builder.getStringAttr(path));
+            operands[1]->setAttr(
+                sim::metadata::coverageFunctionalCrossWithScalar,
+                builder.getBoolAttr(plan->scalar));
             operands[1]->setAttr(
                 sim::metadata::coverageFunctionalCrossWithTargetPaths,
                 builder.getArrayAttr(paths));

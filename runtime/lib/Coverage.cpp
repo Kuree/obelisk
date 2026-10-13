@@ -28,6 +28,34 @@
 #include <unistd.h>
 #endif
 
+// Sampling retains only the immutable label graph and numeric bin ordinals.
+// Constructor query indexes and temporary value projections can be released.
+struct FunctionalCoverageCrossSelection {
+  using Graph = obelisk::coverage::detail::DecisionIndex;
+  using Index = obelisk::coverage::detail::IndexMap<uint64_t, uint32_t>;
+  std::shared_ptr<const Graph> graph;
+  std::vector<Index> bins;
+  std::vector<std::pair<uint32_t, uint32_t>> variables;
+  bool matches(Graph::Root root, const std::vector<uint64_t> &tuple) const {
+    if (tuple.size() != bins.size())
+      return false;
+    std::vector<uint32_t> ordinals(tuple.size());
+    for (size_t axis = 0; axis != tuple.size(); ++axis) {
+      auto bin = bins[axis].find(tuple[axis]);
+      if (bin == bins[axis].end())
+        return false;
+      ordinals[axis] = bin->second;
+    }
+    while (root > 1) {
+      const auto [axis, bit] = variables[graph->variable(root)];
+      if (axis >= ordinals.size())
+        return false;
+      root = graph->child(root, (ordinals[axis] >> bit) & 1);
+    }
+    return root == 1;
+  }
+};
+
 // Templates are partitioned once. A constructor then touches only its type's
 // static rows and its newly resolved bundle, independent of earlier instances.
 struct FunctionalCoverageConstructionSchemas {
@@ -2806,6 +2834,14 @@ std::atomic<uint64_t> nextCoveragePreparationStamp{1};
 struct PreparedFunctionalConstruction {
   std::unique_ptr<obelisk::coverage::Database> schema;
   std::unique_ptr<FunctionalCoverageSetQueryIndex> queries;
+  const obelisk::coverage::Database *borrowedSchema = nullptr;
+  FunctionalCoverageSetQueryIndex *borrowedQueries = nullptr;
+  const obelisk::coverage::Database &database() const {
+    return schema ? *schema : *borrowedSchema;
+  }
+  FunctionalCoverageSetQueryIndex &query() const {
+    return queries ? *queries : *borrowedQueries;
+  }
   std::unordered_set<uint64_t> suppressedTransitions;
   IndexMap<uint64_t, std::vector<uint64_t>> binsByItem;
   uint64_t maximumMatchCount = 1;
@@ -2831,6 +2867,7 @@ struct PreparedCrossValueIndex {
     Graph *source = nullptr;
     Root relation = 0;
     std::unique_ptr<Image> avalImage, bvalImage;
+    IndexMap<uint64_t, uint32_t> binOrdinals;
     IndexMap<uint64_t, Root> templateBins;
     IndexMap<std::pair<uintptr_t, uintptr_t>, Root> associated;
   };
@@ -2838,7 +2875,9 @@ struct PreparedCrossValueIndex {
   PreparedFunctionalConstruction &prepared;
   std::vector<Axis> axes;
   std::unique_ptr<Graph> relation, values;
-  std::unique_ptr<Image> binImage, valueImage;
+  std::unique_ptr<Image> binImage, valueImage, sampleImage;
+  std::shared_ptr<Graph> sampleGraph;
+  std::shared_ptr<FunctionalCoverageCrossSelection> sampleSelection;
   std::unique_ptr<CountImage> countImage;
   IndexMap<uint64_t, size_t> targetAxes;
   IndexMap<uint64_t, Root> selectors;
@@ -2849,13 +2888,15 @@ struct PreparedCrossValueIndex {
       : prepared(prepared) {}
 
   bool check() {
-    if (prepared.queries->status != OBELISK_RT_OK)
-      status = prepared.queries->status;
+    if (prepared.query().status != OBELISK_RT_OK)
+      status = prepared.query().status;
     if ((relation && relation->exhausted()) ||
         (values && values->exhausted()) ||
         (countImage && countImage->exhausted()) ||
         (valueImage && valueImage->exhausted()) ||
-        (binImage && binImage->exhausted()))
+        (binImage && binImage->exhausted()) ||
+        (sampleImage && sampleImage->exhausted()) ||
+        (sampleGraph && sampleGraph->exhausted()))
       status = OBELISK_RT_OUT_OF_RESOURCES;
     return status == OBELISK_RT_OK;
   }
@@ -2873,7 +2914,7 @@ struct PreparedCrossValueIndex {
 
   Root associated(Axis &axis, const std::shared_ptr<CompiledSet> &set,
                   const std::shared_ptr<CompiledSet> &mask = nullptr) {
-    auto &queries = *prepared.queries;
+    auto &queries = prepared.query();
     if (!set || set->graph != axis.source ||
         (mask && mask->domain != set->domain)) {
       status = queries.status == OBELISK_RT_OK ? OBELISK_RT_INVALID_DESIGN
@@ -2915,8 +2956,8 @@ struct PreparedCrossValueIndex {
 
   bool build(const obelisk::coverage::CrossPlan &plan) {
     using namespace obelisk::coverage;
-    const auto &schema = *prepared.schema;
-    auto &queries = *prepared.queries;
+    const auto &schema = prepared.database();
+    auto &queries = prepared.query();
     uint64_t relationWidth = 0, valueWidth = 0;
     for (uint32_t ordinal = 0; ordinal != plan.targetCount; ++ordinal) {
       const auto &target = schema.crossTargets[plan.firstTarget + ordinal];
@@ -2986,6 +3027,7 @@ struct PreparedCrossValueIndex {
       if (bins != prepared.binsByItem.end()) {
         for (uint32_t ordinal = 0; ordinal != bins->second.size(); ++ordinal) {
           const auto *bin = queries.bin(bins->second[ordinal]);
+          axis.binOrdinals.emplace(bin->id, ordinal);
           Root binLabel = label(axis, ordinal);
           Root binValues = associated(
               axis, queries.subject(*bin, prepared.suppressedTransitions),
@@ -3010,8 +3052,8 @@ struct PreparedCrossValueIndex {
   }
 
   Root tupleValues(const obelisk::coverage::ResolvedFunctionalTupleSet &set) {
-    const auto &schema = *prepared.schema;
-    auto &queries = *prepared.queries;
+    const auto &schema = prepared.database();
+    auto &queries = prepared.query();
     Root result = 0;
     for (uint32_t ordinal = 0; ordinal != set.tupleCount; ++ordinal) {
       const auto &tuple =
@@ -3044,8 +3086,8 @@ struct PreparedCrossValueIndex {
   Root select(const obelisk::coverage::CrossSelectorNode &root,
               uint64_t resolvedCross, uint64_t outerWith) {
     using namespace obelisk::coverage;
-    const auto &schema = *prepared.schema;
-    auto &queries = *prepared.queries;
+    const auto &schema = prepared.database();
+    auto &queries = prepared.query();
     if (auto cached = selectors.find(root.id); cached != selectors.end())
       return cached->second;
     std::vector<const CrossSelectorNode *> pending{&root}, reachable;
@@ -3055,7 +3097,8 @@ struct PreparedCrossValueIndex {
       pending.pop_back();
       if (selectors.count(node->id) || !visited.insert(node->id).second)
         continue;
-      if (node->withExpression && node->id != outerWith) {
+      if (node->withExpression && node->id != outerWith &&
+          !queries.binding(resolvedCross, node->id)) {
         status = OBELISK_RT_INVALID_DESIGN;
         return 0;
       }
@@ -3116,8 +3159,7 @@ struct PreparedCrossValueIndex {
         selected = relation->intersect(operand(0), operand(1));
       } else if (node->kind == CrossSelectorKind::Or) {
         selected = relation->unite(operand(0), operand(1));
-      } else if (node->kind == CrossSelectorKind::With &&
-                 node->id == outerWith) {
+      } else if (node->kind == CrossSelectorKind::With) {
         selected = operand(0);
       } else if (node->kind == CrossSelectorKind::Set) {
         const auto *binding = queries.binding(resolvedCross, node->id);
@@ -3149,6 +3191,36 @@ struct PreparedCrossValueIndex {
         status = OBELISK_RT_INVALID_DESIGN;
         return 0;
       }
+      if (node->withExpression && node->id != outerWith) {
+        const auto *binding = queries.binding(resolvedCross, node->id);
+        if (!binding) {
+          status = OBELISK_RT_INVALID_DESIGN;
+          return 0;
+        }
+        Root accepted = 0;
+        if (binding->flags & ResolvedCrossSelectorScalarWith)
+          accepted = (binding->flags & ResolvedCrossSelectorScalarTrue) ? 1 : 0;
+        else {
+          const auto *set = queries.lookup(queries.tupleSets,
+                                           schema.resolvedFunctionalTupleSets,
+                                           binding->tupleSet);
+          if (!set) {
+            status = OBELISK_RT_INVALID_DESIGN;
+            return 0;
+          }
+          accepted = tupleValues(*set);
+        }
+        Root subject = relation->intersect(universe, selected);
+        selected =
+            binding->matchesPolicy == CrossMatchesPolicy::All
+                ? relation->subtract(
+                      binImage->project(subject),
+                      binImage->project(relation->subtract(subject, accepted)))
+            : binding->matchesCount == 1
+                ? binImage->project(relation->intersect(subject, accepted))
+                : countImage->atLeast(relation->intersect(subject, accepted),
+                                      binding->matchesCount);
+      }
       if (!check())
         return 0;
       if (node->id == outerWith)
@@ -3158,6 +3230,36 @@ struct PreparedCrossValueIndex {
     }
     return root.id == outerWith ? outerSelection
                                 : selectors.find(root.id)->second;
+  }
+
+  // Import label roots once through a shared projection memo. Only this
+  // compact graph survives initialization; associated values and count planes
+  // belong to the temporary constructor index.
+  Root sampleRoot(Root selected) {
+    if (!sampleSelection) {
+      uint32_t width = 0;
+      for (const auto &axis : axes)
+        width += axis.binWidth;
+      sampleGraph = std::make_shared<Graph>(width);
+      sampleSelection = std::make_shared<FunctionalCoverageCrossSelection>();
+      sampleSelection->graph = sampleGraph;
+      sampleSelection->bins.resize(axes.size());
+      std::vector<uint32_t> mapping(relation->getWidth(), UINT32_MAX);
+      uint32_t variable = 0;
+      for (uint32_t ordinal = 0; ordinal != axes.size(); ++ordinal) {
+        const auto &axis = axes[ordinal];
+        for (const auto &[bin, label] : axis.binOrdinals)
+          sampleSelection->bins[ordinal].emplace(bin, label);
+        for (uint32_t bit = 0; bit != axis.binWidth; ++bit) {
+          mapping[axis.binFirst + bit] = variable++;
+          sampleSelection->variables.emplace_back(ordinal,
+                                                  axis.binWidth - bit - 1);
+        }
+      }
+      sampleImage =
+          std::make_unique<Image>(*relation, *sampleGraph, std::move(mapping));
+    }
+    return sampleImage->project(selected);
   }
 
   obelisk_rt_status bind(const obelisk::coverage::CrossPlan &plan,
@@ -3175,7 +3277,7 @@ struct PreparedCrossValueIndex {
     std::vector<uint8_t> used(snapshot.valueSize);
     for (uint32_t ordinal = 0; ordinal != plan.targetCount; ++ordinal) {
       const auto &target =
-          prepared.schema->crossTargets[plan.firstTarget + ordinal];
+          prepared.database().crossTargets[plan.firstTarget + ordinal];
       for (uint32_t bit = 0; bit != target.tupleBitWidth; ++bit)
         used[(target.tupleBitOffset + bit) / 8] |=
             uint8_t{1} << ((target.tupleBitOffset + bit) % 8);
@@ -3193,7 +3295,7 @@ struct PreparedCrossValueIndex {
       for (size_t index = axes.size(); index != 0; --index) {
         const auto &axis = axes[index - 1];
         const auto &target =
-            prepared.schema->crossTargets[plan.firstTarget + index - 1];
+            prepared.database().crossTargets[plan.firstTarget + index - 1];
         for (uint32_t plane = 0; plane != 2; ++plane)
           for (uint32_t bit = 0; bit != axis.width; ++bit) {
             uint64_t encodedBit = target.tupleBitOffset + bit;
@@ -3270,7 +3372,7 @@ struct PreparedCrossValueIndex {
       for (size_t ordinal = 0; ordinal != axes.size(); ++ordinal) {
         const auto &axis = axes[ordinal];
         const auto &target =
-            prepared.schema->crossTargets[plan.firstTarget + ordinal];
+            prepared.database().crossTargets[plan.firstTarget + ordinal];
         uint32_t avalFirst =
             values->getWidth() - axis.valueFirst - axis.width * 2;
         uint32_t bvalFirst = values->getWidth() - axis.valueFirst - axis.width;
@@ -3293,6 +3395,53 @@ struct PreparedCrossValueIndex {
   }
 };
 
+// Index each physical bin once; reused crosses share their target geometry.
+void initializeSelectionIndex(PreparedFunctionalConstruction &index,
+                              const obelisk::coverage::Database &schema,
+                              FunctionalCoverageSetQueryIndex &queries,
+                              uint64_t type,
+                              const obelisk::coverage::Digest &configuration,
+                              const std::unordered_set<uint64_t> &suppressed) {
+  using namespace obelisk::coverage;
+  index.borrowedSchema = &schema;
+  index.borrowedQueries = &queries;
+  index.suppressedTransitions = suppressed;
+  constexpr uint32_t omitted =
+      FunctionalBinDefault | FunctionalBinDefaultSequence |
+      FunctionalBinIgnore | FunctionalBinIllegal | FunctionalBinEmpty;
+  for (const auto &bin : schema.resolvedFunctionalBins)
+    if (bin.type == type && bin.configuration == configuration &&
+        (bin.kind == FunctionalBinKind::State ||
+         bin.kind == FunctionalBinKind::Transition) &&
+        !(bin.flags & omitted))
+      index.binsByItem[bin.item].push_back(bin.id);
+  for (auto &[item, bins] : index.binsByItem) {
+    (void)item;
+    sortByKey(bins.begin(), bins.end(), [](uint64_t id) { return id; });
+  }
+  for (const auto &binding : schema.resolvedCrossSelectorBindings)
+    if (binding.type == type && binding.configuration == configuration)
+      index.maximumMatchCount =
+          std::max(index.maximumMatchCount, binding.matchesCount);
+}
+
+std::shared_ptr<PreparedCrossValueIndex>
+selectionKernel(PreparedFunctionalConstruction &index,
+                const obelisk::coverage::CrossPlan &plan) {
+  std::vector<uint64_t> targets;
+  targets.reserve(plan.targetCount);
+  for (uint32_t ordinal = 0; ordinal != plan.targetCount; ++ordinal)
+    targets.push_back(
+        index.database().crossTargets[plan.firstTarget + ordinal].target);
+  auto cached = index.crosses.find(targets);
+  if (cached != index.crosses.end())
+    return cached->second;
+  auto kernel = std::make_shared<PreparedCrossValueIndex>(index);
+  kernel->build(plan);
+  index.crosses.emplace(std::move(targets), kernel);
+  return kernel;
+}
+
 obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
     const obelisk::coverage::Database &schema, uint64_t type,
     const obelisk::coverage::Digest &configuration, uint64_t bin,
@@ -3302,10 +3451,6 @@ obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
 bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
                            const obelisk::coverage::CrossSelectorNode &root,
                            FunctionalCoverageSetQueryIndex &setQueries);
-bool crossSelectorIsWithWrappedSet(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::CrossSelectorNode &root,
-    FunctionalCoverageSetQueryIndex &setQueries);
 bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
                           const obelisk::coverage::CrossSelectorNode &root,
                           FunctionalCoverageSetQueryIndex &setQueries);
@@ -6817,7 +6962,8 @@ obelisk_rt_status resolveStaticFunctionalType(
     auto resolvedCross = resolvedItems.find(node.cross);
     if (resolvedCross == resolvedItems.end())
       continue;
-    if (prepared && node.withExpression)
+    if (prepared && node.withExpression &&
+        !(node.flags & CrossSelectorScalarWith))
       continue;
     if (node.tupleSet || (node.kind == CrossSelectorKind::Set) !=
                              (node.constructionExpression != 0))
@@ -7050,7 +7196,42 @@ obelisk_rt_status resolveStaticFunctionalType(
     uint64_t resolvedTupleSetID = 0;
     CrossMatchesPolicy resolvedMatchesPolicy = CrossMatchesPolicy::None;
     uint64_t resolvedMatchesCount = 0;
-    if (node.constructionExpression || node.withExpression) {
+    uint32_t resolvedBindingFlags = 0;
+    if (node.flags & CrossSelectorScalarWith) {
+      const auto *predicate = expressionValue(node.withExpression);
+      if (!predicate ||
+          (predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
+           predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
+          predicate->bit_width != 1 || predicate->value_size != 1 ||
+          !predicate->value)
+        return OBELISK_RT_INVALID_DESIGN;
+      bool truth = (*static_cast<const uint8_t *>(predicate->value) & 1) &&
+                   (!predicate->unknown ||
+                    !(*static_cast<const uint8_t *>(predicate->unknown) & 1));
+      resolvedBindingFlags = ResolvedCrossSelectorScalarWith |
+                             (truth ? ResolvedCrossSelectorScalarTrue : 0);
+      resolvedMatchesPolicy = node.matchesPolicy;
+      resolvedMatchesCount = node.matchesCount;
+      if (node.matchesExpression) {
+        const auto *descriptor = expressionSchema(node.matchesExpression);
+        const auto *value = expressionValue(node.matchesExpression);
+        FunctionalInteger integer;
+        bool unknown = false;
+        if (!descriptor || !value ||
+            !decodeFunctionalInteger(*value, descriptor->signedness, integer,
+                                     unknown) ||
+            unknown || integer.negative || integer.magnitude.empty())
+          return OBELISK_RT_INVALID_DESIGN;
+        if (integer.magnitude.size() > 1)
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        resolvedMatchesCount = integer.magnitude.front();
+      }
+      if ((resolvedMatchesPolicy == CrossMatchesPolicy::Count &&
+           !resolvedMatchesCount) ||
+          (resolvedMatchesPolicy != CrossMatchesPolicy::Count &&
+           resolvedMatchesPolicy != CrossMatchesPolicy::All))
+        return OBELISK_RT_INVALID_DESIGN;
+    } else if (node.constructionExpression || node.withExpression) {
       const auto *staticPlan = lookup(templateCrossPlans, node.cross);
       const auto *construction =
           expressionValue(node.withExpression ? node.withExpression
@@ -7336,7 +7517,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       pendingTupleSet.set.tupleCount = pendingTupleSet.tuples.size();
       pendingTupleSets.push_back(std::move(pendingTupleSet));
     }
-    if (!resolvedSetID && !resolvedTupleSetID)
+    if (!resolvedSetID && !resolvedTupleSetID && !resolvedBindingFlags)
       continue;
     resolvedSelectorBindingRows.push_back({typeID,
                                            {},
@@ -7346,7 +7527,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                            node.withExpression,
                                            resolvedTupleSetID,
                                            resolvedMatchesPolicy,
-                                           0,
+                                           resolvedBindingFlags,
                                            resolvedMatchesCount});
   }
   sortByKey(pendingTupleSets.begin(), pendingTupleSets.end(),
@@ -7532,7 +7713,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       prepared->maximumMatchCount =
           std::max(prepared->maximumMatchCount, binding.matchesCount);
     for (const auto &node : prepared->schema->crossSelectorNodes) {
-      if (!node.withExpression)
+      if (!node.withExpression || (node.flags & CrossSelectorScalarWith))
         continue;
       uint64_t count = node.matchesCount;
       if (node.matchesPolicy == CrossMatchesPolicy::Count) {
@@ -7564,6 +7745,29 @@ obelisk_rt_status resolveStaticFunctionalType(
     return OBELISK_RT_OK;
   }
 
+  PreparedFunctionalConstruction selectionIndex;
+  initializeSelectionIndex(selectionIndex, fingerprintInput, setQueries, typeID,
+                           Digest{}, suppressedTransitionAlternatives);
+  IndexMap<std::pair<uint64_t, uint64_t>, size_t> resolvedBinTemplates;
+  IndexMap<uint64_t, std::vector<const ResolvedFunctionalBin *>> orderedBins;
+  for (size_t ordinal = 0; ordinal != resolvedBinRows.size(); ++ordinal) {
+    const auto &bin = resolvedBinRows[ordinal];
+    resolvedBinTemplates.emplace(std::make_pair(bin.item, bin.templateBin),
+                                 ordinal);
+    constexpr uint32_t omitted =
+        FunctionalBinDefault | FunctionalBinDefaultSequence |
+        FunctionalBinIgnore | FunctionalBinIllegal | FunctionalBinEmpty;
+    if ((bin.kind == FunctionalBinKind::State ||
+         bin.kind == FunctionalBinKind::Transition) &&
+        !(bin.flags & omitted))
+      orderedBins[bin.item].push_back(&bin);
+  }
+  for (auto &[item, bins] : orderedBins) {
+    (void)item;
+    sortByKey(bins.begin(), bins.end(),
+              [](const auto *bin) { return std::tie(bin->name, bin->id); });
+  }
+
   struct PendingCrossNode {
     ResolvedCrossAutomaticNode node;
     std::vector<ResolvedCrossAutomaticEdge> edges;
@@ -7578,9 +7782,8 @@ obelisk_rt_status resolveStaticFunctionalType(
   for (const auto &item : resolvedItemRows)
     if (item.kind == FunctionalItemKind::Cross)
       resolvedCrossItems.push_back(&item);
-  std::sort(
-      resolvedCrossItems.begin(), resolvedCrossItems.end(),
-      [](const auto *left, const auto *right) { return left->id < right->id; });
+  sortByKey(resolvedCrossItems.begin(), resolvedCrossItems.end(),
+            [](const auto *item) { return item->id; });
   const uint64_t recordLimit = ParseLimits{}.maxRecords;
   std::vector<PendingCross> pendingCrosses;
   uint64_t generatedCrossPlanCount = 0;
@@ -7646,22 +7849,10 @@ obelisk_rt_status resolveStaticFunctionalType(
       auto target = resolvedItems.find(staticTarget.target);
       if (target == resolvedItems.end())
         return OBELISK_RT_INVALID_DESIGN;
-      std::vector<const ResolvedFunctionalBin *> bins;
-      for (const auto &bin : resolvedBinRows) {
-        constexpr uint32_t omitted =
-            FunctionalBinDefault | FunctionalBinDefaultSequence |
-            FunctionalBinIgnore | FunctionalBinIllegal | FunctionalBinEmpty;
-        if (bin.item == target->second && !(bin.flags & omitted))
-          bins.push_back(&bin);
-      }
-      std::sort(bins.begin(), bins.end(),
-                [](const auto *left, const auto *right) {
-                  return std::tie(left->name, left->id) <
-                         std::tie(right->name, right->id);
-                });
+      const auto &bins = orderedBins[target->second];
       if (bins.size() > UINT32_MAX)
         return OBELISK_RT_OUT_OF_RESOURCES;
-      targetBins.push_back(std::move(bins));
+      targetBins.push_back(bins);
     }
     const auto &allTargetBins = targetBins;
     uint64_t fullRectangleBinEntryCount = 0;
@@ -7674,6 +7865,23 @@ obelisk_rt_status resolveStaticFunctionalType(
     for (const auto &bins : allTargetBins)
       for (const ResolvedFunctionalBin *bin : bins)
         binsByID.emplace(bin->id, bin);
+
+    std::shared_ptr<PreparedCrossValueIndex> symbolic;
+    for (uint32_t index = 0; index != staticPlan->binCount; ++index) {
+      const auto &bin = schema.crossBins[staticPlan->firstBin + index];
+      const auto *root = setQueries.lookup(setQueries.selectors,
+                                           fingerprintInput.crossSelectorNodes,
+                                           bin.rootSelector);
+      if (!root)
+        return OBELISK_RT_INVALID_DESIGN;
+      if (crossSelectorUsesWith(schema, *root, setQueries)) {
+        symbolic = selectionKernel(selectionIndex, *staticPlan);
+        if (!symbolic->check())
+          return symbolic->status;
+        break;
+      }
+    }
+    PreparedCrossValueIndex::Root authored = 0;
 
     struct SelectorRectangle {
       std::vector<std::vector<uint64_t>> allowedBins;
@@ -7690,78 +7898,23 @@ obelisk_rt_status resolveStaticFunctionalType(
     for (uint32_t binIndex = 0; binIndex != staticPlan->binCount; ++binIndex) {
       const CrossBinPlan &crossBin =
           schema.crossBins[staticPlan->firstBin + binIndex];
-      auto node = std::find_if(schema.crossSelectorNodes.begin(),
-                               schema.crossSelectorNodes.end(),
-                               [&](const CrossSelectorNode &candidate) {
-                                 return candidate.id == crossBin.rootSelector;
-                               });
+      const auto *node = setQueries.lookup(setQueries.selectors,
+                                           fingerprintInput.crossSelectorNodes,
+                                           crossBin.rootSelector);
       CrossSelectorDNF alternatives;
-      if (crossBin.cross != cross->templateItem ||
-          node == schema.crossSelectorNodes.end() ||
+      if (crossBin.cross != cross->templateItem || !node ||
           node->cross != cross->templateItem)
         return OBELISK_RT_INVALID_DESIGN;
 
       bool hasSignificantAlternative = false;
-      if (crossSelectorUsesWith(schema, *node, setQueries)) {
-        std::vector<std::vector<uint64_t>> candidateTuples;
-        if (crossSelectorIsWithWrappedSet(schema, *node, setQueries)) {
-          std::vector<std::vector<uint64_t>> targetBinIDs(allTargetBins.size());
-          for (size_t ordinal = 0; ordinal != allTargetBins.size(); ++ordinal)
-            for (const ResolvedFunctionalBin *bin : allTargetBins[ordinal])
-              targetBinIDs[ordinal].push_back(bin->id);
-          obelisk_rt_status selectorStatus = resolvedCrossSelectorSetCandidates(
-              fingerprintInput, typeID, Digest{}, cross->id, *node,
-              targetBinIDs, suppressedTransitionAlternatives, setQueries,
-              candidateTuples);
-          if (selectorStatus != OBELISK_RT_OK)
-            return selectorStatus;
-        } else {
-          uint64_t binTupleCount = 1;
-          for (const auto &bins : allTargetBins) {
-            if (bins.empty()) {
-              binTupleCount = 0;
-              break;
-            }
-            if (binTupleCount > recordLimit / bins.size())
-              return OBELISK_RT_OUT_OF_RESOURCES;
-            binTupleCount *= bins.size();
-          }
-          std::vector<uint64_t> tuple(allTargetBins.size());
-          for (uint64_t encodedTuple = 0; encodedTuple != binTupleCount;
-               ++encodedTuple) {
-            uint64_t remainder = encodedTuple;
-            for (size_t reverse = allTargetBins.size(); reverse != 0;
-                 --reverse) {
-              const size_t ordinal = reverse - 1;
-              tuple[ordinal] =
-                  allTargetBins[ordinal]
-                               [remainder % allTargetBins[ordinal].size()]
-                                   ->id;
-              remainder /= allTargetBins[ordinal].size();
-            }
-            bool selected = false;
-            obelisk_rt_status selectorStatus =
-                resolvedCrossSelectorSelectsBinTuple(
-                    fingerprintInput, typeID, Digest{}, cross->id, *node, tuple,
-                    suppressedTransitionAlternatives, setQueries, selected);
-            if (selectorStatus != OBELISK_RT_OK)
-              return selectorStatus;
-            if (selected)
-              candidateTuples.push_back(tuple);
-          }
-        }
-        for (const auto &tuple : candidateTuples) {
-          if (selectorRectangles.size() >= recordLimit ||
-              tuple.size() > recordLimit - selectorRectangleBinEntryCount)
-            return OBELISK_RT_OUT_OF_RESOURCES;
-          SelectorRectangle rectangle;
-          rectangle.allowedBins.reserve(tuple.size());
-          for (uint64_t bin : tuple)
-            rectangle.allowedBins.push_back({bin});
-          selectorRectangleBinEntryCount += tuple.size();
-          selectorRectangles.push_back(std::move(rectangle));
-          hasSignificantAlternative = true;
-        }
+      if (symbolic) {
+        auto selected = symbolic->select(*node, cross->id, 0);
+        selected = symbolic->relation->intersect(
+            selected, symbolic->binImage->project(symbolic->universe));
+        authored = symbolic->relation->unite(authored, selected);
+        if (!symbolic->check())
+          return symbolic->status;
+        hasSignificantAlternative = selected != 0;
       } else {
         const bool usesSet = crossSelectorUsesSet(schema, *node, setQueries);
         obelisk_rt_status selectorStatus = decodeCrossSelectorDNF(
@@ -7894,26 +8047,16 @@ obelisk_rt_status resolveStaticFunctionalType(
         }
       }
       if (!hasSignificantAlternative) {
-        auto mirror =
-            std::find_if(resolvedBinRows.begin(), resolvedBinRows.end(),
-                         [&](const ResolvedFunctionalBin &candidate) {
-                           return candidate.templateBin == crossBin.bin &&
-                                  candidate.item == cross->id;
-                         });
-        if (mirror == resolvedBinRows.end())
+        auto mirror = resolvedBinTemplates.find({cross->id, crossBin.bin});
+        if (mirror == resolvedBinTemplates.end())
           return OBELISK_RT_INVALID_DESIGN;
-        mirror->flags |= FunctionalBinEmpty;
-        auto fingerprintMirror =
-            std::find_if(fingerprintInput.resolvedFunctionalBins.begin(),
-                         fingerprintInput.resolvedFunctionalBins.end(),
-                         [&](const ResolvedFunctionalBin &candidate) {
-                           return candidate.type == typeID &&
-                                  candidate.configuration == Digest{} &&
-                                  candidate.id == mirror->id;
-                         });
-        if (fingerprintMirror == fingerprintInput.resolvedFunctionalBins.end())
+        auto &row = resolvedBinRows[mirror->second];
+        row.flags |= FunctionalBinEmpty;
+        fingerprintInput.resolvedFunctionalBins[binBase + mirror->second]
+            .flags = row.flags;
+        auto queryBin = setQueries.bins.find(row.id);
+        if (queryBin == setQueries.bins.end())
           return OBELISK_RT_INVALID_DESIGN;
-        fingerprintMirror->flags = mirror->flags;
       }
     }
     std::sort(
@@ -7960,44 +8103,134 @@ obelisk_rt_status resolveStaticFunctionalType(
     struct RawState {
       RectangleState active;
       std::vector<RawEdge> edges;
+      PreparedCrossValueIndex::Root label = 0;
     };
     std::vector<std::vector<RawState>> levels(staticPlan->targetCount);
-    RectangleState initial(selectorRectangles.size());
-    std::iota(initial.begin(), initial.end(), uint32_t{0});
-    levels.front().push_back({std::move(initial), {}});
-    uint64_t rawStateCount = 1;
-    uint64_t rawEdgeCount = 0;
-    for (uint32_t ordinal = 0; ordinal != staticPlan->targetCount; ++ordinal) {
-      std::map<RectangleState, uint32_t> successorIndices;
-      for (RawState &state : levels[ordinal]) {
-        for (const ResolvedFunctionalBin *bin : allTargetBins[ordinal]) {
-          RectangleState next;
-          for (uint32_t rectangle : state.active)
-            if (std::binary_search(
-                    selectorRectangles[rectangle].allowedBins[ordinal].begin(),
-                    selectorRectangles[rectangle].allowedBins[ordinal].end(),
-                    bin->id))
-              next.push_back(rectangle);
-          const bool finalTarget = ordinal + 1 == staticPlan->targetCount;
-          if (finalTarget && !next.empty())
-            continue;
-          if (++rawEdgeCount > recordLimit)
-            return OBELISK_RT_OUT_OF_RESOURCES;
-          RawEdge edge;
-          edge.bin = bin;
-          edge.accepts = finalTarget;
-          if (!finalTarget) {
-            auto [position, inserted] = successorIndices.emplace(
-                next, static_cast<uint32_t>(levels[ordinal + 1].size()));
-            if (inserted) {
-              if (++rawStateCount > recordLimit ||
-                  levels[ordinal + 1].size() >= UINT32_MAX)
-                return OBELISK_RT_OUT_OF_RESOURCES;
-              levels[ordinal + 1].push_back({next, {}});
+    if (symbolic) {
+      using Root = PreparedCrossValueIndex::Root;
+      auto &graph = *symbolic->relation;
+      Root retained = graph.subtract(
+          symbolic->binImage->project(symbolic->universe), authored);
+      levels.front().push_back({{}, {}, retained});
+      uint64_t rawStateCount = 1, rawEdgeCount = 0;
+      for (uint32_t ordinal = 0; ordinal != staticPlan->targetCount;
+           ++ordinal) {
+        const auto &axis = symbolic->axes[ordinal];
+        const bool finalTarget = ordinal + 1 == staticPlan->targetCount;
+        std::vector<const ResolvedFunctionalBin *> byLabel(
+            allTargetBins[ordinal].size());
+        IndexMap<uint64_t, uint32_t> nameOrder;
+        for (uint32_t order = 0; order != allTargetBins[ordinal].size();
+             ++order) {
+          const auto *bin = allTargetBins[ordinal][order];
+          auto label = axis.binOrdinals.find(bin->id);
+          if (label == axis.binOrdinals.end() ||
+              label->second >= byLabel.size())
+            return OBELISK_RT_INVALID_DESIGN;
+          byLabel[label->second] = bin;
+          nameOrder.emplace(bin->id, order);
+        }
+        IndexMap<Root, uint32_t> successors;
+        for (RawState &state : levels[ordinal]) {
+          struct Frame {
+            Root root;
+            uint32_t depth;
+            uint64_t first;
+          };
+          std::vector<Frame> pending{{state.label, 0, 0}};
+          while (!pending.empty()) {
+            Frame frame = pending.back();
+            pending.pop_back();
+            if (!frame.root || frame.first >= byLabel.size())
+              continue;
+            const uint64_t span = uint64_t{1} << (axis.binWidth - frame.depth);
+            const uint32_t variable = graph.variable(frame.root);
+            if (variable >= axis.binFirst + axis.binWidth) {
+              uint32_t successor = 0;
+              if (finalTarget) {
+                if (frame.root != 1)
+                  return OBELISK_RT_INVALID_DESIGN;
+              } else {
+                auto [position, inserted] = successors.emplace(
+                    frame.root,
+                    static_cast<uint32_t>(levels[ordinal + 1].size()));
+                if (inserted) {
+                  if (++rawStateCount > recordLimit ||
+                      levels[ordinal + 1].size() >= UINT32_MAX)
+                    return OBELISK_RT_OUT_OF_RESOURCES;
+                  levels[ordinal + 1].push_back({{}, {}, frame.root});
+                }
+                successor = position->second;
+              }
+              const uint64_t limit =
+                  std::min<uint64_t>(byLabel.size(), frame.first + span);
+              for (uint64_t code = frame.first; code != limit; ++code) {
+                if (++rawEdgeCount > recordLimit)
+                  return OBELISK_RT_OUT_OF_RESOURCES;
+                state.edges.push_back({byLabel[code], successor, finalTarget});
+              }
+            } else {
+              const uint32_t bit = axis.binFirst + frame.depth;
+              if (span == 1 || variable < bit)
+                return OBELISK_RT_INVALID_DESIGN;
+              pending.push_back(
+                  {variable == bit ? graph.child(frame.root, true) : frame.root,
+                   frame.depth + 1, frame.first + span / 2});
+              pending.push_back({variable == bit
+                                     ? graph.child(frame.root, false)
+                                     : frame.root,
+                                 frame.depth + 1, frame.first});
             }
-            edge.successor = position->second;
           }
-          state.edges.push_back(edge);
+          sortByKey(state.edges.begin(), state.edges.end(),
+                    [&](const RawEdge &edge) {
+                      return nameOrder.find(edge.bin->id)->second;
+                    });
+        }
+      }
+      if (!symbolic->check())
+        return symbolic->status;
+    } else {
+      RectangleState initial(selectorRectangles.size());
+      std::iota(initial.begin(), initial.end(), uint32_t{0});
+      levels.front().push_back({std::move(initial), {}});
+      uint64_t rawStateCount = 1;
+      uint64_t rawEdgeCount = 0;
+      for (uint32_t ordinal = 0; ordinal != staticPlan->targetCount;
+           ++ordinal) {
+        std::map<RectangleState, uint32_t> successorIndices;
+        for (RawState &state : levels[ordinal]) {
+          for (const ResolvedFunctionalBin *bin : allTargetBins[ordinal]) {
+            RectangleState next;
+            for (uint32_t rectangle : state.active)
+              if (std::binary_search(
+                      selectorRectangles[rectangle]
+                          .allowedBins[ordinal]
+                          .begin(),
+                      selectorRectangles[rectangle].allowedBins[ordinal].end(),
+                      bin->id))
+                next.push_back(rectangle);
+            const bool finalTarget = ordinal + 1 == staticPlan->targetCount;
+            if (finalTarget && !next.empty())
+              continue;
+            if (++rawEdgeCount > recordLimit)
+              return OBELISK_RT_OUT_OF_RESOURCES;
+            RawEdge edge;
+            edge.bin = bin;
+            edge.accepts = finalTarget;
+            if (!finalTarget) {
+              auto [position, inserted] = successorIndices.emplace(
+                  next, static_cast<uint32_t>(levels[ordinal + 1].size()));
+              if (inserted) {
+                if (++rawStateCount > recordLimit ||
+                    levels[ordinal + 1].size() >= UINT32_MAX)
+                  return OBELISK_RT_OUT_OF_RESOURCES;
+                levels[ordinal + 1].push_back({next, {}});
+              }
+              edge.successor = position->second;
+            }
+            state.edges.push_back(edge);
+          }
         }
       }
     }
@@ -8030,7 +8263,7 @@ obelisk_rt_status resolveStaticFunctionalType(
       const uint32_t ordinal = reverseOrdinal - 1;
       stateNodes[ordinal].resize(levels[ordinal].size());
       stateCounts[ordinal].resize(levels[ordinal].size());
-      std::map<NodeSignature, CanonicalNode> canonical;
+      IndexMap<NodeSignature, CanonicalNode> canonical;
       for (size_t stateIndex = 0; stateIndex != levels[ordinal].size();
            ++stateIndex) {
         NodeSignature signature;
@@ -8115,11 +8348,9 @@ obelisk_rt_status resolveStaticFunctionalType(
                              std::make_move_iterator(pending.nodes.begin()),
                              std::make_move_iterator(pending.nodes.end()));
   }
-  std::sort(pendingCrossNodes.begin(), pendingCrossNodes.end(),
-            [](const auto &left, const auto &right) {
-              return std::tie(left.node.cross, left.node.id) <
-                     std::tie(right.node.cross, right.node.id);
-            });
+  sortByKey(
+      pendingCrossNodes.begin(), pendingCrossNodes.end(),
+      [](const auto &node) { return std::tie(node.node.cross, node.node.id); });
   std::vector<ResolvedCrossAutomaticNode> resolvedCrossNodeRows;
   std::vector<ResolvedCrossAutomaticEdge> resolvedCrossEdgeRows;
   for (PendingCrossNode &pending : pendingCrossNodes) {
@@ -8538,6 +8769,10 @@ obelisk_rt_status createResolvedFunctionalType(
     metadata->binPositions.emplace(bin.id, metadata->bins.size());
     metadata->bins.push_back(bin);
   }
+  PreparedFunctionalConstruction selectionIndex;
+  initializeSelectionIndex(selectionIndex, schema, setQueries, typeID,
+                           configuration,
+                           type.suppressedTransitionAlternatives);
   const uint64_t selectorResolutionLimit =
       obelisk::coverage::ParseLimits{}.maxRecords;
   uint64_t explicitRectangleCount = 0;
@@ -8630,80 +8865,18 @@ obelisk_rt_status createResolvedFunctionalType(
       FunctionalCoverageCrossState::ExplicitBin explicitBin;
       explicitBin.bin = resolvedBin->id;
       if (crossSelectorUsesWith(schema, *selector, setQueries)) {
-        std::vector<std::vector<uint64_t>> targetBins(cross.targets.size());
-        for (size_t targetOrdinal = 0; targetOrdinal != cross.targets.size();
-             ++targetOrdinal) {
-          auto targetPosition =
-              metadata->itemPositions.find(cross.targets[targetOrdinal]);
-          for (size_t binIndex : metadata->itemBins[targetPosition->second]) {
-            const auto &candidate = type.bins[binIndex];
-            constexpr uint32_t omitted =
-                obelisk::coverage::FunctionalBinDefault |
-                obelisk::coverage::FunctionalBinDefaultSequence |
-                obelisk::coverage::FunctionalBinIgnore |
-                obelisk::coverage::FunctionalBinIllegal |
-                obelisk::coverage::FunctionalBinEmpty;
-            if (!(candidate.flags & omitted))
-              targetBins[targetOrdinal].push_back(candidate.id);
-          }
-          sortByKey(targetBins[targetOrdinal].begin(),
-                    targetBins[targetOrdinal].end(),
-                    [](uint64_t bin) { return bin; });
-        }
-        std::vector<std::vector<uint64_t>> candidateTuples;
-        if (crossSelectorIsWithWrappedSet(schema, *selector, setQueries)) {
-          obelisk_rt_status selectorStatus = resolvedCrossSelectorSetCandidates(
-              schema, typeID, configuration, cross.id, *selector, targetBins,
-              type.suppressedTransitionAlternatives, setQueries,
-              candidateTuples);
-          if (selectorStatus != OBELISK_RT_OK)
-            return selectorStatus;
-        } else {
-          uint64_t tupleCount = 1;
-          for (const auto &bins : targetBins) {
-            if (bins.empty()) {
-              tupleCount = 0;
-              break;
-            }
-            if (tupleCount > selectorResolutionLimit / bins.size())
-              return OBELISK_RT_OUT_OF_RESOURCES;
-            tupleCount *= bins.size();
-          }
-          std::vector<uint64_t> tuple(cross.targets.size());
-          for (uint64_t encodedTuple = 0; encodedTuple != tupleCount;
-               ++encodedTuple) {
-            uint64_t remainder = encodedTuple;
-            for (size_t reverse = targetBins.size(); reverse != 0; --reverse) {
-              size_t ordinal = reverse - 1;
-              tuple[ordinal] =
-                  targetBins[ordinal][remainder % targetBins[ordinal].size()];
-              remainder /= targetBins[ordinal].size();
-            }
-            bool selected = false;
-            obelisk_rt_status selectorStatus =
-                resolvedCrossSelectorSelectsBinTuple(
-                    schema, typeID, configuration, cross.id, *selector, tuple,
-                    type.suppressedTransitionAlternatives, setQueries,
-                    selected);
-            if (selectorStatus != OBELISK_RT_OK)
-              return selectorStatus;
-            if (selected)
-              candidateTuples.push_back(tuple);
-          }
-        }
-        for (const auto &tuple : candidateTuples) {
-          if (explicitRectangleCount >= selectorResolutionLimit ||
-              tuple.size() >
-                  selectorResolutionLimit - explicitRectangleBinEntryCount)
-            return OBELISK_RT_OUT_OF_RESOURCES;
-          FunctionalCoverageCrossState::Rectangle rectangle;
-          for (size_t ordinal = 0; ordinal != tuple.size(); ++ordinal)
-            rectangle.constraints.push_back(
-                {static_cast<uint32_t>(ordinal), {tuple[ordinal]}});
-          ++explicitRectangleCount;
-          explicitRectangleBinEntryCount += tuple.size();
-          explicitBin.alternatives.push_back(std::move(rectangle));
-        }
+        auto kernel = selectionKernel(selectionIndex, *staticPlan);
+        if (!kernel->check())
+          return kernel->status;
+        auto selected = kernel->select(*selector, cross.id, 0);
+        selected = kernel->relation->intersect(
+            selected, kernel->binImage->project(kernel->universe));
+        if (!kernel->check())
+          return kernel->status;
+        explicitBin.selectionRoot = kernel->sampleRoot(selected);
+        if (!kernel->check())
+          return kernel->status;
+        explicitBin.selection = kernel->sampleSelection;
       } else {
         const bool usesSet =
             crossSelectorUsesSet(schema, *selector, setQueries);
@@ -10249,30 +10422,6 @@ bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
   return false;
 }
 
-bool crossSelectorIsWithWrappedSet(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::CrossSelectorNode &root,
-    FunctionalCoverageSetQueryIndex &setQueries) {
-  using namespace obelisk::coverage;
-  const CrossSelectorNode *node = &root;
-  IndexSet<uint64_t> visited;
-  while (node->kind == CrossSelectorKind::With) {
-    if (!visited.insert(node->id).second || node->operandCount != 1 ||
-        uint64_t{node->firstOperand} >= schema.crossSelectorOperands.size())
-      return false;
-    const CrossSelectorOperand &operand =
-        schema.crossSelectorOperands[node->firstOperand];
-    if (operand.node != node->id || operand.ordinal != 0)
-      return false;
-    const auto *child = setQueries.lookup(
-        setQueries.selectors, schema.crossSelectorNodes, operand.operand);
-    if (!child || child->cross != root.cross)
-      return false;
-    node = child;
-  }
-  return node->kind == CrossSelectorKind::Set;
-}
-
 bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
                           const obelisk::coverage::CrossSelectorNode &root,
                           FunctionalCoverageSetQueryIndex &setQueries) {
@@ -10437,8 +10586,31 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       return finish(base);
 
     auto binding = bindingFor(node.id);
-    if (!binding || binding->withExpression != node.withExpression ||
-        !binding->tupleSet)
+    if (!binding || binding->withExpression != node.withExpression)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (binding->flags & ResolvedCrossSelectorScalarWith) {
+      if (!(binding->flags & ResolvedCrossSelectorScalarTrue))
+        return finish(false);
+      if (binding->matchesPolicy == CrossMatchesPolicy::All)
+        return finish(true);
+      if (binding->matchesPolicy != CrossMatchesPolicy::Count ||
+          !binding->matchesCount)
+        return OBELISK_RT_INVALID_DESIGN;
+      uint64_t volume = 1, threshold = binding->matchesCount;
+      for (uint64_t bin : binTuple) {
+        uint64_t count = setQueries.cardinality(
+            bin, threshold, suppressedTransitionAlternatives);
+        if (setQueries.status != OBELISK_RT_OK)
+          return setQueries.status;
+        if (!count)
+          return finish(false);
+        volume = volume >= threshold || count > (threshold - 1) / volume
+                     ? threshold
+                     : volume * count;
+      }
+      return finish(volume >= threshold);
+    }
+    if (!binding->tupleSet)
       return OBELISK_RT_INVALID_DESIGN;
     const auto *tupleSet = setQueries.lookup(setQueries.tupleSets,
                                              schema.resolvedFunctionalTupleSets,
@@ -12674,7 +12846,8 @@ obelisk_rt_status obelisk_rt_coverage_prepare_construction(
     size_t supplied = 0;
     for (const auto *expression :
          schemaOrdered(schema.functionalExpressions, typeID, true)) {
-      if (expression->role == FunctionalExpressionRole::SelectorWith)
+      if (expression->role == FunctionalExpressionRole::SelectorWith &&
+          expression->resultKind == FunctionalExpressionResultKind::TupleQueue)
         continue;
       if (expression->role == FunctionalExpressionRole::FormalDefault &&
           (supplied == expressionCount ||
@@ -12750,8 +12923,8 @@ obelisk_rt_status obelisk_rt_coverage_prepared_candidates(
         coverage->preparations[slot]->stamp != token >> 32)
       return OBELISK_RT_INVALID_HANDLE;
     auto &prepared = *coverage->preparations[slot]->state;
-    auto &queries = *prepared.queries;
-    const auto &schema = *prepared.schema;
+    auto &queries = prepared.query();
+    const auto &schema = prepared.database();
     const auto *root =
         queries.lookup(queries.selectors, schema.crossSelectorNodes, selector);
     const auto *plan = root ? queries.lookup(queries.crossPlans,
@@ -12832,8 +13005,8 @@ obelisk_rt_v1_covergroup_bind_with(obelisk_rt_context *context, uint64_t token,
         coverage->preparations[slot]->stamp != token >> 32)
       return OBELISK_RT_INVALID_HANDLE;
     auto &prepared = *coverage->preparations[slot]->state;
-    auto &queries = *prepared.queries;
-    const auto &schema = *prepared.schema;
+    auto &queries = prepared.query();
+    const auto &schema = prepared.database();
     const auto *root =
         queries.lookup(queries.selectors, schema.crossSelectorNodes, selector);
     const auto *plan = root ? queries.lookup(queries.crossPlans,
@@ -12894,8 +13067,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_candidates(
         coverage->preparations[slot]->stamp != token >> 32)
       return OBELISK_RT_INVALID_HANDLE;
     auto &prepared = *coverage->preparations[slot]->state;
-    auto &queries = *prepared.queries;
-    const auto &schema = *prepared.schema;
+    auto &queries = prepared.query();
+    const auto &schema = prepared.database();
     const auto *root =
         queries.lookup(queries.selectors, schema.crossSelectorNodes, selector);
     const auto *plan = root ? queries.lookup(queries.crossPlans,
@@ -14252,19 +14425,27 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         IndexSet<uint64_t> illegalBins;
         IndexSet<size_t> ordinaryBins;
         for (const auto &explicitBin : cross.explicitBins) {
-          const bool selected = std::any_of(
-              explicitBin.alternatives.begin(), explicitBin.alternatives.end(),
-              [&](const auto &rectangle) {
-                return std::all_of(
-                    rectangle.constraints.begin(), rectangle.constraints.end(),
-                    [&](const auto &constraint) {
-                      return constraint.targetOrdinal < tuple.size() &&
-                             std::binary_search(
-                                 constraint.selectedTargetBins.begin(),
-                                 constraint.selectedTargetBins.end(),
-                                 tuple[constraint.targetOrdinal]);
-                    });
-              });
+          const bool selected =
+              explicitBin.selection
+                  ? explicitBin.selection->matches(explicitBin.selectionRoot,
+                                                   tuple)
+                  : std::any_of(
+                        explicitBin.alternatives.begin(),
+                        explicitBin.alternatives.end(),
+                        [&](const auto &rectangle) {
+                          return std::all_of(
+                              rectangle.constraints.begin(),
+                              rectangle.constraints.end(),
+                              [&](const auto &constraint) {
+                                return constraint.targetOrdinal <
+                                           tuple.size() &&
+                                       std::binary_search(
+                                           constraint.selectedTargetBins
+                                               .begin(),
+                                           constraint.selectedTargetBins.end(),
+                                           tuple[constraint.targetOrdinal]);
+                              });
+                        });
           if (!selected)
             continue;
           selectedByExplicitBin = true;

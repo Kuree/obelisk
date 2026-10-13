@@ -892,9 +892,12 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
          static_cast<uint32_t>(ordinal.getValue().getZExtValue()),
          {},
          {}});
-    if (role && role.getValue().getZExtValue() ==
-                    static_cast<uint32_t>(
-                        coverage::FunctionalExpressionRole::SelectorWith)) {
+    auto scalarWith = expression->getAttrOfType<BoolAttr>(
+        sim::metadata::coverageFunctionalCrossWithScalar);
+    if ((!scalarWith || !scalarWith.getValue()) && role &&
+        role.getValue().getZExtValue() ==
+            static_cast<uint32_t>(
+                coverage::FunctionalExpressionRole::SelectorWith)) {
       auto tuple = expression->getAttrOfType<TypeAttr>(
           sim::metadata::coverageFunctionalCrossWithTupleType);
       auto selector = expression->getAttrOfType<IntegerAttr>(

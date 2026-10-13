@@ -150,6 +150,8 @@ inline constexpr llvm::StringLiteral coverageFunctionalWithIteratorPath =
     "simulation.coverage.functional.with_iterator_path";
 /// Cross selectors produce one queue of satisfying associated-value tuples.
 /// Target paths identify the semantic iterator bindings in the predicate loop.
+inline constexpr llvm::StringLiteral coverageFunctionalCrossWithScalar =
+    "simulation.coverage.functional.cross_with_scalar";
 inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTupleType =
     "simulation.coverage.functional.cross_with_tuple_type";
 inline constexpr llvm::StringLiteral coverageFunctionalCrossWithSelectorId =
