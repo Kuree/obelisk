@@ -21,6 +21,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/bit.h"
 
@@ -974,7 +975,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     SmallVector<PropertyDomain> propertyDomains;
     if (auto domains = property.getAs<ArrayAttr>("domains")) {
-      APInt coveredMask(width, 0);
+      llvm::SmallBitVector coveredBits(width);
       for (Attribute domainAttr : domains) {
         auto domain = dyn_cast<DictionaryAttr>(domainAttr);
         auto offsetAttr =
@@ -998,13 +999,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           emitError(location) << "randomize property domain is out of range";
           return failure();
         }
-        APInt localMask = APInt::getAllOnes(domainWidth);
-        APInt shiftedMask = localMask.zextOrTrunc(width).shl(domainOffset);
-        if (!(coveredMask & shiftedMask).isZero()) {
-          emitError(location) << "randomize property domains overlap";
-          return failure();
+        // Domain ranges are disjoint. Visit each covered bit once rather than
+        // rebuilding an aggregate-width mask for every array leaf.
+        for (uint64_t bit = domainOffset; bit != domainOffset + domainWidth;
+             ++bit) {
+          if (coveredBits.test(bit)) {
+            emitError(location) << "randomize property domains overlap";
+            return failure();
+          }
+          coveredBits.set(bit);
         }
-        coveredMask |= shiftedMask;
         PropertyDomain propertyDomain{static_cast<uint32_t>(domainOffset),
                                       static_cast<unsigned>(domainWidth),
                                       {},
@@ -1047,8 +1051,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         if (cardinality == APInt::getOneBitSet(domainWidth + 1, domainWidth))
           continue;
-        // Only the narrow generated-code radix paths use this field. Wide
-        // domain counts and ranks come from the compiler-generated sampler.
+        // Generated-code radix paths use a 64-bit count even when the encoded
+        // value is wider. Larger counts use the compiler-generated sampler.
         propertyDomain.cardinality =
             cardinality.getActiveBits() <= 64 ? cardinality.getZExtValue() : 0;
         propertyDomains.push_back(std::move(propertyDomain));
@@ -2152,15 +2156,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return result;
   };
   auto propertyDomainCardinality = [&](const Property &property) {
-    if (property.width > 64)
-      return uint64_t{0};
-    uint64_t valueMask =
-        property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
-    unsigned ordinaryBits =
-        countBits(valueMask & ~propertyDomainMask(property));
-    uint64_t cardinality = ordinaryBits == 64 ? 0 : uint64_t{1} << ordinaryBits;
+    unsigned ordinaryBits = property.width;
     for (const PropertyDomain &domain : property.domains)
+      ordinaryBits -= domain.width;
+    if (ordinaryBits >= 64)
+      return uint64_t{0};
+    uint64_t cardinality = uint64_t{1} << ordinaryBits;
+    for (const PropertyDomain &domain : property.domains) {
+      if (domain.cardinality == 0 ||
+          cardinality > UINT64_MAX / domain.cardinality)
+        return uint64_t{0};
       cardinality *= domain.cardinality;
+    }
     return cardinality;
   };
   auto expandConstantBits = [](uint64_t index, uint64_t outputMask) {
@@ -2223,6 +2230,86 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   auto materializePropertyDomainIndex = [&](const Property &property,
                                             Value index) {
+    if (property.width > 64) {
+      Type fieldType = builder.getIntegerType(property.width);
+      auto resize = [&](Value bits, Type type) -> Value {
+        if (bits.getType() == type)
+          return bits;
+        return arith::ExtUIOp::create(builder, location, type, bits);
+      };
+      auto expand = [&](Value ordinal, const APInt &outputMask,
+                        Type type) -> Value {
+        Value result = arith::ConstantOp::create(
+            builder, location, type, builder.getIntegerAttr(type, 0));
+        unsigned inputBit = 0;
+        for (unsigned outputBit = 0; outputBit != outputMask.getBitWidth();
+             ++outputBit) {
+          if (!outputMask[outputBit])
+            continue;
+          Value bit = arith::AndIOp::create(
+              builder, location,
+              arith::ShRUIOp::create(builder, location, ordinal,
+                                     constant64(inputBit++)),
+              constant64(1));
+          bit = resize(bit, type);
+          if (outputBit)
+            bit = arith::ShLIOp::create(builder, location, bit,
+                                        resize(constant64(outputBit), type));
+          result = arith::OrIOp::create(builder, location, result, bit);
+        }
+        return result;
+      };
+      // Clear disjoint group ranges in one mask. Group literals retain their
+      // natural width and are extended in SSA, avoiding a parent-width APInt
+      // for every leaf of a wide aggregate.
+      APInt ordinaryMask = APInt::getAllOnes(property.width);
+      for (const PropertyDomain &domain : property.domains)
+        ordinaryMask.clearBits(domain.offset, domain.offset + domain.width);
+      Value field = expand(index, ordinaryMask, fieldType);
+      unsigned ordinaryBits = ordinaryMask.popcount();
+      Value remaining = index;
+      if (ordinaryBits)
+        remaining = arith::ShRUIOp::create(builder, location, remaining,
+                                           constant64(ordinaryBits));
+      for (const PropertyDomain &domain : property.domains) {
+        Value groupIndex = arith::RemUIOp::create(
+            builder, location, remaining, constant64(domain.cardinality));
+        remaining = arith::DivUIOp::create(builder, location, remaining,
+                                           constant64(domain.cardinality));
+        Type groupType = builder.getIntegerType(std::max(64u, domain.width));
+        Value selected;
+        uint64_t base = 0;
+        for (const DomainPattern &pattern : domain.patterns) {
+          Value ordinal = arith::SubIOp::create(builder, location, groupIndex,
+                                                constant64(base));
+          Value candidate = arith::OrIOp::create(
+              builder, location,
+              arith::ConstantOp::create(
+                  builder, location, groupType,
+                  builder.getIntegerAttr(
+                      groupType,
+                      pattern.value.zextOrTrunc(std::max(64u, domain.width)))),
+              expand(ordinal, pattern.freeMask, groupType));
+          if (!selected)
+            selected = candidate;
+          else {
+            Value use = arith::CmpIOp::create(builder, location,
+                                              arith::CmpIPredicate::uge,
+                                              groupIndex, constant64(base));
+            selected = arith::SelectOp::create(builder, location, use,
+                                               candidate, selected);
+          }
+          base += pattern.cardinality;
+        }
+        selected = resize(selected, fieldType);
+        if (domain.offset)
+          selected = arith::ShLIOp::create(
+              builder, location, selected,
+              resize(constant64(domain.offset), fieldType));
+        field = arith::OrIOp::create(builder, location, field, selected);
+      }
+      return field;
+    }
     uint64_t valueMask =
         property.width == 64 ? UINT64_MAX : (uint64_t{1} << property.width) - 1;
     uint64_t ordinaryMask = valueMask & ~propertyDomainMask(property);
@@ -2585,7 +2672,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             property.domains.empty()
                 ? constant64(0)
                 : materializePropertyDomainIndex(property, constant64(0));
-        if (assignmentType != i64)
+        if (value.getType() != assignmentType)
           value =
               arith::ExtUIOp::create(builder, location, assignmentType, value);
         cf::BranchOp::create(builder, location, mergeBlock,
@@ -2632,7 +2719,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             property.domains.empty()
                 ? cycle.getValue()
                 : materializePropertyDomainIndex(property, cycle.getValue());
-        if (assignmentType != i64)
+        if (semanticValue.getType() != assignmentType)
           semanticValue = arith::ExtUIOp::create(builder, location,
                                                  assignmentType, semanticValue);
         cf::CondBranchOp::create(
@@ -7107,12 +7194,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   bool hasFiniteDomains = llvm::any_of(planned, [](const Property &property) {
     return !property.domains.empty();
   });
-  if (hasRuntimeForeachConstraint && hasFiniteDomains) {
-    emitError(location)
-        << "foreach constraints over finite semantic random domains require "
-           "dynamic domain-index traversal";
-    return failure();
-  }
   if (hasFiniteDomains)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS;
   bool wideProgram =
@@ -7310,6 +7391,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       break;
     }
     fallbackAttempts *= cardinality;
+  }
+  bool useForeachRankSampler =
+      hasRuntimeForeachConstraint && completeFallbackDomain && !hasRandC &&
+      !hasSoftConstraint && !hasRealProgram && !hasFunctionPriority &&
+      !hasSolveBefore && distPlans.empty() && plannedContainers.empty();
+  if (hasRuntimeForeachConstraint && hasFiniteDomains &&
+      !useForeachRankSampler) {
+    emitError(location)
+        << "foreach constraints over finite semantic random domains require "
+           "complete integral rank traversal without cyclic, soft, ordered "
+           "or randomized-container stages";
+    return failure();
   }
   if (!rawDistWeights && hasFiniteDomains && !distPlans.empty() &&
       !completeFallbackDomain) {
@@ -9162,6 +9255,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *postBlock = addBlock();
   Block *failedBlock = addBlock();
   Block *done = addBlock();
+  Block *foreachRankEntry =
+      useForeachRankSampler && !checkerOnly ? addBlock() : nullptr;
   Block *singleRandCLoop = nullptr;
   Block *singleRandCAdvance = nullptr;
   Block *singleRandCCommit = nullptr;
@@ -9700,33 +9795,44 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t domainPropertyOffset = 0;
     for (const Property &property : planned) {
       for (const PropertyDomain &domain : property.domains) {
-        Value field = assignment;
         uint64_t offset = domainPropertyOffset + domain.offset;
-        if (offset != 0)
-          field = arith::ShRUIOp::create(builder, location, field,
-                                         constantAssignment64(offset));
-        APInt fieldMask = APInt::getAllOnes(domain.width);
-        field = arith::AndIOp::create(builder, location, field,
-                                      constantAssignment(fieldMask));
+        Type fieldType = builder.getIntegerType(domain.width);
+        Value shift;
+        if (offset != 0) {
+          shift = constant64(offset);
+          if (assignmentType != i64)
+            shift = arith::ExtUIOp::create(builder, location, assignmentType,
+                                           shift);
+        }
+        auto extractField = [&](Value bits) -> Value {
+          if (shift)
+            bits = arith::ShRUIOp::create(builder, location, bits, shift);
+          if (bits.getType() != fieldType)
+            bits = arith::TruncIOp::create(builder, location, fieldType, bits);
+          return bits;
+        };
+        auto fieldConstant = [&](const APInt &bits) -> Value {
+          return arith::ConstantOp::create(
+              builder, location, fieldType,
+              builder.getIntegerAttr(fieldType, bits));
+        };
+        // Keep each predicate at its domain width, including enum array
+        // leaves, instead of copying parent-width pattern literals.
+        Value field = extractField(assignment);
         Value member = arith::ConstantOp::create(
             builder, location, builder.getI1Type(), builder.getBoolAttr(false));
         for (const DomainPattern &pattern : domain.patterns) {
-          Value masked = arith::AndIOp::create(
-              builder, location, field, constantAssignment(pattern.mask));
+          Value masked = arith::AndIOp::create(builder, location, field,
+                                               fieldConstant(pattern.mask));
           Value matches =
               arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                    masked, constantAssignment(pattern.value));
+                                    masked, fieldConstant(pattern.value));
           member = arith::OrIOp::create(builder, location, member, matches);
         }
-        Value mutableField = mutableMask;
-        if (offset != 0)
-          mutableField = arith::ShRUIOp::create(builder, location, mutableField,
-                                                constantAssignment64(offset));
-        mutableField = arith::AndIOp::create(builder, location, mutableField,
-                                             constantAssignment(fieldMask));
-        Value inactive =
-            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
-                                  mutableField, constantAssignment64(0));
+        Value mutableField = extractField(mutableMask);
+        Value inactive = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::eq, mutableField,
+            fieldConstant(APInt(domain.width, 0)));
         Value accepted =
             arith::OrIOp::create(builder, location, member, inactive);
         satisfied =
@@ -10148,7 +10254,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           property.domains.empty()
               ? cycle.getValue()
               : materializePropertyDomainIndex(property, cycle.getValue());
-      if (assignmentType != i64)
+      if (semanticValue.getType() != assignmentType)
         semanticValue = arith::ExtUIOp::create(builder, location,
                                                assignmentType, semanticValue);
       cf::CondBranchOp::create(builder, location, valid, singleRandCLoop,
@@ -10172,6 +10278,102 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                               location)))
       return failure();
     cf::BranchOp::create(builder, location, postBlock);
+  }
+
+  if (foreachRankEntry) {
+    // The compiler's semantic domains form a mixed-radix assignment space.
+    // Visit every rank once and reservoir-sample the satisfying assignments.
+    // Starting a cyclic scan at a random rank and taking its first solution
+    // would weight solutions by the preceding gaps instead of uniformly.
+    Value initialState = foreachRankEntry->addArgument(i64, location);
+    Block *rankLoop = addBlock();
+    Value rank = rankLoop->addArgument(i64, location);
+    Value count = rankLoop->addArgument(i64, location);
+    Value selected = rankLoop->addArgument(assignmentType, location);
+    Value stream = rankLoop->addArgument(i64, location);
+    Block *accepted = addBlock();
+    Block *rankAdvance = addBlock();
+    Value nextCount = rankAdvance->addArgument(i64, location);
+    Value nextSelected = rankAdvance->addArgument(assignmentType, location);
+    Value nextStream = rankAdvance->addArgument(i64, location);
+    Block *finished = addBlock();
+    Value finalCount = finished->addArgument(i64, location);
+    Value finalSelected = finished->addArgument(assignmentType, location);
+    Value finalStream = finished->addArgument(i64, location);
+    Block *successful = addBlock();
+
+    setCurrent(foreachRankEntry);
+    cf::BranchOp::create(
+        builder, location, rankLoop,
+        ValueRange{constant64(0), constant64(0), zeroAssignment, initialState});
+    setCurrent(rankLoop);
+    Value remaining = rank;
+    Value candidate = zeroAssignment;
+    for (auto [index, property] : llvm::enumerate(planned)) {
+      uint64_t cardinality = propertyDomainCardinality(property);
+      Value fieldIndex = arith::RemUIOp::create(builder, location, remaining,
+                                                constant64(cardinality));
+      remaining = arith::DivUIOp::create(builder, location, remaining,
+                                         constant64(cardinality));
+      Value bits = property.domains.empty()
+                       ? fieldIndex
+                       : materializePropertyDomainIndex(property, fieldIndex);
+      if (bits.getType() != assignmentType)
+        bits = arith::ExtUIOp::create(builder, location, assignmentType, bits);
+      if (propertyOffsets[index]) {
+        Value shift = constant64(propertyOffsets[index]);
+        if (assignmentType != i64)
+          shift =
+              arith::ExtUIOp::create(builder, location, assignmentType, shift);
+        bits = arith::ShLIOp::create(builder, location, bits, shift);
+      }
+      candidate = arith::OrIOp::create(builder, location, candidate, bits);
+    }
+    candidate = arith::OrIOp::create(
+        builder, location,
+        arith::AndIOp::create(builder, location, candidate, mutableMask),
+        fixedAssignment);
+    FailureOr<ConstraintCheck> check = materializeConstraintCheck(candidate);
+    if (failed(check))
+      return failure();
+    cf::CondBranchOp::create(builder, location, check->hard, accepted,
+                             ValueRange{}, rankAdvance,
+                             ValueRange{count, selected, stream});
+
+    setCurrent(accepted);
+    Value acceptedCount =
+        arith::AddIOp::create(builder, location, count, constant64(1));
+    Value acceptedState = stream;
+    Value draw = next64(acceptedState);
+    Value choice =
+        sampleDynamicBoundedIndex(acceptedCount, draw, acceptedState);
+    Value replace = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::eq, choice, constant64(0));
+    Value acceptedValue = arith::SelectOp::create(builder, location, replace,
+                                                  candidate, selected);
+    cf::BranchOp::create(
+        builder, location, rankAdvance,
+        ValueRange{acceptedCount, acceptedValue, acceptedState});
+
+    setCurrent(rankAdvance);
+    Value nextRank =
+        arith::AddIOp::create(builder, location, rank, constant64(1));
+    Value exhausted =
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                              nextRank, constant64(fallbackAttempts));
+    cf::CondBranchOp::create(
+        builder, location, exhausted, finished,
+        ValueRange{nextCount, nextSelected, nextStream}, rankLoop,
+        ValueRange{nextRank, nextCount, nextSelected, nextStream});
+
+    setCurrent(finished);
+    Value found = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ne, finalCount, constant64(0));
+    cf::CondBranchOp::create(builder, location, found, successful, ValueRange{},
+                             failedBlock, ValueRange{});
+    setCurrent(successful);
+    storeRandomState(finalStream);
+    cf::BranchOp::create(builder, location, commit, ValueRange{finalSelected});
   }
 
   setCurrent(disabledCheckBlock);
@@ -10228,7 +10430,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     // Traverse the bounded aggregate domain cyclically from the initial
     // object-stream draw so a complete domain (at most 2^20 assignments) is
     // proved rather than probabilistically sampled with replacement.
-    next = arith::AddIOp::create(builder, location, counter, constant64(1));
+    next = arith::AddIOp::create(builder, location, counter,
+                                 constantAssignment64(1));
     nextSampledDomainIndices.assign(loopSampledDomainIndices.begin(),
                                     loopSampledDomainIndices.end());
   } else {
@@ -10287,9 +10490,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(modeSamplingDispatchBlock);
   storeRandomState(modeState);
-  if (!hasRuntimeForeachConstraint &&
-      (hasRealProgram || weightedRequiresRuntime || hasSolveBefore ||
-       hasFiniteDomains))
+  if (foreachRankEntry)
+    cf::BranchOp::create(builder, location, foreachRankEntry,
+                         ValueRange{modeState});
+  else if (!hasRuntimeForeachConstraint &&
+           (hasRealProgram || weightedRequiresRuntime || hasSolveBefore ||
+            hasFiniteDomains))
     cf::BranchOp::create(builder, location, modeFallbackBlock,
                          ValueRange{modeStart});
   else
@@ -10307,8 +10513,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   setCurrent(modeAdvance);
   Value modeNext;
   if (hasRuntimeForeachConstraint) {
-    modeNext =
-        arith::AddIOp::create(builder, location, modeCounter, constant64(1));
+    modeNext = arith::AddIOp::create(builder, location, modeCounter,
+                                     constantAssignment64(1));
   } else {
     Value modeRetryState = loadRandomState();
     modeNext = nextAssignment(modeRetryState);
@@ -10366,6 +10572,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   setCurrent(dispatchBlock);
   if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable)
     cf::BranchOp::create(builder, location, failedBlock, ValueRange{});
+  else if (foreachRankEntry)
+    cf::BranchOp::create(builder, location, foreachRankEntry,
+                         ValueRange{state});
   else if (singleRandCLoop)
     cf::BranchOp::create(
         builder, location, singleRandCLoop,

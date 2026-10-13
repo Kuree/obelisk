@@ -1,4 +1,5 @@
-// RUN: obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: %if compiled-sampler %{ obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=PLAN %}
+// RUN: %if !compiled-sampler %{ obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=FALLBACK %}
 // RUN: obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
 // RUN: obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
 
@@ -9,12 +10,14 @@
 // CHECK: simulation.class.field
 // CHECK-SAME: : i4
 // CHECK-SAME: debug_name = "e"
-// CHECK: simulation.random.cycle_next
-// CHECK-SAME: width = 2 : i32
-// CHECK: arith.cmpi ult
-// CHECK-DAG: arith.constant {{.*}} 1 : i64
-// CHECK-DAG: arith.constant {{.*}} 4 : i64
-// CHECK-DAG: arith.constant {{.*}} 9 : i64
+// PLAN: simulation.random.cycle_sample
+// PLAN-SAME: SAMP
+// FALLBACK: simulation.random.cycle_next
+// FALLBACK-SAME: width = 2 : i32
+// FALLBACK: arith.cmpi ult
+// FALLBACK-DAG: arith.constant {{.*}} 1 : i64
+// FALLBACK-DAG: arith.constant {{.*}} 4 : i64
+// FALLBACK-DAG: arith.constant {{.*}} 9 : i64
 // CHECK: simulation.random.solve
 
 module attributes {
@@ -55,8 +58,8 @@ module attributes {
 // CHECK: simulation.class.field
 // CHECK-SAME: !simulation.packed_union
 // CHECK-DAG: arith.constant {{.*}} 21 : i64
-// CHECK-DAG: arith.constant {{.*}} 60 : i64
-// CHECK-DAG: arith.constant {{.*}} 48 : i64
+// CHECK-DAG: arith.constant {{.*}} -4 : i6
+// CHECK-DAG: arith.constant {{.*}} -16 : i6
 // CHECK-DAG: arith.constant {{.*}} 16 : i64
 // CHECK-DAG: arith.constant {{.*}} 63 : i64
 // CHECK-DAG: arith.constant {{.*}} 32 : i64

@@ -468,13 +468,38 @@ ordinary exact runtime solver after expansion.
 
 Constraint execution also includes IEEE 1800-2023 18.5.7.1 universal `foreach`
 predicates over one-dimensional dynamic arrays and queues. The live container
-size is sampled for each candidate, the declared iterator type is respected,
+size is read for each candidate, the declared iterator type is respected,
 and an empty container contributes the identity value `true`. Generalized
 runtime dimensions, associative arrays, and strings remain explicit boundaries.
-The current dynamic-`foreach` solver path accepts ordinary packed random
-domains without `solve before`; finite semantic domains require a future
-domain-index traversal. It checks a complete aggregate domain through 2^20
-assignments and otherwise retains the global bounded-solver limit.
+For hard constraints over state arrays and queues, complete integral domains
+through 2^20 semantic assignments use generated mixed-radix rank traversal and
+reservoir sampling. This preserves the uniform distribution over legal tuples
+required by 18.5.9, including unequal companion completion counts and gaps in
+the legal domain. Semantic cardinality counts actual enum values, including
+sparse 130-bit enums and fixed arrays of those enums. Live constraint modes,
+frozen properties and frozen array leaves use the same checker and commit path;
+frozen unnamed enum values remain state. Empty containers, checker calls and
+unsatisfiable relations retain their normal behavior.
+
+The compiler emits one decoder per property/domain pattern and one rank loop,
+without expanding the Cartesian sample space. Domain range overlap validation
+visits each covered bit once, and both rank expansion and checker predicates
+keep constants at their natural group widths. These passes are linear in the
+lowered domain metadata and bit widths. Arrays of 2, 4, 8 and 12 three-value enum
+leaves emit 33, 67, 135 and 203 decoder operations even though their semantic
+spaces contain 9, 81, 6,561 and 531,441 ranks. The runtime visits every semantic
+rank and retains one satisfying tuple using unbiased bounded draws; no Z3 is
+linked or called by either runtime. MLIR fixtures cover native and bytecode
+execution at O0/O3, and were checked in both WASM CLI and browser configurations.
+Independent Z3 checks prove the emitted decoders, their unfrozen rank bijections, frozen
+value preservation, the reservoir probability invariant and the equivalence
+of domain checks at their natural widths.
+
+This complete path excludes cyclic, soft, function-priority, explicit ordering,
+distribution and randomized-container stages. Finite semantic domains combined
+with those stages are diagnosed. Ordinary larger or staged runtime-`foreach`
+relations retain their existing bounded solver behavior; generalized dynamic
+container solving and the full compiler O(N) audit remain open.
 
 Recursive polymorphic object paths specialize only dynamic classes with
 observable randomization behavior (rand state, effective constraints, or

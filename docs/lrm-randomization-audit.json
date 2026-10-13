@@ -121,7 +121,7 @@
         {
           "feature": "Complete solution discovery",
           "status": "partial",
-          "detail": "Compiler Z3 proves static plans. Native and WASM compiled-plan samplers complete ordinary and explicitly ordered packed integral residuals of arbitrary aggregate width with live captures, frozen bits, domains, block masks and optimal soft priorities. Weighted and runtime-foreach paths retain limits; non-integral forms remain incomplete."
+          "detail": "Compiler Z3 proves static plans. Native and WASM compiled-plan samplers complete ordinary and explicitly ordered packed integral residuals of arbitrary aggregate width with live captures, frozen bits, domains, block masks and optimal soft priorities. State-array and queue foreach over complete hard integral semantic domains through 2^20 assignments uses generated rank traversal, including sparse wide enums and fixed enum arrays. Weighted, other runtime-foreach and non-integral paths retain limits."
         },
         {
           "feature": "Failure leaves random properties unchanged",
@@ -131,7 +131,7 @@
         {
           "feature": "Uniform joint sampling",
           "status": "partial",
-          "detail": "Exact compiler Z3 plans and tables are uniform. Ordinary native/WASM integral residuals use compiler-generated Boolean plans, exact model counts and arbitrary-precision rejection-sampled ranks, including live captures, frozen bits, domains, block masks and optimal soft priorities. Runtime foreach, non-integral forms and other explicitly partial paths remain open."
+          "detail": "Exact compiler Z3 plans and tables are uniform. Ordinary native/WASM integral residuals use compiler-generated Boolean plans, exact model counts and arbitrary-precision rejection-sampled ranks, including live captures, frozen bits, domains, block masks and optimal soft priorities. Hard runtime foreach over state arrays and queues uses complete semantic-rank reservoir sampling through 2^20 assignments, so solution gaps and unequal companion completion counts do not bias legal tuples. Soft, cyclic, ordered, function-priority and randomized-container foreach combinations, larger domains and non-integral forms remain open."
         }
       ],
       "evidence": {
@@ -206,7 +206,10 @@
           "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-real-source-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
         ]
       }
     },
@@ -865,7 +868,7 @@
         {
           "feature": "Iterative constraint family",
           "status": "partial",
-          "detail": "Fixed foreach dimensions expand into ordinary predicates before Z3 planning and function dependency analysis; runtime iteration covers admitted one-dimensional dynamic arrays and queues."
+          "detail": "Fixed foreach dimensions expand into ordinary predicates before Z3 planning and function dependency analysis; runtime iteration covers admitted one-dimensional dynamic arrays and queues. Complete finite hard state-container relations use uniform semantic ranks, including 130-bit enums, fixed enum arrays, live constraint modes and frozen leaves. Generalized runtime dimensions and staged combinations remain open."
         }
       ],
       "evidence": {
@@ -885,7 +888,10 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
           "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
-          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
         ]
       }
     },
@@ -896,7 +902,7 @@
         {
           "feature": "One-dimensional dynamic foreach",
           "status": "supported",
-          "detail": "Live size, declared iterator type, universal conjunction, and empty-array identity are implemented."
+          "detail": "Live size, declared iterator type, universal conjunction and empty-array identity are implemented. For complete hard integral domains through 2^20 assignments, generated mixed-radix traversal and reservoir sampling preserve uniform joint probabilities under state-array and queue exclusions, including sparse 130-bit enums, fixed enum arrays and frozen leaves. Finite semantic domains combined with cyclic, soft, function-priority, ordered or randomized-container stages remain diagnosed; larger domains retain their prior limits."
         },
         {
           "feature": "Fixed, associative, string, and multidimensional foreach",
@@ -931,7 +937,10 @@
           "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
         ]
       }
     },
@@ -1079,7 +1088,10 @@
           "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
         ]
       }
     },
@@ -1625,7 +1637,7 @@
         {
           "feature": "Large-domain partial selection solving",
           "status": "partial",
-          "detail": "With compiled-plan samplers, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. Frozen four-state symbols use snapshot captures and active-bit masks without a runtime solver. The optional build without compiler Z3 retains bounded fallback search; non-integral and dynamic-container relations remain open."
+          "detail": "With compiled-plan samplers, finite integral partial selections use exact projected counts with frozen bits, including sparse wide constraints and fixed array element masks. Frozen four-state symbols use snapshot captures and active-bit masks without a runtime solver. Complete hard state-container foreach domains through 2^20 assignments use uniform rank traversal, including unnamed frozen enum values and fixed wide enum leaves. The optional build without compiler Z3 retains bounded fallback search; non-integral and generalized dynamic-container relations remain open."
         }
       ],
       "evidence": {
@@ -1684,7 +1696,9 @@
           "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
         ]
       }
     },
@@ -1869,7 +1883,7 @@
         {
           "feature": "Scope variable types",
           "status": "partial",
-          "detail": "Packed integral, enum, packed aggregates and fixed unpacked arrays of integral leaves work. Ordinary state indices select exact array paths, including 65-bit elements and multidimensional logical bitstreams. Bounds failures preserve all scope assignments. Dynamic containers, class handles and non-integral aggregates remain incomplete."
+          "detail": "Packed integral, enum, packed aggregates and fixed unpacked arrays of integral leaves work. Ordinary state indices select exact array paths, including 65-bit elements and multidimensional logical bitstreams. Complete finite hard foreach over state arrays and queues preserves uniform scope tuples, including gapped legal domains. Bounds failures preserve all scope assignments. Randomized dynamic containers, class handles and non-integral aggregates remain incomplete."
         },
         {
           "feature": "Scope failure commit behavior",
@@ -1915,7 +1929,8 @@
           "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir"
         ]
       }
     },
@@ -1957,7 +1972,8 @@
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
           "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
           "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir"
         ]
       }
     },
