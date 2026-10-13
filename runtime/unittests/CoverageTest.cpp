@@ -4263,6 +4263,134 @@ TEST_F(CoverageRuntimeDesignTest,
   std::filesystem::remove(path, ignored);
 }
 
+TEST_F(CoverageRuntimeDesignTest,
+       SparseCrossUpdatesPreserveHistoryIsolationAndSaturatingCounts) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalBins.clear();
+  schema.functionalBinPlans.clear();
+  schema.functionalValueSets.clear();
+  schema.functionalValueAtoms.clear();
+  schema.functionalValueLimbs.clear();
+  for (auto &expression : schema.functionalExpressions)
+    expression.bitWidth = 3;
+  for (uint32_t ordinal = 0; ordinal != 2; ++ordinal) {
+    uint64_t item = 22 + ordinal;
+    std::string name = "product" + std::to_string(ordinal);
+    schema.functionalItems.push_back({item, 10, name, FunctionalItemKind::Cross,
+                                      0, 100, 1, ordinal + 2,
+                                      "top.cg." + name});
+    schema.crossPlans.push_back({item, ordinal * 2, 2, 0, 0,
+                                 CrossRetainAutoPolicy::Retain, 0, 62 + ordinal,
+                                 220 + 10 * ordinal, 6, 0});
+    schema.crossTargets.push_back({item, 20, 0, 0, 3,
+                                   FunctionalExpressionResultKind::Integral,
+                                   CoverageSignedness::Unsigned, 0});
+    schema.crossTargets.push_back({item, 21, 1, 3, 3,
+                                   FunctionalExpressionResultKind::Integral,
+                                   CoverageSignedness::Unsigned, 0});
+    auto iff = schema.functionalExpressions.front();
+    iff.id = 62 + ordinal;
+    iff.owner = item;
+    iff.role = FunctionalExpressionRole::CrossIff;
+    iff.resultKind = FunctionalExpressionResultKind::Boolean;
+    iff.bitWidth = 0;
+    iff.signedness = CoverageSignedness::NotApplicable;
+    iff.resultOrdinal = ordinal + 2;
+    schema.functionalExpressions.push_back(iff);
+  }
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0, other = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &other), OBELISK_RT_OK);
+  uint8_t first = 0, second = 0, firstGuard = 1, secondGuard = 1;
+  std::array<obelisk_rt_functional_value_v1, 4> batch{
+      obelisk_rt_functional_value_v1{60, 3, 1, &first, nullptr, nullptr, 0,
+                                     OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {61, 3, 1, &second, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {62, 1, 1, &firstGuard, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+      {63, 1, 1, &secondGuard, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
+  auto sample = [&](uint64_t selected) {
+    return obelisk_rt_v1_covergroup_sample(context, selected, batch.data(),
+                                           batch.size());
+  };
+  ASSERT_EQ(sample(handle), OBELISK_RT_OK);
+  auto &instance = context->coverage->instances.at(handle);
+  const auto &type = context->coverage->types.at({10, instance.configuration});
+  auto product =
+      std::find_if(type.crosses.begin(), type.crosses.end(),
+                   [](const auto &cross) { return cross.templateItem == 22; });
+  ASSERT_NE(product, type.crosses.end());
+  auto &tuples = instance.crossTuples.at(product->id);
+  ASSERT_EQ(tuples.size(), 1u);
+  const auto originalTuple = tuples.begin()->first;
+  auto *originalCounter = &tuples.begin()->second;
+  originalCounter->count = UINT64_MAX - 1;
+  for (unsigned pass = 0; pass != 2; ++pass)
+    for (first = 0; first != 8; ++first)
+      for (second = 0; second != 8; ++second) {
+        secondGuard = pass || first < 4;
+        ASSERT_EQ(sample(handle), OBELISK_RT_OK);
+        if (!pass && !first && !second) {
+          EXPECT_EQ(originalCounter->count, UINT64_MAX);
+          EXPECT_FALSE(originalCounter->overflow);
+        }
+      }
+  ASSERT_EQ(tuples.size(), 64u);
+  EXPECT_EQ(&tuples.at(originalTuple), originalCounter);
+  EXPECT_EQ(originalCounter->count, UINT64_MAX);
+  EXPECT_TRUE(originalCounter->overflow);
+  for (const auto &[components, counter] : tuples)
+    if (components != originalTuple) {
+      EXPECT_EQ(counter.count, 2u);
+    }
+  EXPECT_TRUE(context->coverage->instances.at(other).crossTuples.empty());
+  std::vector<uint64_t> binCounts;
+  for (const auto &bin : instance.bins)
+    binCounts.push_back(bin.count);
+  first = second = 0;
+  secondGuard = 1;
+  batch.back().kind = UINT32_MAX;
+  EXPECT_EQ(sample(handle), OBELISK_RT_INVALID_DESIGN);
+  batch.back().kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+  for (size_t index = 0; index != instance.bins.size(); ++index)
+    EXPECT_EQ(instance.bins[index].count, binCounts[index]);
+  EXPECT_EQ(tuples.size(), 64u);
+  ASSERT_EQ(sample(other), OBELISK_RT_OK);
+  for (const auto &[cross, counters] :
+       context->coverage->instances.at(other).crossTuples) {
+    ASSERT_EQ(counters.size(), 1u);
+    EXPECT_EQ(counters.begin()->second.count, 1u);
+  }
+  double percentage = 0;
+  int32_t covered = 0, total = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, handle, 22, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_DOUBLE_EQ(percentage, 100.0);
+  EXPECT_EQ(covered, 64);
+  EXPECT_EQ(total, 64);
+  Database snapshot = saveCoverage(context, "sparse-incremental");
+  ASSERT_EQ(snapshot.sparseCrossTuples.size(), 130u);
+  uint32_t saturated = 0;
+  for (const auto &tuple : snapshot.sparseCrossTuples) {
+    EXPECT_EQ(tuple.componentCount, 2u);
+    if (tuple.flags & SparseCrossTupleOverflow) {
+      ++saturated;
+      EXPECT_EQ(tuple.hits, UINT64_MAX);
+    } else
+      EXPECT_GE(tuple.hits, 1u);
+  }
+  EXPECT_EQ(saturated, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

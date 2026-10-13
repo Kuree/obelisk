@@ -1756,6 +1756,10 @@ struct FunctionalCoverageCrossTupleState {
   bool overflow = false;
 };
 
+using FunctionalCoverageCrossTupleCounters =
+    obelisk::coverage::detail::IndexMap<std::vector<uint64_t>,
+                                        FunctionalCoverageCrossTupleState>;
+
 struct FunctionalCoverageQueryMetadata;
 
 struct FunctionalCoverageTypeState {
@@ -1881,8 +1885,8 @@ struct FunctionalCoverageInstanceState {
   /// recur. The terminal accepting state uses ordinal == stepCount.
   std::map<uint64_t, std::set<TransitionActiveState>> transitionActive;
   std::unordered_set<uint64_t> transitionSampledItems;
-  std::map<uint64_t,
-           std::map<std::vector<uint64_t>, FunctionalCoverageCrossTupleState>>
+  obelisk::coverage::detail::IndexMap<uint64_t,
+                                      FunctionalCoverageCrossTupleCounters>
       crossTuples;
 };
 

@@ -11219,10 +11219,9 @@ buildLoadedFunctionalInstance(const CoverageState &coverage,
       continue;
     auto &destination =
         instance.crossTuples[metadata.items[position->second].id];
-    // Radix iteration is ordered, so the legacy live tuple map can adopt
-    // this immutable profile with an amortized constant insertion hint.
+    // Both the persisted profile and live counters use bounded-depth indexes.
     for (const auto &[components, state] : tuples)
-      destination.emplace_hint(destination.end(), components, state);
+      destination.emplace(components, state);
   }
   bool hasGroupGoal = false;
   bool hasGroupWeight = false;
@@ -13461,23 +13460,22 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     // failed sample is therefore recoverable and cannot leave coverpoints,
     // sparse cross tuples, and illegal-bin diagnostics describing different
     // subsets of the same atomic sample.
-    decltype(instance.crossTuples) stagedCrosses;
+    decltype(instance.crossTuples)::InsertionBatch stagedCrosses(
+        instance.crossTuples);
+    // Inner batches must roll back before the outer batch removes newly
+    // created cross tables. Their leaves keep existing counter addresses
+    // stable.
+    std::vector<FunctionalCoverageCrossTupleCounters::InsertionBatch>
+        stagedTuples;
+    stagedTuples.reserve(pendingCrossIncrements.size());
+    std::vector<std::pair<FunctionalCoverageCrossTupleState *, uint64_t>>
+        pendingTupleIncrements;
     for (const auto &[crossID, increments] : pendingCrossIncrements) {
-      auto current = instance.crossTuples.find(crossID);
-      auto staged =
-          stagedCrosses
-              .emplace(crossID,
-                       current == instance.crossTuples.end()
-                           ? decltype(instance.crossTuples)::mapped_type{}
-                           : current->second)
-              .first;
+      auto cross = stagedCrosses.emplace(crossID).first;
+      stagedTuples.emplace_back(cross->second);
       for (const auto &[tuple, increment] : increments) {
-        FunctionalCoverageCrossTupleState &counter = staged->second[tuple];
-        if (increment > UINT64_MAX - counter.count) {
-          counter.count = UINT64_MAX;
-          counter.overflow = true;
-        } else
-          counter.count += increment;
+        auto counter = stagedTuples.back().emplace(tuple).first;
+        pendingTupleIncrements.emplace_back(&counter->second, increment);
       }
     }
 
@@ -13517,15 +13515,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       }
     }
 
-    for (auto staged = stagedCrosses.begin(); staged != stagedCrosses.end();) {
-      auto current = instance.crossTuples.find(staged->first);
-      if (current != instance.crossTuples.end()) {
-        current->second.swap(staged->second);
-        ++staged;
-        continue;
-      }
-      auto node = stagedCrosses.extract(staged++);
-      instance.crossTuples.insert(std::move(node));
+    for (auto &batch : stagedTuples)
+      batch.commit();
+    stagedCrosses.commit();
+    for (const auto &[counter, increment] : pendingTupleIncrements) {
+      if (increment > UINT64_MAX - counter->count) {
+        counter->count = UINT64_MAX;
+        counter->overflow = true;
+      } else
+        counter->count += increment;
     }
     instance.transitionActive.swap(pendingTransitionActive);
     instance.transitionSampledItems.swap(pendingTransitionSampledItems);

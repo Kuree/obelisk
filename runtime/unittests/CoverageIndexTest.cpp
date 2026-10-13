@@ -106,6 +106,121 @@ TEST(CoverageIndexTest, ArbitraryIDsHaveOrderedStableLeaves) {
   EXPECT_NE(copied, moved);
 }
 
+TEST(CoverageIndexTest,
+     InsertionBatchesKeepImmovableHistoryAndRestoreOrdering) {
+  struct Value {
+    int number;
+    explicit Value(int number) : number(number) {}
+    Value(const Value &) = delete;
+    Value(Value &&) = delete;
+  };
+  IndexMap<uint64_t, Value> index;
+  index.emplace(8, 8);
+  index.emplace(16, 16);
+  Value *first = &index.at(8);
+  for (unsigned repeat = 0; repeat != 4; ++repeat) {
+    decltype(index)::InsertionBatch batch(index);
+    for (uint64_t key : {32, 1, 12, 24, 0, 17, 48, 9, 64})
+      EXPECT_TRUE(batch.emplace(key, key).second);
+    EXPECT_FALSE(batch.emplace(8, -1).second);
+    EXPECT_EQ(&index.at(8), first);
+    EXPECT_EQ(first->number, 8);
+  }
+  EXPECT_EQ(index.size(), 2u);
+  std::vector<uint64_t> keys;
+  for (const auto &entry : index)
+    keys.push_back(entry.first);
+  EXPECT_EQ(keys, (std::vector<uint64_t>{8, 16}));
+  EXPECT_EQ(index.find(12), index.end());
+  {
+    decltype(index)::InsertionBatch batch(index);
+    EXPECT_TRUE(batch.emplace(12, 12).second);
+    EXPECT_TRUE(batch.emplace(1, 1).second);
+    batch.commit();
+  }
+  EXPECT_EQ(index.size(), 4u);
+  EXPECT_EQ(&index.at(8), first);
+  EXPECT_EQ(index.at(12).number, 12);
+  IndexMap<uint64_t, uint64_t> empty;
+  {
+    decltype(empty)::InsertionBatch batch(empty);
+    batch.emplace(1, 1);
+    batch.emplace(0, 0);
+  }
+  EXPECT_TRUE(empty.empty());
+  EXPECT_EQ(empty.begin(), empty.end());
+  EXPECT_EQ(empty.find(1), empty.end());
+  EXPECT_TRUE(empty.emplace(2, 2).second);
+  EXPECT_EQ(empty.begin()->first, 2u);
+}
+
+TEST(CoverageIndexTest, VariableWidthBatchesRestorePrefixSplitsAndNestedMaps) {
+  using Tuples = IndexMap<std::vector<uint64_t>, uint64_t>;
+  IndexMap<uint64_t, Tuples> crosses;
+  const std::vector<uint64_t> original{10, 1};
+  crosses[8].emplace(original, 11);
+  auto *counter = &crosses.at(8).at(original);
+  {
+    decltype(crosses)::InsertionBatch outer(crosses);
+    auto existing = outer.emplace(8).first;
+    auto inserted = outer.emplace(16).first;
+    std::vector<Tuples::InsertionBatch> children;
+    // Reallocation moves a live batch; it must retain its rollback journal.
+    children.emplace_back(existing->second);
+    children.back().emplace(std::vector<uint64_t>{}, 1);
+    children.back().emplace(std::vector<uint64_t>{10}, 2);
+    children.back().emplace(std::vector<uint64_t>{10, 1, 1}, 3);
+    children.back().emplace(std::vector<uint64_t>{1, UINT64_MAX}, 4);
+    children.emplace_back(inserted->second);
+    children.back().emplace(std::vector<uint64_t>{0, 0}, 5);
+  }
+  ASSERT_EQ(crosses.size(), 1u);
+  ASSERT_EQ(crosses.at(8).size(), 1u);
+  EXPECT_EQ(&crosses.at(8).at(original), counter);
+  EXPECT_EQ(*counter, 11u);
+  auto iterator = crosses.at(8).end();
+  --iterator;
+  EXPECT_EQ(iterator->first, original);
+  EXPECT_EQ(crosses.find(16), crosses.end());
+}
+
+#if defined(__cpp_exceptions) || defined(_CPPUNWIND)
+TEST(CoverageIndexTest, FailedBatchConstructionCanContinueAndThenRollBack) {
+  struct Value {
+    int number;
+    explicit Value(int number) : number(number) {
+      if (number < 0)
+        throw std::runtime_error("batch insertion failed");
+    }
+  };
+  IndexMap<uint64_t, Value> index;
+  index.emplace(8, 8);
+  auto *original = &index.at(8);
+  {
+    decltype(index)::InsertionBatch batch(index);
+    batch.emplace(16, 16);
+    EXPECT_THROW(batch.emplace(12, -1), std::runtime_error);
+    EXPECT_THROW(batch.emplace(0, -1), std::runtime_error);
+    EXPECT_NO_THROW(EXPECT_FALSE(batch.emplace(8, -1).second));
+    batch.emplace(1, 1);
+  }
+  ASSERT_EQ(index.size(), 1u);
+  EXPECT_EQ(&index.at(8), original);
+  EXPECT_EQ(original->number, 8);
+  EXPECT_EQ(index.begin()->first, 8u);
+  EXPECT_EQ(index.find(12), index.end());
+  EXPECT_TRUE(index.emplace(12, 12).second);
+  IndexMap<uint64_t, Value> empty;
+  {
+    decltype(empty)::InsertionBatch batch(empty);
+    EXPECT_THROW(batch.emplace(1, -1), std::runtime_error);
+    batch.emplace(2, 2);
+  }
+  EXPECT_TRUE(empty.empty());
+  EXPECT_EQ(empty.begin(), empty.end());
+}
+#endif
+
 TEST(CoverageIndexTest, VariableKeysCanSplitAboveExistingLongPrefixes) {
   using Key = std::tuple<int64_t, std::string, std::vector<uint64_t>>;
   std::vector<Key> keys{{INT64_MIN, "", {}},

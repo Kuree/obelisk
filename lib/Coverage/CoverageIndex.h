@@ -113,6 +113,13 @@ template <typename Key, typename Value> class IndexMap {
     Entry *first = nullptr;
     Entry *last = nullptr;
   };
+  struct InsertionUndo {
+    size_t root;
+    size_t nodeCount;
+    size_t entryCount;
+    size_t subtree;
+    std::vector<size_t> path;
+  };
   std::deque<Entry> entries;
   std::vector<Node> nodes;
   size_t root = None;
@@ -240,6 +247,46 @@ public:
   }
   template <typename K, typename... Args>
   std::pair<iterator, bool> emplace(K &&key, Args &&...args) {
+    return emplaceWithUndo(nullptr, std::forward<K>(key),
+                           std::forward<Args>(args)...);
+  }
+
+  /// New leaves are removed unless committed. Existing values retain stable
+  /// addresses and are neither copied nor reverted. All insertions into this
+  /// map must use this batch while it is alive; values may be published after
+  /// every allocation-bearing operation in a larger update has succeeded.
+  class InsertionBatch {
+    IndexMap *owner;
+    std::vector<InsertionUndo> journal;
+
+  public:
+    explicit InsertionBatch(IndexMap &owner) : owner(&owner) {}
+    InsertionBatch(const InsertionBatch &) = delete;
+    InsertionBatch &operator=(const InsertionBatch &) = delete;
+    InsertionBatch(InsertionBatch &&other) noexcept
+        : owner(std::exchange(other.owner, nullptr)),
+          journal(std::move(other.journal)) {}
+    ~InsertionBatch() { rollback(); }
+    void rollback() noexcept {
+      if (!owner)
+        return;
+      for (auto entry = journal.rbegin(); entry != journal.rend(); ++entry)
+        owner->rollbackInsertion(*entry);
+      owner = nullptr;
+    }
+    void commit() noexcept { owner = nullptr; }
+    template <typename K, typename... Args>
+    std::pair<iterator, bool> emplace(K &&key, Args &&...args) {
+      assert(owner);
+      return owner->emplaceWithUndo(&journal, std::forward<K>(key),
+                                    std::forward<Args>(args)...);
+    }
+  };
+
+private:
+  template <typename K, typename... Args>
+  std::pair<iterator, bool> emplaceWithUndo(std::vector<InsertionUndo> *journal,
+                                            K &&key, Args &&...args) {
     Key ownedKey(std::forward<K>(key));
     std::vector<uint8_t> bytes;
     IndexKey<Key>::append(bytes, ownedKey);
@@ -278,6 +325,12 @@ public:
     if (required > nodes.capacity())
       nodes.reserve(
           std::max(required, std::min(nodes.max_size(), nodes.capacity() * 2)));
+    // The journal itself can allocate. Record the insertion before creating a
+    // leaf; rollback recognizes a record whose mapped-value constructor failed.
+    if (journal)
+      journal->push_back(
+          {root, nodes.size(), entries.size(), subtree, std::move(path)});
+    const auto &ancestors = journal ? journal->back().path : path;
     entries.emplace_back(std::move(ownedKey), std::move(bytes),
                          std::forward<Args>(args)...);
     Entry *inserted = &entries.back();
@@ -308,18 +361,47 @@ public:
     split.last = side ? inserted : nodes[subtree].last;
     const size_t splitIndex = nodes.size();
     nodes.push_back(split);
-    if (path.empty())
+    if (ancestors.empty())
       root = splitIndex;
     else {
-      Node &parent = nodes[path.back()];
+      Node &parent = nodes[ancestors.back()];
       parent.child[branch(inserted->bytes, parent.bit)] = splitIndex;
     }
-    for (auto ancestor = path.rbegin(); ancestor != path.rend(); ++ancestor) {
+    for (auto ancestor = ancestors.rbegin(); ancestor != ancestors.rend();
+         ++ancestor) {
       Node &node = nodes[*ancestor];
       node.first = nodes[node.child[0]].first;
       node.last = nodes[node.child[1]].last;
     }
     return {{this, inserted}, true};
+  }
+
+  void rollbackInsertion(const InsertionUndo &undo) noexcept {
+    if (entries.size() == undo.entryCount)
+      return;
+    assert(entries.size() == undo.entryCount + 1);
+    Entry &inserted = entries.back();
+    if (inserted.previous)
+      inserted.previous->next = inserted.next;
+    else
+      first = inserted.next;
+    if (inserted.next)
+      inserted.next->previous = inserted.previous;
+    else
+      last = inserted.previous;
+    root = undo.root;
+    if (!undo.path.empty()) {
+      Node &parent = nodes[undo.path.back()];
+      parent.child[branch(inserted.bytes, parent.bit)] = undo.subtree;
+    }
+    nodes.resize(undo.nodeCount);
+    for (auto ancestor = undo.path.rbegin(); ancestor != undo.path.rend();
+         ++ancestor) {
+      Node &node = nodes[*ancestor];
+      node.first = nodes[node.child[0]].first;
+      node.last = nodes[node.child[1]].last;
+    }
+    entries.pop_back();
   }
 };
 
