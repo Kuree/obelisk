@@ -108,12 +108,14 @@ public:
   BooleanCircuit() {
     nodes.push_back({PlanOpcode::Constant, 0, 0});
     firstVariables.push_back(noVariable);
+    mandatoryLiterals.push_back(false);
   }
 
   ID input(PlanOpcode opcode, uint32_t a, uint32_t b = 0) {
     ID id = static_cast<ID>(nodes.size() * 2);
     nodes.push_back({opcode, a, b});
     firstVariables.push_back(opcode == PlanOpcode::RandomBit ? b : noVariable);
+    mandatoryLiterals.push_back(opcode == PlanOpcode::RandomBit);
     return id;
   }
 
@@ -152,6 +154,8 @@ public:
     result = static_cast<ID>(nodes.size() * 2);
     nodes.push_back({PlanOpcode::And, a, b});
     firstVariables.push_back(std::min(firstVariable(a), firstVariable(b)));
+    mandatoryLiterals.push_back(hasMandatoryLiteral(a) ||
+                                hasMandatoryLiteral(b));
     unique.emplace(key, result);
     return result;
   }
@@ -176,6 +180,14 @@ public:
   }
 
   uint32_t firstVariable(ID id) const { return firstVariables[id / 2]; }
+  /// Whether traversing positive ANDs reaches a mandatory random literal.
+  /// Negating an AND stops that traversal; negating a random bit retains it.
+  /// Each gate computes this flag once, so arithmetic without such literals
+  /// can skip the propagation walk and its temporary graph inventory.
+  bool hasMandatoryLiteral(ID id) const {
+    return mandatoryLiterals[id / 2] &&
+           (!(id & 1) || nodes[id / 2].opcode == PlanOpcode::RandomBit);
+  }
   const std::vector<PlanNode> &getNodes() const { return nodes; }
 
   /// Restrict the earliest remaining variable. Hash-consing the simplified
@@ -263,6 +275,7 @@ public:
 private:
   std::vector<PlanNode> nodes;
   std::vector<uint32_t> firstVariables;
+  std::vector<bool> mandatoryLiterals;
   std::unordered_map<uint64_t, ID> unique;
   std::unordered_map<uint64_t, std::pair<ID, ID>> cofactors;
 };

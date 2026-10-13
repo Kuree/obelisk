@@ -207,7 +207,7 @@ public:
   /// retain the exact Boolean plan. Runtime sampling never truncates a count.
   bool prepareDiagram(random::BooleanCircuit::ID predicate, size_t budget,
                       size_t circuitBudget) {
-    return convertConstrained(predicate, root, budget, circuitBudget);
+    return convert(predicate, root, budget, circuitBudget);
   }
 
   /// Re-encode a completed decision diagram using the original named inputs.
@@ -234,7 +234,7 @@ public:
     if (std::find(fixed.begin(), fixed.end(), true) != fixed.end())
       predicate = circuit->restrict(predicate, fixedValues, fixed);
     ID relation = 0;
-    if (!convertConstrained(predicate, relation))
+    if (!convert(predicate, relation))
       return false;
     root = conjunction(root, relation);
     restrict(fixedValues, fixed);
@@ -471,18 +471,19 @@ private:
   /// A positive AND forces both children; a negated AND does not. Restore the
   /// literals in the diagram so counting, projection and weighted intersections
   /// retain exactly the original relation and the same input inventory.
-  bool convertConstrained(random::BooleanCircuit::ID predicate, ID &result,
-                          size_t budget = 0, size_t circuitBudget = 0) {
+  bool extractLiterals(random::BooleanCircuit::ID predicate,
+                       random::BooleanCircuit::ID &remaining, ID &literals,
+                       size_t &budget, size_t circuitBudget) {
     using CircuitID = random::BooleanCircuit::ID;
-    auto found = circuits.find(predicate);
-    if (found != circuits.end()) {
-      result = found->second;
+    remaining = predicate;
+    literals = 1;
+    if (!circuit->hasMandatoryLiteral(remaining))
       return true;
-    }
     std::vector<bool> selected(variableCount, false);
     std::vector<bool> values(variableCount, false);
-    CircuitID remaining = predicate;
     for (;;) {
+      if (!circuit->hasMandatoryLiteral(remaining))
+        break;
       bool changed = false;
       std::vector<bool> visited(circuit->getNodes().size(), false);
       std::vector<CircuitID> pending{remaining};
@@ -493,11 +494,10 @@ private:
         CircuitID id = pending.back();
         pending.pop_back();
         if (id == 0) {
-          result = 0;
-          circuits.emplace(predicate, 0);
+          remaining = 0;
           return true;
         }
-        if (id == 1 || visited[id / 2])
+        if (id == 1 || !circuit->hasMandatoryLiteral(id) || visited[id / 2])
           continue;
         auto node = circuit->getNodes()[id / 2];
         // Opposite polarities of an AND have different implications. Mark
@@ -511,8 +511,7 @@ private:
             return false;
           bool value = !(id & 1);
           if (selected[node.b] && values[node.b] != value) {
-            result = 0;
-            circuits.emplace(predicate, 0);
+            remaining = 0;
             return true;
           }
           changed |= !selected[node.b];
@@ -524,15 +523,10 @@ private:
         break;
       remaining = circuit->restrict(remaining, values, selected);
     }
-    if (!convert(remaining, result, budget, circuitBudget))
-      return false;
-    ID literals = 1;
     for (size_t variable = variableCount; variable-- != 0;)
       if (selected[variable])
         literals = values[variable] ? makeNode(variable, 0, literals)
                                     : makeNode(variable, literals, 0);
-    result = conjunction(result, literals);
-    circuits.emplace(predicate, result);
     return true;
   }
 
@@ -543,14 +537,42 @@ private:
   bool convert(random::BooleanCircuit::ID predicate, ID &result,
                size_t budget = 0, size_t circuitBudget = 0) {
     using CircuitID = random::BooleanCircuit::ID;
-    std::vector<CircuitID> pending{predicate};
+    struct Frame {
+      CircuitID predicate;
+      CircuitID remaining = 0;
+      ID literals = 1;
+      bool propagated = false;
+    };
+    std::vector<Frame> pending{{predicate}};
     while (!pending.empty()) {
       if ((budget && --budget == 0) ||
           (circuitBudget && circuit->getNodes().size() > circuitBudget))
         return false;
-      CircuitID id = pending.back();
+      Frame &frame = pending.back();
+      CircuitID id = frame.predicate;
       auto found = circuits.find(id);
       if (found != circuits.end()) {
+        pending.pop_back();
+        continue;
+      }
+      // A branch can expose a long forced prefix that was hidden under an
+      // OR, notably either sign of a real zero cell. Propagate that prefix
+      // before cofactoring its arithmetic decoder one bit at a time. The
+      // literal diagram restores every forced input for exact counts and
+      // projections; this is simplification, not a restriction of the domain.
+      if (!frame.propagated) {
+        if (!extractLiterals(id, frame.remaining, frame.literals, budget,
+                             circuitBudget))
+          return false;
+        frame.propagated = true;
+      }
+      if (frame.remaining != id) {
+        auto reduced = circuits.find(frame.remaining);
+        if (reduced == circuits.end()) {
+          pending.push_back({frame.remaining});
+          continue;
+        }
+        circuits.emplace(id, conjunction(reduced->second, frame.literals));
         pending.pop_back();
         continue;
       }
@@ -560,11 +582,11 @@ private:
       CircuitID low = circuit->cofactor(id, variable, false);
       CircuitID high = circuit->cofactor(id, variable, true);
       if (!circuits.count(low)) {
-        pending.push_back(low);
+        pending.push_back({low});
         continue;
       }
       if (!circuits.count(high)) {
-        pending.push_back(high);
+        pending.push_back({high});
         continue;
       }
       circuits.emplace(id,
