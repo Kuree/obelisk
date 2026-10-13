@@ -22,6 +22,12 @@ include "mlir/Interfaces/ViewLikeInterface.td"
 
 include "obelisk/Dialect/Simulation/SimulationResources.td"
 
+// The operation may allocate managed storage: a class object, string,
+// container, reference path, or coverage instance. Where code roots managed
+// values eagerly it is a collection point; under polled collection it only
+// records allocation pressure, and a poll must bound it when it repeats.
+def SimAllocatesManagedStorage : NativeOpTrait<"AllocatesManagedStorage">;
+
 class SimOp<string mnemonic, list<Trait> traits = []>
     : Op<ObeliskSimulationDialect, mnemonic, traits> {
   let assemblyFormat =
@@ -756,6 +762,7 @@ def SimVirtualInterfaceScopeOp
 }
 
 def SimCovergroupCreateOp : SimOp<"covergroup.create", [
+    SimAllocatesManagedStorage,
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimCoverageResource>,
                    MemWrite<SimCoverageResource>]>
@@ -1524,6 +1531,7 @@ def SimContainerSizeOp : SimOp<"container.size", [
 }
 
 def SimContainerCreateLikeOp : SimOp<"container.create_like", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a sequential container with matching typed metadata";
@@ -1533,6 +1541,7 @@ def SimContainerCreateLikeOp : SimOp<"container.create_like", [
 }
 
 def SimContainerCreateOp : SimOp<"container.create", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a sequential container from stable type metadata";
@@ -1554,6 +1563,7 @@ def SimContainerCreateOp : SimOp<"container.create", [
 }
 
 def SimContainerCloneOp : SimOp<"container.clone", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "deep-clone a dynamic array or queue value";
@@ -1563,6 +1573,7 @@ def SimContainerCloneOp : SimOp<"container.clone", [
 }
 
 def SimContainerImportFixedOp : SimOp<"container.import_fixed", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "bulk-copy one fixed unpacked array into a dynamic container";
@@ -1604,6 +1615,7 @@ def SimRecursiveExportBitstreamOp : SimOp<"recursive.export_bitstream", [
 }
 
 def SimContainerSwapOp : SimOp<"container.swap", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "swap two sequential-container elements and their identities";
@@ -1631,6 +1643,7 @@ def SimQueueDeleteOp : SimOp<"queue.delete", [
 }
 
 def SimQueueInsertOp : SimOp<"queue.insert", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "insert one queue element at a logical index";
@@ -1644,6 +1657,7 @@ def SimQueueInsertOp : SimOp<"queue.insert", [
 // a run-time constructor argument, and blocking methods participate in process
 // scheduling. Preserve that distinction in executable IR.
 def SimMailboxCreateOp : SimOp<"mailbox.create", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a typed bounded or unbounded mailbox";
@@ -1671,6 +1685,7 @@ def SimMailboxNumOp : SimOp<"mailbox.num", [
 }
 
 def SimMailboxTryPutOp : SimOp<"mailbox.try_put", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "attempt to append one message without blocking";
@@ -1698,6 +1713,7 @@ def SimMailboxTryGetOp : SimOp<"mailbox.try_get", [
 }
 
 def SimSemaphoreCreateOp : SimOp<"semaphore.create", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create a semaphore with an initial signed key count";
@@ -1880,6 +1896,7 @@ def SimContainerReadOp : SimOp<"container.read", [
 }
 
 def SimContainerWriteOp : SimOp<"container.write", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "typed write to a dynamic array or queue";
@@ -1892,6 +1909,7 @@ def SimContainerWriteOp : SimOp<"container.write", [
 //===----------------------------------------------------------------------===//
 
 def SimAssocCreateOp : SimOp<"assoc.create", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "create an empty typed associative array";
@@ -1920,6 +1938,7 @@ def SimAssocReadOp : SimOp<"assoc.read", [
 }
 
 def SimAssocWriteOp : SimOp<"assoc.write", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "insert or replace an explicit associative entry";
@@ -1945,6 +1964,7 @@ def SimAssocDeleteOp : SimOp<"assoc.delete", [
 }
 
 def SimAssocSetDefaultOp : SimOp<"assoc.set_default", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "install a hidden assignment-pattern default";
@@ -1953,6 +1973,7 @@ def SimAssocSetDefaultOp : SimOp<"assoc.set_default", [
 }
 
 def SimAssocTraverseOp : SimOp<"assoc.traverse", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "perform ordered first, last, next, or previous traversal";
@@ -1968,6 +1989,7 @@ def SimAssocTraverseOp : SimOp<"assoc.traverse", [
 
 class SimStringAllocatingOp<string mnemonic, dag stringArgs>
     : SimOp<mnemonic, [
+        SimAllocatesManagedStorage,
         MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
       ]> {
   let arguments = stringArgs;
@@ -2062,6 +2084,7 @@ def SimStringCaseConvertOp
 }
 
 def SimStringScanFieldOp : SimOp<"string.scan_field", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "take one $sscanf conversion's field out of a string";
@@ -2080,6 +2103,7 @@ def SimStringScanFieldOp : SimOp<"string.scan_field", [
 }
 
 def SimScanDynamicValidateOp : SimOp<"scan_dynamic_validate", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "preflight one destination of a dynamic scanf format";
@@ -2096,6 +2120,7 @@ def SimScanDynamicValidateOp : SimOp<"scan_dynamic_validate", [
 }
 
 def SimStringScanDynamicOp : SimOp<"string.scan_dynamic", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "interpret one destination of a dynamic $sscanf format";
@@ -2179,6 +2204,7 @@ def SimStringFormatRealOp
 }
 
 def SimStringOutputFormatOp : SimOp<"string.output_format", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
                    MemRead<SimIOResource>]>
   ]> {
@@ -2205,6 +2231,7 @@ def SimStringOutputFormatOp : SimOp<"string.output_format", [
 }
 
 def SimClassAllocOp : SimOp<"class.alloc", [
+    SimAllocatesManagedStorage,
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
@@ -2216,6 +2243,7 @@ def SimClassAllocOp : SimOp<"class.alloc", [
 }
 
 def SimClassCopyOp : SimOp<"class.copy", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "allocate a dynamic-type SystemVerilog shallow class copy";
@@ -2365,6 +2393,7 @@ def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
 }
 
 def SimReferencePathNBAEnqueueOp : SimOp<"reference_path.nba.enqueue", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[
       MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
       MemWrite<SimSchedulerResource>
@@ -2418,6 +2447,7 @@ def SimArgumentRefRetypeOp : SimOp<"argument_ref.retype", [Pure]> {
 }
 
 def SimReferencePathIndexOp : SimOp<"reference_path.index", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "capture an escaping dynamic-array or queue element lvalue";
@@ -2430,6 +2460,7 @@ def SimReferencePathIndexOp : SimOp<"reference_path.index", [
 }
 
 def SimReferencePathAssocOp : SimOp<"reference_path.assoc", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
   let summary = "capture an escaping associative-array element lvalue";
@@ -2443,6 +2474,7 @@ def SimReferencePathAssocOp : SimOp<"reference_path.assoc", [
 
 def SimReferencePathStringCharacterOp
     : SimOp<"reference_path.string_character", [
+        SimAllocatesManagedStorage,
         MemoryEffects<[MemRead<SimStorageResource>,
                        MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
       ]> {
@@ -2457,6 +2489,7 @@ def SimReferencePathStringCharacterOp
 
 def SimReferencePathAggregateElementOp
     : SimOp<"reference_path.aggregate_element", [
+        SimAllocatesManagedStorage,
         MemoryEffects<[MemRead<SimStorageResource>,
                        MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
       ]> {
@@ -2505,6 +2538,7 @@ def SimArgumentRefLoadOp : SimOp<"argument_ref.load", [
 }
 
 def SimArgumentRefStoreOp : SimOp<"argument_ref.store", [
+    SimAllocatesManagedStorage,
     MemoryEffects<[
       MemRead<SimStorageResource>, MemWrite<SimStorageResource>,
       MemRead<SimHeapResource>, MemWrite<SimHeapResource>
@@ -2578,6 +2612,7 @@ def SimClassVirtualCallOp : SimOp<"class.virtual_call", [
 }
 
 def SimWeakCreateOp : SimOp<"weak.create", [
+    SimAllocatesManagedStorage,
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
   ]> {
@@ -3140,8 +3175,8 @@ def SimDumpPortsControlOp : SimOp<"dump.ports_control", [
 class SimFileOp<string mnemonic, dag fileArgs, dag fileResults,
                 list<MemoryEffect> effects = [
                   MemRead<SimIOResource>, MemWrite<SimIOResource>
-                ]>
-    : SimOp<mnemonic, [MemoryEffects<effects>]> {
+                ], list<Trait> traits = []>
+    : SimOp<mnemonic, !listconcat([MemoryEffects<effects>], traits)> {
   let arguments = fileArgs;
   let results = fileResults;
 }
@@ -3190,7 +3225,8 @@ def SimFileGetlineStringOp : SimFileOp<"file.getline_string",
     (ins SimContextType:$context, I32:$descriptor),
     (outs SimStringType:$data, I32:$count),
     [MemRead<SimIOResource>, MemWrite<SimIOResource>,
-     MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
   let summary = "read one complete line into a managed string";
 }
 
@@ -3199,7 +3235,8 @@ def SimFileScanFieldOp : SimFileOp<"file.scan_field",
          StrAttr:$prefix, I32Attr:$specifier, I64Attr:$width),
     (outs SimStringType:$field, I32:$ok, I32:$eof),
     [MemRead<SimIOResource>, MemWrite<SimIOResource>,
-     MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
   let summary = "consume one $fscanf field from the current file position";
   let description = [{
     `enabled` suppresses all file access after an earlier conversion failed.
@@ -3216,7 +3253,8 @@ def SimFileScanDynamicOp : SimFileOp<"file.scan_dynamic",
     (outs SimStringType:$field, I32:$next_plan_cursor, I32:$conversion_kind,
           I32:$ok, I32:$eof),
     [MemRead<SimIOResource>, MemWrite<SimIOResource>,
-     MemRead<SimHeapResource>, MemWrite<SimHeapResource>]> {
+     MemRead<SimHeapResource>, MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
   let summary = "interpret one destination of a dynamic $fscanf format";
 }
 
@@ -3247,7 +3285,8 @@ def SimPlusargValueOp : SimFileOp<"plusarg.value",
     (ins SimContextType:$context, SimStringType:$prefix),
     (outs SimStringType:$tail, I32:$found),
     [MemRead<SimIOResource>, MemRead<SimHeapResource>,
-     MemWrite<SimHeapResource>]> {
+     MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
   let summary = "return the text following a matched command-line plusarg";
 }
 
@@ -3255,7 +3294,8 @@ def SimPlusargScanOp : SimFileOp<"plusarg.scan",
     (ins SimContextType:$context, SimStringType:$format),
     (outs SimStringType:$tail, I32:$conversion, I32:$found),
     [MemRead<SimIOResource>, MemRead<SimHeapResource>,
-     MemWrite<SimHeapResource>]> {
+     MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
   let summary = "parse a dynamic $value$plusargs format and return its field";
   let description = [{
     `conversion` is zero for `%s`, one for a real conversion, or the numeric
@@ -3288,7 +3328,8 @@ def SimFileErrorStringOp : SimFileOp<"file.error_string",
     (ins SimContextType:$context, I32:$descriptor),
     (outs SimStringType:$message, I32:$code),
     [MemRead<SimIOResource>, MemRead<SimHeapResource>,
-     MemWrite<SimHeapResource>]> {
+     MemWrite<SimHeapResource>],
+    [SimAllocatesManagedStorage]> {
   let summary = "read a descriptor's pending error code and message";
 }
 

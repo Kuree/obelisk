@@ -25,6 +25,10 @@ module {
     simulation.code_unit.decl 9 in 0 function hierarchy "Light.weight"
     simulation.code_unit.decl 10 in 0 task hierarchy "fill"
     simulation.code_unit.decl 11 in 0 initial hierarchy "tasks"
+    simulation.code_unit.decl 12 in 0 initial hierarchy "boxes"
+    simulation.code_unit.decl 13 in 0 function hierarchy "opaque"
+    simulation.code_unit.decl 14 in 0 function hierarchy "early"
+    simulation.code_unit.decl 15 in 0 function hierarchy "late"
 
     simulation.class.decl @Node id 1 {
       is_abstract = false, is_final = false, is_interface = false
@@ -231,6 +235,64 @@ module {
     ^loop:
       simulation.task.call @fill(%ctx) arguments 1 to ^loop :
         !simulation.context
+    }
+
+    // Every operation with the AllocatesManagedStorage trait counts, such as
+    // mailbox construction. A callee without a body is unresolved: it may
+    // allocate and re-enter its caller, so each call polls first and may
+    // reach a poll.
+    // CHECK-LABEL: simulation.func @boxes(
+    // CHECK: simulation.gc.safepoint
+    // CHECK-NEXT: simulation.call @opaque(
+    // CHECK-NOT: gc_poll_free
+    // CHECK-SAME: -> ()
+    // CHECK: ^bb1:
+    // CHECK-NEXT: simulation.gc.safepoint
+    // CHECK-NEXT: simulation.mailbox.create
+    simulation.func private @opaque(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {code_unit_id = 13 : i64, entry_kind = 8 : i32}
+    simulation.func @boxes(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %bound: i64 {simulation.capture_kind = 1 : i32})
+        attributes {code_unit_id = 12 : i64, entry_kind = 1 : i32} {
+      simulation.call @opaque(%ctx) : (!simulation.context) -> ()
+      cf.br ^loop
+    ^loop:
+      %mailbox = simulation.mailbox.create %bound {
+        alignment = 8 : i64,
+        bit_width = 0 : i64,
+        element_flags = #simulation.element_flags<none>,
+        element_kind = #simulation.element_kind<string>,
+        trace_kinds = array<i32>,
+        trace_offsets = array<i64>,
+        type_id = 1 : i64,
+        value_size = 8 : i64
+      } :
+        (i64) -> !simulation.mailbox<!simulation.string>
+      cf.br ^loop
+    }
+
+    // The call-graph closure does not depend on definition order: a loop in a
+    // function defined before its allocating callee still polls.
+    // CHECK-LABEL: simulation.func private @early(
+    // CHECK: ^bb1:
+    // CHECK-NEXT: simulation.gc.safepoint
+    // CHECK-NEXT: simulation.call @late({{.*}}) {simulation.gc_poll_free}
+    simulation.func private @early(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {code_unit_id = 14 : i64, entry_kind = 8 : i32} {
+      cf.br ^loop
+    ^loop:
+      simulation.call @late(%ctx) : (!simulation.context) -> ()
+      cf.br ^loop
+    }
+    simulation.func private @late(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {code_unit_id = 15 : i64, entry_kind = 8 : i32} {
+      %node = simulation.class.alloc %ctx :
+        !simulation.context -> !simulation.class_handle<@Node>
+      simulation.return
     }
 
     // CHECK-LABEL: simulation.func @driver(

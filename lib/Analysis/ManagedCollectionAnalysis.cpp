@@ -282,7 +282,7 @@ void CallGraph::build(Operation *root) {
         info.allocates |= entry.allocates;
       }
       Operation *terminator = block.getTerminator();
-      if (!terminator || returnsToScheduler(terminator))
+      if (!terminator || sim::returnsToScheduler(terminator))
         continue;
       for (Block *successor : terminator->getSuccessors())
         flow.addEdge(blockIndices.lookup(&block),
@@ -400,37 +400,15 @@ private:
 } // namespace
 
 bool mayAllocateManagedStorage(Operation *operation) {
-  return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-             sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
-             sim::SimReferencePathStringCharacterOp,
-             sim::SimReferencePathAggregateElementOp,
-             sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
-             sim::SimContainerCloneOp, sim::SimContainerImportFixedOp,
-             sim::SimContainerWriteOp, sim::SimQueueInsertOp,
-             sim::SimAssocCreateOp, sim::SimAssocWriteOp,
-             sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
-             sim::SimArgumentRefStoreOp, sim::SimReferencePathNBAEnqueueOp,
-             sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
-             sim::SimStringConcatOp, sim::SimStringRepeatOp,
-             sim::SimStringPutcOp, sim::SimStringSubstrOp,
-             sim::SimStringCaseConvertOp, sim::SimStringFormatIntegerOp,
-             sim::SimStringFormatRealOp, sim::SimStringOutputFormatOp,
-             sim::SimStringScanFieldOp, sim::SimScanDynamicValidateOp,
-             sim::SimStringScanDynamicOp, sim::SimFileScanDynamicOp,
-             sim::SimFileGetlineStringOp, sim::SimFileErrorStringOp,
-             sim::SimPlusargValueOp, sim::SimPlusargScanOp,
-             sim::SimCovergroupCreateOp>(operation) ||
+  return operation->hasTrait<OpTrait::AllocatesManagedStorage>() ||
          (isa<sim::SimDPICallOp>(operation) &&
           (llvm::any_of(operation->getOperandTypes(), carriesManagedValues) ||
            llvm::any_of(operation->getResultTypes(), carriesManagedValues)));
 }
 
-bool returnsToScheduler(Operation *operation) {
-  return isa<sim::SimSuspendDelayOp, sim::SimSuspendChangeOp,
-             sim::SimSuspendEdgeOp, sim::SimSuspendEdgeIffOp,
-             sim::SimSuspendClockSetOp, sim::SimSuspendEventOp,
-             sim::SimSuspendEventOrderOp, sim::SimSuspendAnyOp,
-             sim::SimSuspendObserveOp, sim::SimSuspendForeverOp>(operation);
+bool isCompiledCall(Operation *operation) {
+  return isa<sim::SimCallOp, sim::SimClassDirectCallOp,
+             sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
 }
 
 ManagedCollectionAnalysis::ManagedCollectionAnalysis(Operation *root) {

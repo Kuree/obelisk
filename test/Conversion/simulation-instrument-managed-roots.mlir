@@ -2,6 +2,7 @@
 // RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-managed-roots)))' -o %t.serial
 // RUN: diff %t.threaded %t.serial
 // RUN: FileCheck %s < %t.threaded
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-instrument-managed-roots{polled=true})))' | FileCheck %s --check-prefix=POLLED
 
 !candidate = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Object>, ordinal = 0, packedOffset = 0>,
@@ -113,3 +114,31 @@ module attributes {
 // CHECK-LABEL: simulation.func @cross_create
 // CHECK: simulation.class.root_bind %[[QUEUE:.*]] to %{{.*}} at 0 exact kinds 4
 // CHECK-NEXT: %{{.*}} = simulation.covergroup.create {{.*}}payloads[%[[QUEUE]]]
+
+// Under polled collection the record is reset on entry and registered lazily
+// at each poll, after the candidate refresh and the bulk clear that make every
+// slot valid. Allocation, including covergroup.create, is no collection point.
+// POLLED-LABEL: simulation.func @root
+// POLLED: llvm.store %{{.*}}, %[[RECORD:.*]] {{{.*}}obelisk.managed_root_activation_prologue}
+// POLLED-NOT: gc.root_range
+// POLLED: simulation.class.root_bind {{.*}} candidate kinds 3
+// POLLED-NEXT: schedule.gc.root_range.push %[[RECORD]] {{.*}} lazy
+// POLLED-NEXT: runtime.status.from_bits
+// POLLED-NEXT: simulation.status.check
+// POLLED-NEXT: simulation.gc.safepoint
+// POLLED: simulation.class.root_bind {{.*}} candidate kinds 3
+// POLLED-NEXT: schedule.gc.root_range.push %[[RECORD]] {{.*}} lazy
+// POLLED: simulation.gc.safepoint
+// POLLED: schedule.gc.root_range.pop %[[RECORD]]
+// POLLED-LABEL: simulation.func @bulk
+// POLLED-NOT: llvm.intr.memset
+// POLLED: simulation.aggregate.construct
+// POLLED: llvm.intr.memset
+// POLLED-NOT: llvm.intr.memset
+// POLLED: schedule.gc.root_range.push {{.*}} lazy
+// POLLED-NOT: llvm.intr.memset
+// POLLED: simulation.gc.safepoint
+// POLLED-LABEL: simulation.func @cross_create
+// POLLED-NOT: root_bind
+// POLLED-NOT: gc.root_range
+// POLLED: simulation.return

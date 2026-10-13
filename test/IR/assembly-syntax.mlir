@@ -48,6 +48,7 @@ module {
   // CHECK: schedule.scratch 16
   // CHECK: schedule.bytes.address "bytes" = "abc" alignment 4 : !llvm.ptr<3>
   // CHECK: schedule.gc.root_range.push %{{.*}} slots %{{.*}} count %{{.*}} : !llvm.ptr<2>, !llvm.ptr<3>
+  // CHECK: schedule.gc.root_range.push %{{.*}} slots %{{.*}} count %{{.*}} lazy : !llvm.ptr<2>, !llvm.ptr<3>
   // CHECK: schedule.gc.root_range.pop %{{.*}} : !llvm.ptr<2>
   // CHECK: schedule.observer(%{{.*}} : i64) captures 1
   // CHECK: schedule.observer() captures 0
@@ -55,6 +56,8 @@ module {
     %scratch = schedule.scratch 16
     %address = schedule.bytes.address "bytes" = "abc" alignment 4 : !llvm.ptr<3>
     %status = schedule.gc.root_range.push %record slots %slots count %count
+      : !llvm.ptr<2>, !llvm.ptr<3>
+    %lazy = schedule.gc.root_range.push %record slots %slots count %count lazy
       : !llvm.ptr<2>, !llvm.ptr<3>
     schedule.gc.root_range.pop %record : !llvm.ptr<2>
     %observer = schedule.observer(%count : i64) captures 1 {

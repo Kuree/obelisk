@@ -22,14 +22,16 @@ inline constexpr llvm::StringLiteral polledCollectionAttrName =
 inline constexpr llvm::StringLiteral gcPollFreeAttrName =
     "simulation.gc_poll_free";
 
-/// An operation that may allocate managed storage itself. Calls into compiled
-/// code are summarized separately by ManagedCollectionAnalysis.
+/// An operation that may allocate managed storage itself: one with the
+/// `AllocatesManagedStorage` trait, or a DPI call that converts managed values
+/// across its boundary. Calls into compiled code are summarized separately by
+/// ManagedCollectionAnalysis.
 bool mayAllocateManagedStorage(mlir::Operation *operation);
 
-/// A suspension that always ends the activation and returns control to the
-/// scheduler before the process resumes. Task calls, joins, and blocking
-/// mailbox or semaphore operations may continue without a scheduler pass.
-bool returnsToScheduler(mlir::Operation *operation);
+/// A call that runs compiled code and returns to its caller within the same
+/// activation: a function, method, virtual method, or DPI import call. Only
+/// these can be marked poll-free.
+bool isCompiledCall(mlir::Operation *operation);
 
 /// Where the managed heap may reclaim storage under polled collection.
 ///

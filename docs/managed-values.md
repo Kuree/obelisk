@@ -25,8 +25,9 @@ The currently implemented shared-runtime surface includes:
 - native and pointer-free bytecode lowering for escaping array/queue index
   paths through the existing `ArgumentRef` ABI.
 
-Allocation-capable operations require an active managed execution lane. Unless
-code is compiled for polled collection (below), they are collection points.
+Allocation-capable operations carry the `AllocatesManagedStorage` trait and
+require an active managed execution lane. Unless code is compiled for polled
+collection (below), they are collection points in both tiers.
 The runtime roots owners and temporary managed values across every
 allocation. Container publication validates managed element slots against the
 destination context. No managed allocation or GC safepoint occurs while a

@@ -71,6 +71,13 @@ bool isSuspensionOp(Operation *operation) {
       schedule::NativeClassVirtualTaskCallOp>(operation);
 }
 
+bool returnsToScheduler(Operation *operation) {
+  return isa<SimSuspendDelayOp, SimSuspendChangeOp, SimSuspendEdgeOp,
+             SimSuspendEdgeIffOp, SimSuspendClockSetOp, SimSuspendEventOp,
+             SimSuspendEventOrderOp, SimSuspendAnyOp, SimSuspendObserveOp,
+             SimSuspendForeverOp>(operation);
+}
+
 bool isStartupEntryKind(EntryKind kind) {
   switch (kind) {
   case EntryKind::Always:

@@ -34,8 +34,7 @@ namespace {
 constexpr size_t bulkRootRefreshThreshold = 64;
 
 bool managedOperationMayCollect(Operation *operation, bool polled) {
-  bool call = isa<sim::SimCallOp, sim::SimClassDirectCallOp,
-                  sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
+  bool call = analysis::isCompiledCall(operation);
   // Under polled collection allocation only records pressure; the heap
   // reclaims at polls, which roots must reach through every call that may
   // execute one.

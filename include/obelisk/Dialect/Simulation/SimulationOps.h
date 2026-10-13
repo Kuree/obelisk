@@ -23,6 +23,7 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
 #include "obelisk/Dialect/Simulation/SimulationResources.h"
+#include "obelisk/Dialect/Simulation/SimulationTraits.h"
 
 #define GET_OP_CLASSES
 #include "obelisk/Dialect/Simulation/SimulationOps.h.inc"
@@ -101,6 +102,11 @@ materializeKnownZero(::mlir::OpBuilder &builder, ::mlir::Location location,
 
 /// Whether an operation transfers execution to a scheduler continuation.
 bool isSuspensionOp(::mlir::Operation *operation);
+
+/// Whether a suspension always ends the activation and returns control to the
+/// scheduler before the process resumes. Task calls, joins, and blocking
+/// mailbox or semaphore operations may continue without a scheduler pass.
+bool returnsToScheduler(::mlir::Operation *operation);
 
 /// Whether a process is startup infrastructure that must reach its first
 /// suspension or termination before ordinary initial actors begin.

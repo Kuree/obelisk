@@ -23,7 +23,7 @@ class ObeliskSimInsertGCPollsPass final
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    analysis::ManagedCollectionAnalysis collections(module);
+    auto &collections = getAnalysis<analysis::ManagedCollectionAnalysis>();
     OpBuilder builder(module.getContext());
     module.walk([&](sim::SimFuncOp function) {
       if (function.isExternal())
@@ -39,8 +39,7 @@ public:
         ++numPolls;
       }
       function.walk([&](Operation *operation) {
-        if (!isa<sim::SimCallOp, sim::SimClassDirectCallOp,
-                 sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation))
+        if (!analysis::isCompiledCall(operation))
           return;
         if (collections.getCallSummary(operation) &
             analysis::ManagedCollectionAnalysis::Polls) {
