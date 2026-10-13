@@ -616,6 +616,8 @@ Status planSections(const Database &db, const StringTable &strings,
   OBELISK_COVERAGE_PLAN(FunctionalVirtualInterfaceScopes,
                         db.functionalVirtualInterfaceScopes.size());
   OBELISK_COVERAGE_PLAN(CrossPredicateNodes, db.crossPredicateNodes.size());
+  OBELISK_COVERAGE_PLAN(CrossPredicateOperands,
+                        db.crossPredicateOperands.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1612,8 +1614,8 @@ Status encodeSections(const Database &db, const StringTable &strings,
     predicateNodes.record<CrossPredicateNodeRecord>([&](uint8_t *p) {
       CrossPredicateNodeRecord::setId(p, v.id);
       CrossPredicateNodeRecord::setSelector(p, v.selector);
-      CrossPredicateNodeRecord::setLeft(p, v.left);
-      CrossPredicateNodeRecord::setRight(p, v.right);
+      CrossPredicateNodeRecord::setFirstOperand(p, v.firstOperand);
+      CrossPredicateNodeRecord::setOperandCount(p, v.operandCount);
       CrossPredicateNodeRecord::setExpression(p, v.expression);
       CrossPredicateNodeRecord::setTarget(p, v.target);
       CrossPredicateNodeRecord::setKind(p, static_cast<uint32_t>(v.kind));
@@ -1626,6 +1628,12 @@ Status encodeSections(const Database &db, const StringTable &strings,
       CrossPredicateNodeRecord::setIndexBase(p, v.indexBase);
     });
   }
+  Bytes &predicateOperands = add(SectionKind::CrossPredicateOperands,
+                                 db.crossPredicateOperands.size());
+  for (uint64_t operand : db.crossPredicateOperands)
+    predicateOperands.record<CrossPredicateOperandRecord>([&](uint8_t *p) {
+      CrossPredicateOperandRecord::setOperand(p, operand);
+    });
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -1964,8 +1972,8 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, uint32_t(63));
     hashScalar(h, v.id);
     hashScalar(h, v.selector);
-    hashScalar(h, v.left);
-    hashScalar(h, v.right);
+    hashScalar(h, v.firstOperand);
+    hashScalar(h, v.operandCount);
     hashScalar(h, v.expression);
     hashScalar(h, v.target);
     hashScalar(h, static_cast<uint32_t>(v.kind));
@@ -1975,6 +1983,10 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.flags);
     hashScalar(h, v.elementWidth);
     hashScalar(h, v.indexBase);
+  }
+  for (uint64_t operand : db.crossPredicateOperands) {
+    hashScalar(h, uint32_t(64));
+    hashScalar(h, operand);
   }
   for (const auto &v : db.crossSelectorOperands) {
     hashScalar(h, uint32_t(25));
@@ -4551,6 +4563,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (operandCursor != db.crossSelectorOperands.size())
     return fail(Status::InvalidReference, "cross_selector_operand_range");
 
+  if (db.crossPredicateOperands.size() > UINT32_MAX)
+    return fail(Status::InvalidReference, "cross_predicate_operand_range");
   if (!uniqueNonzero(db.crossPredicateNodes,
                      [](const auto &node) { return node.id; }) ||
       !std::is_sorted(db.crossPredicateNodes.begin(),
@@ -4565,10 +4579,19 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       predicateValues;
   IndexSet<uint64_t> predicateExpressions;
   IndexMap<uint64_t, std::vector<const CrossPredicateNode *>> predicateLeaves;
+  size_t predicateOperandCursor = 0;
   for (const auto &node : db.crossPredicateNodes) {
+    if (node.firstOperand != predicateOperandCursor ||
+        node.operandCount >
+            db.crossPredicateOperands.size() - predicateOperandCursor)
+      return fail(Status::InvalidReference, "cross_predicate_operand_range");
+    predicateOperandCursor += node.operandCount;
     const auto *selector = lookupRecord(selectorsByID, node.selector);
-    const auto *left = lookupRecord(predicatesByID, node.left);
-    const auto *right = lookupRecord(predicatesByID, node.right);
+    const auto *left =
+        node.operandCount
+            ? lookupRecord(predicatesByID,
+                           db.crossPredicateOperands[node.firstOperand])
+            : nullptr;
     const auto *value = findExpression(node.expression);
     const bool reduction = node.kind >= CrossPredicateKind::ReductionAnd &&
                            node.kind <= CrossPredicateKind::ReductionXnor;
@@ -4583,13 +4606,23 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       node.kind <= CrossPredicateKind::LogicalOr);
     const bool select = node.kind == CrossPredicateKind::ElementSelect ||
                         node.kind == CrossPredicateKind::RangeSelect;
-    const bool arity = leaf    ? !node.left && !node.right
-                       : unary ? node.left && !node.right
-                               : node.left && node.right;
-    auto validOperand = [&](const CrossPredicateNode *operand) {
-      return !operand || (operand->selector == node.selector &&
-                          operand->ordinal < node.ordinal);
-    };
+    const bool concatenate = node.kind == CrossPredicateKind::Concatenate;
+    const bool conditional = node.kind == CrossPredicateKind::Conditional;
+    const bool arity = leaf          ? node.operandCount == 0
+                       : unary       ? node.operandCount == 1
+                       : conditional ? node.operandCount >= 3
+                       : concatenate ? node.operandCount != 0
+                                     : node.operandCount == 2;
+    uint64_t concatenatedWidth = 0;
+    for (uint32_t i = 0; i != node.operandCount; ++i) {
+      const auto *operand = lookupRecord(
+          predicatesByID, db.crossPredicateOperands[node.firstOperand + i]);
+      if (!operand || operand->selector != node.selector ||
+          operand->ordinal >= node.ordinal)
+        return fail(Status::InvalidReference, "cross_predicate_operand");
+      if (concatenate)
+        concatenatedWidth += operand->bitWidth;
+    }
     bool validTarget = false;
     if (selector && node.target) {
       auto target = predicateTargets.find({selector->cross, node.target});
@@ -4599,7 +4632,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     if (!selector || !selector->predicateRoot || !node.bitWidth ||
         !enumBetween(node.kind, CrossPredicateKind::Value,
-                     CrossPredicateKind::ReductionXnor) ||
+                     CrossPredicateKind::Concatenate) ||
         (node.signedness != CoverageSignedness::Signed &&
          node.signedness != CoverageSignedness::Unsigned) ||
         (node.flags & ~(CrossPredicateTwoState | CrossPredicateAscending |
@@ -4608,8 +4641,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      (node.flags & ~CrossPredicateTwoState))) ||
         (node.kind != CrossPredicateKind::RangeSelect &&
          (node.flags & CrossPredicateBaseNamesHigh)) ||
-        !arity || (node.left && !left) || (node.right && !right) ||
-        !validOperand(left) || !validOperand(right) ||
+        !arity ||
+        (concatenate && (concatenatedWidth != node.bitWidth ||
+                         node.signedness != CoverageSignedness::Unsigned)) ||
         (select &&
          (!node.elementWidth || !left || left->bitWidth % node.elementWidth ||
           node.bitWidth % node.elementWidth ||
@@ -4639,6 +4673,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (expression.role == FunctionalExpressionRole::PredicateValue &&
         !predicateExpressions.count(expression.id))
       return fail(Status::InvalidReference, "cross_predicate_expression");
+  if (predicateOperandCursor != db.crossPredicateOperands.size())
+    return fail(Status::InvalidReference, "cross_predicate_operand_range");
   IndexSet<uint64_t> reachablePredicates;
   std::vector<uint64_t> pendingPredicates;
   for (const auto &selector : db.crossSelectorNodes)
@@ -4652,10 +4688,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     const auto *node = lookupRecord(predicatesByID, id);
     if (!node)
       return fail(Status::InvalidReference, "cross_predicate_root");
-    if (node->left)
-      pendingPredicates.push_back(node->left);
-    if (node->right)
-      pendingPredicates.push_back(node->right);
+    for (uint32_t i = 0; i != node->operandCount; ++i)
+      pendingPredicates.push_back(
+          db.crossPredicateOperands[node->firstOperand + i]);
   }
   if (reachablePredicates.size() != db.crossPredicateNodes.size())
     return fail(Status::InvalidReference, "cross_predicate_unreachable");
@@ -8151,8 +8186,8 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                  result.crossPredicateNodes.push_back(
                      {CrossPredicateNodeRecord::getId(p),
                       CrossPredicateNodeRecord::getSelector(p),
-                      CrossPredicateNodeRecord::getLeft(p),
-                      CrossPredicateNodeRecord::getRight(p),
+                      CrossPredicateNodeRecord::getFirstOperand(p),
+                      CrossPredicateNodeRecord::getOperandCount(p),
                       CrossPredicateNodeRecord::getExpression(p),
                       CrossPredicateNodeRecord::getTarget(p),
                       static_cast<CrossPredicateKind>(
@@ -8164,6 +8199,14 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                       CrossPredicateNodeRecord::getFlags(p),
                       CrossPredicateNodeRecord::getElementWidth(p),
                       CrossPredicateNodeRecord::getIndexBase(p)});
+                 return Status::Ok;
+               });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::CrossPredicateOperands,
+               [&](const auto &, uint64_t, const uint8_t *p) {
+                 result.crossPredicateOperands.push_back(
+                     CrossPredicateOperandRecord::getOperand(p));
                  return Status::Ok;
                });
     if (st != Status::Ok)

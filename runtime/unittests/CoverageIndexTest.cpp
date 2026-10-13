@@ -39,26 +39,71 @@ bool predicateResultIs(PredicateKind kind, uint64_t left, uint64_t right,
   std::vector<PredicateNode> rows = {
       {1, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 0, 0},
       {2, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 1, 0},
-      {3, 1, 1, unary ? 0u : 2u, 0, 0, kind, resultWidth, sign, 2,
+      {3, 1, 0, unary ? 1u : 2u, 0, 0, kind, resultWidth, sign, 2,
        twoState ? obelisk::coverage::CrossPredicateTwoState : 0u},
       {4, 1, 0, 0, 0, 0, PredicateKind::Value, resultWidth, sign, 3, 0},
-      {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
+      {5, 1, unary ? 1u : 2u, 2, 0, 0, PredicateKind::CaseEqual, 1,
+       Signedness::Unsigned, 4, 0}};
+  std::vector<const PredicateNode *> program;
+  for (const auto &row : rows)
+    program.push_back(&row);
+  auto result = index.compile(
+      5, program,
+      unary ? std::vector<uint64_t>{1, 3, 4}
+            : std::vector<uint64_t>{1, 2, 3, 4},
+      [&](const auto &node) {
+        uint64_t value = node.id == 1 ? left : node.id == 2 ? right : expected;
+        PredicateDecisionIndex::Value bits;
+        for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+          bits.aval.push_back((value >> (bit * 2)) & 1);
+          bits.bval.push_back((value >> (bit * 2 + 1)) & 1);
+        }
+        return bits;
+      });
+  EXPECT_FALSE(index.exhausted());
+  return result == 1;
+}
+bool conditionalResultIs(uint64_t condition, uint64_t a, uint64_t b,
+                         uint64_t expected, uint32_t conditionWidth = 1,
+                         uint32_t aWidth = 1, uint32_t bWidth = 1,
+                         uint32_t resultWidth = 1, bool aSigned = false,
+                         bool bSigned = false, bool twoState = false) {
+  DecisionIndex graph(0);
+  PredicateDecisionIndex index(graph);
+  std::vector<PredicateNode> rows = {
+      {1, 1, 0, 0, 0, 0, PredicateKind::Value, conditionWidth,
+       Signedness::Unsigned, 0, 0},
+      {2, 1, 0, 0, 0, 0, PredicateKind::Value, aWidth,
+       aSigned ? Signedness::Signed : Signedness::Unsigned, 1, 0},
+      {3, 1, 0, 0, 0, 0, PredicateKind::Value, bWidth,
+       bSigned ? Signedness::Signed : Signedness::Unsigned, 2, 0},
+      {4, 1, 0, 3, 0, 0, PredicateKind::Conditional, resultWidth,
+       Signedness::Unsigned, 3,
+       twoState ? obelisk::coverage::CrossPredicateTwoState : 0u},
+      {5, 1, 3, 0, 0, 0, PredicateKind::Value, resultWidth,
+       Signedness::Unsigned, 4, 0},
+      {6, 1, 3, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 5,
        0}};
   std::vector<const PredicateNode *> program;
   for (const auto &row : rows)
     program.push_back(&row);
-  auto result = index.compile(5, program, [&](const auto &node) {
-    uint64_t value = node.id == 1 ? left : node.id == 2 ? right : expected;
-    PredicateDecisionIndex::Value bits;
-    for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
-      bits.aval.push_back((value >> (bit * 2)) & 1);
-      bits.bval.push_back((value >> (bit * 2 + 1)) & 1);
-    }
-    return bits;
-  });
+  auto result =
+      index.compile(6, program, {1, 2, 3, 4, 5}, [&](const auto &node) {
+        uint64_t value = node.id == 1   ? condition
+                         : node.id == 2 ? a
+                         : node.id == 3 ? b
+                                        : expected;
+        PredicateDecisionIndex::Value bits;
+        for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+          bits.aval.push_back((value >> (bit * 2)) & 1);
+          bits.bval.push_back((value >> (bit * 2 + 1)) & 1);
+        }
+        return bits;
+      });
   EXPECT_FALSE(index.exhausted());
   return result == 1;
 }
+
 bool selectResultIs(PredicateKind kind, uint64_t source, uint32_t sourceWidth,
                     uint64_t indexValue, uint32_t indexWidth, uint64_t expected,
                     uint32_t resultWidth = 1, uint32_t elementWidth = 1,
@@ -71,16 +116,16 @@ bool selectResultIs(PredicateKind kind, uint64_t source, uint32_t sourceWidth,
        Signedness::Unsigned, 0, 0},
       {2, 1, 0, 0, 0, 0, PredicateKind::Value, indexWidth,
        signedIndex ? Signedness::Signed : Signedness::Unsigned, 1, 0},
-      {3, 1, 1, 2, 0, 0, kind, resultWidth, Signedness::Unsigned, 2, flags,
+      {3, 1, 0, 2, 0, 0, kind, resultWidth, Signedness::Unsigned, 2, flags,
        elementWidth, origin},
       {4, 1, 0, 0, 0, 0, PredicateKind::Value, resultWidth,
        Signedness::Unsigned, 3, 0},
-      {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
+      {5, 1, 2, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
        0}};
   std::vector<const PredicateNode *> program;
   for (const auto &row : rows)
     program.push_back(&row);
-  auto result = index.compile(5, program, [&](const auto &node) {
+  auto result = index.compile(5, program, {1, 2, 3, 4}, [&](const auto &node) {
     uint64_t value = node.id == 1   ? source
                      : node.id == 2 ? indexValue
                                     : expected;
@@ -179,6 +224,110 @@ TEST(CoveragePredicateIndexTest, UnaryOperatorsFollowFourStateLRMTables) {
       predicateResultIs(PredicateKind::Negate, 8, 0, 0, 2, false, true));
 }
 
+TEST(CoveragePredicateIndexTest, ConditionalMergeFollowsLRMTable1120) {
+  const uint64_t merge[4][4] = {
+      {0, 3, 3, 3}, {3, 1, 3, 3}, {3, 3, 3, 3}, {3, 3, 3, 3}};
+  for (uint64_t condition = 0; condition != 4; ++condition)
+    for (uint64_t a = 0; a != 4; ++a)
+      for (uint64_t b = 0; b != 4; ++b)
+        EXPECT_TRUE(conditionalResultIs(condition, a, b,
+                                        condition == 0   ? b
+                                        : condition == 1 ? a
+                                                         : merge[a][b]));
+  // A known one dominates an unknown bit of a multibit condition.
+  EXPECT_TRUE(conditionalResultIs(7, 2, 0, 2, 2));
+  // Only a common signed arm type sign-extends before merging.
+  EXPECT_TRUE(conditionalResultIs(3, 5, 85, 85, 1, 2, 4, 4, true, true));
+  EXPECT_TRUE(conditionalResultIs(3, 5, 85, 245, 1, 2, 4, 4, true, false));
+  EXPECT_TRUE(conditionalResultIs(1, 2, 0, 0, 1, 1, 1, 1, false, false, true));
+}
+
+TEST(CoveragePredicateIndexTest, ConcatenationPreservesManyOperandPlanes) {
+  for (uint32_t count : {1u, 17u, 129u}) {
+    DecisionIndex graph(0);
+    PredicateDecisionIndex index(graph);
+    const uint32_t width = count * 3;
+    std::vector<PredicateNode> rows;
+    std::vector<uint64_t> operands;
+    for (uint32_t i = 0; i != count; ++i) {
+      rows.push_back({i + 1, 1, 0, 0, 0, 0, PredicateKind::Value, 3,
+                      Signedness::Signed, i, 0});
+      operands.push_back(i + 1);
+    }
+    rows.push_back({count + 1, 1, 0, count, 0, 0, PredicateKind::Concatenate,
+                    width, Signedness::Unsigned, count, 0});
+    rows.push_back({count + 2, 1, count, 0, 0, 0, PredicateKind::Value, width,
+                    Signedness::Unsigned, count + 1, 0});
+    rows.push_back({count + 3, 1, count, 2, 0, 0, PredicateKind::CaseEqual, 1,
+                    Signedness::Unsigned, count + 2, 0});
+    operands.push_back(count + 1);
+    operands.push_back(count + 2);
+    std::vector<const PredicateNode *> program;
+    for (const auto &row : rows)
+      program.push_back(&row);
+    auto root =
+        index.compile(count + 3, program, operands, [&](const auto &node) {
+          PredicateDecisionIndex::Value bits;
+          for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+            // Independent expected sequence in least-significant-first order.
+            uint32_t item =
+                node.id <= count ? node.id - 1 : count - bit / 3 - 1;
+            uint32_t plane = (item + bit % 3) % 4;
+            bits.aval.push_back(plane & 1);
+            bits.bval.push_back(plane >> 1);
+          }
+          return bits;
+        });
+    EXPECT_EQ(root, 1u);
+    EXPECT_FALSE(index.exhausted());
+  }
+}
+
+TEST(CoveragePredicateIndexTest, WideConditionalFitsABitProportionalBudget) {
+  for (uint32_t width : {1u, 65u, 129u}) {
+    DecisionIndex graph(width + 1, width * 512);
+    PredicateDecisionIndex index(graph);
+    std::vector<PredicateNode> rows = {{1, 1, 0, 0, 0, 1, PredicateKind::Target,
+                                        width, Signedness::Unsigned, 0, 0},
+                                       {2, 1, 0, 0, 0, 2, PredicateKind::Target,
+                                        1, Signedness::Unsigned, 1, 0},
+                                       {3, 1, 0, 1, 0, 0, PredicateKind::BitNot,
+                                        width, Signedness::Unsigned, 2, 0},
+                                       {4, 1, 1, 3, 0, 0,
+                                        PredicateKind::Conditional, width,
+                                        Signedness::Unsigned, 3, 0},
+                                       {5, 1, 4, 0, 0, 0, PredicateKind::Value,
+                                        width, Signedness::Unsigned, 4, 0},
+                                       {6, 1, 4, 2, 0, 0, PredicateKind::Equal,
+                                        1, Signedness::Unsigned, 5, 0}};
+    std::vector<const PredicateNode *> program;
+    for (const auto &row : rows)
+      program.push_back(&row);
+    auto root =
+        index.compile(6, program, {1, 2, 1, 3, 4, 5}, [&](const auto &node) {
+          PredicateDecisionIndex::Value bits;
+          for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+            bits.aval.push_back(
+                node.id == 5
+                    ? 0
+                    : graph.makeNode(node.id == 2 ? 0 : width - bit, 0, 1));
+            bits.bval.push_back(0);
+          }
+          return bits;
+        });
+    ASSERT_FALSE(index.exhausted());
+    EXPECT_EQ(graph.cardinality(root, 3), 2u);
+    std::vector<uint64_t> zero((width + 64) / 64), ones = zero;
+    zero[width / 64] = uint64_t{1} << (width % 64);
+    for (uint32_t bit = 0; bit != width; ++bit)
+      ones[bit / 64] |= uint64_t{1} << (bit % 64);
+    std::vector<uint64_t> wildcard(zero.size());
+    EXPECT_EQ(root, graph.unite(graph.cube(zero, wildcard),
+                                graph.cube(ones, wildcard)));
+    EXPECT_FALSE(index.exhausted());
+  }
+}
+
 TEST(CoveragePredicateIndexTest, WideParityUsesABoundedLinearGraph) {
   for (uint32_t width : {1u, 65u, 129u}) {
     DecisionIndex graph(width, width * 256);
@@ -187,9 +336,9 @@ TEST(CoveragePredicateIndexTest, WideParityUsesABoundedLinearGraph) {
         1, 1, 0, 0, 0, 1, PredicateKind::Target, width, Signedness::Unsigned,
         0, 0};
     PredicateNode parity{
-        2, 1, 1, 0, 0, 0, PredicateKind::ReductionXor, 1, Signedness::Unsigned,
+        2, 1, 0, 1, 0, 0, PredicateKind::ReductionXor, 1, Signedness::Unsigned,
         1, 0};
-    auto root = index.compile(2, {&input, &parity}, [&](const auto &node) {
+    auto root = index.compile(2, {&input, &parity}, {1}, [&](const auto &node) {
       PredicateDecisionIndex::Value bits;
       for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
         bits.aval.push_back(graph.makeNode(width - bit - 1, 0, 1));
@@ -226,16 +375,17 @@ TEST(CoveragePredicateIndexTest, WideEqualityFitsABitProportionalGraphBudget) {
         2, 1, 0, 0, 0, 2, PredicateKind::Target, width, Signedness::Unsigned,
         1, 0};
     PredicateNode equal{
-        3, 1, 1, 2, 0, 0, PredicateKind::Equal, 1, Signedness::Unsigned, 2, 0};
-    auto root = index.compile(3, {&a, &b, &equal}, [&](const auto &node) {
-      PredicateDecisionIndex::Value value;
-      for (uint32_t bit = 0; bit != width; ++bit) {
-        value.aval.push_back(
-            graph.makeNode((width - bit - 1) * 2 + node.ordinal, 0, 1));
-        value.bval.push_back(0);
-      }
-      return value;
-    });
+        3, 1, 0, 2, 0, 0, PredicateKind::Equal, 1, Signedness::Unsigned, 2, 0};
+    auto root =
+        index.compile(3, {&a, &b, &equal}, {1, 2}, [&](const auto &node) {
+          PredicateDecisionIndex::Value value;
+          for (uint32_t bit = 0; bit != width; ++bit) {
+            value.aval.push_back(
+                graph.makeNode((width - bit - 1) * 2 + node.ordinal, 0, 1));
+            value.bval.push_back(0);
+          }
+          return value;
+        });
     ASSERT_FALSE(index.exhausted()) << "width=" << width;
     EXPECT_NE(root, 0u);
     EXPECT_EQ(graph.intersect(root, graph.intersect(graph.makeNode(0, 0, 1),
@@ -279,15 +429,15 @@ TEST(CoveragePredicateIndexTest,
   std::vector<PredicateNode> rows = {
       {1, 1, 0, 0, 0, 1, PredicateKind::Target, 2, Signedness::Unsigned, 0, 0},
       {2, 1, 0, 0, 0, 2, PredicateKind::Target, 1, Signedness::Unsigned, 1, 0},
-      {3, 1, 1, 2, 0, 0, PredicateKind::ElementSelect, 1, Signedness::Unsigned,
+      {3, 1, 0, 2, 0, 0, PredicateKind::ElementSelect, 1, Signedness::Unsigned,
        2, 0, 1},
       {4, 1, 0, 0, 0, 0, PredicateKind::Value, 1, Signedness::Unsigned, 3, 0},
-      {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
+      {5, 1, 2, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
        0}};
   std::vector<const PredicateNode *> program;
   for (const auto &row : rows)
     program.push_back(&row);
-  auto root = index.compile(5, program, [&](const auto &node) {
+  auto root = index.compile(5, program, {1, 2, 3, 4}, [&](const auto &node) {
     PredicateDecisionIndex::Value bits;
     for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
       uint32_t variable = node.id == 2 ? 0 : 4 - bit * 2;
@@ -320,15 +470,15 @@ TEST(CoveragePredicateIndexTest,
          0},
         {2, 1, 0, 0, 0, 2, PredicateKind::Target, 2, Signedness::Unsigned, 1,
          0},
-        {3, 1, 1, 2, 0, 0, PredicateKind::RangeSelect, 2, Signedness::Unsigned,
+        {3, 1, 0, 2, 0, 0, PredicateKind::RangeSelect, 2, Signedness::Unsigned,
          2, flags, 1},
         {4, 1, 0, 0, 0, 0, PredicateKind::Value, 2, Signedness::Unsigned, 3, 0},
-        {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
+        {5, 1, 2, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 4,
          0}};
     std::vector<const PredicateNode *> program;
     for (const auto &row : rows)
       program.push_back(&row);
-    auto root = index.compile(5, program, [&](const auto &node) {
+    auto root = index.compile(5, program, {1, 2, 3, 4}, [&](const auto &node) {
       PredicateDecisionIndex::Value bits;
       for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
         uint32_t variable = node.id == 2 ? 2 - bit * 2 : 8 - bit * 2;
@@ -376,27 +526,28 @@ TEST(CoveragePredicateIndexTest, VariableWindowsShareABoundedProjection) {
            0, 0},
           {2, 1, 0, 0, 0, 2, PredicateKind::Target, indexWidth,
            Signedness::Unsigned, 1, 0},
-          {3, 1, 1, 2, 0, 0, PredicateKind::RangeSelect, window,
+          {3, 1, 0, 2, 0, 0, PredicateKind::RangeSelect, window,
            Signedness::Unsigned, 2, 0, 1},
           {4, 1, 0, 0, 0, 0, PredicateKind::Value, window, Signedness::Unsigned,
            3, 0},
-          {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned,
+          {5, 1, 2, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned,
            4, 0}};
       std::vector<const PredicateNode *> program;
       for (const auto &row : rows)
         program.push_back(&row);
-      auto root = index.compile(5, program, [&](const auto &node) {
-        PredicateDecisionIndex::Value bits;
-        for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
-          uint32_t variable = node.id == 1   ? indexWidth + width - bit - 1
-                              : node.id == 2 ? indexWidth - bit - 1
-                                             : 0;
-          bits.aval.push_back(node.id == 4 ? 0
-                                           : graph.makeNode(variable, 0, 1));
-          bits.bval.push_back(0);
-        }
-        return bits;
-      });
+      auto root =
+          index.compile(5, program, {1, 2, 3, 4}, [&](const auto &node) {
+            PredicateDecisionIndex::Value bits;
+            for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+              uint32_t variable = node.id == 1   ? indexWidth + width - bit - 1
+                                  : node.id == 2 ? indexWidth - bit - 1
+                                                 : 0;
+              bits.aval.push_back(
+                  node.id == 4 ? 0 : graph.makeNode(variable, 0, 1));
+              bits.bval.push_back(0);
+            }
+            return bits;
+          });
       ASSERT_FALSE(index.exhausted()) << width << ":" << window;
       for (uint32_t ordinal : {0u, width - window, width - 1, width}) {
         auto address = DecisionIndex::Root{1};
@@ -426,10 +577,10 @@ TEST(CoveragePredicateIndexTest, ConstantWindowStatesStillConsumeTheWorkLimit) {
   PredicateNode address{
       2, 1, 0, 0, 0, 1, PredicateKind::Target, 1, Signedness::Unsigned, 1, 0};
   PredicateNode window{
-      3, 1, 1, 2, 0, 0, PredicateKind::RangeSelect, 65, Signedness::Unsigned,
+      3, 1, 0, 2, 0, 0, PredicateKind::RangeSelect, 65, Signedness::Unsigned,
       2, 0, 1};
-  auto root =
-      index.compile(3, {&source, &address, &window}, [&](const auto &node) {
+  auto root = index.compile(
+      3, {&source, &address, &window}, {1, 2}, [&](const auto &node) {
         PredicateDecisionIndex::Value bits;
         bits.aval.assign(node.bitWidth,
                          node.id == 2 ? graph.makeNode(0, 0, 1) : 0);
@@ -454,30 +605,31 @@ TEST(CoveragePredicateIndexTest, WideSelectIndicesCannotWrapIntoTheSource) {
            0},
           {2, 1, 0, 0, 0, 0, PredicateKind::Value, 129,
            scenario == 1 ? Signedness::Signed : Signedness::Unsigned, 1, 0},
-          {3, 1, 1, 2, 0, 0, kind, width, Signedness::Unsigned, 2, 0, 1},
+          {3, 1, 0, 2, 0, 0, kind, width, Signedness::Unsigned, 2, 0, 1},
           {4, 1, 0, 0, 0, 0, PredicateKind::Value, width, Signedness::Unsigned,
            3, 0},
-          {5, 1, 3, 4, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned,
+          {5, 1, 2, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned,
            4, 0}};
       std::vector<const PredicateNode *> program;
       for (const auto &row : rows)
         program.push_back(&row);
-      auto result = index.compile(5, program, [&](const auto &node) {
-        PredicateDecisionIndex::Value bits;
-        bits.aval.assign(node.bitWidth, node.id == 4 && scenario != 4);
-        bits.bval = bits.aval;
-        if (node.id == 2) {
-          if (scenario == 0)
-            bits.aval[64] = 1;
-          else if (scenario == 1)
-            bits.aval[128] = 1;
-          else if (scenario == 2 || scenario == 3) {
-            bits.aval[128] = scenario == 2;
-            bits.bval[128] = 1;
-          }
-        }
-        return bits;
-      });
+      auto result =
+          index.compile(5, program, {1, 2, 3, 4}, [&](const auto &node) {
+            PredicateDecisionIndex::Value bits;
+            bits.aval.assign(node.bitWidth, node.id == 4 && scenario != 4);
+            bits.bval = bits.aval;
+            if (node.id == 2) {
+              if (scenario == 0)
+                bits.aval[64] = 1;
+              else if (scenario == 1)
+                bits.aval[128] = 1;
+              else if (scenario == 2 || scenario == 3) {
+                bits.aval[128] = scenario == 2;
+                bits.bval[128] = 1;
+              }
+            }
+            return bits;
+          });
       EXPECT_EQ(result, 1u) << unsigned(kind) << ":" << scenario;
       EXPECT_FALSE(index.exhausted());
     }
@@ -520,10 +672,10 @@ TEST(CoveragePredicateIndexTest,
                           1,
                           0};
     PredicateNode select{
-        3, 1, 1, 2, 0, 0, PredicateKind::ElementSelect, 1, Signedness::Unsigned,
+        3, 1, 0, 2, 0, 0, PredicateKind::ElementSelect, 1, Signedness::Unsigned,
         2, 0, 1};
-    auto root =
-        index.compile(3, {&source, &address, &select}, [&](const auto &node) {
+    auto root = index.compile(
+        3, {&source, &address, &select}, {1, 2}, [&](const auto &node) {
           PredicateDecisionIndex::Value bits;
           for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
             uint32_t variable = node.id == 1 ? indexWidth + width - bit - 1

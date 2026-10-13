@@ -124,6 +124,8 @@ def CrossPredicateReductionXor : CoverageCrossPredicateKind<"ReductionXor", 27>;
 def CrossPredicateReductionNand : CoverageCrossPredicateKind<"ReductionNand", 28>;
 def CrossPredicateReductionNor : CoverageCrossPredicateKind<"ReductionNor", 29>;
 def CrossPredicateReductionXnor : CoverageCrossPredicateKind<"ReductionXnor", 30>;
+def CrossPredicateConditional : CoverageCrossPredicateKind<"Conditional", 31>;
+def CrossPredicateConcatenate : CoverageCrossPredicateKind<"Concatenate", 32>;
 
 class CoverageExpressionOwnerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -372,7 +374,8 @@ def FunctionalClassTypes : CoverageSection<"FunctionalClassTypes", 60, 16, 0, 1>
 def FunctionalVirtualInterfaceTypes : CoverageSection<"FunctionalVirtualInterfaceTypes", 61, 16, 0, 1>;
 def FunctionalVirtualInterfaceScopes : CoverageSection<"FunctionalVirtualInterfaceScopes", 62, 16, 0, 1>;
 
-def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 80, 0, 1>;
+def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 72, 0, 1>;
+def CrossPredicateOperands : CoverageSection<"CrossPredicateOperands", 64, 8, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -440,7 +443,8 @@ def DomainCrossPredicateKind : CoverageFieldDomain<
      CrossPredicateRangeSelect, CrossPredicateNegate,
      CrossPredicateReductionAnd, CrossPredicateReductionOr,
      CrossPredicateReductionXor, CrossPredicateReductionNand,
-     CrossPredicateReductionNor, CrossPredicateReductionXnor]>;
+     CrossPredicateReductionNor, CrossPredicateReductionXnor,
+     CrossPredicateConditional, CrossPredicateConcatenate]>;
 def DomainFunctionalItemKind : CoverageFieldDomain<
     "FunctionalItemKind", "Enum", [FunctionalCoverpoint, FunctionalCross]>;
 def DomainFunctionalBinKind : CoverageFieldDomain<
@@ -558,6 +562,7 @@ def DomainTransitionSteps : CoverageFieldDomain<"TransitionSteps", "Range", [], 
 def DomainCrossTargets : CoverageFieldDomain<"CrossTargets", "Range", [], 22>;
 def DomainCrossBins : CoverageFieldDomain<"CrossBins", "Range", [], 23>;
 def DomainCrossPredicateNodes : CoverageFieldDomain<"CrossPredicateNodes", "StableRef", [], 63>;
+def DomainCrossPredicateOperands : CoverageFieldDomain<"CrossPredicateOperands", "Range", [], 64>;
 def DomainCrossSelectorNodes : CoverageFieldDomain<"CrossSelectorNodes", "StableRef", [], 24>;
 def DomainCrossSelectorOperands : CoverageFieldDomain<"CrossSelectorOperands", "Range", [], 25>;
 def DomainSparseCrossTupleComponents : CoverageFieldDomain<"SparseCrossTupleComponents", "Range", [], 26>;
@@ -2205,30 +2210,37 @@ def CPNId : CoverageField<"Id", "id", 0, CovU64> {
 def CPNSelector : CoverageField<"Selector", "selector", 8, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainCrossSelectorNodes;
 }
-def CPNLeft : CoverageField<"Left", "left", 16, CovU64> {
-  let semantic = "StableIDRef"; let domain = DomainCrossPredicateNodes; let nullable = 1;
+def CPNFirstOp : CoverageField<"FirstOperand", "first_operand", 16, CovU32> {
+  let semantic = "RangeStart"; let domain = DomainCrossPredicateOperands;
+  let pairedField = "OperandCount";
 }
-def CPNRight : CoverageField<"Right", "right", 24, CovU64> {
-  let semantic = "StableIDRef"; let domain = DomainCrossPredicateNodes; let nullable = 1;
+def CPNOpCount : CoverageField<"OperandCount", "operand_count", 20, CovU32> {
+  let semantic = "RangeCount"; let domain = DomainCrossPredicateOperands;
+  let pairedField = "FirstOperand";
 }
-def CPNExpression : CoverageField<"Expression", "expression", 32, CovU64> {
+def CPNExpression : CoverageField<"Expression", "expression", 24, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainFunctionalExpressions; let nullable = 1;
 }
-def CPNTarget : CoverageField<"Target", "target", 40, CovU64> {
+def CPNTarget : CoverageField<"Target", "target", 32, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainFunctionalItems; let nullable = 1;
 }
-def CPNKind : CoverageField<"Kind", "kind", 48, CovU32> {
+def CPNKind : CoverageField<"Kind", "kind", 40, CovU32> {
   let semantic = "Enum"; let domain = DomainCrossPredicateKind;
 }
-def CPNBitWidth : CoverageField<"BitWidth", "bit_width", 52, CovU32>;
-def CPNSignedness : CoverageField<"Signedness", "signedness", 56, CovU32> {
+def CPNBitWidth : CoverageField<"BitWidth", "bit_width", 44, CovU32>;
+def CPNSignedness : CoverageField<"Signedness", "signedness", 48, CovU32> {
   let semantic = "Enum"; let domain = DomainCoverageSignedness;
 }
-def CPNOrdinal : CoverageField<"Ordinal", "ordinal", 60, CovU32>;
-def CPNFlags : CoverageField<"Flags", "flags", 64, CovU32> {
+def CPNOrdinal : CoverageField<"Ordinal", "ordinal", 52, CovU32>;
+def CPNFlags : CoverageField<"Flags", "flags", 56, CovU32> {
   let semantic = "Flags"; let validMask = 7;
 }
-def CPNElementWidth : CoverageField<"ElementWidth", "element_width", 68, CovU32>;
-def CPNIndexBase : CoverageField<"IndexBase", "index_base", 72, CovS64>;
+def CPNElementWidth : CoverageField<"ElementWidth", "element_width", 60, CovU32>;
+def CPNIndexBase : CoverageField<"IndexBase", "index_base", 64, CovS64>;
 def CrossPredicateNodeRecord : CoverageRecord<"CrossPredicateNodeRecord", CrossPredicateNodes,
-    [CPNId, CPNSelector, CPNLeft, CPNRight, CPNExpression, CPNTarget, CPNKind, CPNBitWidth, CPNSignedness, CPNOrdinal, CPNFlags, CPNElementWidth, CPNIndexBase]>;
+    [CPNId, CPNSelector, CPNFirstOp, CPNOpCount, CPNExpression, CPNTarget, CPNKind, CPNBitWidth, CPNSignedness, CPNOrdinal, CPNFlags, CPNElementWidth, CPNIndexBase]>;
+def CPOOperand : CoverageField<"Operand", "operand", 0, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainCrossPredicateNodes;
+}
+def CrossPredicateOperandRecord : CoverageRecord<"CrossPredicateOperandRecord",
+    CrossPredicateOperands, [CPOOperand]>;

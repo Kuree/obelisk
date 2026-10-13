@@ -2628,8 +2628,8 @@ void jsonReport(
         out.object([&] {
           out.attribute("id", node.id);
           out.attribute("selector", node.selector);
-          out.attribute("left", node.left);
-          out.attribute("right", node.right);
+          out.attribute("first_operand", node.firstOperand);
+          out.attribute("operand_count", node.operandCount);
           out.attribute("expression", node.expression);
           out.attribute("target", node.target);
           out.attribute("kind", static_cast<uint32_t>(node.kind));
@@ -2640,6 +2640,10 @@ void jsonReport(
           out.attribute("element_width", node.elementWidth);
           out.attribute("index_base", node.indexBase);
         });
+    });
+    out.attributeArray("cross_predicate_operands", [&] {
+      for (uint64_t operand : database.crossPredicateOperands)
+        out.value(operand);
     });
     out.attributeArray("cross_selector_operands", [&] {
       for (const CrossSelectorOperand &operand : database.crossSelectorOperands)
@@ -3487,6 +3491,8 @@ int main(int argc, char **argv) {
         << "\nfunctional-formals: " << database.functionalFormals.size()
         << "\nfunctional-expressions: " << database.functionalExpressions.size()
         << "\ncross-predicate-nodes: " << database.crossPredicateNodes.size()
+        << "\ncross-predicate-operands: "
+        << database.crossPredicateOperands.size()
         << "\nfunctional-item-templates: " << database.functionalItems.size()
         << "\nfunctional-bin-templates: " << database.functionalBins.size()
         << "\nfunctional-configurations: "

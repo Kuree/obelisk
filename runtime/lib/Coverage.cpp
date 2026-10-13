@@ -2426,7 +2426,12 @@ struct FunctionalCoverageSetQueryIndex {
       predicateNodes.emplace(node.id, &node);
       if (node.kind == CrossPredicateKind::ElementSelect ||
           node.kind == CrossPredicateKind::RangeSelect)
-        pendingIndices.push_back(node.right);
+        pendingIndices.push_back(
+            schema.crossPredicateOperands[node.firstOperand + 1]);
+      else if (node.kind == CrossPredicateKind::Conditional)
+        for (uint32_t i = 0; i != node.operandCount - 2; ++i)
+          pendingIndices.push_back(
+              schema.crossPredicateOperands[node.firstOperand + i]);
     }
     // Index operands precede data operands in the variable order. Otherwise
     // ordinary variable addressing can require an exponential Boolean
@@ -2443,10 +2448,9 @@ struct FunctionalCoverageSetQueryIndex {
       const auto &node = *found->second;
       if (node.kind == CrossPredicateKind::Target)
         indexTargets.insert(node.target);
-      if (node.left)
-        pendingIndices.push_back(node.left);
-      if (node.right)
-        pendingIndices.push_back(node.right);
+      for (uint32_t i = 0; i != node.operandCount; ++i)
+        pendingIndices.push_back(
+            schema.crossPredicateOperands[node.firstOperand + i]);
     }
     for (const auto &[id, ordinal] : sets) {
       const auto &set = schema.resolvedFunctionalValueSets[ordinal];
@@ -3157,7 +3161,7 @@ struct PreparedCrossValueIndex {
       return 0;
     }
     return predicates->compile(
-        selector.predicateRoot, program->second,
+        selector.predicateRoot, program->second, schema.crossPredicateOperands,
         [&](const CrossPredicateNode &node) {
           Predicate::Value value;
           if (node.kind == CrossPredicateKind::Target) {
@@ -3844,9 +3848,15 @@ obelisk_rt_status ensureFunctionalConstructionSchemas(CoverageState &coverage) {
     schema.crossSelectorNodes.push_back(node);
     owners.emplace(std::make_pair(Owner::Selector, row.id), type);
   }
-  for (const auto &row : source.crossPredicateNodes)
-    schemaFor(owners.at(std::make_pair(Owner::Selector, row.selector)))
-        .crossPredicateNodes.push_back(row);
+  for (const auto &row : source.crossPredicateNodes) {
+    auto &schema =
+        schemaFor(owners.at(std::make_pair(Owner::Selector, row.selector)));
+    auto node = row;
+    node.firstOperand = schema.crossPredicateOperands.size();
+    appendSpan(schema.crossPredicateOperands, source.crossPredicateOperands,
+               row.firstOperand, row.operandCount);
+    schema.crossPredicateNodes.push_back(node);
+  }
   for (const auto &row : source.functionalTupleSets) {
     auto &schema = schemaFor(itemTypes.at(row.cross));
     auto set = row;

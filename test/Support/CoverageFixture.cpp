@@ -182,18 +182,22 @@ int main(int argc, char **argv) {
           predicate.signedness = CoverageSignedness::Unsigned;
           predicate.ownerOrdinal = 1;
           const uint64_t base = 300 + ordinal * 3;
+          const uint32_t firstOperand = db.crossPredicateOperands.size();
+          db.crossPredicateNodes.push_back({base, selector.id, firstOperand, 0,
+                                            0, 20, CrossPredicateKind::Target,
+                                            65, CoverageSignedness::Unsigned, 0,
+                                            CrossPredicateTwoState});
           db.crossPredicateNodes.push_back(
-              {base, selector.id, 0, 0, 0, 20, CrossPredicateKind::Target, 65,
-               CoverageSignedness::Unsigned, 0, CrossPredicateTwoState});
-          db.crossPredicateNodes.push_back(
-              {base + 1, selector.id, 0, 0, predicate.id, 0,
+              {base + 1, selector.id, firstOperand, 0, predicate.id, 0,
                CrossPredicateKind::Value, 65, CoverageSignedness::Unsigned, 1,
                CrossPredicateTwoState});
           db.crossPredicateNodes.push_back(
-              {base + 2, selector.id, base, base + 1, 0, 0,
+              {base + 2, selector.id, firstOperand, 2, 0, 0,
                ordinal ? CrossPredicateKind::GreaterEqual
                        : CrossPredicateKind::Less,
                1, CoverageSignedness::Unsigned, 2, CrossPredicateTwoState});
+          db.crossPredicateOperands.push_back(base);
+          db.crossPredicateOperands.push_back(base + 1);
         }
         db.functionalExpressions.push_back(predicate);
       }

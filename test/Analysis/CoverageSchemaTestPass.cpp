@@ -16,6 +16,7 @@
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <optional>
@@ -235,17 +236,26 @@ private:
          << " matches_count=" << node.matchesCount << " flags=" << node.flags
          << " predicate_root=" << node.predicateRoot << '\n';
     for (const coverage::CrossPredicateNode &predicate :
-         db.crossPredicateNodes)
+         db.crossPredicateNodes) {
       os << "cross_predicate id=" << predicate.id
-         << " selector=" << predicate.selector << " left=" << predicate.left
-         << " right=" << predicate.right
-         << " expression=" << predicate.expression
+         << " selector=" << predicate.selector
+         << " first_operand=" << predicate.firstOperand
+         << " operand_count=" << predicate.operandCount << " operands=";
+      ArrayRef<uint64_t> operands(db.crossPredicateOperands);
+      if (static_cast<uint64_t>(predicate.firstOperand) +
+              predicate.operandCount <=
+          operands.size())
+        llvm::interleave(
+            operands.slice(predicate.firstOperand, predicate.operandCount),
+            os, ",");
+      os << " expression=" << predicate.expression
          << " target=" << predicate.target << " kind=" << raw(predicate.kind)
          << " width=" << predicate.bitWidth
          << " signedness=" << raw(predicate.signedness)
          << " ordinal=" << predicate.ordinal << " flags=" << predicate.flags
          << " element_width=" << predicate.elementWidth
          << " index_base=" << predicate.indexBase << '\n';
+    }
     for (const coverage::CrossSelectorOperand &operand :
          db.crossSelectorOperands)
       os << "cross_selector_operand node=" << operand.node

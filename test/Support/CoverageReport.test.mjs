@@ -591,8 +591,9 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   data.cross_predicate_nodes = [
     {id:'80', selector:'7', kind:'2', target:'60'},
     {id:'81', selector:'7', kind:'1', expression:'200', ordinal:'0'},
-    {id:'82', selector:'7', kind:'8', left:'80', right:'81'},
+    {id:'82', selector:'7', kind:'8', first_operand:'0', operand_count:'2'},
   ];
+  data.cross_predicate_operands = ['80', '81'];
   data.resolved_functional_value_sets.push({
     ...valueSet('94', [{kind:'1', limbs:[limb({low_aval:'5'})]}]),
     role:'5', owner_selector:'7', owner_ordinal:'0',
@@ -638,11 +639,26 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   for (const [kind, operator] of [['24', '-'], ['25', '&'], ['26', '|'], ['27', '^'],
                                  ['28', '~&'], ['29', '~|'], ['30', '~^']]) {
     selection.kind = kind;
-    selection.right = '0';
+    selection.operand_count = '1';
     const unaryView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
     assert.ok(unaryView.rows[0][0].includes(operator + '(cp)'), unaryView.rows[0][0]);
   }
-  data.cross_predicate_nodes[2].left = '82';
+  selection.kind = '31';
+  selection.operand_count = '3';
+  data.cross_predicate_operands.push('80');
+  const conditionalView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(conditionalView.rows[0][0].includes('(cp ? 0x5 : cp)'), conditionalView.rows[0][0]);
+  selection.kind = '32';
+  const concatView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(concatView.rows[0][0].includes('{cp, 0x5, cp}'), concatView.rows[0][0]);
+  selection.operand_count = '10000';
+  data.cross_predicate_operands = Array(10000).fill('80');
+  const wideConcatView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(wideConcatView.rows[0][0].includes('...'));
+  assert.ok(wideConcatView.rows[0][0].length < 2048);
+  selection.kind = '24';
+  selection.operand_count = '1';
+  data.cross_predicate_operands = ['82'];
   const bounded = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.ok(bounded.rows[0][0].includes('...'));
   assert.ok(bounded.rows[0][0].length < 2048);

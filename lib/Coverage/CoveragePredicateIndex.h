@@ -330,6 +330,76 @@ private:
     return result;
   }
 
+  Value evaluateVariadic(const CrossPredicateNode &node,
+                         const std::vector<const Value *> &operands) {
+    Value result;
+    if (node.kind == CrossPredicateKind::Concatenate) {
+      result.aval.reserve(node.bitWidth);
+      result.bval.reserve(node.bitWidth);
+      // Source order is high to low; each physical bit is appended once.
+      // No growing binary-concatenation intermediates are materialized.
+      for (auto it = operands.rbegin(); it != operands.rend(); ++it) {
+        const Value &value = **it;
+        if (value.aval.size() > node.bitWidth - result.aval.size()) {
+          failed = true;
+          return {};
+        }
+        result.aval.insert(result.aval.end(), value.aval.begin(),
+                           value.aval.end());
+        result.bval.insert(result.bval.end(), value.bval.begin(),
+                           value.bval.end());
+      }
+      return result;
+    }
+    if (operands.size() < 3) {
+      failed = true;
+      return {};
+    }
+    Truth condition{1, 0, 0};
+    for (size_t i = 0; i != operands.size() - 2; ++i) {
+      Truth value = truth(*operands[i]);
+      condition.one = graph.intersect(condition.one, value.one);
+      condition.zero = graph.unite(condition.zero, value.zero);
+    }
+    condition.unknown = notRoot(graph.unite(condition.one, condition.zero));
+    Value left = *operands[operands.size() - 2];
+    Value right = *operands.back();
+    const bool signedOperands = left.isSigned && right.isSigned;
+    resize(left, node.bitWidth, signedOperands);
+    resize(right, node.bitWidth, signedOperands);
+    if (condition.one == 1)
+      return left;
+    if (condition.zero == 1)
+      return right;
+    result.aval.resize(node.bitWidth);
+    result.bval.resize(node.bitWidth);
+    for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+      Root a = left.aval[bit], b = right.aval[bit];
+      Root ab = left.bval[bit], bb = right.bval[bit];
+      Root one = graph.unite(graph.intersect(condition.one, a),
+                             graph.intersect(condition.zero, b));
+      Root unknown = graph.unite(graph.intersect(condition.one, ab),
+                                 graph.intersect(condition.zero, bb));
+      if (condition.unknown) {
+        // Table 11-20 retains only equal known bits on an ambiguous path.
+        // In particular, two Z bits merge to X; a known condition keeps Z.
+        Root mergedOne =
+            graph.intersect(graph.subtract(a, ab), graph.subtract(b, bb));
+        Root mergedZero = graph.intersect(notRoot(graph.unite(a, ab)),
+                                          notRoot(graph.unite(b, bb)));
+        Root mergedUnknown = notRoot(graph.unite(mergedOne, mergedZero));
+        one = graph.unite(
+            one, graph.intersect(condition.unknown,
+                                 graph.unite(mergedOne, mergedUnknown)));
+        unknown = graph.unite(
+            unknown, graph.intersect(condition.unknown, mergedUnknown));
+      }
+      result.aval[bit] = one;
+      result.bval[bit] = unknown;
+    }
+    return result;
+  }
+
   Value evaluate(const CrossPredicateNode &node, Value left, Value right) {
     using Kind = CrossPredicateKind;
     if (node.kind == Kind::Cast) {
@@ -509,25 +579,58 @@ public:
   template <typename Leaf>
   Root compile(uint64_t root,
                const std::vector<const CrossPredicateNode *> &nodes,
-               Leaf leaf) {
+               const std::vector<uint64_t> &operandIDs, Leaf leaf) {
     for (const auto *node : nodes) {
       if (values.count(node->id))
         continue;
       Value value;
+      if (node->firstOperand > operandIDs.size() ||
+          node->operandCount > operandIDs.size() - node->firstOperand) {
+        failed = true;
+        return 0;
+      }
       if (node->kind == CrossPredicateKind::Target ||
-          node->kind == CrossPredicateKind::Value)
-        value = leaf(*node);
-      else {
-        auto a = values.find(node->left), b = values.find(node->right);
-        if (a == values.end() || (node->right && b == values.end())) {
+          node->kind == CrossPredicateKind::Value) {
+        if (node->operandCount) {
           failed = true;
           return 0;
         }
-        if (node->kind == CrossPredicateKind::ElementSelect ||
-            node->kind == CrossPredicateKind::RangeSelect)
-          value = select(*node, a->second, b->second);
+        value = leaf(*node);
+      } else {
+        std::vector<const Value *> operands;
+        operands.reserve(node->operandCount);
+        for (uint32_t i = 0; i != node->operandCount; ++i) {
+          auto found = values.find(operandIDs[node->firstOperand + i]);
+          if (found == values.end()) {
+            failed = true;
+            return 0;
+          }
+          operands.push_back(&found->second);
+        }
+        const bool unary = node->kind == CrossPredicateKind::Cast ||
+                           node->kind == CrossPredicateKind::LogicalNot ||
+                           node->kind == CrossPredicateKind::BitNot ||
+                           node->kind == CrossPredicateKind::Negate ||
+                           (node->kind >= CrossPredicateKind::ReductionAnd &&
+                            node->kind <= CrossPredicateKind::ReductionXnor);
+        const bool arity = node->kind == CrossPredicateKind::Conditional
+                               ? operands.size() >= 3
+                           : node->kind == CrossPredicateKind::Concatenate
+                               ? !operands.empty()
+                               : operands.size() == (unary ? 1u : 2u);
+        if (!arity) {
+          failed = true;
+          return 0;
+        }
+        if (node->kind == CrossPredicateKind::Conditional ||
+            node->kind == CrossPredicateKind::Concatenate)
+          value = evaluateVariadic(*node, operands);
+        else if (node->kind == CrossPredicateKind::ElementSelect ||
+                 node->kind == CrossPredicateKind::RangeSelect)
+          value = select(*node, *operands[0], *operands[1]);
         else
-          value = evaluate(*node, a->second, node->right ? b->second : Value{});
+          value = evaluate(*node, *operands[0],
+                           operands.size() > 1 ? *operands[1] : Value{});
       }
       if (value.aval.size() != node->bitWidth ||
           value.bval.size() != node->bitWidth || exhausted()) {

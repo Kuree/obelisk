@@ -470,8 +470,10 @@ struct CrossSelectorNode {
 inline constexpr uint32_t CrossSelectorScalarWith = uint32_t{1} << 0;
 
 struct CrossPredicateNode {
-  uint64_t id = 0, selector = 0, left = 0, right = 0, expression = 0,
-           target = 0;
+  uint64_t id = 0, selector = 0;
+  /// Operands occupy one contiguous range, in source expression order.
+  uint32_t firstOperand = 0, operandCount = 0;
+  uint64_t expression = 0, target = 0;
   CrossPredicateKind kind = CrossPredicateKind::Value;
   uint32_t bitWidth = 0;
   CoverageSignedness signedness = CoverageSignedness::Unsigned;
@@ -956,6 +958,7 @@ struct Database {
   std::vector<CrossBinPlan> crossBins;
   std::vector<CrossSelectorNode> crossSelectorNodes;
   std::vector<CrossPredicateNode> crossPredicateNodes;
+  std::vector<uint64_t> crossPredicateOperands;
   std::vector<CrossSelectorOperand> crossSelectorOperands;
   std::vector<FunctionalSourceRange> functionalSourceRanges;
   std::vector<Exclusion> exclusions;

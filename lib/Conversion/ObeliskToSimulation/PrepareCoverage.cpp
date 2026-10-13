@@ -159,6 +159,20 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
           plan.operands.resize(2);
           plan.kind = Kind::RangeSelect;
         }
+      } else if (auto conditional =
+                     dyn_cast<ir::SVConditionalExpressionOp>(op)) {
+        if (!conditional.getConditionCount() ||
+            conditional.getConditionPatternFlags().size() !=
+                conditional.getConditionCount() ||
+            llvm::any_of(conditional.getConditionPatternFlags(),
+                         [](int64_t flag) { return flag != 0; }) ||
+            plan.operands.size() != conditional.getConditionCount() + 2)
+          return std::nullopt;
+        plan.kind = Kind::Conditional;
+      } else if (isa<ir::SVConcatenationExpressionOp>(op)) {
+        if (plan.operands.empty())
+          return std::nullopt;
+        plan.kind = Kind::Concatenate;
       } else if (isa<ir::SVConversionExpressionOp>(op)) {
         if (plan.operands.size() != 1)
           return std::nullopt;
@@ -262,6 +276,31 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
     pending.emplace_back(op, true);
     for (Operation *child : llvm::reverse(plan.operands))
       pending.emplace_back(child, false);
+  }
+  if (llvm::any_of(result, [](const auto &entry) {
+        return entry.kind == Kind::Conditional;
+      })) {
+    // Capturing both arms eagerly must not execute an inactive call or
+    // mutation. The existing expression evaluator preserves short circuit
+    // behavior for predicates with such constructor subexpressions.
+    for (const auto &entry : result) {
+      if (entry.kind != Kind::Value)
+        continue;
+      bool effects = false;
+      entry.expression->walk([&](Operation *op) -> WalkResult {
+        if (isa<ir::SVCallExpressionOp, ir::SVAssignmentExpressionOp>(op))
+          effects = true;
+        if (auto unary = dyn_cast<ir::SVUnaryExpressionOp>(op))
+          effects |=
+              unary.getOperatorKind() == ir::SVUnaryOperator::Preincrement ||
+              unary.getOperatorKind() == ir::SVUnaryOperator::Postincrement ||
+              unary.getOperatorKind() == ir::SVUnaryOperator::Predecrement ||
+              unary.getOperatorKind() == ir::SVUnaryOperator::Postdecrement;
+        return effects ? WalkResult::interrupt() : WalkResult::advance();
+      });
+      if (effects)
+        return std::nullopt;
+    }
   }
   return result;
 }
@@ -2276,6 +2315,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       SmallVector<coverage::CrossBinPlan> bins;
       SmallVector<coverage::CrossSelectorNode> selectors;
       SmallVector<coverage::CrossPredicateNode> predicates;
+      SmallVector<uint64_t> predicateOperands;
       SmallVector<coverage::CrossSelectorOperand> selectorOperands;
     };
     struct PendingTransitionAlternative {
@@ -3543,10 +3583,19 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                       node.flags = entry.flags;
                       node.elementWidth = entry.elementWidth;
                       node.indexBase = entry.indexBase;
-                      if (!entry.operands.empty())
-                        node.left = ids.lookup(entry.operands[0]);
-                      if (entry.operands.size() > 1)
-                        node.right = ids.lookup(entry.operands[1]);
+                      if (pending.predicateOperands.size() > UINT32_MAX ||
+                          entry.operands.size() >
+                              UINT32_MAX - pending.predicateOperands.size()) {
+                        entry.expression->emitError(
+                            "cross predicate operand inventory exceeds the "
+                            "format limits");
+                        return failure();
+                      }
+                      node.firstOperand = pending.predicateOperands.size();
+                      node.operandCount = entry.operands.size();
+                      for (Operation *operand : entry.operands)
+                        pending.predicateOperands.push_back(
+                            ids.lookup(operand));
                       if (entry.kind == coverage::CrossPredicateKind::Target)
                         node.target =
                             pending.targets[entry.targetOrdinal].target;
@@ -5111,6 +5160,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           schema.crossPredicateNodes.size() > UINT32_MAX ||
           pending.predicates.size() >
               UINT32_MAX - schema.crossPredicateNodes.size() ||
+          schema.crossPredicateOperands.size() > UINT32_MAX ||
+          pending.predicateOperands.size() >
+              UINT32_MAX - schema.crossPredicateOperands.size() ||
           schema.crossSelectorOperands.size() > UINT32_MAX ||
           pending.selectorOperands.size() >
               UINT32_MAX - schema.crossSelectorOperands.size()) {
@@ -5129,7 +5181,13 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       for (coverage::CrossSelectorNode &selector : pending.selectors)
         selector.firstOperand += operandBase;
       llvm::append_range(schema.crossSelectorNodes, pending.selectors);
+      const uint32_t predicateOperandBase =
+          schema.crossPredicateOperands.size();
+      for (coverage::CrossPredicateNode &node : pending.predicates)
+        node.firstOperand += predicateOperandBase;
       llvm::append_range(schema.crossPredicateNodes, pending.predicates);
+      llvm::append_range(schema.crossPredicateOperands,
+                         pending.predicateOperands);
       llvm::append_range(schema.crossSelectorOperands,
                          pending.selectorOperands);
     }
@@ -5206,6 +5264,18 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     sortCoverageRecords(schema.crossPredicateNodes, [](const auto &entry) {
       return coverageOrderKey(entry.selector, entry.ordinal);
     });
+    // Sorting the nodes permutes their operand ranges. Repack the pooled
+    // IDs once so every range stays canonical, without per-node allocation.
+    auto oldPredicateOperands = std::move(schema.crossPredicateOperands);
+    schema.crossPredicateOperands.clear();
+    schema.crossPredicateOperands.reserve(oldPredicateOperands.size());
+    for (coverage::CrossPredicateNode &node : schema.crossPredicateNodes) {
+      uint32_t first = node.firstOperand;
+      node.firstOperand = schema.crossPredicateOperands.size();
+      for (uint32_t i = 0; i != node.operandCount; ++i)
+        schema.crossPredicateOperands.push_back(
+            oldPredicateOperands[first + i]);
+    }
     sortCoverageRecords(schema.crossSelectorNodes, [](const auto &entry) {
       return coverageOrderKey(entry.cross, entry.ordinal);
     });

@@ -5,7 +5,7 @@
 // Dynamic bases retain their typed target operand and signed width. Packed
 // element widths and declared ascending ranges remain in the predicate DAG;
 // no constructor tuple queue is generated for any of these windows.
-// SCHEMA-DAG: cross_predicate {{.*}} selector=[[OWNER:[1-9][0-9]*]] left={{[1-9][0-9]*}} right=[[INDEX:[1-9][0-9]*]] {{.*}} kind=23 width=2 {{.*}} flags=6 element_width=1 index_base=64
+// SCHEMA-DAG: cross_predicate {{.*}} selector=[[OWNER:[1-9][0-9]*]] first_operand={{[0-9]+}} operand_count=2 operands={{[1-9][0-9]*}},[[INDEX:[1-9][0-9]*]] {{.*}} kind=23 width=2 {{.*}} flags=6 element_width=1 index_base=64
 // SCHEMA-DAG: cross_predicate id=[[INDEX]] selector=[[OWNER]] {{.*}} kind=2 width=8 signedness=2
 // SCHEMA-DAG: cross_predicate {{.*}} kind=23 width=2 {{.*}} flags=0 element_width=1 index_base=0
 // SCHEMA-DAG: cross_predicate {{.*}} kind=23 width=2 {{.*}} flags=4 element_width=1 index_base=0

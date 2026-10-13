@@ -241,6 +241,7 @@ const tupleSetText = (g, id) => {
   return text;
 };
 const predicateNodes = new Map((d.cross_predicate_nodes || []).map(n => [n.id, n]));
+const predicateOperandIDs = d.cross_predicate_operands || [];
 const predicateOperands = new Map(d.resolved_functional_value_sets.filter(s => num(s.role) === 5).map(
   s => [s.type + '|' + s.configuration + '|' + s.owner_selector + '|' + s.owner_ordinal, s.id]));
 const matchesValues = new Map(d.resolved_functional_value_sets.filter(s => num(s.role) === 6).map(
@@ -261,13 +262,15 @@ const predicateText = (g, root) => {
     const n = predicateNodes.get(frame.id);
     if (!n) { append('predicate ' + frame.id); continue; }
     const kind = num(n.kind);
+    const count = num(n.operand_count), first = num(n.first_operand);
+    const operand = index => predicateOperandIDs[first + index];
     if (kind === 1) {
       const value = predicateOperands.get(g.type + '|' + g.configuration + '|' + n.selector + '|' + n.ordinal);
       append(value ? valueText(g.type, g.configuration, value) : 'operand ' + n.expression);
     } else if (kind === 2) append(templateItems.get(n.target) || n.target);
     else if (kind === 3 || unaryOperators[kind]) {
       append(kind === 3 ? n.bit_width + "'(" : unaryOperators[kind] + '(');
-      pending.push({text:')'}, {id:n.left});
+      pending.push({text:')'}, {id:operand(0)});
     } else if (kind === 22 || kind === 23) {
       pending.push({text:']'});
       if (kind === 23) {
@@ -275,10 +278,29 @@ const predicateText = (g, root) => {
         pending.push({text:' ' + (plus ? '+:' : '-:') + ' ' +
                           BigInt(n.bit_width) / BigInt(n.element_width)});
       }
-      pending.push({id:n.right}, {text:'['}, {id:n.left});
+      pending.push({id:operand(1)}, {text:'['}, {id:operand(0)});
+    } else if (kind === 31) {
+      append('(');
+      pending.push({text:')'}, {id:operand(count - 1)}, {text:' : '},
+                   {id:operand(count - 2)}, {text:' ? '});
+      const shown = Math.min(count - 2, Math.max(0, 128 - visits - 2));
+      if (shown < count - 2) pending.push({text:' &&& ...'});
+      for (let i = shown - 1; i >= 0; --i) {
+        pending.push({id:operand(i)});
+        if (i > 0) pending.push({text:' &&& '});
+      }
+    } else if (kind === 32) {
+      append('{');
+      pending.push({text:'}'});
+      const shown = Math.min(count, Math.max(0, 128 - visits));
+      if (shown < count) pending.push({text:', ...'});
+      for (let i = shown - 1; i >= 0; --i) {
+        pending.push({id:operand(i)});
+        if (i > 0) pending.push({text:', '});
+      }
     } else {
       append('(');
-      pending.push({text:')'}, {id:n.right}, {text:' ' + (operators[kind] || '?') + ' '}, {id:n.left});
+      pending.push({text:')'}, {id:operand(1)}, {text:' ' + (operators[kind] || '?') + ' '}, {id:operand(0)});
     }
   }
   const label = pieces.join('');
