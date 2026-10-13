@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -6130,6 +6132,210 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(count(31), 1u);
   EXPECT_EQ(count(32), 1u);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       NumericExclusionUnionsCoverWideSignedPartitionsAndKeepOutsideValues) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  schema.functionalItems.resize(1);
+  schema.functionalBins.clear();
+  schema.functionalValueSets.clear();
+  schema.functionalValueAtoms.clear();
+  schema.functionalValueLimbs.clear();
+  schema.functionalBinPlans.clear();
+  schema.functionalExpressions.resize(1);
+  schema.functionalExpressions[0].bitWidth = 65;
+  schema.functionalExpressions[0].signedness = CoverageSignedness::Signed;
+  constexpr uint32_t inclusive =
+      FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+  auto addBin = [&](uint64_t id, int64_t low, int64_t high, uint32_t flags) {
+    uint64_t set = 5000 + id;
+    uint32_t ordinal = schema.functionalBins.size();
+    uint32_t atom = schema.functionalValueAtoms.size();
+    uint32_t limb = schema.functionalValueLimbs.size();
+    std::string name = "bin" + std::to_string(id);
+    schema.functionalBins.push_back({id, 20, name, FunctionalBinKind::State,
+                                     flags, 1, ordinal,
+                                     "top.cg.first." + name});
+    schema.functionalBinPlans.push_back({id, set});
+    schema.functionalValueSets.push_back({set, 20, atom, 1, 65,
+                                          FunctionalValueSetKind::Integral, 0,
+                                          CoverageSignedness::Signed, 0});
+    schema.functionalValueAtoms.push_back(
+        {set, 0, 0, limb, 2, 0,
+         low == high ? FunctionalValueAtomKind::IntegralValue
+                     : FunctionalValueAtomKind::IntegralRange,
+         inclusive, 0, 0});
+    schema.functionalValueLimbs.push_back({set, 0, 0,
+                                           static_cast<uint64_t>(low), 0,
+                                           static_cast<uint64_t>(high), 0, 0});
+    schema.functionalValueLimbs.push_back(
+        {set, 0, 1, low < 0 ? 1u : 0u, 0, high < 0 ? 1u : 0u, 0, 0});
+  };
+  addBin(30, -16, 15, 0);
+  addBin(31, -16, 16, 0);
+  for (uint32_t ordinal = 0; ordinal != 32; ++ordinal)
+    addBin(32 + ordinal, int64_t{ordinal} - 16, int64_t{ordinal} - 16, 0);
+  // Reverse endpoint order exercises radix ordering before the merge/sweep.
+  for (uint32_t ordinal = 0; ordinal != 32; ++ordinal)
+    addBin(1000 + ordinal, 15 - int64_t{ordinal}, 15 - int64_t{ordinal},
+           FunctionalBinIgnore);
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema, false);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  for (const auto &bin : context->coverage->instances.at(handle).bins)
+    if (!(bin.flags & FunctionalBinIgnore))
+      EXPECT_EQ(bool(bin.flags & FunctionalBinEmpty), bin.templateBin != 31);
+  double percentage = 0;
+  int32_t covered = 0, total = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, handle, 20, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covered, 0);
+  EXPECT_EQ(total, 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       RealExclusionUnionsRespectPrecisionAdjacencyOpenBoundsAndSignedZero) {
+  using namespace obelisk::coverage;
+  constexpr uint32_t lower = FunctionalValueAtomLowerInclusive;
+  constexpr uint32_t upper = FunctionalValueAtomUpperInclusive;
+  constexpr uint32_t both = lower | upper;
+  struct Case {
+    double low, high, leftLow, leftHigh, rightLow, rightHigh;
+    uint32_t leftFlags, rightFlags;
+    bool realEmpty, shortEmpty;
+  };
+  double nextFloat =
+      std::nextafter(1.0f, std::numeric_limits<float>::infinity());
+  const std::array<Case, 7> cases{
+      {{0, 4, 0, 2, 2, 4, both, both, true, true},
+       {0, 4, 0, 2, 2, 4, lower, both, true, true},
+       {0, 4, 0, 2, 2, 4, lower, upper, false, false},
+       {0, 2, 0, 1, nextFloat, 2, both, both, false, true},
+       {-1, 1, -1, -0.0, +0.0, 1, both, upper, true, true},
+       {-1, 1, -1, -0.0, +0.0, 1, lower, upper, false, false},
+       {-1, 1, 0, 0, 0, 0, FunctionalValueAtomLowerUnbounded | both,
+        FunctionalValueAtomUpperUnbounded | upper, true, true}}};
+  for (bool shortReal : {false, true}) {
+    for (const Case &test : cases) {
+      SCOPED_TRACE(::testing::Message() << "shortreal=" << shortReal
+                                        << " left_high=" << test.leftHigh
+                                        << " right_low=" << test.rightLow
+                                        << " left_flags=" << test.leftFlags
+                                        << " right_flags=" << test.rightFlags);
+      Database schema = makeFunctionalSchema();
+      schema.functionalItems.resize(1);
+      schema.functionalBins.clear();
+      schema.functionalValueSets.clear();
+      schema.functionalValueAtoms.clear();
+      schema.functionalValueLimbs.clear();
+      schema.functionalBinPlans.clear();
+      schema.functionalExpressions.resize(1);
+      auto &sample = schema.functionalExpressions.front();
+      sample.resultKind = shortReal ? FunctionalExpressionResultKind::ShortReal
+                                    : FunctionalExpressionResultKind::Real;
+      sample.bitWidth = 0;
+      sample.signedness = CoverageSignedness::NotApplicable;
+      auto addBin = [&](double low, double high, uint32_t flags,
+                        uint32_t atomFlags) {
+        uint32_t ordinal = schema.functionalBins.size();
+        uint64_t bin = 30 + ordinal, set = 50 + ordinal;
+        std::string name = "bin" + std::to_string(bin);
+        schema.functionalBins.push_back({bin, 20, name,
+                                         FunctionalBinKind::State, flags, 1,
+                                         ordinal, "top.cg.first." + name});
+        uint32_t setFlags = atomFlags & (FunctionalValueAtomLowerUnbounded |
+                                         FunctionalValueAtomUpperUnbounded)
+                                ? FunctionalValueSetNeedsResolution
+                                : 0;
+        schema.functionalValueSets.push_back(
+            {set, 20, ordinal, 1, 64, FunctionalValueSetKind::Real, setFlags,
+             CoverageSignedness::NotApplicable, 0});
+        uint64_t lowBits, highBits;
+        std::memcpy(&lowBits, &low, sizeof(low));
+        std::memcpy(&highBits, &high, sizeof(high));
+        uint64_t lowerExpression = 0, upperExpression = 0;
+        if (setFlags) {
+          auto bound = schema.functionalExpressions.front();
+          bound.id = 100 + ordinal;
+          bound.owner = set;
+          bound.ownerKind = FunctionalExpressionOwnerKind::ValueSet;
+          bound.role = atomFlags & FunctionalValueAtomLowerUnbounded
+                           ? FunctionalExpressionRole::ValueAtomUpper
+                           : FunctionalExpressionRole::ValueAtomLower;
+          bound.resultKind = FunctionalExpressionResultKind::Real;
+          bound.evaluationPhase =
+              FunctionalExpressionEvaluationPhase::Constructor;
+          bound.resultOrdinal = ordinal - 1;
+          if (atomFlags & FunctionalValueAtomLowerUnbounded)
+            upperExpression = bound.id;
+          else
+            lowerExpression = bound.id;
+          schema.functionalExpressions.push_back(bound);
+        }
+        schema.functionalValueAtoms.push_back(
+            {set, lowBits, highBits, 0, 0, 0,
+             FunctionalValueAtomKind::RealInterval,
+             atomFlags | FunctionalValueAtomRealRange, lowerExpression,
+             upperExpression});
+        uint64_t iff = 0;
+        if (flags) {
+          auto guard = schema.functionalExpressions.front();
+          iff = guard.id = 60 + ordinal;
+          guard.owner = bin;
+          guard.ownerKind = FunctionalExpressionOwnerKind::Bin;
+          guard.role = FunctionalExpressionRole::BinIff;
+          guard.resultKind = FunctionalExpressionResultKind::Boolean;
+          guard.resultOrdinal = ordinal;
+          schema.functionalExpressions.push_back(guard);
+        }
+        schema.functionalBinPlans.push_back({bin, set, iff});
+      };
+      addBin(test.low, test.high, 0, both);
+      addBin(test.leftLow, test.leftHigh, FunctionalBinIgnore, test.leftFlags);
+      addBin(test.rightLow, test.rightHigh, FunctionalBinIllegal,
+             test.rightFlags);
+      detail::sortByKey(schema.functionalExpressions.begin(),
+                        schema.functionalExpressions.end(),
+                        [](const auto &expression) { return expression.id; });
+      schema.schemaFingerprint = computeSchemaFingerprint(schema);
+      obelisk_rt_context *context = createContextForSchema(schema, false);
+      ASSERT_NE(context, nullptr);
+      ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr),
+                OBELISK_RT_OK);
+      obelisk_rt_covergroup_v1 handle = 0;
+      if (test.leftFlags & FunctionalValueAtomLowerUnbounded) {
+        double zero = 0;
+        std::array<obelisk_rt_functional_value_v1, 2> bounds{
+            {{101, 64, sizeof(zero), &zero, nullptr, nullptr, 0,
+              OBELISK_RT_FUNCTIONAL_VALUE_REAL, 0},
+             {102, 64, sizeof(zero), &zero, nullptr, nullptr, 0,
+              OBELISK_RT_FUNCTIONAL_VALUE_REAL, 0}}};
+        ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+                                                  bounds.data(), bounds.size(),
+                                                  &handle),
+                  OBELISK_RT_OK);
+      } else
+        ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+      const auto &bins = context->coverage->instances.at(handle).bins;
+      bool empty = shortReal ? test.shortEmpty : test.realEmpty;
+      EXPECT_EQ(bool(bins.front().flags & FunctionalBinEmpty), empty);
+      double percentage = 0;
+      int32_t covered = 0, total = 0;
+      ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                    context, handle, 20, &percentage, &covered, &total),
+                OBELISK_RT_OK);
+      EXPECT_EQ(covered, 0);
+      EXPECT_EQ(total, empty ? 0 : 1);
+      obelisk_rt_v1_context_destroy(context);
+    }
+  }
 }
 
 TEST_F(CoverageRuntimeDesignTest,

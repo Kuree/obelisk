@@ -10568,6 +10568,137 @@ bool valueSetCoveredBy(
   return true;
 }
 
+struct StateCoverageInterval {
+  // Most-significant limb first, so the radix key and numeric order agree.
+  std::vector<uint64_t> low;
+  std::vector<uint64_t> high;
+  size_t bin = SIZE_MAX;
+  bool empty = false;
+};
+
+bool advanceStateCoverageEndpoint(std::vector<uint64_t> &endpoint,
+                                  bool increment) {
+  for (size_t reverse = endpoint.size(); reverse != 0; --reverse) {
+    uint64_t &limb = endpoint[reverse - 1];
+    if (increment ? ++limb != 0 : limb-- != 0)
+      return true;
+  }
+  return false;
+}
+
+template <typename Real>
+bool makeRealStateCoverageInterval(
+    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
+    StateCoverageInterval &interval) {
+  using namespace obelisk::coverage;
+  double sourceLow, sourceHigh;
+  std::memcpy(&sourceLow, &atom.realLowBits, sizeof(sourceLow));
+  std::memcpy(&sourceHigh, &atom.realHighBits, sizeof(sourceHigh));
+  bool lowerUnbounded = atom.flags & FunctionalValueAtomLowerUnbounded;
+  bool upperUnbounded = atom.flags & FunctionalValueAtomUpperUnbounded;
+  Real low = lowerUnbounded ? -std::numeric_limits<Real>::infinity()
+                            : static_cast<Real>(sourceLow);
+  Real high = upperUnbounded ? std::numeric_limits<Real>::infinity()
+                             : static_cast<Real>(sourceHigh);
+  if (std::isnan(low) || std::isnan(high))
+    return false;
+  if (!lowerUnbounded &&
+      (low < sourceLow ||
+       (low == sourceLow && !(atom.flags & FunctionalValueAtomLowerInclusive))))
+    low = std::nextafter(low, std::numeric_limits<Real>::infinity());
+  if (!upperUnbounded && (high > sourceHigh ||
+                          (high == sourceHigh &&
+                           !(atom.flags & FunctionalValueAtomUpperInclusive))))
+    high = std::nextafter(high, -std::numeric_limits<Real>::infinity());
+  interval.empty = low > high;
+  auto rank = [](Real value) -> uint64_t {
+    using Bits = std::conditional_t<sizeof(Real) == sizeof(uint32_t), uint32_t,
+                                    uint64_t>;
+    Bits bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    constexpr Bits sign = Bits{1} << (sizeof(Bits) * 8 - 1);
+    // Collapse -0 and +0 into one rank. Adjacent representable values then
+    // have adjacent ranks, including at zero and at the infinity boundaries.
+    return bits & sign ? static_cast<Bits>(~bits)
+                       : static_cast<Bits>((bits | sign) - 1);
+  };
+  interval.low = {rank(low)};
+  interval.high = {rank(high)};
+  return true;
+}
+
+bool makeStateCoverageInterval(
+    const obelisk::coverage::Database &schema,
+    const obelisk::coverage::ResolvedFunctionalValueSet &set,
+    const obelisk::coverage::ResolvedFunctionalValueAtom &atom, bool shortReal,
+    StateCoverageInterval &interval) {
+  using namespace obelisk::coverage;
+  if (set.kind == FunctionalValueSetKind::Real)
+    return shortReal ? makeRealStateCoverageInterval<float>(atom, interval)
+                     : makeRealStateCoverageInterval<double>(atom, interval);
+  IntegralCoverageShape shape;
+  if (!makeIntegralCoverageShape(schema, atom, set.bitWidth, set.signedness,
+                                 shape))
+    return false;
+  if (shape.interval) {
+    interval.low.assign(shape.low.rbegin(), shape.low.rend());
+    interval.high.assign(shape.high.rbegin(), shape.high.rend());
+    if (!(atom.flags & FunctionalValueAtomLowerInclusive) &&
+        !advanceStateCoverageEndpoint(interval.low, true))
+      interval.empty = true;
+    if (!(atom.flags & FunctionalValueAtomUpperInclusive) &&
+        !advanceStateCoverageEndpoint(interval.high, false))
+      interval.empty = true;
+  } else {
+    // A prefix cube is one interval. Other cubes retain symbolic subtraction.
+    bool fixed = false;
+    for (size_t ordinal = 0; ordinal != shape.wildcard.size(); ++ordinal) {
+      uint64_t wildcard = shape.wildcard[ordinal];
+      uint64_t valid = ordinal + 1 == shape.wildcard.size() && set.bitWidth % 64
+                           ? lowBitsMask(set.bitWidth % 64)
+                           : UINT64_MAX;
+      if ((fixed && wildcard) || (wildcard & (wildcard + 1)))
+        return false;
+      fixed |= wildcard != valid;
+    }
+    interval.low.assign(shape.value.rbegin(), shape.value.rend());
+    interval.high = interval.low;
+    for (size_t ordinal = 0; ordinal != shape.wildcard.size(); ++ordinal)
+      interval.high[shape.wildcard.size() - ordinal - 1] |=
+          shape.wildcard[ordinal];
+  }
+  interval.empty |= interval.high < interval.low;
+  return true;
+}
+
+void mergeStateCoverageIntervals(
+    std::vector<StateCoverageInterval> &intervals) {
+  obelisk::coverage::detail::sortByKey(
+      intervals.begin(), intervals.end(),
+      [](const auto &interval) -> const auto & { return interval.low; });
+  std::vector<StateCoverageInterval> merged;
+  merged.reserve(intervals.size());
+  for (auto &interval : intervals) {
+    if (interval.empty)
+      continue;
+    bool adjacent = false;
+    if (!merged.empty()) {
+      adjacent = interval.low <= merged.back().high;
+      if (!adjacent) {
+        auto successor = merged.back().high;
+        adjacent = advanceStateCoverageEndpoint(successor, true) &&
+                   interval.low <= successor;
+      }
+    }
+    if (adjacent) {
+      if (merged.back().high < interval.high)
+        merged.back().high = std::move(interval.high);
+    } else
+      merged.push_back(std::move(interval));
+  }
+  intervals = std::move(merged);
+}
+
 struct ExactTransitionWord {
   uint64_t alternative = 0;
   uint64_t bin = 0;
@@ -10941,8 +11072,24 @@ void markStaticallyEmptyStateBins(
     auto set = sets.find(plan->second->valueSet);
     return set == sets.end() ? nullptr : set->second;
   };
-  IndexMap<uint64_t, std::vector<const ResolvedFunctionalValueSet *>>
-      exclusionsByItem;
+  IndexSet<uint64_t> shortRealTemplates;
+  for (const auto &expression : schema.functionalExpressions)
+    if (expression.role == FunctionalExpressionRole::CoverpointSample &&
+        expression.resultKind == FunctionalExpressionResultKind::ShortReal)
+      shortRealTemplates.insert(expression.owner);
+  IndexSet<uint64_t> shortRealItems;
+  for (const auto &item : schema.resolvedFunctionalItems)
+    if (item.type == typeID && item.configuration == configuration &&
+        shortRealTemplates.count(item.templateItem))
+      shortRealItems.insert(item.id);
+  struct ItemExclusions {
+    const ResolvedFunctionalValueSet *type = nullptr;
+    bool numeric = true;
+    std::vector<const ResolvedFunctionalValueSet *> sets;
+    std::vector<StateCoverageInterval> intervals;
+    std::vector<StateCoverageInterval> queries;
+  };
+  IndexMap<uint64_t, ItemExclusions> exclusionsByItem;
   for (const auto &bin : schema.resolvedFunctionalBins) {
     if (bin.type != typeID || bin.configuration != configuration ||
         !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) ||
@@ -10952,9 +11099,42 @@ void markStaticallyEmptyStateBins(
     // iff gates sampling, not the values removed by an exclusion (19.5.1,
     // 19.5.5-.6). Include guarded exclusions in the coverage denominator.
     if (set)
-      exclusionsByItem[bin.item].push_back(set);
+      exclusionsByItem[bin.item].sets.push_back(set);
   }
-  for (auto &bin : schema.resolvedFunctionalBins) {
+  auto sameDomain = [](const auto &left, const auto &right) {
+    return left.kind == right.kind && left.bitWidth == right.bitWidth &&
+           left.signedness == right.signedness;
+  };
+  for (auto &[item, exclusions] : exclusionsByItem) {
+    exclusions.type = exclusions.sets.front();
+    for (const auto *set : exclusions.sets) {
+      if (!sameDomain(*set, *exclusions.type)) {
+        exclusions.numeric = false;
+        break;
+      }
+      for (uint32_t ordinal = 0; ordinal != set->atomCount; ++ordinal) {
+        StateCoverageInterval interval;
+        if (!makeStateCoverageInterval(
+                schema, *set,
+                schema.resolvedFunctionalValueAtoms[set->firstAtom + ordinal],
+                shortRealItems.count(item), interval)) {
+          exclusions.numeric = false;
+          break;
+        }
+        exclusions.intervals.push_back(std::move(interval));
+      }
+      if (!exclusions.numeric)
+        break;
+    }
+    if (exclusions.numeric)
+      mergeStateCoverageIntervals(exclusions.intervals);
+    else
+      exclusions.intervals.clear();
+  }
+  std::vector<size_t> remaining(schema.resolvedFunctionalBins.size(), SIZE_MAX);
+  for (size_t binIndex = 0; binIndex != schema.resolvedFunctionalBins.size();
+       ++binIndex) {
+    auto &bin = schema.resolvedFunctionalBins[binIndex];
     constexpr uint32_t nonContributing =
         FunctionalBinDefault | FunctionalBinIgnore | FunctionalBinIllegal |
         FunctionalBinEmpty;
@@ -10969,10 +11149,57 @@ void markStaticallyEmptyStateBins(
       continue;
     }
     auto exclusions = exclusionsByItem.find(bin.item);
-    if (exclusions != exclusionsByItem.end() &&
-        valueSetCoveredBy(schema, *subject, exclusions->second))
+    if (exclusions == exclusionsByItem.end())
+      continue;
+    auto &group = exclusions->second;
+    if (group.numeric && sameDomain(*subject, *group.type)) {
+      remaining[binIndex] = subject->atomCount;
+      for (uint32_t ordinal = 0; ordinal != subject->atomCount; ++ordinal) {
+        StateCoverageInterval query;
+        if (!makeStateCoverageInterval(
+                schema, *subject,
+                schema
+                    .resolvedFunctionalValueAtoms[subject->firstAtom + ordinal],
+                shortRealItems.count(bin.item), query)) {
+          remaining[binIndex] = SIZE_MAX;
+          break;
+        }
+        if (query.empty)
+          --remaining[binIndex];
+        else {
+          query.bin = binIndex;
+          group.queries.push_back(std::move(query));
+        }
+      }
+      if (remaining[binIndex] != SIZE_MAX)
+        continue;
+    }
+    if (valueSetCoveredBy(schema, *subject, group.sets))
       bin.flags |= FunctionalBinEmpty;
   }
+  // Sort all queries once and sweep the canonical union. Each atom and
+  // endpoint is visited a bounded number of times, O(total numeric key bytes).
+  for (auto &[item, group] : exclusionsByItem) {
+    if (!group.numeric)
+      continue;
+    detail::sortByKey(
+        group.queries.begin(), group.queries.end(),
+        [](const auto &query) -> const auto & { return query.low; });
+    size_t position = 0;
+    for (const auto &query : group.queries) {
+      while (position != group.intervals.size() &&
+             group.intervals[position].high < query.low)
+        ++position;
+      if (remaining[query.bin] != SIZE_MAX &&
+          position != group.intervals.size() &&
+          group.intervals[position].low <= query.low &&
+          query.high <= group.intervals[position].high)
+        --remaining[query.bin];
+    }
+  }
+  for (size_t bin = 0; bin != remaining.size(); ++bin)
+    if (remaining[bin] == 0)
+      schema.resolvedFunctionalBins[bin].flags |= FunctionalBinEmpty;
 }
 
 const FunctionalCoverageCrossState *
