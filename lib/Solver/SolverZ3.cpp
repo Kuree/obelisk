@@ -354,6 +354,41 @@ std::mutex &detail::getZ3Mutex() {
 }
 #endif
 
+Satisfiability
+detail::checkRandomDomainOverlapZ3(llvm::ArrayRef<RandomDomainPattern> patterns,
+                                   uint64_t resourceLimit) {
+#ifdef OBELISK_Z3_SINGLE_THREADED
+  std::lock_guard<std::mutex> lock(detail::getZ3Mutex());
+#endif
+  try {
+    z3::context context;
+    z3::solver solver(context);
+    z3::params parameters(context);
+    parameters.set("random_seed", 0u);
+    parameters.set("rlimit", static_cast<unsigned>(
+                                 std::min<uint64_t>(resourceLimit, UINT_MAX)));
+    solver.set(parameters);
+    unsigned width = patterns.front().mask.getBitWidth();
+    z3::expr field = context.bv_const("domain_field", width);
+    z3::expr member = context.bool_val(false);
+    z3::expr overlap = member;
+    for (const RandomDomainPattern &pattern : patterns) {
+      z3::expr matches = (field & bitVectorValue(context, pattern.mask)) ==
+                         bitVectorValue(context, pattern.value);
+      overlap = overlap || (member && matches);
+      member = member || matches;
+    }
+    solver.add(overlap);
+    z3::check_result result = solver.check();
+    if (result == z3::unsat)
+      return Satisfiability::Unsatisfiable;
+    if (result == z3::sat)
+      return Satisfiability::Satisfiable;
+  } catch (const z3::exception &) {
+  }
+  return Satisfiability::Unknown;
+}
+
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit,

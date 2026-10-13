@@ -149,7 +149,9 @@
           "runtime/include/obelisk/Runtime/RandomDomain.h",
           "lib/Conversion/ObeliskToSimulation/RandomArithmetic.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitOperators.cpp",
-          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp"
+          "lib/Conversion/SimulationToBytecode/BytecodeArithmeticEncoding.cpp",
+          "include/obelisk/Solver/ConstraintSolver.h",
+          "lib/Solver/SolverHeuristic.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-alias.mlir",
@@ -209,7 +211,8 @@
           "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-domain-overlap.mlir"
         ]
       }
     },
@@ -225,7 +228,7 @@
         {
           "feature": "Standalone enum domains",
           "status": "supported",
-          "detail": "Named enumerators, anonymous and typedef inventories retain arbitrary-width two-state representations in class and scope plans. Compiler Z3 analyzes exact membership; wide literal-pool records feed the Boolean sampler in native and WASM execution. Frozen nonmember enum state remains legal; conflicting source domains are diagnosed."
+          "detail": "Named enumerators, anonymous and typedef inventories retain arbitrary-width two-state representations in class and scope plans. Compiler Z3 analyzes exact membership; wide literal-pool records feed the Boolean sampler in native and WASM execution. Frozen nonmember enum state remains legal; conflicting source domains are diagnosed. Frozen semantic-pattern validation uses deterministic radix ordering for equal masks and a shared-prefix compiler Z3 proof for mixed masks, independently of user constraints; solver-free builds bound pair checks linearly and diagnose unproven domains."
         },
         {
           "feature": "Packed structs and untagged unions",
@@ -287,7 +290,9 @@
           "lib/Solver/RandomRealZ3.h",
           "lib/Conversion/ObeliskToSimulation/LowerUnitRealConversionSystemCalls.cpp",
           "runtime/lib/RandModelCount.h",
-          "cmake/PatchZ3FpaParams.cmake"
+          "cmake/PatchZ3FpaParams.cmake",
+          "include/obelisk/Solver/ConstraintSolver.h",
+          "lib/Solver/SolverHeuristic.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -329,7 +334,8 @@
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-fixed-randc-plan-size.mlir"
+          "test/Conversion/obelisk-to-simulation-random-fixed-randc-plan-size.mlir",
+          "test/Conversion/obelisk-to-simulation-random-domain-overlap.mlir"
         ]
       }
     },

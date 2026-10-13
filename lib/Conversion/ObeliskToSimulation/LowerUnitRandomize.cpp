@@ -1013,6 +1013,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                       static_cast<unsigned>(domainWidth),
                                       {},
                                       0};
+        SmallVector<solver::RandomDomainPattern> overlapPatterns;
         APInt cardinality(domainWidth + 1, 0);
         for (Attribute patternAttr : patternsAttr) {
           auto pattern = dyn_cast<DictionaryAttr>(patternAttr);
@@ -1034,13 +1035,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                 << "randomize property domain pattern is inconsistent";
             return failure();
           }
-          for (const DomainPattern &other : propertyDomain.patterns)
-            if (((patternValue ^ other.value) & (patternMask & other.mask))
-                    .isZero()) {
-              emitError(location)
-                  << "randomize property domain patterns overlap";
-              return failure();
-            }
+          overlapPatterns.push_back({patternMask, patternValue});
           APInt freeMask = ~patternMask;
           unsigned freeBits = freeMask.popcount();
           cardinality += APInt::getOneBitSet(domainWidth + 1, freeBits);
@@ -1048,6 +1043,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               freeBits >= 64 ? 0 : uint64_t{1} << freeBits;
           propertyDomain.patterns.push_back(
               {patternMask, patternValue, freeMask, patternCardinality});
+        }
+        solver::Satisfiability overlap =
+            solver::checkRandomDomainOverlap(overlapPatterns);
+        if (overlap != solver::Satisfiability::Unsatisfiable) {
+          emitError(location)
+              << (overlap == solver::Satisfiability::Satisfiable
+                      ? "randomize property domain patterns overlap"
+                      : "could not prove disjoint randomize property domain "
+                        "patterns within compiler solver resources");
+          return failure();
         }
         if (cardinality == APInt::getOneBitSet(domainWidth + 1, domainWidth))
           continue;

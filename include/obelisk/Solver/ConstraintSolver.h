@@ -9,10 +9,28 @@
 #include <vector>
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
 
 namespace obelisk::solver {
 
 enum class Satisfiability { Unknown, Satisfiable, Unsatisfiable };
+
+/// The cube of values satisfying (field & mask) == value. Both integers have
+/// the same nonzero width and value has no bits outside mask.
+struct RandomDomainPattern {
+  llvm::APInt mask;
+  llvm::APInt value;
+};
+
+/// Test whether any value matches two domain patterns, independently of user
+/// constraints. Unsatisfiable proves that the cubes are disjoint. Equal-mask
+/// patterns use radix ordering; mixed masks use one shared-prefix Z3 query.
+/// Preparing that query is linear in the pattern words. Without compiler Z3, a
+/// linear work budget can return Unknown instead of doing quadratic pair
+/// comparisons.
+Satisfiability
+checkRandomDomainOverlap(llvm::ArrayRef<RandomDomainPattern> patterns,
+                         uint64_t resourceLimit = 100000);
 
 /// One literal in a propositional sum-of-products formula. Variables are
 /// opaque caller-assigned identities; a negated literal represents !variable.

@@ -194,9 +194,15 @@ The structural proposal decoder indexes variables, captures and solve-order
 masks. It validates ordering and schedules definitions with linear graph
 traversals. Dependency discovery visits each constraint once and indexes all
 overlapping variable views by bit; a linear work budget stops optional metadata
-when dense overlap would expand it excessively. Equal-mask semantic domains
-use hashed values, while Z3 proves unequal-mask records disjoint with a shared
-prefix formula. The SMT-to-Z3 shim visits each SSA edge once with an explicit
+when dense overlap would expand it excessively. Source semantic-domain pattern
+validation uses deterministic radix ordering over their complete values. Equal
+canonical values witness overlap; distinct equal-mask values prove disjointness.
+Mixed masks use one shared-prefix compiler Z3 query, constructed in linear
+pattern-word work independently of user constraints. Solver-free compiler builds
+bound mixed-mask pair checks to four times the input word count, reporting an
+unproven domain rather than exceeding that linear budget. The SMT proposal
+decoder also uses a shared-prefix formula for unequal-mask records. The
+SMT-to-Z3 shim visits each SSA edge once with an explicit
 stack. Component masks and bounded assignment tables have a linear output
 budget, and wide assignments use in-place bit insertion. Budget exhaustion
 retains the complete compiled Boolean plan. Here N counts lowered operations,
