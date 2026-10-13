@@ -94,6 +94,14 @@ planTwoStateRegisters(sim::SimDesignOp design) {
         if (auto write = dyn_cast<sim::SimContainerWriteOp>(operation))
           force(write.getValue());
 
+        // Constructor formals are snapshotted and later read with their
+        // declared type. Preserve that ABI even for a known logic constant;
+        // its empty unknown plane cannot change the stored value kind.
+        if (auto create = dyn_cast<sim::SimCovergroupCreateOp>(operation))
+          for (Value formal :
+               create.getPayloads().take_front(create.getArgumentCount()))
+            force(formal);
+
         if (auto op = dyn_cast<sim::SimLogicUnaryOp>(operation)) {
           if (op.getKind() != sim::UnaryKind::LogicalNot)
             constrain(op.getResult(), op.getInput());
