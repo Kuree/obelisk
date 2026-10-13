@@ -3776,9 +3776,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     case FunctionalExpressionRole::SelectorWith:
       validContract =
-          expression.resultKind == FunctionalExpressionResultKind::Boolean &&
+          expression.resultKind == FunctionalExpressionResultKind::TupleQueue &&
           expression.ownerKind == FunctionalExpressionOwnerKind::Selector &&
-          expression.ownerSubordinal == 0 &&
+          expression.ownerOrdinal == 0 && expression.ownerSubordinal == 0 &&
           expression.evaluationPhase ==
               FunctionalExpressionEvaluationPhase::Constructor;
       break;
@@ -4489,72 +4489,18 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (operandCursor != db.crossSelectorOperands.size())
     return fail(Status::InvalidReference, "cross_selector_operand_range");
 
-  // A cross `with` expression is evaluated once for every value tuple in the
-  // complete finite target domain.  The compiler records that constructor
-  // batch as dense SelectorWith expressions owned by the decorated selector;
-  // the first member is named by CrossSelectorNode::withExpression.  Keeping
-  // this relationship structural makes malformed helper payloads fail before
-  // the runtime can bind a partially resolved configuration.
+  // Each decorated selector owns exactly one constructor queue. Its contents
+  // are satisfying associated-value tuples, independent of target type width.
   for (const auto &node : db.crossSelectorNodes) {
-    std::vector<const FunctionalExpression *> withExpressions;
-    for (const auto &expression : lookupRows(
-             expressionsByOwner,
-             std::make_tuple(FunctionalExpressionOwnerKind::Selector, node.id,
-                             FunctionalExpressionRole::SelectorWith)))
-      withExpressions.push_back(&expression);
-    sortByKey(withExpressions.begin(), withExpressions.end(),
-              [](const auto *left) { return left->ownerOrdinal; });
-    if (!node.withExpression) {
-      if (!withExpressions.empty())
-        return fail(Status::InvalidReference,
-                    "cross_selector_node.with_expression_batch");
-      continue;
-    }
-    auto targets = targetsByCross.find(node.cross);
-    uint64_t candidateCount = 1;
-    bool validBatch = targets != targetsByCross.end() &&
-                      !withExpressions.empty() &&
-                      withExpressions.front()->id == node.withExpression;
-    Digest semanticDigest =
-        validBatch ? withExpressions.front()->semanticDigest : Digest{};
-    if (validBatch) {
-      const auto *plan = lookupRecord(crossPlansByItem, node.cross);
-      validBatch = plan != nullptr;
-      for (uint32_t ordinal = 0; validBatch && ordinal != plan->targetCount;
-           ++ordinal) {
-        const CrossTarget &target =
-            db.crossTargets[plan->firstTarget + ordinal];
-        const FunctionalExpression *sample = sampleExpressionFor(target.target);
-        const uint64_t domainBits =
-            sample ? uint64_t{sample->bitWidth} *
-                         ((target.tupleFlags & CrossTargetDomainFourState) ? 2u
-                                                                           : 1u)
-                   : 0;
-        if (!sample ||
-            sample->resultKind != FunctionalExpressionResultKind::Integral ||
-            !sample->bitWidth || domainBits >= 64 ||
-            candidateCount > uint64_t{MaxFunctionalCrossWithCandidates} >>
-                domainBits) {
-          validBatch = false;
-          break;
-        }
-        candidateCount <<= domainBits;
-      }
-    }
-    if (!validBatch || candidateCount > MaxFunctionalCrossWithCandidates ||
-        withExpressions.size() != candidateCount)
+    const auto &expressions = lookupRows(
+        expressionsByOwner,
+        std::make_tuple(FunctionalExpressionOwnerKind::Selector, node.id,
+                        FunctionalExpressionRole::SelectorWith));
+    if (node.withExpression ? expressions.size() != 1 ||
+                                  expressions.front().id != node.withExpression
+                            : !expressions.empty())
       return fail(Status::InvalidReference,
-                  "cross_selector_node.with_expression_batch");
-    for (size_t ordinal = 0; ordinal != withExpressions.size(); ++ordinal) {
-      const FunctionalExpression &expression = *withExpressions[ordinal];
-      if (expression.ownerOrdinal != ordinal || expression.ownerSubordinal ||
-          expression.semanticDigest != semanticDigest ||
-          expression.resultKind != FunctionalExpressionResultKind::Boolean ||
-          expression.evaluationPhase !=
-              FunctionalExpressionEvaluationPhase::Constructor)
-        return fail(Status::InvalidReference,
-                    "cross_selector_node.with_expression_batch");
-    }
+                  "cross_selector_node.with_expression_queue");
   }
   size_t seenCrossBins = 0;
   IndexSet<uint64_t> plannedCrossBins;

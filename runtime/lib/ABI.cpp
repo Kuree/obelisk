@@ -1038,6 +1038,9 @@ ABI_FUNCTION(obelisk_rt_v1_covergroup_prepare,
 ABI_FUNCTION(obelisk_rt_v1_covergroup_candidates,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
                                    obelisk_rt_object_v1 *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_covergroup_bind_with,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   obelisk_rt_object_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_covergroup_release_preparation,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_covergroup_create,

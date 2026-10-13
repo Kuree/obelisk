@@ -543,7 +543,9 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   const data = covergroupWith([bin({id: '171', kind: '3', name: 'sel', cross_selector: '1'})], {
     cross_selector_nodes: [
       node('1', 3), node('2', 1, {target: '60', bin: '70'}), node('3', 2), node('5', 6), node('4', 4),
-      node('6', 5, {value_set: '93'}), node('7', 7, {with_expression: 'unused'}), node('8', 5), node('9', 9),
+      node('6', 5, {value_set: '93'}),
+      node('7', 7, {with_expression: '200', matches_policy: '3', matches_count: '0'}),
+      node('8', 5), node('9', 9),
       node('10', 2),
     ],
     cross_selector_operands: [
@@ -551,18 +553,23 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
       ['4', '6'], ['4', '7'], ['4', '8'], ['4', '9'], ['4', '10'], ['10', '10'],
     ].map(([node, operand]) => ({node, operand})),
     resolved_cross_selector_bindings: [
-      binding('6', {value_set: '93'}), binding('7', {with_expression: 'a > b'}), binding('8', {tuple_set: '300'}),
+      binding('6', {value_set: '93'}),
+      binding('7', {with_expression: '200', tuple_set: '400', matches_policy: '3', matches_count: '0'}),
+      binding('8', {tuple_set: '300'}),
     ],
     resolved_functional_value_sets: [valueSet('93', [{kind: '1', limbs: [limb({low_aval: '5'})]}])],
     resolved_functional_bins: [{type: '50', configuration: '500', id: '172', name: 'low'}],
-    resolved_functional_tuples: [{id: '301', tuple_set: '300'}],
+    functional_expressions: [{id: '200', owner: '7', owner_kind: '4', role: '11',
+      result_kind: '7', owner_ordinal: '0', owner_subordinal: '0', evaluation_phase: '1', result_ordinal: '0'}],
+    resolved_functional_tuple_sets: [{id: '400', tuple_count: '1', element_mode: '2'}],
+    resolved_functional_tuples: [{id: '301', tuple_set: '300'}, {id: '401', tuple_set: '400'}],
     resolved_functional_tuple_components: [
       {tuple: '301', ordinal: '1', bin: '0', value_set: '93'}, {tuple: '301', ordinal: '0', bin: '172', value_set: '0'},
     ],
   });
   const cg = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.equal(cg.rows[0][0], 'sel = (binsof(cp.low) && !(all tuples) && (intersect {0x5} || ' +
-    'all tuples with expression a > b || intersect {<low,0x5>} || selector 9 || !(<cycle>)))');
+    'all tuples with 1 satisfying value tuple matches all || intersect {<low,0x5>} || selector 9 || !(<cycle>)))');
 }
 
 // With merge_instances, an inherited item that does not aggregate earns its

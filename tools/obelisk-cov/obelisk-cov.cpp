@@ -2433,6 +2433,30 @@ void jsonReport(
           out.attribute("value_type", formal.valueType);
         });
     });
+    out.attributeArray("functional_expressions", [&] {
+      for (const FunctionalExpression &expression :
+           database.functionalExpressions)
+        out.object([&] {
+          out.attribute("id", expression.id);
+          out.attribute("owner", expression.owner);
+          out.attribute("owner_kind",
+                        static_cast<uint32_t>(expression.ownerKind));
+          out.attribute("role", static_cast<uint32_t>(expression.role));
+          out.attribute("result_kind",
+                        static_cast<uint32_t>(expression.resultKind));
+          out.attribute("flags", expression.flags);
+          out.attribute("semantic_digest",
+                        digestText(expression.semanticDigest));
+          out.attribute("bit_width", expression.bitWidth);
+          out.attribute("signedness",
+                        static_cast<uint32_t>(expression.signedness));
+          out.attribute("owner_ordinal", expression.ownerOrdinal);
+          out.attribute("owner_subordinal", expression.ownerSubordinal);
+          out.attribute("evaluation_phase",
+                        static_cast<uint32_t>(expression.evaluationPhase));
+          out.attribute("result_ordinal", expression.resultOrdinal);
+        });
+    });
     out.attributeArray("functional_container_types", [&] {
       for (const auto &type : database.functionalContainerTypes)
         out.object([&] {
@@ -3442,6 +3466,7 @@ int main(int argc, char **argv) {
         << "\ntoggle-objects: " << database.toggleObjects.size()
         << "\nfunctional-types: " << database.functionalTypes.size()
         << "\nfunctional-formals: " << database.functionalFormals.size()
+        << "\nfunctional-expressions: " << database.functionalExpressions.size()
         << "\nfunctional-item-templates: " << database.functionalItems.size()
         << "\nfunctional-bin-templates: " << database.functionalBins.size()
         << "\nfunctional-configurations: "

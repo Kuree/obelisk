@@ -14,6 +14,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <algorithm>
 #include <limits>
@@ -233,8 +234,6 @@ struct CoverageWithCandidatePlan {
 };
 
 struct CrossWithCandidatePlan {
-  /// Tuple-major values. The final target varies fastest.
-  SmallVector<llvm::APInt> values;
   SmallVector<std::string> targetPaths;
 };
 
@@ -362,14 +361,7 @@ FailureOr<CrossWithCandidatePlan> buildCrossWithCandidatePlan(
     return failure();
   }
 
-  struct TargetDomain {
-    unsigned width = 0;
-    bool isSigned = false;
-    bool isFourState = false;
-  };
-  SmallVector<TargetDomain> domains;
   CrossWithCandidatePlan plan;
-  uint64_t tupleCount = 1;
   StringRef crossHierarchy = getHierarchyName(cross);
   for (auto [ordinal, targetAttr] : llvm::enumerate(cross.getTargetSymbols())) {
     auto targetReference = dyn_cast<SymbolRefAttr>(targetAttr);
@@ -400,19 +392,6 @@ FailureOr<CrossWithCandidatePlan> buildCrossWithCandidatePlan(
                        << " must be a finite integral coverpoint";
       return failure();
     }
-    const bool isFourState = isFourStateSemanticType(semanticType.getValue());
-    const uint64_t domainBits = uint64_t{*width} * (isFourState ? 2u : 1u);
-    if (domainBits >= 63 ||
-        tupleCount > coverage::MaxFunctionalCrossWithCandidates /
-                         (uint64_t{1} << domainBits)) {
-      with.emitError()
-          << "cross selector with candidate count exceeds the v1 limit of "
-          << coverage::MaxFunctionalCrossWithCandidates;
-      return failure();
-    }
-    tupleCount *= uint64_t{1} << domainBits;
-    domains.push_back(
-        {*width, isSignedSemanticType(semanticType.getValue()), isFourState});
     StringRef targetName = getDebugName(target);
     if (crossHierarchy.empty() || targetName.empty()) {
       with.emitError("cross selector with target has no semantic iterator "
@@ -422,11 +401,14 @@ FailureOr<CrossWithCandidatePlan> buildCrossWithCandidatePlan(
     plan.targetPaths.push_back(
         (Twine(crossHierarchy) + "." + targetName).str());
   }
-  if (domains.size() < 2 || tupleCount == 0) {
+  if (plan.targetPaths.size() < 2) {
     with.emitError("cross selector with requires at least two finite targets");
     return failure();
   }
 
+  llvm::StringSet<> targetPaths;
+  for (StringRef path : plan.targetPaths)
+    targetPaths.insert(path);
   Operation *predicate = children[1];
   bool invalidIterator = false;
   predicate->walk([&](semantic::SVNamedValueExpressionOp reference) {
@@ -440,8 +422,7 @@ FailureOr<CrossWithCandidatePlan> buildCrossWithCandidatePlan(
     // not name a cross item, so they remain valid inside the predicate.
     if (!isa<semantic::SVCoverCrossBodySymbolOp>(found->second->getParentOp()))
       return;
-    if (!llvm::is_contained(plan.targetPaths,
-                            reference.getReferencedPath().str()))
+    if (!targetPaths.contains(reference.getReferencedPath()))
       invalidIterator = true;
   });
   if (invalidIterator) {
@@ -450,28 +431,6 @@ FailureOr<CrossWithCandidatePlan> buildCrossWithCandidatePlan(
     return failure();
   }
 
-  plan.values.reserve(tupleCount * domains.size());
-  SmallVector<uint64_t> indices(domains.size(), 0);
-  for (uint64_t tupleOrdinal = 0; tupleOrdinal != tupleCount; ++tupleOrdinal) {
-    for (auto [targetOrdinal, domain] : llvm::enumerate(domains)) {
-      llvm::APInt value(domain.width * (domain.isFourState ? 2u : 1u),
-                        indices[targetOrdinal]);
-      // Biasing the sign bit maps unsigned ordinal order onto mathematical
-      // signed order: min, ..., -1, 0, ..., max.
-      if (domain.isSigned && !domain.isFourState)
-        value.flipBit(domain.width - 1);
-      plan.values.push_back(value);
-    }
-    for (size_t target = domains.size(); target != 0; --target) {
-      const size_t index = target - 1;
-      const uint64_t domainBits = uint64_t{domains[index].width} *
-                                  (domains[index].isFourState ? 2u : 1u);
-      const uint64_t cardinality = uint64_t{1} << domainBits;
-      if (++indices[index] != cardinality)
-        break;
-      indices[index] = 0;
-    }
-  }
   return plan;
 }
 
@@ -1192,20 +1151,10 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             if (failed(plan))
               return false;
             Builder builder(module.getContext());
-            SmallVector<Attribute> values;
-            values.reserve(plan->values.size());
-            for (const llvm::APInt &candidate : plan->values)
-              values.push_back(builder.getIntegerAttr(
-                  IntegerType::get(module.getContext(),
-                                   candidate.getBitWidth()),
-                  candidate));
             SmallVector<Attribute> paths;
             paths.reserve(plan->targetPaths.size());
             for (StringRef path : plan->targetPaths)
               paths.push_back(builder.getStringAttr(path));
-            operands[1]->setAttr(
-                sim::metadata::coverageFunctionalCrossWithCandidateValues,
-                builder.getArrayAttr(values));
             operands[1]->setAttr(
                 sim::metadata::coverageFunctionalCrossWithTargetPaths,
                 builder.getArrayAttr(paths));

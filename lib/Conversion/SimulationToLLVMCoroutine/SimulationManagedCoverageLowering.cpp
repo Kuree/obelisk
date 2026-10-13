@@ -540,6 +540,32 @@ public:
   }
 };
 
+class CovergroupBindWithConversion final
+    : public OpConversionPattern<sim::SimCovergroupBindWithOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimCovergroupBindWithOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_covergroup_bind_with"),
+            ValueRange{context, adaptor.getToken().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), op.getSelector()),
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getQueue().front())})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class CovergroupReleasePreparationConversion final
     : public OpConversionPattern<sim::SimCovergroupReleasePreparationOp> {
 public:
@@ -1453,9 +1479,10 @@ void populateManagedCoverageToLLVMConversionPatterns(
       CoverageQueryConversion<sim::SimCoverageQueryInstanceOp>,
       CoverageDatabaseConversion<sim::SimCoverageSaveOp>,
       CoverageDatabaseConversion<sim::SimCoverageMergeOp>,
-      CovergroupCandidatesConversion, CovergroupReleasePreparationConversion,
-      CovergroupNullConversion, CovergroupCastConversion,
-      CovergroupEqualConversion, FunctionalCoverageGetConversion,
+      CovergroupCandidatesConversion, CovergroupBindWithConversion,
+      CovergroupReleasePreparationConversion, CovergroupNullConversion,
+      CovergroupCastConversion, CovergroupEqualConversion,
+      FunctionalCoverageGetConversion,
       FunctionalCoverageDatabaseConversion<
           sim::SimFunctionalCoverageSetDbNameOp>,
       FunctionalCoverageDatabaseConversion<sim::SimFunctionalCoverageLoadDbOp>,

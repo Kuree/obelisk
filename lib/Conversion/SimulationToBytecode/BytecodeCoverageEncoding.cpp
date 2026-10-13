@@ -108,6 +108,12 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
         {reg(plan, op.getToken()), emitU64Constant(plan, op.getSelector()),
          reg(plan, op.getQueue()), emitU64Constant(plan, op.getMaximum())},
         {});
+  if (auto op = dyn_cast<sim::SimCovergroupBindWithOp>(operation))
+    return emitIntrinsicRegisters(plan, kIntrinsicCovergroupBindWith,
+                                  {reg(plan, op.getToken()),
+                                   emitU64Constant(plan, op.getSelector()),
+                                   reg(plan, op.getQueue())},
+                                  {});
   if (auto op = dyn_cast<sim::SimCovergroupReleasePreparationOp>(operation))
     return emitIntrinsic(plan, kIntrinsicCovergroupReleasePreparation,
                          {op.getToken()}, {});

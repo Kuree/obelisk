@@ -52,7 +52,7 @@
 // SCHEMA-DAG: functional_expression id=[[ALL_SET]] owner=[[ALL]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[HUGE_SET]] owner=[[HUGE]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[FILTER_QUEUE]] owner=[[FILTER_SET]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
-// SCHEMA-DAG: functional_expression id=[[FILTER_WITH]] owner=[[FILTER]] owner_kind=4 role=11 result_kind=1 {{.*}} phase=1
+// SCHEMA-DAG: functional_expression id=[[FILTER_WITH]] owner=[[FILTER]] owner_kind=4 role=11 result_kind=7 {{.*}} phase=1
 
 // The queue-valued constructor expressions are ordinary covergroup-create
 // payloads. Native lowering passes each managed word through the descriptor's

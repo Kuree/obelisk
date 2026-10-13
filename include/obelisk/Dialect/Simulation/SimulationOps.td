@@ -815,6 +815,20 @@ def SimCovergroupCandidatesOp : SimOp<"covergroup.candidates", [
   let hasVerifier = 1;
 }
 
+def SimCovergroupBindWithOp : SimOp<"covergroup.bind_with", [
+    MemoryEffects<[MemRead<SimHeapResource>,
+                   MemRead<SimCoverageResource>, MemWrite<SimCoverageResource>]>
+  ]> {
+  let summary = "bind satisfying value tuples before selecting a parent";
+  let arguments = (ins SimContextType:$context, I64:$token,
+                       AnyType:$queue, I64Attr:$selector);
+  let assemblyFormat = [{
+    $context `,` $token `from` $queue `selector` $selector
+    attr-dict `:` type($queue)
+  }];
+  let hasVerifier = 1;
+}
+
 def SimCovergroupReleasePreparationOp
     : SimOp<"covergroup.release_preparation", [
         MemoryEffects<[MemWrite<SimCoverageResource>]>

@@ -294,8 +294,13 @@ const selectorText = (g, i, root) => {
     } else if (kind === 6) {
       append('all tuples');
     } else if (kind === 7) {
-      pending.push({text: ' with expression ' +
-                         (binding ? binding.with_expression : n.with_expression)});
+      const count = binding ? (tuplesBySet.get(binding.tuple_set) || []).length : 0;
+      const subject = binding && binding.tuple_set !== '0'
+        ? count + ' satisfying value tuple' + (count === 1 ? '' : 's')
+        : 'expression ' + n.with_expression;
+      const policy = binding || n;
+      const matches = num(policy.matches_policy) === 3 ? 'all' : policy.matches_count;
+      pending.push({text: ' with ' + subject + ' matches ' + matches});
       if (ops.length && remainingNodes) {
         --remainingNodes;
         pending.push({id: ops[0]});

@@ -1323,6 +1323,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                                readManaged(inputRegister(2)),
                                                static_cast<uint32_t>(*maximum));
   }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH: {
+    auto token = scalar(0), selector = scalar(1);
+    if (!token || !selector)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_covergroup_bind_with(context, *token, *selector,
+                                              readManaged(inputRegister(2)));
+  }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION: {
     auto token = scalar(0);
     return token ? obelisk_rt_v1_covergroup_release_preparation(context, *token)

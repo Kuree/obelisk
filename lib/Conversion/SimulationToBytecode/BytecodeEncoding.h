@@ -233,6 +233,8 @@ constexpr uint32_t kIntrinsicCovergroupPrepare =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE;
 constexpr uint32_t kIntrinsicCovergroupCandidates =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES;
+constexpr uint32_t kIntrinsicCovergroupBindWith =
+    OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH;
 constexpr uint32_t kIntrinsicCovergroupReleasePreparation =
     OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION;
 constexpr uint32_t kIntrinsicCovergroupFormalRead =

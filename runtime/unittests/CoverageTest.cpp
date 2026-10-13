@@ -251,20 +251,15 @@ makeCrossWithSchema(obelisk::coverage::CrossMatchesPolicy policy,
   schema.crossSelectorNodes.push_back(selector);
   Digest digest{};
   digest.front() = 1;
-  for (uint32_t ordinal = 0; ordinal != 16; ++ordinal) {
-    FunctionalExpression predicate;
-    predicate.id = 100 + ordinal;
-    predicate.owner = 70;
-    predicate.ownerKind = FunctionalExpressionOwnerKind::Selector;
-    predicate.role = FunctionalExpressionRole::SelectorWith;
-    predicate.resultKind = FunctionalExpressionResultKind::Boolean;
-    predicate.semanticDigest = digest;
-    predicate.ownerOrdinal = ordinal;
-    predicate.evaluationPhase =
-        FunctionalExpressionEvaluationPhase::Constructor;
-    predicate.resultOrdinal = ordinal;
-    schema.functionalExpressions.push_back(predicate);
-  }
+  FunctionalExpression predicate;
+  predicate.id = 100;
+  predicate.owner = 70;
+  predicate.ownerKind = FunctionalExpressionOwnerKind::Selector;
+  predicate.role = FunctionalExpressionRole::SelectorWith;
+  predicate.resultKind = FunctionalExpressionResultKind::TupleQueue;
+  predicate.semanticDigest = digest;
+  predicate.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
+  schema.functionalExpressions.push_back(predicate);
   if (splitFirstTarget) {
     schema.functionalBins.insert(schema.functionalBins.begin() + 1,
                                  {31, 20, "high", FunctionalBinKind::State, 0,
@@ -1735,36 +1730,28 @@ TEST_F(CoverageRuntimeDesignTest, SharedAndSelectorDagBindsAndSamplesOnce) {
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(CoverageDatabaseTest, CrossWithConstructorBatchIsStrictlyValidated) {
+TEST(CoverageDatabaseTest, CrossWithConstructorQueueIsStrictlyValidated) {
   using namespace obelisk::coverage;
-  Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, /*count=*/1);
+  Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1);
   EXPECT_EQ(validate(schema), Status::Ok);
-
-  Database wrongFirst = schema;
-  auto selector = std::find_if(wrongFirst.crossSelectorNodes.begin(),
-                               wrongFirst.crossSelectorNodes.end(),
-                               [](const auto &node) { return node.id == 70; });
-  ASSERT_NE(selector, wrongFirst.crossSelectorNodes.end());
-  selector->withExpression = 101;
-  EXPECT_EQ(validate(wrongFirst), Status::InvalidReference);
-
-  Database ordinalGap = schema;
-  auto predicate =
-      std::find_if(ordinalGap.functionalExpressions.begin(),
-                   ordinalGap.functionalExpressions.end(),
-                   [](const auto &expression) { return expression.id == 105; });
-  ASSERT_NE(predicate, ordinalGap.functionalExpressions.end());
-  predicate->ownerOrdinal = 17;
-  EXPECT_EQ(validate(ordinalGap), Status::InvalidReference);
-
-  Database digestMismatch = schema;
-  predicate =
-      std::find_if(digestMismatch.functionalExpressions.begin(),
-                   digestMismatch.functionalExpressions.end(),
-                   [](const auto &expression) { return expression.id == 105; });
-  ASSERT_NE(predicate, digestMismatch.functionalExpressions.end());
-  predicate->semanticDigest.back() = 1;
-  EXPECT_EQ(validate(digestMismatch), Status::InvalidReference);
+  Database wrongAnchor = schema;
+  wrongAnchor.crossSelectorNodes.front().withExpression = 101;
+  EXPECT_EQ(validate(wrongAnchor), Status::InvalidReference);
+  auto predicate = std::find_if(schema.functionalExpressions.begin(),
+                                schema.functionalExpressions.end(),
+                                [](const auto &row) { return row.id == 100; });
+  ASSERT_NE(predicate, schema.functionalExpressions.end());
+  predicate->ownerOrdinal = 1;
+  EXPECT_EQ(validate(schema), Status::InvalidReference);
+  predicate->ownerOrdinal = 0;
+  predicate->resultKind = FunctionalExpressionResultKind::Boolean;
+  EXPECT_EQ(validate(schema), Status::InvalidReference);
+  predicate->resultKind = FunctionalExpressionResultKind::TupleQueue;
+  auto extra = *predicate;
+  extra.id = 101;
+  extra.resultOrdinal = 1;
+  schema.functionalExpressions.push_back(extra);
+  EXPECT_EQ(validate(schema), Status::InvalidReference);
 }
 
 TEST(CoverageDatabaseTest,
@@ -2234,6 +2221,112 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
+// Own the descriptor and GC lane as long as the constructor payload is live.
+struct CrossWithQueue {
+  obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
+                                     OBELISK_RT_ELEMENT_AGGREGATE,
+                                     220,
+                                     0,
+                                     0,
+                                     1,
+                                     1,
+                                     8,
+                                     nullptr};
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  obelisk_rt_object_v1 *queue = nullptr;
+  obelisk_rt_gc_root_v1 root{};
+  void initialize(obelisk_rt_context *context, bool all) {
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
+    for (uint8_t first = 0; first != 4; ++first)
+      for (uint8_t second = 0; second != 4; ++second)
+        if (all || first == second) {
+          uint8_t tuple = first | (second << 2);
+          ASSERT_EQ(obelisk_rt_v1_queue_push(lane, queue, 0, &tuple, nullptr),
+                    OBELISK_RT_OK);
+        }
+  }
+  obelisk_rt_functional_value_v1 payload() const {
+    return {100,     0,     0, nullptr,
+            nullptr, queue, 0, OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER,
+            0};
+  }
+  void close() {
+    if (!lane)
+      return;
+    EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    lane = nullptr;
+  }
+  ~CrossWithQueue() { close(); }
+};
+
+TEST_F(CoverageRuntimeDesignTest,
+       PreparedNestedWithCountsPerBinAndRestoresWholeBinValues) {
+  using namespace obelisk::coverage;
+  for (auto [policy, count, expected] :
+       {std::tuple{CrossMatchesPolicy::Count, uint64_t{2}, uint64_t{16}},
+        std::tuple{CrossMatchesPolicy::Count, uint64_t{3}, uint64_t{0}},
+        std::tuple{CrossMatchesPolicy::All, uint64_t{0}, uint64_t{0}}}) {
+    Database schema = makeCrossWithSchema(policy, count, true);
+    CrossSelectorNode parent;
+    parent.id = 71;
+    parent.cross = 22;
+    parent.kind = CrossSelectorKind::With;
+    parent.withExpression = 101;
+    parent.operandCount = 1;
+    parent.ordinal = 1;
+    parent.matchesPolicy = CrossMatchesPolicy::All;
+    schema.crossSelectorNodes.push_back(parent);
+    schema.crossSelectorOperands.push_back({71, 70, 0});
+    schema.crossBins.front().rootSelector = 71;
+    auto expression = schema.functionalExpressions.back();
+    ASSERT_EQ(expression.id, 100u);
+    expression.id = 101;
+    expression.owner = 71;
+    expression.resultOrdinal = 1;
+    schema.functionalExpressions.push_back(expression);
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    ASSERT_EQ(validate(schema), Status::Ok);
+    obelisk_rt_context *local = createContextForSchema(schema, false);
+    ASSERT_NE(local, nullptr);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    uint64_t token = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_prepare(local, 10, nullptr, 0, &token),
+              OBELISK_RT_OK);
+    CrossWithQueue child;
+    child.initialize(local, false);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 70, child.queue),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 70, child.queue),
+              OBELISK_RT_INVALID_DESIGN);
+    CoverageTupleQueueSnapshot candidates;
+    ASSERT_EQ(obelisk_rt_coverage_prepared_candidates(local, token, 71, 16,
+                                                      candidates),
+              OBELISK_RT_OK);
+    // Each split first-target bin contains two satisfying diagonal values.
+    // The parent's predicate still sees every value of a selected bin tuple.
+    EXPECT_EQ(candidates.count, expected);
+    CrossWithQueue all;
+    all.initialize(local, true);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_bind_with(local, token, 71, all.queue),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_coverage_prepared_candidates(local, token, 71, 16,
+                                                      candidates),
+              OBELISK_RT_OK);
+    EXPECT_EQ(candidates.count, expected);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_release_preparation(local, token),
+              OBELISK_RT_OK);
+    all.close();
+    child.close();
+    obelisk_rt_v1_context_destroy(local);
+  }
+}
+
 TEST_F(CoverageRuntimeDesignTest,
      CrossWithPersistsSatisfyingTuplesAndAppliesMatchesPolicies) {
   using namespace obelisk::coverage;
@@ -2245,27 +2338,12 @@ TEST_F(CoverageRuntimeDesignTest,
     ASSERT_NE(local, nullptr);
     ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
               OBELISK_RT_OK);
-    std::array<uint8_t, 16> predicateValues{};
-    std::array<obelisk_rt_functional_value_v1, 16> predicates{};
-    for (size_t ordinal = 0; ordinal != predicates.size(); ++ordinal) {
-      uint32_t first = static_cast<uint32_t>(ordinal / 4);
-      uint32_t second = static_cast<uint32_t>(ordinal % 4);
-      predicateValues[ordinal] =
-          everyPredicate || first == second ? uint8_t{1} : uint8_t{0};
-      predicates[ordinal] = {100 + ordinal,
-                             1,
-                             1,
-                             &predicateValues[ordinal],
-                             nullptr,
-                             nullptr,
-                             0,
-                             OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
-                             0};
-    }
+    CrossWithQueue queue;
+    queue.initialize(local, everyPredicate);
+    auto predicate = queue.payload();
     obelisk_rt_covergroup_v1 handle = 0;
-    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
-                                              predicates.data(),
-                                              predicates.size(), &handle),
+    ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
+                                              1, &handle),
               OBELISK_RT_OK);
     ASSERT_EQ(sampleFunctional(local, handle, 2, 2), OBELISK_RT_OK);
 
@@ -2295,6 +2373,7 @@ TEST_F(CoverageRuntimeDesignTest,
                                ResolvedFunctionalValueSetRole::TupleComponent;
                       }),
         satisfyingCount * 2);
+    queue.close();
     obelisk_rt_v1_context_destroy(local);
   };
 
@@ -2428,24 +2507,12 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
   ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
             OBELISK_RT_OK);
 
-  std::array<uint8_t, 16> predicateValues{};
-  std::array<obelisk_rt_functional_value_v1, 16> predicates{};
-  for (uint32_t ordinal = 0; ordinal != predicates.size(); ++ordinal) {
-    predicateValues[ordinal] = ordinal / 4 == ordinal % 4;
-    predicates[ordinal] = {100 + ordinal,
-                           1,
-                           1,
-                           &predicateValues[ordinal],
-                           nullptr,
-                           nullptr,
-                           0,
-                           OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
-                           0};
-  }
+  CrossWithQueue queue;
+  queue.initialize(local, false);
+  auto predicate = queue.payload();
   obelisk_rt_covergroup_v1 handle = 0;
-  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
-                                            predicates.data(),
-                                            predicates.size(), &handle),
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, &predicate,
+                                            1, &handle),
             OBELISK_RT_OK);
   double percentage = 0.0;
   int32_t covered = 0;
@@ -2456,6 +2523,7 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
   EXPECT_DOUBLE_EQ(percentage, 0.0);
   EXPECT_EQ(covered, 0);
   EXPECT_EQ(total, 0);
+  queue.close();
   obelisk_rt_v1_context_destroy(local);
 }
 
@@ -2472,7 +2540,7 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   matches.bitWidth = 128;
   matches.signedness = CoverageSignedness::Unsigned;
   matches.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
-  matches.resultOrdinal = 16;
+  matches.resultOrdinal = 1;
   schema.functionalExpressions.push_back(matches);
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
   ASSERT_EQ(validate(schema), Status::Ok);
@@ -2481,25 +2549,16 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   ASSERT_NE(local, nullptr);
   ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr),
             OBELISK_RT_OK);
-  std::array<std::array<uint8_t, 16>, 17> storage{};
-  std::array<obelisk_rt_functional_value_v1, 17> expressions{};
-  for (uint32_t ordinal = 0; ordinal != 16; ++ordinal) {
-    storage[ordinal][0] = ordinal / 4 == ordinal % 4;
-    expressions[ordinal] = {100 + ordinal,
-                            1,
-                            1,
-                            storage[ordinal].data(),
-                            nullptr,
-                            nullptr,
-                            0,
-                            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
-                            0};
-  }
+  CrossWithQueue queue;
+  queue.initialize(local, false);
+  std::array<uint8_t, 16> storage{};
+  std::array<obelisk_rt_functional_value_v1, 2> expressions{};
+  expressions.front() = queue.payload();
   // 2^64 is positive and legal, but exceeds every bounded candidate bin
   // tuple. The v1 resolved representation canonicalizes it to 4097.
-  storage.back()[8] = 1;
+  storage[8] = 1;
   expressions.back() = {
-      200,     128,     16, storage.back().data(),
+      200,     128,     16, storage.data(),
       nullptr, nullptr, 0,  OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
   obelisk_rt_covergroup_v1 handle = 0;
@@ -2511,6 +2570,7 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   ASSERT_EQ(validate(saved), Status::Ok);
   ASSERT_EQ(saved.resolvedCrossSelectorBindings.size(), 1u);
   EXPECT_EQ(saved.resolvedCrossSelectorBindings.front().matchesCount, 4097u);
+  queue.close();
   obelisk_rt_v1_context_destroy(local);
 }
 

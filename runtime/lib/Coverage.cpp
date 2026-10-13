@@ -2809,6 +2809,7 @@ struct PreparedFunctionalConstruction {
   std::unordered_set<uint64_t> suppressedTransitions;
   IndexMap<uint64_t, std::vector<uint64_t>> binsByItem;
   uint64_t maximumMatchCount = 1;
+  IndexMap<uint64_t, uint64_t> withMatches;
   IndexMap<std::vector<uint64_t>, std::shared_ptr<PreparedCrossValueIndex>>
       crosses;
 };
@@ -3045,6 +3046,8 @@ struct PreparedCrossValueIndex {
     using namespace obelisk::coverage;
     const auto &schema = *prepared.schema;
     auto &queries = *prepared.queries;
+    if (auto cached = selectors.find(root.id); cached != selectors.end())
+      return cached->second;
     std::vector<const CrossSelectorNode *> pending{&root}, reachable;
     IndexSet<uint64_t> visited;
     while (!pending.empty()) {
@@ -3155,6 +3158,78 @@ struct PreparedCrossValueIndex {
     }
     return root.id == outerWith ? outerSelection
                                 : selectors.find(root.id)->second;
+  }
+
+  obelisk_rt_status bind(const obelisk::coverage::CrossPlan &plan,
+                         const obelisk::coverage::CrossSelectorNode &node,
+                         uint64_t resolvedCross,
+                         const CoverageTupleQueueSnapshot &snapshot) {
+    using namespace obelisk::coverage;
+    auto matches = prepared.withMatches.find(node.id);
+    if (!node.withExpression || matches == prepared.withMatches.end() ||
+        selectors.count(node.id) || plan.targetCount != axes.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    Root subordinate = select(node, resolvedCross, node.id);
+    if (!check())
+      return status;
+    std::vector<uint8_t> used(snapshot.valueSize);
+    for (uint32_t ordinal = 0; ordinal != plan.targetCount; ++ordinal) {
+      const auto &target =
+          prepared.schema->crossTargets[plan.firstTarget + ordinal];
+      for (uint32_t bit = 0; bit != target.tupleBitWidth; ++bit)
+        used[(target.tupleBitOffset + bit) / 8] |=
+            uint8_t{1} << ((target.tupleBitOffset + bit) % 8);
+    }
+    Root accepted = 0;
+    for (uint64_t ordinal = 0; ordinal != snapshot.count; ++ordinal) {
+      const auto *aval = snapshot.value.data() + ordinal * snapshot.valueSize;
+      const auto *bval = snapshot.fourState ? snapshot.unknown.data() +
+                                                  ordinal * snapshot.valueSize
+                                            : nullptr;
+      for (uint64_t byte = 0; byte != snapshot.valueSize; ++byte)
+        if ((aval[byte] & ~used[byte]) || (bval && (bval[byte] & ~used[byte])))
+          return OBELISK_RT_INVALID_DESIGN;
+      Root tuple = 1;
+      for (size_t index = axes.size(); index != 0; --index) {
+        const auto &axis = axes[index - 1];
+        const auto &target =
+            prepared.schema->crossTargets[plan.firstTarget + index - 1];
+        for (uint32_t plane = 0; plane != 2; ++plane)
+          for (uint32_t bit = 0; bit != axis.width; ++bit) {
+            uint64_t encodedBit = target.tupleBitOffset + bit;
+            bool one =
+                plane ? bval && ((bval[encodedBit / 8] >> (encodedBit % 8)) & 1)
+                      : ((aval[encodedBit / 8] >> (encodedBit % 8)) & 1);
+            if (plane && one &&
+                !(target.tupleFlags & CrossTargetDomainFourState))
+              return OBELISK_RT_INVALID_DESIGN;
+            if (!plane && axis.signedness == CoverageSignedness::Signed &&
+                bit == axis.width - 1)
+              one = !one;
+            uint32_t variable =
+                (plane ? axis.bFirst : axis.aFirst) + axis.width - bit - 1;
+            tuple = one ? relation->makeNode(variable, 0, tuple)
+                        : relation->makeNode(variable, tuple, 0);
+          }
+      }
+      accepted = relation->unite(accepted, tuple);
+      if (!check())
+        return status;
+    }
+    Root subject = relation->intersect(universe, subordinate);
+    Root selected =
+        node.matchesPolicy == CrossMatchesPolicy::All
+            ? relation->subtract(
+                  binImage->project(subject),
+                  binImage->project(relation->subtract(subject, accepted)))
+        : matches->second == 1
+            ? binImage->project(relation->intersect(subject, accepted))
+            : countImage->atLeast(relation->intersect(subject, accepted),
+                                  matches->second);
+    if (!check())
+      return status;
+    selectors.emplace(node.id, selected);
+    return OBELISK_RT_OK;
   }
 
   obelisk_rt_status candidates(const obelisk::coverage::CrossPlan &plan,
@@ -3612,7 +3687,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   IndexMap<uint64_t, const FunctionalExpression *> expressionSchemas;
   IndexMap<uint64_t, const FunctionalExpression *> coverpointSamples;
   IndexMap<uint64_t, std::vector<const FunctionalExpression *>>
-      binWithExpressions, selectorWithExpressions;
+      binWithExpressions;
   for (const auto &row : schema.functionalExpressions) {
     expressionSchemas.emplace(row.id, &row);
     if (row.ownerKind == FunctionalExpressionOwnerKind::Item &&
@@ -3621,17 +3696,9 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (row.ownerKind == FunctionalExpressionOwnerKind::Bin &&
         row.role == FunctionalExpressionRole::BinWith)
       binWithExpressions[row.owner].push_back(&row);
-    if (row.ownerKind == FunctionalExpressionOwnerKind::Selector &&
-        row.role == FunctionalExpressionRole::SelectorWith)
-      selectorWithExpressions[row.owner].push_back(&row);
   }
   for (auto &[bin, predicates] : binWithExpressions) {
     (void)bin;
-    sortByKey(predicates.begin(), predicates.end(),
-              [](const auto *row) { return row->ownerOrdinal; });
-  }
-  for (auto &[selector, predicates] : selectorWithExpressions) {
-    (void)selector;
     sortByKey(predicates.begin(), predicates.end(),
               [](const auto *row) { return row->ownerOrdinal; });
   }
@@ -6983,9 +7050,11 @@ obelisk_rt_status resolveStaticFunctionalType(
     uint64_t resolvedTupleSetID = 0;
     CrossMatchesPolicy resolvedMatchesPolicy = CrossMatchesPolicy::None;
     uint64_t resolvedMatchesCount = 0;
-    if (node.constructionExpression) {
+    if (node.constructionExpression || node.withExpression) {
       const auto *staticPlan = lookup(templateCrossPlans, node.cross);
-      const auto *construction = expressionValue(node.constructionExpression);
+      const auto *construction =
+          expressionValue(node.withExpression ? node.withExpression
+                                              : node.constructionExpression);
       if (!staticPlan || !construction ||
           construction->kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
           uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
@@ -6998,7 +7067,9 @@ obelisk_rt_status resolveStaticFunctionalType(
               context, construction->owner, staticPlan->tupleElementType,
               staticPlan->tupleProvenanceSpan,
               (staticPlan->tupleFlags & CrossTupleFourState) != 0,
-              ParseLimits{}.maxRecords, snapshot);
+              node.withExpression ? MaxFunctionalCrossWithCandidates
+                                  : ParseLimits{}.maxRecords,
+              snapshot);
       if (snapshotStatus != OBELISK_RT_OK)
         return snapshotStatus;
 
@@ -7141,15 +7212,20 @@ obelisk_rt_status resolveStaticFunctionalType(
                                        integer, unknownValue) ||
               unknownValue || integer.negative)
             return OBELISK_RT_INVALID_DESIGN;
-          const uint64_t cap = ParseLimits{}.maxRecords == UINT64_MAX
-                                   ? UINT64_MAX
-                                   : ParseLimits{}.maxRecords + 1;
+          const uint64_t cap =
+              node.withExpression
+                  ? uint64_t{MaxFunctionalCrossWithCandidates} + 1
+                  : ParseLimits{}.maxRecords + 1;
           resolvedMatchesCount = integer.magnitude.empty() ? 0
                                  : integer.magnitude.size() > 1
                                      ? cap
                                      : std::min(integer.magnitude.front(), cap);
-        } else if (resolvedMatchesCount > ParseLimits{}.maxRecords + 1)
-          resolvedMatchesCount = ParseLimits{}.maxRecords + 1;
+        } else
+          resolvedMatchesCount =
+              std::min(resolvedMatchesCount,
+                       node.withExpression
+                           ? uint64_t{MaxFunctionalCrossWithCandidates} + 1
+                           : ParseLimits{}.maxRecords + 1);
         if (!resolvedMatchesCount)
           return OBELISK_RT_INVALID_DESIGN;
       } else if (node.matchesPolicy != CrossMatchesPolicy::All) {
@@ -7259,200 +7335,6 @@ obelisk_rt_status resolveStaticFunctionalType(
       }
       pendingTupleSet.set.tupleCount = pendingTupleSet.tuples.size();
       pendingTupleSets.push_back(std::move(pendingTupleSet));
-    } else if (node.withExpression) {
-      const auto *staticPlan = lookup(templateCrossPlans, node.cross);
-      if (!staticPlan || staticPlan->targetCount < 2 ||
-          uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
-              schema.crossTargets.size())
-        return OBELISK_RT_INVALID_DESIGN;
-
-      struct TargetDomain {
-        uint64_t item = 0;
-        uint32_t bitWidth = 0;
-        CoverageSignedness signedness = CoverageSignedness::NotApplicable;
-        uint32_t cardinality = 0;
-        bool fourState = false;
-      };
-      std::vector<TargetDomain> domains;
-      uint64_t candidateCount = 1;
-      for (uint32_t ordinal = 0; ordinal != staticPlan->targetCount;
-           ++ordinal) {
-        const CrossTarget &target =
-            schema.crossTargets[staticPlan->firstTarget + ordinal];
-        auto resolvedTargetItem = resolvedItems.find(target.target);
-        const auto *sampleExpression = lookup(coverpointSamples, target.target);
-        const bool fourState =
-            (target.tupleFlags & CrossTargetDomainFourState) != 0;
-        const uint64_t domainBits =
-            sampleExpression
-                ? uint64_t{sampleExpression->bitWidth} * (fourState ? 2u : 1u)
-                : 0;
-        if (target.cross != node.cross || target.ordinal != ordinal ||
-            resolvedTargetItem == resolvedItems.end() || !sampleExpression ||
-            sampleExpression->resultKind !=
-                FunctionalExpressionResultKind::Integral ||
-            !sampleExpression->bitWidth || domainBits >= 32 ||
-            candidateCount > uint64_t{MaxFunctionalCrossWithCandidates} >>
-                domainBits)
-          return OBELISK_RT_INVALID_DESIGN;
-        const uint32_t cardinality = uint32_t{1} << domainBits;
-        candidateCount *= cardinality;
-        domains.push_back(
-            {resolvedTargetItem->second, sampleExpression->bitWidth,
-             sampleExpression->signedness, cardinality, fourState});
-      }
-      if (!candidateCount || candidateCount > MaxFunctionalCrossWithCandidates)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-
-      auto with = selectorWithExpressions.find(node.id);
-      if (with == selectorWithExpressions.end())
-        return OBELISK_RT_INVALID_DESIGN;
-      const auto &predicates = with->second;
-      if (predicates.size() != candidateCount || predicates.empty() ||
-          predicates.front()->id != node.withExpression)
-        return OBELISK_RT_INVALID_DESIGN;
-      for (size_t ordinal = 0; ordinal != predicates.size(); ++ordinal)
-        if (predicates[ordinal]->ownerOrdinal != ordinal ||
-            predicates[ordinal]->ownerSubordinal ||
-            predicates[ordinal]->semanticDigest !=
-                predicates.front()->semanticDigest)
-          return OBELISK_RT_INVALID_DESIGN;
-
-      resolvedMatchesPolicy = node.matchesPolicy;
-      if (node.matchesPolicy == CrossMatchesPolicy::Count) {
-        resolvedMatchesCount = node.matchesCount;
-        if (node.matchesExpression) {
-          const FunctionalExpression *matchesSchema =
-              expressionSchema(node.matchesExpression);
-          const auto *matchesValue = expressionValue(node.matchesExpression);
-          FunctionalInteger integer;
-          bool unknown = false;
-          if (!matchesSchema || !matchesValue ||
-              !decodeFunctionalInteger(*matchesValue, matchesSchema->signedness,
-                                       integer, unknown) ||
-              unknown || integer.negative)
-            return OBELISK_RT_INVALID_DESIGN;
-          resolvedMatchesCount =
-              integer.magnitude.empty() ? 0
-              : integer.magnitude.size() > 1
-                  ? uint64_t{MaxFunctionalCrossWithCandidates} + 1
-                  : std::min(integer.magnitude.front(),
-                             uint64_t{MaxFunctionalCrossWithCandidates} + 1);
-        }
-        if (!resolvedMatchesCount)
-          return OBELISK_RT_INVALID_DESIGN;
-      } else if (node.matchesPolicy != CrossMatchesPolicy::All) {
-        return OBELISK_RT_INVALID_DESIGN;
-      }
-
-      resolvedTupleSetID =
-          resolvedFunctionalID("functional.resolved.selector-with-tuples",
-                               typeID, node.id, 0, tupleSetIDs);
-      if (!resolvedTupleSetID)
-        return OBELISK_RT_INVALID_DESIGN;
-      tupleSetIDs.insert(resolvedTupleSetID);
-      PendingTupleSet pendingTupleSet;
-      pendingTupleSet.set = {typeID,
-                             {},
-                             resolvedTupleSetID,
-                             0,
-                             resolvedCross->second,
-                             node.id,
-                             0,
-                             0,
-                             FunctionalTupleElementMode::ValueTuple,
-                             0};
-      for (uint32_t candidate = 0; candidate != candidateCount; ++candidate) {
-        const auto *predicate = expressionValue(predicates[candidate]->id);
-        if (!predicate ||
-            (predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL &&
-             predicate->kind != OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) ||
-            predicate->bit_width != 1 || predicate->value_size != 1 ||
-            !predicate->value || predicate->owner || predicate->payload ||
-            predicate->argument_ref_kind ||
-            (predicate->kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE) !=
-                (predicate->unknown != nullptr))
-          return OBELISK_RT_INVALID_DESIGN;
-        if (!functionalBooleanTrue(*predicate))
-          continue;
-        const uint32_t tupleOrdinal = pendingTupleSet.tuples.size();
-        uint64_t tupleID =
-            resolvedFunctionalID("functional.resolved.selector-with-tuple",
-                                 typeID, node.id, tupleOrdinal, tupleIDs);
-        if (!tupleID)
-          return OBELISK_RT_INVALID_DESIGN;
-        tupleIDs.insert(tupleID);
-        const uint32_t firstComponent = pendingTupleSet.components.size();
-        uint32_t remainder = candidate;
-        std::vector<uint32_t> targetValues(domains.size());
-        for (size_t reverse = domains.size(); reverse != 0; --reverse) {
-          const size_t targetOrdinal = reverse - 1;
-          targetValues[targetOrdinal] =
-              remainder % domains[targetOrdinal].cardinality;
-          remainder /= domains[targetOrdinal].cardinality;
-        }
-        for (size_t targetOrdinal = 0; targetOrdinal != domains.size();
-             ++targetOrdinal) {
-          const TargetDomain &domain = domains[targetOrdinal];
-          uint64_t encoded = targetValues[targetOrdinal];
-          uint64_t bval = 0;
-          if (domain.fourState) {
-            bval = encoded >> domain.bitWidth;
-            encoded &= (uint64_t{1} << domain.bitWidth) - 1;
-          } else if (domain.signedness == CoverageSignedness::Signed) {
-            encoded ^= uint64_t{1} << (domain.bitWidth - 1);
-          }
-          const uint32_t componentOrdinal =
-              static_cast<uint32_t>(targetOrdinal);
-          const uint32_t stableOrdinal =
-              tupleOrdinal * staticPlan->targetCount + componentOrdinal;
-          uint64_t componentSetID =
-              resolvedFunctionalID("functional.resolved.selector-with-value",
-                                   typeID, node.id, stableOrdinal, valueSetIDs);
-          if (!componentSetID)
-            return OBELISK_RT_INVALID_DESIGN;
-          valueSetIDs.insert(componentSetID);
-          PendingSet base;
-          base.set = {typeID,
-                      {},
-                      0,
-                      0,
-                      domain.item,
-                      0,
-                      0,
-                      domain.bitWidth,
-                      FunctionalValueSetKind::Integral,
-                      0,
-                      domain.signedness,
-                      0,
-                      node.id,
-                      tupleOrdinal,
-                      componentOrdinal,
-                      ResolvedFunctionalValueSetRole::TupleComponent};
-          PendingAtom atom;
-          atom.atom.kind = FunctionalValueAtomKind::IntegralValue;
-          atom.atom.flags = FunctionalValueAtomLowerInclusive |
-                            FunctionalValueAtomUpperInclusive;
-          atom.atom.limbCount = 1;
-          atom.limbs.push_back({0, 0, 0, encoded, bval, encoded, bval, 0});
-          pendingSets.push_back(
-              packPendingSet(base, {atom}, componentSetID, 0, tupleOrdinal));
-          // packPendingSet assigns ownerBin and ownerOrdinal for state-bin
-          // expansion. Tuple components instead retain their selector-owned
-          // coordinates.
-          pendingSets.back().set.ownerBin = 0;
-          pendingSets.back().set.ownerOrdinal = tupleOrdinal;
-          pendingSets.back().set.ownerSubordinal = componentOrdinal;
-          pendingTupleSet.components.push_back(
-              {tupleID, domain.item, 0, componentSetID, componentOrdinal, 0});
-        }
-        pendingTupleSet.tuples.push_back(
-            {resolvedTupleSetID, tupleID, firstComponent,
-             static_cast<uint32_t>(domains.size()), tupleOrdinal, 0});
-      }
-      pendingTupleSet.set.tupleCount =
-          static_cast<uint32_t>(pendingTupleSet.tuples.size());
-      pendingTupleSets.push_back(std::move(pendingTupleSet));
     }
     if (!resolvedSetID && !resolvedTupleSetID)
       continue;
@@ -7467,10 +7349,8 @@ obelisk_rt_status resolveStaticFunctionalType(
                                            0,
                                            resolvedMatchesCount});
   }
-  std::sort(pendingTupleSets.begin(), pendingTupleSets.end(),
-            [](const auto &left, const auto &right) {
-              return left.set.id < right.set.id;
-            });
+  sortByKey(pendingTupleSets.begin(), pendingTupleSets.end(),
+            [](const auto &pending) { return pending.set.id; });
   std::vector<ResolvedFunctionalTupleSet> resolvedTupleSetRows;
   std::vector<ResolvedFunctionalTuple> resolvedTupleRows;
   std::vector<ResolvedFunctionalTupleComponent> resolvedTupleComponentRows;
@@ -7651,6 +7531,36 @@ obelisk_rt_status resolveStaticFunctionalType(
     for (const auto &binding : prepared->schema->resolvedCrossSelectorBindings)
       prepared->maximumMatchCount =
           std::max(prepared->maximumMatchCount, binding.matchesCount);
+    for (const auto &node : prepared->schema->crossSelectorNodes) {
+      if (!node.withExpression)
+        continue;
+      uint64_t count = node.matchesCount;
+      if (node.matchesPolicy == CrossMatchesPolicy::Count) {
+        constexpr uint64_t cap = uint64_t{MaxFunctionalCrossWithCandidates} + 1;
+        if (node.matchesExpression) {
+          const auto *descriptor = expressionSchema(node.matchesExpression);
+          const auto *value = expressionValue(node.matchesExpression);
+          FunctionalInteger integer;
+          bool unknown = false;
+          if (!descriptor || !value ||
+              !decodeFunctionalInteger(*value, descriptor->signedness, integer,
+                                       unknown) ||
+              unknown || integer.negative)
+            return OBELISK_RT_INVALID_DESIGN;
+          count = integer.magnitude.empty() ? 0
+                  : integer.magnitude.size() > 1
+                      ? cap
+                      : std::min(integer.magnitude.front(), cap);
+        } else
+          count = std::min(count, cap);
+        if (!count)
+          return OBELISK_RT_INVALID_DESIGN;
+      } else if (node.matchesPolicy != CrossMatchesPolicy::All)
+        return OBELISK_RT_INVALID_DESIGN;
+      prepared->withMatches.emplace(node.id, count);
+      prepared->maximumMatchCount =
+          std::max(prepared->maximumMatchCount, count);
+    }
     return OBELISK_RT_OK;
   }
 
@@ -12903,6 +12813,63 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_prepare(
     uint64_t *outToken) {
   return obelisk_rt_coverage_prepare_construction(context, typeID, expressions,
                                                   expressionCount, outToken);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_bind_with(obelisk_rt_context *context, uint64_t token,
+                                   uint64_t selector,
+                                   obelisk_rt_object_v1 *queue) {
+  using namespace obelisk::coverage;
+  if (!context || !token || !static_cast<uint32_t>(token) || !selector ||
+      !queue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *coverage = coverageState(context, false);
+    uint32_t slot = static_cast<uint32_t>(token) - 1;
+    if (!coverage || slot >= coverage->preparations.size() ||
+        !coverage->preparations[slot] ||
+        coverage->preparations[slot]->stamp != token >> 32)
+      return OBELISK_RT_INVALID_HANDLE;
+    auto &prepared = *coverage->preparations[slot]->state;
+    auto &queries = *prepared.queries;
+    const auto &schema = *prepared.schema;
+    const auto *root =
+        queries.lookup(queries.selectors, schema.crossSelectorNodes, selector);
+    const auto *plan = root ? queries.lookup(queries.crossPlans,
+                                             schema.crossPlans, root->cross)
+                            : nullptr;
+    const auto *cross =
+        root ? queries.lookup(queries.templateItems,
+                              schema.resolvedFunctionalItems, root->cross)
+             : nullptr;
+    if (!root || !plan || !cross || !root->withExpression)
+      return OBELISK_RT_INVALID_DESIGN;
+    CoverageTupleQueueSnapshot snapshot;
+    auto status = obelisk_rt_coverage_tuple_queue_snapshot(
+        context, queue, plan->tupleElementType, plan->tupleProvenanceSpan,
+        (plan->tupleFlags & CrossTupleFourState) != 0,
+        MaxFunctionalCrossWithCandidates, snapshot);
+    if (status != OBELISK_RT_OK)
+      return status;
+    std::vector<uint64_t> targets;
+    for (uint32_t ordinal = 0; ordinal != plan->targetCount; ++ordinal)
+      targets.push_back(
+          schema.crossTargets[plan->firstTarget + ordinal].target);
+    auto found = prepared.crosses.find(targets);
+    if (found == prepared.crosses.end()) {
+      auto index = std::make_shared<PreparedCrossValueIndex>(prepared);
+      if (!index->build(*plan))
+        return index->status;
+      found =
+          prepared.crosses.emplace(std::move(targets), std::move(index)).first;
+    }
+    return found->second->bind(*plan, *root, cross->id, snapshot);
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
 }
 
 extern "C" obelisk_rt_status

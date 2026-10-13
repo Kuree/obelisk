@@ -148,13 +148,12 @@ inline constexpr llvm::StringLiteral coverageFunctionalWithCandidateValues =
     "simulation.coverage.functional.with_candidate_values";
 inline constexpr llvm::StringLiteral coverageFunctionalWithIteratorPath =
     "simulation.coverage.functional.with_iterator_path";
-/// Constructor-time cross-selector predicates are evaluated once for every
-/// tuple in the finite Cartesian product of their cross targets. The values
-/// are flattened tuple-major (the final target varies fastest); target paths
-/// identify the semantic iterator bindings restored around each evaluation.
-inline constexpr llvm::StringLiteral
-    coverageFunctionalCrossWithCandidateValues =
-        "simulation.coverage.functional.cross_with_candidate_values";
+/// Cross selectors produce one queue of satisfying associated-value tuples.
+/// Target paths identify the semantic iterator bindings in the predicate loop.
+inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTupleType =
+    "simulation.coverage.functional.cross_with_tuple_type";
+inline constexpr llvm::StringLiteral coverageFunctionalCrossWithSelectorId =
+    "simulation.coverage.functional.cross_with_selector_id";
 inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTargetPaths =
     "simulation.coverage.functional.cross_with_target_paths";
 inline constexpr llvm::StringLiteral coverageFunctionalFormalId =

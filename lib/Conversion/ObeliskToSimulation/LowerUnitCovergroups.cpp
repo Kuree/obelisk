@@ -810,6 +810,8 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     uint32_t ordinal = 0;
     SmallVector<IntegerAttr> candidates;
     SmallVector<std::string> iteratorPaths;
+    sim::UnpackedStructType crossTuple;
+    uint64_t selector = 0;
   };
   SmallVector<ConstructorExpression> constructorExpressions;
   WalkResult inventoryResult = covergroup->walk<
@@ -822,71 +824,29 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
           sim::metadata::coverageFunctionalWithCandidateValues);
       auto iteratorPath = expression->getAttrOfType<StringAttr>(
           sim::metadata::coverageFunctionalWithIteratorPath);
-      auto crossCandidates = expression->getAttrOfType<ArrayAttr>(
-          sim::metadata::coverageFunctionalCrossWithCandidateValues);
-      auto crossTargetPaths = expression->getAttrOfType<ArrayAttr>(
-          sim::metadata::coverageFunctionalCrossWithTargetPaths);
       ArrayRef<int64_t> idValues = ids.asArrayRef();
       ArrayRef<int64_t> ordinalValues =
           ordinals ? ordinals.asArrayRef() : ArrayRef<int64_t>{};
-      const bool stateBatch =
-          candidates && iteratorPath && !crossCandidates && !crossTargetPaths;
-      const bool crossBatch =
-          !candidates && !iteratorPath && crossCandidates && crossTargetPaths &&
-          !crossTargetPaths.empty() &&
-          crossCandidates.size() % crossTargetPaths.size() == 0 &&
-          crossCandidates.size() / crossTargetPaths.size() == idValues.size();
-      if (!ordinals || (!stateBatch && !crossBatch) || idValues.empty() ||
+      if (!ordinals || !candidates || !iteratorPath || idValues.empty() ||
           idValues.size() != ordinalValues.size() ||
-          (stateBatch && idValues.size() != candidates.size()) ||
-          (stateBatch &&
-           idValues.size() > coverage::MaxFunctionalWithCandidates) ||
-          (crossBatch &&
-           idValues.size() > coverage::MaxFunctionalCrossWithCandidates)) {
+          idValues.size() != candidates.size() ||
+          idValues.size() > coverage::MaxFunctionalWithCandidates) {
         expression->emitError(
             "constructor with-expression batch metadata is malformed");
         return WalkResult::interrupt();
       }
-      SmallVector<std::string> targetPaths;
-      if (crossBatch) {
-        targetPaths.reserve(crossTargetPaths.size());
-        for (Attribute path : crossTargetPaths) {
-          auto string = dyn_cast<StringAttr>(path);
-          if (!string || string.getValue().empty()) {
-            expression->emitError(
-                "constructor cross with-expression target path is malformed");
-            return WalkResult::interrupt();
-          }
-          targetPaths.push_back(string.getValue().str());
-        }
-      }
       for (auto [index, id, ordinal] :
            llvm::enumerate(idValues, ordinalValues)) {
-        SmallVector<IntegerAttr> tuple;
-        if (stateBatch) {
-          auto integer = dyn_cast<IntegerAttr>(candidates[index]);
-          if (integer)
-            tuple.push_back(integer);
-        } else {
-          tuple.reserve(targetPaths.size());
-          for (Attribute candidate : crossCandidates.getValue().slice(
-                   index * targetPaths.size(), targetPaths.size())) {
-            auto integer = dyn_cast<IntegerAttr>(candidate);
-            if (integer)
-              tuple.push_back(integer);
-          }
-        }
-        if (!id || ordinal < 0 || ordinal > UINT32_MAX ||
-            tuple.size() != (stateBatch ? 1 : targetPaths.size()) ||
+        auto integer = dyn_cast<IntegerAttr>(candidates[index]);
+        if (!id || ordinal < 0 || ordinal > UINT32_MAX || !integer ||
             (index && ordinal != ordinalValues[index - 1] + 1)) {
           expression->emitError(
-              "constructor with-expression entries are malformed or not "
-              "in contiguous typed v1 result-ordinal order");
+              "constructor with-expression entries are malformed or not in "
+              "contiguous result-ordinal order");
           return WalkResult::interrupt();
         }
-        SmallVector<std::string> paths =
-            stateBatch ? SmallVector<std::string>{iteratorPath.getValue().str()}
-                       : targetPaths;
+        SmallVector<IntegerAttr> tuple{integer};
+        SmallVector<std::string> paths{iteratorPath.getValue().str()};
         constructorExpressions.push_back(
             {expression, static_cast<uint64_t>(id),
              static_cast<uint32_t>(
@@ -932,6 +892,36 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
          static_cast<uint32_t>(ordinal.getValue().getZExtValue()),
          {},
          {}});
+    if (role && role.getValue().getZExtValue() ==
+                    static_cast<uint32_t>(
+                        coverage::FunctionalExpressionRole::SelectorWith)) {
+      auto tuple = expression->getAttrOfType<TypeAttr>(
+          sim::metadata::coverageFunctionalCrossWithTupleType);
+      auto selector = expression->getAttrOfType<IntegerAttr>(
+          sim::metadata::coverageFunctionalCrossWithSelectorId);
+      auto paths = expression->getAttrOfType<ArrayAttr>(
+          sim::metadata::coverageFunctionalCrossWithTargetPaths);
+      auto &entry = constructorExpressions.back();
+      entry.crossTuple =
+          tuple ? dyn_cast<sim::UnpackedStructType>(tuple.getValue())
+                : sim::UnpackedStructType{};
+      if (!entry.crossTuple || !selector || selector.getValue().isZero() ||
+          !paths || paths.size() != entry.crossTuple.getFields().size()) {
+        expression->emitError(
+            "cross with-expression has malformed tuple metadata");
+        return WalkResult::interrupt();
+      }
+      entry.selector = selector.getValue().getZExtValue();
+      for (Attribute path : paths) {
+        auto string = dyn_cast<StringAttr>(path);
+        if (!string || string.getValue().empty()) {
+          expression->emitError(
+              "cross with-expression has a malformed iterator path");
+          return WalkResult::interrupt();
+        }
+        entry.iteratorPaths.push_back(string.getValue().str());
+      }
+    }
     return WalkResult::advance();
   });
   if (inventoryResult.wasInterrupted())
@@ -942,6 +932,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       });
   SmallVector<Value> constructorValues(defaultValues);
   SmallVector<int64_t> expressionIDs(defaultExpressionIDs);
+  SmallVector<std::pair<size_t, size_t>> crossPredicates;
   std::optional<std::pair<uint32_t, uint32_t>> previousPosition;
   llvm::DenseSet<uint64_t> seenExpressionIDs;
   for (size_t index : getCoverageOrder(llvm::ArrayRef(expressionKeys))) {
@@ -958,6 +949,13 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     if (!seenExpressionIDs.insert(entry.id).second) {
       expression->emitError("functional expression ID hash collision");
       return failure();
+    }
+
+    if (entry.crossTuple) {
+      crossPredicates.emplace_back(index, constructorValues.size());
+      constructorValues.push_back({});
+      expressionIDs.push_back(static_cast<int64_t>(entry.id));
+      continue;
     }
 
     SmallVector<Value> previousIteratorValues;
@@ -1189,6 +1187,107 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     }
     constructorValues.push_back(value);
     expressionIDs.push_back(static_cast<int64_t>(entry.id));
+  }
+  if (!crossPredicates.empty()) {
+    SmallVector<Value> primitiveValues;
+    SmallVector<int64_t> primitiveIDs;
+    for (auto [value, id] : llvm::zip_equal(constructorValues, expressionIDs))
+      if (value) {
+        primitiveValues.push_back(value);
+        primitiveIDs.push_back(id);
+      }
+    Value token = sim::SimCovergroupPrepareOp::create(
+        builder, location, builder.getI64Type(), context, declaration,
+        primitiveValues, builder.getDenseI64ArrayAttr(primitiveIDs));
+    for (auto [entryIndex, valueIndex] : crossPredicates) {
+      const auto &entry = constructorExpressions[entryIndex];
+      Location predicateLocation = getSemanticLocation(entry.expression);
+      auto indexConstant = [&](uint64_t value) -> Value {
+        return arith::ConstantOp::create(builder, predicateLocation,
+                                         builder.getI64Type(),
+                                         builder.getI64IntegerAttr(value));
+      };
+      FailureOr<ContainerElementDescriptor> descriptor =
+          describeContainerElement(entry.crossTuple, predicateLocation);
+      if (failed(descriptor))
+        return failure();
+      auto queueType =
+          sim::QueueType::get(function.getContext(), entry.crossTuple, 0);
+      auto makeQueue = [&]() -> Value {
+        return sim::SimContainerCreateOp::create(
+            builder, predicateLocation, queueType, indexConstant(0),
+            descriptor->typeID, descriptor->kind, descriptor->flags,
+            descriptor->valueSize, descriptor->alignment, descriptor->bitWidth,
+            builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+            builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+            sim::ContainerKind::Queue, UINT64_MAX);
+      };
+      Value candidates = makeQueue();
+      Value accepted = makeQueue();
+      sim::SimCovergroupCandidatesOp::create(
+          builder, predicateLocation, context, token, candidates,
+          entry.selector, coverage::MaxFunctionalCrossWithCandidates);
+      Value size = sim::SimContainerSizeOp::create(
+          builder, predicateLocation, builder.getI64Type(), candidates);
+      Block *header = addBlock();
+      header->addArgument(builder.getI64Type(), predicateLocation);
+      Block *body = addBlock();
+      Block *append = addBlock();
+      Block *step = addBlock();
+      Block *exit = addBlock();
+      cf::BranchOp::create(builder, predicateLocation, header,
+                           ValueRange{indexConstant(0)});
+      setCurrent(header);
+      Value index = header->getArgument(0);
+      Value more = arith::CmpIOp::create(
+          builder, predicateLocation, arith::CmpIPredicate::ult, index, size);
+      cf::CondBranchOp::create(builder, predicateLocation, more, body,
+                               ValueRange{}, exit, ValueRange{});
+      setCurrent(body);
+      Value tuple = sim::SimContainerReadOp::create(
+          builder, predicateLocation, entry.crossTuple, candidates, index);
+      SmallVector<Value> saved;
+      for (auto [ordinal, path] : llvm::enumerate(entry.iteratorPaths)) {
+        saved.push_back(values.lookup(path));
+        auto field =
+            cast<sim::FieldAttr>(entry.crossTuple.getFields()[ordinal]);
+        values[path] = sim::SimAggregateExtractOp::create(
+            builder, predicateLocation, field.getType(), tuple, ordinal);
+      }
+      llvm::scope_exit restore([&] {
+        for (auto [path, previous] :
+             llvm::zip_equal(entry.iteratorPaths, saved))
+          if (previous)
+            values[path] = previous;
+          else
+            values.erase(path);
+      });
+      FailureOr<Value> predicate = lowerExpression(entry.expression);
+      FailureOr<Value> truth = succeeded(predicate)
+                                   ? truthValue(*predicate, predicateLocation)
+                                   : FailureOr<Value>(failure());
+      if (failed(truth))
+        return failure();
+      cf::CondBranchOp::create(builder, predicateLocation, *truth, append,
+                               ValueRange{}, step, ValueRange{});
+      setCurrent(append);
+      Value outputIndex = sim::SimContainerSizeOp::create(
+          builder, predicateLocation, builder.getI64Type(), accepted);
+      sim::SimContainerWriteOp::create(builder, predicateLocation, accepted,
+                                       outputIndex, tuple);
+      cf::BranchOp::create(builder, predicateLocation, step);
+      setCurrent(step);
+      Value next = arith::AddIOp::create(builder, predicateLocation, index,
+                                         indexConstant(1));
+      cf::BranchOp::create(builder, predicateLocation, header,
+                           ValueRange{next});
+      setCurrent(exit);
+      sim::SimCovergroupBindWithOp::create(builder, predicateLocation, context,
+                                           token, accepted, entry.selector);
+      constructorValues[valueIndex] = accepted;
+    }
+    sim::SimCovergroupReleasePreparationOp::create(builder, location, context,
+                                                   token);
   }
   Value handle = sim::SimCovergroupCreateOp::create(
       builder, location, handleType, context, declaration,

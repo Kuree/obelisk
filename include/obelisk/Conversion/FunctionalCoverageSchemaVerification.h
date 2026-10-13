@@ -31,7 +31,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   module.walk([&](Operation *op) {
     hasTypedFunctionalOperation |=
         isa<sim::SimCovergroupCreateOp, sim::SimCovergroupPrepareOp,
-            sim::SimCovergroupCandidatesOp,
+            sim::SimCovergroupCandidatesOp, sim::SimCovergroupBindWithOp,
             sim::SimCovergroupReleasePreparationOp,
             sim::SimCovergroupFormalReadOp, sim::SimCovergroupSampleOp,
             sim::SimCovergroupStartOp, sim::SimCovergroupStopOp,
@@ -475,21 +475,28 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
               prepare, prepare.getExpressionIds(), prepare.getPayloads(), type,
               Phase::Constructor, "primitive constructor", true)))
         invalid = true;
-    } else if (auto candidates =
-                   dyn_cast<sim::SimCovergroupCandidatesOp>(operation)) {
-      auto selector = selectors.find(candidates.getSelector());
-      if (selector == selectors.end()) {
-        candidates.emitError("has a nonexistent cross selector ID");
+    } else if (isa<sim::SimCovergroupCandidatesOp,
+                   sim::SimCovergroupBindWithOp>(operation)) {
+      auto candidates = dyn_cast<sim::SimCovergroupCandidatesOp>(operation);
+      auto bind = dyn_cast<sim::SimCovergroupBindWithOp>(operation);
+      uint64_t id = candidates ? candidates.getSelector() : bind.getSelector();
+      Value token = candidates ? candidates.getToken() : bind.getToken();
+      auto selector = selectors.find(id);
+      if (selector == selectors.end() ||
+          (bind && !selector->second->withExpression)) {
+        operation->emitError(
+            selector == selectors.end()
+                ? "has a nonexistent cross selector ID"
+                : "requires a selector with a with-expression");
         invalid = true;
       } else if (auto prepare =
-                     candidates.getToken()
-                         .getDefiningOp<sim::SimCovergroupPrepareOp>()) {
+                     token.getDefiningOp<sim::SimCovergroupPrepareOp>()) {
         auto declaration =
             nominalSymbols.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
                 prepare, prepare.getDeclarationAttr());
         if (!declaration || items.lookup(selector->second->cross)->type !=
                                 declaration.getSchemaType()) {
-          candidates.emitError("has a wrong-owner cross selector ID");
+          operation->emitError("has a wrong-owner cross selector ID");
           invalid = true;
         }
       }

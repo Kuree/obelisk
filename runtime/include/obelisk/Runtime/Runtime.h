@@ -1361,6 +1361,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE = UINT32_C(0x0001047e),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES = UINT32_C(0x0001047f),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION = UINT32_C(0x00010480),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH = UINT32_C(0x00010481),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -4910,6 +4911,10 @@ obelisk_rt_status obelisk_rt_v1_covergroup_prepare(
 obelisk_rt_status obelisk_rt_v1_covergroup_candidates(
     obelisk_rt_context *context, uint64_t token, uint64_t selector,
     obelisk_rt_object_v1 *queue, uint32_t maximum_candidates);
+obelisk_rt_status
+obelisk_rt_v1_covergroup_bind_with(obelisk_rt_context *context, uint64_t token,
+                                   uint64_t selector,
+                                   obelisk_rt_object_v1 *queue);
 obelisk_rt_status
 obelisk_rt_v1_covergroup_release_preparation(obelisk_rt_context *context,
                                              uint64_t token);

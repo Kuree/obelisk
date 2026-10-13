@@ -1113,7 +1113,7 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimCoverageMergeOp, sim::SimCovergroupNullOp,
         sim::SimCovergroupEqualOp, sim::SimCovergroupCreateOp,
         sim::SimCovergroupPrepareOp, sim::SimCovergroupCandidatesOp,
-        sim::SimCovergroupReleasePreparationOp,
+        sim::SimCovergroupBindWithOp, sim::SimCovergroupReleasePreparationOp,
         sim::SimCovergroupClockEventRegisterOp,
         sim::SimCovergroupBlockEventRegisterOp,
         sim::SimCovergroupBlockEventFireOp, sim::SimCovergroupSampleEnabledOp,

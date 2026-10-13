@@ -1164,6 +1164,10 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 0 && twoStateBits(input(0), 64) &&
            twoStateBits(input(1), 64) && managed(input(2)) &&
            twoStateBits(input(3), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_BIND_WITH:
+    return signature.flags == 0 && site.inputCount == 3 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && managed(input(2));
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && twoStateBits(input(0), 64);

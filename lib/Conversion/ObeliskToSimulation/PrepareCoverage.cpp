@@ -3290,80 +3290,34 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   }
 
                   Operation *predicate = operands[1];
-                  auto candidates = predicate->getAttrOfType<ArrayAttr>(
-                      sim::metadata::
-                          coverageFunctionalCrossWithCandidateValues);
                   auto targetPaths = predicate->getAttrOfType<ArrayAttr>(
                       sim::metadata::coverageFunctionalCrossWithTargetPaths);
-                  if (!candidates || !targetPaths || targetPaths.empty() ||
-                      candidates.empty() ||
-                      candidates.size() % targetPaths.size() != 0 ||
-                      candidates.size() / targetPaths.size() >
-                          coverage::MaxFunctionalCrossWithCandidates) {
-                    predicate->emitError("cross selector with predicate has "
-                                         "no validated finite candidate "
-                                         "tuple plan");
+                  if (!targetPaths ||
+                      targetPaths.size() != pending.targets.size())
+                    return predicate->emitError(
+                        "cross selector with has no validated iterator plan");
+                  if (failed(addFunctionalExpression(
+                          predicate, selectorID,
+                          coverage::FunctionalExpressionOwnerKind::Selector,
+                          coverage::FunctionalExpressionRole::SelectorWith,
+                          coverage::FunctionalExpressionEvaluationPhase::
+                              Constructor,
+                          0, 0,
+                          coverage::FunctionalExpressionResultKind::
+                              TupleQueue)))
                     return failure();
-                  }
-                  const uint64_t candidateCount =
-                      candidates.size() / targetPaths.size();
-                  SmallVector<int64_t> expressionIDs;
-                  SmallVector<int64_t> resultOrdinals;
-                  expressionIDs.reserve(candidateCount);
-                  resultOrdinals.reserve(candidateCount);
-                  const coverage::Digest semanticDigest =
-                      functionalSemanticDigest(predicate);
-                  for (uint64_t candidateOrdinal = 0;
-                       candidateOrdinal != candidateCount; ++candidateOrdinal) {
-                    if (candidateOrdinal > UINT32_MAX) {
-                      predicate->emitError("cross selector with candidate "
-                                           "ordinal exceeds v1 limits");
-                      return failure();
-                    }
-                    const uint32_t ownerOrdinal =
-                        static_cast<uint32_t>(candidateOrdinal);
-                    const uint64_t expressionID = stableFunctionalExpressionID(
-                        selectorID,
-                        coverage::FunctionalExpressionOwnerKind::Selector,
-                        coverage::FunctionalExpressionRole::SelectorWith,
-                        ownerOrdinal, 0, predicate, semanticDigest, prefixMaps);
-                    auto [previous, inserted] =
-                        expressionOwners.try_emplace(expressionID, predicate);
-                    if (!inserted) {
-                      predicate->emitError(
-                          "functional coverage expression ID collision with ")
-                          << previous->second->getLoc();
-                      return failure();
-                    }
-                    coverage::FunctionalExpression descriptor;
-                    descriptor.id = expressionID;
-                    descriptor.owner = selectorID;
-                    descriptor.ownerKind =
-                        coverage::FunctionalExpressionOwnerKind::Selector;
-                    descriptor.role =
-                        coverage::FunctionalExpressionRole::SelectorWith;
-                    descriptor.resultKind =
-                        coverage::FunctionalExpressionResultKind::Boolean;
-                    descriptor.signedness =
-                        coverage::CoverageSignedness::NotApplicable;
-                    descriptor.semanticDigest = semanticDigest;
-                    descriptor.ownerOrdinal = ownerOrdinal;
-                    descriptor.ownerSubordinal = 0;
-                    descriptor.evaluationPhase = coverage::
-                        FunctionalExpressionEvaluationPhase::Constructor;
-                    descriptor.resultOrdinal = constructorResultOrdinal++;
-                    schema.functionalExpressions.push_back(descriptor);
-                    expressionIDs.push_back(static_cast<int64_t>(expressionID));
-                    resultOrdinals.push_back(descriptor.resultOrdinal);
-                  }
-                  predicate->setAttr(
-                      sim::metadata::coverageFunctionalWithExpressionIds,
-                      DenseI64ArrayAttr::get(&getContext(), expressionIDs));
-                  predicate->setAttr(
-                      sim::metadata::coverageFunctionalWithExpressionOrdinals,
-                      DenseI64ArrayAttr::get(&getContext(), resultOrdinals));
                   const uint64_t withExpression =
-                      static_cast<uint64_t>(expressionIDs.front());
+                      predicate
+                          ->getAttrOfType<IntegerAttr>(
+                              sim::metadata::coverageFunctionalExpressionId)
+                          .getValue()
+                          .getZExtValue();
+                  predicate->setAttr(
+                      sim::metadata::coverageFunctionalCrossWithTupleType,
+                      TypeAttr::get(tupleType));
+                  predicate->setAttr(
+                      sim::metadata::coverageFunctionalCrossWithSelectorId,
+                      builder.getI64IntegerAttr(selectorID));
                   coverage::CrossMatchesPolicy matchesPolicy =
                       coverage::CrossMatchesPolicy::Count;
                   uint64_t matchesCount = 1;

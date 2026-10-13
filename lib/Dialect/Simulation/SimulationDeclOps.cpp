@@ -1434,6 +1434,16 @@ LogicalResult SimCovergroupCandidatesOp::verify() {
   return success();
 }
 
+LogicalResult SimCovergroupBindWithOp::verify() {
+  auto queue = dyn_cast<QueueType>(getQueue().getType());
+  if (!queue || queue.getBound() ||
+      !isa<UnpackedStructType>(queue.getElementType()))
+    return emitOpError("requires an unbounded CrossQueueType");
+  if (!getSelector() || getSelectorAttr().getValue().isNegative())
+    return emitOpError("requires a positive selector");
+  return success();
+}
+
 LogicalResult
 SimCovergroupCreateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   SimCovergroupDeclOp declaration =

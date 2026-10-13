@@ -32,3 +32,13 @@ module {
     return
   }
 }
+
+// -----
+
+module {
+  func.func @f(%ctx: !simulation.context, %token: i64, %queue: i64) {
+    // expected-error@+1 {{requires an unbounded CrossQueueType}}
+    simulation.covergroup.bind_with %ctx, %token from %queue selector 70 : i64
+    return
+  }
+}

@@ -1,0 +1,79 @@
+# RUN: %coverage-fixture %t.obcov 1 with 0 construction-with
+# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=WITH
+# RUN: %coverage-fixture %t.scalar.obcov 1 scalar 0 construction-with-scalar
+# RUN: obelisk-cov report --format=json %t.scalar.obcov | FileCheck %s --check-prefix=SCALAR
+# RUN: %coverage-fixture %t.symbolic.obcov 1 symbolic 0 construction-symbolic
+# RUN: obelisk-cov report --format=json %t.symbolic.obcov | FileCheck %s --check-prefix=SYMBOLIC
+# RUN: %coverage-fixture %t.wide.obcov 1 wide 0 construction-symbolic-wide
+# RUN: obelisk-cov report --format=json %t.wide.obcov | FileCheck %s --check-prefix=WIDE
+
+# IEEE 1800-2023 19.6.1.4: a constructed with clause is one role-11 expression
+# per selector; its result is a tuple queue (kind 7), or a scalar (kind 1) for
+# the scalar form, which also marks the selector nodes with flag 1. Six
+# expressions and no predicate nodes in each.
+# WITH: "functional_expressions":[
+# WITH-SAME: "role":2,
+# WITH-SAME: "role":2,
+# WITH-SAME: "role":15,
+# WITH-SAME: "role":16,
+# WITH-SAME: "role":11,"result_kind":7{{[^}]*}}"owner_ordinal":0,"owner_subordinal":0
+# WITH-SAME: "role":11,"result_kind":7{{[^}]*}}"owner_ordinal":0,"owner_subordinal":0
+# WITH-NOT: "role":
+# WITH: "cross_selector_nodes":[
+# WITH-SAME: "with_expression":0{{[^}]*}}"flags":0}
+# WITH-SAME: "with_expression":{{[1-9][0-9]*}}{{[^}]*}}"flags":0}
+# WITH-SAME: "with_expression":{{[1-9][0-9]*}}{{[^}]*}}"flags":0}
+# WITH: "cross_predicate_nodes":[]
+# SCALAR: "functional_expressions":[
+# SCALAR-SAME: "role":2,
+# SCALAR-SAME: "role":2,
+# SCALAR-SAME: "role":15,
+# SCALAR-SAME: "role":16,
+# SCALAR-SAME: "role":11,"result_kind":1{{[^}]*}}"owner_ordinal":0,"owner_subordinal":0
+# SCALAR-SAME: "role":11,"result_kind":1{{[^}]*}}"owner_ordinal":0,"owner_subordinal":0
+# SCALAR-NOT: "role":
+# SCALAR: "cross_selector_nodes":[
+# SCALAR-SAME: "with_expression":0{{[^}]*}}"flags":0}
+# SCALAR-SAME: "with_expression":{{[1-9][0-9]*}}{{[^}]*}}"flags":1}
+# SCALAR-SAME: "with_expression":{{[1-9][0-9]*}}{{[^}]*}}"flags":1}
+# SCALAR: "cross_predicate_nodes":[]
+
+# A symbolic with clause is two role-18 predicate expressions owned by cross
+# ordinal 1, six predicate nodes, and exactly two selector nodes with a
+# predicate root.
+# SYMBOLIC: "functional_expressions":[
+# SYMBOLIC-SAME: "role":2,
+# SYMBOLIC-SAME: "role":2,
+# SYMBOLIC-SAME: "role":15,
+# SYMBOLIC-SAME: "role":16,
+# SYMBOLIC-SAME: "role":18,"result_kind":2{{[^}]*}}"owner_ordinal":1
+# SYMBOLIC-SAME: "role":18,"result_kind":2{{[^}]*}}"owner_ordinal":1
+# SYMBOLIC-NOT: "role":
+# SYMBOLIC: "cross_selector_nodes":[
+# SYMBOLIC-SAME: "predicate_root":0,
+# SYMBOLIC-SAME: "predicate_root":{{[1-9][0-9]*}},
+# SYMBOLIC-SAME: "predicate_root":{{[1-9][0-9]*}},
+# SYMBOLIC-NOT: "predicate_root":{{[1-9]}}
+# SYMBOLIC: "cross_predicate_nodes":[
+# SYMBOLIC-COUNT-6: "index_base":
+# SYMBOLIC-NOT: "index_base":
+
+# A 128-bit matches count is one role-12 expression of that width, attached to
+# exactly one selector node.
+# WIDE: "functional_expressions":[
+# WIDE-SAME: "role":2,
+# WIDE-SAME: "role":2,
+# WIDE-SAME: "role":15,
+# WIDE-SAME: "role":16,
+# WIDE-SAME: "role":18,
+# WIDE-SAME: "role":18,
+# WIDE-SAME: "role":12,{{[^}]*}}"bit_width":128,
+# WIDE-NOT: "role":
+# WIDE: "cross_selector_nodes":[
+# WIDE-SAME: "matches_expression":0,
+# WIDE-SAME: "matches_expression":{{[1-9][0-9]*}},
+# WIDE-SAME: "matches_expression":0,
+# WIDE-NOT: "matches_expression":{{[1-9]}}
+# WIDE: "cross_predicate_nodes":[
+# WIDE-COUNT-6: "index_base":
+# WIDE-NOT: "index_base":

@@ -89,7 +89,7 @@ endmodule
 // JSON: "functional_formals":[
 // JSON-COUNT-11: "result_kind":18,"flags":{{[01]}},"bit_width":0,
 // JSON-NOT: "result_kind":18
-// JSON: "functional_container_types"
+// JSON: "functional_expressions"
 
 // The real ref formal stays result_kind 3, and the two defaulted formals carry a
 // nonzero default expression (flags 1).
