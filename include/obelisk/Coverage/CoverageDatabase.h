@@ -487,6 +487,9 @@ struct CrossPredicateNode {
 inline constexpr uint32_t CrossPredicateTwoState = uint32_t{1} << 0;
 inline constexpr uint32_t CrossPredicateAscending = uint32_t{1} << 1;
 inline constexpr uint32_t CrossPredicateBaseNamesHigh = uint32_t{1} << 2;
+inline constexpr uint32_t CrossPredicateLowerUnbounded = uint32_t{1} << 3;
+inline constexpr uint32_t CrossPredicateUpperUnbounded = uint32_t{1} << 4;
+inline constexpr uint32_t CrossPredicateAbsoluteTolerance = uint32_t{1} << 5;
 
 struct CrossSelectorOperand {
   uint64_t node = 0;

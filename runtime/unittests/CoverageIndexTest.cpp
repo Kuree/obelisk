@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <map>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <stdexcept>
 
@@ -22,7 +23,9 @@ using Signedness = obelisk::coverage::CoverageSignedness;
 // checking whether it would select a bin. A=0,B=1 is Z; A=1,B=1 is X.
 bool predicateResultIs(PredicateKind kind, uint64_t left, uint64_t right,
                        uint64_t expected, uint32_t width = 1,
-                       bool isSigned = false, bool twoState = false) {
+                       bool isSigned = false, bool twoState = false,
+                       uint32_t rightWidth = 0,
+                       std::optional<bool> rightSigned = std::nullopt) {
   DecisionIndex graph(0);
   PredicateDecisionIndex index(graph);
   const Signedness sign = isSigned ? Signedness::Signed : Signedness::Unsigned;
@@ -32,16 +35,21 @@ bool predicateResultIs(PredicateKind kind, uint64_t left, uint64_t right,
                      kind == PredicateKind::Cast ||
                      kind == PredicateKind::LogicalNot ||
                      kind == PredicateKind::BitNot;
-  const uint32_t resultWidth = reduction || (kind >= PredicateKind::Equal &&
-                                             kind <= PredicateKind::LogicalOr)
-                                   ? 1
-                                   : width;
+  const bool boolean =
+      reduction || kind == PredicateKind::WildcardEqual ||
+      kind == PredicateKind::WildcardNotEqual ||
+      (kind >= PredicateKind::Equal && kind <= PredicateKind::LogicalOr);
+  const uint32_t resultWidth = boolean ? 1 : width;
+  const Signedness resultSign = boolean ? Signedness::Unsigned : sign;
   std::vector<PredicateNode> rows = {
       {1, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 0, 0},
-      {2, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 1, 0},
-      {3, 1, 0, unary ? 1u : 2u, 0, 0, kind, resultWidth, sign, 2,
+      {2, 1, 0, 0, 0, 0, PredicateKind::Value, rightWidth ? rightWidth : width,
+       rightSigned.value_or(isSigned) ? Signedness::Signed
+                                      : Signedness::Unsigned,
+       1, 0},
+      {3, 1, 0, unary ? 1u : 2u, 0, 0, kind, resultWidth, resultSign, 2,
        twoState ? obelisk::coverage::CrossPredicateTwoState : 0u},
-      {4, 1, 0, 0, 0, 0, PredicateKind::Value, resultWidth, sign, 3, 0},
+      {4, 1, 0, 0, 0, 0, PredicateKind::Value, resultWidth, resultSign, 3, 0},
       {5, 1, unary ? 1u : 2u, 2, 0, 0, PredicateKind::CaseEqual, 1,
        Signedness::Unsigned, 4, 0}};
   std::vector<const PredicateNode *> program;
@@ -360,6 +368,134 @@ TEST(CoveragePredicateIndexTest, WideConditionalFitsABitProportionalBudget) {
                                 graph.cube(ones, wildcard)));
     EXPECT_FALSE(index.exhausted());
   }
+}
+
+TEST(CoveragePredicateIndexTest,
+     WildcardEqualityIsAsymmetricAndMismatchControlsUnknown) {
+  for (PredicateKind kind :
+       {PredicateKind::WildcardEqual, PredicateKind::WildcardNotEqual})
+    for (uint64_t left = 0; left != 16; ++left)
+      for (uint64_t right = 0; right != 16; ++right) {
+        bool different = false, unknown = false;
+        for (uint32_t bit = 0; bit != 2; ++bit) {
+          uint32_t a = (left >> (bit * 2)) & 3, b = (right >> (bit * 2)) & 3;
+          if (b >= 2)
+            continue;
+          unknown |= a >= 2;
+          different |= a < 2 && a != b;
+        }
+        uint64_t expected = !different && unknown                  ? 3
+                            : kind == PredicateKind::WildcardEqual ? !different
+                                                                   : different;
+        EXPECT_TRUE(predicateResultIs(kind, left, right, expected, 2));
+      }
+  // Size both operands before masking. Extend a signed RHS wildcard through
+  // the wider operand, but zero-extend when either operand is unsigned.
+  EXPECT_TRUE(predicateResultIs(PredicateKind::WildcardEqual, 4, 20, 1, 2, true,
+                                false, 3));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::WildcardEqual, 4, 20, 0, 2,
+                                false, false, 3));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::WildcardEqual, 4, 20, 0, 2, true,
+                                false, 3, false));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::WildcardEqual, 16, 12, 1, 3,
+                                true, false, 2));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::WildcardEqual, 16, 8, 1, 3, true,
+                                false, 2));
+  EXPECT_TRUE(predicateResultIs(PredicateKind::WildcardEqual, 16, 12, 0, 3,
+                                true, false, 2, false));
+}
+
+TEST(CoveragePredicateIndexTest, WideWildcardMaskNeedsNoComparisonStates) {
+  constexpr uint32_t width = 129;
+  DecisionIndex graph(width * 2, width * 4);
+  PredicateDecisionIndex index(graph);
+  PredicateNode source{
+      1, 1, 0, 0, 0, 1, PredicateKind::Target, width, Signedness::Unsigned,
+      0, 0};
+  PredicateNode mask{
+      2, 1, 0, 0, 0, 0, PredicateKind::Value, width, Signedness::Unsigned,
+      1, 0};
+  PredicateNode equal{
+      3, 1, 0, 2, 0, 0, PredicateKind::WildcardEqual, 1, Signedness::Unsigned,
+      2, 0};
+  auto root =
+      index.compile(3, {&source, &mask, &equal}, {1, 2}, [&](const auto &node) {
+        PredicateDecisionIndex::Value bits;
+        for (uint32_t bit = 0; bit != width; ++bit) {
+          bits.aval.push_back(
+              node.id == 1 ? graph.makeNode(width * 2 - bit * 2 - 1, 0, 1) : 0);
+          bits.bval.push_back(
+              node.id == 1 ? graph.makeNode(width * 2 - bit * 2 - 2, 0, 1) : 1);
+        }
+        return bits;
+      });
+  EXPECT_EQ(root, 1u);
+  EXPECT_FALSE(index.exhausted());
+}
+
+TEST(CoveragePredicateIndexTest,
+     InsideRangesPreserveUnknownsAndToleranceTypes) {
+  using namespace obelisk::coverage;
+  auto resultIs = [&](uint32_t flags, uint64_t value, uint64_t low,
+                      uint64_t high, uint32_t expected, bool isSigned = false,
+                      bool centerTwoState = false, uint32_t highWidth = 2) {
+    DecisionIndex graph(0);
+    PredicateDecisionIndex index(graph);
+    auto sign = isSigned ? Signedness::Signed : Signedness::Unsigned;
+    std::vector<uint64_t> args{1};
+    if (!(flags & CrossPredicateLowerUnbounded))
+      args.push_back(2);
+    if (!(flags & CrossPredicateUpperUnbounded))
+      args.push_back(3);
+    uint32_t arity = args.size();
+    args.insert(args.end(), {4, 5});
+    std::vector<PredicateNode> rows = {
+        {1, 1, 0, 0, 0, 0, PredicateKind::Value, 2, sign, 0, 0},
+        {2, 1, 0, 0, 0, 0, PredicateKind::Value, 2, sign, 1,
+         centerTwoState ? CrossPredicateTwoState : 0u},
+        {3, 1, 0, 0, 0, 0, PredicateKind::Value, highWidth, sign, 2, 0},
+        {4, 1, 0, arity, 0, 0, PredicateKind::InsideRange, 1,
+         Signedness::Unsigned, 3, flags},
+        {5, 1, arity, 0, 0, 0, PredicateKind::Value, 1, Signedness::Unsigned, 4,
+         0},
+        {6, 1, arity, 2, 0, 0, PredicateKind::CaseEqual, 1,
+         Signedness::Unsigned, 5, 0}};
+    std::vector<const PredicateNode *> program;
+    for (const auto &row : rows)
+      program.push_back(&row);
+    auto root = index.compile(6, program, args, [&](const auto &node) {
+      uint64_t planes = node.id == 1   ? value
+                        : node.id == 2 ? low
+                        : node.id == 3 ? high
+                                       : expected;
+      PredicateDecisionIndex::Value bits;
+      for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+        bits.aval.push_back((planes >> (bit * 2)) & 1);
+        bits.bval.push_back((planes >> (bit * 2 + 1)) & 1);
+      }
+      return bits;
+    });
+    EXPECT_FALSE(index.exhausted());
+    return root == 1;
+  };
+  for (uint32_t value = 0; value != 4; ++value) {
+    uint32_t encoded = (value & 1) | ((value & 2) << 1);
+    EXPECT_TRUE(resultIs(0, encoded, 1, 4, value == 1 || value == 2));
+    EXPECT_TRUE(
+        resultIs(0, encoded, 5, 1, 0)); // reversed simple range is empty
+    EXPECT_TRUE(resultIs(CrossPredicateAbsoluteTolerance, encoded, 0, 1,
+                         value != 0)); // unsigned wrap, then swap
+    EXPECT_TRUE(resultIs(CrossPredicateAbsoluteTolerance, encoded, 0, 1,
+                         value != 2, true));
+  }
+  EXPECT_TRUE(resultIs(CrossPredicateLowerUnbounded, 3, 0, 5, 3));
+  EXPECT_TRUE(resultIs(0, 0, 3, 5, 3)); // unknown low bound
+  EXPECT_TRUE(resultIs(0, 5, 3, 4, 0)); // a known failed bound controls X
+  EXPECT_TRUE(resultIs(CrossPredicateAbsoluteTolerance, 0, 0, 3, 3));
+  EXPECT_TRUE(resultIs(CrossPredicateAbsoluteTolerance, 0, 0, 3, 1, false,
+                       true)); // cast X to two-state center type
+  EXPECT_TRUE(resultIs(CrossPredicateAbsoluteTolerance, 1, 0, 17, 1, false,
+                       false, 4)); // tolerance truncates to center width
 }
 
 TEST(CoveragePredicateIndexTest, ShiftsFollowFourStateAndUnsignedCountRules) {

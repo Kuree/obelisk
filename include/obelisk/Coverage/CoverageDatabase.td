@@ -131,6 +131,10 @@ def CrossPredicateShiftRight : CoverageCrossPredicateKind<"ShiftRight", 34>;
 def CrossPredicateArithmeticShiftLeft : CoverageCrossPredicateKind<"ArithmeticShiftLeft", 35>;
 def CrossPredicateArithmeticShiftRight : CoverageCrossPredicateKind<"ArithmeticShiftRight", 36>;
 def CrossPredicateReplicate : CoverageCrossPredicateKind<"Replicate", 37>;
+def CrossPredicateWildcardEqual : CoverageCrossPredicateKind<"WildcardEqual", 38>;
+def CrossPredicateWildcardNotEqual : CoverageCrossPredicateKind<"WildcardNotEqual", 39>;
+def CrossPredicateInside : CoverageCrossPredicateKind<"Inside", 40>;
+def CrossPredicateInsideRange : CoverageCrossPredicateKind<"InsideRange", 41>;
 
 class CoverageExpressionOwnerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -452,7 +456,9 @@ def DomainCrossPredicateKind : CoverageFieldDomain<
      CrossPredicateConditional, CrossPredicateConcatenate,
      CrossPredicateShiftLeft, CrossPredicateShiftRight,
      CrossPredicateArithmeticShiftLeft, CrossPredicateArithmeticShiftRight,
-     CrossPredicateReplicate]>;
+     CrossPredicateReplicate, CrossPredicateWildcardEqual,
+     CrossPredicateWildcardNotEqual, CrossPredicateInside,
+     CrossPredicateInsideRange]>;
 def DomainFunctionalItemKind : CoverageFieldDomain<
     "FunctionalItemKind", "Enum", [FunctionalCoverpoint, FunctionalCross]>;
 def DomainFunctionalBinKind : CoverageFieldDomain<
@@ -2241,7 +2247,7 @@ def CPNSignedness : CoverageField<"Signedness", "signedness", 48, CovU32> {
 }
 def CPNOrdinal : CoverageField<"Ordinal", "ordinal", 52, CovU32>;
 def CPNFlags : CoverageField<"Flags", "flags", 56, CovU32> {
-  let semantic = "Flags"; let validMask = 7;
+  let semantic = "Flags"; let validMask = 63;
 }
 def CPNElementWidth : CoverageField<"ElementWidth", "element_width", 60, CovU32>;
 def CPNIndexBase : CoverageField<"IndexBase", "index_base", 64, CovS64>;

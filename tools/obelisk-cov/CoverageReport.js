@@ -250,7 +250,7 @@ const predicateTextCache = new Map();
 const predicateText = (g, root) => {
   const key = g.type + '|' + g.configuration + '|' + root;
   if (predicateTextCache.has(key)) return predicateTextCache.get(key);
-  const operators = {4:'==',5:'!=',6:'===',7:'!==',8:'<',9:'<=',10:'>',11:'>=',13:'&&',14:'||',16:'&',17:'|',18:'^',19:'~^',20:'+',21:'-',33:'<<',34:'>>',35:'<<<',36:'>>>'};
+  const operators = {4:'==',5:'!=',6:'===',7:'!==',8:'<',9:'<=',10:'>',11:'>=',13:'&&',14:'||',16:'&',17:'|',18:'^',19:'~^',20:'+',21:'-',33:'<<',34:'>>',35:'<<<',36:'>>>',38:'==?',39:'!=?'};
   const unaryOperators = {12:'!',15:'~',24:'-',25:'&',26:'|',27:'^',28:'~&',29:'~|',30:'~^'};
   const pending = [{id:root}], pieces = [];
   let visits = 0, length = 0;
@@ -264,7 +264,35 @@ const predicateText = (g, root) => {
     const kind = num(n.kind);
     const count = num(n.operand_count), first = num(n.first_operand);
     const operand = index => predicateOperandIDs[first + index];
-    if (kind === 1) {
+    if (frame.member && kind === 38) {
+      pending.push({id:operand(1)});
+    } else if (frame.member && kind === 41) {
+      append('[');
+      pending.push({text:']'});
+      const flags = num(n.flags);
+      if (flags & 32) {
+        pending.push({id:operand(2)}, {text:' +/- '}, {id:operand(1)});
+      } else {
+        pending.push(flags & 16 ? {text:'$'} : {id:operand(flags & 8 ? 1 : 2)},
+                     {text:': '}, flags & 8 ? {text:'$'} : {id:operand(1)});
+      }
+    } else if (kind === 40) {
+      append('(');
+      pending.push({text:'})'});
+      const shown = Math.min(count, Math.floor(Math.max(0, 128 - visits - 1) / 2));
+      if (shown < count) pending.push({text:', ...'});
+      for (let i = shown - 1; i >= 0; --i) {
+        pending.push({id:operand(i), member:true});
+        if (i > 0) pending.push({text:', '});
+      }
+      const clause = predicateNodes.get(operand(0));
+      const subject = clause ? predicateOperandIDs[num(clause.first_operand)] : '?';
+      pending.push({text:' inside {'}, {id:subject});
+    } else if (kind === 41) {
+      append('(');
+      pending.push({text:'})'}, {id:frame.id, member:true},
+                   {text:' inside {'}, {id:operand(0)});
+    } else if (kind === 1) {
       const value = predicateOperands.get(g.type + '|' + g.configuration + '|' + n.selector + '|' + n.ordinal);
       append(value ? valueText(g.type, g.configuration, value) : 'operand ' + n.expression);
     } else if (kind === 2) append(templateItems.get(n.target) || n.target);

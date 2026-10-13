@@ -4602,19 +4602,31 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                        node.kind == CrossPredicateKind::Replicate;
     const bool leaf = node.kind == CrossPredicateKind::Target ||
                       node.kind == CrossPredicateKind::Value;
-    const bool boolean =
-        reduction || (node.kind >= CrossPredicateKind::Equal &&
-                      node.kind <= CrossPredicateKind::LogicalOr);
+    const bool boolean = reduction ||
+                         (node.kind >= CrossPredicateKind::Equal &&
+                          node.kind <= CrossPredicateKind::LogicalOr) ||
+                         (node.kind >= CrossPredicateKind::WildcardEqual &&
+                          node.kind <= CrossPredicateKind::InsideRange);
     const bool select = node.kind == CrossPredicateKind::ElementSelect ||
                         node.kind == CrossPredicateKind::RangeSelect;
     const bool concatenate = node.kind == CrossPredicateKind::Concatenate;
     const bool replication = node.kind == CrossPredicateKind::Replicate;
     const bool conditional = node.kind == CrossPredicateKind::Conditional;
-    const bool arity = leaf          ? node.operandCount == 0
-                       : unary       ? node.operandCount == 1
-                       : conditional ? node.operandCount >= 3
-                       : concatenate ? node.operandCount != 0
-                                     : node.operandCount == 2;
+    const bool inside = node.kind == CrossPredicateKind::Inside;
+    const bool insideRange = node.kind == CrossPredicateKind::InsideRange;
+    const uint32_t rangeFlags = CrossPredicateLowerUnbounded |
+                                CrossPredicateUpperUnbounded |
+                                CrossPredicateAbsoluteTolerance;
+    const uint32_t rangeArity =
+        3 - bool(node.flags & CrossPredicateLowerUnbounded) -
+        bool(node.flags & CrossPredicateUpperUnbounded);
+    const bool arity = leaf                    ? node.operandCount == 0
+                       : unary                 ? node.operandCount == 1
+                       : conditional           ? node.operandCount >= 3
+                       : concatenate || inside ? node.operandCount != 0
+                       : insideRange           ? node.operandCount == rangeArity
+                                               : node.operandCount == 2;
+    uint64_t insideSubject = 0;
     uint64_t concatenatedWidth = 0;
     for (uint32_t i = 0; i != node.operandCount; ++i) {
       const auto *operand = lookupRecord(
@@ -4625,6 +4637,19 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         return fail(Status::InvalidReference, "cross_predicate_operand");
       if (concatenate)
         concatenatedWidth += operand->bitWidth;
+      if (inside) {
+        if ((operand->kind != CrossPredicateKind::WildcardEqual &&
+             operand->kind != CrossPredicateKind::InsideRange) ||
+            !operand->operandCount ||
+            operand->firstOperand >= db.crossPredicateOperands.size())
+          return fail(Status::InvalidReference,
+                      "cross_predicate_inside_clause");
+        uint64_t subject = db.crossPredicateOperands[operand->firstOperand];
+        if (insideSubject && insideSubject != subject)
+          return fail(Status::InvalidReference,
+                      "cross_predicate_inside_subject");
+        insideSubject = subject;
+      }
     }
     bool validTarget = false;
     if (selector && node.target) {
@@ -4637,13 +4662,23 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         (!node.bitWidth &&
          (!replication || selector->predicateRoot == node.id)) ||
         !enumBetween(node.kind, CrossPredicateKind::Value,
-                     CrossPredicateKind::Replicate) ||
+                     CrossPredicateKind::InsideRange) ||
         (node.signedness != CoverageSignedness::Signed &&
          node.signedness != CoverageSignedness::Unsigned) ||
         (node.flags & ~(CrossPredicateTwoState | CrossPredicateAscending |
-                        CrossPredicateBaseNamesHigh)) ||
+                        CrossPredicateBaseNamesHigh | rangeFlags)) ||
         (!select && (node.elementWidth || node.indexBase ||
-                     (node.flags & ~CrossPredicateTwoState))) ||
+                     (node.flags & ~(CrossPredicateTwoState |
+                                     (insideRange ? rangeFlags : 0))))) ||
+        (insideRange && (node.flags & CrossPredicateAbsoluteTolerance) &&
+         (node.flags &
+          (CrossPredicateLowerUnbounded | CrossPredicateUpperUnbounded))) ||
+        (insideRange &&
+         (node.flags &
+          (CrossPredicateLowerUnbounded | CrossPredicateUpperUnbounded)) ==
+             (CrossPredicateLowerUnbounded | CrossPredicateUpperUnbounded)) ||
+        (boolean && node.kind >= CrossPredicateKind::WildcardEqual &&
+         node.signedness != CoverageSignedness::Unsigned) ||
         (node.kind != CrossPredicateKind::RangeSelect &&
          (node.flags & CrossPredicateBaseNamesHigh)) ||
         !arity ||

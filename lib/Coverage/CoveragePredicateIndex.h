@@ -16,6 +16,7 @@ public:
   struct Value {
     std::vector<Root> aval, bval;
     bool isSigned = false;
+    bool isTwoState = false;
   };
 
 private:
@@ -435,9 +436,81 @@ private:
     return window(projection, *input, std::move(index), indeterminate, padding);
   }
 
+  Value insideRange(const CrossPredicateNode &node,
+                    const std::vector<const Value *> &operands) {
+    const Value &subject = *operands[0];
+    CrossPredicateNode compare;
+    compare.kind = CrossPredicateKind::LessEqual;
+    compare.bitWidth = 1;
+    compare.signedness = CoverageSignedness::Unsigned;
+    Value lower, upper;
+    const Value *low = nullptr, *high = nullptr;
+    if (node.flags & CrossPredicateAbsoluteTolerance) {
+      const Value &center = *operands[1];
+      Value tolerance = *operands[2];
+      resize(tolerance, center.aval.size(), tolerance.isSigned);
+      tolerance.isSigned = center.isSigned;
+      if (center.isTwoState)
+        for (size_t bit = 0; bit != tolerance.aval.size(); ++bit) {
+          tolerance.aval[bit] =
+              graph.subtract(tolerance.aval[bit], tolerance.bval[bit]);
+          tolerance.bval[bit] = 0;
+        }
+      CrossPredicateNode arithmetic;
+      arithmetic.bitWidth = center.aval.size();
+      arithmetic.kind = CrossPredicateKind::Subtract;
+      lower = evaluate(arithmetic, center, tolerance);
+      arithmetic.kind = CrossPredicateKind::Add;
+      upper = evaluate(arithmetic, center, tolerance);
+      lower.isSigned = upper.isSigned = center.isSigned;
+      Value order = evaluate(compare, lower, upper);
+      CrossPredicateNode select;
+      select.kind = CrossPredicateKind::Conditional;
+      select.bitWidth = center.aval.size();
+      Value sortedLow = evaluateVariadic(select, {&order, &lower, &upper});
+      Value sortedHigh = evaluateVariadic(select, {&order, &upper, &lower});
+      lower = std::move(sortedLow);
+      upper = std::move(sortedHigh);
+      lower.isSigned = upper.isSigned = center.isSigned;
+      low = &lower;
+      high = &upper;
+    } else {
+      uint32_t cursor = 1;
+      if (!(node.flags & CrossPredicateLowerUnbounded))
+        low = operands[cursor++];
+      if (!(node.flags & CrossPredicateUpperUnbounded))
+        high = operands[cursor];
+    }
+    Root indeterminate = 0;
+    IndexSet<Root> observations;
+    for (Root bit : subject.bval)
+      if (observations.insert(bit).second)
+        indeterminate = graph.unite(indeterminate, bit);
+    Value above =
+        low ? evaluate(compare, *low, subject) : predicate(1, indeterminate);
+    Value below =
+        high ? evaluate(compare, subject, *high) : predicate(1, indeterminate);
+    CrossPredicateNode conjunction;
+    conjunction.kind = CrossPredicateKind::LogicalAnd;
+    conjunction.bitWidth = 1;
+    return evaluate(conjunction, std::move(above), std::move(below));
+  }
+
   Value evaluateVariadic(const CrossPredicateNode &node,
                          const std::vector<const Value *> &operands) {
     Value result;
+    if (node.kind == CrossPredicateKind::Inside) {
+      Root matches = 0, indeterminate = 0;
+      IndexSet<Root> ones, unknowns;
+      for (const Value *clause : operands) {
+        Truth value = truth(*clause);
+        if (ones.insert(value.one).second)
+          matches = graph.unite(matches, value.one);
+        if (unknowns.insert(value.unknown).second)
+          indeterminate = graph.unite(indeterminate, value.unknown);
+      }
+      return predicate(matches, graph.subtract(indeterminate, matches));
+    }
     if (node.kind == CrossPredicateKind::Concatenate) {
       result.aval.reserve(node.bitWidth);
       result.bval.reserve(node.bitWidth);
@@ -603,11 +676,30 @@ private:
       return left;
     }
     const bool signedOperands = left.isSigned && right.isSigned;
+    const bool wildcard =
+        node.kind == Kind::WildcardEqual || node.kind == Kind::WildcardNotEqual;
     uint32_t width = std::max(left.aval.size(), right.aval.size());
-    if (node.kind >= Kind::BitAnd)
+    if (node.kind >= Kind::BitAnd && !wildcard)
       width = node.bitWidth;
     resize(left, width, signedOperands);
     resize(right, width, signedOperands);
+    if (wildcard) {
+      Root mismatch = 0, indeterminate = 0;
+      IndexSet<Root> mismatches, unknowns;
+      for (uint32_t bit = 0; bit != width; ++bit) {
+        Root difference =
+            graph.subtract(xorRoot(left.aval[bit], right.aval[bit]),
+                           graph.unite(left.bval[bit], right.bval[bit]));
+        Root unknown = graph.subtract(left.bval[bit], right.bval[bit]);
+        if (mismatches.insert(difference).second)
+          mismatch = graph.unite(mismatch, difference);
+        if (unknowns.insert(unknown).second)
+          indeterminate = graph.unite(indeterminate, unknown);
+      }
+      return predicate(node.kind == Kind::WildcardEqual ? notRoot(mismatch)
+                                                        : mismatch,
+                       graph.subtract(indeterminate, mismatch));
+    }
     if (node.kind >= Kind::Equal && node.kind <= Kind::GreaterEqual) {
       const bool caseEquality =
           node.kind == Kind::CaseEqual || node.kind == Kind::CaseNotEqual;
@@ -753,18 +845,34 @@ public:
                            node->kind == CrossPredicateKind::Replicate ||
                            (node->kind >= CrossPredicateKind::ReductionAnd &&
                             node->kind <= CrossPredicateKind::ReductionXnor);
-        const bool arity = node->kind == CrossPredicateKind::Conditional
-                               ? operands.size() >= 3
-                           : node->kind == CrossPredicateKind::Concatenate
-                               ? !operands.empty()
-                               : operands.size() == (unary ? 1u : 2u);
+        const bool arity =
+            node->kind == CrossPredicateKind::Conditional ? operands.size() >= 3
+            : node->kind == CrossPredicateKind::Concatenate ||
+                    node->kind == CrossPredicateKind::Inside
+                ? !operands.empty()
+            : node->kind == CrossPredicateKind::InsideRange
+                ? operands.size() ==
+                          3 - bool(node->flags & CrossPredicateLowerUnbounded) -
+                              bool(node->flags &
+                                   CrossPredicateUpperUnbounded) &&
+                      !((node->flags & CrossPredicateAbsoluteTolerance) &&
+                        (node->flags & (CrossPredicateLowerUnbounded |
+                                        CrossPredicateUpperUnbounded))) &&
+                      (node->flags & (CrossPredicateLowerUnbounded |
+                                      CrossPredicateUpperUnbounded)) !=
+                          (CrossPredicateLowerUnbounded |
+                           CrossPredicateUpperUnbounded)
+                : operands.size() == (unary ? 1u : 2u);
         if (!arity) {
           failed = true;
           return 0;
         }
         if (node->kind == CrossPredicateKind::Conditional ||
-            node->kind == CrossPredicateKind::Concatenate)
+            node->kind == CrossPredicateKind::Concatenate ||
+            node->kind == CrossPredicateKind::Inside)
           value = evaluateVariadic(*node, operands);
+        else if (node->kind == CrossPredicateKind::InsideRange)
+          value = insideRange(*node, operands);
         else if (node->kind == CrossPredicateKind::ElementSelect ||
                  node->kind == CrossPredicateKind::RangeSelect)
           value = select(*node, *operands[0], *operands[1]);
@@ -788,6 +896,7 @@ public:
           value.bval[bit] = 0;
         }
       value.isSigned = node->signedness == CoverageSignedness::Signed;
+      value.isTwoState = node->flags & CrossPredicateTwoState;
       values.emplace(node->id, std::move(value));
     }
     auto found = values.find(root);

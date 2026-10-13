@@ -667,6 +667,34 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   data.cross_predicate_nodes.pop();
   data.cross_predicate_operands.pop();
   selection.first_operand = '0';
+  selection.kind = '38';
+  selection.operand_count = '2';
+  for (const [kind, operator] of [['38', '==?'], ['39', '!=?']]) {
+    selection.kind = kind;
+    const wildcardView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(wildcardView.rows[0][0].includes('(cp ' + operator + ' 0x5)'), wildcardView.rows[0][0]);
+  }
+  data.cross_predicate_nodes.push(
+    {id:'83', kind:'38', first_operand:'0', operand_count:'2'},
+    {id:'84', kind:'41', first_operand:'2', operand_count:'3', flags:'0'});
+  data.cross_predicate_operands.push('80', '81', '81', '83', '84');
+  selection.kind = '40';
+  selection.first_operand = '5';
+  for (const [flags, text] of [['0', '[0x5: 0x5]'], ['8', '[$: 0x5]'],
+                              ['16', '[0x5: $]'], ['32', '[0x5 +/- 0x5]']]) {
+    data.cross_predicate_nodes[4].flags = flags;
+    const insideView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(insideView.rows[0][0].includes('(cp inside {0x5, ' + text + '})'), insideView.rows[0][0]);
+  }
+  selection.operand_count = '10000';
+  data.cross_predicate_operands = ['80', '81', ...Array(10000).fill('83')];
+  selection.first_operand = '2';
+  const wideInsideView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(wideInsideView.rows[0][0].includes('...'));
+  assert.ok(wideInsideView.rows[0][0].length < 2048);
+  data.cross_predicate_nodes.splice(3);
+  data.cross_predicate_operands = ['80', '81'];
+  selection.first_operand = '0';
   selection.kind = '31';
   selection.operand_count = '3';
   data.cross_predicate_operands.push('80');

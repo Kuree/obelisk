@@ -2765,6 +2765,49 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
+TEST(CoverageDatabaseTest, MembershipClausesAndRangeFlagsValidateAndRoundTrip) {
+  using namespace obelisk::coverage;
+  for (uint32_t flags :
+       {0u, CrossPredicateLowerUnbounded, CrossPredicateUpperUnbounded,
+        CrossPredicateAbsoluteTolerance}) {
+    Database schema = makeSymbolicCrossWithSchema();
+    schema.crossPredicateNodes.back().kind = CrossPredicateKind::WildcardEqual;
+    uint32_t arity = 3 - bool(flags & CrossPredicateLowerUnbounded) -
+                     bool(flags & CrossPredicateUpperUnbounded);
+    schema.crossPredicateNodes.push_back(
+        {203, 70, 2, arity, 0, 0, CrossPredicateKind::InsideRange, 1,
+         CoverageSignedness::Unsigned, 3, flags});
+    schema.crossPredicateNodes.push_back({204, 70, 2 + arity, 2, 0, 0,
+                                          CrossPredicateKind::Inside, 1,
+                                          CoverageSignedness::Unsigned, 4, 0});
+    schema.crossPredicateOperands = {200, 201, 200};
+    for (uint32_t i = 1; i != arity; ++i)
+      schema.crossPredicateOperands.push_back(201);
+    schema.crossPredicateOperands.insert(schema.crossPredicateOperands.end(),
+                                         {202, 203});
+    schema.crossSelectorNodes.back().predicateRoot = 204;
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    ASSERT_EQ(validate(schema), Status::Ok);
+    std::vector<uint8_t> bytes;
+    ASSERT_EQ(serialize(schema, bytes), Status::Ok);
+    Database parsed;
+    ASSERT_EQ(parse(bytes.data(), bytes.size(), parsed), Status::Ok);
+    EXPECT_EQ(parsed.crossPredicateNodes[3].flags, flags);
+    schema.crossPredicateOperands[2] = 201;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+    schema.crossPredicateOperands[2] = 200;
+    schema.crossPredicateNodes[3].flags =
+        CrossPredicateAbsoluteTolerance | CrossPredicateLowerUnbounded;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+    schema.crossPredicateNodes[3].flags =
+        CrossPredicateLowerUnbounded | CrossPredicateUpperUnbounded;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+    schema.crossPredicateNodes[3].flags = flags;
+    schema.crossPredicateNodes[2].flags = CrossPredicateLowerUnbounded;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+  }
+}
+
 TEST(CoverageDatabaseTest, ReplicationWidthsAndZeroSizeParentsAreValidated) {
   using namespace obelisk::coverage;
   for (uint32_t width : {0u, 4u}) {

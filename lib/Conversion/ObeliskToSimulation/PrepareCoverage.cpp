@@ -46,10 +46,14 @@ namespace obelisk {
 
 namespace {
 
+using CrossPredicateKey = std::pair<Operation *, Operation *>;
+
 struct PlannedCrossPredicate {
+  CrossPredicateKey key;
   Operation *expression = nullptr;
   coverage::CrossPredicateKind kind;
   SmallVector<Operation *> operands;
+  SmallVector<CrossPredicateKey> operandKeys;
   uint32_t bitWidth = 0;
   coverage::CoverageSignedness signedness;
   uint32_t flags = 0, targetOrdinal = 0;
@@ -67,9 +71,14 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
   for (auto [ordinal, path] : llvm::enumerate(targetPaths))
     targets.try_emplace(cast<StringAttr>(path).getValue(), ordinal);
   llvm::DenseMap<Operation *, bool> dependent;
-  bool hasReplication = false;
+  bool hasReplication = false, hasMembership = false;
   predicate->walk<WalkOrder::PostOrder>([&](Operation *op) {
     hasReplication |= isa<ir::SVReplicationExpressionOp>(op);
+    hasMembership |= isa<ir::SVInsideExpressionOp>(op);
+    if (auto binary = dyn_cast<ir::SVBinaryExpressionOp>(op))
+      hasMembership |=
+          binary.getOperatorKind() == ir::SVBinaryOperator::WildcardEquality ||
+          binary.getOperatorKind() == ir::SVBinaryOperator::WildcardInequality;
     bool iterator = false;
     if (auto reference = dyn_cast<ir::SVNamedValueExpressionOp>(op))
       iterator = targets.contains(reference.getReferencedPath());
@@ -77,17 +86,62 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
       iterator |= dependent.lookup(child);
     dependent[op] = iterator;
   });
-  SmallVector<std::pair<Operation *, bool>> pending{{predicate, false}};
+  SmallVector<std::pair<CrossPredicateKey, bool>> pending{
+      {{predicate, nullptr}, false}};
   SmallVector<PlannedCrossPredicate> result;
-  llvm::DenseMap<Operation *, PlannedCrossPredicate> plans;
+  llvm::DenseMap<CrossPredicateKey, PlannedCrossPredicate> plans;
+  auto addPlan = [&](PlannedCrossPredicate plan) {
+    for (Operation *operand : plan.operands)
+      plan.operandKeys.emplace_back(operand, nullptr);
+    plan.operands.clear();
+    plans.try_emplace(plan.key, plan);
+    pending.emplace_back(plan.key, true);
+    for (CrossPredicateKey child : llvm::reverse(plan.operandKeys))
+      pending.emplace_back(child, false);
+  };
   while (!pending.empty()) {
-    auto [op, ready] = pending.pop_back_val();
+    auto [key, ready] = pending.pop_back_val();
+    Operation *op = key.first;
     if (ready) {
-      result.push_back(plans.lookup(op));
+      result.push_back(plans.lookup(key));
       continue;
     }
-    if (plans.contains(op))
+    if (plans.contains(key))
       continue;
+    // Membership clauses share the original selector expression. A separate
+    // key identifies its Boolean comparison without cloning the source tree
+    // or changing the type of the member expression used by the comparison.
+    if (key.second) {
+      PlannedCrossPredicate clause;
+      clause.key = key;
+      clause.expression = op;
+      clause.bitWidth = 1;
+      clause.signedness = coverage::CoverageSignedness::Unsigned;
+      clause.operands.push_back(key.second);
+      if (auto range = dyn_cast<ir::SVValueRangeExpressionOp>(op)) {
+        auto bounds = simlowering::getChildren(op);
+        if (bounds.size() != 2 ||
+            range.getRangeKind() == ir::SVValueRangeKind::RelativeTolerance)
+          return std::nullopt;
+        clause.kind = Kind::InsideRange;
+        if (range.getRangeKind() == ir::SVValueRangeKind::AbsoluteTolerance)
+          clause.flags |= coverage::CrossPredicateAbsoluteTolerance;
+        for (auto [index, bound] : llvm::enumerate(bounds)) {
+          if (simlowering::isUnboundedEndpoint(bound)) {
+            if (clause.flags & coverage::CrossPredicateAbsoluteTolerance)
+              return std::nullopt;
+            clause.flags |= index ? coverage::CrossPredicateUpperUnbounded
+                                  : coverage::CrossPredicateLowerUnbounded;
+          } else
+            clause.operands.push_back(bound);
+        }
+      } else {
+        clause.kind = Kind::WildcardEqual;
+        clause.operands.push_back(op);
+      }
+      addPlan(std::move(clause));
+      continue;
+    }
     auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
     const bool zeroReplication = isa<ir::SVReplicationExpressionOp>(op) &&
                                  semanticType &&
@@ -104,6 +158,7 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
                    (!*width || !isa<IntegerType, sim::LogicType>(scalar))))
       return std::nullopt;
     PlannedCrossPredicate plan;
+    plan.key = key;
     plan.expression = op;
     plan.bitWidth = *width;
     plan.signedness = semanticType && simlowering::isSignedSemanticType(
@@ -170,6 +225,15 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
           plan.operands.resize(2);
           plan.kind = Kind::RangeSelect;
         }
+      } else if (auto inside = dyn_cast<ir::SVInsideExpressionOp>(op)) {
+        if (inside.getItemCount() < 1 ||
+            plan.operands.size() != uint64_t{1} + inside.getItemCount())
+          return std::nullopt;
+        plan.kind = Kind::Inside;
+        Operation *subject = plan.operands.front();
+        for (Operation *member : llvm::drop_begin(plan.operands))
+          plan.operandKeys.emplace_back(member, subject);
+        plan.operands.clear();
       } else if (auto conditional =
                      dyn_cast<ir::SVConditionalExpressionOp>(op)) {
         if (!conditional.getConditionCount() ||
@@ -273,6 +337,12 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
         case ir::SVBinaryOperator::CaseInequality:
           plan.kind = Kind::CaseNotEqual;
           break;
+        case ir::SVBinaryOperator::WildcardEquality:
+          plan.kind = Kind::WildcardEqual;
+          break;
+        case ir::SVBinaryOperator::WildcardInequality:
+          plan.kind = Kind::WildcardNotEqual;
+          break;
         case ir::SVBinaryOperator::LessThan:
           plan.kind = Kind::Less;
           break;
@@ -327,16 +397,15 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
       } else
         return std::nullopt;
     }
-    plans.try_emplace(op, plan);
-    pending.emplace_back(op, true);
-    for (Operation *child : llvm::reverse(plan.operands))
-      pending.emplace_back(child, false);
+    addPlan(std::move(plan));
   }
-  if (hasReplication || llvm::any_of(result, [](const auto &entry) {
+  if (hasReplication || hasMembership ||
+      llvm::any_of(result, [](const auto &entry) {
         return entry.kind == Kind::Conditional;
       })) {
     // Capturing operands eagerly must preserve conditional execution and
-    // replication's per-tuple effects, including for a zero multiplier.
+    // per-tuple effects in membership and replication, including a zero
+    // multiplier.
     for (const auto &entry : result) {
       if (entry.kind != Kind::Value)
         continue;
@@ -3621,7 +3690,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           : planCrossPredicate(predicate, targetPaths);
                   uint64_t predicateRoot = 0, withExpression = 0;
                   if (program) {
-                    llvm::DenseMap<Operation *, uint64_t> ids;
+                    llvm::DenseMap<CrossPredicateKey, uint64_t> ids;
                     uint32_t ordinal = 0;
                     for (const auto &entry : *program) {
                       const uint64_t id = stableID(
@@ -3638,7 +3707,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                       node.elementWidth = entry.elementWidth;
                       node.indexBase = entry.indexBase;
                       if (pending.predicateOperands.size() > UINT32_MAX ||
-                          entry.operands.size() >
+                          entry.operandKeys.size() >
                               UINT32_MAX - pending.predicateOperands.size()) {
                         entry.expression->emitError(
                             "cross predicate operand inventory exceeds the "
@@ -3646,8 +3715,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         return failure();
                       }
                       node.firstOperand = pending.predicateOperands.size();
-                      node.operandCount = entry.operands.size();
-                      for (Operation *operand : entry.operands)
+                      node.operandCount = entry.operandKeys.size();
+                      for (CrossPredicateKey operand : entry.operandKeys)
                         pending.predicateOperands.push_back(
                             ids.lookup(operand));
                       if (entry.kind == coverage::CrossPredicateKind::Target)
@@ -3672,7 +3741,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                 .getValue()
                                 .getZExtValue();
                       }
-                      ids.try_emplace(entry.expression, id);
+                      ids.try_emplace(entry.key, id);
                       pending.predicates.push_back(node);
                       predicateRoot = id;
                     }
