@@ -3191,7 +3191,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   IndexMap<uint64_t, const FunctionalExpression *> expressionSchemas;
   IndexMap<uint64_t, const FunctionalExpression *> coverpointSamples;
   IndexMap<uint64_t, std::vector<const FunctionalExpression *>>
-      binWithExpressions;
+      binWithExpressions, selectorWithExpressions;
   for (const auto &row : schema.functionalExpressions) {
     expressionSchemas.emplace(row.id, &row);
     if (row.ownerKind == FunctionalExpressionOwnerKind::Item &&
@@ -3200,12 +3200,23 @@ obelisk_rt_status resolveStaticFunctionalType(
     if (row.ownerKind == FunctionalExpressionOwnerKind::Bin &&
         row.role == FunctionalExpressionRole::BinWith)
       binWithExpressions[row.owner].push_back(&row);
+    if (row.ownerKind == FunctionalExpressionOwnerKind::Selector &&
+        row.role == FunctionalExpressionRole::SelectorWith)
+      selectorWithExpressions[row.owner].push_back(&row);
   }
   for (auto &[bin, predicates] : binWithExpressions) {
     (void)bin;
     sortByKey(predicates.begin(), predicates.end(),
               [](const auto *row) { return row->ownerOrdinal; });
   }
+  for (auto &[selector, predicates] : selectorWithExpressions) {
+    (void)selector;
+    sortByKey(predicates.begin(), predicates.end(),
+              [](const auto *row) { return row->ownerOrdinal; });
+  }
+  IndexMap<uint64_t, const CrossPlan *> templateCrossPlans;
+  for (const auto &row : schema.crossPlans)
+    templateCrossPlans.emplace(row.item, &row);
   IndexMap<uint64_t, const FunctionalBinPlan *> binPlans;
   for (const auto &row : schema.functionalBinPlans)
     binPlans.emplace(row.bin, &row);
@@ -6550,11 +6561,9 @@ obelisk_rt_status resolveStaticFunctionalType(
     CrossMatchesPolicy resolvedMatchesPolicy = CrossMatchesPolicy::None;
     uint64_t resolvedMatchesCount = 0;
     if (node.constructionExpression) {
-      const auto staticPlan = std::find_if(
-          schema.crossPlans.begin(), schema.crossPlans.end(),
-          [&](const CrossPlan &plan) { return plan.item == node.cross; });
+      const auto *staticPlan = lookup(templateCrossPlans, node.cross);
       const auto *construction = expressionValue(node.constructionExpression);
-      if (staticPlan == schema.crossPlans.end() || !construction ||
+      if (!staticPlan || !construction ||
           construction->kind != OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
           uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
               schema.crossTargets.size())
@@ -6829,11 +6838,8 @@ obelisk_rt_status resolveStaticFunctionalType(
       pendingTupleSet.set.tupleCount = pendingTupleSet.tuples.size();
       pendingTupleSets.push_back(std::move(pendingTupleSet));
     } else if (node.withExpression) {
-      auto staticPlan = std::find_if(
-          schema.crossPlans.begin(), schema.crossPlans.end(),
-          [&](const CrossPlan &plan) { return plan.item == node.cross; });
-      if (staticPlan == schema.crossPlans.end() ||
-          staticPlan->targetCount < 2 ||
+      const auto *staticPlan = lookup(templateCrossPlans, node.cross);
+      if (!staticPlan || staticPlan->targetCount < 2 ||
           uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
               schema.crossTargets.size())
         return OBELISK_RT_INVALID_DESIGN;
@@ -6852,15 +6858,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         const CrossTarget &target =
             schema.crossTargets[staticPlan->firstTarget + ordinal];
         auto resolvedTargetItem = resolvedItems.find(target.target);
-        const FunctionalExpression *sampleExpression = nullptr;
-        for (const FunctionalExpression &expression :
-             schema.functionalExpressions)
-          if (expression.owner == target.target &&
-              expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-              expression.role == FunctionalExpressionRole::CoverpointSample) {
-            sampleExpression = &expression;
-            break;
-          }
+        const auto *sampleExpression = lookup(coverpointSamples, target.target);
         const bool fourState =
             (target.tupleFlags & CrossTargetDomainFourState) != 0;
         const uint64_t domainBits =
@@ -6884,17 +6882,10 @@ obelisk_rt_status resolveStaticFunctionalType(
       if (!candidateCount || candidateCount > MaxFunctionalCrossWithCandidates)
         return OBELISK_RT_OUT_OF_RESOURCES;
 
-      std::vector<const FunctionalExpression *> predicates;
-      for (const FunctionalExpression &expression :
-           schema.functionalExpressions)
-        if (expression.owner == node.id &&
-            expression.ownerKind == FunctionalExpressionOwnerKind::Selector &&
-            expression.role == FunctionalExpressionRole::SelectorWith)
-          predicates.push_back(&expression);
-      std::sort(predicates.begin(), predicates.end(),
-                [](const auto *left, const auto *right) {
-                  return left->ownerOrdinal < right->ownerOrdinal;
-                });
+      auto with = selectorWithExpressions.find(node.id);
+      if (with == selectorWithExpressions.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      const auto &predicates = with->second;
       if (predicates.size() != candidateCount || predicates.empty() ||
           predicates.front()->id != node.withExpression)
         return OBELISK_RT_INVALID_DESIGN;
@@ -7264,12 +7255,8 @@ obelisk_rt_status resolveStaticFunctionalType(
     return true;
   };
   for (const ResolvedFunctionalItem *cross : resolvedCrossItems) {
-    auto staticPlan =
-        std::find_if(schema.crossPlans.begin(), schema.crossPlans.end(),
-                     [&](const CrossPlan &candidate) {
-                       return candidate.item == cross->templateItem;
-                     });
-    if (staticPlan == schema.crossPlans.end() || staticPlan->targetCount < 2 ||
+    const auto *staticPlan = lookup(templateCrossPlans, cross->templateItem);
+    if (!staticPlan || staticPlan->targetCount < 2 ||
         uint64_t{staticPlan->firstTarget} + staticPlan->targetCount >
             schema.crossTargets.size() ||
         uint64_t{staticPlan->firstBin} + staticPlan->binCount >
