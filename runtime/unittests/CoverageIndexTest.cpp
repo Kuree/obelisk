@@ -1,4 +1,5 @@
 #include "../../lib/Coverage/CoverageIndex.h"
+#include "../../lib/Coverage/CoverageCountProjectionIndex.h"
 #include "../../lib/Coverage/CoverageDecisionIndex.h"
 #include "../../lib/Coverage/CoverageTransitionIndex.h"
 #include "gtest/gtest.h"
@@ -324,6 +325,97 @@ TEST(CoverageDecisionIndexTest, ProjectionValidatesOrderingAndTracksResources) {
                                  {0, UINT32_MAX, UINT32_MAX, 3});
   EXPECT_EQ(exists.project(root), 1u);
   EXPECT_FALSE(exists.exhausted());
+}
+
+TEST(CoverageDecisionIndexTest, CountProjectionAgreesWithFiniteRelationOracle) {
+  for (uint32_t trial = 0; trial != 16; ++trial) {
+    for (uint64_t cap :
+         {uint64_t{1}, uint64_t{3}, uint64_t{5}, uint64_t{7}, UINT64_MAX}) {
+      DecisionIndex relation(7), labels(3);
+      uint64_t low = trial, high = 64 + trial * 3;
+      uint64_t fixed = trial * 7, wildcard = (trial * 11) & 127;
+      auto root = relation.subtract(relation.interval({low}, {high}),
+                                    relation.cube({fixed}, {wildcard}));
+      DecisionCountProjectionIndex counts(
+          relation, labels,
+          {UINT32_MAX, 0, UINT32_MAX, UINT32_MAX, 1, UINT32_MAX, 2}, cap);
+      std::array<uint32_t, 8> expected{};
+      for (uint64_t value = 0; value != 128; ++value)
+        if (low <= value && value <= high &&
+            (value & ~wildcard) != (fixed & ~wildcard))
+          ++expected[((value >> 3) & 4) | ((value >> 1) & 2) | (value & 1)];
+      for (uint64_t threshold = 1; threshold <= std::min(cap, uint64_t{17});
+           ++threshold) {
+        auto selected = counts.atLeast(root, threshold);
+        std::vector<std::vector<uint64_t>> actual, wanted;
+        for (uint64_t label = 0; label != 8; ++label)
+          if (expected[label] >= threshold)
+            wanted.push_back({label});
+        ASSERT_TRUE(labels.enumerate(selected, 8, actual));
+        EXPECT_EQ(actual, wanted);
+        EXPECT_EQ(counts.atLeast(root, threshold), selected);
+      }
+      EXPECT_FALSE(counts.exhausted());
+    }
+  }
+}
+
+TEST(CoverageDecisionIndexTest, CountProjectionSaturatesWideFreeDomains) {
+  DecisionIndex relation(513), labels(1);
+  std::vector<uint32_t> variables(513, UINT32_MAX);
+  variables[0] = 0;
+  DecisionCountProjectionIndex counts(relation, labels, variables, 4097);
+  EXPECT_EQ(counts.atLeast(1, 4097), 1u);
+  EXPECT_EQ(counts.atLeast(0, 1), 0u);
+  std::vector<uint64_t> value(9), wildcard(9);
+  value[8] = 1;
+  wildcard[0] = 3;
+  auto sparse = relation.cube(value, wildcard);
+  auto highLabel = labels.cube({1}, {0});
+  EXPECT_EQ(counts.atLeast(sparse, 4), highLabel);
+  EXPECT_EQ(counts.atLeast(sparse, 5), 0u);
+  EXPECT_FALSE(counts.exhausted());
+
+  DecisionIndex wide(65), scalar(0);
+  DecisionCountProjectionIndex overflow(
+      wide, scalar, std::vector<uint32_t>(65, UINT32_MAX), UINT64_MAX);
+  EXPECT_EQ(overflow.atLeast(1, UINT64_MAX), 1u);
+  EXPECT_FALSE(overflow.exhausted());
+
+  // Overlapping branch counts overflow a 64-bit addition for label zero.
+  DecisionIndex branchValues(66), branchLabels(1);
+  auto labelZero = branchValues.makeNode(65, 1, 0);
+  auto restricted = branchValues.makeNode(1, labelZero, 0);
+  auto branches = branchValues.makeNode(0, labelZero, restricted);
+  std::vector<uint32_t> branchVariables(66, UINT32_MAX);
+  branchVariables[65] = 0;
+  DecisionCountProjectionIndex sum(branchValues, branchLabels,
+                                   std::move(branchVariables), UINT64_MAX);
+  EXPECT_EQ(sum.atLeast(branches, UINT64_MAX), branchLabels.cube({0}, {0}));
+  EXPECT_FALSE(sum.exhausted());
+}
+
+TEST(CoverageDecisionIndexTest, CountProjectionSharesTailsWithinLinearBudget) {
+  DecisionIndex relation(128), scalar(0);
+  std::vector<uint32_t> variables(128, UINT32_MAX);
+  DecisionCountProjectionIndex counts(relation, scalar, variables, 129, 512);
+  DecisionIndex::Root root = 1;
+  for (uint32_t variable = 128; variable != 0;) {
+    --variable;
+    root = relation.makeNode(variable, 0, root);
+    EXPECT_EQ(counts.atLeast(root, 129), variable >= 8 ? 1u : 0u);
+  }
+  EXPECT_FALSE(counts.exhausted());
+  DecisionCountProjectionIndex limited(relation, scalar, variables, 129, 2);
+  EXPECT_EQ(limited.atLeast(root, 1), 0u);
+  EXPECT_TRUE(limited.exhausted());
+  DecisionCountProjectionIndex invalid(relation, scalar, variables, 0);
+  EXPECT_TRUE(invalid.exhausted());
+  DecisionCountProjectionIndex malformed(relation, scalar, {UINT32_MAX}, 1);
+  EXPECT_TRUE(malformed.exhausted());
+  DecisionCountProjectionIndex insufficient(relation, scalar, variables, 1);
+  EXPECT_EQ(insufficient.atLeast(root, 2), 0u);
+  EXPECT_TRUE(insufficient.exhausted());
 }
 
 TEST(CoverageIndexTest, TypeHierarchyUsesDirectEdgesAndHandlesUnorderedChains) {
