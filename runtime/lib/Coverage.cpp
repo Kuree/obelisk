@@ -7558,26 +7558,40 @@ obelisk_rt_status createResolvedFunctionalType(
       obelisk::coverage::ParseLimits{}.maxRecords;
   uint64_t explicitRectangleCount = 0;
   uint64_t explicitRectangleBinEntryCount = 0;
+  IndexMap<uint64_t, const obelisk::coverage::CrossPlan *> staticCrossPlans;
+  for (const auto &plan : schema.crossPlans)
+    staticCrossPlans.emplace(plan.item, &plan);
+  IndexMap<uint64_t, const obelisk::coverage::CrossSelectorNode *> selectors;
+  for (const auto &selector : schema.crossSelectorNodes)
+    selectors.emplace(selector.id, &selector);
+  IndexMap<std::pair<uint64_t, uint64_t>, size_t> crossBins;
+  for (size_t index = 0; index != metadata->bins.size(); ++index) {
+    const auto &bin = metadata->bins[index];
+    if (bin.kind == obelisk::coverage::FunctionalBinKind::Cross)
+      crossBins.emplace(std::make_pair(bin.item, bin.templateBin), index);
+  }
+  IndexMap<std::pair<uint64_t, uint64_t>,
+           const obelisk::coverage::ResolvedCrossSelectorBinding *>
+      bindings;
+  for (const auto &binding : schema.resolvedCrossSelectorBindings)
+    if (binding.type == typeID && binding.configuration == configuration)
+      bindings.emplace(std::make_pair(binding.cross, binding.node), &binding);
+  for (const auto &set : schema.resolvedFunctionalValueSets)
+    if (set.type == typeID && set.configuration == configuration)
+      metadata->valueSets.emplace(set.id, &set);
   for (const auto &plan : schema.resolvedCrossPlans) {
     if (plan.type != typeID || plan.configuration != type.configuration)
       continue;
-    auto item = std::find_if(
-        schema.resolvedFunctionalItems.begin(),
-        schema.resolvedFunctionalItems.end(), [&](const auto &entry) {
-          return entry.type == typeID && entry.configuration == configuration &&
-                 entry.id == plan.cross &&
-                 entry.kind == obelisk::coverage::FunctionalItemKind::Cross;
-        });
-    auto staticPlan =
-        item == schema.resolvedFunctionalItems.end()
-            ? schema.crossPlans.end()
-            : std::find_if(schema.crossPlans.begin(), schema.crossPlans.end(),
-                           [&](const auto &entry) {
-                             return entry.item == item->templateItem;
-                           });
-    if (item == schema.resolvedFunctionalItems.end() ||
-        staticPlan == schema.crossPlans.end() ||
-        (plan.retainAutoPolicy !=
+    auto itemPosition = metadata->itemPositions.find(plan.cross);
+    if (itemPosition == metadata->itemPositions.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto *item = &metadata->items[itemPosition->second];
+    auto staticPlanPosition = staticCrossPlans.find(item->templateItem);
+    if (item->kind != obelisk::coverage::FunctionalItemKind::Cross ||
+        staticPlanPosition == staticCrossPlans.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto *staticPlan = staticPlanPosition->second;
+    if ((plan.retainAutoPolicy !=
              obelisk::coverage::CrossRetainAutoPolicy::Retain &&
          plan.retainAutoPolicy !=
              obelisk::coverage::CrossRetainAutoPolicy::Discard) ||
@@ -7599,76 +7613,58 @@ obelisk_rt_status createResolvedFunctionalType(
         schema.resolvedCrossAutomaticBinCountLimbs.begin() +
             plan.firstAutomaticBinCountLimb + plan.automaticBinCountLimbCount);
     cross.automaticRoot = plan.rootNode;
-    auto itemPosition = std::find(type.items.begin(), type.items.end(), item->id);
-    if (itemPosition == type.items.end())
-      return OBELISK_RT_INVALID_DESIGN;
-    cross.atLeast = type.itemAtLeast[static_cast<size_t>(itemPosition -
-                                                        type.items.begin())];
-    cross.excluded = std::any_of(
-        schema.exclusions.begin(), schema.exclusions.end(),
-        [&](const auto &entry) {
-          return entry.metric == obelisk::coverage::MetricKind::Functional &&
-                 (entry.entity == item->id ||
-                  entry.entity == item->templateItem);
-        });
+    cross.atLeast = type.itemAtLeast[itemPosition->second];
+    cross.excluded = excludedEntities.count(item->id) ||
+                     excludedEntities.count(item->templateItem);
+    IndexMap<uint64_t, uint32_t> targetOrdinals;
     for (uint32_t ordinal = 0; ordinal != staticPlan->targetCount; ++ordinal) {
       const auto &target =
           schema.crossTargets[staticPlan->firstTarget + ordinal];
-      auto resolvedTarget = std::find_if(
-          schema.resolvedFunctionalItems.begin(),
-          schema.resolvedFunctionalItems.end(), [&](const auto &entry) {
-            return entry.type == typeID &&
-                   entry.configuration == configuration &&
-                   entry.templateItem == target.target &&
-                   entry.kind ==
-                       obelisk::coverage::FunctionalItemKind::Coverpoint;
-          });
+      auto resolvedTarget = metadata->templateItemPositions.find(target.target);
       if (target.cross != item->templateItem || target.ordinal != ordinal ||
-          resolvedTarget == schema.resolvedFunctionalItems.end())
+          resolvedTarget == metadata->templateItemPositions.end() ||
+          metadata->items[resolvedTarget->second].kind !=
+              obelisk::coverage::FunctionalItemKind::Coverpoint)
         return OBELISK_RT_INVALID_DESIGN;
-      cross.targets.push_back(resolvedTarget->id);
+      cross.targets.push_back(metadata->items[resolvedTarget->second].id);
+      targetOrdinals.emplace(target.target, ordinal);
     }
     for (uint32_t binOrdinal = 0; binOrdinal != staticPlan->binCount;
          ++binOrdinal) {
       const auto &crossBin =
           schema.crossBins[staticPlan->firstBin + binOrdinal];
-      auto selector = std::find_if(
-          schema.crossSelectorNodes.begin(), schema.crossSelectorNodes.end(),
-          [&](const auto &entry) { return entry.id == crossBin.rootSelector; });
-      auto resolvedBin = std::find_if(
-          schema.resolvedFunctionalBins.begin(),
-          schema.resolvedFunctionalBins.end(), [&](const auto &entry) {
-            return entry.type == typeID &&
-                   entry.configuration == configuration &&
-                   entry.templateBin == crossBin.bin &&
-                   entry.item == cross.id &&
-                   entry.kind == obelisk::coverage::FunctionalBinKind::Cross;
-          });
+      auto selectorPosition = selectors.find(crossBin.rootSelector);
+      auto resolvedBinPosition = crossBins.find({cross.id, crossBin.bin});
       CrossSelectorDNF alternatives;
       if (crossBin.cross != item->templateItem ||
-          selector == schema.crossSelectorNodes.end() ||
-          selector->cross != item->templateItem ||
-          resolvedBin == schema.resolvedFunctionalBins.end())
+          selectorPosition == selectors.end() ||
+          selectorPosition->second->cross != item->templateItem ||
+          resolvedBinPosition == crossBins.end())
         return OBELISK_RT_INVALID_DESIGN;
+      const auto *selector = selectorPosition->second;
+      const auto *resolvedBin = &metadata->bins[resolvedBinPosition->second];
       FunctionalCoverageCrossState::ExplicitBin explicitBin;
       explicitBin.bin = resolvedBin->id;
       if (crossSelectorUsesWith(schema, *selector)) {
         std::vector<std::vector<uint64_t>> targetBins(cross.targets.size());
         for (size_t targetOrdinal = 0; targetOrdinal != cross.targets.size();
              ++targetOrdinal) {
-          for (const FunctionalCoverageBinState &candidate : type.bins) {
+          auto targetPosition =
+              metadata->itemPositions.find(cross.targets[targetOrdinal]);
+          for (size_t binIndex : metadata->itemBins[targetPosition->second]) {
+            const auto &candidate = type.bins[binIndex];
             constexpr uint32_t omitted =
                 obelisk::coverage::FunctionalBinDefault |
                 obelisk::coverage::FunctionalBinDefaultSequence |
                 obelisk::coverage::FunctionalBinIgnore |
                 obelisk::coverage::FunctionalBinIllegal |
                 obelisk::coverage::FunctionalBinEmpty;
-            if (candidate.item == cross.targets[targetOrdinal] &&
-                !(candidate.flags & omitted))
+            if (!(candidate.flags & omitted))
               targetBins[targetOrdinal].push_back(candidate.id);
           }
-          std::sort(targetBins[targetOrdinal].begin(),
-                    targetBins[targetOrdinal].end());
+          sortByKey(targetBins[targetOrdinal].begin(),
+                    targetBins[targetOrdinal].end(),
+                    [](uint64_t bin) { return bin; });
         }
         std::vector<std::vector<uint64_t>> candidateTuples;
         if (crossSelectorIsWithWrappedSet(schema, *selector)) {
@@ -7731,59 +7727,41 @@ obelisk_rt_status createResolvedFunctionalType(
           return selectorStatus;
         for (const CrossSelectorConjunction &terms : alternatives) {
           FunctionalCoverageCrossState::Rectangle rectangle;
-          std::map<uint32_t, std::vector<uint64_t>> constraints;
+          IndexMap<uint32_t, std::vector<uint64_t>> constraints;
           uint64_t rectangleBinEntryCount = 0;
           for (const CrossSelectorTerm &term : terms) {
             const auto *condition = term.condition;
-            auto staticTarget = std::find_if(
-                schema.crossTargets.begin() + staticPlan->firstTarget,
-                schema.crossTargets.begin() + staticPlan->firstTarget +
-                    staticPlan->targetCount,
-                [&](const auto &entry) {
-                  return entry.target == condition->target;
-                });
-            if (staticTarget == schema.crossTargets.begin() +
-                                    staticPlan->firstTarget +
-                                    staticPlan->targetCount)
+            auto targetOrdinal = targetOrdinals.find(condition->target);
+            if (targetOrdinal == targetOrdinals.end())
               return OBELISK_RT_INVALID_DESIGN;
+            const auto *staticTarget =
+                &schema.crossTargets[staticPlan->firstTarget +
+                                     targetOrdinal->second];
 
             const obelisk::coverage::ResolvedFunctionalValueSet *selectedSet =
                 nullptr;
             if (condition->valueSet) {
-              auto binding =
-                  std::find_if(schema.resolvedCrossSelectorBindings.begin(),
-                               schema.resolvedCrossSelectorBindings.end(),
-                               [&](const auto &entry) {
-                                 return entry.type == typeID &&
-                                        entry.configuration == configuration &&
-                                        entry.cross == cross.id &&
-                                        entry.node == condition->id;
-                               });
-              if (binding == schema.resolvedCrossSelectorBindings.end())
+              auto binding = bindings.find({cross.id, condition->id});
+              if (binding == bindings.end())
                 return OBELISK_RT_INVALID_DESIGN;
-              auto set =
-                  std::find_if(schema.resolvedFunctionalValueSets.begin(),
-                               schema.resolvedFunctionalValueSets.end(),
-                               [&](const auto &entry) {
-                                 return entry.type == typeID &&
-                                        entry.configuration == configuration &&
-                                        entry.id == binding->valueSet;
-                               });
-              if (set == schema.resolvedFunctionalValueSets.end())
+              auto set = metadata->valueSets.find(binding->second->valueSet);
+              if (set == metadata->valueSets.end())
                 return OBELISK_RT_INVALID_DESIGN;
-              selectedSet = &*set;
+              selectedSet = set->second;
             }
 
             std::vector<uint64_t> selectedBins;
             const uint64_t targetItem = cross.targets[staticTarget->ordinal];
-            for (const FunctionalCoverageBinState &candidate : type.bins) {
+            auto targetPosition = metadata->itemPositions.find(targetItem);
+            for (size_t binIndex : metadata->itemBins[targetPosition->second]) {
+              const auto &candidate = type.bins[binIndex];
               constexpr uint32_t omitted =
                   obelisk::coverage::FunctionalBinDefault |
                   obelisk::coverage::FunctionalBinDefaultSequence |
                   obelisk::coverage::FunctionalBinIgnore |
                   obelisk::coverage::FunctionalBinIllegal |
                   obelisk::coverage::FunctionalBinEmpty;
-              if (candidate.item != targetItem || (candidate.flags & omitted))
+              if (candidate.flags & omitted)
                 continue;
               bool selected =
                   !condition->bin || candidate.templateBin == condition->bin;
@@ -7812,7 +7790,8 @@ obelisk_rt_status createResolvedFunctionalType(
                 selectedBins.push_back(candidate.id);
               }
             }
-            std::sort(selectedBins.begin(), selectedBins.end());
+            sortByKey(selectedBins.begin(), selectedBins.end(),
+                      [](uint64_t bin) { return bin; });
             auto position = constraints.find(staticTarget->ordinal);
             if (position != constraints.end()) {
               // Intersect in place so a third vector cannot evade the aggregate
@@ -7860,19 +7839,22 @@ obelisk_rt_status createResolvedFunctionalType(
           std::vector<std::vector<uint64_t>> targetBins(cross.targets.size());
           for (size_t targetOrdinal = 0; targetOrdinal != cross.targets.size();
                ++targetOrdinal) {
-            for (const FunctionalCoverageBinState &candidate : type.bins) {
+            auto targetPosition =
+                metadata->itemPositions.find(cross.targets[targetOrdinal]);
+            for (size_t binIndex : metadata->itemBins[targetPosition->second]) {
+              const auto &candidate = type.bins[binIndex];
               constexpr uint32_t omitted =
                   obelisk::coverage::FunctionalBinDefault |
                   obelisk::coverage::FunctionalBinDefaultSequence |
                   obelisk::coverage::FunctionalBinIgnore |
                   obelisk::coverage::FunctionalBinIllegal |
                   obelisk::coverage::FunctionalBinEmpty;
-              if (candidate.item == cross.targets[targetOrdinal] &&
-                  !(candidate.flags & omitted))
+              if (!(candidate.flags & omitted))
                 targetBins[targetOrdinal].push_back(candidate.id);
             }
-            std::sort(targetBins[targetOrdinal].begin(),
-                      targetBins[targetOrdinal].end());
+            sortByKey(targetBins[targetOrdinal].begin(),
+                      targetBins[targetOrdinal].end(),
+                      [](uint64_t bin) { return bin; });
           }
           std::vector<std::vector<uint64_t>> candidates;
           selectorStatus = resolvedCrossSelectorSetCandidates(
@@ -8721,9 +8703,6 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
     else
       sample.iff = index;
   }
-  for (const auto &set : schema.resolvedFunctionalValueSets)
-    if (set.type == typeID && set.configuration == type.configuration)
-      metadata.valueSets.emplace(set.id, &set);
   for (size_t index = 0; index != type.bins.size(); ++index) {
     const auto &bin = type.bins[index];
     if (auto iff = binIffs.find(bin.templateBin); iff != binIffs.end())
@@ -13371,25 +13350,36 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       if (!crossEnabled)
         continue;
 
-      std::vector<std::vector<uint64_t>> tuples(1);
+      std::vector<const std::vector<uint64_t> *> targetHits;
+      targetHits.reserve(cross.targets.size());
       for (uint64_t target : cross.targets) {
         auto hits = sampledBins.find(target);
-        if (hits == sampledBins.end() || hits->second.empty()) {
-          tuples.clear();
+        if (hits == sampledBins.end() || hits->second.empty())
           break;
-        }
-        if (tuples.size() > SIZE_MAX / hits->second.size())
-          return OBELISK_RT_OUT_OF_RESOURCES;
-        std::vector<std::vector<uint64_t>> expanded;
-        expanded.reserve(tuples.size() * hits->second.size());
-        for (const auto &prefix : tuples)
-          for (uint64_t bin : hits->second) {
-            expanded.push_back(prefix);
-            expanded.back().push_back(bin);
-          }
-        tuples = std::move(expanded);
+        targetHits.push_back(&hits->second);
       }
-      for (const auto &tuple : tuples) {
+      // A missing target makes the entire Cartesian product empty, even when
+      // an earlier prefix would exceed the resource limit. Check that first.
+      if (targetHits.size() != cross.targets.size())
+        continue;
+      size_t tupleCount = 1;
+      for (const auto *hits : targetHits) {
+        if (tupleCount > SIZE_MAX / hits->size())
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        tupleCount *= hits->size();
+      }
+      // Decode each complete tuple directly. Growing and copying every
+      // intermediate prefix was quadratic in arity for a single tuple.
+      std::vector<uint64_t> tuple(cross.targets.size());
+      for (size_t encodedTuple = 0; encodedTuple != tupleCount;
+           ++encodedTuple) {
+        size_t remainder = encodedTuple;
+        for (size_t reverse = targetHits.size(); reverse != 0; --reverse) {
+          size_t ordinal = reverse - 1;
+          tuple[ordinal] =
+              (*targetHits[ordinal])[remainder % targetHits[ordinal]->size()];
+          remainder /= targetHits[ordinal]->size();
+        }
         bool selectedByExplicitBin = false;
         bool ignored = false;
         IndexSet<uint64_t> illegalBins;

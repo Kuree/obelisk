@@ -4391,6 +4391,170 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
+// A wide cross with only four observed tuples exercises target order without
+// expanding a large sample space. The fully overlapping variant verifies that
+// an empty final target is detected before considering its enormous product.
+obelisk::coverage::Database makeWideCrossSchema(bool fullyOverlapping) {
+  using namespace obelisk::coverage;
+  Database schema;
+  schema.scopes.push_back({1, 0, "top", 0, "top"});
+  schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
+  constexpr uint32_t arity = 64;
+  constexpr uint64_t cross = 2000;
+  constexpr uint32_t inclusive =
+      FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+  for (uint32_t ordinal = 0; ordinal != arity; ++ordinal) {
+    uint64_t point = 1000 + ordinal;
+    std::string name = "cp" + std::to_string(ordinal);
+    schema.functionalItems.push_back({point, 10, name,
+                                      FunctionalItemKind::Coverpoint, 0, 100, 1,
+                                      ordinal, "top.cg." + name});
+    uint32_t binCount = fullyOverlapping ? 4 : (ordinal < 2 ? 2 : 1);
+    for (uint32_t binOrdinal = 0; binOrdinal != binCount; ++binOrdinal) {
+      uint64_t bin = 5000 + ordinal * 4 + binOrdinal;
+      uint64_t set = 7000 + ordinal * 4 + binOrdinal;
+      uint32_t atom = schema.functionalValueAtoms.size();
+      schema.functionalValueSets.push_back({set, point, atom, 1, 1,
+                                            FunctionalValueSetKind::Integral, 0,
+                                            CoverageSignedness::Unsigned, 0});
+      schema.functionalValueAtoms.push_back(
+          {set, 0, 0, atom, 1, 0, FunctionalValueAtomKind::IntegralValue,
+           inclusive, 0, 0});
+      schema.functionalValueLimbs.push_back({set, 0, 0, 0, 0, 0, 0, 0});
+      std::string binName = "zero" + std::to_string(binOrdinal);
+      schema.functionalBins.push_back(
+          {bin, point, binName, FunctionalBinKind::State, 0, 1, binOrdinal,
+           "top.cg." + name + "." + binName});
+      schema.functionalBinPlans.push_back({bin, set});
+    }
+    FunctionalExpression expression;
+    expression.id = 4000 + ordinal;
+    expression.owner = point;
+    expression.ownerKind = FunctionalExpressionOwnerKind::Item;
+    expression.role = FunctionalExpressionRole::CoverpointSample;
+    expression.resultKind = FunctionalExpressionResultKind::Integral;
+    expression.bitWidth = 1;
+    expression.signedness = CoverageSignedness::Unsigned;
+    expression.evaluationPhase = FunctionalExpressionEvaluationPhase::Sample;
+    expression.resultOrdinal = ordinal;
+    schema.functionalExpressions.push_back(expression);
+    schema.crossTargets.push_back({cross, point, ordinal, ordinal, 1,
+                                   FunctionalExpressionResultKind::Integral,
+                                   CoverageSignedness::Unsigned, 0});
+  }
+  schema.functionalItems.push_back({cross, 10, "product",
+                                    FunctionalItemKind::Cross, 0, 100, 1, arity,
+                                    "top.cg.product"});
+  schema.crossPlans.push_back({cross, 0, arity, 0, 0,
+                               CrossRetainAutoPolicy::Retain, 0, 0, 220, arity,
+                               0});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  return schema;
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       WideCrossPreservesOverlappingTupleComponents) {
+  using namespace obelisk::coverage;
+  obelisk_rt_context *context =
+      createContextForSchema(makeWideCrossSchema(false));
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  std::array<uint8_t, 64> values{};
+  std::array<obelisk_rt_functional_value_v1, 64> batch;
+  for (size_t ordinal = 0; ordinal != batch.size(); ++ordinal)
+    batch[ordinal] = {4000 + ordinal,
+                      1,
+                      1,
+                      &values[ordinal],
+                      nullptr,
+                      nullptr,
+                      0,
+                      OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                      0};
+  auto sample = [&] {
+    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+                                           batch.size());
+  };
+  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  // IEEE 1800-2023 19.6: a missing bin on any target makes this sample's
+  // Cartesian product empty, even when the other targets overlap.
+  values.back() = 1;
+  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  auto &instance = context->coverage->instances.at(handle);
+  const auto &type = context->coverage->types.at({10, instance.configuration});
+  ASSERT_EQ(type.crosses.size(), 1u);
+  const auto &tuples = instance.crossTuples.at(type.crosses.front().id);
+  ASSERT_EQ(tuples.size(), 4u);
+  detail::IndexMap<uint64_t, uint64_t> binItems;
+  for (const auto &bin : instance.bins)
+    binItems.emplace(bin.id, bin.item);
+  detail::IndexSet<std::pair<uint64_t, uint64_t>> leadingComponents;
+  for (const auto &[components, counter] : tuples) {
+    ASSERT_EQ(components.size(), values.size());
+    EXPECT_EQ(counter.count, 2u);
+    EXPECT_TRUE(leadingComponents.emplace(components[0], components[1]).second);
+    for (size_t ordinal = 0; ordinal != components.size(); ++ordinal)
+      EXPECT_EQ(binItems.at(components[ordinal]),
+                type.crosses.front().targets[ordinal])
+          << ordinal;
+  }
+  EXPECT_EQ(leadingComponents.size(), 4u);
+  Database snapshot = saveCoverage(context, "wide-cross");
+  ASSERT_EQ(snapshot.sparseCrossTuples.size(), 4u);
+  for (const auto &tuple : snapshot.sparseCrossTuples) {
+    EXPECT_EQ(tuple.componentCount, 64u);
+    EXPECT_EQ(tuple.hits, 2u);
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       WideCrossEmptyFinalTargetPrecedesProductOverflowAndCommitsAtomically) {
+  obelisk_rt_context *context =
+      createContextForSchema(makeWideCrossSchema(true));
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+  std::array<uint8_t, 64> values{};
+  values.back() = 1;
+  std::array<obelisk_rt_functional_value_v1, 64> batch;
+  for (size_t ordinal = 0; ordinal != batch.size(); ++ordinal)
+    batch[ordinal] = {4000 + ordinal,
+                      1,
+                      1,
+                      &values[ordinal],
+                      nullptr,
+                      nullptr,
+                      0,
+                      OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                      0};
+  auto sample = [&] {
+    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+                                           batch.size());
+  };
+  // Do not enumerate 4^63 prefixes: the final target has no matching bin.
+  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  auto &instance = context->coverage->instances.at(handle);
+  EXPECT_TRUE(instance.crossTuples.empty());
+  std::vector<uint64_t> counts;
+  for (const auto &bin : instance.bins)
+    counts.push_back(bin.count);
+  values.back() = 0;
+  EXPECT_EQ(sample(), OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_TRUE(instance.crossTuples.empty());
+  for (size_t bin = 0; bin != counts.size(); ++bin)
+    EXPECT_EQ(instance.bins[bin].count, counts[bin]);
+  values.back() = 1;
+  ASSERT_EQ(sample(), OBELISK_RT_OK);
+  for (size_t bin = 0; bin != counts.size(); ++bin)
+    EXPECT_EQ(instance.bins[bin].count, 2 * counts[bin]);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST_F(CoverageRuntimeDesignTest, ItemTypeAveragesUseMutableInstanceWeights) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
