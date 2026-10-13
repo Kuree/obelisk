@@ -72,12 +72,15 @@ struct FunctionalCoverageQueryMetadata {
     const obelisk::coverage::ResolvedTransitionAlternative *resolved = nullptr;
     const obelisk::coverage::TransitionAlternative *definition = nullptr;
     size_t bin = 0;
+    size_t activeSlot = 0;
   };
   struct SampleItem {
+    bool trackTransitionLength = false;
     size_t value = SIZE_MAX;
     size_t iff = SIZE_MAX;
     std::vector<SampleTransition> transitions;
   };
+  size_t transitionSlotCount = 0;
   struct ConstructionOptions {
     uint64_t autoBinMax = 64;
     bool detectOverlap = false;
@@ -8743,8 +8746,12 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
           !metadata.valueSets.count(step.valueSet))
         return OBELISK_RT_INVALID_DESIGN;
     }
-    metadata.sampleItems[item->second].transitions.push_back(
-        {&alternative, &definition, position->second});
+    auto &sampleItem = metadata.sampleItems[item->second];
+    sampleItem.trackTransitionLength |=
+        (bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) != 0;
+    sampleItem.transitions.push_back({&alternative, &definition,
+                                      position->second,
+                                      metadata.transitionSlotCount++});
   }
   return OBELISK_RT_OK;
 }
@@ -10570,7 +10577,7 @@ struct ExactTransitionWord {
 };
 
 /// Derive the post-distribution subtraction required by IEEE 1800-2023
-/// 19.5.5 and 19.5.6. Both ordinary and exclusion alternatives are finite
+/// 19.5.5 and 19.5.6. Bounded ordinary and exclusion alternatives yield finite
 /// symbolic words. Integral ranges are decomposed into prefix cubes and each
 /// word is represented as a Cartesian product in a concatenated bit space.
 /// Union containment in that space is exact and does not enumerate values.
@@ -10612,6 +10619,11 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     if (set.type == typeID && set.configuration == configuration)
       valueSets.emplace(set.id, &set);
   IndexMap<uint64_t, size_t> ordinaryAlternativeCounts;
+  IndexMap<uint64_t, size_t> ordinaryWordCounts;
+  IndexMap<uint64_t, uint64_t> ordinaryWordBins;
+  IndexMap<uint64_t, const TransitionProgram *> programs;
+  for (const auto &program : schema.transitionPrograms)
+    programs.emplace(program.bin, &program);
   for (const auto &alternative : schema.resolvedTransitionAlternatives) {
     if (alternative.type != typeID ||
         alternative.configuration != configuration)
@@ -10627,26 +10639,85 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
       return OBELISK_RT_INVALID_DESIGN;
     if (!consumeWork(alternative.stepCount))
       return OBELISK_RT_OUT_OF_RESOURCES;
-    ExactTransitionWord word{alternative.id,
-                             alternative.bin,
-                             bin->second->item,
-                             bin->second->flags,
-                             {}};
-    word.valueSets.reserve(alternative.stepCount);
+    auto program = programs.find(bin->second->templateBin);
+    if (program == programs.end() ||
+        alternative.templateAlternativeOrdinal >=
+            program->second->alternativeCount ||
+        uint64_t{program->second->firstAlternative} +
+                program->second->alternativeCount >
+            schema.transitionAlternatives.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &definition =
+        schema.transitionAlternatives[program->second->firstAlternative +
+                                      alternative.templateAlternativeOrdinal];
+    if (definition.stepCount != alternative.stepCount ||
+        uint64_t{definition.firstStep} + definition.stepCount >
+            schema.transitionSteps.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    struct Dimension {
+      const ResolvedFunctionalValueSet *set;
+      uint64_t lower, upper;
+    };
+    std::vector<Dimension> dimensions;
+    dimensions.reserve(alternative.stepCount);
+    uint64_t wordCount = 1, maximumLength = 0;
     for (uint32_t ordinal = 0; ordinal != alternative.stepCount; ++ordinal) {
       const auto &step =
           schema.resolvedTransitionSteps[alternative.firstStep + ordinal];
       auto set = valueSets.find(step.valueSet);
+      const auto repetition =
+          schema.transitionSteps[definition.firstStep + ordinal].repetition;
       if (step.alternative != alternative.id || step.ordinal != ordinal ||
-          step.lowerBound != 1 || step.upperBound != 1 ||
+          (repetition != TransitionRepetitionKind::Once &&
+           repetition != TransitionRepetitionKind::Consecutive) ||
+          !step.lowerBound || step.upperBound < step.lowerBound ||
+          step.upperBound == TransitionUnbounded ||
+          (repetition == TransitionRepetitionKind::Once &&
+           (step.lowerBound != 1 || step.upperBound != 1)) ||
           set == valueSets.end() ||
           set->second->kind != FunctionalValueSetKind::Integral)
         return OBELISK_RT_INVALID_DESIGN;
-      word.valueSets.push_back(set->second);
+      if (step.upperBound > maxDerivationWork - maximumLength)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      maximumLength += step.upperBound;
+      uint64_t choices = step.upperBound - step.lowerBound + 1;
+      if (wordCount > maxDerivationWork / choices)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      wordCount *= choices;
+      dimensions.push_back({set->second, step.lowerBound, step.upperBound});
     }
-    if (!(bin->second->flags & (FunctionalBinIgnore | FunctionalBinIllegal)))
+    if (!(bin->second->flags & (FunctionalBinIgnore | FunctionalBinIllegal))) {
       ++ordinaryAlternativeCounts[bin->second->id];
-    words.push_back(std::move(word));
+      ordinaryWordCounts.emplace(alternative.id, wordCount);
+      ordinaryWordBins.emplace(alternative.id, alternative.bin);
+    }
+    // Enumerate complete bounded words. No growing prefix or whole schema is
+    // copied per repetition count, and work is charged to the word data
+    // emitted.
+    std::vector<uint64_t> repetitions(dimensions.size());
+    for (uint64_t encodedWord = 0; encodedWord != wordCount; ++encodedWord) {
+      uint64_t remainder = encodedWord, length = 0;
+      for (size_t reverse = dimensions.size(); reverse != 0; --reverse) {
+        size_t ordinal = reverse - 1;
+        const auto &dimension = dimensions[ordinal];
+        uint64_t choices = dimension.upper - dimension.lower + 1;
+        repetitions[ordinal] = dimension.lower + remainder % choices;
+        remainder /= choices;
+        length += repetitions[ordinal];
+      }
+      if (!consumeWork(length))
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      ExactTransitionWord word{alternative.id,
+                               alternative.bin,
+                               bin->second->item,
+                               bin->second->flags,
+                               {}};
+      word.valueSets.reserve(length);
+      for (size_t ordinal = 0; ordinal != dimensions.size(); ++ordinal)
+        word.valueSets.insert(word.valueSets.end(), repetitions[ordinal],
+                              dimensions[ordinal].set);
+      words.push_back(std::move(word));
+    }
   }
 
   auto wildcardPlane = [](uint32_t bitWidth) {
@@ -10796,6 +10867,7 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     if (word.flags & (FunctionalBinIgnore | FunctionalBinIllegal))
       exclusionsByItem[word.item].push_back(&word);
   IndexMap<uint64_t, size_t> suppressedPerBin;
+  IndexMap<uint64_t, size_t> suppressedWordCounts;
   for (const auto &word : words) {
     if (word.flags & (FunctionalBinIgnore | FunctionalBinIllegal))
       continue;
@@ -10836,10 +10908,14 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
         break;
       }
     if (suppressed) {
-      suppressedAlternatives.insert(word.alternative);
-      ++suppressedPerBin[word.bin];
+      ++suppressedWordCounts[word.alternative];
     }
   }
+  for (const auto &[alternative, count] : ordinaryWordCounts)
+    if (suppressedWordCounts[alternative] == count) {
+      suppressedAlternatives.insert(alternative);
+      ++suppressedPerBin[ordinaryWordBins.at(alternative)];
+    }
   for (const auto &[bin, count] : ordinaryAlternativeCounts)
     if (suppressedPerBin[bin] == count)
       emptyBins.insert(bin);
@@ -12293,6 +12369,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_create(
     instance.itemWeights = type->itemWeights;
     instance.itemAtLeast = type->itemAtLeast;
     instance.bins = type->bins;
+    instance.transitionActive.resize(type->queryMetadata->transitionSlotCount);
     for (const FunctionalCoverageCrossState &cross : type->crosses)
       instance.crossAtLeast.emplace(cross.id, cross.atLeast);
     for (const auto &option : schema.functionalConfigurationOptions) {
@@ -13031,6 +13108,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       return OBELISK_RT_INVALID_DESIGN;
     if (!instance.enabled)
       return OBELISK_RT_OK;
+    if (instance.transitionActive.size() != metadata.transitionSlotCount)
+      return OBELISK_RT_INVALID_DESIGN;
 
     std::vector<size_t> pendingBinIncrements;
     IndexSet<size_t> pendingExplicitBinIncrements;
@@ -13155,12 +13234,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       IndexSet<size_t> transitionHits;
       struct OrdinaryTransitionHit {
         size_t binIndex = 0;
-        uint32_t stepCount = 0;
+        uint64_t shortestLength = UINT64_MAX;
         bool unexcluded = false;
       };
       std::vector<OrdinaryTransitionHit> ordinaryTransitionHits;
-      std::vector<uint32_t> exclusionHitLengths;
-      std::vector<uint64_t> ordinaryAlternatives;
+      std::vector<uint64_t> exclusionHitLengths;
+      std::vector<size_t> ordinaryTransitionSlots;
       bool previousPendingRemains = false;
       for (const auto &binding : sampleItem.transitions) {
         const auto &alternative = *binding.resolved;
@@ -13173,13 +13252,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
             type->second.suppressedTransitionAlternatives.count(alternative.id))
           continue;
         bool binEnabled = binIsEnabled(binIndex);
-        auto active = pendingTransitionActive.find(alternative.id);
+        auto &active = pendingTransitionActive[binding.activeSlot];
         const bool exclusion =
             bin->flags & (obelisk::coverage::FunctionalBinIgnore |
                           obelisk::coverage::FunctionalBinIllegal);
         if (!binEnabled && !exclusion) {
-          if (active != pendingTransitionActive.end() &&
-              !active->second.empty())
+          if (active)
             previousPendingRemains = true;
           continue;
         }
@@ -13194,15 +13272,34 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         };
         bool hit = false;
         bool unexcludedHit = false;
+        uint64_t shortestHit = UINT64_MAX;
+        uint64_t shortestUnexcludedHit = UINT64_MAX;
         using ActiveState =
             FunctionalCoverageInstanceState::TransitionActiveState;
-        std::set<ActiveState> next;
+        using TransitionStates =
+            FunctionalCoverageInstanceState::TransitionStates;
+        std::shared_ptr<TransitionStates> next;
         auto retain = [&](const ActiveState &state, bool fromPrevious) {
-          next.insert(state);
+          if (!next)
+            next = std::make_shared<TransitionStates>();
+          next->insert(state);
           previousPendingRemains |= fromPrevious;
         };
         auto advance = [&](const ActiveState &activeState,
                            bool fromPrevious) -> bool {
+          ActiveState sampledState = activeState;
+          if (sampleItem.trackTransitionLength)
+            sampledState.samplesConsumed =
+                saturatingAdd(sampledState.samplesConsumed, 1);
+          auto recordHit = [&] {
+            hit = true;
+            shortestHit = std::min(shortestHit, sampledState.samplesConsumed);
+            if (!sampledState.excluded) {
+              unexcludedHit = true;
+              shortestUnexcludedHit =
+                  std::min(shortestUnexcludedHit, sampledState.samplesConsumed);
+            }
+          };
           const uint32_t ordinal = activeState.ordinal;
           const uint64_t repetitionsConsumed = activeState.repetitionsConsumed;
           // A terminal nonconsecutive repetition remains a complete match on
@@ -13218,9 +13315,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
                     obelisk::coverage::TransitionRepetitionKind::Nonconsecutive)
               return false;
             if (!matchesStep(activeState.gapForbiddenOrdinal)) {
-              hit = true;
-              unexcludedHit |= !activeState.excluded;
-              retain(activeState, fromPrevious);
+              recordHit();
+              retain(sampledState, fromPrevious);
             }
             return true;
           }
@@ -13246,92 +13342,94 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
               if (activeState.gapForbiddenOrdinal >= alternative.stepCount)
                 return false;
               if (!matchesStep(activeState.gapForbiddenOrdinal))
-                retain(activeState, fromPrevious);
+                retain(sampledState, fromPrevious);
             } else if (repetition ==
                            obelisk::coverage::TransitionRepetitionKind::Goto ||
                        repetition ==
                            obelisk::coverage::TransitionRepetitionKind::
                                Nonconsecutive) {
-              retain(activeState, fromPrevious);
+              retain(sampledState, fromPrevious);
             }
             return true;
           }
           const uint64_t consumed = repetitionsConsumed + 1;
           if (consumed >= step.lowerBound) {
             if (ordinal + 1 == alternative.stepCount) {
-              hit = true;
-              unexcludedHit |= !activeState.excluded;
+              recordHit();
               if (repetition ==
                   obelisk::coverage::TransitionRepetitionKind::Nonconsecutive)
-                retain(
-                    {alternative.stepCount, ordinal, 0, activeState.excluded},
-                    fromPrevious);
+                retain({alternative.stepCount, ordinal, 0, activeState.excluded,
+                        sampledState.samplesConsumed},
+                       fromPrevious);
             } else
               retain({ordinal + 1,
                       repetition == obelisk::coverage::
                                         TransitionRepetitionKind::Nonconsecutive
                           ? ordinal
                           : UINT32_MAX,
-                      0, activeState.excluded},
+                      0, activeState.excluded, sampledState.samplesConsumed},
                      fromPrevious);
           }
           if (consumed < step.upperBound)
-            retain({ordinal, UINT32_MAX, consumed, activeState.excluded},
+            retain({ordinal, UINT32_MAX, consumed, activeState.excluded,
+                    sampledState.samplesConsumed},
                    fromPrevious);
           return true;
         };
-        if (active != pendingTransitionActive.end())
-          for (const ActiveState &state : active->second)
+        if (active)
+          for (const ActiveState &state : *active)
             if (!advance(state, true))
               return OBELISK_RT_INVALID_DESIGN;
         if (!advance({0, UINT32_MAX, 0, false}, false))
           return OBELISK_RT_INVALID_DESIGN;
-        if (next.empty())
-          pendingTransitionActive.erase(alternative.id);
-        else
-          pendingTransitionActive[alternative.id] = std::move(next);
+        active = std::move(next);
         if (!(bin->flags & (obelisk::coverage::FunctionalBinIgnore |
                             obelisk::coverage::FunctionalBinIllegal)))
-          ordinaryAlternatives.push_back(alternative.id);
+          ordinaryTransitionSlots.push_back(binding.activeSlot);
         if (hit) {
           if (bin->flags & (obelisk::coverage::FunctionalBinIgnore |
                             obelisk::coverage::FunctionalBinIllegal)) {
             transitionHits.insert(binIndex);
-            exclusionHitLengths.push_back(alternative.stepCount);
+            exclusionHitLengths.push_back(shortestHit);
           } else {
             ordinaryTransitionHits.push_back(
-                {binIndex, alternative.stepCount, unexcludedHit});
+                {binIndex, shortestUnexcludedHit, unexcludedHit});
           }
         }
       }
-      const uint32_t shortestExclusion =
+      const uint64_t shortestExclusion =
           exclusionHitLengths.empty()
-              ? UINT32_MAX
+              ? UINT64_MAX
               : *std::min_element(exclusionHitLengths.begin(),
                                   exclusionHitLengths.end());
       if (!exclusionHitLengths.empty()) {
-        // A fixed exclusion word that ends on this sample taints every live
+        // An exclusion word that ends on this sample taints every live
         // ordinary prefix containing that suffix. Keep the taint with the
         // overlapping matcher state so a longer ordinary word cannot be
         // counted after the ignored or illegal subsequence has completed.
-        for (uint64_t alternativeID : ordinaryAlternatives) {
-          auto active = pendingTransitionActive.find(alternativeID);
-          if (active == pendingTransitionActive.end())
+        for (size_t slot : ordinaryTransitionSlots) {
+          auto &active = pendingTransitionActive[slot];
+          if (!active || !std::any_of(active->begin(), active->end(),
+                                      [&](const auto &state) {
+                                        return !state.excluded &&
+                                               state.samplesConsumed >=
+                                                   shortestExclusion;
+                                      }))
             continue;
-          std::set<FunctionalCoverageInstanceState::TransitionActiveState>
-              tainted;
-          for (auto state : active->second) {
-            if (state.ordinal >= shortestExclusion)
+          auto tainted = std::make_shared<
+              FunctionalCoverageInstanceState::TransitionStates>();
+          for (auto state : *active) {
+            if (state.samplesConsumed >= shortestExclusion)
               state.excluded = true;
-            tainted.insert(std::move(state));
+            tainted->insert(std::move(state));
           }
-          active->second = std::move(tainted);
+          active = std::move(tainted);
         }
       }
       for (const OrdinaryTransitionHit &hit : ordinaryTransitionHits) {
         bool excluded = !hit.unexcluded;
-        excluded |=
-            !exclusionHitLengths.empty() && shortestExclusion <= hit.stepCount;
+        excluded |= !exclusionHitLengths.empty() &&
+                    shortestExclusion <= hit.shortestLength;
         if (!excluded)
           transitionHits.insert(hit.binIndex);
       }

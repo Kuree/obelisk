@@ -1795,7 +1795,7 @@ struct FunctionalCoverageTypeState {
   std::vector<FunctionalCoverageBinState> bins;
   std::vector<FunctionalCoverageCrossState> crosses;
   std::vector<uint64_t> instances;
-  /// Resolved ordinary transition alternatives removed by fixed transition
+  /// Resolved ordinary transition alternatives removed by bounded transition
   /// ignore/illegal words. This is derived from the v1 schema and therefore
   /// is an implementation detail rather than a serialized identity.
   std::unordered_set<uint64_t> suppressedTransitionAlternatives;
@@ -1836,20 +1836,33 @@ struct FunctionalCoverageTypeOptions {
   obelisk::coverage::detail::IndexMap<uint64_t, std::string> comments;
 };
 
-struct FunctionalCoverageInstanceState {
-  struct TransitionActiveState {
-    uint32_t ordinal = 0;
-    uint32_t gapForbiddenOrdinal = UINT32_MAX;
-    uint64_t repetitionsConsumed = 0;
-    bool excluded = false;
+struct FunctionalCoverageTransitionState {
+  uint32_t ordinal = 0;
+  uint32_t gapForbiddenOrdinal = UINT32_MAX;
+  uint64_t repetitionsConsumed = 0;
+  bool excluded = false;
+  /// Actual sampled prefix length, distinct from the number of stored steps.
+  /// Zero when no transition exclusion needs this history.
+  uint64_t samplesConsumed = 0;
+};
 
-    bool operator<(const TransitionActiveState &other) const {
-      return std::tie(ordinal, gapForbiddenOrdinal, repetitionsConsumed,
-                      excluded) <
-             std::tie(other.ordinal, other.gapForbiddenOrdinal,
-                      other.repetitionsConsumed, other.excluded);
-    }
-  };
+namespace obelisk::coverage::detail {
+template <> struct IndexKey<::FunctionalCoverageTransitionState> {
+  static void append(std::vector<uint8_t> &bytes,
+                     const ::FunctionalCoverageTransitionState &key) {
+    IndexKey<uint32_t>::append(bytes, key.ordinal);
+    IndexKey<uint32_t>::append(bytes, key.gapForbiddenOrdinal);
+    IndexKey<uint64_t>::append(bytes, key.repetitionsConsumed);
+    IndexKey<uint8_t>::append(bytes, key.excluded);
+    IndexKey<uint64_t>::append(bytes, key.samplesConsumed);
+  }
+};
+} // namespace obelisk::coverage::detail
+
+struct FunctionalCoverageInstanceState {
+  using TransitionActiveState = FunctionalCoverageTransitionState;
+  using TransitionStates =
+      obelisk::coverage::detail::IndexSet<TransitionActiveState>;
 
   uint64_t typeID = 0;
   obelisk::coverage::Digest configuration{};
@@ -1878,12 +1891,14 @@ struct FunctionalCoverageInstanceState {
   obelisk::coverage::detail::IndexMap<uint64_t, FunctionalCoverageValue>
       formals;
   std::vector<FunctionalCoverageBinState> bins;
-  /// Live overlapping matches keyed by resolved transition alternative. A
+  /// Live overlapping matches in frozen per-type alternative slots. A
   /// zero repeat count means the step has not matched yet. For a successor or
   /// terminal accepting gap of nonconsecutive repetition,
   /// gapForbiddenOrdinal identifies the repeated step whose value may not
   /// recur. The terminal accepting state uses ordinal == stepCount.
-  std::map<uint64_t, std::set<TransitionActiveState>> transitionActive;
+  /// Histories are immutable so staged samples share prior states without
+  /// copying them. Empty alternatives have null slots and allocate no set.
+  std::vector<std::shared_ptr<const TransitionStates>> transitionActive;
   std::unordered_set<uint64_t> transitionSampledItems;
   obelisk::coverage::detail::IndexMap<uint64_t,
                                       FunctionalCoverageCrossTupleCounters>

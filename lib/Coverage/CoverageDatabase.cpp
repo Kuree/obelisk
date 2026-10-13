@@ -4254,7 +4254,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
             step.repetition != TransitionRepetitionKind::Consecutive)
           return fail(Status::InvalidReference,
                       "transition_step.array_repetition");
-        if (((variableLength || unresolved) &&
+        if ((variableLength &&
              (bin->flags & (FunctionalBinIgnore | FunctionalBinIllegal))) ||
             (variableLength && arrayed))
           return fail(Status::InvalidReference,

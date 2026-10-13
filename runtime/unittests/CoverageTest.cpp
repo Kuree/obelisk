@@ -5341,6 +5341,177 @@ TEST_F(CoverageRuntimeDesignTest,
   }
 }
 
+obelisk::coverage::Database
+makeRepeatedExclusionSchema(uint64_t ordinaryLower, uint64_t ordinaryUpper,
+                            uint64_t ignoredLower, uint64_t ignoredUpper,
+                            bool partialOrdinary = false) {
+  using namespace obelisk::coverage;
+  Database schema = makeGuardedTransitionSchema(2, true, partialOrdinary);
+  const std::array<std::tuple<size_t, uint64_t, uint64_t>, 2> bounds{
+      {{0, ordinaryLower, ordinaryUpper}, {2, ignoredLower, ignoredUpper}}};
+  for (auto [index, lower, upper] : bounds) {
+    auto &step = schema.transitionSteps[index];
+    step.repetition = TransitionRepetitionKind::Consecutive;
+    step.lowerBound = lower;
+    step.upperBound = upper;
+  }
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  return schema;
+}
+
+obelisk_rt_status
+createRepeatedExclusionFunctional(obelisk_rt_context *context,
+                                  bool partialOrdinary, uint8_t ignoredLast,
+                                  obelisk_rt_covergroup_v1 *handle) {
+  std::array<uint8_t, 7> values{1, 2, 1, ignoredLast, 0, 0, 3};
+  std::array<obelisk_rt_functional_value_v1, 7> expressions;
+  for (size_t index = 0; index != expressions.size(); ++index)
+    expressions[index] = {index == 6 ? 20000 : 10000 + index,
+                          2,
+                          1,
+                          &values[index],
+                          nullptr,
+                          nullptr,
+                          0,
+                          OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                          0};
+  return obelisk_rt_v1_covergroup_create(context, 10, nullptr, 0,
+                                         expressions.data(),
+                                         partialOrdinary ? 7 : 6, handle);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       RepeatedTransitionExclusionsRemoveEveryCoveredLengthFromDenominator) {
+  using namespace obelisk::coverage;
+  constexpr std::array<std::array<uint64_t, 4>, 4> bounds{
+      {{2, 2, 1, 1}, {3, 3, 2, 3}, {2, 3, 1, 1}, {2, 3, 2, 2}}};
+  for (const auto &test : bounds) {
+    Database schema =
+        makeRepeatedExclusionSchema(test[0], test[1], test[2], test[3]);
+    obelisk_rt_context *context = createContextForSchema(schema);
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
+              OBELISK_RT_OK);
+    const auto &instance = context->coverage->instances.at(handle);
+    EXPECT_TRUE(instance.bins.front().flags & FunctionalBinEmpty);
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handle, 20, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, 0);
+    EXPECT_EQ(total, 0);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       BoundedTransitionExclusionsPreserveShorterOverlappingMatches) {
+  using namespace obelisk::coverage;
+  for (bool adjacentRepetition : {false, true}) {
+    Database schema =
+        makeRepeatedExclusionSchema(1, adjacentRepetition ? 2 : 3, 2, 2);
+    if (adjacentRepetition) {
+      auto &ordinaryLast = schema.transitionSteps[1];
+      ordinaryLast.repetition = TransitionRepetitionKind::Consecutive;
+      ordinaryLast.upperBound = 2;
+      auto &ignoredLast = schema.transitionSteps[3];
+      ignoredLast.repetition = TransitionRepetitionKind::Consecutive;
+      ignoredLast.lowerBound = ignoredLast.upperBound = 2;
+      schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    }
+    obelisk_rt_context *context = createContextForSchema(schema);
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
+              OBELISK_RT_OK);
+    const auto &instance = context->coverage->instances.at(handle);
+    EXPECT_FALSE(instance.bins.front().flags & FunctionalBinEmpty);
+    GuardedTransitionSample sample{context, handle};
+    ASSERT_EQ(sample(1), OBELISK_RT_OK);
+    ASSERT_EQ(sample(1), OBELISK_RT_OK);
+    ASSERT_EQ(sample(2), OBELISK_RT_OK);
+    EXPECT_EQ(instance.bins.front().count, 1u);
+    if (adjacentRepetition) {
+      ASSERT_EQ(sample(2), OBELISK_RT_OK);
+      EXPECT_EQ(instance.bins.front().count, 2u);
+    }
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       RepeatedTransitionPrefixKeepsEarlierExclusionTaint) {
+  using namespace obelisk::coverage;
+  Database schema = makeRepeatedExclusionSchema(3, 3, 1, 1, true);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createRepeatedExclusionFunctional(context, true, 1, &handle),
+            OBELISK_RT_OK);
+  const auto &instance = context->coverage->instances.at(handle);
+  EXPECT_FALSE(instance.bins.front().flags & FunctionalBinEmpty);
+  GuardedTransitionSample sample{context, handle};
+  for (uint8_t value : {1, 1, 3, 2})
+    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+  EXPECT_EQ(instance.bins.front().count, 0u);
+  for (uint8_t value : {3, 3, 3, 2})
+    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+  EXPECT_EQ(instance.bins.front().count, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       RepeatedIllegalTransitionReportsOncePerSampleWhenGuarded) {
+  using namespace obelisk::coverage;
+  Database schema = makeRepeatedExclusionSchema(3, 3, 2, 3);
+  schema.functionalBins[1].flags = FunctionalBinIllegal;
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
+            OBELISK_RT_OK);
+  const auto &bins = context->coverage->instances.at(handle).bins;
+  EXPECT_TRUE(bins.front().flags & FunctionalBinEmpty);
+  GuardedTransitionSample sample{context, handle};
+  for (uint8_t value : {1, 1, 2})
+    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+  EXPECT_TRUE(saveCoverage(context, "disabled-repeated-illegal")
+                  .illegalBinDiagnostics.empty());
+  // This guard belongs to the bin changed from ignored to illegal above.
+  sample.ignored = 1;
+  for (uint8_t value : {1, 1, 1, 2})
+    ASSERT_EQ(sample(value), OBELISK_RT_OK);
+  EXPECT_EQ(bins.front().count, 0u);
+  Database saved = saveCoverage(context, "enabled-repeated-illegal");
+  ASSERT_EQ(saved.illegalBinDiagnostics.size(), 1u);
+  EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, bins[1].id);
+  EXPECT_EQ(saved.illegalBinDiagnostics.front().count, 1u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       HugeRepeatedTransitionExclusionDerivationFailsBeforePublication) {
+  auto schema =
+      makeRepeatedExclusionSchema(UINT64_MAX - 1, UINT64_MAX - 1, 1, 1);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  EXPECT_EQ(createRepeatedExclusionFunctional(context, false, 2, &handle),
+            OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(handle, 0u);
+  EXPECT_TRUE(context->coverage->instances.empty());
+  EXPECT_TRUE(context->coverage->types.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST_F(CoverageRuntimeDesignTest,
      FixedTransitionExclusionDerivationHasDeterministicWorkLimit) {
   using namespace obelisk::coverage;

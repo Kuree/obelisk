@@ -1363,8 +1363,9 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         if (pointHasTransitionExclusion && !defaultSequence &&
             !multipleBinsHasVariableLengthTransition) {
           // Transition subtraction is performed after distribution. The
-          // runtime accepts fixed-length symbolic integral words for both
-          // ordinary and exclusion bins. This excludes repetitions and
+          // runtime accepts bounded symbolic integral words for both
+          // ordinary and exclusion bins, including consecutive repetition.
+          // This excludes goto/nonconsecutive repetition and
           // set expressions whose subtraction would require a more general
           // temporal language operation.
           if (basicFinite) {
@@ -1372,16 +1373,20 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
                  transitionChildren->transitions)
               for (const CoverageTransitionRangeChildren &range : set.ranges) {
                 basicFinite &=
-                    range.repeatKind ==
-                        semantic::SVCoverageTransitionRepeatKind::None &&
+                    (range.repeatKind ==
+                         semantic::SVCoverageTransitionRepeatKind::None ||
+                     range.repeatKind ==
+                         semantic::SVCoverageTransitionRepeatKind::
+                             Consecutive) &&
                     !range.items.empty();
               }
           }
           if (!basicFinite) {
             emitError(getSemanticLocation(op))
                 << "transition ignore_bins and illegal_bins currently require "
-                   "integral fixed-length transitions, scalar or unsized "
-                   "arrays, with no repetition or set expression";
+                   "integral bounded transitions, scalar or unsized "
+                   "arrays, with optional consecutive repetition and no "
+                   "set expression";
             invalid = true;
           }
         }
