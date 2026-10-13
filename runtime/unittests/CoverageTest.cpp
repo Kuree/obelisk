@@ -1786,6 +1786,383 @@ TEST(CoverageDatabaseTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       PreparedCrossValuesPreserveSharedSelectorCorrelations) {
+  using namespace obelisk::coverage;
+  Database schema = makeSharedAndSelectorSchema();
+  schema.functionalValueLimbs[2].lowAval = 0;
+  schema.functionalValueLimbs[2].highAval = 0;
+  schema.functionalBins.push_back(
+      {42, 21, "one", FunctionalBinKind::State, 0, 1, 1, "top.cg.second.one"});
+  schema.functionalValueSets.push_back({53, 21, 3, 1, 2,
+                                        FunctionalValueSetKind::Integral, 0,
+                                        CoverageSignedness::Unsigned, 0});
+  schema.functionalValueAtoms.push_back(schema.functionalValueAtoms[1]);
+  schema.functionalValueAtoms.back().valueSet = 53;
+  schema.functionalValueAtoms.back().firstLimb = 3;
+  schema.functionalValueLimbs.push_back({53, 0, 0, 1, 0, 1, 0, 0});
+  schema.functionalBinPlans.push_back({42, 53});
+  schema.crossSelectorNodes.push_back({74, 22, 20, 31, 0, 0, 0, 0, 0, 4, 0,
+                                       CrossSelectorKind::Binsof, 4, 0,
+                                       CrossMatchesPolicy::None, 0});
+  schema.crossSelectorNodes.push_back({75, 22, 21, 42, 0, 0, 0, 0, 0, 4, 0,
+                                       CrossSelectorKind::Binsof, 5, 0,
+                                       CrossMatchesPolicy::None, 0});
+  schema.crossSelectorNodes.push_back({76, 22, 0, 0, 0, 0, 0, 0, 0, 4, 2,
+                                       CrossSelectorKind::And, 6, 0,
+                                       CrossMatchesPolicy::None, 0});
+  schema.crossSelectorNodes.push_back({77, 22, 0, 0, 0, 0, 0, 0, 0, 6, 2,
+                                       CrossSelectorKind::Or, 7, 0,
+                                       CrossMatchesPolicy::None, 0});
+  schema.crossSelectorOperands.insert(
+      schema.crossSelectorOperands.end(),
+      {{76, 74, 0}, {76, 75, 1}, {77, 73, 0}, {77, 76, 1}});
+  schema.crossBins.front().rootSelector = 77;
+  obelisk_rt_context *local = createContextForSchema(schema);
+  ASSERT_NE(local, nullptr);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  uint64_t token = 0;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
+      OBELISK_RT_OK);
+  CoverageTupleQueueSnapshot values;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 77, 2, values),
+      OBELISK_RT_OK);
+  EXPECT_EQ(values.count, 2u);
+  EXPECT_EQ(values.value, (std::vector<uint8_t>{0, 5}));
+  EXPECT_TRUE(local->coverage->schema->functionalConfigurations.empty());
+  EXPECT_TRUE(local->coverage->instances.empty());
+  EXPECT_TRUE(local->coverage->types.empty());
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+            OBELISK_RT_OK);
+  EXPECT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 77, 2, values),
+      OBELISK_RT_INVALID_HANDLE);
+  uint64_t replacement = 0;
+  ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0,
+                                                     &replacement),
+            OBELISK_RT_OK);
+  EXPECT_NE(token, replacement);
+  EXPECT_EQ(static_cast<uint32_t>(token), static_cast<uint32_t>(replacement));
+  EXPECT_EQ(local->coverage->preparations.size(), 1u);
+  EXPECT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+            OBELISK_RT_INVALID_HANDLE);
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, replacement),
+            OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 instance = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0, nullptr, 0,
+                                            &instance),
+            OBELISK_RT_OK);
+  EXPECT_EQ(instance, 1u);
+  EXPECT_EQ(validate(saveCoverage(local, "prepared-correlations")), Status::Ok);
+  obelisk_rt_v1_context_destroy(local);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       PreparedCrossValuesResolveWideConstructorRangesAndPreserveOutput) {
+  using namespace obelisk::coverage;
+  Database schema = makeSharedAndSelectorSchema();
+  schema.functionalBins.erase(schema.functionalBins.begin() + 1);
+  schema.functionalValueSets = {
+      {50, 20, 0, 1, 65, FunctionalValueSetKind::Integral, 0,
+       CoverageSignedness::Unsigned, 0},
+      {52, 21, 1, 1, 1, FunctionalValueSetKind::Integral, 0,
+       CoverageSignedness::Unsigned, 0}};
+  schema.functionalValueSets[0].flags = FunctionalValueSetNeedsResolution;
+  constexpr uint32_t inclusive =
+      FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+  schema.functionalValueAtoms = {
+      {50, 0, 0, 0, 0, 0, FunctionalValueAtomKind::IntegralRange, inclusive,
+       100, 101},
+      {52, 0, 0, 0, 1, 0, FunctionalValueAtomKind::IntegralValue, inclusive, 0,
+       0}};
+  schema.functionalValueLimbs = {{52, 0, 0, 0, 0, 0, 0, 0}};
+  schema.functionalBinPlans = {{30, 50}, {40, 52}};
+  schema.functionalExpressions[0].bitWidth = 65;
+  schema.functionalExpressions[1].bitWidth = 1;
+  FunctionalExpression upper;
+  upper.id = 101;
+  upper.owner = 50;
+  upper.ownerKind = FunctionalExpressionOwnerKind::ValueSet;
+  upper.role = FunctionalExpressionRole::ValueAtomUpper;
+  upper.resultKind = FunctionalExpressionResultKind::Integral;
+  upper.bitWidth = 65;
+  upper.signedness = CoverageSignedness::Unsigned;
+  upper.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
+  upper.resultOrdinal = 1;
+  auto lower = upper;
+  lower.id = 100;
+  lower.role = FunctionalExpressionRole::ValueAtomLower;
+  lower.resultOrdinal = 0;
+  schema.functionalExpressions.push_back(lower);
+  schema.functionalExpressions.push_back(upper);
+  schema.crossPlans.front().tupleProvenanceSpan = 66;
+  schema.crossTargets[0].tupleBitWidth = 65;
+  schema.crossTargets[1].tupleBitOffset = 65;
+  schema.crossTargets[1].tupleBitWidth = 1;
+  obelisk_rt_context *local = createContextForSchema(schema);
+  ASSERT_NE(local, nullptr);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  uint64_t token = 53;
+  EXPECT_EQ(
+      obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
+      OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(token, 53u);
+  std::array<uint8_t, 9> upperBytes{}, lowerBytes;
+  lowerBytes.fill(UINT8_MAX);
+  lowerBytes[0] = UINT8_MAX - 1;
+  lowerBytes[8] = 0;
+  upperBytes[8] = 1;
+  std::array<obelisk_rt_functional_value_v1, 2> encoded{
+      {{100, 65, 9, lowerBytes.data(), nullptr, nullptr, 0,
+        OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+       {101, 65, 9, upperBytes.data(), nullptr, nullptr, 0,
+        OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}}};
+  ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, encoded.data(),
+                                                     encoded.size(), &token),
+            OBELISK_RT_OK);
+  CoverageTupleQueueSnapshot values;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 73, 3, values),
+      OBELISK_RT_OK);
+  EXPECT_EQ(values.count, 3u);
+  ASSERT_EQ(values.valueSize, 9u);
+  EXPECT_EQ(read64(values.value, 0), UINT64_MAX - 1);
+  EXPECT_EQ(read64(values.value, 9), UINT64_MAX);
+  EXPECT_EQ(read64(values.value, 18), 0u);
+  EXPECT_EQ(values.value[26], 1u);
+  const auto previous = values.value;
+  EXPECT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 73, 2, values),
+      OBELISK_RT_OUT_OF_RESOURCES);
+  EXPECT_EQ(values.value, previous);
+  EXPECT_EQ(values.count, 3u);
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+            OBELISK_RT_OK);
+  upperBytes[0] = 1;
+  ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, encoded.data(),
+                                                     encoded.size(), &token),
+            OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 73, 4, values),
+      OBELISK_RT_OK);
+  EXPECT_EQ(values.count, 4u);
+  EXPECT_EQ(read64(values.value, 27), 1u);
+  EXPECT_EQ(values.value[35], 1u);
+  EXPECT_TRUE(local->coverage->schema->functionalConfigurations.empty());
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(local);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       PreparedCrossValuesPreserveSignedUnknownPlanesAndContextIdentity) {
+  using namespace obelisk::coverage;
+  Database schema = makeSharedAndSelectorSchema();
+  schema.functionalExpressions[0].signedness = CoverageSignedness::Signed;
+  schema.functionalExpressions[0].flags =
+      FunctionalExpressionCoverpointFourState;
+  schema.functionalValueSets[0].signedness = CoverageSignedness::Signed;
+  schema.functionalValueSets[1].signedness = CoverageSignedness::Signed;
+  schema.functionalValueLimbs[0].lowBval = 1;
+  schema.functionalValueLimbs[0].highBval = 1;
+  schema.crossTargets[0].tupleSignedness = CoverageSignedness::Signed;
+  schema.crossTargets[0].tupleFlags =
+      CrossTargetDomainFourState | CrossTupleFieldFourState;
+  schema.crossPlans[0].tupleFlags = CrossTupleFourState;
+  obelisk_rt_context *local = createContextForSchema(schema);
+  obelisk_rt_context *other = createContextForSchema(schema);
+  ASSERT_NE(local, nullptr);
+  ASSERT_NE(other, nullptr);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  ASSERT_EQ(finalizeCoverage(other, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  uint64_t token = 0, foreign = 0;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepare_construction(local, 10, nullptr, 0, &token),
+      OBELISK_RT_OK);
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepare_construction(other, 10, nullptr, 0, &foreign),
+      OBELISK_RT_OK);
+  CoverageTupleQueueSnapshot values;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 73, 1, values),
+      OBELISK_RT_OK);
+  EXPECT_EQ(values.value, (std::vector<uint8_t>{8}));
+  EXPECT_EQ(values.unknown, (std::vector<uint8_t>{1}));
+  EXPECT_TRUE(values.fourState);
+  EXPECT_EQ(
+      obelisk_rt_coverage_prepared_candidates(other, token, 73, 1, values),
+      OBELISK_RT_INVALID_HANDLE);
+  EXPECT_EQ(obelisk_rt_coverage_release_preparation(local, foreign),
+            OBELISK_RT_INVALID_HANDLE);
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(other, foreign),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(local);
+  obelisk_rt_v1_context_destroy(other);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       PreparedCrossValuesApplyTupleSetMatchesToFrozenAssociatedValues) {
+  using namespace obelisk::coverage;
+  for (auto policy : {CrossMatchesPolicy::Count, CrossMatchesPolicy::All}) {
+    Database schema =
+        makeCrossWithSchema(policy, policy == CrossMatchesPolicy::Count ? 5 : 0,
+                            /*splitFirstTarget=*/true);
+    schema.functionalExpressions.erase(
+        std::remove_if(schema.functionalExpressions.begin(),
+                       schema.functionalExpressions.end(),
+                       [](const auto &row) {
+                         return row.role ==
+                                FunctionalExpressionRole::SelectorWith;
+                       }),
+        schema.functionalExpressions.end());
+    auto &selector = schema.crossSelectorNodes.front();
+    selector.kind = CrossSelectorKind::Set;
+    selector.withExpression = 0;
+    selector.constructionExpression = 100;
+    FunctionalExpression expression;
+    expression.id = 100;
+    expression.owner = selector.id;
+    expression.ownerKind = FunctionalExpressionOwnerKind::Selector;
+    expression.role = FunctionalExpressionRole::BinSet;
+    expression.resultKind = FunctionalExpressionResultKind::TupleQueue;
+    expression.evaluationPhase =
+        FunctionalExpressionEvaluationPhase::Constructor;
+    schema.functionalExpressions.push_back(expression);
+    obelisk_rt_context *local = createContextForSchema(schema);
+    ASSERT_NE(local, nullptr);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(local, &lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+    obelisk_rt_element_type_v1 element{};
+    element.version = OBELISK_RT_VERSION;
+    element.kind = OBELISK_RT_ELEMENT_AGGREGATE;
+    element.type_id = 220;
+    element.value_size = 1;
+    element.alignment = 1;
+    element.bit_width = 8;
+    obelisk_rt_object_v1 *queue = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_root_v1 root{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
+    const std::vector<uint8_t> selected{0, 4, 8, 12, 1, 5, 9, 13};
+    for (size_t ordinal = 0; ordinal != selected.size(); ++ordinal)
+      ASSERT_EQ(obelisk_rt_v1_container_write(lane, queue, ordinal,
+                                              &selected[ordinal], nullptr),
+                OBELISK_RT_OK);
+    obelisk_rt_functional_value_v1 encoded{};
+    encoded.id = 100;
+    encoded.owner = queue;
+    encoded.kind = OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER;
+    uint64_t token = 0;
+    ASSERT_EQ(obelisk_rt_coverage_prepare_construction(local, 10, &encoded, 1,
+                                                       &token),
+              OBELISK_RT_OK);
+    // Alter the original queue after staging; the constructor owns its
+    // snapshot.
+    const std::vector<uint8_t> remaining{2, 6, 10, 14, 3, 7, 11, 15};
+    for (size_t ordinal = 0; ordinal != remaining.size(); ++ordinal)
+      ASSERT_EQ(obelisk_rt_v1_container_write(lane, queue,
+                                              selected.size() + ordinal,
+                                              &remaining[ordinal], nullptr),
+                OBELISK_RT_OK);
+    CoverageTupleQueueSnapshot values;
+    ASSERT_EQ(
+        obelisk_rt_coverage_prepared_candidates(local, token, 70, 8, values),
+        OBELISK_RT_OK);
+    EXPECT_EQ(values.count, 8u);
+    EXPECT_EQ(values.value, selected);
+    ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(local);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       PreparedCrossIntersectSelectsWholeBinsAfterExclusions) {
+  using namespace obelisk::coverage;
+  Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, 1);
+  schema.functionalExpressions.erase(
+      std::remove_if(schema.functionalExpressions.begin(),
+                     schema.functionalExpressions.end(),
+                     [](const auto &row) {
+                       return row.role ==
+                              FunctionalExpressionRole::SelectorWith;
+                     }),
+      schema.functionalExpressions.end());
+  auto &selector = schema.crossSelectorNodes.front();
+  selector.kind = CrossSelectorKind::Binsof;
+  selector.target = 20;
+  selector.valueSet = 51;
+  selector.withExpression = 0;
+  selector.matchesPolicy = CrossMatchesPolicy::None;
+  selector.matchesCount = 0;
+  schema.functionalValueSets.insert(
+      schema.functionalValueSets.begin() + 1,
+      {51, 20, 1, 1, 2, FunctionalValueSetKind::Integral,
+       FunctionalValueSetNeedsResolution, CoverageSignedness::Unsigned, 0});
+  schema.functionalValueSets.back().firstAtom = 2;
+  constexpr uint32_t inclusive =
+      FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+  schema.functionalValueAtoms.insert(schema.functionalValueAtoms.begin() + 1,
+                                     {51, 0, 0, 1, 0, 0,
+                                      FunctionalValueAtomKind::IntegralValue,
+                                      inclusive, 100, 0});
+  FunctionalExpression intersect;
+  intersect.id = 100;
+  intersect.owner = 51;
+  intersect.ownerKind = FunctionalExpressionOwnerKind::ValueSet;
+  intersect.role = FunctionalExpressionRole::ValueAtomSingleton;
+  intersect.resultKind = FunctionalExpressionResultKind::Integral;
+  intersect.bitWidth = 2;
+  intersect.signedness = CoverageSignedness::Unsigned;
+  intersect.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
+  schema.functionalExpressions.push_back(intersect);
+  schema.functionalBins.insert(schema.functionalBins.begin() + 1,
+                               {32, 20, "ignored_zero",
+                                FunctionalBinKind::State, FunctionalBinIgnore,
+                                1, 1, "top.cg.first.ignored_zero"});
+  schema.functionalBinPlans.insert(schema.functionalBinPlans.begin() + 1,
+                                   {32, 54});
+  schema.functionalValueSets.push_back({54, 20, 3, 1, 2,
+                                        FunctionalValueSetKind::Integral, 0,
+                                        CoverageSignedness::Unsigned, 0});
+  schema.functionalValueAtoms.push_back({54, 0, 0, 2, 1, 0,
+                                         FunctionalValueAtomKind::IntegralValue,
+                                         inclusive, 0, 0});
+  schema.functionalValueLimbs.push_back({54, 0, 0, 0, 0, 0, 0, 0});
+  obelisk_rt_context *local = createContextForSchema(schema);
+  ASSERT_NE(local, nullptr);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  uint8_t one = 1;
+  obelisk_rt_functional_value_v1 encoded{
+      100,     2,       1, &one,
+      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      0};
+  uint64_t token = 0;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepare_construction(local, 10, &encoded, 1, &token),
+      OBELISK_RT_OK);
+  CoverageTupleQueueSnapshot values;
+  ASSERT_EQ(
+      obelisk_rt_coverage_prepared_candidates(local, token, 70, 12, values),
+      OBELISK_RT_OK);
+  EXPECT_EQ(values.count, 12u);
+  EXPECT_EQ(values.value,
+            (std::vector<uint8_t>{1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15}));
+  ASSERT_EQ(obelisk_rt_coverage_release_preparation(local, token),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(local);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
      CrossWithPersistsSatisfyingTuplesAndAppliesMatchesPolicies) {
   using namespace obelisk::coverage;
   auto exercise = [&](CrossMatchesPolicy policy, uint64_t count,

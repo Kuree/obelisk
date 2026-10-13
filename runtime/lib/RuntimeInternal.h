@@ -258,6 +258,20 @@ obelisk_rt_status obelisk_rt_coverage_tuple_queue_snapshot(
     bool expectedFourState, uint64_t maximumElements,
     CoverageTupleQueueSnapshot &output);
 
+// Private constructor staging. Tokens belong to one context; preparation
+// resolves point bins without publishing a configuration or instance. Candidate
+// snapshots contain distinct selected value tuples in CrossValType layout.
+obelisk_rt_status obelisk_rt_coverage_prepare_construction(
+    obelisk_rt_context *context, uint64_t type,
+    const obelisk_rt_functional_value_v1 *expressions, uint64_t expressionCount,
+    uint64_t *outToken);
+obelisk_rt_status obelisk_rt_coverage_prepared_candidates(
+    obelisk_rt_context *context, uint64_t token, uint64_t selector,
+    uint32_t maximumCandidates, CoverageTupleQueueSnapshot &output);
+obelisk_rt_status
+obelisk_rt_coverage_release_preparation(obelisk_rt_context *context,
+                                        uint64_t token);
+
 // Validate and copy one transient state-bin set expression before functional
 // coverage resolution. Both dynamic arrays and queues are accepted and queue
 // storage is linearized in logical index order. Coverage.cpp receives only
@@ -1940,6 +1954,7 @@ struct CovergroupBlockEventFeatureState {
 // avoid the context mutex. Toggle publication already serializes committed
 // state transitions and uses the same context lock as the shadow planes.
 struct FunctionalCoverageConstructionSchemas;
+struct FunctionalCoveragePreparedConstruction;
 struct FunctionalCoverageConfigurationSchemas;
 struct FunctionalCoverageLoadedData;
 struct FunctionalCoverageDiagnosticIndex;
@@ -1948,6 +1963,9 @@ struct CoverageState {
   std::unique_ptr<obelisk::coverage::Database> schema;
   std::shared_ptr<const FunctionalCoverageConstructionSchemas>
       constructionSchemas;
+  std::vector<std::shared_ptr<FunctionalCoveragePreparedConstruction>>
+      preparations;
+  std::vector<uint32_t> freePreparations;
   std::shared_ptr<const FunctionalCoverageConfigurationSchemas>
       loadedConfigurationSchemas;
   mutable std::shared_ptr<const FunctionalCoverageLoadedData> loadedData;
