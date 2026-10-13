@@ -1867,20 +1867,30 @@ public:
   }
 };
 
-class RandomSolveWideConversion final
-    : public OpConversionPattern<sim::SimRandomSolveWideOp> {
+template <typename Op>
+class RandomPlanWideConversion final : public OpConversionPattern<Op> {
 public:
-  using OpConversionPattern::OpConversionPattern;
+  using OpConversionPattern<Op>::OpConversionPattern;
   LogicalResult
-  matchAndRewrite(sim::SimRandomSolveWideOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(Op op,
+                  typename OpConversionPattern<Op>::OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     if (adaptor.getContext().size() != 1 || adaptor.getStart().size() != 1 ||
         adaptor.getMutableMask().size() != 1 ||
         adaptor.getConstraintMask().size() != 1 ||
-        adaptor.getMaxAttempts().size() != 1 ||
         adaptor.getRngState().size() != 1 ||
         adaptor.getRngIncrement().size() != 1)
       return failure();
+    if constexpr (std::is_same_v<Op, sim::SimRandomSolveWideOp>) {
+      if (adaptor.getMaxAttempts().size() != 1)
+        return failure();
+    } else {
+      if (adaptor.getKey().size() != 1 || adaptor.getPosition().size() != 1 ||
+          adaptor.getDomain().size() != 1 ||
+          adaptor.getFieldOffset().size() != 1 ||
+          adaptor.getFieldWidth().size() != 1)
+        return failure();
+    }
     auto assignmentType =
         dyn_cast<IntegerType>(adaptor.getStart().front().getType());
     if (!assignmentType ||
@@ -1968,20 +1978,38 @@ public:
     Value successStorage = entryAlloca(rewriter, op.getLoc(), i32, 1, 4);
     Value nextRngState = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
     Value context = adaptor.getContext().front();
+    SmallVector<Value> arguments{context,
+                                 programAddress,
+                                 c64(program.size()),
+                                 startAddress,
+                                 mutableAddress,
+                                 c64(assignmentWords),
+                                 adaptor.getConstraintMask().front()};
+    if constexpr (std::is_same_v<Op, sim::SimRandomSolveWideOp>)
+      arguments.push_back(adaptor.getMaxAttempts().front());
+    arguments.append(
+        {adaptor.getRngState().front(), adaptor.getRngIncrement().front()});
+    Value nextKey, nextPosition, nextDomain;
+    StringRef functionName = "obelisk_rt_v1_random_solve_wide_modes_state";
+    if constexpr (std::is_same_v<Op, sim::SimRandomCycleSampleOp>) {
+      functionName = "obelisk_rt_v1_random_cycle_sample";
+      arguments.append({adaptor.getKey().front(), adaptor.getPosition().front(),
+                        adaptor.getDomain().front(),
+                        adaptor.getFieldOffset().front(),
+                        adaptor.getFieldWidth().front()});
+      nextKey = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+      nextPosition = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+      nextDomain = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    }
+    arguments.append({captureAddress, c64(captureWordCount),
+                      captureWidthsAddress, c64(captures.size()),
+                      assignmentAddress, successStorage, nextRngState});
+    if constexpr (std::is_same_v<Op, sim::SimRandomCycleSampleOp>)
+      arguments.append({nextKey, nextPosition, nextDomain});
     Value status =
         LLVM::CallOp::create(
             rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_random_solve_wide_modes_state"),
-            ValueRange{context, programAddress, c64(program.size()),
-                       startAddress, mutableAddress, c64(assignmentWords),
-                       adaptor.getConstraintMask().front(),
-                       adaptor.getMaxAttempts().front(),
-                       adaptor.getRngState().front(),
-                       adaptor.getRngIncrement().front(), captureAddress,
-                       c64(captureWordCount), captureWidthsAddress,
-                       c64(captures.size()), assignmentAddress, successStorage,
-                       nextRngState})
+            SymbolRefAttr::get(rewriter.getContext(), functionName), arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
 
@@ -2011,10 +2039,20 @@ public:
         LLVM::LoadOp::create(rewriter, op.getLoc(), i32, successStorage, 4));
     Value nextState =
         LLVM::LoadOp::create(rewriter, op.getLoc(), i64, nextRngState, 8);
-    rewriter.replaceOp(op, ValueRange{result, successValue, nextState});
+    SmallVector<Value> results{result, successValue, nextState};
+    if constexpr (std::is_same_v<Op, sim::SimRandomCycleSampleOp>)
+      for (Value address : {nextKey, nextPosition, nextDomain})
+        results.push_back(
+            LLVM::LoadOp::create(rewriter, op.getLoc(), i64, address, 8));
+    rewriter.replaceOp(op, results);
     return success();
   }
 };
+
+using RandomSolveWideConversion =
+    RandomPlanWideConversion<sim::SimRandomSolveWideOp>;
+using RandomCycleSampleConversion =
+    RandomPlanWideConversion<sim::SimRandomCycleSampleOp>;
 
 class ContainerReadConversion final
     : public OpConversionPattern<sim::SimContainerReadOp> {
@@ -2191,10 +2229,11 @@ void populateManagedContainerToLLVMConversionPatterns(
       ContainerExportBitstreamConversion, RecursiveExportBitstreamConversion,
       AggregateExportBitstreamConversion, AggregateImportBitstreamConversion>(
       converter, context, dataLayout);
-  patterns.add<RandomSolveWideConversion, RandomRealToRankConversion,
-               RandomRealFromRankConversion, SampledReadConversion,
-               SampledHistoryConversion, ClockedSampleUpdateConversion,
-               ClockedSampleReadConversion>(converter, context);
+  patterns.add<RandomSolveWideConversion, RandomCycleSampleConversion,
+               RandomRealToRankConversion, RandomRealFromRankConversion,
+               SampledReadConversion, SampledHistoryConversion,
+               ClockedSampleUpdateConversion, ClockedSampleReadConversion>(
+      converter, context);
   populateManagedAssociativeToLLVMConversionPatterns(patterns, converter);
 }
 

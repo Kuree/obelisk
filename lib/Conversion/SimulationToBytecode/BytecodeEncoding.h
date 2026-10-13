@@ -373,6 +373,8 @@ constexpr uint32_t kIntrinsicRandomRealFromRank =
     OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK;
 constexpr uint32_t kIntrinsicRandomCycleNext =
     OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_NEXT;
+constexpr uint32_t kIntrinsicRandomCycleSample =
+    OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE;
 constexpr uint32_t kIntrinsicRandomNext = OBELISK_RT_INTRINSIC_V1_RANDOM_NEXT;
 constexpr uint32_t kIntrinsicRandomInitializationEnter =
     OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_ENTER;

@@ -371,7 +371,7 @@
         {
           "feature": "Constrained randc cycle restart",
           "status": "partial",
-          "detail": "Compiler Z3 plans let each cyclic candidate test for a legal completion with later cyclic and ordinary fields free. Rejected semantic values are skipped, enum holes do not consume the exhaustion budget, and exhausted remainders restart one full permutation. Accepted histories and all fields are published only after the final ordinary solve succeeds. Arbitrary changes to a live cycle's constraints and domains still need persistent restart tracking."
+          "detail": "Compiler Z3 plans let each cyclic candidate test for a legal completion with later cyclic and ordinary fields free. Rejected semantic values are skipped, enum holes do not consume the exhaustion budget, and exhausted remainders restart one full permutation. Accepted histories and all fields are published only after the final ordinary solve succeeds. Arbitrary changes to a live cycle's constraints and domains still need persistent restart tracking. A typed Simulation cyclic sampler now projects the legal field domain, permutes dense ranks and returns an exact canonical managed snapshot with transactional history and RNG outputs. Native and WASM MLIR cover sparse 32-bit domains, live bound changes, reordered plans with different completion counts, hard distribution support with wide weights, and frozen-state failures. This primitive is not yet connected to persistent source property fields; source constraint-context changes that preserve the legal domain also remain open."
         },
         {
           "feature": "Multiple randc variables",
@@ -394,11 +394,14 @@
           "runtime/lib/RandSolveWide.cpp",
           "lib/Solver/RandomSamplerZ3.cpp",
           "runtime/lib/RandSamplePlan.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "runtime/lib/RandModelCount.h",
+          "lib/Dialect/Simulation/Transforms/CompileRandomPlans.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
+          "test/Runtime/simulation-random-cyclic-domain-runtime.mlir"
         ]
       }
     },

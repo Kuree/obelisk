@@ -1366,6 +1366,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_INITIALIZATION_LEAVE = UINT32_C(0x00010483),
   OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK = UINT32_C(0x00010484),
   OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK = UINT32_C(0x00010485),
+  OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE = UINT32_C(0x00010486),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -5249,6 +5250,22 @@ obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     const uint32_t *capture_widths, uint64_t capture_count,
     uint64_t *out_assignment_words, uint32_t *out_success,
     uint64_t *out_rng_state);
+// Project one cyclic field from a version-2 compiler sampling plan. Histories
+// are immutable managed strings that callers keep rooted like other strings.
+// No field, history or supplied RNG is changed on an unsuccessful stage.
+// Only the selected field is patched in the returned aggregate; later fields
+// are existential completion variables. All output words are initialized.
+obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
+    obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
+    const uint64_t *start_words, const uint64_t *mutable_mask_words,
+    uint64_t assignment_word_count, uint64_t constraint_mask,
+    uint64_t rng_state, uint64_t rng_increment, uint64_t key, uint64_t position,
+    obelisk_rt_string_v1 domain, uint32_t field_offset, uint32_t field_width,
+    const uint64_t *capture_words, uint64_t capture_word_count,
+    const uint32_t *capture_widths, uint64_t capture_count,
+    uint64_t *out_assignment_words, uint32_t *out_success,
+    uint64_t *out_rng_state, uint64_t *out_key, uint64_t *out_position,
+    obelisk_rt_string_v1 *out_domain);
 obelisk_rt_status
 obelisk_rt_v1_random_get_state(obelisk_rt_context *context,
                                obelisk_rt_random_state_v1 *out_state);

@@ -776,6 +776,8 @@ LogicalResult lowerPackedSimulationOperations(
       program = solve.getProgram();
     else if (auto solve = dyn_cast<sim::SimRandomSolveWideOp>(operation))
       program = solve.getProgram();
+    else if (auto cyclic = dyn_cast<sim::SimRandomCycleSampleOp>(operation))
+      program = cyclic.getProgram();
     if (!program.empty()) {
       std::string name = "__obelisk_random_program_" +
                          llvm::utohexstr(llvm::hash_value(program));
@@ -1141,11 +1143,11 @@ LogicalResult lowerPackedSimulationOperations(
         sim::SimAssocExistsOp, sim::SimAssocDeleteOp, sim::SimAssocSetDefaultOp,
         sim::SimAssocTraverseOp, sim::SimRandomInitializationEnterOp,
         sim::SimRandomInitializationLeaveOp, sim::SimRandomNextOp,
-        sim::SimLegacyRandomOp,
-        sim::SimRandomStateOp, sim::SimRandomSetStateOp, sim::SimRandomSeedOp,
-        sim::SimRandomBoundedOp, sim::SimRandomDistributionOp,
-        sim::SimStochasticQueueOp, sim::SimRandomCycleNextOp,
-        sim::SimRandomSolveOp, sim::SimRandomSolveWideOp,
+        sim::SimLegacyRandomOp, sim::SimRandomStateOp, sim::SimRandomSetStateOp,
+        sim::SimRandomSeedOp, sim::SimRandomBoundedOp,
+        sim::SimRandomDistributionOp, sim::SimStochasticQueueOp,
+        sim::SimRandomCycleNextOp, sim::SimRandomSolveOp,
+        sim::SimRandomSolveWideOp, sim::SimRandomCycleSampleOp,
         sim::SimRandomRealToRankOp, sim::SimRandomRealFromRankOp,
         sim::SimStringLiteralOp, sim::SimStringFromPackedOp,
         sim::SimStringToPackedOp, sim::SimStringToPackedExactOp,

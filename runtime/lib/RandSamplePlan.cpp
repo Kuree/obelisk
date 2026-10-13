@@ -128,6 +128,85 @@ public:
       output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
   }
 
+  SamplerResult cyclic(CyclicSampleRequest &request, unsigned width,
+                       const uint64_t *start, const uint64_t *mutableMask,
+                       obelisk_rt_random_state_v1 &state, uint64_t *output) {
+    if (request.width == 0 || request.width > 32 || request.offset > width ||
+        request.width > width - request.offset)
+      return SamplerResult::Invalid;
+    for (unsigned bit = 0; bit != request.width; ++bit)
+      if (!((mutableMask[(request.offset + bit) / 64] >>
+             ((request.offset + bit) % 64)) &
+            1))
+        return SamplerResult::Invalid;
+    ModelCounter completions(circuit, bits);
+    if (!completions.build(predicate()))
+      return SamplerResult::Invalid;
+    std::vector<bool> keep(bits.size(), false);
+    for (size_t bit = 0; bit != bits.size(); ++bit)
+      keep[bit] = physicalBits[bit] >= request.offset &&
+                  physicalBits[bit] - request.offset < request.width;
+    completions.project(keep);
+    if (completions.count().zero())
+      return SamplerResult::Unsatisfiable;
+
+    // Rebuild only the projected field in a fixed physical-bit order. The
+    // compiler may choose a different input order for another inline plan;
+    // equal legal domains must still have identical histories and rank maps.
+    BooleanCircuit domainCircuit;
+    Bits domainBits;
+    for (unsigned bit = 0; bit != request.width; ++bit)
+      domainBits.push_back(
+          domainCircuit.input(PlanOpcode::RandomBit, bit, bit));
+    Bits renamed(bits.size(), 0);
+    for (size_t bit = 0; bit != bits.size(); ++bit)
+      if (keep[bit])
+        renamed[bit] = domainBits[physicalBits[bit] - request.offset];
+    ID predicate = completions.exportDiagram(domainCircuit, renamed, true);
+    ModelCounter domain(domainCircuit, domainBits);
+    if (!domain.build(predicate))
+      return SamplerResult::Invalid;
+    uint64_t cardinality = domain.count().word(0);
+    if (!cardinality || cardinality > (uint64_t{1} << request.width))
+      return SamplerResult::Invalid;
+    std::vector<uint8_t> snapshot = domain.domainSnapshot();
+    bool changed =
+        snapshot.size() != request.previousDomainSize ||
+        !std::equal(snapshot.begin(), snapshot.end(), request.previousDomain);
+    uint64_t key = request.key, position = changed ? 0 : request.position;
+    uint64_t rank = 0;
+    obelisk_rt_random_state_v1 nextState = state;
+    if (cardinality != 1) {
+      unsigned permutationWidth = 0;
+      for (uint64_t remaining = cardinality - 1; remaining; remaining >>= 1)
+        ++permutationWidth;
+      if (position >= (uint64_t{1} << permutationWidth))
+        return SamplerResult::Invalid;
+      do {
+        if (position == 0)
+          key = obelisk_rt_v1_random_state_next64(&nextState);
+        if (obelisk_rt_v1_random_cycle_next(key, position, permutationWidth,
+                                            &position, &rank) != OBELISK_RT_OK)
+          return SamplerResult::Invalid;
+      } while (rank >= cardinality);
+    } else
+      position = 0;
+    auto value = domain.assignment(ModelCount(rank));
+    size_t words = (uint64_t(width) + 63) / 64;
+    std::copy_n(start, words, output);
+    for (unsigned bit = 0; bit != request.width; ++bit) {
+      unsigned physical = request.offset + bit;
+      uint64_t mask = uint64_t{1} << (physical % 64);
+      output[physical / 64] =
+          (output[physical / 64] & ~mask) | (value[bit] ? mask : 0);
+    }
+    request.key = key;
+    request.position = position;
+    request.domain = std::move(snapshot);
+    state = nextState;
+    return SamplerResult::Satisfiable;
+  }
+
   bool weighted(unsigned width, const Bits &variable,
                 const std::vector<ID> &bits,
                 const std::vector<unsigned> &physicalBits,
@@ -529,14 +608,13 @@ public:
 
 } // namespace
 
-SamplerResult
-sampleRandomPlan(const uint8_t *program, size_t programSize,
-                 const uint64_t *start, const uint64_t *mutableMask,
-                 size_t assignmentWords, uint64_t constraintMask,
-                 const uint64_t *captures, const uint32_t *captureWidths,
-                 size_t captureCount, uint64_t *assignment,
-                 obelisk_rt_random_state_v1 *randomState,
-                 const uint64_t *orderedMasks, size_t orderedLayerCount) {
+SamplerResult sampleRandomPlan(
+    const uint8_t *program, size_t programSize, const uint64_t *start,
+    const uint64_t *mutableMask, size_t assignmentWords,
+    uint64_t constraintMask, const uint64_t *captures,
+    const uint32_t *captureWidths, size_t captureCount, uint64_t *assignment,
+    obelisk_rt_random_state_v1 *randomState, const uint64_t *orderedMasks,
+    size_t orderedLayerCount, CyclicSampleRequest *cyclic) {
   if (programSize < OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE ||
       read32(program + 16) != captureCount ||
       !(read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN))
@@ -798,6 +876,51 @@ sampleRandomPlan(const uint8_t *program, size_t programSize,
         else
           f.require(domains[group]);
       }
+  }
+  if (cyclic) {
+    if (!exact || functionPriority)
+      return SamplerResult::Unavailable;
+    // Only hard positive-weight support constrains a cyclic choice. Ordinary
+    // soft preferences and probability masses are resolved after cyclic fields
+    // are frozen. Support is a conjunction of groups, without a Cartesian
+    // product of their weighted alternatives.
+    for (size_t groupIndex = 0; groupIndex != weightedGroups.size();
+         ++groupIndex) {
+      const WeightedGroup &group = weightedGroups[groupIndex];
+      if (group.softPriority != UINT32_MAX ||
+          (group.constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
+           ((constraintMask >> group.constraintBlock) & 1)))
+        continue;
+      Bits field(variable.begin() + group.targetOffset,
+                 variable.begin() + group.targetOffset + group.width);
+      if (group.isSigned)
+        field.back() ^= 1;
+      ID support = 0;
+      for (const WeightedItem &item : group.items) {
+        unsigned weightWidth =
+            captureWidths ? captureWidths[item.weightCapture] : 64;
+        bool positive = false;
+        for (size_t word = 0; word != (uint64_t(weightWidth) + 63) / 64; ++word)
+          positive |= captures[captureOffsets[item.weightCapture] + word] != 0;
+        if (!positive)
+          continue;
+        for (const WeightedInterval &interval : item.intervals) {
+          ID region = interval.cardinality == 0
+                          ? 1
+                          : circuit.conjunction(
+                                f.atLeast(field, interval.lower),
+                                f.atMost(field, interval.lower +
+                                                    interval.cardinality - 1));
+          support = circuit.disjunction(support, region);
+        }
+      }
+      ID guard = distributionGuards[groupIndex] == missing
+                     ? 1
+                     : distributionGuards[groupIndex];
+      f.require(circuit.disjunction(guard ^ 1, support));
+    }
+    return f.cyclic(*cyclic, width, start, mutableMask, *randomState,
+                    assignment);
   }
   if (functionPriority) {
     size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);

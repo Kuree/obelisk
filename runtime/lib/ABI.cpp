@@ -1165,6 +1165,14 @@ ABI_FUNCTION(obelisk_rt_v1_random_solve_wide_modes_state,
                                    uint64_t, const uint64_t *, uint64_t,
                                    const uint32_t *, uint64_t, uint64_t *,
                                    uint32_t *, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_random_cycle_sample,
+             obelisk_rt_status (*)(
+                 obelisk_rt_context *, const uint8_t *, uint64_t,
+                 const uint64_t *, const uint64_t *, uint64_t, uint64_t,
+                 uint64_t, uint64_t, uint64_t, uint64_t, obelisk_rt_string_v1,
+                 uint32_t, uint32_t, const uint64_t *, uint64_t,
+                 const uint32_t *, uint64_t, uint64_t *, uint32_t *, uint64_t *,
+                 uint64_t *, uint64_t *, obelisk_rt_string_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_random_get_state,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    obelisk_rt_random_state_v1 *));

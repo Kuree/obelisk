@@ -1296,6 +1296,61 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       return OBELISK_RT_INVALID_BYTECODE;
     return OBELISK_RT_OK;
   }
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE: {
+    auto program = bytes(0);
+    auto constraintMask = scalar(3), rngState = scalar(4),
+         rngIncrement = scalar(5), key = scalar(6), position = scalar(7),
+         domain = scalar(8), offset = scalar(9), width = scalar(10);
+    if (!program || !constraintMask || !rngState || !rngIncrement || !key ||
+        !position || !domain || !offset || !width || *offset > UINT32_MAX ||
+        *width > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout startLayout = layoutAt(image, frame.function, inputRegister(1));
+    Layout mutableLayout = layoutAt(image, frame.function, inputRegister(2));
+    Layout assignmentLayout =
+        layoutAt(image, frame.function, outputRegister(0));
+    Logic start = readLogic(frame.data, startLayout);
+    Logic mutableMask = readLogic(frame.data, mutableLayout);
+    std::vector<uint64_t> captures;
+    std::vector<uint32_t> captureWidths;
+    OBELISK_RT_TRY {
+      for (uint32_t index = 11; index != site.inputCount; ++index) {
+        Layout layout = layoutAt(image, frame.function, inputRegister(index));
+        captureWidths.push_back(layout.width);
+        Logic capture = readLogic(frame.data, layout);
+        captures.insert(captures.end(), capture.value.begin(),
+                        capture.value.end());
+      }
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    Logic assignment{start.width, false, LimbVector(limbCount(start.width)),
+                     LimbVector(limbCount(start.width))};
+    uint64_t nextState = 0, nextKey = 0, nextPosition = 0;
+    obelisk_rt_string_v1 nextDomain = 0;
+    uint32_t success = 0;
+    obelisk_rt_status status = obelisk_rt_v1_random_cycle_sample(
+        context, program->data, program->size, start.value.data(),
+        mutableMask.value.data(), start.value.size(), *constraintMask,
+        *rngState, *rngIncrement, *key, *position, *domain, *offset, *width,
+        captures.data(), captures.size(), captureWidths.data(),
+        captureWidths.size(), assignment.value.data(), &success, &nextState,
+        &nextKey, &nextPosition, &nextDomain);
+    if (status != OBELISK_RT_OK)
+      return status;
+    writeLogic(frame.data, assignmentLayout, assignment);
+    if (!writeScalar(image, frame, outputRegister(1), success) ||
+        !writeScalar(image, frame, outputRegister(2), nextState) ||
+        !writeScalar(image, frame, outputRegister(3), nextKey) ||
+        !writeScalar(image, frame, outputRegister(4), nextPosition) ||
+        !writeScalar(image, frame, outputRegister(5), nextDomain))
+      return OBELISK_RT_INVALID_BYTECODE;
+    return OBELISK_RT_OK;
+  }
   case OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK: {
     Layout valueLayout = layoutAt(image, frame.function, inputRegister(0));
     Layout rankLayout = layoutAt(image, frame.function, outputRegister(0));

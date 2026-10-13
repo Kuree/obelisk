@@ -1118,6 +1118,24 @@ bool validIntrinsic(const Image &image, const Function &function,
       if (!twoStateBits(input(index)))
         return false;
     return true;
+  case OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE:
+    if (signature.flags != 0 || site.inputCount < 11 || site.outputCount != 6 ||
+        !bytes(input(0)) || !twoStateBits(input(1)) ||
+        !twoStateBits(input(2), input(1)->width) || !string(input(8)) ||
+        !twoStateBits(input(9), 32) || !twoStateBits(input(10), 32) ||
+        !twoStateBits(output(0), input(1)->width) ||
+        !twoStateBits(output(1), 1) || !string(output(5)))
+      return false;
+    for (uint32_t index = 3; index != 8; ++index)
+      if (!twoStateBits(input(index), 64))
+        return false;
+    for (uint32_t index = 2; index != 5; ++index)
+      if (!twoStateBits(output(index), 64))
+        return false;
+    for (uint32_t index = 11; index != site.inputCount; ++index)
+      if (!twoStateBits(input(index)))
+        return false;
+    return true;
   case OBELISK_RT_INTRINSIC_V1_COVERAGE_POINT_HIT:
     return signature.flags == 0 && site.inputCount == 2 &&
            site.outputCount == 0 && twoStateBits(input(0), 64) &&

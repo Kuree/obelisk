@@ -370,6 +370,31 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
                                    reg(plan, op.getSuccess()),
                                    reg(plan, op.getNextRngState())});
   }
+  if (auto op = dyn_cast<sim::SimRandomCycleSampleOp>(operation)) {
+    StringRef program = op.getProgram();
+    SmallVector<uint32_t> inputs{
+        emitBytesConstant(
+            plan,
+            ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(program.data()),
+                              program.size())),
+        reg(plan, op.getStart()),
+        reg(plan, op.getMutableMask()),
+        reg(plan, op.getConstraintMask()),
+        reg(plan, op.getRngState()),
+        reg(plan, op.getRngIncrement()),
+        reg(plan, op.getKey()),
+        reg(plan, op.getPosition()),
+        reg(plan, op.getDomain()),
+        reg(plan, op.getFieldOffset()),
+        reg(plan, op.getFieldWidth())};
+    for (Value capture : op.getCaptures())
+      inputs.push_back(reg(plan, capture));
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicRandomCycleSample, inputs,
+        {reg(plan, op.getAssignment()), reg(plan, op.getSuccess()),
+         reg(plan, op.getNextRngState()), reg(plan, op.getNextKey()),
+         reg(plan, op.getNextPosition()), reg(plan, op.getNextDomain())});
+  }
   if (auto op = dyn_cast<sim::SimRandomRealToRankOp>(operation))
     return emitIntrinsic(plan, kIntrinsicRandomRealToRank, {op.getValue()},
                          {op.getRank(), op.getFinite()});

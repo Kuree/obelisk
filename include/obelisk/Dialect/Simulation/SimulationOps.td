@@ -2047,6 +2047,34 @@ def SimRandomSolveWideOp : SimOp<"random.solve_wide", [
   let hasVerifier = 1;
 }
 
+def SimRandomCycleSampleOp : SimOp<"random.cycle_sample", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimRNGResource>, MemRead<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>,
+    AllTypesMatch<["start", "mutable_mask", "assignment"]>
+  ]> {
+  let summary = "sample one cyclic field from its exact legal domain";
+  let description = [{
+    Specializes a compiler Z3 plan, projects away later random fields, and
+    permutes dense legal ranks for the indicated at-most-32-bit field. Only
+    that field changes in `assignment`. `domain` is an opaque managed string
+    containing the exact canonical projected relation. A changed relation
+    restarts the cycle. Returned histories and RNG are tentative; the caller
+    publishes them after the entire randomization succeeds. Soft preferences
+    and explicit ordering of ordinary fields belong to the subsequent solve.
+  }];
+  let arguments = (ins SimContextType:$context, AnySignlessInteger:$start,
+                       AnySignlessInteger:$mutable_mask,
+                       I64:$constraint_mask, I64:$rng_state, I64:$rng_increment,
+                       I64:$key, I64:$position, SimStringType:$domain,
+                       I32:$field_offset, I32:$field_width,
+                       Variadic<AnySignlessInteger>:$captures, StrAttr:$program);
+  let results = (outs AnySignlessInteger:$assignment, I1:$success,
+                       I64:$next_rng_state, I64:$next_key, I64:$next_position,
+                       SimStringType:$next_domain);
+  let hasVerifier = 1;
+}
+
 def SimRandomRealToRankOp : SimOp<"random.real_to_rank", [Pure]> {
   let summary = "encode a finite IEEE value as its signed numeric coordinate";
   let description = [{

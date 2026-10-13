@@ -215,8 +215,10 @@ public:
   /// gates can then be omitted from the serialized sampling plan.
   random::BooleanCircuit::ID
   exportDiagram(random::BooleanCircuit &output,
-                const std::vector<random::BooleanCircuit::ID> &inputs) const {
-    auto reached = reachable(root);
+                const std::vector<random::BooleanCircuit::ID> &inputs,
+                bool projected = false) const {
+    ID start = projected ? viewRoot : root;
+    auto reached = reachable(start);
     std::vector<random::BooleanCircuit::ID> exported(nodes.size());
     exported[1] = 1;
     for (ID id = 2; id != reached.size(); ++id)
@@ -225,7 +227,48 @@ public:
         exported[id] = output.conditional(
             inputs[node.variable], exported[node.high], exported[node.low]);
       }
-    return exported[root];
+    return exported[start];
+  }
+
+  /// Exact, portable identity of the current projected relation. A fixed
+  /// variable order and low-before-high postorder make this independent of
+  /// graph allocation history. Equal bytes mean equal domains; no hash or
+  /// probabilistic fingerprint participates in cyclic-history decisions.
+  std::vector<uint8_t> domainSnapshot() const {
+    std::vector<uint64_t> names(nodes.size(), UINT64_MAX);
+    names[0] = 0;
+    names[1] = 1;
+    std::vector<ID> order;
+    std::vector<std::pair<ID, bool>> pending{{viewRoot, false}};
+    while (!pending.empty()) {
+      auto [id, visited] = pending.back();
+      pending.pop_back();
+      if (names[id] != UINT64_MAX)
+        continue;
+      if (!visited) {
+        pending.emplace_back(id, true);
+        pending.emplace_back(nodes[id].high, false);
+        pending.emplace_back(nodes[id].low, false);
+      } else {
+        names[id] = order.size() + 2;
+        order.push_back(id);
+      }
+    }
+    std::vector<uint8_t> result;
+    auto append = [&](uint64_t value) {
+      for (unsigned byte = 0; byte != 8; ++byte)
+        result.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+    };
+    append(1); // Snapshot version, independent of the compiler plan format.
+    append(variableCount);
+    append(names[viewRoot]);
+    append(order.size());
+    for (ID id : order) {
+      append(nodes[id].variable);
+      append(names[nodes[id].low]);
+      append(names[nodes[id].high]);
+    }
+    return result;
   }
 
   /// Cofactor fixed inputs before constructing the relation's diagram. Only

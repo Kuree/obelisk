@@ -1165,6 +1165,13 @@ LogicalResult SimRandomSolveWideOp::verify() {
   return success();
 }
 
+LogicalResult SimRandomCycleSampleOp::verify() {
+  if (getMutableMask().getType() != getStart().getType() ||
+      getAssignment().getType() != getStart().getType())
+    return emitOpError("start, mutable mask, and assignment types must match");
+  return success();
+}
+
 static LogicalResult verifyRealRank(Operation *op, Type real, Type rank) {
   auto floating = dyn_cast<FloatType>(real);
   auto integer = dyn_cast<IntegerType>(rank);

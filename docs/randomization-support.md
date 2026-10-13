@@ -56,6 +56,25 @@ masks from 64-bit constants and SSA extensions. Arbitrary changes to an existing
 cycle's constraints still need persistent restart tracking; function-priority
 stages, per-element array histories and aliased object cycles remain open.
 
+The typed `simulation.random.cycle_sample` primitive projects the compiler's
+hard relation onto one cyclic field, then permutes dense legal ranks. Sparse
+32-bit domains therefore do not require scanning billions of declared values.
+Later random fields are existentially free; ordinary soft preferences and
+ordering are resolved after the cyclic value is frozen. Hard distributions
+contribute only their positive-weight support. Canonical snapshots use a fixed
+physical bit order and exact bytes, preserving the same rank map across plans
+with different ordinary completion counts. A changed legal domain starts a new
+cycle. Assignments, immutable managed snapshots, keys, positions and RNG outputs
+remain tentative until the caller commits the complete randomization.
+MLIR checks cover live bounds, complete non-power-of-two and unconstrained
+8-bit cycles, sparse enum values, 130-bit ordinary fields and weights, zero
+weights, full 32-bit domains, reordered plans and failure retention in native,
+bytecode and WASM execution.
+Repeated plan attributes with the same capture layout compile once in the
+Simulation plan pass. Connecting the primitive to persistent source property
+fields, and tracking source constraint-context changes with equal legal domains,
+remain open; these typed tests do not close the source `randc` audit rows.
+
 Fixed unpacked arrays of integral elements use their logical element bitstream
 for class and scope randomization, including multidimensional arrays and
 ascending or negative bounds. Explicit import and export preserve declaration

@@ -4,6 +4,7 @@
 #include "RandSamplePlan.h"
 #include "RandSolveOrder.h"
 #include "RandSolveWeighted.h"
+#include "RuntimeInternal.h"
 #include "obelisk/Runtime/RandomDomain.h"
 #include "obelisk/Runtime/RandomSamplerPlan.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -1123,6 +1125,120 @@ bool advanceMutable(WideValue &candidate, const WideValue &mutableMask) {
 }
 
 } // namespace
+
+extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
+    obelisk_rt_context *context, const uint8_t *programBytes,
+    uint64_t programSize, const uint64_t *startWords,
+    const uint64_t *mutableMaskWords, uint64_t assignmentWordCount,
+    uint64_t constraintMask, uint64_t rngState, uint64_t rngIncrement,
+    uint64_t key, uint64_t position, obelisk_rt_string_v1 domain,
+    uint32_t fieldOffset, uint32_t fieldWidth, const uint64_t *captureWords,
+    uint64_t captureWordCount, const uint32_t *captureWidths,
+    uint64_t captureCount, uint64_t *outAssignmentWords, uint32_t *outSuccess,
+    uint64_t *outRngState, uint64_t *outKey, uint64_t *outPosition,
+    obelisk_rt_string_v1 *outDomain) {
+  constexpr uint64_t maxWords =
+      std::numeric_limits<size_t>::max() / sizeof(uint64_t);
+  if (!context || !programBytes || !startWords || !mutableMaskWords ||
+      !outAssignmentWords || !outSuccess || !outRngState || !outKey ||
+      !outPosition || !outDomain || (captureWordCount && !captureWords) ||
+      (captureCount && !captureWidths) || programSize > SIZE_MAX ||
+      assignmentWordCount > maxWords || captureWordCount > maxWords ||
+      captureCount > UINT32_MAX || !(rngIncrement & 1) || fieldWidth == 0 ||
+      fieldWidth > 32)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSuccess = 0;
+  *outRngState = rngState;
+  *outKey = key;
+  *outPosition = position;
+  *outDomain = domain;
+  OBELISK_RT_TRY {
+    WideProgram program;
+    if (!parseWideProgram(programBytes, programSize, program, captureWidths,
+                          captureCount, captureWordCount) ||
+        assignmentWordCount != (uint64_t(program.aggregateWidth) + 63) / 64 ||
+        fieldOffset > program.aggregateWidth ||
+        fieldWidth > program.aggregateWidth - fieldOffset)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    uint64_t padding = ~highMask(program.aggregateWidth);
+    if ((startWords[assignmentWordCount - 1] & padding) ||
+        (mutableMaskWords[assignmentWordCount - 1] & padding))
+      return OBELISK_RT_INVALID_ARGUMENT;
+    for (size_t index = 0; index != program.captureWidths.size(); ++index) {
+      uint32_t width = program.captureWidths[index];
+      size_t last =
+          program.captureOffsets[index] + (uint64_t(width) + 63) / 64 - 1;
+      if (captureWords[last] & ~highMask(width))
+        return OBELISK_RT_INVALID_ARGUMENT;
+    }
+    for (const DomainGroup &group : program.domainGroups) {
+      WideValue overlap = extract(mutableMaskWords, assignmentWordCount,
+                                  group.targetOffset, group.width);
+      if (truth(overlap))
+        for (size_t word = 0; word != overlap.words.size(); ++word)
+          if (overlap.words[word] != (word + 1 == overlap.words.size()
+                                          ? highMask(group.width)
+                                          : UINT64_MAX))
+            return OBELISK_RT_INVALID_ARGUMENT;
+    }
+    std::copy_n(startWords, assignmentWordCount, outAssignmentWords);
+    ManagedExecutionScope execution(context);
+    if (execution.getStatus() != OBELISK_RT_OK)
+      return execution.getStatus();
+    obelisk_rt_status status = obelisk_rt_validate_string(context, domain);
+    if (status != OBELISK_RT_OK)
+      return status;
+    char scratch[8];
+    const char *oldBytes = nullptr;
+    uint64_t oldSize = 0;
+    status = obelisk_rt_v1_string_view(domain, scratch, &oldBytes, &oldSize);
+    if (status != OBELISK_RT_OK)
+      return status;
+    obelisk::runtime::CyclicSampleRequest request{
+        fieldOffset,
+        fieldWidth,
+        key,
+        position,
+        reinterpret_cast<const uint8_t *>(oldBytes),
+        static_cast<size_t>(oldSize),
+        {}};
+    obelisk_rt_random_state_v1 state{rngState, rngIncrement};
+    std::vector<uint64_t> assignment(assignmentWordCount);
+    auto result = obelisk::runtime::sampleRandomPlan(
+        programBytes, programSize, startWords, mutableMaskWords,
+        assignmentWordCount, constraintMask, captureWords, captureWidths,
+        captureCount, assignment.data(), &state, nullptr, 0, &request);
+    if (result == obelisk::runtime::SamplerResult::Unsatisfiable)
+      return OBELISK_RT_OK;
+    if (result != obelisk::runtime::SamplerResult::Satisfiable)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    obelisk_rt_string_v1 nextDomain = domain;
+    if (oldSize != request.domain.size() ||
+        !std::equal(request.domain.begin(), request.domain.end(),
+                    reinterpret_cast<const uint8_t *>(oldBytes))) {
+      // Comparison is complete before the allocating safepoint. No borrowed
+      // view of the previous managed string survives that allocation.
+      status = obelisk_rt_v1_string_create(
+          execution.getLane(),
+          reinterpret_cast<const char *>(request.domain.data()),
+          request.domain.size(), &nextDomain);
+      if (status != OBELISK_RT_OK)
+        return status;
+    }
+    std::copy(assignment.begin(), assignment.end(), outAssignmentWords);
+    *outSuccess = 1;
+    *outRngState = state.state;
+    *outKey = request.key;
+    *outPosition = request.position;
+    *outDomain = nextDomain;
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
+}
 
 extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     obelisk_rt_context *context, const uint8_t *programBytes,
