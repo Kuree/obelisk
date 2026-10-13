@@ -2105,10 +2105,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_prepare_periodic_aot(
       context->nativePeriodicClockActorSlots.push_back(actorSlot);
       removeNativeAOTDeadlineUnlocked(context, actorSlot);
       // Invalidate the generic heap entry too. Shared slot drains must not
-      // execute the source actor a second time (LRM 4.5, 9.4.1).
-      context
-          ->scheduledProcesses[context->nativeScheduleActorIndices[actorSlot]]
-          .wakeTime = UINT64_MAX;
+      // execute the source actor a second time (LRM 4.5, 9.4.1), so it is no
+      // poll candidate either until a handoff restores its deadline.
+      ScheduledProcess &source =
+          context->scheduledProcesses
+              [context->nativeScheduleActorIndices[actorSlot]];
+      source.wakeTime = UINT64_MAX;
+      context->nativePollCandidates.erase(source.token);
     }
     context->nativePeriodicTerminationRequested =
         context->schedulerFinishRequested.load(std::memory_order_relaxed) ? 1u
@@ -2276,6 +2279,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_handoff_periodic_aot(
         // instead of rebuilding it for every periodic handoff.
         indexScheduledProcessDelayUnlocked(context, scheduled);
       }
+      // A shared calendar may restore an edge of the current slot, which no
+      // later slot entry admits.
+      if (scheduled.wakeTime <= context->schedulerTime)
+        context->nativePollCandidates.insert(scheduled.token);
       setNativeAOTDeadlineUnlocked(context, clock.actor_slot, nextEdges[index]);
     }
     return OBELISK_RT_OK;

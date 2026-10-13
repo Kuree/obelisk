@@ -446,9 +446,18 @@ bool nativeProcessReady(obelisk_rt_context &context,
   return nativeProcessReadyImpl<true>(context, process);
 }
 
-static bool indexedSignalBlocked(const ScheduledProcess &process) {
+/// Whether an exact index publishes the process's readiness, so the poll
+/// candidates need not hold it: a signal subscription latches its trigger, and
+/// the delay calendar admits a future delay when that time slot begins (see
+/// admitDueProcessDelaysUnlocked). Readiness never depends on visiting such a
+/// process earlier (IEEE 1800-2023 4.4-4.5).
+static bool indexedBlocked(const obelisk_rt_context &context,
+                           const ScheduledProcess &process) {
   if (!process.instance || !process.started || process.signalTriggered)
     return false;
+  // Only Active-phase delays are kept in the calendar heap.
+  if (process.suspendKind == OBELISK_RT_SUSPEND_DELAY)
+    return process.phase == 0 && process.wakeTime > context.schedulerTime;
   bool signalSuspend = process.suspendKind == OBELISK_RT_SUSPEND_CHANGE ||
                        process.suspendKind == OBELISK_RT_SUSPEND_EDGE;
   return (signalSuspend ||
@@ -500,6 +509,40 @@ void indexScheduledProcessDelayUnlocked(obelisk_rt_context *context,
                                                   process.token);
   std::push_heap(context->scheduledProcessDelayHeap.begin(),
                  context->scheduledProcessDelayHeap.end(), std::greater<>());
+}
+
+/// Make every Active-phase delay that expires by the current time a poll
+/// candidate again. Called whenever a time slot begins, before any candidate
+/// scan of that slot; delays that expire within a slot (#0) never leave the
+/// candidates.
+static obelisk_rt_status
+admitDueProcessDelaysUnlocked(obelisk_rt_context *context) {
+  auto &heap = context->scheduledProcessDelayHeap;
+  bool admitted = false;
+  while (!heap.empty() && heap.front().first <= context->schedulerTime) {
+    auto [wakeTime, token] = heap.front();
+    std::pop_heap(heap.begin(), heap.end(), std::greater<>());
+    heap.pop_back();
+    auto indexed = context->scheduledProcessIndices.find(token);
+    if (indexed == context->scheduledProcessIndices.end() ||
+        indexed->second >= context->scheduledProcesses.size())
+      continue;
+    const ScheduledProcess &process =
+        context->scheduledProcesses[indexed->second];
+    if (process.instance && process.token == token && process.phase == 0 &&
+        process.started && process.suspendKind == OBELISK_RT_SUSPEND_DELAY &&
+        process.wakeTime == wakeTime) {
+      OBELISK_RT_TRY { context->nativePollCandidates.insert(token); }
+      OBELISK_RT_CATCH(const std::bad_alloc &) {
+        context->schedulerStatus = OBELISK_RT_OUT_OF_MEMORY;
+        return context->schedulerStatus;
+      }
+      admitted = true;
+    }
+  }
+  if (admitted && ++context->schedulerSelectionGeneration == 0)
+    context->schedulerSelectionGeneration = 1;
+  return OBELISK_RT_OK;
 }
 
 std::optional<uint64_t>
@@ -679,7 +722,7 @@ void rebuildNativeSchedulerIndexUnlocked(obelisk_rt_context *context) {
       context->scheduledProcessTokens.emplace(process.instance, process.token);
     if (process.aotActorSlot < context->nativeScheduleActorIndices.size())
       context->nativeScheduleActorIndices[process.aotActorSlot] = index;
-    if (process.instance && !indexedSignalBlocked(process))
+    if (process.instance && !indexedBlocked(*context, process))
       context->nativePollCandidates.insert(process.token);
     // Periodic evaluation updates detached deadlines without maintaining the
     // generic calendar. Rebuild it from the restored actors at handoff too,
@@ -2671,6 +2714,9 @@ obelisk_rt_status enterSchedulerTimeSlotUnlocked(obelisk_rt_context *context) {
   }
   context->schedulerPreponedTime = context->schedulerTime;
   context->schedulerSlotProgress = 0;
+  status = admitDueProcessDelaysUnlocked(context);
+  if (status != OBELISK_RT_OK)
+    return status;
   if (context->staticNBASlowRootsPresent) {
     std::fill(context->staticNBASlowRoots.begin(),
               context->staticNBASlowRoots.end(), uint8_t{0});
@@ -3939,7 +3985,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               indexed->second < context->scheduledProcesses.size()) {
             const ScheduledProcess &resumed =
                 context->scheduledProcesses[indexed->second];
-            if (resumed.instance && !indexedSignalBlocked(resumed))
+            if (resumed.instance && !indexedBlocked(*context, resumed))
               context->nativePollCandidates.insert(resumed.token);
             else
               context->nativePollCandidates.erase(resumed.token);
@@ -5506,7 +5552,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               scheduled.instance ? selectedIndex : SIZE_MAX;
         }
       }
-      if (scheduled.instance && !indexedSignalBlocked(scheduled))
+      if (scheduled.instance && !indexedBlocked(*context, scheduled))
         context->nativePollCandidates.insert(scheduled.token);
       else
         context->nativePollCandidates.erase(scheduled.token);
@@ -5676,7 +5722,7 @@ obelisk_rt_v1_scheduler_prime(obelisk_rt_context *context,
         }
         if (status == OBELISK_RT_OK &&
             action.kind == OBELISK_RT_FRAGMENT_SUSPEND) {
-          if (indexedSignalBlocked(scheduled))
+          if (indexedBlocked(*context, scheduled))
             context->nativePollCandidates.erase(token);
           else
             context->nativePollCandidates.insert(token);

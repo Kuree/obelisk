@@ -6625,6 +6625,54 @@ TEST(Scheduler, AOTDelayIndexStaysBoundedWithoutGenericCalendarQueries) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, FutureDelaysLeavePollCandidatesUntilTheirTimeSlot) {
+  // IEEE 1800-2023 4.4-4.5: a delayed process becomes runnable only in the
+  // time slot of its wake time. The delay calendar admits it there, so no
+  // scheduler pass of an earlier slot visits it.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 instances[4]{};
+  constexpr uint64_t wakeTimes[] = {5, 10, 1000, 0};
+  context->scheduledProcesses.resize(4);
+  for (unsigned index = 0; index != 4; ++index) {
+    auto &process = context->scheduledProcesses[index];
+    process.instance = &instances[index];
+    process.token = index + 1;
+    process.started = true;
+    process.suspendKind = OBELISK_RT_SUSPEND_DELAY;
+    process.wakeTime = wakeTimes[index];
+  }
+  // Final-phase delays are not in the calendar and stay polled.
+  context->scheduledProcesses[3].phase = 1;
+  context->scheduledProcesses[3].wakeTime = 7;
+  rebuildNativeSchedulerIndexUnlocked(context);
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->nativePollCandidates,
+            (std::unordered_set<uint64_t>{4}));
+
+  // Re-suspending replaces the calendar entry; the stale one admits nothing.
+  auto &moved = context->scheduledProcesses[1];
+  moved.wakeTime = 20;
+  indexScheduledProcessDelayUnlocked(context, moved);
+  context->schedulerTime = 5;
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->nativePollCandidates,
+            (std::unordered_set<uint64_t>{1, 4}));
+  context->schedulerTime = 10;
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->nativePollCandidates,
+            (std::unordered_set<uint64_t>{1, 4}));
+  // A slot past the wake time admits it as well.
+  context->schedulerTime = 25;
+  ASSERT_EQ(enterSchedulerTimeSlotUnlocked(context), OBELISK_RT_OK);
+  EXPECT_EQ(context->nativePollCandidates,
+            (std::unordered_set<uint64_t>{1, 2, 4}));
+  EXPECT_EQ(nextScheduledProcessDelayUnlocked(context),
+            std::optional<uint64_t>{1000});
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, AOTZeroDelayUsesInactiveBeforeNBAWithoutWholePlanFallback) {
   AOTTestState state;
   obelisk_rt_native_schedule_plan plan = makeAOTPlan(state, 2);
