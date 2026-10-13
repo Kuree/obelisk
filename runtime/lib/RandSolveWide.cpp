@@ -556,6 +556,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   bool sawSoft = false;
   uint64_t softPriorities = 0;
   std::vector<bool> guardSeen(weightedGroups.size(), false);
+  obelisk::random::WeightBitSequence weightBits(encodedCaptureCount, weighted);
   for (uint32_t index = 0; index != instructionCount; ++index) {
     const uint8_t *cursor =
         bytes + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2 +
@@ -566,6 +567,10 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     instruction.width = read32(cursor + 4);
     instruction.operand = read32(cursor + 8);
     instruction.auxiliary = read32(cursor + 12);
+    if (!weightBits.visit(instruction.opcode, instruction.width,
+                          instruction.flags, instruction.operand,
+                          instruction.auxiliary))
+      return false;
     if (obelisk::random::isRealInstruction(instruction.opcode) &&
         (!real || stackWidths.empty() ||
          !obelisk::random::validRealInstruction(
@@ -658,6 +663,16 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
         return false;
       guardSeen[instruction.operand] = true;
       depth = 0;
+      break;
+    case OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1:
+      if (!weighted || instruction.flags || depth != 1 ||
+          stackWidths.back() != instruction.width ||
+          instruction.operand >= encodedCaptureCount ||
+          instruction.auxiliary >= instruction.width)
+        return false;
+      result.captureWidths[instruction.operand] = instruction.width;
+      if (instruction.auxiliary + 1 == instruction.width)
+        depth = 0;
       break;
     case OBELISK_RT_RANDOM_SELECT_V1:
       if (instruction.auxiliary != 0 || depth < 3)
@@ -910,6 +925,11 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
       stack.pop_back();
+      continue;
+    }
+    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+      if (instruction.auxiliary + 1 == instruction.width)
+        stack.pop_back();
       continue;
     }
     if (instruction.opcode == OBELISK_RT_RANDOM_SELECT_V1) {

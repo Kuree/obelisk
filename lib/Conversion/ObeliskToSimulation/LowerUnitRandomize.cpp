@@ -3413,6 +3413,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Operation *softSource;
   };
   SmallVector<DistPlan> distPlans;
+  // Expression weights share immutable program temporaries and export one
+  // Boolean root per bit. The dummy capture retains their existing ABI width.
+  SmallVector<Operation *> expressionWeightSources;
+  SmallVector<std::optional<uint32_t>> expressionWeightSlots;
+  SmallVector<std::optional<uint32_t>> expressionWeightScales;
   uint32_t activeProgramConstraintBlock =
       OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
   auto emitLiteral = [&](bool value) {
@@ -3912,6 +3917,37 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   std::function<LogicalResult(Operation *)> emitProgramExpression;
   std::function<LogicalResult(Operation *)> emitProgramNode;
   llvm::DenseMap<Operation *, uint32_t> emittedArithmeticValues;
+  auto emitWeightValue = [&](uint32_t capture, Value value) -> LogicalResult {
+    unsigned width = cast<IntegerType>(value.getType()).getWidth();
+    if (capture >= expressionWeightSources.size() ||
+        !expressionWeightSources[capture]) {
+      instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, width, false, capture);
+      return success();
+    }
+    if (expressionWeightSlots[capture]) {
+      instruction(OBELISK_RT_RANDOM_LOAD_VALUE_V1, width, false,
+                  *expressionWeightSlots[capture]);
+      return success();
+    }
+    if (failed(emitProgramExpression(expressionWeightSources[capture])))
+      return failure();
+    instruction(OBELISK_RT_RANDOM_CAST_V1, width, false);
+    if (expressionWeightScales[capture]) {
+      uint32_t scale = *expressionWeightScales[capture];
+      instruction(
+          OBELISK_RT_RANDOM_PUSH_CAPTURE_V1,
+          cast<IntegerType>(programCaptures[scale].getType()).getWidth(), false,
+          scale);
+      instruction(OBELISK_RT_RANDOM_CAST_V1, width, false);
+      instruction(OBELISK_RT_RANDOM_MUL_V1, width, false);
+    }
+    if (programTemporaryCount >= UINT32_MAX)
+      return failure();
+    uint32_t slot = static_cast<uint32_t>(programTemporaryCount++);
+    expressionWeightSlots[capture] = slot;
+    instruction(OBELISK_RT_RANDOM_STORE_VALUE_V1, width, false, slot);
+    return success();
+  };
   emitProgramExpression = [&](Operation *expression) -> LogicalResult {
     if (arithmeticFailure)
       return failure();
@@ -4153,14 +4189,35 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           [&](Operation *weight,
               bool &isSigned) -> FailureOr<std::pair<uint32_t, Value>> {
         if (weight) {
-          if (dependsOnCandidate(weight)) {
-            emitError(getSemanticLocation(weight))
-                << "dist weights cannot depend on randomized properties";
-            return failure();
-          }
           if (auto found = weights.find(weight); found != weights.end()) {
             isSigned = false;
             return found->second;
+          }
+          if (dependsOnCandidate(weight)) {
+            auto width = expressionWidth(weight);
+            auto type = getNormalizedSemanticType(weight);
+            if (!rawDistWeights || failed(width) || failed(type) ||
+                !getIntegralRandomWidth(*type)) {
+              emitError(getSemanticLocation(weight))
+                  << "candidate dist weights require integral compiler Z3 "
+                     "sampling plans";
+              return failure();
+            }
+            Type weightType =
+                builder.getIntegerType(std::max<unsigned>(64, *width));
+            Value placeholder = arith::ConstantOp::create(
+                builder, location, weightType,
+                builder.getIntegerAttr(weightType, 0));
+            uint32_t capture = static_cast<uint32_t>(programCaptures.size());
+            programCaptures.push_back(placeholder);
+            expressionWeightSources.resize(capture + 1, nullptr);
+            expressionWeightSlots.resize(capture + 1);
+            expressionWeightScales.resize(capture + 1);
+            expressionWeightSources[capture] = weight;
+            auto result = std::make_pair(capture, placeholder);
+            weights[weight] = result;
+            isSigned = false;
+            return result;
           }
           FailureOr<SafeConstraintValue> safe = safeConstraintValue(weight);
           FailureOr<Value> lowered = succeeded(safe)
@@ -4374,6 +4431,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             mass = arith::MulIOp::create(builder, location, *extendedWeight,
                                          *extendedCardinality);
             massCapture = capture(mass);
+            if (weight->first < expressionWeightSources.size() &&
+                expressionWeightSources[weight->first]) {
+              uint32_t scale = capture(cardinality);
+              expressionWeightSources.resize(massCapture + 1, nullptr);
+              expressionWeightSlots.resize(massCapture + 1);
+              expressionWeightScales.resize(massCapture + 1);
+              expressionWeightSources[massCapture] = item.weight;
+              expressionWeightScales[massCapture] = scale;
+            }
           }
           plan.ranges.push_back({lowerCapture, upperCapture, 1, 1, massCapture,
                                  false, mass, identity, true,
@@ -4427,23 +4493,36 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
           return success();
         };
-        auto emitPositive = [&](uint32_t index, Value weight) {
+        auto emitPositive = [&](uint32_t index, Value weight) -> LogicalResult {
           unsigned width = cast<IntegerType>(weight.getType()).getWidth();
-          instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, width, false, index);
+          if (failed(emitWeightValue(index, weight)))
+            return failure();
           instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, width, false, 0, 0);
           instruction(OBELISK_RT_RANDOM_GT_V1, 1);
+          if (index < expressionWeightSources.size() &&
+              expressionWeightSources[index])
+            if (Operation *valid =
+                    arithmeticValidity(expressionWeightSources[index])) {
+              if (failed(emitProgramExpression(valid)))
+                return failure();
+              instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+            }
+          return success();
         };
         bool firstSupport = true;
         for (size_t index = 0; index != rawItems.size(); ++index) {
           const DistRangePlan &range = plan.ranges[index];
           if (failed(emitMatch(range)))
             return failure();
-          emitPositive(range.weightCapture, range.weight);
+          if (failed(emitPositive(range.weightCapture, range.weight)))
+            return failure();
           instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
           // The unscaled weight capture is shared by all its source uses;
           // keeping it in the predicate also records its precise ABI width.
           if (range.weightCapture != rawWeights[index].first) {
-            emitPositive(rawWeights[index].first, rawWeights[index].second);
+            if (failed(emitPositive(rawWeights[index].first,
+                                    rawWeights[index].second)))
+              return failure();
             instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
           }
           if (!firstSupport)
@@ -4462,8 +4541,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (firstExplicit)
             emitLiteral(false);
           instruction(OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1);
-          emitPositive(plan.ranges.back().weightCapture,
-                       plan.ranges.back().weight);
+          if (failed(emitPositive(plan.ranges.back().weightCapture,
+                                  plan.ranges.back().weight)))
+            return failure();
           instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
           if (!firstSupport)
             instruction(OBELISK_RT_RANDOM_LOGICAL_OR_V1, 1);
@@ -4719,10 +4799,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         unsigned width =
             cast<IntegerType>(materialized->second.getType()).getWidth();
-        instruction(OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, width, weightSigned,
-                    materialized->first);
+        if (failed(emitWeightValue(materialized->first, materialized->second)))
+          return failure();
         instruction(OBELISK_RT_RANDOM_PUSH_LITERAL_V1, width, false, 0, 0);
         instruction(OBELISK_RT_RANDOM_GT_V1, 1, weightSigned);
+        if (materialized->first < expressionWeightSources.size() &&
+            expressionWeightSources[materialized->first])
+          if (Operation *valid = arithmeticValidity(weight)) {
+            if (failed(emitProgramExpression(valid)))
+              return failure();
+            instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
+          }
         return success();
       };
       auto emitMatch = [&](Operation *value) -> LogicalResult {
@@ -7115,6 +7202,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           break;
       }
       predecessors &= ~target;
+      for (const DistRangePlan &range : plan.ranges)
+        if (range.weightCapture < expressionWeightSources.size() &&
+            expressionWeightSources[range.weightCapture] &&
+            !(priorityInputs(expressionWeightSources[range.weightCapture]) &
+              ~(predecessors | target))
+                 .isZero()) {
+          emitError(
+              getSemanticLocation(expressionWeightSources[range.weightCapture]))
+              << "candidate dist weight inputs must be the distributed target "
+                 "or solved before that complete target";
+          return failure();
+        }
       auto emitGuard = [&](Operation *guard, bool positive) -> LogicalResult {
         if (!(priorityInputs(guard) & ~predecessors).isZero()) {
           emitError(getSemanticLocation(guard))
@@ -7159,6 +7258,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
         }
       instruction(OBELISK_RT_RANDOM_END_DIST_GUARD_V1, 1, false, group);
+    }
+    for (auto [capture, source] : llvm::enumerate(expressionWeightSources)) {
+      if (!source)
+        continue;
+      Value value = programCaptures[capture];
+      if (failed(emitWeightValue(capture, value)))
+        return failure();
+      unsigned width = cast<IntegerType>(value.getType()).getWidth();
+      for (unsigned bit = 0; bit != width; ++bit)
+        instruction(OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1, width, false,
+                    capture, bit);
     }
   }
   thisObject = programSavedThis;
@@ -7232,7 +7342,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         auxiliary = static_cast<uint32_t>(literalWords.size());
         literalWords.append(literal.getRawData(), literal.getRawData() + words);
-      } else if (encoded.opcode == OBELISK_RT_RANDOM_END_SOFT_V1) {
+      } else if (encoded.opcode == OBELISK_RT_RANDOM_END_SOFT_V1 ||
+                 encoded.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
         if (encoded.immediate > UINT32_MAX) {
           emitError(location) << "random soft priority exceeds 32 bits";
           return failure();
@@ -7340,6 +7451,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           if (range.perRange)
             flags |= OBELISK_RT_RANDOM_DIST_PER_RANGE;
           flags |= range.intervalFlags;
+          if (range.weightCapture < expressionWeightSources.size() &&
+              expressionWeightSources[range.weightCapture])
+            flags |= OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT;
         }
         if (planned[plan.propertyIndex].isSigned)
           flags |= OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
@@ -9499,11 +9613,51 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             arith::CmpIPredicate positivePredicate =
                 range.weightSigned ? arith::CmpIPredicate::sgt
                                    : arith::CmpIPredicate::ugt;
+            Value weight = range.weight;
+            Value weightValid;
+            if (range.weightCapture < expressionWeightSources.size() &&
+                expressionWeightSources[range.weightCapture]) {
+              auto safe = safeConstraintValue(
+                  expressionWeightSources[range.weightCapture]);
+              auto scalar = succeeded(safe)
+                                ? toPackedScalar(safe->value, location)
+                                : FailureOr<Value>(failure());
+              auto converted = succeeded(scalar)
+                                   ? convert(*scalar, weight.getType(), false,
+                                             location, false)
+                                   : FailureOr<Value>(failure());
+              if (failed(converted))
+                return failure();
+              weight = *converted;
+              weightValid = safe->valid;
+              if (Operation *valid = arithmeticValidity(
+                      expressionWeightSources[range.weightCapture])) {
+                auto known = safeConstraintValue(valid);
+                auto predicate = succeeded(known)
+                                     ? truthValue(known->value, location)
+                                     : FailureOr<Value>(failure());
+                if (failed(predicate))
+                  return failure();
+                weightValid = guardAnd(weightValid, *predicate);
+              }
+              if (expressionWeightScales[range.weightCapture]) {
+                auto scale =
+                    convert(programCaptures
+                                [*expressionWeightScales[range.weightCapture]],
+                            weight.getType(), false, location, false);
+                if (failed(scale))
+                  return failure();
+                weight =
+                    arith::MulIOp::create(builder, location, weight, *scale);
+              }
+            }
             Value positive = arith::CmpIOp::create(
-                builder, location, positivePredicate, range.weight,
+                builder, location, positivePredicate, weight,
                 arith::ConstantOp::create(
                     builder, location, range.weight.getType(),
                     builder.getIntegerAttr(range.weight.getType(), 0)));
+            if (weightValid)
+              positive = guardAnd(positive, weightValid);
             Value active =
                 arith::AndIOp::create(builder, location, matches, positive);
             supported =

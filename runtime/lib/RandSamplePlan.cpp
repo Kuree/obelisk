@@ -216,9 +216,10 @@ public:
                 const std::vector<ID> &bits,
                 const std::vector<unsigned> &physicalBits,
                 const std::vector<WeightedGroup> &groups,
-                const std::vector<ID> &guards, uint64_t retainedSoft,
-                uint64_t constraintMask, const uint64_t *captures,
-                const uint32_t *captureWidths,
+                const std::vector<ID> &guards,
+                const std::vector<Bits> &expressionWeights,
+                uint64_t retainedSoft, uint64_t constraintMask,
+                const uint64_t *captures, const uint32_t *captureWidths,
                 const std::vector<size_t> &captureOffsets,
                 const uint64_t *start, const uint64_t *mutableMask,
                 obelisk_rt_random_state_v1 &state, const uint64_t *masks,
@@ -285,6 +286,7 @@ public:
         if (!inactive.count().zero())
           return false;
         std::vector<Choice> eligible;
+        ModelCount denominator(1);
         Bits field(variable.begin() + group.targetOffset,
                    variable.begin() + group.targetOffset + group.width);
         if (group.isSigned)
@@ -293,13 +295,16 @@ public:
           unsigned weightWidth =
               captureWidths ? captureWidths[item.weightCapture] : 64;
           size_t weightWords = (uint64_t(weightWidth) + 63) / 64;
-          std::vector<uint64_t> weight(
-              captures + captureOffsets[item.weightCapture],
-              captures + captureOffsets[item.weightCapture] + weightWords);
-          if (weightWidth % 64)
-            weight.back() &= (uint64_t{1} << (weightWidth % 64)) - 1;
-          ModelCount mass = ModelCount::fromWords(weight.data(), weight.size());
-          if (mass.zero() || item.intervals.empty())
+          ModelCount mass;
+          if (!item.expressionWeight) {
+            std::vector<uint64_t> weight(
+                captures + captureOffsets[item.weightCapture],
+                captures + captureOffsets[item.weightCapture] + weightWords);
+            if (weightWidth % 64)
+              weight.back() &= (uint64_t{1} << (weightWidth % 64)) - 1;
+            mass = ModelCount::fromWords(weight.data(), weight.size());
+          }
+          if ((!item.expressionWeight && mass.zero()) || item.intervals.empty())
             continue;
           ID region = 0;
           for (const WeightedInterval &interval : item.intervals) {
@@ -311,28 +316,67 @@ public:
             }
             region = circuit.disjunction(region, match);
           }
-          if (!item.perRange) {
-            uint64_t cardinality = item.intervals.front().cardinality;
-            mass = mass.multiplied(cardinality ? ModelCount(cardinality)
-                                               : ModelCount::powerOfTwo(64));
-          }
           ModelCounter range = counter;
           if (!range.constrain(region))
             return false;
           range.project(target);
           ModelCount count = range.count();
-          if (!count.zero())
-            eligible.push_back({std::move(range), std::move(mass),
-                                std::move(count), ModelCount()});
+          if (count.zero())
+            continue;
+          denominator = denominator.multiplied(count);
+          auto originalMass = [&](ModelCount value) {
+            if (!item.perRange) {
+              uint64_t cardinality = item.intervals.front().cardinality;
+              value =
+                  value.multiplied(cardinality ? ModelCount(cardinality)
+                                               : ModelCount::powerOfTwo(64));
+            }
+            return value;
+          };
+          if (item.expressionWeight) {
+            const Bits &weight = expressionWeights[item.weightCapture];
+            if (weight.size() != weightWidth)
+              return false;
+            // An unsigned expression is the sum of its set-bit masses.
+            // Every bit uses the original item's legal-value denominator,
+            // including values where that particular bit is zero.
+            for (unsigned bit = 0; bit != weightWidth; ++bit) {
+              if (weight[bit] == 0)
+                continue;
+              ModelCounter weightedRange = counter;
+              if (!weightedRange.constrain(
+                      circuit.conjunction(region, weight[bit])))
+                return false;
+              weightedRange.project(target);
+              if (weightedRange.count().zero())
+                continue;
+              // Each weight bit must be determined by this target and the
+              // accepted prefix. Reject unresolved companion-dependent roots
+              // rather than assigning their existential projection a mass.
+              ModelCounter zeroRange = counter;
+              if (!zeroRange.constrain(
+                      circuit.conjunction(region, weight[bit] ^ 1)))
+                return false;
+              zeroRange.project(target);
+              ModelCount covered = weightedRange.count();
+              covered.add(zeroRange.count());
+              // Both projections cover the original range. Their counts add
+              // to its count exactly when their target values are disjoint.
+              if (covered.compare(count) != 0)
+                return false;
+              eligible.push_back({std::move(weightedRange),
+                                  originalMass(ModelCount::powerOfTwo(bit)),
+                                  count, ModelCount()});
+            }
+          } else
+            eligible.push_back({std::move(range), originalMass(std::move(mass)),
+                                count, ModelCount()});
         }
         if (eligible.empty())
           return false;
         // Each source item's original mass is shared by its legal target
         // values. A common denominator keeps the resulting ratios integral
         // without a fixed-width normalization or rounding step.
-        ModelCount denominator(1);
-        for (const Choice &choice : eligible)
-          denominator = denominator.multiplied(choice.count);
         for (Choice &choice : eligible)
           choice.coefficient =
               choice.mass.multiplied(denominator.divided(choice.count));
@@ -810,6 +854,7 @@ SamplerResult sampleRandomPlan(
     domainsOffset += footerSize;
   }
   std::vector<ID> distributionGuards(weightedGroups.size(), missing);
+  std::vector<Bits> expressionWeights(captureCount);
   std::vector<const PriorityInput *> hardInputs;
   std::array<const PriorityInput *, 64> softInputs{};
   for (unsigned index = 0; index != instructions; ++index) {
@@ -819,6 +864,13 @@ SamplerResult sampleRandomPlan(
       continue;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
+    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+      if (!weighted || operand >= captureCount ||
+          auxiliary != expressionWeights[operand].size())
+        return SamplerResult::Invalid;
+      expressionWeights[operand].push_back(roots[index]);
+      continue;
+    }
     if (opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
       if (!weighted || operand >= distributionGuards.size() ||
           distributionGuards[operand] != missing)
@@ -843,6 +895,12 @@ SamplerResult sampleRandomPlan(
       softInputs[auxiliary] = input;
     }
   }
+  for (const WeightedGroup &group : weightedGroups)
+    for (const WeightedItem &item : group.items)
+      if (item.expressionWeight &&
+          expressionWeights[item.weightCapture].size() !=
+              (captureWidths ? captureWidths[item.weightCapture] : 64))
+        return SamplerResult::Invalid;
   if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS) {
     size_t offset = domainsOffset;
     if (offset > programSize || programSize - offset < 8)
@@ -904,9 +962,17 @@ SamplerResult sampleRandomPlan(
       for (const WeightedItem &item : group.items) {
         unsigned weightWidth =
             captureWidths ? captureWidths[item.weightCapture] : 64;
-        bool positive = false;
-        for (size_t word = 0; word != (uint64_t(weightWidth) + 63) / 64; ++word)
-          positive |= captures[captureOffsets[item.weightCapture] + word] != 0;
+        ID positive = 0;
+        if (item.expressionWeight) {
+          if (expressionWeights[item.weightCapture].size() != weightWidth)
+            return SamplerResult::Invalid;
+          for (ID bit : expressionWeights[item.weightCapture])
+            positive = circuit.disjunction(positive, bit);
+        } else
+          for (size_t word = 0; word != (uint64_t(weightWidth) + 63) / 64;
+               ++word)
+            if (captures[captureOffsets[item.weightCapture] + word] != 0)
+              positive = 1;
         if (!positive)
           continue;
         for (const WeightedInterval &interval : item.intervals) {
@@ -916,7 +982,8 @@ SamplerResult sampleRandomPlan(
                                 f.atLeast(field, interval.lower),
                                 f.atMost(field, interval.lower +
                                                     interval.cardinality - 1));
-          support = circuit.disjunction(support, region);
+          support = circuit.disjunction(support,
+                                        circuit.conjunction(region, positive));
         }
       }
       ID guard = distributionGuards[groupIndex] == missing
@@ -994,10 +1061,10 @@ SamplerResult sampleRandomPlan(
   }
   if (weighted)
     return f.weighted(width, variable, booleanBits, physicalBits,
-                      weightedGroups, distributionGuards, retainedSoft,
-                      constraintMask, captures, captureWidths, captureOffsets,
-                      start, mutableMask, *randomState, orderedMasks,
-                      orderedLayerCount, assignment)
+                      weightedGroups, distributionGuards, expressionWeights,
+                      retainedSoft, constraintMask, captures, captureWidths,
+                      captureOffsets, start, mutableMask, *randomState,
+                      orderedMasks, orderedLayerCount, assignment)
                ? SamplerResult::Satisfiable
                : SamplerResult::Invalid;
   if (uniform)

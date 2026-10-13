@@ -307,10 +307,44 @@ struct SamplerPlanView {
   size_t coreSize = 0;
 };
 
+/// Weight roots are one contiguous, ascending bit sequence per capture.
+/// Keep validation linear without accepting partial or repeated definitions.
+class WeightBitSequence {
+public:
+  WeightBitSequence(uint32_t captures, bool weighted)
+      : seen(captures, false), weighted(weighted) {}
+  bool visit(unsigned opcode, unsigned width, unsigned flags, unsigned operand,
+             uint64_t bit) {
+    if (opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
+      return next == 0;
+    if (!weighted || !width || flags || operand >= seen.size())
+      return false;
+    if (next == 0) {
+      if (bit || seen[operand])
+        return false;
+      seen[operand] = true;
+      capture = operand;
+      bits = width;
+    }
+    if (capture != operand || bits != width || bit != next)
+      return false;
+    if (++next == bits)
+      next = 0;
+    return true;
+  }
+  bool complete() const { return next == 0; }
+
+private:
+  std::vector<bool> seen;
+  bool weighted;
+  unsigned capture = 0, bits = 0, next = 0;
+};
+
 /// Validate the bundle independently of the residual interpreter. All handles
 /// are topological, all parameter indices are bounded, and roots correspond
-/// one-to-one to end instructions. The residual's own validator checks its
-/// arithmetic and optional metadata after using coreSize as its byte bound.
+/// one-to-one to end instructions and weight-bit exports. The residual's own
+/// validator checks its arithmetic and optional metadata after using coreSize
+/// as its byte bound.
 inline bool readSamplerPlan(const uint8_t *program, size_t size,
                             const uint32_t *captureWidths,
                             SamplerPlanView &view) {
@@ -400,15 +434,28 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
     return false;
   const uint8_t *rootBytes = nodeBytes + size_t(nodes) * samplerPlanNodeSize;
   uint32_t previous = 0, expected = 0;
+  WeightBitSequence weightBits(captures,
+                               planRead32(program + 20) &
+                                   OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
   for (uint32_t index = 0; index != instructions; ++index) {
-    uint8_t opcode = program[instructionHeader + size_t(index) * 16];
+    const uint8_t *p = program + instructionHeader + size_t(index) * 16;
+    uint8_t opcode = p[0];
+    unsigned bits = wide ? planRead32(p + 4) : p[1];
+    unsigned operand = planRead32(p + (wide ? 8 : 4));
+    if (!weightBits.visit(opcode, bits, wide ? p[1] : p[2], operand,
+                          wide ? planRead32(p + 12) : planRead64(p + 8)))
+      return false;
+    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
+        bits != (captureWidths ? captureWidths[operand] : 64))
+      return false;
     // END_HARD, END_SOFT and END_DIST_GUARD are fixed C ABI opcodes.
     if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
         opcode == OBELISK_RT_RANDOM_END_SOFT_V1 ||
-        opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1)
+        opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1 ||
+        opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
       ++expected;
   }
-  if (roots != expected)
+  if (roots != expected || !weightBits.complete())
     return false;
   for (uint32_t index = 0; index != roots; ++index) {
     const uint8_t *p = rootBytes + size_t(index) * samplerPlanRootSize;
@@ -419,7 +466,8 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
     uint8_t opcode = program[instructionHeader + size_t(instruction) * 16];
     if (opcode != OBELISK_RT_RANDOM_END_HARD_V1 &&
         opcode != OBELISK_RT_RANDOM_END_SOFT_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_DIST_GUARD_V1)
+        opcode != OBELISK_RT_RANDOM_END_DIST_GUARD_V1 &&
+        opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
       return false;
     previous = instruction;
   }

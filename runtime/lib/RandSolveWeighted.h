@@ -27,6 +27,7 @@ struct WeightedItem {
   bool perRange;
   std::vector<WeightedInterval> intervals;
   bool isDefault = false;
+  bool expressionWeight = false;
 };
 
 struct WeightedGroup {
@@ -94,7 +95,8 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
                    OBELISK_RT_RANDOM_DIST_PER_RANGE |
                    OBELISK_RT_RANDOM_DIST_TARGET_SIGNED |
                    OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL |
-                   OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT)))
+                   OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
+                   OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT)))
       return false;
     uint64_t mask = width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     bool captured = (flags & OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL) != 0;
@@ -106,6 +108,8 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
       return false;
     bool signedTarget = (flags & OBELISK_RT_RANDOM_DIST_TARGET_SIGNED) != 0;
     bool perRange = (flags & OBELISK_RT_RANDOM_DIST_PER_RANGE) != 0;
+    bool expressionWeight =
+        (flags & OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT) != 0;
     if ((captured && !perRange) ||
         (isDefault &&
          (captured || !perRange || lower != 0 || cardinality != mask + 1)))
@@ -131,11 +135,14 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
           std::any_of(group.items.begin(), group.items.end(),
                       [](const WeightedItem &item) { return item.isDefault; }))
         return false;
-      group.items.push_back({identity, capture, perRange, {}, isDefault});
+      group.items.push_back(
+          {identity, capture, perRange, {}, isDefault, expressionWeight});
     } else if (!perRange ||
                group.items[found->second].weightCapture != capture ||
                !group.items[found->second].perRange || isDefault ||
-               group.items[found->second].isDefault) {
+               group.items[found->second].isDefault ||
+               group.items[found->second].expressionWeight !=
+                   expressionWeight) {
       return false;
     }
     group.items[found->second].intervals.push_back(

@@ -4667,8 +4667,9 @@ struct obelisk_rt_random_state_v1 {
 // u64 literal-word pool. Its header adds literal_word_count and a zero reserved
 // u32. Its instructions contain opcode:u8, flags:u8, reserved:u16, width:u32,
 // operand:u32, and auxiliary:u32. PUSH_LITERAL auxiliary is a word-pool index;
-// END_SOFT auxiliary is its priority; every other auxiliary is zero. This
-// allows arbitrary-width bit-vector expressions without changing the compact
+// END_SOFT auxiliary is its priority; END_DIST_WEIGHT_BIT auxiliary is its
+// exported bit index; every other auxiliary is zero. This allows
+// arbitrary-width bit-vector expressions without changing the compact
 // version-1 runtime fast path. END_HARD and END_SOFT use
 // operand as the disabled constraint-block bit (or the unmasked sentinel).
 // END_SOFT uses the v1 immediate or v2 auxiliary as a contiguous, zero-based
@@ -4770,6 +4771,9 @@ struct obelisk_rt_random_state_v1 {
 // One per-range item represents the complement of all explicit intervals.
 // Its wire interval is the complete target domain, resolved at each call.
 #define OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT UINT32_C(32)
+// The weight capture names a compiler-generated expression rather than live
+// capture data. Consecutive END_DIST_WEIGHT_BIT instructions export its bits.
+#define OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT UINT32_C(64)
 #define OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE UINT16_C(32)
 // V2 domain record: width is u32; mask/value are u64 literal-pool word indices.
@@ -4855,7 +4859,12 @@ typedef enum obelisk_rt_random_opcode_v1 {
   OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1 = 54,
   OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1 = 55,
   // One-bit finite predicate for the conversion's four-state unknown plane.
-  OBELISK_RT_RANDOM_REAL_IS_FINITE_V1 = 56
+  OBELISK_RT_RANDOM_REAL_IS_FINITE_V1 = 56,
+  // Export one bit of the stack top to the compiled sampling plan. Operand
+  // identifies the weight capture; auxiliary is the ascending bit index.
+  // Width is the complete expression width. Only the final bit pops the value.
+  // Valid only under SMT_WEIGHTED; flags are zero.
+  OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 = 57
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called

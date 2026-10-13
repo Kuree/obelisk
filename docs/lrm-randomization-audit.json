@@ -645,22 +645,22 @@
         {
           "feature": "Unsigned weight interpretation",
           "status": "supported",
-          "detail": "Self-determined integral weights are zero-extended, including negative signed bit patterns."
+          "detail": "Self-determined integral weights are zero-extended, including negative signed bit patterns. State weights and weights computed from the distributed target or its explicit solve-before predecessors retain arbitrary-width unsigned values."
         },
         {
           "feature": "Per-range and per-value probability",
           "status": "partial",
-          "detail": "The compiled-plan sampler preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Expression targets, candidate-dependent endpoints and real ranges remain open."
+          "detail": "The compiled-plan sampler preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Integral weights computed from the distributed target or its explicit solve-before predecessors export one Boolean root per bit and use exact unsigned bit masses with the original item denominator. Captured := range cardinality scales the expression before sampling. Expression targets, unresolved companion weights, candidate-dependent endpoints and real ranges remain open."
         },
         {
           "feature": "Nonzero weights never make an otherwise legal solve fail",
           "status": "partial",
-          "detail": "The compiled-plan samplers policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. General expression targets, unresolved activation and function-priority stage combinations remain diagnosed. Source cyclic projection also retains exact positive support of ordinary distributions, including 130-bit captured weights, live support changes and zero-total-weight transactional failures."
+          "detail": "The compiled-plan sampler's policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. Target- and explicitly ordered predecessor-dependent weights retain exact positive support, including zero exclusions, negative signed bit patterns, checker-only calls, mode changes and transactional failures. General expression targets, unresolved companion weights, unresolved activation and function-priority stage combinations remain diagnosed. Source cyclic projection also retains exact positive support of ordinary distributions, including candidate weights, 130-bit captured weights, live support changes and zero-total-weight transactional failures."
         },
         {
           "feature": "Soft dist and dist with solve before",
           "status": "partial",
-          "detail": "The compiled-plan sampler retains or discards soft distributions in global soft-priority order and samples whole distributed targets conditionally on earlier solve-before layers. State guards and earlier candidate guards are supported. Split-target ordering, unresolved candidate activation and independent function-priority stage combinations remain open."
+          "detail": "The compiled-plan sampler retains or discards soft distributions in global soft-priority order and samples whole distributed targets conditionally on earlier solve-before layers. State guards, earlier candidate guards and integral weights computed from those explicitly ordered predecessors are supported. Candidate-dependent zero soft weights can be discarded without constraining hard support. Split-target ordering, unresolved companion weights, unresolved candidate activation and independent function-priority stage combinations remain open."
         },
         {
           "feature": "Multiple active distributions on one target",
@@ -670,7 +670,7 @@
         {
           "feature": "Dynamic endpoints, candidate weights, and real ranges",
           "status": "partial",
-          "detail": "State-valued two-state integral endpoints are captured at each call, clipped to the target domain, and combined with exact original := range masses. Default complement membership includes explicitly listed zero-weight items and supports a default-only distribution. Candidate-dependent endpoints and weights, unknown-plane state endpoints and real ranges remain open."
+          "detail": "State-valued two-state integral endpoints are captured at each call, clipped to the target domain, and combined with exact original := range masses. Default complement membership includes explicitly listed zero-weight items and supports a default-only distribution. Integral candidate weights computed from the distributed target or its explicit solve-before predecessors are compiled once into shared immutable temporaries and width-linear Boolean root exports. The target runtime binds captures and samples arbitrary-precision masses without Z3. Unresolved companion-dependent weights, candidate-dependent endpoints, unknown-plane state endpoints and real ranges remain open."
         }
       ],
       "evidence": {
@@ -685,7 +685,8 @@
           "runtime/lib/RandSolveWeighted.h",
           "runtime/lib/RandModelCount.h",
           "lib/Solver/RandomSamplerZ3.cpp",
-          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
+          "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
+          "runtime/include/obelisk/Runtime/Runtime.h"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
@@ -696,7 +697,10 @@
           "runtime/unittests/RandSolveWideTest.cpp",
           "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-dynamic-dist-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-candidate-weights-invalid.mlir",
+          "test/Runtime/obelisk-to-simulation-random-candidate-weights-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-candidate-weights-scope-runtime.mlir"
         ]
       }
     },

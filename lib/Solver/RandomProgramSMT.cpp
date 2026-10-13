@@ -7,6 +7,7 @@
 #include "RandomProgramSMT.h"
 
 #include "obelisk/Runtime/RandomDomain.h"
+#include "obelisk/Runtime/RandomSamplerPlan.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/Builders.h"
@@ -489,7 +490,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                                 OBELISK_RT_RANDOM_DIST_PER_RANGE |
                                 OBELISK_RT_RANDOM_DIST_TARGET_SIGNED |
                                 OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL |
-                                OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT)) != 0
+                                OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
+                                OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT)) != 0
                : (flags & ~(OBELISK_RT_RANDOM_DIST_WEIGHT_SIGNED |
                             OBELISK_RT_RANDOM_DIST_TARGET_SIGNED)) != 0) ||
           (constraintBlock != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
@@ -596,7 +598,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       std::optional<DecodedInstruction> decoded = decodeInstruction(index);
       if (!decoded)
         return std::nullopt;
-      if (decoded->opcode != OBELISK_RT_RANDOM_PUSH_CAPTURE_V1)
+      if (decoded->opcode != OBELISK_RT_RANDOM_PUSH_CAPTURE_V1 &&
+          decoded->opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
         continue;
       if (decoded->operand >= captureCount || decoded->width == 0)
         return std::nullopt;
@@ -653,6 +656,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   bool sawSoft = false;
   uint64_t softPriorities = 0;
   std::vector<bool> guardSeen(distGroupCount, false);
+  random::WeightBitSequence weightBits(captureCount, weighted);
   for (uint32_t index = 0; index != instructionCount; ++index) {
     std::optional<DecodedInstruction> decoded = decodeInstruction(index);
     if (!decoded)
@@ -662,11 +666,14 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     uint8_t flags = decoded->flags;
     uint32_t operand = decoded->operand;
     uint64_t immediate = decoded->auxiliary;
+    if (!weightBits.visit(opcode, width, flags, operand, immediate))
+      return std::nullopt;
     if (width == 0 || (version1 && width > 64) ||
         (flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
       return std::nullopt;
     if (version2 && opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_SOFT_V1 && immediate != 0)
+        opcode != OBELISK_RT_RANDOM_END_SOFT_V1 &&
+        opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 && immediate != 0)
       return std::nullopt;
     bool signedOperation = (flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     if (opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
@@ -726,6 +733,14 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         return std::nullopt;
       guardSeen[operand] = true;
       stack.clear();
+      continue;
+    }
+    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+      if (!weighted || flags || operand >= captureCount || stack.size() != 1 ||
+          stack.back().width != width || immediate >= width)
+        return std::nullopt;
+      if (immediate + 1 == width)
+        stack.clear();
       continue;
     }
     if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||

@@ -1353,6 +1353,9 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   std::vector<Bits> stack;
   std::vector<Bits> temporaries;
   std::vector<std::pair<unsigned, ID>> roots;
+  random::WeightBitSequence weightBits(
+      captureWidths.size(),
+      read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     unsigned opcode = p[0], bits = wide ? read32(p + 4) : p[1];
@@ -1360,6 +1363,8 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     bool sign = (instructionFlags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
+    if (!weightBits.visit(opcode, bits, instructionFlags, operand, auxiliary))
+      return std::nullopt;
     if (random::isRealInstruction(opcode)) {
       if (!(read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) ||
           stack.empty() ||
@@ -1414,6 +1419,19 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
                          builder.input(PlanOpcode::ConstraintEnabled, operand))
                 .first;
       stack.push_back(f.boolean(found->second, bits));
+    } else if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+      if (stack.size() != 1 || stack.back().real ||
+          stack.back().width != bits || bits != captureWidths[operand])
+        return std::nullopt;
+      Bits selected{
+          Z3_mk_extract(f.context, auxiliary, auxiliary, stack.back().value),
+          1};
+      ID root;
+      if (!builder.lower(f.truth(selected), root))
+        return std::nullopt;
+      roots.emplace_back(index, root);
+      if (auxiliary + 1 == bits)
+        stack.clear();
     } else if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
                opcode == OBELISK_RT_RANDOM_END_SOFT_V1 ||
                opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
