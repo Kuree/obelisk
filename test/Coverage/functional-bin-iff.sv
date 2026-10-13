@@ -56,8 +56,8 @@ module top;
     ordinary_on = 0;
     cov.sample();
 
-    // Disabled ignore/illegal guards do not suppress overlapping ordinary
-    // bins; enabled guards do.
+    // Excluded membership removes overlapping ordinary values even when an
+    // ignore/illegal guard is false. Illegal guards only gate diagnostics.
     sampled = 1;
     cov.sample();
     ignore_on = 1;
@@ -92,11 +92,11 @@ module top;
   end
 endmodule
 
-// CHECK: functional: 75.00% (3/4)
-// CHECK: coverpoint cp: 3/4 (75.00%)
+// CHECK: functional: 50.00% (1/2)
+// CHECK: coverpoint cp: 1/2 (50.00%)
 // CHECK-DAG: bin zero: 0 [uncovered]
-// CHECK-DAG: bin one_overlap: 1 [covered]
-// CHECK-DAG: bin two_overlap: 1 [covered]
+// CHECK-DAG: bin one_overlap: 0 [excluded] {empty}
+// CHECK-DAG: bin two_overlap: 0 [excluded] {empty}
 // CHECK-DAG: bin three: 1 [covered]
 // CHECK-DAG: bin ignored: 0 [excluded] {ignore}
 // ERROR: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 0

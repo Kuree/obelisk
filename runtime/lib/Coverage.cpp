@@ -10948,11 +10948,10 @@ void markStaticallyEmptyStateBins(
         !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) ||
         (bin.flags & FunctionalBinEmpty))
       continue;
-    auto plan = plans.find(bin.id);
     const auto *set = setFor(bin.id);
-    // An iff-guarded exclusion cannot make a resolved schema bin globally
-    // empty.
-    if (set && !plan->second->iffExpression)
+    // iff gates sampling, not the values removed by an exclusion (19.5.1,
+    // 19.5.5-.6). Include guarded exclusions in the coverage denominator.
+    if (set)
       exclusionsByItem[bin.item].push_back(set);
   }
   for (auto &bin : schema.resolvedFunctionalBins) {
@@ -13157,7 +13156,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       const bool hadPreviousTransitionSample =
           pendingTransitionSampledItems.count(resolvedItem) != 0;
       IndexSet<uint64_t> illegalBins;
-      bool ignored = false;
+      bool excluded = false;
       bool matchedNonDefault = false;
       std::vector<size_t> ordinary;
       std::vector<size_t> defaults;
@@ -13180,13 +13179,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         // its iff is false; only the counter update is disabled (IEEE 1800-2017
         // 19.5).
         matchedNonDefault = true;
-        if (!binEnabled)
-          continue;
-        if (bin.flags & obelisk::coverage::FunctionalBinIllegal)
-          illegalBins.insert(bin.id);
-        else if (bin.flags & obelisk::coverage::FunctionalBinIgnore)
-          ignored = true;
-        else
+        if (bin.flags & obelisk::coverage::FunctionalBinIllegal) {
+          excluded = true;
+          if (binEnabled)
+            illegalBins.insert(bin.id);
+        } else if (bin.flags & obelisk::coverage::FunctionalBinIgnore)
+          excluded = true;
+        else if (binEnabled)
           ordinary.push_back(binIndex);
       }
       // IEEE 1800-2017 19.5: default catches exactly the values associated with
@@ -13198,7 +13197,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           if (bin.flags & obelisk::coverage::FunctionalBinIllegal)
             illegalBins.insert(bin.id);
           else if (bin.flags & obelisk::coverage::FunctionalBinIgnore)
-            ignored = true;
+            excluded = true;
           else
             ordinary.push_back(binIndex);
         }
@@ -13208,7 +13207,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           uint64_t &increment = pendingIllegalIncrements[illegalBin];
           increment = saturatingAdd(increment, 1);
         }
-      } else if (!ignored) {
+      } else if (!excluded) {
         for (size_t binIndex : ordinary) {
           const auto &bin = instance.bins[binIndex];
           pendingBinIncrements.push_back(binIndex);

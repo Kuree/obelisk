@@ -6133,6 +6133,106 @@ TEST_F(CoverageRuntimeDesignTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       GuardedStateExclusionsRemoveValuesAndOnlyGateIllegalDiagnostics) {
+  using namespace obelisk::coverage;
+  constexpr uint32_t inclusive =
+      FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+  for (bool fullyExcluded : {false, true}) {
+    Database schema = makeFunctionalSchema();
+    if (!fullyExcluded) {
+      schema.functionalValueAtoms[0].kind =
+          FunctionalValueAtomKind::IntegralRange;
+      schema.functionalValueLimbs[0].highAval = 2;
+    }
+    for (auto [bin, set, value, flag, expressionID, ordinal] :
+         {std::tuple{uint64_t{32}, uint64_t{53}, uint64_t{0},
+                     FunctionalBinIgnore, uint64_t{62}, uint32_t{2}},
+          std::tuple{uint64_t{33}, uint64_t{54}, uint64_t{1},
+                     FunctionalBinIllegal, uint64_t{63}, uint32_t{3}}}) {
+      std::string name = flag == FunctionalBinIgnore ? "ignored" : "illegal";
+      schema.functionalBins.push_back({bin, 20, name, FunctionalBinKind::State,
+                                       flag, 1, ordinal,
+                                       "top.cg.first." + name});
+      uint32_t atomIndex = schema.functionalValueAtoms.size();
+      uint32_t limbIndex = schema.functionalValueLimbs.size();
+      schema.functionalValueSets.push_back({set, 20, atomIndex, 1, 2,
+                                            FunctionalValueSetKind::Integral, 0,
+                                            CoverageSignedness::Unsigned, 0});
+      schema.functionalValueAtoms.push_back(
+          {set, 0, 0, limbIndex, 1, 0, FunctionalValueAtomKind::IntegralValue,
+           inclusive, 0, 0});
+      schema.functionalValueLimbs.push_back({set, 0, 0, value, 0, value, 0, 0});
+      schema.functionalBinPlans.push_back({bin, set, expressionID});
+      auto guard = schema.functionalExpressions.front();
+      guard.id = expressionID;
+      guard.owner = bin;
+      guard.ownerKind = FunctionalExpressionOwnerKind::Bin;
+      guard.role = FunctionalExpressionRole::BinIff;
+      guard.resultKind = FunctionalExpressionResultKind::Boolean;
+      guard.bitWidth = 0;
+      guard.signedness = CoverageSignedness::NotApplicable;
+      guard.resultOrdinal = ordinal;
+      schema.functionalExpressions.push_back(guard);
+    }
+    detail::sortByKey(schema.functionalBins.begin(),
+                      schema.functionalBins.end(),
+                      [](const auto &bin) { return bin.id; });
+    detail::sortByKey(schema.functionalBinPlans.begin(),
+                      schema.functionalBinPlans.end(),
+                      [](const auto &plan) { return plan.bin; });
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    obelisk_rt_context *context = createContextForSchema(schema, false);
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createFunctional(context, 10, &handle), OBELISK_RT_OK);
+    auto sample = [&](uint8_t value, uint8_t guard, uint8_t unknown = 0) {
+      uint8_t second = 2;
+      std::array<obelisk_rt_functional_value_v1, 4> values{
+          {{60, 2, 1, &value, nullptr, nullptr, 0,
+            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+           {61, 2, 1, &second, nullptr, nullptr, 0,
+            OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+           {62, 1, 1, &guard, &unknown, nullptr, 0,
+            OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0},
+           {63, 1, 1, &guard, &unknown, nullptr, 0,
+            OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0}}};
+      return obelisk_rt_v1_covergroup_sample(context, handle, values.data(),
+                                             values.size());
+    };
+    const auto &bins = context->coverage->instances.at(handle).bins;
+    EXPECT_EQ(bool(bins[0].flags & FunctionalBinEmpty), fullyExcluded);
+    EXPECT_TRUE(bins[1].flags & FunctionalBinEmpty);
+    for (uint8_t value : {0, 1}) {
+      ASSERT_EQ(sample(value, 0), OBELISK_RT_OK);
+      ASSERT_EQ(sample(value, 1, 1), OBELISK_RT_OK);
+      ASSERT_EQ(sample(value, 0, 1), OBELISK_RT_OK);
+    }
+    EXPECT_EQ(bins[0].count, 0u);
+    EXPECT_EQ(bins[1].count, 0u);
+    EXPECT_TRUE(saveCoverage(context, "disabled-state-exclusions")
+                    .illegalBinDiagnostics.empty());
+    ASSERT_EQ(sample(2, 0), OBELISK_RT_OK);
+    EXPECT_EQ(bins[0].count, fullyExcluded ? 0u : 1u);
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handle, 20, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, fullyExcluded ? 0 : 1);
+    EXPECT_EQ(total, fullyExcluded ? 0 : 1);
+    ASSERT_EQ(sample(1, 1), OBELISK_RT_OK);
+    ASSERT_EQ(sample(0, 1), OBELISK_RT_OK);
+    EXPECT_EQ(bins[0].count, fullyExcluded ? 0u : 1u);
+    Database saved = saveCoverage(context, "enabled-state-exclusions");
+    ASSERT_EQ(saved.illegalBinDiagnostics.size(), 1u);
+    EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, bins[3].id);
+    EXPECT_EQ(saved.illegalBinDiagnostics.front().count, 1u);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
      IgnoreIllegalOverlapEmptiesOrdinaryBinAndIllegalWins) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
