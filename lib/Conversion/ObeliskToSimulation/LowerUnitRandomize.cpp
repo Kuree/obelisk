@@ -4748,6 +4748,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     // the live active-bit inventory while materializing this capture.
     if (expression->hasAttr(randomArithmeticPlaneAttr))
       return captureExpression();
+    if (expression->hasAttr(randomArithmeticRealFiniteAttr)) {
+      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
+        return failure();
+      instruction(OBELISK_RT_RANDOM_REAL_IS_FINITE_V1, 1);
+      return success();
+    }
     if (isa<semantic::SVConversionExpressionOp>(expression)) {
       // Keep constant conversions structural so Z3 can fold them, but evaluate
       // a conversion of runtime state once as a capture. This preserves the
@@ -4762,9 +4768,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       auto sourceType = getNormalizedSemanticType(nested.front());
       if (!floating && succeeded(sourceType) && isa<FloatType>(*sourceType)) {
-        emitError(getSemanticLocation(expression))
-            << "real-to-integral constraint conversion requires IEEE rounding";
-        return failure();
+        instruction(OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1, *width);
+        return success();
       }
       instruction(floating ? OBELISK_RT_RANDOM_REAL_CAST_V1
                            : OBELISK_RT_RANDOM_CAST_V1,
@@ -4777,6 +4782,48 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (!dependsOnCandidate(expression) &&
         !expression->hasAttr(randomArithmeticNodeAttr))
       return captureExpression();
+
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
+        call && call.getIsSystemCall() &&
+        isRealRandomSystemFunction(call.getCalleeName())) {
+      if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
+        return failure();
+      auto inputType = getNormalizedSemanticType(nested.front());
+      if (failed(inputType))
+        return failure();
+      StringRef name = call.getCalleeName();
+      bool realInput = isa<FloatType>(*inputType);
+      if (name == "$itor") {
+        if (realInput)
+          instruction(OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1, 32);
+        instruction(OBELISK_RT_RANDOM_REAL_CAST_V1, 64,
+                    realInput || isSignedNode(nested.front()));
+      } else if (name == "$rtoi") {
+        if (!realInput)
+          instruction(OBELISK_RT_RANDOM_REAL_CAST_V1, 64,
+                      isSignedNode(nested.front()));
+        instruction(OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1, *width);
+      } else if (name == "$bitstoreal" || name == "$bitstoshortreal") {
+        unsigned precision = name == "$bitstoreal" ? 64 : 32;
+        if (realInput)
+          instruction(OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1, precision);
+        else
+          instruction(OBELISK_RT_RANDOM_CAST_V1, precision,
+                      isSignedNode(nested.front()));
+        instruction(precision == 64 ? OBELISK_RT_RANDOM_REAL64_BITS_V1
+                                    : OBELISK_RT_RANDOM_REAL32_BITS_V1,
+                    precision);
+      } else {
+        unsigned precision = name == "$realtobits" ? 64 : 32;
+        if (!realInput || cast<FloatType>(*inputType).getWidth() != precision)
+          instruction(OBELISK_RT_RANDOM_REAL_CAST_V1, precision,
+                      isSignedNode(nested.front()));
+        instruction(OBELISK_RT_RANDOM_REAL_TO_BITS_V1, precision);
+        if (*width != precision)
+          instruction(OBELISK_RT_RANDOM_CAST_V1, *width);
+      }
+      return success();
+    }
 
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
         call && call.getIsSystemCall() &&
@@ -6033,6 +6080,29 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // Expanded function evaluation retains errors in every executed input.
       // An unused four-state value does not taint a known function result.
       valid = guardAnd(errors, values.back().valid);
+    } else if (expression->hasAttr(randomArithmeticRealFiniteAttr)) {
+      if (values.size() != 1 || !isa<FloatType>(values.front().value.getType()))
+        return failure();
+      unsigned precision =
+          cast<FloatType>(values.front().value.getType()).getWidth();
+      unsigned fraction = precision == 32 ? 23 : 52;
+      uint64_t exponentMask = precision == 32 ? 255 : 2047;
+      Type integer = builder.getIntegerType(precision);
+      auto constant = [&](uint64_t value) {
+        return arith::ConstantOp::create(
+            builder, location, integer, builder.getIntegerAttr(integer, value));
+      };
+      Value payload = arith::BitcastOp::create(builder, location, integer,
+                                               values.front().value);
+      Value exponent = arith::AndIOp::create(
+          builder, location,
+          arith::ShRUIOp::create(builder, location, payload,
+                                 constant(fraction)),
+          constant(exponentMask));
+      result =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                exponent, constant(exponentMask));
+      valid = errors;
     } else if (binary && (binary.getOperatorKind() ==
                               semantic::SVBinaryOperator::LogicalAnd ||
                           binary.getOperatorKind() ==
@@ -6334,6 +6404,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         cf::BranchOp::create(builder, location, done, ValueRange{*lowered});
         setCurrent(done);
       }
+    }
+    // IEEE conversions consume integral X/Z bits as zero. Retain structural
+    // evaluation errors, such as an invalid address, across that boundary.
+    if (values.size() == 1) {
+      auto inputType = getNormalizedSemanticType(inputs.front());
+      auto realCall = dyn_cast<semantic::SVCallExpressionOp>(expression);
+      if (succeeded(inputType) && !isa<FloatType>(*inputType) &&
+          ((isa<semantic::SVConversionExpressionOp>(expression) &&
+            isa<FloatType>(*resultType)) ||
+           (realCall && realCall.getIsSystemCall() &&
+            isRealRandomSystemFunction(realCall.getCalleeName()))))
+        valid = errors;
     }
     // An X/Z value is an evaluation error while forming constraints. An active
     // random input is a relation to be solved; its current stored X bits do not

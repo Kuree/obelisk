@@ -3,7 +3,6 @@
 #include "LowerUnit.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 
 using namespace mlir;
 
@@ -63,8 +62,40 @@ UnitLowering::lowerRealConversionSystemCall(semantic::SVCallExpressionOp op) {
                 getSemanticLocation(children.front()));
     if (failed(real))
       return failure();
-    Value truncated =
-        math::TruncOp::create(builder, location, builder.getF64Type(), *real);
+    // Clear the IEEE fractional bits using operations shared by native and
+    // bytecode execution. Preserve NaN/Inf so the result conversion retains
+    // the destination's unknown plane; small values become signed zero.
+    auto constant = [&](uint64_t bits) {
+      return arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                       builder.getI64IntegerAttr(bits));
+    };
+    Value payload = arith::BitcastOp::create(builder, location,
+                                             builder.getI64Type(), *real);
+    Value exponent = arith::AndIOp::create(
+        builder, location,
+        arith::ShRUIOp::create(builder, location, payload, constant(52)),
+        constant(2047));
+    Value small = arith::CmpIOp::create(
+        builder, location, arith::CmpIPredicate::ult, exponent, constant(1023));
+    Value fractional = arith::AndIOp::create(
+        builder, location,
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::uge,
+                              exponent, constant(1023)),
+        arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                              exponent, constant(1075)));
+    Value shift = arith::SelectOp::create(
+        builder, location, fractional,
+        arith::SubIOp::create(builder, location, constant(1075), exponent),
+        constant(0));
+    Value integral = arith::AndIOp::create(
+        builder, location, payload,
+        arith::ShLIOp::create(builder, location, constant(UINT64_MAX), shift));
+    Value signedZero = arith::AndIOp::create(builder, location, payload,
+                                             constant(UINT64_C(1) << 63));
+    Value truncatedBits =
+        arith::SelectOp::create(builder, location, small, signedZero, integral);
+    Value truncated = arith::BitcastOp::create(
+        builder, location, builder.getF64Type(), truncatedBits);
     return convertResult(truncated);
   }
 

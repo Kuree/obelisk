@@ -15,7 +15,7 @@ namespace obelisk::random {
 
 inline bool isRealInstruction(unsigned opcode) {
   return opcode >= OBELISK_RT_RANDOM_REAL32_BITS_V1 &&
-         opcode <= OBELISK_RT_RANDOM_REAL_TO_BITS_V1;
+         opcode <= OBELISK_RT_RANDOM_REAL_IS_FINITE_V1;
 }
 
 /// The host and both target program readers share the scalar/rank wire shape.
@@ -43,6 +43,11 @@ inline bool validRealInstruction(unsigned opcode, unsigned width,
     return (width == 32 || width == 64) && inputWidth == width;
   case OBELISK_RT_RANDOM_REAL_CAST_V1:
     return width == 32 || width == 64;
+  case OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1:
+  case OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1:
+    return width && (inputWidth == 32 || inputWidth == 64);
+  case OBELISK_RT_RANDOM_REAL_IS_FINITE_V1:
+    return width == 1 && (inputWidth == 32 || inputWidth == 64);
   }
   return false;
 }

@@ -360,7 +360,7 @@ static bool isStatefulResolutionSystemCall(StringRef name) {
 static bool isSupportedRandomConstraintExpression(Operation *op) {
   if (auto call = dyn_cast<semantic::SVCallExpressionOp>(op))
     return call.getIsSystemCall() &&
-           isIntegralRandomSystemFunction(call.getCalleeName());
+           isRandomConstraintSystemFunction(call.getCalleeName());
   if (auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(op)) {
     using Unary = semantic::SVUnaryOperator;
     switch (unary.getOperatorKind()) {
@@ -5113,7 +5113,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             constraintRoots, semanticSymbols, builder, randomIndices,
             [&](semantic::SVCallExpressionOp expression) {
               return expression.getIsSystemCall() &&
-                     isIntegralRandomSystemFunction(expression.getCalleeName());
+                     isRandomConstraintSystemFunction(
+                         expression.getCalleeName());
             },
             resolveScopeFunction))) {
       invalid = true;
@@ -5132,7 +5133,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (auto function = dyn_cast<semantic::SVCallExpressionOp>(nested);
             function &&
             !(function.getIsSystemCall() &&
-              isIntegralRandomSystemFunction(function.getCalleeName()))) {
+              isRandomConstraintSystemFunction(function.getCalleeName()))) {
           emitError(getSemanticLocation(nested))
               << "unsupported system function in std::randomize constraint";
           invalid = true;
@@ -7438,7 +7439,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             [&](semantic::SVCallExpressionOp expression) {
               return isRandomContainerSizeCall(expression) ||
                      (expression.getIsSystemCall() &&
-                      isIntegralRandomSystemFunction(
+                      isRandomConstraintSystemFunction(
                           expression.getCalleeName()));
             },
             resolveConstraintFunction))) {

@@ -247,7 +247,7 @@
         {
           "feature": "Real random variables",
           "status": "partial",
-          "detail": "Source class and scope plans admit scalar real and shortreal properties, qualified real structure leaves, and real leaves in finite active object graphs. Compiler Z3 emits finite numeric-coordinate relations with spacing-weighted cells, subnormals, signed zero and clipped finite extremes. Live IEEE bounds, promoted shortreal comparisons, soft preferences, constraint/rand modes, explicit property lists, checker-only calls and transactional failures execute in native and WASM at O0/O3, in native and bytecode tiers. Frozen properties retain original NaN/infinity payloads rather than decoding coordinate placeholders. Captured binary64 bounds use deterministic round-to-nearest, ties-to-even binary32 cell parameters; targets validate their full source precision and never link or call Z3. Typed backend arithmetic, integral-to-real conversions, selection and rank decoders remain available. Candidate real-to-integral conversions and computed arithmetic payload bitcasts are diagnosed. MLIR covers the 18.4.1 numeric-density example, every comparison in both operand orders, malformed wire formats, aliases, parent/descendant global constraints and null guard sifting. General full-coordinate arithmetic efficiency, real arrays, joint real/integral distributions and complete real probability semantics remain open."
+          "detail": "Source class and scope plans admit scalar real and shortreal properties, qualified real structure leaves, and real leaves in finite active object graphs. Compiler Z3 emits finite numeric-coordinate relations with spacing-weighted cells, subnormals, signed zero and clipped finite extremes. Live IEEE bounds, promoted shortreal comparisons, soft preferences, constraint/rand modes, explicit property lists, checker-only calls and transactional failures execute in native and WASM at O0/O3, in native and bytecode tiers. Frozen properties retain original NaN/infinity payloads rather than decoding coordinate placeholders. Captured binary64 bounds use deterministic round-to-nearest, ties-to-even binary32 cell parameters; targets validate their full source precision and never link or call Z3. Typed backend arithmetic, integral-to-real conversions, selection and rank decoders remain available. Numeric integral casts and $rtoi now lower to compiler Z3 relations with halfway-away rounding, truncation, arbitrary-width low bits, nonfinite four-state unknown planes and exact binary32-to-binary64 numeric provenance through selection and negation. MLIR validates adjacent IEEE candidate payloads, 1/32/130-bit results, frozen source casts, integer-to-real candidate solves, X/Z-to-zero conversion, and payload-preserving IEEE system-call round trips. Native $rtoi uses integer IEEE truncation operations that also execute in bytecode. Universal Z3 proofs cover all binary32 and binary64 inputs at widths 1, 8, 32, 64 and 130, plus exact binary32 promotion. General computed-FP conversion and arithmetic payload-bitcast plans remain incomplete. Full numeric-coordinate integral-cast counting can exhaust memory and remains an explicit performance gap. MLIR covers the 18.4.1 numeric-density example, every comparison in both operand orders, malformed wire formats, aliases, parent/descendant global constraints and null guard sifting. General full-coordinate arithmetic efficiency, real arrays, joint real/integral distributions and complete real probability semantics remain open."
         },
         {
           "feature": "Rand object handles",
@@ -280,7 +280,9 @@
           "lib/Conversion/SimulationToLLVMCoroutine/SimulationManagedContainerLowering.cpp",
           "lib/Conversion/SimulationToBytecode/BytecodeContainerEncoding.cpp",
           "runtime/lib/DesignBytecodeImage.cpp",
-          "runtime/lib/DesignBytecodeIntrinsics.cpp"
+          "runtime/lib/DesignBytecodeIntrinsics.cpp",
+          "lib/Solver/RandomRealZ3.h",
+          "lib/Conversion/ObeliskToSimulation/LowerUnitRealConversionSystemCalls.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
@@ -314,7 +316,9 @@
           "test/Dialect/Simulation/random-real-rank-invalid.mlir",
           "test/Runtime/simulation-random-real-coordinate-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-real-source-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir",
+          "test/Runtime/simulation-random-real-integer-plan-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-integer-runtime.mlir"
         ]
       }
     },

@@ -350,6 +350,17 @@ inline bool isIntegralRandomSystemFunction(::llvm::StringRef name) {
          name == "$onehot0" || name == "$isunknown";
 }
 
+inline bool isRealRandomSystemFunction(::llvm::StringRef name) {
+  return name == "$itor" || name == "$rtoi" || name == "$bitstoreal" ||
+         name == "$realtobits" || name == "$bitstoshortreal" ||
+         name == "$shortrealtobits";
+}
+
+inline bool isRandomConstraintSystemFunction(::llvm::StringRef name) {
+  return isIntegralRandomSystemFunction(name) ||
+         isRealRandomSystemFunction(name);
+}
+
 /// Result representation frozen by prepare for computed timing observers.
 /// Keep this strongly typed at both ends of the private pass boundary so a
 /// malformed integer attribute cannot silently select value semantics.

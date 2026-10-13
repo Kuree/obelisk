@@ -18,6 +18,8 @@ inline constexpr llvm::StringLiteral randomArithmeticPlaneAttr =
     "simulation.random_arithmetic_plane";
 inline constexpr llvm::StringLiteral randomArithmeticOperandAttr =
     "simulation.random_arithmetic_operand";
+inline constexpr llvm::StringLiteral randomArithmeticRealFiniteAttr =
+    "simulation.random_real_finite";
 
 enum class RandomArithmeticPlane : int32_t {
   Value,

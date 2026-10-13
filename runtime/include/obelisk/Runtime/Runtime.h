@@ -4848,7 +4848,13 @@ typedef enum obelisk_rt_random_opcode_v1 {
   OBELISK_RT_RANDOM_REAL_CAST_V1 = 51,
   OBELISK_RT_RANDOM_REAL_RANK_VALID_V1 = 52,
   // Recover a bitcast payload. Computed NaN payload semantics remain open.
-  OBELISK_RT_RANDOM_REAL_TO_BITS_V1 = 53
+  OBELISK_RT_RANDOM_REAL_TO_BITS_V1 = 53,
+  // IEEE 1800 integral casts round halfway away from zero; $rtoi truncates.
+  // Both return destination-width low bits, with nonfinite two-state zero.
+  OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1 = 54,
+  OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1 = 55,
+  // One-bit finite predicate for the conversion's four-state unknown plane.
+  OBELISK_RT_RANDOM_REAL_IS_FINITE_V1 = 56
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called

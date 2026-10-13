@@ -41,7 +41,10 @@
 // CHECK: %[[ITOR_RESULT:.*]] = simulation.real.from_integer %[[ITOR_INPUT]] signed = true : i32 -> f64
 // CHECK: simulation.display {{.*}}(%[[ITOR_RESULT]])
 // CHECK: %[[RTOI_REAL:.*]] = simulation.real.from_integer
-// CHECK: %[[RTOI_TRUNCATED:.*]] = math.trunc %[[RTOI_REAL]] : f64
+// Truncation uses integer IEEE operations admitted by design bytecode.
+// CHECK: arith.bitcast %[[RTOI_REAL]] : f64 to i64
+// CHECK-NOT: math.trunc
+// CHECK: %[[RTOI_TRUNCATED:.*]] = arith.bitcast {{.*}} : i64 to f64
 // CHECK: %[[RTOI_RESULT:.*]] = simulation.real.to_integer %[[RTOI_TRUNCATED]]
 // $rtoi returns a four-state integer; a non-finite operand produces X.
 // CHECK: %[[RTOI_BITS:.*]] = simulation.logic.from_bits %[[RTOI_RESULT]]

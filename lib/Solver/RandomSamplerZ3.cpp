@@ -5,9 +5,11 @@
 #include "obelisk/Solver/ConstraintSolver.h"
 
 #ifdef OBELISK_ENABLE_Z3
+#include "RandomRealZ3.h"
 #include <algorithm>
 #include <functional>
 #include <unordered_map>
+
 #include <z3.h>
 
 namespace obelisk::solver {
@@ -44,6 +46,10 @@ struct Bits {
   // Its other arm is IEEE state and must never decode a NaN/Inf placeholder.
   Z3_ast coordinateGuard = nullptr;
   Z3_ast coordinateState = nullptr;
+  // Exact IEEE widening preserves the numeric value used by integral casts.
+  // Retain its original payload without assigning a promoted NaN payload.
+  Z3_ast numericPayload = nullptr;
+  unsigned numericWidth = 0;
 };
 
 class BitVectorFormula {
@@ -122,8 +128,7 @@ public:
   }
 
   Bits unary(uint8_t opcode, Bits input, unsigned width, bool sign) {
-    if (opcode >= OBELISK_RT_RANDOM_REAL32_BITS_V1 &&
-        opcode <= OBELISK_RT_RANDOM_REAL_TO_BITS_V1)
+    if (random::isRealInstruction(opcode))
       return realUnary(opcode, input, width, sign);
     if (input.real) {
       if (opcode == OBELISK_RT_RANDOM_LOGICAL_NOT_V1)
@@ -140,19 +145,29 @@ public:
           representation =
               Z3_mk_bvxor(context, representation,
                           constant(uint64_t{1} << (width - 1), width));
-        return {value,
-                width,
-                true,
-                representation,
-                opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
-                    ? input.coordinate
-                    : nullptr,
-                opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
-                    ? input.coordinateGuard
-                    : nullptr,
-                opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
-                    ? input.coordinateState
-                    : nullptr};
+        Bits result{value,
+                    width,
+                    true,
+                    representation,
+                    opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                        ? input.coordinate
+                        : nullptr,
+                    opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                        ? input.coordinateGuard
+                        : nullptr,
+                    opcode == OBELISK_RT_RANDOM_POS_V1 && input.width == width
+                        ? input.coordinateState
+                        : nullptr};
+        if (input.width == width && input.numericPayload) {
+          result.numericPayload = input.numericPayload;
+          result.numericWidth = input.numericWidth;
+          if (opcode == OBELISK_RT_RANDOM_NEG_V1)
+            result.numericPayload =
+                Z3_mk_bvxor(context, result.numericPayload,
+                            constant(uint64_t{1} << (result.numericWidth - 1),
+                                     result.numericWidth));
+        }
+        return result;
       }
       return {nullptr, width};
     }
@@ -430,6 +445,45 @@ public:
 
   Bits realUnary(uint8_t opcode, Bits input, unsigned width, bool sign) {
     bool format = width == 32 || width == 64;
+    if (opcode == OBELISK_RT_RANDOM_REAL_IS_FINITE_V1) {
+      if (!input.real || sign || width != 1)
+        return {nullptr, width};
+      return boolean(conjunction(
+          Z3_mk_not(context, Z3_mk_fpa_is_nan(context, input.value)),
+          Z3_mk_not(context, Z3_mk_fpa_is_infinite(context, input.value))));
+    }
+    if (opcode == OBELISK_RT_RANDOM_REAL_TO_INTEGER_V1 ||
+        opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1) {
+      if (!input.real || sign || !width)
+        return {nullptr, width};
+      hasReal = true;
+      Z3_ast payload =
+          input.representation ? input.representation : input.numericPayload;
+      if (!payload) {
+        // A wide signed result holds every finite value of this IEEE format.
+        // Sanitize nonfinite values before converting, then retain the low
+        // destination bits. No unspecified NaN encoding is exposed to Z3.
+        unsigned safeWidth = input.width == 32 ? 129 : 1025;
+        Z3_ast finite = conjunction(
+            Z3_mk_not(context, Z3_mk_fpa_is_nan(context, input.value)),
+            Z3_mk_not(context, Z3_mk_fpa_is_infinite(context, input.value)));
+        Z3_ast safe =
+            Z3_mk_ite(context, finite, input.value,
+                      Z3_mk_fpa_zero(context, realSort(input.width), false));
+        Z3_ast converted = Z3_mk_fpa_to_sbv(
+            context,
+            opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1
+                ? Z3_mk_fpa_rtz(context)
+                : Z3_mk_fpa_rna(context),
+            safe, safeWidth);
+        return {resize({converted, safeWidth}, width, true), width};
+      }
+      return {detail::realIntegerBits(
+                  context, payload,
+                  input.representation ? input.width : input.numericWidth,
+                  width, opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1),
+              width};
+    }
     if (opcode == OBELISK_RT_RANDOM_REAL_RANK_VALID_V1) {
       if (input.real || sign || width != 1 ||
           (input.width != OBELISK_RT_REAL32_RANK_BITS &&
@@ -450,16 +504,23 @@ public:
                                           realSort(width))
                  : Z3_mk_fpa_to_fp_unsigned(context, rounding(), input.value,
                                             realSort(width));
-      return {value,
-              width,
-              true,
-              input.real && input.width == width ? input.representation
-                                                 : nullptr,
-              retainsCoordinate ? input.coordinate : nullptr,
-              retainsCoordinate ? input.coordinateGuard : nullptr,
-              retainsCoordinate && input.coordinateState
-                  ? resize({input.coordinateState, input.width, true}, width)
-                  : nullptr};
+      Bits result{
+          value,
+          width,
+          true,
+          input.real && input.width == width ? input.representation : nullptr,
+          retainsCoordinate ? input.coordinate : nullptr,
+          retainsCoordinate ? input.coordinateGuard : nullptr,
+          retainsCoordinate && input.coordinateState
+              ? resize({input.coordinateState, input.width, true}, width)
+              : nullptr};
+      if (retainsCoordinate) {
+        result.numericPayload =
+            input.representation ? input.representation : input.numericPayload;
+        result.numericWidth =
+            input.representation ? input.width : input.numericWidth;
+      }
+      return result;
     }
     if (opcode == OBELISK_RT_RANDOM_REAL_TO_BITS_V1) {
       if (!input.real || input.width != width || sign)
@@ -1408,16 +1469,27 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
         coordinateState =
             Z3_mk_ite(f.context, conditionValue, state(yes), state(no));
       }
-      stack.push_back(
-          {Z3_mk_ite(f.context, f.truth(condition), yesValue, noValue), bits,
-           yes.real, representation, coordinate, coordinateGuard,
-           coordinateState});
+      Bits result{Z3_mk_ite(f.context, f.truth(condition), yesValue, noValue),
+                  bits,
+                  yes.real,
+                  representation,
+                  coordinate,
+                  coordinateGuard,
+                  coordinateState};
+      if (yes.real && yes.numericPayload && no.numericPayload &&
+          yes.width == bits && no.width == bits &&
+          yes.numericWidth == no.numericWidth) {
+        result.numericPayload =
+            Z3_mk_ite(f.context, f.truth(condition), yes.numericPayload,
+                      no.numericPayload);
+        result.numericWidth = yes.numericWidth;
+      }
+      stack.push_back(result);
     } else if ((opcode >= OBELISK_RT_RANDOM_CAST_V1 &&
                 opcode <= OBELISK_RT_RANDOM_LOGICAL_NOT_V1) ||
                opcode == OBELISK_RT_RANDOM_COUNT_ONES_V1 ||
                opcode == OBELISK_RT_RANDOM_CLOG2_V1 ||
-               (opcode >= OBELISK_RT_RANDOM_REAL32_BITS_V1 &&
-                opcode <= OBELISK_RT_RANDOM_REAL_TO_BITS_V1)) {
+               random::isRealInstruction(opcode)) {
       if (stack.empty())
         return std::nullopt;
       Bits value = stack.back();

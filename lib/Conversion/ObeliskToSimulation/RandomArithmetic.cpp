@@ -402,6 +402,14 @@ struct RandomArithmetic::Impl {
       result = true;
     auto children = getChildren(expression);
     auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
+    if (children.size() == 1 &&
+        (isa<semantic::SVConversionExpressionOp>(expression) ||
+         (call && call.getIsSystemCall() &&
+          isRealRandomSystemFunction(call.getCalleeName())))) {
+      auto inputType = getNormalizedSemanticType(children.front());
+      if (succeeded(inputType) && isa<FloatType>(*inputType))
+        result = true;
+    }
     // countbits control literals may legally name X and Z. They describe the
     // symbols to count and do not contribute unknown result bits.
     if (call && call.getIsSystemCall() &&
@@ -1075,6 +1083,35 @@ struct RandomArithmetic::Impl {
                                                  matches, precision,
                                                  signedResult),
                                     nullptr};
+    }
+    auto realCall = dyn_cast<semantic::SVCallExpressionOp>(expression);
+    if (children.size() == 1 &&
+        (isa<semantic::SVConversionExpressionOp>(expression) ||
+         (realCall && realCall.getIsSystemCall() &&
+          isRealRandomSystemFunction(realCall.getCalleeName())))) {
+      auto inputType = getNormalizedSemanticType(children.front());
+      if (succeeded(inputType) && isa<FloatType>(*inputType)) {
+        Operation *value =
+            realCall
+                ? integralCall(expression, realCall.getCalleeName(),
+                               children.front(), precision, signedResult)
+                : cast(expression, children.front(), precision, signedResult);
+        Operation *unknown = nullptr;
+        if (fourState(expression) &&
+            (!realCall || realCall.getCalleeName() == "$rtoi")) {
+          Operation *finite = make(
+              expression,
+              semantic::SVConversionExpressionOp::getOperationName(), 1, false,
+              {builder.getNamedAttr("is_implicit", builder.getBoolAttr(false)),
+               builder.getNamedAttr(randomArithmeticRealFiniteAttr,
+                                    builder.getUnitAttr())},
+              {children.front()});
+          unknown =
+              unknownMask(expression, notBool(expression, finite), precision);
+        }
+        return RandomArithmeticPlanes{
+            mask(expression, value, unknown, precision, signedResult), unknown};
+      }
     }
     SmallVector<RandomArithmeticPlanes> inputs;
     for (Operation *child : children) {
