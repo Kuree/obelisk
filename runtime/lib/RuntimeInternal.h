@@ -1921,6 +1921,7 @@ struct CovergroupBlockEventFeatureState {
 struct FunctionalCoverageConstructionSchemas;
 struct FunctionalCoverageConfigurationSchemas;
 struct FunctionalCoverageLoadedData;
+struct FunctionalCoverageDiagnosticIndex;
 
 struct CoverageState {
   std::unique_ptr<obelisk::coverage::Database> schema;
@@ -1929,6 +1930,7 @@ struct CoverageState {
   std::shared_ptr<const FunctionalCoverageConfigurationSchemas>
       loadedConfigurationSchemas;
   mutable std::shared_ptr<const FunctionalCoverageLoadedData> loadedData;
+  std::shared_ptr<FunctionalCoverageDiagnosticIndex> diagnosticIndex;
   obelisk::coverage::detail::IndexMap<uint64_t,
                                       std::vector<obelisk::coverage::Digest>>
       configurationsByType;

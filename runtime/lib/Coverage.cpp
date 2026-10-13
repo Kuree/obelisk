@@ -68,6 +68,16 @@ struct FunctionalCoverageConfigurationSchemas {
 };
 
 struct FunctionalCoverageQueryMetadata {
+  struct SampleTransition {
+    const obelisk::coverage::ResolvedTransitionAlternative *resolved = nullptr;
+    const obelisk::coverage::TransitionAlternative *definition = nullptr;
+    size_t bin = 0;
+  };
+  struct SampleItem {
+    size_t value = SIZE_MAX;
+    size_t iff = SIZE_MAX;
+    std::vector<SampleTransition> transitions;
+  };
   struct ConstructionOptions {
     uint64_t autoBinMax = 64;
     bool detectOverlap = false;
@@ -89,6 +99,28 @@ struct FunctionalCoverageQueryMetadata {
   obelisk::coverage::detail::IndexMap<uint64_t, size_t> crossPositions;
   std::vector<std::vector<size_t>> itemBins;
   obelisk::coverage::detail::IndexSet<uint64_t> explicitAtLeastItems;
+  /// Sample ordinals are frozen with the configuration. Optional defaults
+  /// occupy their own slots even when omitted from a particular ABI batch.
+  std::vector<const obelisk::coverage::FunctionalExpression *>
+      sampleExpressions;
+  std::vector<SampleItem> sampleItems;
+  std::vector<size_t> binIffs;
+  std::vector<const obelisk::coverage::ResolvedFunctionalValueSet *>
+      binValueSets;
+  obelisk::coverage::detail::IndexMap<
+      uint64_t, const obelisk::coverage::ResolvedFunctionalValueSet *>
+      valueSets;
+};
+
+struct FunctionalCoverageDiagnosticIndex {
+  /// Live rows refer to the current run and instances, which enter the
+  /// persisted schema only when a snapshot is assembled. Keeping them here
+  /// leaves coverage_load's input database valid after an illegal-bin hit.
+  std::vector<obelisk::coverage::IllegalBinDiagnostic> rows;
+  size_t indexed = 0;
+  obelisk::coverage::detail::IndexMap<
+      std::tuple<obelisk::coverage::UUID, uint64_t, uint64_t, uint64_t>, size_t>
+      positions;
 };
 
 struct FunctionalCoverageLoadedData {
@@ -1012,6 +1044,11 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
     }
   }
   if (run.flags & obelisk::coverage::RunContainsFunctional) {
+    if (coverage.diagnosticIndex)
+      result.illegalBinDiagnostics.insert(
+          result.illegalBinDiagnostics.end(),
+          coverage.diagnosticIndex->rows.begin(),
+          coverage.diagnosticIndex->rows.end());
     using Owner = obelisk::coverage::FunctionalConfigurationOptionOwnerKind;
     using Option = obelisk::coverage::FunctionalConfigurationOptionKind;
     using ValueKind = obelisk::coverage::FunctionalConfigurationValueKind;
@@ -7266,6 +7303,12 @@ applyFunctionalTypeOptions(CoverageState &coverage, uint64_t typeID,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status
+prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
+                                uint64_t typeID,
+                                const FunctionalCoverageTypeState &type,
+                                FunctionalCoverageQueryMetadata &metadata);
+
 obelisk_rt_status createResolvedFunctionalType(
     CoverageState &coverage, const obelisk::coverage::Database &schema,
     uint64_t typeID, const obelisk::coverage::Digest &configuration,
@@ -7866,6 +7909,10 @@ obelisk_rt_status createResolvedFunctionalType(
         option.option ==
             obelisk::coverage::FunctionalConfigurationOptionKind::AtLeast)
       metadata->explicitAtLeastItems.insert(option.owner);
+  obelisk_rt_status sampleStatus =
+      prepareFunctionalSampleMetadata(schema, typeID, type, *metadata);
+  if (sampleStatus != OBELISK_RT_OK)
+    return sampleStatus;
   type.queryMetadata = std::move(metadata);
   obelisk_rt_status typeOptionStatus =
       applyFunctionalTypeOptions(coverage, typeID, type);
@@ -8643,6 +8690,110 @@ std::vector<const Entry *> schemaOrdered(const std::vector<Entry> &entries,
   return result;
 }
 
+obelisk_rt_status
+prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
+                                uint64_t typeID,
+                                const FunctionalCoverageTypeState &type,
+                                FunctionalCoverageQueryMetadata &metadata) {
+  using namespace obelisk::coverage;
+  metadata.sampleExpressions =
+      schemaOrdered(schema.functionalExpressions, typeID, false);
+  metadata.sampleItems.resize(metadata.items.size());
+  metadata.binIffs.assign(metadata.bins.size(), SIZE_MAX);
+  metadata.binValueSets.resize(metadata.bins.size());
+  IndexMap<uint64_t, size_t> binIffs;
+  for (size_t index = 0; index != metadata.sampleExpressions.size(); ++index) {
+    const auto &expression = *metadata.sampleExpressions[index];
+    if (expression.role == FunctionalExpressionRole::BinIff) {
+      binIffs.emplace(expression.owner, index);
+      continue;
+    }
+    if (expression.role != FunctionalExpressionRole::CoverpointSample &&
+        expression.role != FunctionalExpressionRole::CoverpointIff &&
+        expression.role != FunctionalExpressionRole::CrossIff)
+      continue;
+    auto item = metadata.templateItemPositions.find(expression.owner);
+    if (item == metadata.templateItemPositions.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    auto &sample = metadata.sampleItems[item->second];
+    if (expression.role == FunctionalExpressionRole::CoverpointSample)
+      sample.value = index;
+    else
+      sample.iff = index;
+  }
+  for (const auto &set : schema.resolvedFunctionalValueSets)
+    if (set.type == typeID && set.configuration == type.configuration)
+      metadata.valueSets.emplace(set.id, &set);
+  for (size_t index = 0; index != type.bins.size(); ++index) {
+    const auto &bin = type.bins[index];
+    if (auto iff = binIffs.find(bin.templateBin); iff != binIffs.end())
+      metadata.binIffs[index] = iff->second;
+    if (bin.valueSet) {
+      auto set = metadata.valueSets.find(bin.valueSet);
+      if (set == metadata.valueSets.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      metadata.binValueSets[index] = set->second;
+    }
+  }
+  IndexMap<uint64_t, const TransitionProgram *> programs;
+  for (const auto &program : schema.transitionPrograms)
+    programs.emplace(program.bin, &program);
+  for (const auto &alternative : schema.resolvedTransitionAlternatives) {
+    if (alternative.type != typeID ||
+        alternative.configuration != type.configuration)
+      continue;
+    auto position = metadata.binPositions.find(alternative.bin);
+    if (position == metadata.binPositions.end())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &bin = type.bins[position->second];
+    auto item = metadata.itemPositions.find(bin.item);
+    auto program = programs.find(bin.templateBin);
+    if (item == metadata.itemPositions.end() || program == programs.end() ||
+        bin.kind != FunctionalBinKind::Transition || !alternative.stepCount ||
+        uint64_t{alternative.firstStep} + alternative.stepCount >
+            schema.resolvedTransitionSteps.size() ||
+        alternative.templateAlternativeOrdinal >=
+            program->second->alternativeCount ||
+        uint64_t{program->second->firstAlternative} +
+                program->second->alternativeCount >
+            schema.transitionAlternatives.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    const auto &definition =
+        schema.transitionAlternatives[program->second->firstAlternative +
+                                      alternative.templateAlternativeOrdinal];
+    if (definition.stepCount != alternative.stepCount ||
+        uint64_t{definition.firstStep} + definition.stepCount >
+            schema.transitionSteps.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    for (uint32_t ordinal = 0; ordinal != alternative.stepCount; ++ordinal) {
+      const auto &step =
+          schema.resolvedTransitionSteps[alternative.firstStep + ordinal];
+      if (step.alternative != alternative.id || step.ordinal != ordinal ||
+          !metadata.valueSets.count(step.valueSet))
+        return OBELISK_RT_INVALID_DESIGN;
+    }
+    metadata.sampleItems[item->second].transitions.push_back(
+        {&alternative, &definition, position->second});
+  }
+  return OBELISK_RT_OK;
+}
+
+FunctionalCoverageDiagnosticIndex &
+indexFunctionalDiagnostics(CoverageState &coverage) {
+  if (!coverage.diagnosticIndex)
+    coverage.diagnosticIndex =
+        std::make_shared<FunctionalCoverageDiagnosticIndex>();
+  auto &index = *coverage.diagnosticIndex;
+  const auto &rows = index.rows;
+  for (; index.indexed != rows.size(); ++index.indexed) {
+    const auto &row = rows[index.indexed];
+    index.positions.emplace(
+        std::make_tuple(row.run, row.bin, row.instance, row.simulationTime),
+        index.indexed);
+  }
+  return index;
+}
+
 uint64_t readPlaneLimb(const void *plane, uint64_t size, uint32_t ordinal) {
   return readLittleEndianLimb(plane, size, ordinal);
 }
@@ -8685,15 +8836,9 @@ int compareIntegral(
 }
 
 bool valueSetMatches(const obelisk::coverage::Database &schema,
-                     const obelisk::coverage::Digest &configuration,
-                     uint64_t setID,
+                     const obelisk::coverage::ResolvedFunctionalValueSet *set,
                      const obelisk_rt_functional_value_v1 &value) {
-  auto set = std::find_if(
-      schema.resolvedFunctionalValueSets.begin(),
-      schema.resolvedFunctionalValueSets.end(), [&](const auto &entry) {
-        return entry.id == setID && entry.configuration == configuration;
-      });
-  if (set == schema.resolvedFunctionalValueSets.end() ||
+  if (!set ||
       (set->kind == obelisk::coverage::FunctionalValueSetKind::Integral &&
        set->bitWidth != value.bit_width))
     return false;
@@ -12852,14 +12997,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     auto type = coverage->types.find({instance.typeID, instance.configuration});
     if (type == coverage->types.end())
       return OBELISK_RT_INVALID_DESIGN;
-    if (!type->second.configurationSchema)
+    if (!type->second.configurationSchema || !type->second.queryMetadata)
       return OBELISK_RT_INVALID_DESIGN;
     const auto &schema = *type->second.configurationSchema;
-    auto schemaExpressions =
-        schemaOrdered(schema.functionalExpressions, instance.typeID, false);
-    std::vector<const obelisk::coverage::FunctionalExpression *> expected;
+    const auto &metadata = *type->second.queryMetadata;
+    if (metadata.sampleItems.size() != metadata.items.size() ||
+        metadata.binIffs.size() != instance.bins.size() ||
+        metadata.binValueSets.size() != instance.bins.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    std::vector<const obelisk_rt_functional_value_v1 *> sampleExpressions(
+        metadata.sampleExpressions.size());
     size_t supplied = 0;
-    for (const auto *entry : schemaExpressions) {
+    for (size_t index = 0; index != metadata.sampleExpressions.size();
+         ++index) {
+      const auto *entry = metadata.sampleExpressions[index];
       bool isDefault =
           entry->role ==
           obelisk::coverage::FunctionalExpressionRole::FormalDefault;
@@ -12879,7 +13030,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
               functionalDefaultClassType(*coverage, entry->owner),
               formalValueType(*coverage, entry->owner)))
         return OBELISK_RT_INVALID_DESIGN;
-      expected.push_back(entry);
+      sampleExpressions[index] = &expressions[supplied];
       ++supplied;
     }
     if (supplied != expressionCount)
@@ -12888,70 +13039,68 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       return OBELISK_RT_OK;
 
     std::vector<size_t> pendingBinIncrements;
-    std::set<size_t> pendingExplicitBinIncrements;
-    std::map<uint64_t, uint64_t> pendingIllegalIncrements;
-    std::map<uint64_t, std::map<std::vector<uint64_t>, uint64_t>>
+    IndexSet<size_t> pendingExplicitBinIncrements;
+    IndexMap<uint64_t, uint64_t> pendingIllegalIncrements;
+    IndexMap<uint64_t, IndexMap<std::vector<uint64_t>, uint64_t>>
         pendingCrossIncrements;
-    std::map<uint64_t, std::vector<uint64_t>> sampledBins;
+    IndexMap<uint64_t, std::vector<uint64_t>> sampledBins;
     auto pendingTransitionActive = instance.transitionActive;
     auto pendingTransitionSampledItems = instance.transitionSampledItems;
-    for (uint64_t resolvedItem : type->second.items) {
-      auto item = std::find_if(
-          schema.resolvedFunctionalItems.begin(),
-          schema.resolvedFunctionalItems.end(), [&](const auto &entry) {
-            return entry.id == resolvedItem &&
-                   entry.configuration == type->second.configuration;
-          });
-      if (item == schema.resolvedFunctionalItems.end())
-        return OBELISK_RT_INVALID_DESIGN;
+    auto binIsEnabled = [&](size_t index) {
+      size_t iff = metadata.binIffs[index];
+      return iff == SIZE_MAX || functionalBooleanTrue(*sampleExpressions[iff]);
+    };
+    for (size_t itemIndex = 0; itemIndex != metadata.items.size();
+         ++itemIndex) {
+      const auto *item = &metadata.items[itemIndex];
+      const uint64_t resolvedItem = item->id;
       if (item->kind != obelisk::coverage::FunctionalItemKind::Coverpoint)
         continue;
       if (instance.disabledItems.count(item->templateItem))
         continue;
-      const obelisk_rt_functional_value_v1 *sample = nullptr;
-      bool itemEnabled = true;
-      for (size_t index = 0; index != expected.size(); ++index) {
-        if (expected[index]->owner != item->templateItem)
-          continue;
-        if (expected[index]->role ==
-            obelisk::coverage::FunctionalExpressionRole::CoverpointSample)
-          sample = &expressions[index];
-        else if (expected[index]->role ==
-                 obelisk::coverage::FunctionalExpressionRole::CoverpointIff)
-          itemEnabled = functionalBooleanTrue(expressions[index]);
-      }
+      const auto &sampleItem = metadata.sampleItems[itemIndex];
+      const auto *sample = sampleItem.value == SIZE_MAX
+                               ? nullptr
+                               : sampleExpressions[sampleItem.value];
+      bool itemEnabled =
+          sampleItem.iff == SIZE_MAX ||
+          functionalBooleanTrue(*sampleExpressions[sampleItem.iff]);
       if (!sample || !itemEnabled)
         continue;
+      // Bin arrays and transition alternatives may share a large value set.
+      // Interpret it only once for this coverpoint's sample value.
+      IndexMap<uint64_t, bool> matchedSets;
+      auto matchesSet =
+          [&](const obelisk::coverage::ResolvedFunctionalValueSet *set) {
+            if (!set)
+              return false;
+            auto cached = matchedSets.find(set->id);
+            if (cached != matchedSets.end())
+              return cached->second;
+            bool matched = valueSetMatches(schema, set, *sample);
+            matchedSets.emplace(set->id, matched);
+            return matched;
+          };
       const bool hadPreviousTransitionSample =
           pendingTransitionSampledItems.count(resolvedItem) != 0;
-      std::set<uint64_t> illegalBins;
+      IndexSet<uint64_t> illegalBins;
       bool ignored = false;
       bool matchedNonDefault = false;
       std::vector<size_t> ordinary;
       std::vector<size_t> defaults;
-      for (size_t binIndex = 0; binIndex != instance.bins.size(); ++binIndex) {
+      for (size_t binIndex : metadata.itemBins[itemIndex]) {
         auto &bin = instance.bins[binIndex];
-        if (bin.item != resolvedItem ||
-            bin.kind == obelisk::coverage::FunctionalBinKind::Transition ||
+        if (bin.kind == obelisk::coverage::FunctionalBinKind::Transition ||
             (bin.flags & obelisk::coverage::FunctionalBinEmpty))
           continue;
-        bool binEnabled = true;
-        for (size_t expressionIndex = 0; expressionIndex != expected.size();
-             ++expressionIndex)
-          if (expected[expressionIndex]->role ==
-                  obelisk::coverage::FunctionalExpressionRole::BinIff &&
-              expected[expressionIndex]->owner == bin.templateBin)
-            binEnabled = functionalBooleanTrue(expressions[expressionIndex]);
+        bool binEnabled = binIsEnabled(binIndex);
         if (bin.flags & obelisk::coverage::FunctionalBinDefault) {
-          if (binEnabled && (!bin.valueSet ||
-                             valueSetMatches(schema, type->second.configuration,
-                                             bin.valueSet, *sample)))
+          if (binEnabled &&
+              (!bin.valueSet || matchesSet(metadata.binValueSets[binIndex])))
             defaults.push_back(binIndex);
           continue;
         }
-        if (!bin.valueSet ||
-            !valueSetMatches(schema, type->second.configuration, bin.valueSet,
-                             *sample))
+        if (!bin.valueSet || !matchesSet(metadata.binValueSets[binIndex]))
           continue;
         // The iff is a sampling guard, not part of the bin's value set.  A
         // matching defined bin therefore prevents fallback to default even when
@@ -13009,7 +13158,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       // match of a resolved finite sequence. A new match begins on every
       // enabled sample, including a sample that also advances another match.
       // Counter publication remains deferred with the rest of the sample.
-      std::set<size_t> transitionHits;
+      IndexSet<size_t> transitionHits;
       struct OrdinaryTransitionHit {
         size_t binIndex = 0;
         uint32_t stepCount = 0;
@@ -13017,37 +13166,19 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       };
       std::vector<OrdinaryTransitionHit> ordinaryTransitionHits;
       std::vector<uint32_t> exclusionHitLengths;
-      std::map<uint64_t, uint32_t> ordinaryAlternativeLengths;
+      std::vector<uint64_t> ordinaryAlternatives;
       bool previousPendingRemains = false;
-      for (const auto &alternative : schema.resolvedTransitionAlternatives) {
-        if (alternative.type != instance.typeID ||
-            alternative.configuration != instance.configuration)
-          continue;
-        auto bin = std::find_if(
-            instance.bins.begin(), instance.bins.end(),
-            [&](const FunctionalCoverageBinState &candidate) {
-              return candidate.id == alternative.bin &&
-                     candidate.item == resolvedItem &&
-                     candidate.kind ==
-                         obelisk::coverage::FunctionalBinKind::Transition;
-            });
-        if (bin == instance.bins.end())
-          continue;
-        const size_t binIndex =
-            static_cast<size_t>(bin - instance.bins.begin());
+      for (const auto &binding : sampleItem.transitions) {
+        const auto &alternative = *binding.resolved;
+        const size_t binIndex = binding.bin;
+        const auto *bin = &instance.bins[binIndex];
         if (bin->flags & obelisk::coverage::FunctionalBinEmpty)
           continue;
         if (!(bin->flags & (obelisk::coverage::FunctionalBinIgnore |
                             obelisk::coverage::FunctionalBinIllegal)) &&
             type->second.suppressedTransitionAlternatives.count(alternative.id))
           continue;
-        bool binEnabled = true;
-        for (size_t expressionIndex = 0; expressionIndex != expected.size();
-             ++expressionIndex)
-          if (expected[expressionIndex]->role ==
-                  obelisk::coverage::FunctionalExpressionRole::BinIff &&
-              expected[expressionIndex]->owner == bin->templateBin)
-            binEnabled = functionalBooleanTrue(expressions[expressionIndex]);
+        bool binEnabled = binIsEnabled(binIndex);
         auto active = pendingTransitionActive.find(alternative.id);
         if (!binEnabled) {
           if (active != pendingTransitionActive.end() &&
@@ -13055,37 +13186,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
             previousPendingRemains = true;
           continue;
         }
-        if (!alternative.stepCount ||
-            uint64_t{alternative.firstStep} + alternative.stepCount >
-                schema.resolvedTransitionSteps.size())
-          return OBELISK_RT_INVALID_DESIGN;
-        auto program = std::find_if(schema.transitionPrograms.begin(),
-                                    schema.transitionPrograms.end(),
-                                    [&](const auto &candidate) {
-                                      return candidate.bin == bin->templateBin;
-                                    });
-        if (program == schema.transitionPrograms.end() ||
-            alternative.templateAlternativeOrdinal >=
-                program->alternativeCount ||
-            uint64_t{program->firstAlternative} + program->alternativeCount >
-                schema.transitionAlternatives.size())
-          return OBELISK_RT_INVALID_DESIGN;
-        const auto &templateAlternative =
-            schema
-                .transitionAlternatives[program->firstAlternative +
-                                        alternative.templateAlternativeOrdinal];
-        if (templateAlternative.stepCount != alternative.stepCount ||
-            uint64_t{templateAlternative.firstStep} +
-                    templateAlternative.stepCount >
-                schema.transitionSteps.size())
-          return OBELISK_RT_INVALID_DESIGN;
+        const auto &templateAlternative = *binding.definition;
         auto matchesStep = [&](uint32_t ordinal) {
           const auto &step =
               schema.resolvedTransitionSteps[alternative.firstStep + ordinal];
-          return step.alternative == alternative.id &&
-                 step.ordinal == ordinal &&
-                 valueSetMatches(schema, type->second.configuration,
-                                 step.valueSet, *sample);
+          return matchesSet(metadata.valueSets.find(step.valueSet)->second);
         };
         bool hit = false;
         bool unexcludedHit = false;
@@ -13187,8 +13292,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           pendingTransitionActive[alternative.id] = std::move(next);
         if (!(bin->flags & (obelisk::coverage::FunctionalBinIgnore |
                             obelisk::coverage::FunctionalBinIllegal)))
-          ordinaryAlternativeLengths.emplace(alternative.id,
-                                             alternative.stepCount);
+          ordinaryAlternatives.push_back(alternative.id);
         if (hit) {
           if (bin->flags & (obelisk::coverage::FunctionalBinIgnore |
                             obelisk::coverage::FunctionalBinIllegal)) {
@@ -13200,16 +13304,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           }
         }
       }
+      const uint32_t shortestExclusion =
+          exclusionHitLengths.empty()
+              ? UINT32_MAX
+              : *std::min_element(exclusionHitLengths.begin(),
+                                  exclusionHitLengths.end());
       if (!exclusionHitLengths.empty()) {
-        const uint32_t shortestExclusion = *std::min_element(
-            exclusionHitLengths.begin(), exclusionHitLengths.end());
         // A fixed exclusion word that ends on this sample taints every live
         // ordinary prefix containing that suffix. Keep the taint with the
         // overlapping matcher state so a longer ordinary word cannot be
         // counted after the ignored or illegal subsequence has completed.
-        for (const auto &[alternativeID, stepCount] :
-             ordinaryAlternativeLengths) {
-          (void)stepCount;
+        for (uint64_t alternativeID : ordinaryAlternatives) {
           auto active = pendingTransitionActive.find(alternativeID);
           if (active == pendingTransitionActive.end())
             continue;
@@ -13225,29 +13330,20 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       }
       for (const OrdinaryTransitionHit &hit : ordinaryTransitionHits) {
         bool excluded = !hit.unexcluded;
-        for (uint32_t exclusionLength : exclusionHitLengths)
-          excluded |= exclusionLength <= hit.stepCount;
+        excluded |=
+            !exclusionHitLengths.empty() && shortestExclusion <= hit.stepCount;
         if (!excluded)
           transitionHits.insert(hit.binIndex);
       }
       if (hadPreviousTransitionSample && transitionHits.empty() &&
           !previousPendingRemains) {
-        for (size_t binIndex = 0; binIndex != instance.bins.size();
-             ++binIndex) {
+        for (size_t binIndex : metadata.itemBins[itemIndex]) {
           const auto &bin = instance.bins[binIndex];
-          if (bin.item != resolvedItem ||
-              bin.kind != obelisk::coverage::FunctionalBinKind::Transition ||
+          if (bin.kind != obelisk::coverage::FunctionalBinKind::Transition ||
               !(bin.flags & obelisk::coverage::FunctionalBinDefaultSequence) ||
               (bin.flags & obelisk::coverage::FunctionalBinEmpty))
             continue;
-          bool binEnabled = true;
-          for (size_t expressionIndex = 0; expressionIndex != expected.size();
-               ++expressionIndex)
-            if (expected[expressionIndex]->role ==
-                    obelisk::coverage::FunctionalExpressionRole::BinIff &&
-                expected[expressionIndex]->owner == bin.templateBin)
-              binEnabled = functionalBooleanTrue(expressions[expressionIndex]);
-          if (binEnabled)
+          if (binIsEnabled(binIndex))
             pendingBinIncrements.push_back(binIndex);
         }
       }
@@ -13267,12 +13363,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       if (instance.disabledItems.count(cross.templateItem) ||
           (cross.automaticBinCount.empty() && cross.explicitBins.empty()))
         continue;
-      bool crossEnabled = true;
-      for (size_t index = 0; index != expected.size(); ++index)
-        if (expected[index]->owner == cross.templateItem &&
-            expected[index]->role ==
-                obelisk::coverage::FunctionalExpressionRole::CrossIff)
-          crossEnabled = functionalBooleanTrue(expressions[index]);
+      auto crossItem = metadata.itemPositions.find(cross.id);
+      if (crossItem == metadata.itemPositions.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      size_t crossIff = metadata.sampleItems[crossItem->second].iff;
+      bool crossEnabled = crossIff == SIZE_MAX ||
+                          functionalBooleanTrue(*sampleExpressions[crossIff]);
       if (!crossEnabled)
         continue;
 
@@ -13297,8 +13393,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       for (const auto &tuple : tuples) {
         bool selectedByExplicitBin = false;
         bool ignored = false;
-        std::set<uint64_t> illegalBins;
-        std::set<size_t> ordinaryBins;
+        IndexSet<uint64_t> illegalBins;
+        IndexSet<size_t> ordinaryBins;
         for (const auto &explicitBin : cross.explicitBins) {
           const bool selected = std::any_of(
               explicitBin.alternatives.begin(), explicitBin.alternatives.end(),
@@ -13316,21 +13412,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           if (!selected)
             continue;
           selectedByExplicitBin = true;
-          auto bin =
-              std::find_if(instance.bins.begin(), instance.bins.end(),
-                           [&](const FunctionalCoverageBinState &candidate) {
-                             return candidate.id == explicitBin.bin &&
-                                    candidate.item == cross.id;
-                           });
-          if (bin == instance.bins.end())
+          auto binPosition = metadata.binPositions.find(explicitBin.bin);
+          if (binPosition == metadata.binPositions.end())
             return OBELISK_RT_INVALID_DESIGN;
-          bool binEnabled = true;
-          for (size_t expressionIndex = 0; expressionIndex != expected.size();
-               ++expressionIndex)
-            if (expected[expressionIndex]->role ==
-                    obelisk::coverage::FunctionalExpressionRole::BinIff &&
-                expected[expressionIndex]->owner == bin->templateBin)
-              binEnabled = functionalBooleanTrue(expressions[expressionIndex]);
+          size_t binIndex = binPosition->second;
+          const auto *bin = &instance.bins[binIndex];
+          bool binEnabled = binIsEnabled(binIndex);
           // The iff guards this bin's counter, not its tuple selection. A
           // selected tuple therefore remains owned by the explicit bin and
           // cannot fall through to an automatic bin when the guard is false
@@ -13342,8 +13429,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           } else if (bin->flags & obelisk::coverage::FunctionalBinIgnore) {
             ignored = true;
           } else {
-            ordinaryBins.insert(
-                static_cast<size_t>(bin - instance.bins.begin()));
+            ordinaryBins.insert(binIndex);
           }
         }
         // IEEE 1800-2023 19.6.2-19.6.3: illegal selections take precedence
@@ -13358,8 +13444,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         } else if (ignored) {
           continue;
         } else if (selectedByExplicitBin) {
-          pendingExplicitBinIncrements.insert(ordinaryBins.begin(),
-                                              ordinaryBins.end());
+          for (size_t binIndex : ordinaryBins)
+            pendingExplicitBinIncrements.insert(binIndex);
         } else if (!cross.automaticBinCount.empty()) {
           auto &counter = pendingCrossIncrements[cross.id][tuple];
           counter = saturatingAdd(counter, 1);
@@ -13396,38 +13482,40 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     }
 
     std::vector<obelisk::coverage::IllegalBinDiagnostic> pendingNewDiagnostics;
+    std::vector<std::pair<size_t, uint64_t>> pendingDiagnosticIncrements;
     std::vector<std::string> pendingIllegalHierarchies;
     pendingIllegalHierarchies.reserve(pendingIllegalIncrements.size());
     const obelisk::coverage::UUID currentRun = makeRunUUID(context, *coverage);
+    auto *diagnostics = pendingIllegalIncrements.empty()
+                            ? nullptr
+                            : &indexFunctionalDiagnostics(*coverage);
     for (const auto &[bin, increment] : pendingIllegalIncrements) {
-      const uint64_t binID = bin;
-      auto resolvedBin =
-          std::find_if(schema.resolvedFunctionalBins.begin(),
-                       schema.resolvedFunctionalBins.end(),
-                       [&](const auto &entry) { return entry.id == binID; });
-      if (resolvedBin == schema.resolvedFunctionalBins.end())
+      auto resolvedBin = metadata.binPositions.find(bin);
+      if (resolvedBin == metadata.binPositions.end())
         return OBELISK_RT_INVALID_DESIGN;
-      pendingIllegalHierarchies.push_back(resolvedBin->hierarchy);
-      auto diagnostic =
-          std::find_if(coverage->schema->illegalBinDiagnostics.begin(),
-                       coverage->schema->illegalBinDiagnostics.end(),
-                       [&](const auto &entry) {
-                         return entry.run == currentRun && entry.bin == binID &&
-                                entry.instance == handle &&
-                                entry.simulationTime == context->schedulerTime;
-                       });
-      if (diagnostic == coverage->schema->illegalBinDiagnostics.end())
+      pendingIllegalHierarchies.push_back(
+          metadata.bins[resolvedBin->second].hierarchy);
+      auto diagnostic = diagnostics->positions.find(
+          std::make_tuple(currentRun, bin, handle, context->schedulerTime));
+      if (diagnostic == diagnostics->positions.end())
         pendingNewDiagnostics.push_back({currentRun, bin, handle,
                                          context->schedulerTime, increment,
                                          "illegal bin sampled", 0});
+      else
+        pendingDiagnosticIncrements.emplace_back(diagnostic->second, increment);
     }
-    if (pendingNewDiagnostics.size() >
-        coverage->schema->illegalBinDiagnostics.max_size() -
-            coverage->schema->illegalBinDiagnostics.size())
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    coverage->schema->illegalBinDiagnostics.reserve(
-        coverage->schema->illegalBinDiagnostics.size() +
-        pendingNewDiagnostics.size());
+    if (diagnostics) {
+      auto &rows = diagnostics->rows;
+      if (pendingNewDiagnostics.size() > rows.max_size() - rows.size())
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      const size_t required = rows.size() + pendingNewDiagnostics.size();
+      if (required > rows.capacity()) {
+        const size_t grown =
+            rows.capacity() +
+            std::min(rows.capacity(), rows.max_size() - rows.capacity());
+        rows.reserve(std::max(required, grown));
+      }
+    }
 
     for (auto staged = stagedCrosses.begin(); staged != stagedCrosses.end();) {
       auto current = instance.crossTuples.find(staged->first);
@@ -13448,26 +13536,16 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       else
         ++bin.count;
     }
-    for (const auto &[bin, increment] : pendingIllegalIncrements) {
-      const uint64_t binID = bin;
-      auto diagnostic =
-          std::find_if(coverage->schema->illegalBinDiagnostics.begin(),
-                       coverage->schema->illegalBinDiagnostics.end(),
-                       [&](const auto &entry) {
-                         return entry.run == currentRun && entry.bin == binID &&
-                                entry.instance == handle &&
-                                entry.simulationTime == context->schedulerTime;
-                       });
-      if (diagnostic == coverage->schema->illegalBinDiagnostics.end())
-        continue;
-      if (increment > UINT64_MAX - diagnostic->count) {
-        diagnostic->count = UINT64_MAX;
-        diagnostic->flags |= obelisk::coverage::IllegalBinDiagnosticOverflow;
+    for (const auto &[position, increment] : pendingDiagnosticIncrements) {
+      auto &diagnostic = diagnostics->rows[position];
+      if (increment > UINT64_MAX - diagnostic.count) {
+        diagnostic.count = UINT64_MAX;
+        diagnostic.flags |= obelisk::coverage::IllegalBinDiagnosticOverflow;
       } else
-        diagnostic->count += increment;
+        diagnostic.count += increment;
     }
     for (auto &diagnostic : pendingNewDiagnostics)
-      coverage->schema->illegalBinDiagnostics.push_back(std::move(diagnostic));
+      diagnostics->rows.push_back(std::move(diagnostic));
     for (const std::string &hierarchy : pendingIllegalHierarchies)
       std::fprintf(stderr,
                    "ERROR: functional coverage illegal bin '%s' sampled at "

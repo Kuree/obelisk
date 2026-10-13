@@ -2152,6 +2152,132 @@ TEST_F(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST_F(CoverageRuntimeDesignTest,
+       SampleOrdinalsPreserveInterleavedDefaultsAndIndependentItemGuards) {
+  using namespace obelisk::coverage;
+  constexpr uint32_t itemCount = 64;
+  Database schema;
+  schema.scopes.push_back({1, 0, "top", 0, "top"});
+  schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
+  std::array<uint8_t, itemCount> values{}, pointGuards{}, binGuards{};
+  std::vector<obelisk_rt_functional_value_v1> batch;
+  for (uint32_t ordinal = 0; ordinal != itemCount; ++ordinal) {
+    const uint64_t item = 1000 + ordinal, bin = 2000 + 2 * ordinal;
+    const uint64_t set = 3000 + ordinal, formal = 4000 + ordinal;
+    // Deliberately order expression IDs opposite to their ABI ordinals.
+    const uint64_t expression = 20000 + 4 * (itemCount - 1 - ordinal);
+    const std::string name = "point" + std::to_string(ordinal);
+    const std::string hierarchy = "top.cg." + name;
+    schema.functionalItems.push_back({item, 10, name,
+                                      FunctionalItemKind::Coverpoint, 0, 100, 1,
+                                      ordinal, hierarchy});
+    schema.functionalBins.push_back({bin, item, "hit", FunctionalBinKind::State,
+                                     0, 1, 0, hierarchy + ".hit"});
+    schema.functionalBins.push_back(
+        {bin + 1, item, "fallback", FunctionalBinKind::State,
+         FunctionalBinDefault, 1, 1, hierarchy + ".fallback"});
+    schema.functionalValueSets.push_back({set, item, ordinal, 1, 2,
+                                          FunctionalValueSetKind::Integral, 0,
+                                          CoverageSignedness::Unsigned, 0});
+    schema.functionalValueAtoms.push_back(
+        {set, 0, 0, ordinal, 1, 0, FunctionalValueAtomKind::IntegralValue,
+         FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive,
+         0, 0});
+    uint64_t value = ordinal % 4;
+    schema.functionalValueLimbs.push_back({set, 0, 0, value, 0, value, 0, 0});
+    schema.functionalBinPlans.push_back({bin, set, expression + 2});
+    schema.functionalBinPlans.push_back({bin + 1, 0});
+    schema.functionalFormals.push_back(
+        {formal, 10, name, FunctionalFormalKind::Sample,
+         FunctionalFormalDirection::Input,
+         FunctionalExpressionResultKind::Integral, FunctionalFormalHasDefault,
+         2, CoverageSignedness::Unsigned, ordinal, expression + 3});
+    FunctionalExpression sample;
+    sample.id = expression;
+    sample.owner = item;
+    sample.ownerKind = FunctionalExpressionOwnerKind::Item;
+    sample.role = FunctionalExpressionRole::CoverpointSample;
+    sample.resultKind = FunctionalExpressionResultKind::Integral;
+    sample.bitWidth = 2;
+    sample.signedness = CoverageSignedness::Unsigned;
+    sample.evaluationPhase = FunctionalExpressionEvaluationPhase::Sample;
+    sample.resultOrdinal = 4 * ordinal;
+    schema.functionalExpressions.push_back(sample);
+    auto pointIff = sample;
+    pointIff.id = expression + 1;
+    pointIff.role = FunctionalExpressionRole::CoverpointIff;
+    pointIff.resultKind = FunctionalExpressionResultKind::Boolean;
+    pointIff.bitWidth = 0;
+    pointIff.signedness = CoverageSignedness::NotApplicable;
+    ++pointIff.resultOrdinal;
+    schema.functionalExpressions.push_back(pointIff);
+    auto binIff = pointIff;
+    binIff.id = expression + 2;
+    binIff.owner = bin;
+    binIff.ownerKind = FunctionalExpressionOwnerKind::Bin;
+    binIff.role = FunctionalExpressionRole::BinIff;
+    ++binIff.resultOrdinal;
+    schema.functionalExpressions.push_back(binIff);
+    auto defaultValue = sample;
+    defaultValue.id = expression + 3;
+    defaultValue.owner = formal;
+    defaultValue.ownerKind = FunctionalExpressionOwnerKind::Formal;
+    defaultValue.role = FunctionalExpressionRole::FormalDefault;
+    defaultValue.resultOrdinal += 3;
+    schema.functionalExpressions.push_back(defaultValue);
+    values[ordinal] = value;
+    pointGuards[ordinal] = ordinal % 3 != 0;
+    binGuards[ordinal] = ordinal % 4 != 0;
+    batch.push_back({expression, 2, 1, &values[ordinal], nullptr, nullptr, 0,
+                     OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+    batch.push_back({expression + 1, 1, 1, &pointGuards[ordinal], nullptr,
+                     nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+    batch.push_back({expression + 2, 1, 1, &binGuards[ordinal], nullptr,
+                     nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+    if (ordinal % 2)
+      batch.push_back({expression + 3, 2, 1, &values[ordinal], nullptr, nullptr,
+                       0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0});
+  }
+  detail::sortByKey(schema.functionalExpressions.begin(),
+                    schema.functionalExpressions.end(),
+                    [](const auto &expression) { return expression.id; });
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  obelisk_rt_covergroup_v1 first = 0, second = 0;
+  ASSERT_EQ(createFunctional(context, 10, &first), OBELISK_RT_OK);
+  ASSERT_EQ(createFunctional(context, 10, &second), OBELISK_RT_OK);
+  auto sample = [&](uint64_t handle) {
+    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+                                           batch.size());
+  };
+  ASSERT_EQ(sample(first), OBELISK_RT_OK);
+  ASSERT_EQ(sample(second), OBELISK_RT_OK);
+  for (auto &value : values)
+    value = (value + 1) % 4;
+  ASSERT_EQ(sample(first), OBELISK_RT_OK);
+  // A malformed late value must not partially publish the earlier items.
+  uint32_t lastKind = batch.back().kind;
+  batch.back().kind = UINT32_MAX;
+  EXPECT_EQ(sample(first), OBELISK_RT_INVALID_DESIGN);
+  batch.back().kind = lastKind;
+  for (uint64_t handle : {first, second}) {
+    const auto &instance = context->coverage->instances.at(handle);
+    ASSERT_EQ(instance.bins.size(), 2 * itemCount);
+    for (const auto &bin : instance.bins) {
+      uint32_t ordinal = (bin.templateBin - 2000) / 2;
+      ASSERT_LT(ordinal, itemCount);
+      bool fallback = (bin.templateBin - 2000) % 2;
+      uint64_t expected = fallback
+                              ? (handle == first && pointGuards[ordinal])
+                              : (pointGuards[ordinal] && binGuards[ordinal]);
+      EXPECT_EQ(bin.count, expected)
+          << "item " << ordinal << " handle " << handle;
+    }
+  }
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST_F(CoverageRuntimeDesignTest, RealFormalsPreservePrecisionBitsAndLiveRefs) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();
@@ -5345,6 +5471,48 @@ TEST_F(CoverageRuntimeDesignTest,
       [](const auto &bin) { return bin.templateBin == 33; });
   ASSERT_NE(illegal, saved.resolvedFunctionalBins.end());
   EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, illegal->id);
+  // Repeated hits share a diagnostic only within the same run, bin,
+  // instance and simulation time. Live and loaded rows remain independent.
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+  Database repeated = saveCoverage(context, "illegal-repeated");
+  ASSERT_EQ(repeated.illegalBinDiagnostics.size(), 1u);
+  EXPECT_EQ(repeated.illegalBinDiagnostics.front().count, 2u);
+  context->schedulerTime = 7;
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+  Database beforeReload = saveCoverage(context, "illegal-index");
+  ASSERT_EQ(beforeReload.illegalBinDiagnostics.size(), 2u);
+  ASSERT_EQ(beforeReload.runs.size(), 1u);
+  const UUID liveRun = beforeReload.runs.front().uuid;
+  UUID loadedRun = liveRun;
+  loadedRun[0] ^= 1;
+  beforeReload.runs.front().uuid = loadedRun;
+  for (auto &row : beforeReload.resolvedInstances)
+    row.run = loadedRun;
+  for (auto &row : beforeReload.resolvedInstanceOptions)
+    row.run = loadedRun;
+  for (auto &row : beforeReload.counters)
+    row.run = loadedRun;
+  for (auto &row : beforeReload.illegalBinDiagnostics)
+    row.run = loadedRun;
+  const std::string reloadPath =
+      (std::filesystem::temp_directory_path() /
+       ("obelisk-illegal-index-" +
+        std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) +
+        ".obcov"))
+          .string();
+  ASSERT_EQ(writeFileAtomically(reloadPath, beforeReload), Status::Ok);
+  obelisk_rt_status loadStatus = obelisk_rt_v1_coverage_load(
+      context, reloadPath.data(), reloadPath.size());
+  std::error_code ignored;
+  std::filesystem::remove(reloadPath, ignored);
+  ASSERT_EQ(loadStatus, OBELISK_RT_OK);
+  ASSERT_EQ(sampleFunctional(context, handle, 0, 2), OBELISK_RT_OK);
+  Database afterReload = saveCoverage(context, "illegal-after-load");
+  ASSERT_EQ(afterReload.illegalBinDiagnostics.size(), 4u);
+  for (const auto &row : afterReload.illegalBinDiagnostics)
+    EXPECT_EQ(row.count,
+              row.simulationTime == 7 && row.run == loadedRun ? 1u : 2u);
   obelisk_rt_v1_context_destroy(context);
 }
 
