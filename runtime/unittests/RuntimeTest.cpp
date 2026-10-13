@@ -6095,6 +6095,86 @@ TEST(ManagedHeap, DesignatedCollectionReclaimsOnlyAtQuiescentPoints) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(ManagedHeap, PolledCollectionReclaimsOnlyAtPollsAndBetweenActivations) {
+  // Under OBELISK_RT_EXECUTION_POLLED_COLLECTION compiled code registers its
+  // managed values only at polls, so allocation must neither collect nor
+  // park. A poll reclaims pending pressure, deferring to designated points
+  // until pressure reaches the emergency multiple; so does a point between
+  // activations.
+  auto run = [](bool designate) {
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    obelisk_rt_managed_heap_poll_collections(context->managedHeap);
+    ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX),
+              OBELISK_RT_OK);
+    auto statistics = [&] {
+      obelisk_rt_gc_statistics_v1 result{};
+      EXPECT_EQ(obelisk_rt_v1_gc_statistics(context, &result), OBELISK_RT_OK);
+      return result;
+    };
+    auto allocate = [&](obelisk_rt_gc_lane_v1 *lane, unsigned count) {
+      for (unsigned index = 0; index != count; ++index) {
+        obelisk_rt_object_v1 *object = nullptr;
+        EXPECT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &object),
+                  OBELISK_RT_OK);
+      }
+    };
+
+    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    bool entered = false;
+    ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+              OBELISK_RT_OK);
+    ASSERT_TRUE(entered);
+    obelisk_rt_object_v1 *kept = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &kept),
+              OBELISK_RT_OK);
+    uint64_t objectBytes = statistics().live_bytes;
+    ASSERT_GT(objectBytes, 0u);
+    uint64_t keptID = obelisk_rt_v1_object_id(kept);
+    ASSERT_EQ(obelisk_rt_v1_gc_static_root_register(context, &kept),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, objectBytes * 16),
+              OBELISK_RT_OK);
+    if (designate)
+      ASSERT_EQ(obelisk_rt_v1_gc_designate(context), OBELISK_RT_OK);
+
+    // Allocation never collects, even far past the emergency multiple.
+    allocate(lane, 32);
+    EXPECT_EQ(statistics().collection_count, 0u);
+    // A poll reclaims what is due: everything without designated points,
+    // only an emergency with them.
+    EXPECT_EQ(obelisk_rt_v1_gc_safepoint(lane), OBELISK_RT_OK);
+    EXPECT_EQ(statistics().collection_count, designate ? 0u : 1u);
+    allocate(lane, 80);
+    EXPECT_EQ(statistics().collection_count, designate ? 0u : 1u);
+    EXPECT_EQ(obelisk_rt_v1_gc_safepoint(lane), OBELISK_RT_OK);
+    EXPECT_EQ(statistics().collection_count, designate ? 1u : 2u);
+    EXPECT_EQ(statistics().reclaimed_objects, 112u);
+
+    // A point between activations does nothing while one runs.
+    allocate(lane, 32);
+    EXPECT_EQ(obelisk_rt_managed_heap_collect_between_activations(context),
+              OBELISK_RT_OK);
+    EXPECT_EQ(statistics().collection_count, designate ? 1u : 2u);
+    obelisk_rt_managed_execution_leave(lane, entered);
+    // Between activations it reclaims what is due; a designated point
+    // reclaims whatever is pending.
+    EXPECT_EQ(obelisk_rt_managed_heap_collect_between_activations(context),
+              OBELISK_RT_OK);
+    EXPECT_EQ(statistics().collection_count, designate ? 1u : 3u);
+    EXPECT_EQ(obelisk_rt_v1_gc_collect_pending(context), OBELISK_RT_OK);
+    obelisk_rt_gc_statistics_v1 collected = statistics();
+    EXPECT_EQ(collected.collection_count, designate ? 2u : 3u);
+    EXPECT_EQ(collected.reclaimed_objects, 144u);
+    EXPECT_EQ(obelisk_rt_v1_object_id(kept), keptID);
+    ASSERT_EQ(obelisk_rt_v1_gc_static_root_unregister(context, &kept),
+              OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(context);
+  };
+  run(/*designate=*/false);
+  run(/*designate=*/true);
+}
+
 TEST(ManagedHeap, SerializesConcurrentCollectionRequestsWithoutDeadlock) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

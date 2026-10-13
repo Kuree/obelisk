@@ -20,6 +20,7 @@
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/IntegerRangeIPO.h"
+#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
@@ -4325,15 +4326,19 @@ public:
                                "pipeline phase Schedule");
       return signalPassFailure();
     }
+    ObeliskSimInstrumentManagedRootsPassOptions rootOptions;
+    rootOptions.polled =
+        getOperation()->hasAttr(analysis::polledCollectionAttrName);
     auto instrumentFunctions = [&]() -> LogicalResult {
       OpPassManager pipeline(sim::SimDesignOp::getOperationName());
       pipeline.nest<sim::SimFuncOp>().addPass(
-          createObeliskSimInstrumentManagedRootsPass());
+          createObeliskSimInstrumentManagedRootsPass(rootOptions));
       for (auto design : getOperation().getOps<sim::SimDesignOp>())
         if (failed(runPipeline(pipeline, design)))
           return failure();
       OpPassManager directFunctions(sim::SimFuncOp::getOperationName());
-      directFunctions.addPass(createObeliskSimInstrumentManagedRootsPass());
+      directFunctions.addPass(
+          createObeliskSimInstrumentManagedRootsPass(rootOptions));
       for (auto function : getOperation().getOps<sim::SimFuncOp>())
         if (failed(runPipeline(directFunctions, function)))
           return failure();

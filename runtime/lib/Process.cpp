@@ -955,6 +955,15 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_instance_execute(
     if (instance->native_handle)
       return OBELISK_RT_INVALID_LIFECYCLE;
   }
+  // Unless this activation is nested in another one, nothing on this thread
+  // holds an unregistered managed value before it starts, so pressure that
+  // suspensions carried here without reaching a poll is reclaimable.
+  if (context) {
+    obelisk_rt_status collected =
+        obelisk_rt_managed_heap_collect_between_activations(context);
+    if (collected != OBELISK_RT_OK)
+      return collected;
+  }
   ManagedExecutionScope managedExecution(context);
   if (managedExecution.getStatus() != OBELISK_RT_OK)
     return managedExecution.getStatus();
@@ -5263,8 +5272,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           obelisk_rt_dump_slot_unlocked(context);
           // Between time slots of a runtime-driven schedule no activation
           // runs: a designated collection point for stretches that no
-          // generated periodic loop drives.
+          // generated periodic loop drives, and the point where polled
+          // collection reclaims pressure that no poll reached.
           if (obelisk_rt_managed_heap_collections_designated(
+                  context->managedHeap) ||
+              obelisk_rt_managed_heap_collections_polled(
                   context->managedHeap)) {
             obelisk_rt_status collected =
                 obelisk_rt_v1_gc_collect_pending(context);

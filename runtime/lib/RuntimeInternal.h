@@ -2753,6 +2753,14 @@ void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
 uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap);
 /// Whether a schedule has designated the heap's collection points.
 bool obelisk_rt_managed_heap_collections_designated(ManagedHeap *heap);
+/// Compiled code roots managed values only at GC polls; allocation records
+/// pressure instead of collecting (OBELISK_RT_EXECUTION_POLLED_COLLECTION).
+void obelisk_rt_managed_heap_poll_collections(ManagedHeap *heap);
+bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap);
+/// Reclaim pressure that is due between two activations. Does nothing while
+/// this thread runs a managed activation.
+obelisk_rt_status
+obelisk_rt_managed_heap_collect_between_activations(obelisk_rt_context *context);
 obelisk_rt_status
 obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
                                    obelisk_rt_gc_lane_v1 **outLane,

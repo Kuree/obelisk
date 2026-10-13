@@ -416,6 +416,11 @@ typedef struct obelisk_rt_handle_v1 {
 // counters and run metadata are context-owned and never mutate this
 // compiler-emitted blob.
 #define OBELISK_RT_EXECUTION_COVERAGE_SCHEMA (UINT32_C(1) << 9)
+// Compiled code exposes its managed values to the collector only at GC polls
+// (obelisk_rt_v1_gc_safepoint) and at calls that may reach one. Allocation
+// records pressure but never collects or parks; the heap reclaims at polls,
+// between activations, and at designated collection points.
+#define OBELISK_RT_EXECUTION_POLLED_COLLECTION (UINT32_C(1) << 10)
 
 // Executable event-region ordinals. The eight PLI callback regions remain
 // compiler-only until the callback ABI can populate them. Preponed is serviced

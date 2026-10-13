@@ -39,9 +39,10 @@ constexpr uint64_t kSpanSize = 64 * 1024;
 constexpr uint64_t kChunkAlignment = 64;
 constexpr uint64_t kSpansPerChunk = kChunkSize / kSpanSize;
 constexpr uint64_t kMinimumCollectionBytes = 32 * 1024 * 1024;
-/// With designated collections, allocation still collects once its pressure
-/// reaches this multiple of the threshold, so a long activation that
-/// allocates without reaching a collection point stays bounded.
+/// With designated collections, pressure that reaches this multiple of the
+/// threshold is reclaimed at the next opportunity inside the cycle (an
+/// allocation, or under polled collection a poll or a point between
+/// activations), so a long activation stays bounded.
 constexpr uint64_t kDeferredCollectionFactor = 4;
 constexpr uint64_t kMaximumSmallSlot = 32 * 1024;
 constexpr unsigned kSizeClassCount = 11; // 32 bytes through 32 KiB.
@@ -1032,6 +1033,13 @@ public:
       obelisk_rt_object_v1 **outObject) noexcept;
 
 private:
+  static uint64_t deferredLimit(uint64_t threshold) {
+    return threshold > std::numeric_limits<uint64_t>::max() /
+                           kDeferredCollectionFactor
+               ? std::numeric_limits<uint64_t>::max()
+               : threshold * kDeferredCollectionFactor;
+  }
+
   obelisk_rt_status allocateImpl(obelisk_rt_gc_lane_v1 *lane,
                                  obelisk_rt_managed_kind_v1 kind,
                                  uint64_t extent, uint64_t alignment,
@@ -1049,7 +1057,12 @@ private:
             std::numeric_limits<uint64_t>::max() - allocationAlignment + 1)
       return OBELISK_RT_OUT_OF_RESOURCES;
 
-    obelisk_rt_status status = safepoint(lane);
+    // Under polled collection the caller's managed values are registered
+    // only at polls, so allocation neither parks nor collects: it records
+    // pressure for the next poll or point between activations.
+    bool polledCollection = polled.load(std::memory_order_acquire);
+    obelisk_rt_status status =
+        polledCollection ? OBELISK_RT_OK : safepoint(lane);
     if (status != OBELISK_RT_OK)
       return status;
     uint64_t allocated =
@@ -1059,13 +1072,8 @@ private:
       // Once collections are designated the schedule reclaims at its own
       // collection points; leave the work to them unless pressure runs far
       // ahead of the next one.
-      uint64_t deferredLimit =
-          threshold > std::numeric_limits<uint64_t>::max() /
-                          kDeferredCollectionFactor
-              ? std::numeric_limits<uint64_t>::max()
-              : threshold * kDeferredCollectionFactor;
-      if (designated.load(std::memory_order_acquire) &&
-          allocated < deferredLimit) {
+      if (polledCollection || (designated.load(std::memory_order_acquire) &&
+                               allocated < deferredLimit(threshold))) {
         collectionPending.store(true, std::memory_order_release);
       } else {
         status = collect(lane);
@@ -1216,6 +1224,32 @@ public:
   /// 8.29 leaves the timing of reclamation to the implementation.
   void designateCollections() {
     designated.store(true, std::memory_order_release);
+  }
+  /// The executing code roots its managed values only at polls and calls
+  /// that may reach one (OBELISK_RT_EXECUTION_POLLED_COLLECTION).
+  void pollCollections() { polled.store(true, std::memory_order_release); }
+  bool collectionsPolled() const {
+    return polled.load(std::memory_order_acquire);
+  }
+  /// Whether pending pressure should be reclaimed at an opportunity the
+  /// schedule did not designate: always without designated points, otherwise
+  /// only once pressure runs far ahead of them.
+  bool undesignatedCollectionDue() const {
+    if (!collectionPending.load(std::memory_order_acquire))
+      return false;
+    if (!designated.load(std::memory_order_acquire))
+      return true;
+    return allocatedSinceCollection.load(std::memory_order_relaxed) >=
+           deferredLimit(nextCollectionBytes.load(std::memory_order_relaxed));
+  }
+  /// A compiled poll: every managed value of the calling activations is
+  /// registered, so the lane may park for another collector and reclaim
+  /// pending pressure itself.
+  obelisk_rt_status poll(obelisk_rt_gc_lane_v1 *lane) {
+    obelisk_rt_status status = safepoint(lane);
+    if (status != OBELISK_RT_OK || !undesignatedCollectionDue())
+      return status;
+    return collect(lane);
   }
   bool collectionsDesignated() const {
     return designated.load(std::memory_order_acquire);
@@ -1676,6 +1710,7 @@ private:
   /// Allocation pressure deferred to a designated collection point.
   std::atomic<bool> collectionPending{false};
   std::atomic<bool> designated{false};
+  std::atomic<bool> polled{false};
   std::vector<obelisk_rt_gc_lane_v1 *> lanes;
   std::vector<obelisk_rt_object_v1 **> staticRoots;
   struct CandidateStaticRoot {
@@ -2349,7 +2384,7 @@ obelisk_rt_v1_gc_lane_leave(obelisk_rt_gc_lane_v1 *lane) {
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_safepoint(obelisk_rt_gc_lane_v1 *lane) {
-  return lane && lane->heap ? lane->heap->safepoint(lane)
+  return lane && lane->heap ? lane->heap->poll(lane)
                             : OBELISK_RT_INVALID_ARGUMENT;
 }
 
@@ -2495,10 +2530,13 @@ namespace {
 /// Collect deferred pressure where this thread runs no managed activation:
 /// every live value is then in a static root, a process frame or another
 /// runtime root, never in an unregistered activation. A call from inside an
-/// activation leaves the work to the next collection point.
+/// activation leaves the work to the next collection point. A point the
+/// schedule did not designate reclaims only pressure that is due there.
 obelisk_rt_status collectPendingAtQuiescentPoint(obelisk_rt_context *context,
-                                                 ManagedHeap *heap) {
-  if (!heap->collectionIsPending())
+                                                 ManagedHeap *heap,
+                                                 bool designatedPoint) {
+  if (designatedPoint ? !heap->collectionIsPending()
+                      : !heap->undesignatedCollectionDue())
     return OBELISK_RT_OK;
   obelisk_rt_gc_lane_v1 *lane = nullptr;
   bool entered = false;
@@ -2508,7 +2546,7 @@ obelisk_rt_status collectPendingAtQuiescentPoint(obelisk_rt_context *context,
     return status;
   if (entered) {
     status = heap->collect(lane);
-    if (status == OBELISK_RT_OK)
+    if (status == OBELISK_RT_OK && designatedPoint)
       heap->designatedCollections.fetch_add(1, std::memory_order_relaxed);
   }
   obelisk_rt_managed_execution_leave(lane, entered);
@@ -2523,7 +2561,27 @@ uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap) {
 extern "C" obelisk_rt_status
 obelisk_rt_v1_gc_collect_pending(obelisk_rt_context *context) {
   ManagedHeap *heap = heapFor(context);
-  return heap ? collectPendingAtQuiescentPoint(context, heap) : OBELISK_RT_OK;
+  return heap ? collectPendingAtQuiescentPoint(context, heap,
+                                              /*designatedPoint=*/true)
+              : OBELISK_RT_OK;
+}
+
+obelisk_rt_status
+obelisk_rt_managed_heap_collect_between_activations(obelisk_rt_context *context) {
+  ManagedHeap *heap = heapFor(context);
+  return heap && heap->collectionIsPending()
+             ? collectPendingAtQuiescentPoint(context, heap,
+                                              /*designatedPoint=*/false)
+             : OBELISK_RT_OK;
+}
+
+void obelisk_rt_managed_heap_poll_collections(ManagedHeap *heap) {
+  if (heap)
+    heap->pollCollections();
+}
+
+bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap) {
+  return heap && heap->collectionsPolled();
 }
 
 extern "C" obelisk_rt_status

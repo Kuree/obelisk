@@ -627,6 +627,9 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   bool needsStandaloneStatePlan =
       needsSampledStatePlan || hasClockOccurrenceCondition;
   requiresStateSync |= needsStandaloneStatePlan && !needsDesignEncoding;
+  // Both tiers share the polls that bound garbage between collections, so
+  // place them before bytecode is frozen.
+  manager.addPass(createObeliskSimInsertGCPollsPass());
   if (needsDesignEncoding) {
     // Bytecode and native lowering must observe the same suspension-safe SSA
     // shape. The coroutine pass also runs this canonicalization for native

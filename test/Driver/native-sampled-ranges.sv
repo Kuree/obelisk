@@ -41,14 +41,14 @@ endmodule
 // OUTPUT-NEXT: sampled stored=010 net=0011
 
 // GENERIC: @__obelisk_execution_descriptor_v1 = constant
-// GENERIC-SAME: { i32 1, i32 32, i64 120,
+// GENERIC-SAME: { i32 1, i32 1056, i64 120,
 // GENERIC-SAME: { i32 1, i32 72, ptr @__obelisk_sampled_ranges_v1, i64 2,
 // GENERIC: @__obelisk_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 3 }, { i64, i64, i64 } { i64 32, i64 1, i64 4 }]
 
 // AOT: @__obelisk_execution_descriptor_v1 = constant
-// AOT-SAME: { i32 1, i32 33, i64 120,
+// AOT-SAME: { i32 1, i32 1057, i64 120,
 // AOT-SAME: { i32 1, i32 72, ptr @__obelisk_sampled_ranges_v1, i64 2,
 // AOT: @__obelisk_sampled_ranges_v1 = internal constant [2 x { i64, i64, i64 }] [{ i64, i64, i64 } { i64 16, i64 0, i64 3 }, { i64, i64, i64 } { i64 32, i64 1, i64 4 }]
 
 // NO-SAMPLED: @__obelisk_execution_descriptor_v1 = constant
-// NO-SAMPLED-SAME: { i32 1, i32 0, i64 0, ptr null, i64 0,
+// NO-SAMPLED-SAME: { i32 1, i32 1024, i64 0, ptr null, i64 0,

@@ -40,6 +40,34 @@ def ObeliskSimMarkBoundedLoopsPass
                            "mlir::cf::ControlFlowDialect"];
 }
 
+def ObeliskSimInsertGCPollsPass
+    : Pass<"obelisk-sim-insert-gc-polls", "mlir::ModuleOp"> {
+  let summary = "Place managed-heap collection polls for polled collection";
+  let description = [{
+    Under polled collection, compiled code exposes its managed values to the
+    collector only at `simulation.gc.safepoint` polls and at calls that may
+    reach one. Allocation records pressure but never collects; the heap
+    reclaims at polls, between activations, and at designated schedule points.
+    IEEE 1800-2023 8.29 leaves the timing of reclamation to the
+    implementation.
+
+    The pass places a poll before the first allocation of every block on a
+    control-flow cycle that avoids each suspension returning to the scheduler,
+    before every allocating call that may re-enter its caller, and at the entry
+    of every allocating DPI export, so garbage between two collection
+    opportunities stays bounded. Every call into compiled code that cannot
+    reach a poll is marked `simulation.gc_poll_free`, and the module is marked
+    `obelisk.gc.polled`; root instrumentation then registers managed values
+    only where a collection can observe them. Rerunning the pass adds nothing.
+  }];
+  let statistics = [
+    Statistic<"numPolls", "polls", "Collection polls placed">,
+    Statistic<"numPollFreeCalls", "poll-free-calls",
+              "Calls proven unable to reach a collection poll">
+  ];
+  let dependentDialects = ["obelisk::sim::ObeliskSimulationDialect"];
+}
+
 def ObeliskSimRefineContinuousSensitivityPass
     : Pass<"obelisk-sim-refine-continuous-sensitivity", "obelisk::sim::SimDesignOp"> {
   let summary = "Refine pure continuous RHS wakeups with sparse storage ranges";

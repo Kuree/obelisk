@@ -3,6 +3,7 @@ add_mlir_dialect_library(ObeliskSimulationTransforms
   DevirtualizeClassCalls.cpp
   EliminateDeadBoundaries.cpp
   EliminateDeadCaptures.cpp
+  InsertGCPolls.cpp
   Inline.cpp
   PropagateInitializedStorage.cpp
   RefineContinuousSensitivity.cpp

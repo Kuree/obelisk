@@ -92,6 +92,10 @@ inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
     "obelisk.managed_root_range_record";
 inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
     "obelisk.managed_root_range_push_check";
+/// Ends the prologue that reacquires an activation's root record at a resume
+/// target; coroutine lowering runs it only on scheduler resumption.
+inline constexpr llvm::StringLiteral managedRootActivationPrologueAttr =
+    "obelisk.managed_root_activation_prologue";
 inline constexpr llvm::StringLiteral nativeMethodArgumentSizesAttr =
     "obelisk.native.method_argument_sizes";
 inline constexpr llvm::StringLiteral nativeMethodArgumentRootsAttr =

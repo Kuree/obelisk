@@ -980,20 +980,21 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     // always_comb entry can branch directly to the block resumed after its
     // implicit wait).  Leaving the prologue in the semantic block would then
     // push the same activation record once on entry and again without an
-    // intervening suspension.  Move the marked prefix into this resume-only
-    // shim so it executes for scheduler dispatch but not for ordinary edges.
-    Operation *rootPushCheck = nullptr;
+    // intervening suspension, or reset a record registered earlier in the
+    // activation.  Move the marked prefix into this resume-only shim so it
+    // executes for scheduler dispatch but not for ordinary edges.
+    Operation *prologueEnd = nullptr;
     for (Operation &operation : *continuation) {
-      if (operation.hasAttr(managedRootRangePushCheckAttr)) {
-        rootPushCheck = &operation;
+      if (operation.hasAttr(managedRootActivationPrologueAttr)) {
+        prologueEnd = &operation;
         break;
       }
     }
-    if (rootPushCheck) {
+    if (prologueEnd) {
       Operation *operation = &continuation->front();
       while (operation) {
         Operation *next = operation->getNextNode();
-        bool last = operation == rootPushCheck;
+        bool last = operation == prologueEnd;
         operation->moveBefore(shim, shim->end());
         if (last)
           break;

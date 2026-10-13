@@ -25,8 +25,9 @@ The currently implemented shared-runtime surface includes:
 - native and pointer-free bytecode lowering for escaping array/queue index
   paths through the existing `ArgumentRef` ABI.
 
-Allocation-capable operations require an active managed execution lane and are
-collection points. They root owners and temporary managed values across every
+Allocation-capable operations require an active managed execution lane. Unless
+code is compiled for polled collection (below), they are collection points.
+The runtime roots owners and temporary managed values across every
 allocation. Container publication validates managed element slots against the
 destination context. No managed allocation or GC safepoint occurs while a
 container ticket lock is held.
@@ -46,6 +47,33 @@ are static storage, process frames and runtime-held state. Without a periodic
 schedule, allocation keeps collecting. `OBELISK_RT_GC_THRESHOLD` sets the
 collection threshold in bytes, and `OBELISK_RT_GC_DIAGNOSTICS` reports
 collections at exit.
+
+The native backend compiles for polled collection
+(`OBELISK_RT_EXECUTION_POLLED_COLLECTION`), so activations register managed
+roots only where a collection can observe them. `obelisk-sim-insert-gc-polls`
+places a `simulation.gc.safepoint` poll on every way to allocate repeatedly
+without returning to the scheduler:
+- before the first allocation of each block on a control-flow cycle that
+  avoids every suspension returning to the scheduler;
+- before each allocating call that may re-enter its caller (recursion, or a
+  callee it cannot resolve);
+- at the entry of each allocating DPI export, which foreign code may call in
+  a loop of its own.
+`ManagedCollectionAnalysis` solves the call graph with the dataflow solver.
+It resolves virtual dispatch over the closed class hierarchy and connects
+context imports to every export (IEEE 1800-2023 35.5.3: a noncontext import
+cannot call an export). Calls that cannot reach a poll are marked
+`simulation.gc_poll_free`. Root instrumentation then treats only polls and the
+remaining calls as collection points, so a function without either registers
+no roots. In this mode allocation records pressure but never collects or
+parks. Reclamation happens at three kinds of point:
+- polls, which defer to designated points until pressure reaches four times
+  the threshold;
+- the runtime scheduler, before each native activation it dispatches, and at
+  each time advance;
+- designated points.
+Garbage between two collection opportunities stays bounded: such a stretch
+executes no cycle, recursion, or foreign loop that allocates.
 
 `obelisk_rt_managed_word_v1` and `obelisk_rt_string_v1` are 64-bit ABI words.
 Tag `01` stores an explicit three-bit length and up to seven arbitrary bytes,

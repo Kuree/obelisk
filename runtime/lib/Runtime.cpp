@@ -374,12 +374,13 @@ obelisk_rt_context::~obelisk_rt_context() {
     std::fprintf(
         stderr,
         "obelisk-gc-diagnostics collections=%llu designated=%llu "
-        "allocated_objects=%llu reclaimed_objects=%llu\n",
+        "allocated_objects=%llu reclaimed_objects=%llu polled=%d\n",
         static_cast<unsigned long long>(statistics.collection_count),
         static_cast<unsigned long long>(
             obelisk_rt_managed_heap_designated_collections(managedHeap)),
         static_cast<unsigned long long>(statistics.allocated_objects),
-        static_cast<unsigned long long>(statistics.reclaimed_objects));
+        static_cast<unsigned long long>(statistics.reclaimed_objects),
+        obelisk_rt_managed_heap_collections_polled(managedHeap) ? 1 : 0);
   }
   obelisk_rt_managed_heap_destroy(managedHeap);
 }
@@ -1197,7 +1198,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
                                       OBELISK_RT_EXECUTION_WAVEFORM_METADATA |
                                       OBELISK_RT_EXECUTION_DPI_EXPORTS |
                                       OBELISK_RT_EXECUTION_CLASS_BITSTREAM |
-                                      OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+                                      OBELISK_RT_EXECUTION_COVERAGE_SCHEMA |
+                                      OBELISK_RT_EXECUTION_POLLED_COLLECTION;
       if (execution->version != OBELISK_RT_VERSION ||
           execution->dpi_reserved != 0 ||
           (execution->flags & ~validFlags) != 0 ||
@@ -1258,6 +1260,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_context_create_for_design(
       context->coverage->schema = std::make_unique<obelisk::coverage::Database>(
           std::move(coverageSchema));
     }
+    if (execution &&
+        (execution->flags & OBELISK_RT_EXECUTION_POLLED_COLLECTION) != 0)
+      obelisk_rt_managed_heap_poll_collections(context->managedHeap);
     if (execution) {
       obelisk_rt_status status =
           obelisk_rt_initialize_dpi_scopes(context, execution);

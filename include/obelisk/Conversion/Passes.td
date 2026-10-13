@@ -147,8 +147,16 @@ def ObeliskSimInstrumentManagedRootsPass
   let summary = "Bind live managed SSA values to precise GC roots";
   let description = [{
     Uses MLIR liveness to allocate and maintain precise managed-root slots
-    around collection points and process activation boundaries.
+    around collection points and process activation boundaries. By default
+    every allocation and call is a collection point. Under polled collection
+    (`obelisk-sim-insert-gc-polls`) only `simulation.gc.safepoint` polls and
+    calls not marked `simulation.gc_poll_free` are, and a function without
+    one registers no roots.
   }];
+  let options = [
+    Option<"polled", "polled", "bool", "false",
+           "Collect only at GC polls and calls that may reach one">
+  ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",
     "obelisk::schedule::ScheduleDialect", "mlir::LLVM::LLVMDialect"

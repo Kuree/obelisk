@@ -2,6 +2,9 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
+#include "obelisk/Conversion/Passes.h"
+
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -30,35 +33,23 @@ namespace {
 /// live at the collection point.
 constexpr size_t bulkRootRefreshThreshold = 64;
 
-bool managedOperationMayCollect(Operation *operation) {
-  return isa<sim::SimClassAllocOp, sim::SimClassCopyOp, sim::SimWeakCreateOp,
-             sim::SimReferencePathIndexOp, sim::SimReferencePathAssocOp,
-             sim::SimReferencePathStringCharacterOp,
-             sim::SimReferencePathAggregateElementOp,
-             sim::SimContainerCreateLikeOp, sim::SimContainerCreateOp,
-             sim::SimContainerCloneOp, sim::SimContainerImportFixedOp,
-             sim::SimContainerWriteOp, sim::SimQueueInsertOp,
-             sim::SimAssocCreateOp, sim::SimAssocWriteOp,
-             sim::SimAssocSetDefaultOp, sim::SimAssocTraverseOp,
-             sim::SimArgumentRefStoreOp, sim::SimReferencePathNBAEnqueueOp,
-             sim::SimGCSafepointOp, sim::SimStringLiteralOp,
-             sim::SimStringFromPackedOp, sim::SimStringConcatOp,
-             sim::SimStringRepeatOp, sim::SimStringPutcOp,
-             sim::SimStringSubstrOp, sim::SimStringCaseConvertOp,
-             sim::SimStringFormatIntegerOp, sim::SimStringFormatRealOp,
-             sim::SimStringOutputFormatOp, sim::SimStringScanFieldOp,
-             sim::SimScanDynamicValidateOp, sim::SimStringScanDynamicOp,
-             sim::SimFileScanDynamicOp, sim::SimFileGetlineStringOp,
-             sim::SimFileErrorStringOp, sim::SimPlusargValueOp,
-             sim::SimPlusargScanOp, sim::SimCallOp, sim::SimCovergroupCreateOp,
-             sim::SimClassDirectCallOp, sim::SimClassVirtualCallOp,
-             sim::SimClassVirtualTaskCallOp, sim::SimDPICallOp>(operation);
+bool managedOperationMayCollect(Operation *operation, bool polled) {
+  bool call = isa<sim::SimCallOp, sim::SimClassDirectCallOp,
+                  sim::SimClassVirtualCallOp, sim::SimDPICallOp>(operation);
+  // Under polled collection allocation only records pressure; the heap
+  // reclaims at polls, which roots must reach through every call that may
+  // execute one.
+  if (polled)
+    return isa<sim::SimGCSafepointOp>(operation) ||
+           (call && !operation->hasAttr(analysis::gcPollFreeAttrName));
+  return call || analysis::mayAllocateManagedStorage(operation) ||
+         isa<sim::SimGCSafepointOp, sim::SimClassVirtualTaskCallOp>(operation);
 }
 
 } // namespace
 
 LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
-                                     const Liveness &liveness) {
+                                     const Liveness &liveness, bool polled) {
   if (function.isExternal())
     return success();
   MLIRContext *context = function.getContext();
@@ -96,7 +87,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
         return function.emitError(
             "block argument has no fixed managed root layout");
     for (Operation &operation : block) {
-      if (managedOperationMayCollect(&operation))
+      if (managedOperationMayCollect(&operation, polled))
         collectionPoints.push_back(&operation);
       for (Value result : operation.getResults())
         if (failed(collectHandles(result)))
@@ -147,7 +138,9 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
   // Each coroutine activation owns roots only while it is running on
   // the current worker lane. Pop before suspension and reacquire on
   // the resume block so a continuation may migrate to another host
-  // thread.
+  // thread. Under polled collection an activation registers its record
+  // lazily, at the first collection point it reaches, so the resume block
+  // only resets the record.
   llvm::SetVector<Block *> activationBlocks;
   activationBlocks.insert(&entry);
   function.walk([&](Operation *operation) {
@@ -160,6 +153,14 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
       builder.setInsertionPointAfter(record.getDefiningOp());
     else
       builder.setInsertionPointToStart(block);
+    if (polled) {
+      Operation *reset = LLVM::StoreOp::create(
+          builder, location, LLVM::ZeroOp::create(builder, location, rootType),
+          record, 8);
+      reset->setAttr(managedRootActivationPrologueAttr, builder.getUnitAttr());
+      activationEnds[block] = reset;
+      continue;
+    }
     if (useBulkRefresh) {
       LLVM::MemsetOp::create(
           builder, location, slotsBase,
@@ -180,6 +181,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
         builder, location, i32, record, slotsBase, rootCount);
     Operation *check = reportManagedStatus(builder, location, Value{}, status);
     check->setAttr(managedRootRangePushCheckAttr, builder.getUnitAttr());
+    check->setAttr(managedRootActivationPrologueAttr, builder.getUnitAttr());
     activationEnds[block] = check;
   }
 
@@ -248,6 +250,16 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
           LLVM::ZeroOp::create(builder, collectionPoint->getLoc(), i64), slot,
           8);
     }
+    if (!polled)
+      continue;
+    // Every slot now holds a live value or zero, so the record can be
+    // registered here; once registered it stays so until the activation ends.
+    Value status = schedule::NativeManagedRootPushOp::create(
+        builder, collectionPoint->getLoc(), i32, record, slotsBase, rootCount,
+        /*lazy=*/true);
+    Operation *check =
+        reportManagedStatus(builder, collectionPoint->getLoc(), Value{}, status);
+    check->setAttr(managedRootRangePushCheckAttr, builder.getUnitAttr());
   }
 
   SmallVector<Operation *> exits;
@@ -279,11 +291,14 @@ class ObeliskSimInstrumentManagedRootsPass
     : public impl::ObeliskSimInstrumentManagedRootsPassBase<
           ObeliskSimInstrumentManagedRootsPass> {
 public:
+  using impl::ObeliskSimInstrumentManagedRootsPassBase<
+      ObeliskSimInstrumentManagedRootsPass>::
+      ObeliskSimInstrumentManagedRootsPassBase;
   void runOnOperation() override {
     if (getOperation().isExternal())
       return;
-    if (failed(detail::instrumentManagedRoots(getOperation(),
-                                              getAnalysis<Liveness>())))
+    if (failed(detail::instrumentManagedRoots(
+            getOperation(), getAnalysis<Liveness>(), polled)))
       signalPassFailure();
   }
 };

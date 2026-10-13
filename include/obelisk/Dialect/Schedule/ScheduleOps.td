@@ -830,15 +830,19 @@ def NativeByteAddressOp : ScheduleNativeOp<"bytes.address", [Pure]> {
   }];
 }
 // Activation-local root records are lowered only after simulation design
-// symbol tables have been flattened into the native module.
+// symbol tables have been flattened into the native module. A `lazy` push
+// registers the record only when it is not registered yet (its runtime cookie
+// is zero) and otherwise reports success, so an activation registers its roots
+// at the first collection point it reaches instead of on entry.
 def NativeManagedRootPushOp : ScheduleNativeOp<"gc.root_range.push", [
     MemoryEffects<[MemRead, MemWrite, MemRead<SimProcessResource>,
                    MemWrite<SimHeapResource>]>
   ]> {
-  let arguments = (ins LLVM_AnyPointer:$record, LLVM_AnyPointer:$slots, I64:$count);
+  let arguments = (ins LLVM_AnyPointer:$record, LLVM_AnyPointer:$slots,
+                       I64:$count, UnitAttr:$lazy);
   let results = (outs I32:$status);
   let assemblyFormat = [{
-    $record `slots` $slots `count` $count attr-dict `:`
+    $record `slots` $slots `count` $count (`lazy` $lazy^)? attr-dict `:`
     qualified(type($record)) `,` qualified(type($slots))
   }];
 }
@@ -866,6 +870,7 @@ def NativeGCCollectOp : ScheduleNativeOp<"gc.collect", [
   }];
   let hasVerifier = 1;
 }
+// Unregisters a record if it is registered; a lazily pushed record may not be.
 def NativeManagedRootPopOp : ScheduleNativeOp<"gc.root_range.pop", [
     MemoryEffects<[MemRead, MemWrite, MemRead<SimProcessResource>,
                    MemWrite<SimHeapResource>]>

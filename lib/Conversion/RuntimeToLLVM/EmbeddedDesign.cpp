@@ -1,5 +1,6 @@
 //===- EmbeddedDesign.cpp - Materialize embedded simulation design --------===//
 
+#include "obelisk/Analysis/ManagedCollectionAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/RuntimeToLLVM.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -991,6 +992,8 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     flags |= OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
   if (coverageSchema)
     flags |= OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+  if (module->hasAttr(analysis::polledCollectionAttrName))
+    flags |= OBELISK_RT_EXECUTION_POLLED_COLLECTION;
   // IEEE 1800-2023 35.7: exporting a function preserves its SV semantics.
   // Native scheduling must see the same capabilities as the runtime descriptor
   // before choosing a state-publication strategy.
