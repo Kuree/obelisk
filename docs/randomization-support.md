@@ -35,8 +35,8 @@ their cycle and modes across instances. Whole-structure, member, nested-structur
 and array-element mode setters preserve other modes. An explicit property list
 temporarily activates the selected structure's random members. Unpacked
 structure `randc` declarations and nonsingular mode queries are diagnosed.
-Dynamic container members, random object members, real members, member `randc`
-arrays, and structures in recursively randomized objects remain open.
+Dynamic container members, random object members, real array members, member
+`randc` arrays, and structures in recursively randomized objects remain open.
 
 Fixed unpacked arrays of integral elements use their logical element bitstream
 for class and scope randomization, including multidimensional arrays and
@@ -232,8 +232,20 @@ calls, live mode changes, frozen NaN payloads and scope randomization. Parent
 and descendant-owned constraints bind object fields by their static receiver
 paths; alias equations retain shared identity. Frozen child state, guarded and
 unguarded nulls, disabled blocks and failed solves retain the normal error and
-commit rules. General full-coordinate arithmetic efficiency, candidate
-real-to-integral conversions, real arrays, joint real/integral distributions
+commit rules. Integral casts and `$rtoi` lower to compiler Z3 bit-vector
+relations, including computed IEEE arithmetic. Nonfinite results preserve
+four-state unknown planes; two-state casts consume them as zero. Computed
+numeric conversions extract sanitized IEEE bits and reuse the conversion
+kernel for rounding halfway away from zero, truncation and arbitrary-width
+low bits. A metadata patch to the pinned compiler Z3 exposes its existing
+local deterministic completion option; unreachable NaN completion functions
+never become sampler inputs. MLIR covers active real points, live addition
+captures, arithmetic at both precisions and 1/32/130-bit results. Universal
+Z3 checks cover every binary32/64 arithmetic-result encoding at widths
+1/8/32/64/130 for both rounding and truncation.
+
+General full-coordinate arithmetic efficiency, computed arithmetic payload
+bitcasts, real arrays, joint real/integral distributions
 and complete real probability semantics remain open.
 
 The compiler appends `HAS_SAMPLER_PLAN` bundles and opts into exact sampling

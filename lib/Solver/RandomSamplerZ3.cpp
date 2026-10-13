@@ -8,6 +8,7 @@
 #include "RandomRealZ3.h"
 #include <algorithm>
 #include <functional>
+#include <mutex>
 #include <unordered_map>
 
 #include <z3.h>
@@ -55,6 +56,16 @@ struct Bits {
 class BitVectorFormula {
 public:
   BitVectorFormula() {
+    // Numeric casts extract IEEE bits only after sanitizing nonfinite inputs,
+    // so undefined NaN payloads cannot be observed. Z3's fpa2bv tactic reads
+    // hi_fp_unspecified from the rewriter module parameters but does not
+    // accept it as a tactic parameter; set it before any sampler context
+    // exists so the unspecified completion branches stay deterministic and do
+    // not become extra random inputs.
+    static std::once_flag hardwareUnspecified;
+    std::call_once(hardwareUnspecified, [] {
+      Z3_global_param_set("rewriter.hi_fp_unspecified", "true");
+    });
     Z3_config config = Z3_mk_config();
     context = Z3_mk_context(config);
     Z3_del_config(config);
@@ -460,23 +471,21 @@ public:
       Z3_ast payload =
           input.representation ? input.representation : input.numericPayload;
       if (!payload) {
-        // A wide signed result holds every finite value of this IEEE format.
-        // Sanitize nonfinite values before converting, then retain the low
-        // destination bits. No unspecified NaN encoding is exposed to Z3.
-        unsigned safeWidth = input.width == 32 ? 129 : 1025;
+        // Numeric conversion observes no NaN payload. Sanitize nonfinite
+        // arithmetic before obtaining IEEE bits, then use the same proven
+        // bit-vector conversion as direct payloads. This avoids a wide signed
+        // conversion and its range-completion witnesses.
         Z3_ast finite = conjunction(
             Z3_mk_not(context, Z3_mk_fpa_is_nan(context, input.value)),
             Z3_mk_not(context, Z3_mk_fpa_is_infinite(context, input.value)));
         Z3_ast safe =
             Z3_mk_ite(context, finite, input.value,
                       Z3_mk_fpa_zero(context, realSort(input.width), false));
-        Z3_ast converted = Z3_mk_fpa_to_sbv(
-            context,
-            opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1
-                ? Z3_mk_fpa_rtz(context)
-                : Z3_mk_fpa_rna(context),
-            safe, safeWidth);
-        return {resize({converted, safeWidth}, width, true), width};
+        payload = Z3_mk_fpa_to_ieee_bv(context, safe);
+        return {detail::realIntegerBits(
+                    context, payload, input.width, width,
+                    opcode == OBELISK_RT_RANDOM_REAL_TRUNCATE_INTEGER_V1),
+                width};
       }
       return {detail::realIntegerBits(
                   context, payload,
@@ -921,6 +930,14 @@ public:
 
 inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
                               std::vector<Z3_ast> &formulas, bool real) {
+  Z3_tactic floating = nullptr;
+  if (real) {
+    // hi_fp_unspecified is set globally by BitVectorFormula.
+    floating = Z3_mk_tactic(context, "fpa2bv");
+    if (!floating || Z3_get_error_code(context) != Z3_OK)
+      return false;
+    Z3_tactic_inc_ref(context, floating);
+  }
   Z3_goal goal = Z3_mk_goal(context, false, false, false);
   Z3_goal_inc_ref(context, goal);
   Z3_goal_assert(context, goal, predicate);
@@ -944,11 +961,8 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   Z3_tactic_inc_ref(context, cardFirst);
   Z3_tactic first = Z3_tactic_and_then(context, cardFirst, blast);
   Z3_tactic_inc_ref(context, first);
-  Z3_tactic floating = nullptr, floatingSimplified = nullptr,
-            floatingFirst = nullptr;
+  Z3_tactic floatingSimplified = nullptr, floatingFirst = nullptr;
   if (real) {
-    floating = Z3_mk_tactic(context, "fpa2bv");
-    Z3_tactic_inc_ref(context, floating);
     floatingSimplified = Z3_tactic_and_then(context, simplify, floating);
     Z3_tactic_inc_ref(context, floatingSimplified);
     floatingFirst = Z3_tactic_and_then(context, floatingSimplified, first);
