@@ -106,6 +106,67 @@ TEST(CoverageIndexTest, ArbitraryIDsHaveOrderedStableLeaves) {
   EXPECT_NE(copied, moved);
 }
 
+TEST(CoverageIndexTest, BoundsAgreeWithOrderedReferenceForPresentAndAbsentIDs) {
+  std::mt19937_64 random(67890);
+  IndexMap<uint64_t, uint64_t> index;
+  std::map<uint64_t, uint64_t> expected;
+  EXPECT_EQ(index.lower_bound(0), index.end());
+  EXPECT_EQ(index.upper_bound(UINT64_MAX), index.end());
+  for (unsigned i = 0; i != 128; ++i) {
+    uint64_t key = random();
+    index.emplace(key, i);
+    expected.emplace(key, i);
+  }
+  const auto &view = index;
+  auto check = [&](uint64_t key) {
+    auto lower = expected.lower_bound(key), upper = expected.upper_bound(key);
+    for (bool after : {false, true}) {
+      auto actual = after ? view.upper_bound(key) : view.lower_bound(key);
+      auto wanted = after ? upper : lower;
+      EXPECT_EQ(actual == view.end(), wanted == expected.end());
+      if (actual != view.end() && wanted != expected.end())
+        EXPECT_EQ(actual->first, wanted->first);
+      auto mutableResult =
+          after ? index.upper_bound(key) : index.lower_bound(key);
+      IndexMap<uint64_t, uint64_t>::const_iterator constResult = mutableResult;
+      EXPECT_EQ(constResult, actual);
+    }
+  };
+  check(0);
+  check(UINT64_MAX);
+  for (const auto &[key, value] : expected) {
+    check(key);
+    check(key - 1);
+    check(key + 1);
+  }
+}
+
+TEST(CoverageIndexTest, BoundsHandleSkippedPrefixesAndVariableLengthKeys) {
+  std::string prefix(1024, 'm');
+  IndexMap<std::string, unsigned> index;
+  std::map<std::string, unsigned> expected;
+  for (const std::string &key :
+       {prefix + "zz", std::string("z"), prefix, prefix + "ab", std::string(),
+        std::string("a"), prefix + "abc"}) {
+    unsigned ordinal = expected.size();
+    index.emplace(key, ordinal);
+    expected.emplace(key, ordinal);
+  }
+  for (const std::string &key :
+       {std::string(), std::string("b"), std::string("l"), prefix, prefix + "a",
+        prefix + "ab", prefix + "abb", prefix + "abcd", prefix + "zy",
+        prefix + "zzz", std::string("n"), std::string("zz")}) {
+    for (bool after : {false, true}) {
+      auto actual = after ? index.upper_bound(key) : index.lower_bound(key);
+      auto wanted =
+          after ? expected.upper_bound(key) : expected.lower_bound(key);
+      EXPECT_EQ(actual == index.end(), wanted == expected.end());
+      if (actual != index.end() && wanted != expected.end())
+        EXPECT_EQ(actual->first, wanted->first);
+    }
+  }
+}
+
 TEST(CoverageIndexTest,
      InsertionBatchesKeepImmovableHistoryAndRestoreOrdering) {
   struct Value {

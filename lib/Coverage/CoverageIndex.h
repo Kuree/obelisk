@@ -142,6 +142,38 @@ template <typename Key, typename Value> class IndexMap {
     Entry *entry = nodes[node].first;
     return entry->bytes == key ? entry : nullptr;
   }
+  Entry *lookupBound(const std::vector<uint8_t> &key, bool after) const {
+    if (root == None)
+      return nullptr;
+    size_t position = root, prefix = 0;
+    while (true) {
+      const Node &node = nodes[position];
+      const auto &representative = node.first->bytes;
+      size_t end = node.bit == None ? representative.size() * 8 : node.bit;
+      // Patricia nodes skip shared prefix bits. Compare each skipped segment
+      // once, so a variable-width bound costs O(key bytes), not O(depth*bytes).
+      while (prefix < end) {
+        size_t byte = prefix / 8;
+        if (byte >= key.size())
+          return node.first;
+        size_t next = std::min(end, (byte + 1) * 8);
+        uint8_t mask = static_cast<uint8_t>((0xffu >> (prefix % 8)) &
+                                            (0xffu << ((byte + 1) * 8 - next)));
+        uint8_t actual = key[byte] & mask;
+        uint8_t expected = representative[byte] & mask;
+        if (actual != expected)
+          return actual < expected ? node.first : node.last->next;
+        prefix = next;
+      }
+      if (node.bit == None)
+        return key.size() > representative.size() || after ? node.first->next
+                                                           : node.first;
+      if (node.bit / 8 >= key.size())
+        return node.first;
+      position = node.child[branch(key, node.bit)];
+      prefix = node.bit + 1;
+    }
+  }
 
 public:
   template <bool Const> class Iterator {
@@ -226,6 +258,26 @@ public:
     std::vector<uint8_t> bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookup(bytes)};
+  }
+  iterator lower_bound(const Key &key) {
+    std::vector<uint8_t> bytes;
+    IndexKey<Key>::append(bytes, key);
+    return {this, lookupBound(bytes, false)};
+  }
+  const_iterator lower_bound(const Key &key) const {
+    std::vector<uint8_t> bytes;
+    IndexKey<Key>::append(bytes, key);
+    return {this, lookupBound(bytes, false)};
+  }
+  iterator upper_bound(const Key &key) {
+    std::vector<uint8_t> bytes;
+    IndexKey<Key>::append(bytes, key);
+    return {this, lookupBound(bytes, true)};
+  }
+  const_iterator upper_bound(const Key &key) const {
+    std::vector<uint8_t> bytes;
+    IndexKey<Key>::append(bytes, key);
+    return {this, lookupBound(bytes, true)};
   }
   size_t count(const Key &key) const { return find(key) != end(); }
   Value &at(const Key &key) {
