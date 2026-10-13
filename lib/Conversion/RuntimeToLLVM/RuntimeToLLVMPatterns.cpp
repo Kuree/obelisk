@@ -1046,6 +1046,7 @@ public:
     case runtime::RuntimeCall::Error:
     case runtime::RuntimeCall::PublicationBatchBegin:
     case runtime::RuntimeCall::PublicationBatchEnd:
+    case runtime::RuntimeCall::GCCollect:
       return replaceStatus(operands);
     case runtime::RuntimeCall::TerminationRequested: {
       Value requested = emitCall(operands).getResult();

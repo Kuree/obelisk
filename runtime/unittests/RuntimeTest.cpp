@@ -6018,6 +6018,83 @@ TEST(ManagedHeap, ConcurrentSmallObjectAllocationUsesChunkedTLSCaches) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(ManagedHeap, DesignatedCollectionReclaimsOnlyAtQuiescentPoints) {
+  // IEEE 1800-2023 8.29 leaves the timing of reclamation to the
+  // implementation. Once a schedule designates its collection points,
+  // allocation only records pressure; a collection point reclaims it outside
+  // every managed activation, where static and frame roots hold all live
+  // objects. Pressure far beyond the threshold still collects at allocation.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX), OBELISK_RT_OK);
+  auto statistics = [&] {
+    obelisk_rt_gc_statistics_v1 result{};
+    EXPECT_EQ(obelisk_rt_v1_gc_statistics(context, &result), OBELISK_RT_OK);
+    return result;
+  };
+  auto allocate = [&](obelisk_rt_gc_lane_v1 *lane) {
+    obelisk_rt_object_v1 *object = nullptr;
+    EXPECT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &object),
+              OBELISK_RT_OK);
+    return object;
+  };
+
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  bool entered = false;
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  ASSERT_TRUE(entered);
+  obelisk_rt_object_v1 *kept = allocate(lane);
+  uint64_t objectBytes = statistics().live_bytes;
+  ASSERT_GT(objectBytes, 0u);
+  uint64_t keptID = obelisk_rt_v1_object_id(kept);
+  ASSERT_EQ(obelisk_rt_v1_gc_static_root_register(context, &kept),
+            OBELISK_RT_OK);
+
+  // Exceed the threshold, staying below the emergency multiple.
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, objectBytes * 16),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_designate(context), OBELISK_RT_OK);
+  for (unsigned index = 0; index != 32; ++index)
+    allocate(lane);
+  EXPECT_EQ(statistics().collection_count, 0u);
+  // A collection point inside a managed activation defers.
+  {
+    obelisk_rt_gc_lane_v1 *nested = nullptr;
+    bool nestedEntered = true;
+    ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &nested,
+                                                 &nestedEntered),
+              OBELISK_RT_OK);
+    EXPECT_FALSE(nestedEntered);
+    EXPECT_EQ(obelisk_rt_v1_gc_collect_pending(context), OBELISK_RT_OK);
+    obelisk_rt_managed_execution_leave(nested, nestedEntered);
+  }
+  EXPECT_EQ(statistics().collection_count, 0u);
+  obelisk_rt_managed_execution_leave(lane, entered);
+
+  // Outside every activation it reclaims the garbage and keeps static roots.
+  EXPECT_EQ(obelisk_rt_v1_gc_collect_pending(context), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 collected = statistics();
+  EXPECT_EQ(collected.collection_count, 1u);
+  EXPECT_EQ(collected.reclaimed_objects, 32u);
+  EXPECT_EQ(obelisk_rt_v1_object_id(kept), keptID);
+  // Nothing is pending afterwards.
+  EXPECT_EQ(obelisk_rt_v1_gc_collect_pending(context), OBELISK_RT_OK);
+  EXPECT_EQ(statistics().collection_count, 1u);
+
+  // An activation that allocates far past the threshold without reaching a
+  // collection point still collects at allocation.
+  ASSERT_EQ(obelisk_rt_managed_execution_enter(context, &lane, &entered),
+            OBELISK_RT_OK);
+  for (unsigned index = 0; index != 80; ++index)
+    allocate(lane);
+  EXPECT_GE(statistics().collection_count, 2u);
+  obelisk_rt_managed_execution_leave(lane, entered);
+  ASSERT_EQ(obelisk_rt_v1_gc_static_root_unregister(context, &kept),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(ManagedHeap, SerializesConcurrentCollectionRequestsWithoutDeadlock) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

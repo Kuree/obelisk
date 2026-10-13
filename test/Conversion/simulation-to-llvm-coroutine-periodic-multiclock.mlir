@@ -138,18 +138,28 @@ module attributes {
 // CHECK-SAME: !llvm.array<2 x
 // CHECK-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
 // CHECK: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
+// Allocation defers to designated collection points from here on.
+// CHECK: llvm.call @obelisk_rt_v1_gc_designate(
 // The first clock's equality test bypasses its physical update entirely.
 // CHECK: %[[DUE0:.*]] = llvm.icmp "eq" {{.*}} : i64
 // CHECK-NEXT: llvm.cond_br %[[DUE0]], ^[[TOGGLE0:bb[0-9]+]], ^[[NEXT0:bb[0-9]+]]({{.*}} : i1, i64)
 // CHECK: ^[[TOGGLE0]]:
 // CHECK: llvm.xor {{.*}} : i8
 // CHECK: llvm.store {{.*}} : i8, !llvm.ptr
+// The rising edge of the faster clock (period 6) is the cycle's only
+// designated collection point (IEEE 1800-2023 8.29); falling edges, the slower
+// clock and slot ends have none.
+// CHECK: llvm.cond_br %{{.*}}, ^[[COLLECT:bb[0-9]+]], ^[[COLLECTED:bb[0-9]+]](%{{.*}} : i32)
+// CHECK: ^[[COLLECT]]:
+// CHECK-NEXT: %[[GC:.*]] = llvm.call @obelisk_rt_v1_gc_collect_pending(
+// CHECK-NEXT: llvm.br ^[[COLLECTED]](%[[GC]] : i32)
 // CHECK: llvm.br ^[[NEXT0]]({{.*}} : i1, i64)
 // The second clock preserves the first clock's ready mask when not due.
 // CHECK: ^[[NEXT0]](%[[INGRESS0:.*]]: i1, %[[READY0:.*]]: i64):
 // CHECK: %[[DUE1:.*]] = llvm.icmp "eq" {{.*}} : i64
 // CHECK-NEXT: llvm.cond_br %[[DUE1]], ^[[TOGGLE1:bb[0-9]+]], ^[[NEXT1:bb[0-9]+]](%[[INGRESS0]], %[[READY0]] : i1, i64)
 // CHECK: ^[[TOGGLE1]]:
+// CHECK-NOT: gc_collect_pending
 // CHECK: llvm.xor {{.*}} : i8
 // CHECK: llvm.store {{.*}} : i8, !llvm.ptr
 // CHECK: llvm.or %[[READY0]], {{.*}} : i64

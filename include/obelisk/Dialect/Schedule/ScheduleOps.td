@@ -842,6 +842,30 @@ def NativeManagedRootPushOp : ScheduleNativeOp<"gc.root_range.push", [
     qualified(type($record)) `,` qualified(type($slots))
   }];
 }
+// A designated managed-heap collection point. Generated schedules place
+// these where no activation is running, such as between time slots, and the
+// runtime then reclaims deferred allocation pressure only here (IEEE
+// 1800-2023 8.29 leaves the timing of reclamation to the implementation).
+// Points that follow an edge of a proven periodic clock record the clock, its
+// period and the edge, so they can be thinned to one collection per cycle;
+// `edge` then holds whether that edge occurred in the current slot. A point
+// that does not run reports success.
+def NativeGCCollectOp : ScheduleNativeOp<"gc.collect", [
+    MemoryEffects<[MemRead, MemWrite, MemRead<SimHeapResource>,
+                   MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "designated managed-heap collection point";
+  let arguments = (ins LLVM_AnyPointer:$runtime_context, Optional<I1>:$edge,
+                       OptionalAttr<I32Attr>:$periodic_clock,
+                       OptionalAttr<I64Attr>:$period,
+                       UnitAttr:$posedge);
+  let results = (outs I32:$status);
+  let assemblyFormat = [{
+    $runtime_context (`if` $edge^)? attr-dict `:`
+    qualified(type($runtime_context))
+  }];
+  let hasVerifier = 1;
+}
 def NativeManagedRootPopOp : ScheduleNativeOp<"gc.root_range.pop", [
     MemoryEffects<[MemRead, MemWrite, MemRead<SimProcessResource>,
                    MemWrite<SimHeapResource>]>

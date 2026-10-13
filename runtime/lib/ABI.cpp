@@ -1880,6 +1880,10 @@ ABI_FUNCTION(obelisk_rt_v1_gc_unpin,
                                    obelisk_rt_object_v1 *));
 ABI_FUNCTION(obelisk_rt_v1_gc_collect,
              obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_gc_collect_pending,
+             obelisk_rt_status (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v1_gc_designate,
+             obelisk_rt_status (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_gc_set_threshold,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_gc_statistics,

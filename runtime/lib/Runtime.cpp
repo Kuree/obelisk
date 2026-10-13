@@ -260,6 +260,11 @@ obelisk_rt_context::obelisk_rt_context() {
   }
   errorLifetime = std::make_shared<const uint8_t>(0);
   managedHeap = obelisk_rt_managed_heap_create(this);
+  // A small threshold makes the collector run often, which tests use to
+  // exercise every collection point.
+  if (const char *threshold = std::getenv("OBELISK_RT_GC_THRESHOLD"))
+    if (uint64_t bytes = std::strtoull(threshold, nullptr, 0))
+      obelisk_rt_v1_gc_set_threshold(this, bytes);
   mcd[0].stream = stdout;
   mcd[0].writable = true;
   mcd[0].name = "stdout";
@@ -361,6 +366,21 @@ obelisk_rt_context::~obelisk_rt_context() {
   if (recursiveWatchGroups && recursiveWatchGroups->destroy)
     recursiveWatchGroups->destroy(recursiveWatchGroups);
   threadErrors.erase(this);
+  if (const char *diagnostics = std::getenv("OBELISK_RT_GC_DIAGNOSTICS");
+      diagnostics && diagnostics[0] != '\0' &&
+      std::strcmp(diagnostics, "0") != 0) {
+    obelisk_rt_gc_statistics_v1 statistics{};
+    obelisk_rt_v1_gc_statistics(this, &statistics);
+    std::fprintf(
+        stderr,
+        "obelisk-gc-diagnostics collections=%llu designated=%llu "
+        "allocated_objects=%llu reclaimed_objects=%llu\n",
+        static_cast<unsigned long long>(statistics.collection_count),
+        static_cast<unsigned long long>(
+            obelisk_rt_managed_heap_designated_collections(managedHeap)),
+        static_cast<unsigned long long>(statistics.allocated_objects),
+        static_cast<unsigned long long>(statistics.reclaimed_objects));
+  }
   obelisk_rt_managed_heap_destroy(managedHeap);
 }
 

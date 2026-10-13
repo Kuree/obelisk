@@ -2444,6 +2444,14 @@ obelisk_rt_status obelisk_rt_v1_gc_unpin(obelisk_rt_context *context,
 // Request a stop-the-world collection. The requesting lane participates in
 // root publication; every other active lane parks at its next safepoint.
 obelisk_rt_status obelisk_rt_v1_gc_collect(obelisk_rt_gc_lane_v1 *lane);
+// Designated collection. After designate, allocation records collection
+// pressure instead of collecting (unless pressure runs far ahead), and the
+// heap reclaims at collect_pending calls that the schedule places where no
+// managed activation is running, such as once per periodic clock cycle.
+// collect_pending is a no-op without pending pressure and defers when called
+// from inside a managed activation.
+obelisk_rt_status obelisk_rt_v1_gc_collect_pending(obelisk_rt_context *context);
+obelisk_rt_status obelisk_rt_v1_gc_designate(obelisk_rt_context *context);
 obelisk_rt_status obelisk_rt_v1_gc_set_threshold(obelisk_rt_context *context,
                                                  uint64_t allocation_bytes);
 obelisk_rt_status

@@ -2749,6 +2749,10 @@ obelisk_rt_design_signal_wait_blocked(const ScheduledDesignTask &task) {
 
 ManagedHeap *obelisk_rt_managed_heap_create(obelisk_rt_context *context);
 void obelisk_rt_managed_heap_destroy(ManagedHeap *heap) noexcept;
+/// Collections the heap made at designated collection points.
+uint64_t obelisk_rt_managed_heap_designated_collections(ManagedHeap *heap);
+/// Whether a schedule has designated the heap's collection points.
+bool obelisk_rt_managed_heap_collections_designated(ManagedHeap *heap);
 obelisk_rt_status
 obelisk_rt_managed_execution_enter(obelisk_rt_context *context,
                                    obelisk_rt_gc_lane_v1 **outLane,

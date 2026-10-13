@@ -31,6 +31,22 @@ allocation. Container publication validates managed element slots against the
 destination context. No managed allocation or GC safepoint occurs while a
 container ticket lock is held.
 
+A generated periodic schedule designates where the heap reclaims. IEEE
+1800-2023 8.29 leaves the timing of reclamation to the implementation. The
+periodic-loop materializer places a `schedule.gc.collect` after every clock
+edge and at every slot end. `schedule-thin-gc-collections` then keeps only the
+rising edge of the fastest proven periodic clock, ahead of that edge's
+evaluation, so the heap reclaims at most once per cycle. The survivor lowers
+through `runtime.gc.collect` to `obelisk_rt_v1_gc_collect_pending`. Once the loop
+calls `obelisk_rt_v1_gc_designate`, allocation records pressure instead of
+collecting, unless pressure runs four times past the threshold. The runtime
+scheduler's own time advances are designated points too. A designated point
+collects only where no managed activation runs on its thread, so its roots
+are static storage, process frames and runtime-held state. Without a periodic
+schedule, allocation keeps collecting. `OBELISK_RT_GC_THRESHOLD` sets the
+collection threshold in bytes, and `OBELISK_RT_GC_DIAGNOSTICS` reports
+collections at exit.
+
 `obelisk_rt_managed_word_v1` and `obelisk_rt_string_v1` are 64-bit ABI words.
 Tag `01` stores an explicit three-bit length and up to seven arbitrary bytes,
 including embedded NULs. Tag `00` is either zero or an aligned heap-string

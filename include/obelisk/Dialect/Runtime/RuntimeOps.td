@@ -274,6 +274,15 @@ def RTPublicationBatchEndOp : RTOp<"publication.batch_end", [
   let results = (outs RTStatusType:$status);
 }
 
+// Reclaim deferred managed-heap pressure at a designated collection point.
+def RTGCCollectOp : RTOp<"gc.collect", [
+  MemoryEffects<[MemRead, MemWrite, MemRead<RTRuntimeResource>,
+                 MemWrite<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs RTStatusType:$status);
+}
+
 def RTTerminationRequestedOp : RTOp<"termination.requested", [
   MemoryEffects<[MemRead<RTRuntimeResource>]>
 ]> {

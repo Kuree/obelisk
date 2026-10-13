@@ -4027,6 +4027,12 @@ FailureOr<bool> makeNativeEvalPlan(
     Value enterHotLoop = arith::XOrIOp::create(
         builder, location, alreadyStopping,
         llvmConstant(builder, location, builder.getI1Type(), 1));
+    // From here on, allocation leaves reclamation to designated collection
+    // points: those of this loop and the runtime's own slot boundaries.
+    LLVM::CallOp::create(
+        builder, location, TypeRange{i32},
+        SymbolRefAttr::get(context, "obelisk_rt_v1_gc_designate"),
+        ValueRange{runEntry->getArgument(1)});
     cf::CondBranchOp::create(
         builder, location, enterHotLoop, promote, ValueRange{}, handoff,
         ValueRange{
@@ -4111,6 +4117,34 @@ FailureOr<bool> makeNativeEvalPlan(
                                   OBELISK_RT_AOT_TIMED_CHECKPOINT)},
           step, ValueRange{nextTime});
     }
+
+    // Designated collection points: between time slots no activation runs, so
+    // the heap may reclaim there (IEEE 1800-2023 8.29 leaves the timing of
+    // reclamation to the implementation). Every clock edge and every slot end
+    // gets one; schedule-thin-gc-collections keeps one per clock cycle.
+    auto emitCollection = [&](Block *next, Value edge,
+                              std::optional<unsigned> clockIndex,
+                              uint64_t period, bool posedge) {
+      auto collection = schedule::NativeGCCollectOp::create(
+          builder, location, i32, runEntry->getArgument(1), edge,
+          clockIndex ? builder.getI32IntegerAttr(*clockIndex) : IntegerAttr(),
+          clockIndex ? builder.getI64IntegerAttr(period) : IntegerAttr(),
+          posedge ? builder.getUnitAttr() : UnitAttr());
+      Value collected = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::eq, collection.getStatus(),
+          llvmConstant(builder, location, i32, OBELISK_RT_OK));
+      cf::CondBranchOp::create(builder, location, collected, next, ValueRange{},
+                               afterStep, ValueRange{collection.getStatus()});
+    };
+    auto emitEdgeCollection = [&](Value edge, unsigned clockIndex,
+                                  uint64_t period, bool posedge) {
+      // Keep the continuation next to its block, in loop order.
+      Block *next = new Block;
+      run.getBody().getBlocks().insert(
+          std::next(Region::iterator(builder.getInsertionBlock())), next);
+      emitCollection(next, edge, clockIndex, period, posedge);
+      builder.setInsertionPointToStart(next);
+    };
 
     builder.setInsertionPointToStart(step);
     if (sharedPeriodic) {
@@ -4243,6 +4277,13 @@ FailureOr<bool> makeNativeEvalPlan(
               builder, location, oldSet,
               llvmConstant(builder, location, builder.getI1Type(), 1)),
           oldSet);
+      uint64_t period = clock.getHalfPeriod() > UINT64_MAX / 2
+                            ? UINT64_MAX
+                            : clock.getHalfPeriod() * 2;
+      emitEdgeCollection(arith::AndIOp::create(builder, location, due, newSet),
+                         clockIndex, period, /*posedge=*/true);
+      emitEdgeCollection(arith::AndIOp::create(builder, location, due, oldSet),
+                         clockIndex, period, /*posedge=*/false);
       recordClockCoverage(clock, due);
       if (mlir::failed(publishRuntimeClockBit(
               clock.getStaticState(), clock.getBitOffset(), oldSet, newSet)))
@@ -4841,10 +4882,14 @@ FailureOr<bool> makeNativeEvalPlan(
       Value running = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, terminated,
           llvmConstant(builder, location, i32, 0));
+      Block *collectSlot = new Block;
+      run.getBody().push_back(collectSlot);
       cf::CondBranchOp::create(
           builder, location,
-          arith::AndIOp::create(builder, location, drainedOK, running), loop,
-          ValueRange{}, afterStep, ValueRange{drained});
+          arith::AndIOp::create(builder, location, drainedOK, running),
+          collectSlot, ValueRange{}, afterStep, ValueRange{drained});
+      builder.setInsertionPointToStart(collectSlot);
+      emitCollection(loop, Value(), std::nullopt, 0, /*posedge=*/false);
     } else {
       Value stepOK = arith::CmpIOp::create(
           builder, location, arith::CmpIPredicate::eq, completedStatus,
@@ -4865,10 +4910,14 @@ FailureOr<bool> makeNativeEvalPlan(
           builder, location, stepOK,
           llvmConstant(builder, location, i32, OBELISK_RT_TIER_UNAVAILABLE),
           completedStatus);
+      Block *collectSlot = new Block;
+      run.getBody().push_back(collectSlot);
       cf::CondBranchOp::create(builder, location, continueGenerated,
-                               canCompressSilentFall ? silentFall : loop,
-                               ValueRange{}, afterStep,
+                               collectSlot, ValueRange{}, afterStep,
                                ValueRange{runtimeHandoffStatus});
+      builder.setInsertionPointToStart(collectSlot);
+      emitCollection(canCompressSilentFall ? silentFall : loop, Value(),
+                     std::nullopt, 0, /*posedge=*/false);
     }
 
     if (canCompressSilentFall) {
@@ -7334,6 +7383,8 @@ FailureOr<bool> makeNativeEvalPlan(
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_scheduler_handoff_periodic_aot", i32,
                            {pointer, pointer, i32, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_gc_designate", i32,
+                           {pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_drain_periodic_aot",
                            i32, {pointer, pointer});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_scheduler_enter_periodic_aot",

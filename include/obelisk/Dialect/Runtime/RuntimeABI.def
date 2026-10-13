@@ -22,6 +22,8 @@ OBELISK_RUNTIME_CALL(PublicationBatchBegin, RTPublicationBatchBeginOp,
                      obelisk_rt_v1_scheduler_publication_batch_begin, Error)
 OBELISK_RUNTIME_CALL(PublicationBatchEnd, RTPublicationBatchEndOp,
                      obelisk_rt_v1_scheduler_publication_batch_end, Error)
+OBELISK_RUNTIME_CALL(GCCollect, RTGCCollectOp, obelisk_rt_v1_gc_collect_pending,
+                     Error)
 OBELISK_RUNTIME_CALL(TerminationRequested, RTTerminationRequestedOp,
                      obelisk_rt_v1_scheduler_termination_requested,
                      TerminationRequested)

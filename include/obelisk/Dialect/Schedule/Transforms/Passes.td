@@ -362,6 +362,37 @@ def MarkCleanNativeNBAPass : Pass<"schedule-mark-clean-native-nba", "mlir::Modul
     "mlir::math::MathDialect", "mlir::scf::SCFDialect"
   ];
 }
+def ThinNativeGCCollectionsPass
+    : Pass<"schedule-thin-gc-collections", "mlir::ModuleOp"> {
+  let summary = "Keep one designated GC collection per periodic clock cycle";
+  let description = [{
+    Runs after the generated periodic schedule is materialized. A function
+    whose designated collection points follow edges of proven periodic clocks
+    keeps only the point after the rising edge of the clock with the shortest
+    period; every other point of that function, including those at slot
+    ends, is removed and reports success. The heap then reclaims deferred
+    allocation pressure once per cycle (IEEE 1800-2023 8.29 leaves the timing
+    of reclamation to the implementation). Functions without periodic points
+    keep all of theirs.
+  }];
+  let dependentDialects = ["mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
+def LowerNativeGCCollectionsPass
+    : Pass<"schedule-lower-gc-collections", "mlir::ModuleOp"> {
+  let summary = "Lower designated GC collection points to the runtime dialect";
+  let description = [{
+    Replaces each schedule.gc.collect with rt.gc.collect on its runtime
+    context and returns the runtime status bits. Runtime-to-LLVM conversion
+    then calls the runtime, which collects only when pressure is pending. A
+    point guarded by an edge runs only in slots where that edge occurred.
+  }];
+  let dependentDialects = ["obelisk::runtime::ObeliskRuntimeDialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::cf::ControlFlowDialect"];
+}
+
 def VersionKnownRegionsPass
     : Pass<"schedule-version-known-regions", "mlir::ModuleOp"> {
   let summary = "Run loops and straight-line regions on value planes when known";

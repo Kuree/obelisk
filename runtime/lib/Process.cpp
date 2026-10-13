@@ -5261,6 +5261,16 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           considerTime(context->scheduledPassSwitchEvents.begin()->first.first);
         if (nextTime) {
           obelisk_rt_dump_slot_unlocked(context);
+          // Between time slots of a runtime-driven schedule no activation
+          // runs: a designated collection point for stretches that no
+          // generated periodic loop drives.
+          if (obelisk_rt_managed_heap_collections_designated(
+                  context->managedHeap)) {
+            obelisk_rt_status collected =
+                obelisk_rt_v1_gc_collect_pending(context);
+            if (collected != OBELISK_RT_OK)
+              return collected;
+          }
           context->schedulerTime = *nextTime;
           if (context->nativeScheduleSingleStep)
             return OBELISK_RT_OK;

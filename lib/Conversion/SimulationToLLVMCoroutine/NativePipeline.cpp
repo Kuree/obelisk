@@ -49,6 +49,8 @@ void buildSimulationToLLVMCoroutinePipeline(mlir::OpPassManager &manager,
   manager.addPass(createPlanNativeExecutableNodesPass());
   manager.addPass(createResolveNativeEvalSchedulePass());
   manager.addPass(createMaterializeNativeProcessesPass());
+  manager.addPass(createThinNativeGCCollectionsPass());
+  manager.addPass(createLowerNativeGCCollectionsPass());
   manager.addPass(createPrepareNativeLLVMFunctionsPass());
   manager.nest<mlir::LLVM::LLVMFuncOp>().addPass(
       createConvertNativeFunctionBodyPass());

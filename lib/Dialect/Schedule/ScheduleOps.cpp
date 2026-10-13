@@ -1058,4 +1058,15 @@ LogicalResult NativeScratchOp::verify() {
   }
   return success();
 }
+LogicalResult NativeGCCollectOp::verify() {
+  if (getPeriodicClock().has_value() != getPeriod().has_value())
+    return emitOpError("a periodic collection point needs both its clock and "
+                       "its period");
+  if (getPeriod() && *getPeriod() == 0)
+    return emitOpError("a periodic clock has a positive period");
+  if ((getPosedge() || getEdge()) && !getPeriodicClock())
+    return emitOpError("only a periodic collection point follows an edge");
+  return success();
+}
+
 } // namespace obelisk::schedule

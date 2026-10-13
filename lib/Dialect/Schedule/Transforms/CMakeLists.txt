@@ -40,11 +40,13 @@ add_mlir_library(ObeliskScheduleNativeTransforms
   CoalesceNativeReady.cpp
   CachePureCones.cpp
   VersionKnownRegions.cpp
+  NativeGCCollections.cpp
   DEPENDS
   ObeliskSchedulePassIncGen
   LINK_LIBS PUBLIC
   ObeliskSimulationIR
   ObeliskSimulationAnalysis
+  ObeliskRuntimeIR
   MLIRArithDialect
   MLIRControlFlowDialect
   MLIRLLVMDialect
