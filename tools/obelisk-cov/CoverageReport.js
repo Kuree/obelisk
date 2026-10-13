@@ -243,6 +243,8 @@ const tupleSetText = (g, id) => {
 const predicateNodes = new Map((d.cross_predicate_nodes || []).map(n => [n.id, n]));
 const predicateOperands = new Map(d.resolved_functional_value_sets.filter(s => num(s.role) === 5).map(
   s => [s.type + '|' + s.configuration + '|' + s.owner_selector + '|' + s.owner_ordinal, s.id]));
+const matchesValues = new Map(d.resolved_functional_value_sets.filter(s => num(s.role) === 6).map(
+  s => [s.type + '|' + s.configuration + '|' + s.owner_selector, s.id]));
 const predicateTextCache = new Map();
 const predicateText = (g, root) => {
   const key = g.type + '|' + g.configuration + '|' + root;
@@ -275,6 +277,12 @@ const predicateText = (g, root) => {
     ? label.slice(0, 1021) + '...' : label;
   predicateTextCache.set(key, text);
   return text;
+};
+const selectorMatchesText = (g, node, policy) => {
+  if (num(policy.matches_policy) === 3) return 'all';
+  const wideCount = matchesValues.get(g.type + '|' + g.configuration + '|' + node.id);
+  return (num(policy.flags) & 8) && wideCount
+    ? valueText(g.type, g.configuration, wideCount) : policy.matches_count;
 };
 const selectorText = (g, i, root) => {
   // Labels remain brief; the complete selector graph stays in the payload.
@@ -327,6 +335,10 @@ const selectorText = (g, i, root) => {
              : binding ? valueText(g.type, g.configuration, binding.value_set)
              : 'set ' + n.value_set);
       append('}');
+      const policy = binding || n;
+      if (num(policy.matches_policy) === 3 || (num(policy.flags) & 8) ||
+          (num(policy.matches_policy) === 2 && String(policy.matches_count) !== '1'))
+        append(' matches ' + selectorMatchesText(g, n, policy));
     } else if (kind === 6) {
       append('all tuples');
     } else if (kind === 7) {
@@ -339,8 +351,7 @@ const selectorText = (g, i, root) => {
           ? count + ' satisfying value tuple' + (count === 1 ? '' : 's')
           : 'expression ' + n.with_expression;
       const policy = binding || n;
-      const matches = num(policy.matches_policy) === 3 ? 'all' : policy.matches_count;
-      pending.push({text: ' with ' + subject + ' matches ' + matches});
+      pending.push({text: ' with ' + subject + ' matches ' + selectorMatchesText(g, n, policy)});
       if (ops.length && remainingNodes) {
         --remainingNodes;
         pending.push({id: ops[0]});

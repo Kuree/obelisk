@@ -3572,8 +3572,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                            "must be a positive v1 integer");
                         return failure();
                       }
-                      if ((scalarPredicate || program) &&
-                          parsed->value.getActiveBits() > 64) {
+                      if (parsed->value.getActiveBits() > 64) {
                         if (failed(addFunctionalExpression(
                                 matches, selectorID,
                                 coverage::FunctionalExpressionOwnerKind::
@@ -3592,12 +3591,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                 .getValue()
                                 .getZExtValue();
                       } else
-                        matchesCount = parsed->value.getLimitedValue(
-                            (scalarPredicate || program)
-                                ? UINT64_MAX
-                                : uint64_t{coverage::
-                                               MaxFunctionalCrossWithCandidates} +
-                                      1);
+                        matchesCount = parsed->value.getZExtValue();
                     } else {
                       if (failed(addFunctionalExpression(
                               matches, selectorID,
@@ -3718,13 +3712,26 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                             "positive v1 integer");
                         return failure();
                       }
-                      // A queue-valued set is not bounded by the finite-domain
-                      // `with` planner.  Preserve every representable policy
-                      // through the parser's v1 record limit, then use one
-                      // exact sentinel above that limit; no possible resolved
-                      // tuple set can satisfy the sentinel.
-                      matchesCount = parsed->value.getLimitedValue(
-                          coverage::ParseLimits{}.maxRecords + 1);
+                      if (parsed->value.getActiveBits() > 64) {
+                        if (failed(addFunctionalExpression(
+                                matches, selectorID,
+                                coverage::FunctionalExpressionOwnerKind::
+                                    Selector,
+                                coverage::FunctionalExpressionRole::
+                                    SelectorMatches,
+                                coverage::FunctionalExpressionEvaluationPhase::
+                                    Constructor,
+                                0, 0)))
+                          return failure();
+                        matchesExpression =
+                            matches
+                                ->getAttrOfType<IntegerAttr>(
+                                    sim::metadata::
+                                        coverageFunctionalExpressionId)
+                                .getValue()
+                                .getZExtValue();
+                      } else
+                        matchesCount = parsed->value.getZExtValue();
                     } else {
                       if (failed(addFunctionalExpression(
                               matches, selectorID,

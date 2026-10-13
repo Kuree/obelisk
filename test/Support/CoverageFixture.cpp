@@ -69,7 +69,8 @@ int main(int argc, char **argv) {
   Database db;
   db.producer = "coverage-fixture";
   if (mode == "construction-preparation" || mode == "construction-with" ||
-      mode == "construction-with-scalar" || mode == "construction-symbolic") {
+      mode == "construction-with-scalar" || mode == "construction-symbolic" ||
+      mode == "construction-symbolic-wide") {
     db.scopes.push_back({1, 0, "top", 0, "top"});
     db.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
     db.functionalItems = {{20, 10, "point", FunctionalItemKind::Coverpoint, 0,
@@ -140,7 +141,8 @@ int main(int argc, char **argv) {
     selector.kind = CrossSelectorKind::Binsof;
     db.crossSelectorNodes.push_back(selector);
     if (mode == "construction-with" || mode == "construction-with-scalar" ||
-        mode == "construction-symbolic") {
+        mode == "construction-symbolic" ||
+        mode == "construction-symbolic-wide") {
       db.crossBins.front().rootSelector = 72;
       for (uint32_t ordinal = 0; ordinal != 2; ++ordinal) {
         CrossSelectorNode with;
@@ -169,7 +171,8 @@ int main(int argc, char **argv) {
         predicate.evaluationPhase =
             FunctionalExpressionEvaluationPhase::Constructor;
         predicate.resultOrdinal = 2 + ordinal;
-        if (mode == "construction-symbolic") {
+        if (mode == "construction-symbolic" ||
+            mode == "construction-symbolic-wide") {
           auto &selector = db.crossSelectorNodes.back();
           selector.withExpression = 0;
           selector.predicateRoot = 302 + ordinal * 3;
@@ -194,6 +197,22 @@ int main(int argc, char **argv) {
         }
         db.functionalExpressions.push_back(predicate);
       }
+    }
+    if (mode == "construction-symbolic-wide") {
+      auto &selector = db.crossSelectorNodes[1];
+      selector.matchesExpression = 202;
+      selector.matchesCount = 0;
+      FunctionalExpression count;
+      count.id = 202;
+      count.owner = selector.id;
+      count.ownerKind = FunctionalExpressionOwnerKind::Selector;
+      count.role = FunctionalExpressionRole::SelectorMatches;
+      count.resultKind = FunctionalExpressionResultKind::Integral;
+      count.bitWidth = 128;
+      count.signedness = CoverageSignedness::Unsigned;
+      count.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
+      count.resultOrdinal = 4;
+      db.functionalExpressions.push_back(count);
     }
     db.schemaFingerprint = computeSchemaFingerprint(db);
     Diagnostic diagnostic;

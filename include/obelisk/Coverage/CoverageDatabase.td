@@ -277,6 +277,8 @@ def ResolvedValueSetTupleComponent
     : CoverageResolvedValueSetRole<"TupleComponent", 4>;
 def ResolvedValueSetPredicateValue
     : CoverageResolvedValueSetRole<"PredicateValue", 5>;
+def ResolvedValueSetMatchesCount
+    : CoverageResolvedValueSetRole<"MatchesCount", 6>;
 
 // The v2 envelope can be emitted to a non-seekable sink in one pass. The
 // checksum is a SHA-256 trailer over the header, directory and section bytes.
@@ -505,7 +507,7 @@ def DomainResolvedFunctionalValueSetRole : CoverageFieldDomain<
     "ResolvedFunctionalValueSetRole", "Enum",
     [ResolvedValueSetStateBin, ResolvedValueSetTransitionStep,
      ResolvedValueSetSelectorIntersection, ResolvedValueSetTupleComponent,
-     ResolvedValueSetPredicateValue]>;
+     ResolvedValueSetPredicateValue, ResolvedValueSetMatchesCount]>;
 def DomainMetricKind : CoverageFieldDomain<
     "MetricKind", "Enum",
     [MetricLine, MetricToggle, MetricFunctional, MetricFSM, MetricAssertion,
@@ -1701,7 +1703,7 @@ def RCSBMatchesPolicy : CoverageField<"MatchesPolicy", "matches_policy", 80, Cov
   let semantic = "Enum"; let domain = DomainCrossMatchesPolicy;
 }
 def RCSBFlags     : CoverageField<"Flags", "flags", 84, CovU32> {
-  let semantic = "Flags"; let validMask = 7;
+  let semantic = "Flags"; let validMask = 15;
 }
 def RCSBMatchesCount : CoverageField<"MatchesCount", "matches_count", 88, CovU64>;
 def ResolvedCrossSelectorBindingRecord : CoverageRecord<

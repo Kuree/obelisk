@@ -4506,11 +4506,6 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           (!node.matchesExpression && node.matchesCount != 0))) ||
         (node.matchesPolicy == CrossMatchesPolicy::All &&
          node.matchesCount == 0 && !node.matchesExpression);
-    if (node.constructionExpression &&
-        node.matchesPolicy == CrossMatchesPolicy::Count &&
-        !node.matchesExpression &&
-        node.matchesCount > ParseLimits{}.maxRecords + 1)
-      validMatches = false;
     const auto *with = findExpression(node.withExpression);
     if ((with && with->resultKind !=
                      ((node.flags & CrossSelectorScalarWith)
@@ -5348,6 +5343,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   IndexMap<std::tuple<uint64_t, Digest, uint64_t, uint32_t>,
            const ResolvedFunctionalValueSet *>
       resolvedPredicateValues;
+  IndexMap<std::tuple<uint64_t, Digest, uint64_t>,
+           const ResolvedFunctionalValueSet *>
+      resolvedMatchesValues;
 
   size_t resolvedAtomCursor = 0;
   size_t resolvedLimbCursor = 0;
@@ -5370,14 +5368,20 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         set.role == ResolvedFunctionalValueSetRole::PredicateValue;
     auto predicate =
         predicateValues.find({set.ownerSelector, set.ownerOrdinal});
+    bool matchesRole = set.role == ResolvedFunctionalValueSetRole::MatchesCount;
+    const auto *matches =
+        ownerSelector == nodesByID.end()
+            ? nullptr
+            : findExpression(ownerSelector->second->matchesExpression);
     bool ownerValid =
         ((stateRole || transitionRole) && set.ownerBin && !set.ownerSelector &&
          ownerBin != resolvedBins.end() &&
          ((stateRole && ownerBin->second->kind == FunctionalBinKind::State) ||
           (transitionRole &&
            ownerBin->second->kind == FunctionalBinKind::Transition))) ||
-        ((selectorRole || tupleRole || predicateRole) && !set.ownerBin &&
-         set.ownerSelector && ownerSelector != nodesByID.end());
+        ((selectorRole || tupleRole || predicateRole || matchesRole) &&
+         !set.ownerBin && set.ownerSelector &&
+         ownerSelector != nodesByID.end());
     bool templateRequired =
         transitionRole || selectorRole ||
         (stateRole && ownerBin != resolvedBins.end() &&
@@ -5385,12 +5389,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
            (FunctionalBinAutomatic | FunctionalBinDefault)));
     if (!hasConfiguration(set.type, set.configuration) || !set.id ||
         owner == resolvedItems.end() ||
-        (owner->second->kind != (predicateRole
+        (owner->second->kind != ((predicateRole || matchesRole)
                                      ? FunctionalItemKind::Cross
                                      : FunctionalItemKind::Coverpoint)) ||
         !ownerValid ||
         (!stateRole && !transitionRole && !selectorRole && !tupleRole &&
-         !predicateRole) ||
+         !predicateRole && !matchesRole) ||
         (predicateRole &&
          (set.templateValueSet || set.ownerSubordinal || set.atomCount != 1 ||
           set.kind != FunctionalValueSetKind::Integral ||
@@ -5398,6 +5402,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           predicate->second->bitWidth != set.bitWidth ||
           predicate->second->signedness != set.signedness ||
           ownerSelector->second->cross != owner->second->templateItem)) ||
+        (matchesRole &&
+         (set.templateValueSet || set.ownerOrdinal || set.ownerSubordinal ||
+          set.atomCount != 1 || set.bitWidth <= 64 ||
+          set.kind != FunctionalValueSetKind::Integral || !matches ||
+          matches->bitWidth != set.bitWidth ||
+          matches->signedness != set.signedness ||
+          ownerSelector->second->cross != owner->second->templateItem ||
+          ownerSelector->second->matchesPolicy != CrossMatchesPolicy::Count)) ||
         (templateRequired && !templateSet) ||
         (templateSet && (templateSet->item != owner->second->templateItem ||
                          set.kind != templateSet->kind ||
@@ -5438,10 +5450,16 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           std::make_tuple(set.type, set.configuration, set.ownerSelector,
                           set.ownerOrdinal),
           &set);
+    if (matchesRole)
+      resolvedMatchesValues.emplace(
+          std::make_tuple(set.type, set.configuration, set.ownerSelector),
+          &set);
+    bool hasHighCountLimb = false;
     for (uint32_t atomIndex = 0; atomIndex != set.atomCount; ++atomIndex) {
       const ResolvedFunctionalValueAtom &atom =
           db.resolvedFunctionalValueAtoms[set.firstAtom + atomIndex];
-      if (predicateRole && atom.kind != FunctionalValueAtomKind::IntegralValue)
+      if ((predicateRole || matchesRole) &&
+          atom.kind != FunctionalValueAtomKind::IntegralValue)
         return fail(Status::InvalidReference, "cross_predicate_value");
       bool integralAtom = atom.kind == FunctionalValueAtomKind::IntegralValue ||
                           atom.kind == FunctionalValueAtomKind::IntegralRange;
@@ -5497,13 +5515,22 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                                limb.wildcardMask != limb.highBval ||
                                (limb.lowAval & limb.wildcardMask) ||
                                (limb.highAval & limb.wildcardMask))) ||
-            ((selectorRole || tupleRole || predicateRole) &&
+            ((selectorRole || tupleRole || predicateRole || matchesRole) &&
              limb.wildcardMask) ||
             (stateRole && ownerBin != resolvedBins.end() &&
              (ownerBin->second->flags & FunctionalBinAutomatic) &&
              (limb.lowBval || limb.highBval || limb.wildcardMask)))
           return fail(Status::InvalidReference,
                       "resolved_functional_value_limb");
+        if (matchesRole) {
+          if (limb.lowBval || limb.highBval ||
+              (limbIndex + 1 == atom.limbCount &&
+               set.signedness == CoverageSignedness::Signed &&
+               ((limb.lowAval >> ((set.bitWidth - 1) % 64)) & 1)))
+            return fail(Status::InvalidReference,
+                        "resolved_cross_matches_value");
+          hasHighCountLimb |= limbIndex != 0 && limb.lowAval != 0;
+        }
         if (atom.kind == FunctionalValueAtomKind::IntegralValue &&
             (limb.lowAval != limb.highAval || limb.lowBval != limb.highBval))
           return fail(Status::InvalidReference,
@@ -5550,6 +5577,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       }
       resolvedLimbCursor += atom.limbCount;
     }
+    if (matchesRole && !hasHighCountLimb)
+      return fail(Status::InvalidReference, "resolved_cross_matches_value");
     resolvedAtomCursor += set.atomCount;
   }
   auto resolvedValueSetOrderKey = [&](const ResolvedFunctionalValueSet &set) {
@@ -6712,12 +6741,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         node != nodesByID.end() &&
         (node->second->withExpression || node->second->predicateRoot ||
          node->second->constructionExpression || node->second->tupleSet);
-    bool validMatches = (binding.matchesPolicy == CrossMatchesPolicy::None &&
-                         binding.matchesCount == 0 && !hasMatchSubject) ||
-                        (binding.matchesPolicy == CrossMatchesPolicy::Count &&
-                         binding.matchesCount != 0 && hasMatchSubject) ||
-                        (binding.matchesPolicy == CrossMatchesPolicy::All &&
-                         binding.matchesCount == 0 && hasMatchSubject);
+    bool wideMatches = binding.flags & ResolvedCrossSelectorWideMatches;
+    auto wideValue = resolvedMatchesValues.find(
+        {binding.type, binding.configuration, binding.node});
+    bool validMatches =
+        (binding.matchesPolicy == CrossMatchesPolicy::None &&
+         binding.matchesCount == 0 && !hasMatchSubject && !wideMatches) ||
+        (binding.matchesPolicy == CrossMatchesPolicy::Count &&
+         hasMatchSubject &&
+         (wideMatches ? !binding.matchesCount : binding.matchesCount != 0)) ||
+        (binding.matchesPolicy == CrossMatchesPolicy::All &&
+         binding.matchesCount == 0 && hasMatchSubject && !wideMatches);
     bool needsTuple =
         node != nodesByID.end() &&
         ((node->second->withExpression &&
@@ -6743,9 +6777,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         (binding.tupleSet && tupleSet->second->selector != binding.node) ||
         binding.withExpression != node->second->withExpression ||
         !validMatches ||
-        (node->second->constructionExpression &&
-         binding.matchesPolicy == CrossMatchesPolicy::Count &&
-         binding.matchesCount > ParseLimits{}.maxRecords + 1) ||
+        (wideMatches != (wideValue != resolvedMatchesValues.end())) ||
+        (wideMatches && wideValue->second->item != binding.cross) ||
         (node->second->matchesPolicy == CrossMatchesPolicy::Count &&
          !node->second->matchesExpression &&
          (binding.matchesPolicy != CrossMatchesPolicy::Count ||
@@ -6754,7 +6787,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
          binding.matchesPolicy != CrossMatchesPolicy::All) ||
         (binding.flags &
          ~(ResolvedCrossSelectorScalarWith | ResolvedCrossSelectorScalarTrue |
-           ResolvedCrossSelectorSymbolicWith)) ||
+           ResolvedCrossSelectorSymbolicWith |
+           ResolvedCrossSelectorWideMatches)) ||
         (bool(binding.flags & ResolvedCrossSelectorSymbolicWith) !=
          bool(node->second->predicateRoot)) ||
         (bool(binding.flags & ResolvedCrossSelectorScalarWith) !=
@@ -6766,6 +6800,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       binding.node)
              .second)
       return fail(Status::InvalidReference, "resolved_cross_selector_binding");
+    if (wideMatches)
+      ++resolvedValueSetConsumers[{binding.type, binding.configuration,
+                                   wideValue->second->id}];
     if (binding.valueSet)
       ++resolvedValueSetConsumers[{binding.type, binding.configuration,
                                    binding.valueSet}];

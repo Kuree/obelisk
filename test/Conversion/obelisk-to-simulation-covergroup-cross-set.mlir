@@ -36,13 +36,13 @@
 // A set selector owns one constructor-phase BinSet expression with the
 // TupleQueue result kind. Omitted matches is Count 1, ordinary large counts
 // are preserved, `$` is All in 1800-2017, dynamic counts remain typed
-// constructor expressions, and wider-than-u64 positives clamp only above the
-// v1 parser record limit.
+// constructor expressions, and wider-than-u64 positives retain their typed
+// constructor values.
 // SCHEMA-DAG: cross_selector id=[[OMITTED:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[OMITTED_SET:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=1
 // SCHEMA-DAG: cross_selector id=[[COUNT:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[COUNT_SET:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=5000
 // SCHEMA-DAG: cross_selector id=[[DYNAMIC:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[DYNAMIC_SET:[1-9][0-9]*]] {{.*}} matches_expression=[[MATCHES:[1-9][0-9]*]] matches_policy=2 matches_count=0
 // SCHEMA-DAG: cross_selector id=[[ALL:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[ALL_SET:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=3 matches_count=0
-// SCHEMA-DAG: cross_selector id=[[HUGE:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[HUGE_SET:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=268435457
+// SCHEMA-DAG: cross_selector id=[[HUGE:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[HUGE_SET:[1-9][0-9]*]] {{.*}} matches_expression=[[HUGE_MATCHES:[1-9][0-9]*]] matches_policy=2 matches_count=0
 // SCHEMA-DAG: cross_selector id=[[FILTER_SET:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=5 {{.*}} construction_expression=[[FILTER_QUEUE:[1-9][0-9]*]] {{.*}} matches_expression=0 matches_policy=2 matches_count=2
 // SCHEMA-DAG: cross_selector id=[[FILTER:[1-9][0-9]*]] cross=[[CROSS]] {{.*}} kind=7 {{.*}} with_expression=0 {{.*}} matches_expression=0 matches_policy=2 matches_count=2 flags=0 predicate_root=[[FILTER_ROOT:[1-9][0-9]*]]
 // SCHEMA-DAG: functional_expression id=[[OMITTED_SET]] owner=[[OMITTED]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
@@ -51,6 +51,7 @@
 // SCHEMA-DAG: functional_expression id=[[MATCHES]] owner=[[DYNAMIC]] owner_kind=4 role=12 result_kind=2 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[ALL_SET]] owner=[[ALL]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[HUGE_SET]] owner=[[HUGE]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
+// SCHEMA-DAG: functional_expression id=[[HUGE_MATCHES]] owner=[[HUGE]] owner_kind=4 role=12 result_kind=2 width=128 {{.*}} phase=1
 // SCHEMA-DAG: functional_expression id=[[FILTER_QUEUE]] owner=[[FILTER_SET]] owner_kind=4 role=6 result_kind=7 {{.*}} phase=1
 // SCHEMA-DAG: cross_predicate id=[[FILTER_ROOT]] selector=[[FILTER]] {{.*}} kind=4 width=1
 

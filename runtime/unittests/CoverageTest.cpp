@@ -2799,7 +2799,8 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
   obelisk_rt_v1_context_destroy(local);
 }
 
-TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
+TEST_F(CoverageRuntimeDesignTest,
+       CrossWithWideDynamicMatchesPreservesExactCount) {
   using namespace obelisk::coverage;
   Database schema = makeCrossWithSchema(CrossMatchesPolicy::Count, /*count=*/0);
   schema.crossSelectorNodes.front().matchesExpression = 200;
@@ -2809,8 +2810,8 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   matches.ownerKind = FunctionalExpressionOwnerKind::Selector;
   matches.role = FunctionalExpressionRole::SelectorMatches;
   matches.resultKind = FunctionalExpressionResultKind::Integral;
-  matches.bitWidth = 128;
-  matches.signedness = CoverageSignedness::Unsigned;
+  matches.bitWidth = 66;
+  matches.signedness = CoverageSignedness::Signed;
   matches.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
   matches.resultOrdinal = 1;
   schema.functionalExpressions.push_back(matches);
@@ -2827,11 +2828,11 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   std::array<obelisk_rt_functional_value_v1, 2> expressions{};
   expressions.front() = queue.payload();
   // 2^64 is positive and legal, but exceeds every bounded candidate bin
-  // tuple. The v1 resolved representation canonicalizes it to 4097.
+  // tuple. Its exact typed value is retained in the resolved database.
   storage[8] = 1;
   expressions.back() = {
-      200,     128,     16, storage.data(),
-      nullptr, nullptr, 0,  OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+      200,     66,      9, storage.data(),
+      nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
       0};
   obelisk_rt_covergroup_v1 handle = 0;
   ASSERT_EQ(obelisk_rt_v1_covergroup_create(local, 10, nullptr, 0,
@@ -2841,7 +2842,45 @@ TEST_F(CoverageRuntimeDesignTest, CrossWithWideDynamicMatchesClampsExactly) {
   Database saved = saveCoverage(local, "wide-dynamic-matches");
   ASSERT_EQ(validate(saved), Status::Ok);
   ASSERT_EQ(saved.resolvedCrossSelectorBindings.size(), 1u);
-  EXPECT_EQ(saved.resolvedCrossSelectorBindings.front().matchesCount, 4097u);
+  const auto &binding = saved.resolvedCrossSelectorBindings.front();
+  EXPECT_EQ(binding.matchesCount, 0u);
+  EXPECT_TRUE(binding.flags & ResolvedCrossSelectorWideMatches);
+  auto count = std::find_if(
+      saved.resolvedFunctionalValueSets.begin(),
+      saved.resolvedFunctionalValueSets.end(), [](const auto &set) {
+        return set.role == ResolvedFunctionalValueSetRole::MatchesCount;
+      });
+  ASSERT_NE(count, saved.resolvedFunctionalValueSets.end());
+  EXPECT_EQ(count->ownerSelector, 70u);
+  EXPECT_EQ(count->bitWidth, 66u);
+  const auto &atom = saved.resolvedFunctionalValueAtoms[count->firstAtom];
+  ASSERT_EQ(atom.limbCount, 2u);
+  EXPECT_EQ(saved.resolvedFunctionalValueLimbs[atom.firstLimb].lowAval, 0u);
+  EXPECT_EQ(saved.resolvedFunctionalValueLimbs[atom.firstLimb + 1].lowAval, 1u);
+  double percentage = 0.0;
+  int32_t covered = 0, total = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                local, handle, 22, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_EQ(total, 0);
+
+  Database invalid = saved;
+  invalid.resolvedCrossSelectorBindings.front().matchesCount = 1;
+  EXPECT_EQ(validate(invalid), Status::InvalidReference);
+  invalid = saved;
+  invalid.resolvedCrossSelectorBindings.front().flags &=
+      ~ResolvedCrossSelectorWideMatches;
+  EXPECT_EQ(validate(invalid), Status::InvalidReference);
+  for (uint64_t high : {uint64_t{0}, uint64_t{2}}) {
+    invalid = saved;
+    auto &limb = invalid.resolvedFunctionalValueLimbs[atom.firstLimb + 1];
+    limb.lowAval = limb.highAval = high;
+    EXPECT_EQ(validate(invalid), Status::InvalidReference);
+  }
+  invalid = saved;
+  auto &unknown = invalid.resolvedFunctionalValueLimbs[atom.firstLimb + 1];
+  unknown.lowBval = unknown.highBval = 1;
+  EXPECT_EQ(validate(invalid), Status::InvalidReference);
   queue.close();
   obelisk_rt_v1_context_destroy(local);
 }

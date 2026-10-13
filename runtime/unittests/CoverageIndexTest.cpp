@@ -514,6 +514,55 @@ TEST(CoverageDecisionIndexTest, CountProjectionSaturatesWideFreeDomains) {
   EXPECT_FALSE(sum.exhausted());
 }
 
+TEST(CoverageDecisionIndexTest, CountProjectionPreservesWidePerLabelCounts) {
+  DecisionIndex relation(131), labels(1);
+  std::vector<uint32_t> variables(131, UINT32_MAX);
+  variables[0] = 0;
+  // Label zero has 2**130 witnesses. Label one fixes 65 of those variables,
+  // leaving exactly 2**65. Their counts must never be added together.
+  DecisionIndex::Root restricted = 1;
+  for (uint32_t variable = 66; variable != 1;)
+    restricted = relation.makeNode(--variable, restricted, 0);
+  auto root = relation.makeNode(0, 1, restricted);
+  DecisionCountProjectionIndex counts(
+      relation, labels, variables,
+      DecisionCountProjectionIndex::Magnitude{0, 0, 4});
+  auto labelZero = labels.cube({0}, {0});
+  EXPECT_EQ(counts.atLeast(root, {0, 2}), 1u);
+  EXPECT_EQ(counts.atLeast(root, {1, 2}), labelZero);
+  EXPECT_EQ(counts.atLeast(root, {0, 0, 4}), labelZero);
+  EXPECT_EQ(counts.atLeast(root, {1, 0, 4}), 0u);
+  EXPECT_EQ(counts.atLeast(root, {1, 2}), labelZero);
+  EXPECT_FALSE(counts.exhausted());
+
+  // An arbitrarily wide threshold above the physical bound is empty without
+  // allocating count digits for that threshold's width.
+  DecisionIndex scalar(0);
+  DecisionCountProjectionIndex::Magnitude enormous(8);
+  enormous.back() = uint64_t{1} << 63;
+  DecisionCountProjectionIndex bounded(
+      relation, scalar, std::vector<uint32_t>(131, UINT32_MAX), enormous, 128);
+  EXPECT_EQ(bounded.atLeast(1, enormous), 0u);
+  EXPECT_EQ(bounded.atLeast(0, {0, 0, 4}), 0u);
+  EXPECT_FALSE(bounded.exhausted());
+}
+
+TEST(CoverageDecisionIndexTest, CountProjectionCarriesAcrossLimbBoundary) {
+  DecisionIndex relation(67), labels(1);
+  auto labelZero = relation.makeNode(66, 1, 0);
+  auto restricted = relation.makeNode(1, labelZero, 0);
+  auto root = relation.makeNode(0, labelZero, restricted);
+  std::vector<uint32_t> variables(67, UINT32_MAX);
+  variables[66] = 0;
+  DecisionCountProjectionIndex counts(
+      relation, labels, variables,
+      DecisionCountProjectionIndex::Magnitude{0, 4});
+  // The branches contribute 2**65 and 2**64 to the same retained label.
+  EXPECT_EQ(counts.atLeast(root, {0, 3}), labels.cube({0}, {0}));
+  EXPECT_EQ(counts.atLeast(root, {1, 3}), 0u);
+  EXPECT_FALSE(counts.exhausted());
+}
+
 TEST(CoverageDecisionIndexTest, CountProjectionSharesTailsWithinLinearBudget) {
   DecisionIndex relation(128), scalar(0);
   std::vector<uint32_t> variables(128, UINT32_MAX);

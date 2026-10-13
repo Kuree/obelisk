@@ -686,6 +686,8 @@ struct ResolvedCrossSelectorBinding {
 inline constexpr uint32_t ResolvedCrossSelectorScalarWith = uint32_t{1} << 0;
 inline constexpr uint32_t ResolvedCrossSelectorScalarTrue = uint32_t{1} << 1;
 inline constexpr uint32_t ResolvedCrossSelectorSymbolicWith = uint32_t{1} << 2;
+/// A positive count wider than u64 lives in a MatchesCount literal snapshot.
+inline constexpr uint32_t ResolvedCrossSelectorWideMatches = uint32_t{1} << 3;
 
 struct ResolvedFunctionalValueSet {
   /// The concrete language after constructor evaluation, effective-type casts,
@@ -709,6 +711,7 @@ struct ResolvedFunctionalValueSet {
   /// StateBin: expansion ordinal,0. TransitionStep: resolved alternative
   /// ordinal,step ordinal. SelectorIntersection: 0,0. TupleComponent: tuple
   /// ordinal,component ordinal; tuple sets are unique per selector/config.
+  /// PredicateValue: predicate node ordinal,0. MatchesCount: 0,0.
   uint32_t ownerOrdinal = 0;
   uint32_t ownerSubordinal = 0;
   ResolvedFunctionalValueSetRole role =

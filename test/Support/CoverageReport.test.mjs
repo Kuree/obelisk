@@ -600,6 +600,26 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   const symbolicView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.ok(symbolicView.rows[0][0].includes(
     'all tuples with (cp < 0x5) matches 18446744073709551615'), symbolicView.rows[0][0]);
+  scalar.flags = '12';
+  scalar.matches_count = '0';
+  data.resolved_functional_value_sets.push({
+    ...valueSet('95', [{kind:'1', limbs:[limb(), limb({low_aval:'2'})]}]),
+    role:'6', owner_selector:'7', bit_width:'128',
+  });
+  const wideView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(wideView.rows[0][0].includes(
+    'all tuples with (cp < 0x5) matches 0x20000000000000000'), wideView.rows[0][0]);
+  const setBinding = data.resolved_cross_selector_bindings.find(row => row.node === '8');
+  setBinding.flags = '8';
+  setBinding.matches_policy = '2';
+  setBinding.matches_count = '0';
+  data.resolved_functional_value_sets.push({
+    ...valueSet('96', [{kind:'1', limbs:[limb(), limb({low_aval:'1'})]}]),
+    role:'6', owner_selector:'8', bit_width:'128',
+  });
+  const wideSetView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(wideSetView.rows[0][0].includes(
+    'intersect {<low,0x5>} matches 0x10000000000000000'), wideSetView.rows[0][0]);
   data.cross_predicate_nodes[2].left = '82';
   const bounded = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.ok(bounded.rows[0][0].includes('...'));

@@ -9,37 +9,75 @@ namespace obelisk::coverage::detail {
 
 /// Count removed-variable assignments separately for each retained assignment.
 /// Counts saturate at cap and use shared Boolean graphs for their binary
-/// digits. All source nodes and scaled edge results are memoized. The number of
-/// digits is at most 64, independent of the width or cardinality of the value
-/// domain.
+/// digits. Source nodes, scaled edge results and identical digit vectors are
+/// shared. Distinct digit states are charged to the resource budget; thresholds
+/// above the physical domain bound require no count-digit allocation.
 class DecisionCountProjectionIndex {
+public:
+  using Magnitude = std::vector<uint64_t>;
+  static void normalize(Magnitude &value) {
+    while (!value.empty() && !value.back())
+      value.pop_back();
+  }
+  static int compareMagnitudes(const Magnitude &a, const Magnitude &b) {
+    if (a.size() != b.size())
+      return a.size() < b.size() ? -1 : 1;
+    for (size_t limb = a.size(); limb; --limb)
+      if (a[limb - 1] != b[limb - 1])
+        return a[limb - 1] < b[limb - 1] ? -1 : 1;
+    return 0;
+  }
+
+private:
   using Root = DecisionIndex::Root;
   using Bits = std::vector<Root>;
 
   DecisionIndex &source, &destination;
   std::vector<uint32_t> variables, removedBefore;
-  uint64_t cap;
+  Magnitude cap, domainBound;
   uint32_t bitCount = 0;
   size_t limit;
   bool failed = false;
-  IndexMap<Root, Bits> counts;
-  IndexMap<std::pair<Root, uint32_t>, Bits> scaled;
-  IndexMap<std::pair<Root, uint64_t>, Root> selections;
+  size_t digitStates = 0;
+  // IndexMap stores keys in a deque, so interned vectors retain stable
+  // addresses.
+  IndexMap<Bits, uint8_t> digits;
+  IndexMap<Root, const Bits *> counts;
+  IndexMap<std::pair<Root, uint32_t>, const Bits *> scaled;
+  IndexMap<std::pair<Root, Magnitude>, Root> selections;
 
-  bool reserveState() {
+  bool reserveState(size_t digits = 0) {
     if (exhausted() ||
-        counts.size() + scaled.size() + selections.size() >= limit) {
+        counts.size() + scaled.size() + selections.size() +
+                this->digits.size() + digitStates >=
+            limit ||
+        digits > limit - counts.size() - scaled.size() - selections.size() -
+                     this->digits.size() - digitStates - 1) {
       failed = true;
       return false;
     }
+    digitStates += digits;
     return true;
   }
 
-  Root compare(const Bits &bits, uint64_t threshold) {
+  const Bits *intern(Bits value) {
+    auto found = digits.find(value);
+    if (found != digits.end())
+      return &found->first;
+    if (!reserveState(value.size()))
+      return nullptr;
+    return &digits.emplace(std::move(value), 0).first->first;
+  }
+
+  static bool bitAt(const Magnitude &value, uint32_t bit) {
+    return bit / 64 < value.size() && ((value[bit / 64] >> (bit % 64)) & 1);
+  }
+
+  Root compare(const Bits &bits, const Magnitude &threshold) {
     Root result = 1;
     for (uint32_t bit = 0; bit != bitCount; ++bit)
-      result = (threshold >> bit) & 1 ? destination.intersect(bits[bit], result)
-                                      : destination.unite(bits[bit], result);
+      result = bitAt(threshold, bit) ? destination.intersect(bits[bit], result)
+                                     : destination.unite(bits[bit], result);
     return result;
   }
 
@@ -54,7 +92,7 @@ class DecisionCountProjectionIndex {
       return bits;
     for (uint32_t bit = 0; bit != bitCount; ++bit) {
       bits[bit] = destination.subtract(bits[bit], saturated);
-      if ((cap >> bit) & 1)
+      if (bitAt(cap, bit))
         bits[bit] = destination.unite(bits[bit], saturated);
     }
     return bits;
@@ -73,14 +111,14 @@ class DecisionCountProjectionIndex {
   }
 
   const Bits &scale(Root root, uint32_t shift) {
-    const Bits &bits = counts.find(root)->second;
+    const Bits &bits = *counts.find(root)->second;
     if (!shift)
       return bits;
     shift = std::min(shift, bitCount);
     auto key = std::make_pair(root, shift);
     auto found = scaled.find(key);
     if (found != scaled.end())
-      return found->second;
+      return *found->second;
     Bits result(bitCount);
     Root overflow = 0;
     for (uint32_t bit = 0; bit != bitCount; ++bit)
@@ -89,12 +127,28 @@ class DecisionCountProjectionIndex {
       else
         overflow = destination.unite(overflow, bits[bit]);
     result = clamp(std::move(result), overflow);
-    if (!reserveState())
+    const Bits *stored = intern(std::move(result));
+    if (!stored || !reserveState())
       return bits;
-    return scaled.emplace(key, std::move(result)).first->second;
+    scaled.emplace(key, stored);
+    return *stored;
   }
 
   bool prepare(Root root) {
+    if (counts.empty()) {
+      if (limit < 4 || bitCount > (limit - 4) / 2) {
+        failed = true;
+        return false;
+      }
+      Bits one(bitCount);
+      one[0] = 1;
+      const Bits *zero = intern(Bits(bitCount));
+      const Bits *unit = intern(std::move(one));
+      if (!zero || !unit)
+        return false;
+      counts.emplace(0, zero);
+      counts.emplace(1, unit);
+    }
     std::vector<Root> stack{root};
     while (!stack.empty() && !exhausted()) {
       Root value = stack.back();
@@ -129,24 +183,36 @@ class DecisionCountProjectionIndex {
           result[bit] = destination.makeNode(variables[variable], zeroBits[bit],
                                              oneBits[bit]);
       }
-      if (!reserveState())
+      const Bits *stored = intern(std::move(result));
+      if (!stored || !reserveState())
         break;
-      counts.emplace(value, std::move(result));
+      counts.emplace(value, stored);
       stack.pop_back();
     }
     return !exhausted();
   }
 
 public:
+  DecisionCountProjectionIndex(const DecisionCountProjectionIndex &) = delete;
+  DecisionCountProjectionIndex &
+  operator=(const DecisionCountProjectionIndex &) = delete;
+
   DecisionCountProjectionIndex(DecisionIndex &source,
                                DecisionIndex &destination,
                                std::vector<uint32_t> variables, uint64_t cap,
                                size_t limit = size_t{1} << 18)
+      : DecisionCountProjectionIndex(source, destination, std::move(variables),
+                                     Magnitude{cap}, limit) {}
+
+  DecisionCountProjectionIndex(DecisionIndex &source,
+                               DecisionIndex &destination,
+                               std::vector<uint32_t> variables, Magnitude cap,
+                               size_t limit = size_t{1} << 18)
       : source(source), destination(destination),
-        variables(std::move(variables)), cap(cap), limit(limit) {
-    failed = !cap || limit < 2 || this->variables.size() != source.getWidth();
-    for (uint64_t value = cap; value; value >>= 1)
-      ++bitCount;
+        variables(std::move(variables)), cap(std::move(cap)), limit(limit) {
+    normalize(this->cap);
+    failed = this->cap.empty() || limit < 2 ||
+             this->variables.size() != source.getWidth();
     if (failed)
       return;
     removedBefore.resize(uint64_t{source.getWidth()} + 1);
@@ -161,10 +227,22 @@ public:
         failed = true;
       next = uint64_t{variable} + 1;
     }
-    Bits zero(bitCount), one(bitCount);
-    one[0] = 1;
-    counts.emplace(0, std::move(zero));
-    counts.emplace(1, std::move(one));
+    uint32_t removed = removedBefore.back();
+    domainBound.resize(uint64_t{removed} / 64 + 1);
+    domainBound[removed / 64] = uint64_t{1} << (removed % 64);
+    if (compareMagnitudes(this->cap, domainBound) > 0)
+      this->cap = domainBound;
+    uint64_t highest = this->cap.back();
+    uint64_t width = uint64_t{this->cap.size() - 1} * 64;
+    while (highest) {
+      ++width;
+      highest >>= 1;
+    }
+    if (width > UINT32_MAX) {
+      failed = true;
+      return;
+    }
+    bitCount = width;
   }
 
   bool exhausted() const {
@@ -172,15 +250,26 @@ public:
   }
 
   /// Return retained assignments with at least threshold source assignments.
-  /// The configured cap must be at least threshold; failure returns an empty
-  /// root and is reported by exhausted(), rather than publishing partial data.
+  /// Thresholds above the physical domain bound select nothing. Otherwise the
+  /// configured cap must be at least threshold; failure returns an empty root
+  /// and is reported by exhausted(), rather than publishing partial data.
   Root atLeast(Root root, uint64_t threshold) {
-    if (threshold > cap)
+    return atLeast(root, Magnitude{threshold});
+  }
+  Root atLeast(Root root, Magnitude threshold) {
+    normalize(threshold);
+    if (exhausted())
+      return 0;
+    if (compareMagnitudes(threshold, domainBound) > 0)
+      return 0;
+    if (compareMagnitudes(threshold, cap) > 0)
       failed = true;
     if (exhausted())
       return 0;
-    if (!threshold)
+    if (threshold.empty())
       return 1;
+    if (!root)
+      return 0;
     auto key = std::make_pair(root, threshold);
     auto found = selections.find(key);
     if (found != selections.end())
