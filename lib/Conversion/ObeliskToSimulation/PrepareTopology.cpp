@@ -3183,7 +3183,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         schedule::ComputeObservabilityKindAttr{}, sim::VPITypeSemanticsAttr{});
     FailureOr<Type> propertyType = getNormalizedSemanticType(property);
     if (succeeded(propertyType) &&
-        property.getRandMode() == semantic::SVRandMode::Rand)
+        property.getRandMode() != semantic::SVRandMode::None)
       if (auto layout = getFixedRandomArrayLayout(*propertyType)) {
         std::string elements =
             (llvm::Twine(path) + ".$rand_element_modes").str();
@@ -3215,34 +3215,33 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       for (auto [index, attribute] : llvm::enumerate(members)) {
         auto member = cast<DictionaryAttr>(attribute);
         NamedAttrList attributes(member);
-        if (!member.getAs<BoolAttr>("is_randc").getValue())
-          if (auto layout = getFixedRandomArrayLayout(
-                  member.getAs<TypeAttr>("type").getValue())) {
-            std::string elements = (llvm::Twine(path) + ".$rand_member_" +
-                                    llvm::Twine(index) + "_element_modes")
-                                       .str();
-            if (descriptors.count(elements) || nextStorageId == UINT64_MAX) {
-              emitError(getSemanticLocation(property))
-                  << "static structure member rand_mode storage is unavailable";
-              invalid = true;
-              return;
-            }
-            uint64_t elementId = nextStorageId++;
-            Type elementType = builder.getIntegerType(layout->elementCount);
-            attributes.set("element_mode_storage",
-                           builder.getI64IntegerAttr(elementId));
-            descriptors[elements] = {DescriptorInfo::Kind::Storage, elementId,
-                                     scopeId, elementType,
-                                     sim::NetResolutionKind::Wire};
-            descriptors[elements].rootType = elementType;
-            sim::SimStorageDeclOp::create(
-                builder, getSemanticLocation(property), elementId, scopeId,
-                elementType, sim::Lifetime::Design,
-                builder.getStringAttr(elements),
-                builder.getStringAttr("__obelisk_rand_member_element_modes"),
-                schedule::ComputeObservabilityKindAttr{},
-                sim::VPITypeSemanticsAttr{});
+        if (auto layout = getFixedRandomArrayLayout(
+                member.getAs<TypeAttr>("type").getValue())) {
+          std::string elements = (llvm::Twine(path) + ".$rand_member_" +
+                                  llvm::Twine(index) + "_element_modes")
+                                     .str();
+          if (descriptors.count(elements) || nextStorageId == UINT64_MAX) {
+            emitError(getSemanticLocation(property))
+                << "static structure member rand_mode storage is unavailable";
+            invalid = true;
+            return;
           }
+          uint64_t elementId = nextStorageId++;
+          Type elementType = builder.getIntegerType(layout->elementCount);
+          attributes.set("element_mode_storage",
+                         builder.getI64IntegerAttr(elementId));
+          descriptors[elements] = {DescriptorInfo::Kind::Storage, elementId,
+                                   scopeId, elementType,
+                                   sim::NetResolutionKind::Wire};
+          descriptors[elements].rootType = elementType;
+          sim::SimStorageDeclOp::create(
+              builder, getSemanticLocation(property), elementId, scopeId,
+              elementType, sim::Lifetime::Design,
+              builder.getStringAttr(elements),
+              builder.getStringAttr("__obelisk_rand_member_element_modes"),
+              schedule::ComputeObservabilityKindAttr{},
+              sim::VPITypeSemanticsAttr{});
+        }
         updated.push_back(attributes.getDictionary(property.getContext()));
       }
       property->setAttr(randomStructMembersAttrName,

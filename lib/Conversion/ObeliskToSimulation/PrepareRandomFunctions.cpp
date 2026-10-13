@@ -53,6 +53,15 @@ std::optional<FixedRandomArrayLayout> getFixedRandomArrayLayout(Type type) {
   return FixedRandomArrayLayout{*elementWidth, *width / *elementWidth};
 }
 
+Type getRandomCyclicStateType(Type type, Type stateType) {
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    return sim::UnpackedArrayType::get(
+        type.getContext(),
+        getRandomCyclicStateType(array.getElementType(), stateType),
+        array.getLeft(), array.getRight());
+  return stateType;
+}
+
 FailureOr<SmallVector<QualifiedRandomMember>>
 collectQualifiedRandomStructMembers(Type type, Location location,
                                     Operation *scope) {

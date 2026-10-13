@@ -883,8 +883,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           elementWidth.getValue().getZExtValue() != layout->elementWidth ||
           static_cast<bool>(elementModeField) ==
               static_cast<bool>(elementModeStorage) ||
-          randcAttr.getValue() || isContainerSize || isNestedObject ||
-          (elementModeField && !field) ||
+          isContainerSize || isNestedObject || (elementModeField && !field) ||
           (elementModeStorage &&
            (field || elementModeStorage.getValue().isNegative() ||
             elementModeStorage.getValue().getActiveBits() > 63))) {
@@ -916,6 +915,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value randcPositionReference;
     Value randcDomainReference;
     if (randcAttr.getValue()) {
+      auto cyclicWidth = sim::getPackedWidth(type);
+      if (auto layout = getFixedRandomArrayLayout(type))
+        cyclicWidth = layout->elementWidth;
+      Type wordState = getRandomCyclicStateType(type, i64);
+      Type domainState = getRandomCyclicStateType(
+          type, sim::StringType::get(function.getContext()));
       auto keyField = property.getAs<FlatSymbolRefAttr>("randc_key_field");
       auto positionField =
           property.getAs<FlatSymbolRefAttr>("randc_position_field");
@@ -930,7 +935,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       bool hasPositionField = static_cast<bool>(positionField);
       bool hasKeyPath = static_cast<bool>(keyPath);
       bool hasPositionPath = static_cast<bool>(positionPath);
-      if (width > 32 || hasKeyField != hasPositionField ||
+      if (!cyclicWidth || *cyclicWidth > 32 ||
+          hasKeyField != hasPositionField ||
           hasKeyField != static_cast<bool>(domainField) ||
           hasKeyPath != hasPositionPath ||
           hasKeyPath != static_cast<bool>(domainPath) ||
@@ -941,17 +947,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       if (hasKeyField) {
         Type stateReferenceType = sim::ManagedRefType::get(
-            function.getContext(), i64, objectType.getClassName());
+            function.getContext(), wordState, objectType.getClassName());
         randcKeyReference = sim::SimClassFieldRefOp::create(
             builder, location, stateReferenceType, receiver, keyField);
         randcPositionReference = sim::SimClassFieldRefOp::create(
             builder, location, stateReferenceType, receiver, positionField);
         randcDomainReference = sim::SimClassFieldRefOp::create(
             builder, location,
-            sim::ManagedRefType::get(
-                function.getContext(),
-                sim::StringType::get(function.getContext()),
-                objectType.getClassName()),
+            sim::ManagedRefType::get(function.getContext(), domainState,
+                                     objectType.getClassName()),
             receiver, domainField);
       } else {
         randcKeyReference = lvalues.lookup(keyPath.getValue());
@@ -959,10 +963,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         randcDomainReference = lvalues.lookup(domainPath.getValue());
         if (!randcKeyReference || !randcPositionReference ||
             !randcDomainReference ||
-            getReferenceElementType(randcKeyReference) != i64 ||
-            getReferenceElementType(randcPositionReference) != i64 ||
-            !isa<sim::StringType>(
-                getReferenceElementType(randcDomainReference))) {
+            getReferenceElementType(randcKeyReference) != wordState ||
+            getReferenceElementType(randcPositionReference) != wordState ||
+            getReferenceElementType(randcDomainReference) != domainState) {
           emitError(location)
               << "static randc state has no typed unit-local references";
           return failure();
@@ -1298,6 +1301,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 #ifdef OBELISK_ENABLE_Z3
   useCyclicPlan = !checkerOnly && hasRandC && !hasRuntimeForeachConstraint;
 #endif
+  if (!checkerOnly && !useCyclicPlan &&
+      llvm::any_of(planned, [](const Property &property) {
+        return property.isRandC && isa<sim::UnpackedArrayType>(property.type);
+      })) {
+    emitError(location) << "randc arrays require compiler sampling plans "
+                           "without runtime foreach constraints";
+    return failure();
+  }
 
   Value stateReference;
   Value randomContext;
@@ -2528,7 +2539,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                         builder.getBoolAttr(true))));
     }
     propertyEnabled.push_back(enabled);
-    if (property.isRandC && useCyclicPlan) {
+    if (property.isRandC &&
+        (useCyclicPlan ||
+         (checkerOnly && isa<sim::UnpackedArrayType>(property.type)))) {
       auto key = loadReference(property.randcKeyReference, location);
       auto position = loadReference(property.randcPositionReference, location);
       auto domain = loadReference(property.randcDomainReference, location);
@@ -2684,17 +2697,82 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                   builder.getBoolAttr(true)));
   }
+  struct CyclicField {
+    unsigned width, offset;
+    Value enabled, key, position, domain, mask{};
+  };
+  SmallVector<CyclicField> cyclicFields;
+  SmallVector<std::pair<unsigned, unsigned>> cyclicFieldRanges(planned.size());
+  if (useCyclicPlan)
+    for (auto [index, property] : llvm::enumerate(planned)) {
+      if (!property.isRandC)
+        continue;
+      auto layout = getFixedRandomArrayLayout(property.type);
+      unsigned count = layout ? layout->elementCount : 1;
+      unsigned width = layout ? layout->elementWidth : property.width;
+      unsigned first = cyclicFields.size();
+      std::function<void(Type, Value, Value, Value)> visit = [&](Type type,
+                                                                 Value key,
+                                                                 Value position,
+                                                                 Value domain) {
+        if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+          for (unsigned ordinal = 0;
+               ordinal != sim::getAggregateNumElements(array); ++ordinal) {
+            auto extract = [&](Value value) -> Value {
+              return sim::SimAggregateExtractOp::create(
+                  builder, location,
+                  sim::getAggregateElementType(value.getType(), ordinal), value,
+                  builder.getI64IntegerAttr(ordinal));
+            };
+            visit(array.getElementType(), extract(key), extract(position),
+                  extract(domain));
+          }
+          return;
+        }
+        // Logical bit streams place the first declared leaf at the high
+        // end. The persistent mode bitmap follows low-to-high bit offsets.
+        unsigned leaf = count - 1 - (cyclicFields.size() - first);
+        Value enabled = propertyEnabled[index];
+        if (property.disabledElements) {
+          Type bitmapType = property.disabledElements.getType();
+          Value shift = constant64(leaf);
+          unsigned bitmapWidth = cast<IntegerType>(bitmapType).getWidth();
+          if (bitmapWidth < 64)
+            shift =
+                arith::TruncIOp::create(builder, location, bitmapType, shift);
+          else if (bitmapWidth > 64)
+            shift =
+                arith::ExtUIOp::create(builder, location, bitmapType, shift);
+          Value disabled = arith::ShRUIOp::create(
+              builder, location, property.disabledElements, shift);
+          if (!disabled.getType().isInteger(1))
+            disabled = arith::TruncIOp::create(builder, location,
+                                               builder.getI1Type(), disabled);
+          Value active = arith::XOrIOp::create(
+              builder, location, disabled,
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true)));
+          enabled = arith::AndIOp::create(builder, location, enabled, active);
+        }
+        cyclicFields.push_back({width, propertyOffsets[index] + leaf * width,
+                                enabled, key, position, domain});
+      };
+      visit(property.type, property.nextRandcKey, property.nextRandcPosition,
+            property.nextRandcDomain);
+      cyclicFieldRanges[index] = {first, cyclicFields.size()};
+    }
   Value activeGuardBits = mutableMask;
-  for (auto [index, property] : llvm::enumerate(planned)) {
-    if (!property.isRandC)
-      continue;
+  auto includeCyclicBits = [&](unsigned width, unsigned fieldOffset,
+                               Value enabled) -> Value {
+    // Each leaf uses bounded-width constants and the shared assignment zero.
+    // Avoid allocating an aggregate-width literal for every array element.
     Value propertyMask =
-        constant64(APInt::getLowBitsSet(64, property.width).getZExtValue());
+        constant64(APInt::getLowBitsSet(64, width).getZExtValue());
     if (assignmentType != i64)
       propertyMask = arith::ExtUIOp::create(builder, location, assignmentType,
                                             propertyMask);
-    if (propertyOffsets[index]) {
-      Value offset = constant64(propertyOffsets[index]);
+    if (fieldOffset) {
+      Value offset = constant64(fieldOffset);
       if (assignmentType != i64)
         offset =
             arith::ExtUIOp::create(builder, location, assignmentType, offset);
@@ -2703,9 +2781,18 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     activeGuardBits = arith::OrIOp::create(
         builder, location, activeGuardBits,
-        arith::SelectOp::create(builder, location, propertyEnabled[index],
-                                propertyMask, zeroAssignment));
-  }
+        arith::SelectOp::create(builder, location, enabled, propertyMask,
+                                zeroAssignment));
+    return propertyMask;
+  };
+  if (useCyclicPlan)
+    for (CyclicField &field : cyclicFields)
+      field.mask = includeCyclicBits(field.width, field.offset, field.enabled);
+  else
+    for (auto [index, property] : llvm::enumerate(planned))
+      if (property.isRandC && !isa<sim::UnpackedArrayType>(property.type))
+        includeCyclicBits(property.width, propertyOffsets[index],
+                          propertyEnabled[index]);
   struct AliasEquality {
     uint32_t leftOffset;
     uint32_t rightOffset;
@@ -8590,49 +8677,31 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           reinterpret_cast<const char *>(program.data()), program.size()));
     return samplerProgram;
   };
-  SmallVector<unsigned> cyclicProperties;
   SmallVector<Value> cyclicMasks;
   SmallVector<Value> cyclicKeys;
   SmallVector<Value> cyclicPositions;
   SmallVector<Value> cyclicDomains;
   Block *cyclicPlanEntry = useCyclicPlan ? addBlock() : nullptr;
   if (useCyclicPlan) {
-    cyclicKeys.resize(planned.size());
-    cyclicPositions.resize(planned.size());
-    cyclicDomains.resize(planned.size());
+    cyclicKeys.resize(cyclicFields.size());
+    cyclicPositions.resize(cyclicFields.size());
+    cyclicDomains.resize(cyclicFields.size());
     Value remainingMask = activeGuardBits;
     Type referenceType = sim::RefType::get(function.getContext(), i64);
-    for (auto [index, property] : llvm::enumerate(planned)) {
-      if (!property.isRandC)
-        continue;
-      cyclicProperties.push_back(index);
+    for (auto [index, field] : llvm::enumerate(cyclicFields)) {
       // Tentative histories live in automatic storage. A later cyclic field
       // or ordinary solve may still fail, so none is published before commit.
-      cyclicKeys[index] = sim::SimRefAllocOp::create(
-          builder, location, referenceType, property.nextRandcKey);
+      cyclicKeys[index] = sim::SimRefAllocOp::create(builder, location,
+                                                     referenceType, field.key);
       cyclicPositions[index] = sim::SimRefAllocOp::create(
-          builder, location, referenceType, property.nextRandcPosition);
+          builder, location, referenceType, field.position);
       cyclicDomains[index] = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(),
                             sim::StringType::get(function.getContext())),
-          property.nextRandcDomain);
-      // Construct masks from bounded-width constants and SSA extensions.
-      // Materializing an aggregate-width APInt for every cyclic field would
-      // otherwise make host mask construction quadratic in the field count.
-      Value fieldMask =
-          constant64(APInt::getLowBitsSet(64, property.width).getZExtValue());
-      Value offset = constant64(propertyOffsets[index]);
-      if (assignmentType != i64) {
-        fieldMask = arith::ExtUIOp::create(builder, location, assignmentType,
-                                           fieldMask);
-        offset =
-            arith::ExtUIOp::create(builder, location, assignmentType, offset);
-      }
-      if (propertyOffsets[index])
-        fieldMask = arith::ShLIOp::create(builder, location, fieldMask, offset);
+          field.domain);
       Value inverseMask =
-          arith::XOrIOp::create(builder, location, fieldMask, mask);
+          arith::XOrIOp::create(builder, location, field.mask, mask);
       // The current field and all later random fields are free at this stage.
       cyclicMasks.push_back(remainingMask);
       remainingMask =
@@ -9874,7 +9943,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     };
     SmallVector<Block *> entries, accepted;
     SmallVector<int32_t> stages;
-    for (unsigned stage = 0; stage != cyclicProperties.size(); ++stage) {
+    for (unsigned stage = 0; stage != cyclicFields.size(); ++stage) {
       entries.push_back(addBlock());
       accepted.push_back(addBlock());
       stages.push_back(stage);
@@ -9907,8 +9976,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       cf::BranchOp::create(builder, location, entries.front(),
                            ValueRange{currentAssignment, modeState});
 
-    for (auto [stage, propertyIndex] : llvm::enumerate(cyclicProperties)) {
-      const Property &property = planned[propertyIndex];
+    for (auto [stage, field] : llvm::enumerate(cyclicFields)) {
       Value entryAssignment =
           entries[stage]->addArgument(assignmentType, location);
       Value entryState = entries[stage]->addArgument(i64, location);
@@ -9923,21 +9991,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       setCurrent(entries[stage]);
       // Inactive cyclic fields are frozen state and retain their histories.
       cf::CondBranchOp::create(
-          builder, location, propertyEnabled[propertyIndex], probe,
-          ValueRange{entryAssignment, cyclicMasks[stage], entryState,
-                     property.nextRandcKey, property.nextRandcPosition,
-                     property.nextRandcDomain,
-                     constant32(propertyOffsets[propertyIndex]),
-                     constant32(property.width), constant32(stage)},
+          builder, location, field.enabled, probe,
+          ValueRange{entryAssignment, cyclicMasks[stage], entryState, field.key,
+                     field.position, field.domain, constant32(field.offset),
+                     constant32(field.width), constant32(stage)},
           next, ValueRange{entryAssignment, entryState});
 
       setCurrent(accepted[stage]);
       sim::SimRefStoreOp::create(builder, location, acceptedKey,
-                                 cyclicKeys[propertyIndex]);
+                                 cyclicKeys[stage]);
       sim::SimRefStoreOp::create(builder, location, acceptedPosition,
-                                 cyclicPositions[propertyIndex]);
+                                 cyclicPositions[stage]);
       sim::SimRefStoreOp::create(builder, location, acceptedDomain,
-                                 cyclicDomains[propertyIndex]);
+                                 cyclicDomains[stage]);
       cf::BranchOp::create(builder, location, next,
                            ValueRange{acceptedAssignment, acceptedState});
     }
@@ -10449,13 +10515,33 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value key = property.nextRandcKey;
       Value position = property.nextRandcPosition;
       if (useCyclicPlan) {
-        key = sim::SimRefLoadOp::create(builder, location, i64,
-                                        cyclicKeys[index]);
-        position = sim::SimRefLoadOp::create(builder, location, i64,
-                                             cyclicPositions[index]);
-        Value domain = sim::SimRefLoadOp::create(
-            builder, location, sim::StringType::get(function.getContext()),
-            cyclicDomains[index]);
+        auto readHistory = [&](Type type, ArrayRef<Value> references) -> Value {
+          unsigned cursor = cyclicFieldRanges[index].first;
+          std::function<Value(Type)> build = [&](Type current) -> Value {
+            if (auto array = dyn_cast<sim::UnpackedArrayType>(current)) {
+              SmallVector<Value> elements;
+              for (unsigned ordinal = 0;
+                   ordinal != sim::getAggregateNumElements(array); ++ordinal)
+                elements.push_back(build(array.getElementType()));
+              return sim::SimAggregateConstructOp::create(builder, location,
+                                                          current, elements);
+            }
+            return sim::SimRefLoadOp::create(builder, location, current,
+                                             references[cursor++]);
+          };
+          Value result = build(type);
+          assert(cursor == cyclicFieldRanges[index].second &&
+                 "cyclic history shape mismatch");
+          return result;
+        };
+        key = readHistory(getReferenceElementType(property.randcKeyReference),
+                          cyclicKeys);
+        position = readHistory(
+            getReferenceElementType(property.randcPositionReference),
+            cyclicPositions);
+        Value domain =
+            readHistory(getReferenceElementType(property.randcDomainReference),
+                        cyclicDomains);
         if (failed(storeReference(property.randcDomainReference, domain,
                                   location)))
           return failure();

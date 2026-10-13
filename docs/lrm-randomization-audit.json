@@ -237,12 +237,12 @@
         {
           "feature": "Unpacked arrays, queues, and associative arrays",
           "status": "partial",
-          "detail": "Fixed unpacked arrays of packed integral elements use exact logical bitstreams for class and scope randomization, including multidimensional, descending, ascending and negative ranges. Enum domains and live modes apply independently to each element. Ordinary state-selected fixed-array paths compile to balanced Z3 selection plans with frozen X/Z and precise guard masks. One-dimensional dynamic arrays and queues retain specialized plans. Per-element randc histories, dynamic container modes, non-integral leaves, generalized selected-path function ordering and associative arrays remain incomplete. Fixed integral arrays also contribute their singular members to inside sets in ordinary constraints and expanded function bodies, including frozen wildcard symbols."
+          "detail": "Fixed unpacked arrays of packed integral elements use exact logical bitstreams for class and scope randomization, including multidimensional, descending, ascending and negative ranges. Enum domains and live modes apply independently to each element. Ordinary state-selected fixed-array paths compile to balanced Z3 selection plans with frozen X/Z and precise guard masks. One-dimensional dynamic arrays and queues retain specialized plans. Fixed integral randc arrays through 32 bits per leaf retain independent exact histories, including multidimensional and static storage. Dynamic container histories and modes, non-integral leaves, generalized selected-path function ordering and associative arrays remain incomplete. Fixed integral arrays also contribute their singular members to inside sets in ordinary constraints and expanded function bodies, including frozen wildcard symbols."
         },
         {
           "feature": "Unpacked structs with member rand qualifiers",
           "status": "partial",
-          "detail": "Instance and static unpacked structure properties contribute only explicitly rand/randc qualified fixed integral leaves and rand fixed integral arrays, recursively through qualified structures. Ordinary members retain strings, nested state and X/Z symbols. Packed randc leaves through 32 bits have independent persistent cycles; static cycles and modes are shared across instances. Whole-structure, leaf, nested-structure, array-element and class mode operations compose with temporary explicit property selection. Qualified scalar real members use numeric-coordinate plans and preserve ordinary shortreal state. Dynamic container, class-handle and randc-array members, and structures in recursively randomized objects remain incomplete."
+          "detail": "Instance and static unpacked structure properties contribute only explicitly rand/randc qualified fixed integral leaves and rand/randc fixed integral arrays, recursively through qualified structures. Ordinary members retain strings, nested state and X/Z symbols. Integral randc leaves through 32 bits, including fixed arrays, have independent persistent cycles; static cycles and modes are shared across instances. Whole-structure, leaf, nested-structure, array-element and class mode operations compose with temporary explicit property selection. Qualified scalar real members use numeric-coordinate plans and preserve ordinary shortreal state. Dynamic container and class-handle members, and structures in recursively randomized objects remain incomplete."
         },
         {
           "feature": "Real random variables",
@@ -322,7 +322,11 @@
           "test/Runtime/simulation-random-real-integer-plan-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-real-integer-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-real-computed-integer-runtime.mlir",
-          "test/Runtime/simulation-random-real-computed-integer-plan-runtime.mlir"
+          "test/Runtime/simulation-random-real-computed-integer-plan-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-fixed-randc-plan-size.mlir"
         ]
       }
     },
@@ -371,12 +375,12 @@
         {
           "feature": "Constrained randc cycle restart",
           "status": "partial",
-          "detail": "Compiler-admitted scalar source constraints now use one compiled relation and one shared cyclic operation to project exact legal domains, permute dense ranks and persist canonical managed snapshots. Live bound, block and inline changes, including unconstrained transitions, restart changed legal domains without scanning sparse declared ranges. Keys, positions, snapshots, fields and RNG are published only after the final ordinary solve succeeds. Native and WASM MLIR cover instance and static sharing, checker and frozen modes, shallow copy, wide ordinary fields and weights, reordered plans with different completion counts, zero weights and failure atomicity. Source constraint-context changes that preserve the legal domain, runtime foreach combinations, function-priority stages, per-element arrays and object aliasing remain open."
+          "detail": "Compiler-admitted scalar and fixed-array source constraints now use one compiled relation and one shared cyclic operation to project exact legal domains, permute dense ranks and persist canonical managed snapshots. Live bound, block and inline changes, including unconstrained transitions, restart changed legal domains without scanning sparse declared ranges. Keys, positions, snapshots, fields and RNG are published only after the final ordinary solve succeeds. Native and WASM MLIR cover instance and static sharing, checker and frozen modes, shallow copy, wide ordinary fields and weights, reordered plans with different completion counts, zero weights and failure atomicity. Fixed multidimensional array leaves and qualified enum/integral members retain independent shaped histories, including static sharing, shallow copies, element modes and frozen X/Z. Source constraint-context changes that preserve the legal domain, runtime foreach combinations, function-priority stages, dynamic-container histories and object aliasing remain open."
         },
         {
           "feature": "Multiple randc variables",
           "status": "partial",
-          "detail": "Integral cyclic fields through 32 bits, including qualified structure members and sparse signed enums, are sampled sequentially from projected legal domains before ordinary fields. One shared compiled-plan cyclic operation serves every stage; only the final solve and successful commit publish histories and RNG. Native and WASM cover joint cycles, 130-bit ordinary fields, live modes, explicit selection and failure atomicity. Function-priority stages, per-element array histories, object aliasing and source constraint-context changes with equal legal domains remain open."
+          "detail": "Integral cyclic fields through 32 bits, including fixed array leaves, qualified structure members and sparse signed enums, are sampled sequentially from projected legal domains before ordinary fields. One shared compiled-plan cyclic operation serves every stage; only the final solve and successful commit publish histories and RNG. Native and WASM cover joint cycles, 130-bit ordinary fields, live modes, explicit selection and failure atomicity. Function-priority stages, dynamic-container histories, object aliasing and source constraint-context changes with equal legal domains remain open."
         },
         {
           "feature": "Randc real and dist on randc",
@@ -406,7 +410,11 @@
           "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
           "test/Runtime/simulation-random-cyclic-domain-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-fixed-randc-plan-size.mlir"
         ]
       }
     },
@@ -1028,7 +1036,7 @@
         {
           "feature": "Randc implicit priority",
           "status": "partial",
-          "detail": "Cyclic stages project exact hard legal domains before the ordinary solve, with later cyclic and ordinary bits existentially free. Ordinary solve-before edges and soft preferences are sampled only after cyclic values are frozen. MLIR covers mixed and joint cyclic fields, persistent live scalar-domain changes, static sharing, copied histories, wide distribution support and transactional failure. Function-priority stages, runtime foreach combinations, per-element array and aliased-object histories, and source constraint-context changes with equal legal domains remain incomplete."
+          "detail": "Cyclic stages project exact hard legal domains before the ordinary solve, with later cyclic and ordinary bits existentially free. Ordinary solve-before edges and soft preferences are sampled only after cyclic values are frozen. MLIR covers mixed and joint cyclic fields, persistent live scalar and fixed-array domain changes, static sharing, copied histories, wide distribution support and transactional failure. Function-priority stages, runtime foreach combinations, dynamic-container and aliased-object histories, and source constraint-context changes with equal legal domains remain incomplete."
         }
       ],
       "evidence": {
@@ -1068,7 +1076,10 @@
           "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.mlir",
           "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir"
         ]
       }
     },
@@ -1609,7 +1620,7 @@
         {
           "feature": "Per-element unpacked array rand_mode",
           "status": "partial",
-          "detail": "Fixed unpacked integral arrays have persistent per-leaf mode bitmaps, including multidimensional subarray setters, arbitrary leaf counts, static sharing, and inherited dynamic-class resets. Disabled four-state leaves preserve X/Z on commits and bind their original unknown planes into admitted integral constraints, including conversion and known absorbing operators. Only singular leaves may be queried. Dynamic arrays, queues, and per-element randc histories remain open."
+          "detail": "Fixed unpacked integral arrays have persistent per-leaf mode bitmaps, including multidimensional subarray setters, arbitrary leaf counts, static sharing, and inherited dynamic-class resets. Disabled four-state leaves preserve X/Z on commits and bind their original unknown planes into admitted integral constraints, including conversion and known absorbing operators. Only singular leaves may be queried. Fixed randc array leaves, including qualified and static members, retain their independent histories when frozen or omitted; explicit array selection temporarily activates every leaf. Dynamic array and queue modes and histories remain open."
         },
         {
           "feature": "Large-domain partial selection solving",
@@ -1670,7 +1681,10 @@
           "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
           "test/Runtime/random-program-temporaries-validation.mlir",
           "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir"
         ]
       }
     },
@@ -1725,7 +1739,7 @@
         {
           "feature": "Randc domain changes",
           "status": "partial",
-          "detail": "Persistent exact domain snapshots restart scalar instance, qualified structure-member and static cycles after live legal-domain changes, including state bounds, constraint modes and inline or unconstrained transitions. Static histories are shared across instances; failed solves and disabled fields retain prior history. Equal-domain source context changes, per-element arrays, aliased objects and generalized function-priority stages remain open."
+          "detail": "Persistent exact domain snapshots restart scalar and fixed-array instance, qualified structure-member and static cycles after live legal-domain changes, including state bounds, constraint modes and inline or unconstrained transitions. Static histories are shared across instances; failed solves and disabled fields retain prior history. Equal-domain source context changes, dynamic-container histories, aliased objects and generalized function-priority stages remain open."
         }
       ],
       "evidence": {
@@ -1772,7 +1786,10 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir"
         ]
       }
     },

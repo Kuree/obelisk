@@ -29,19 +29,20 @@ Unpacked `rand` structure properties contribute only their explicitly declared
 domains, scalar real leaves, and nested qualified structures use the same Z3
 relation as other properties.
 Ordinary members retain their values, including strings and four-state symbols.
-Each packed `randc` member through 32 bits has its own persistent cycle; static
-members share
+Each integral `randc` leaf through 32 bits has its own persistent cycle,
+including fixed array members; static members share
 their cycle and modes across instances. Whole-structure, member, nested-structure,
 and array-element mode setters preserve other modes. An explicit property list
 temporarily activates the selected structure's random members. Unpacked
 structure `randc` declarations and nonsingular mode queries are diagnosed.
-Dynamic container members, random object members, real array members, member
-`randc` arrays, and structures in recursively randomized objects remain open.
+Dynamic container members, random object members, real array members, and
+structures in recursively randomized objects remain open.
 
-For compiled scalar constraints, `randc` fields through 32 bits share one Z3
-relation with ordinary fields. Each stage projects an exact legal domain with
-later cyclic and ordinary fields free, then permutes its dense ranks. Persistent
-managed snapshots detect domain changes caused by live bounds, constraint modes
+For compiled integral constraints, scalar and fixed-array `randc` leaves through
+32 bits share one Z3 relation with ordinary fields. Each stage projects an exact
+legal domain with later cyclic and ordinary fields free, then permutes its dense
+ranks. Persistent managed snapshots detect domain changes caused by live bounds,
+constraint modes
 and inline constraints, including transitions to an unconstrained full range.
 Instance fields, qualified structure members and static storage retain their
 own histories; static histories are shared across objects. Automatic temporary
@@ -51,11 +52,16 @@ values frozen, keeping ordinary soft preferences and `solve before` conditional
 on them. Inactive fields and checker calls preserve histories. Shallow copies
 retain RNG, modes and cyclic histories under 8.12. Source MLIR tests cover these
 paths in native, bytecode and WASM execution, including sparse signed enums
-after a 130-bit ordinary field. Stage construction emits a fixed number of
-operations per cyclic field, reuses one cycle operation and compiler plan, and
-builds masks from 64-bit constants and SSA extensions. Source constraint-context
-changes that preserve the legal domain, runtime foreach combinations,
-function-priority stages, per-element array histories and aliased object cycles
+after a 130-bit ordinary field, multidimensional arrays with negative bounds,
+and qualified and static array members. Shape-preserving key, position and
+snapshot arrays retain independent histories through shallow copies and element
+modes. Stage construction emits a fixed number of operations per cyclic leaf,
+reuses one cycle operation and compiler plan, and builds masks from 64-bit
+constants and SSA extensions. Shared tree extracts and one aggregate history
+construction per commit avoid rebuilding an entire array for each leaf.
+Source constraint-context changes that preserve the legal domain, runtime
+foreach combinations,
+function-priority stages, dynamic-container histories and aliased object cycles
 remain open.
 
 The typed `simulation.random.cycle_sample` primitive projects the compiler's
@@ -68,13 +74,18 @@ physical bit order and exact bytes, preserving the same rank map across plans
 with different ordinary completion counts. A changed legal domain starts a new
 cycle. Assignments, immutable managed snapshots, keys, positions and RNG outputs
 remain tentative until the caller commits the complete randomization.
+Projection constructs the cyclic diagram directly instead of first building
+every ordinary completion. A bounded attempt prioritizes retained inputs for
+sparse domains; exhaustion retries exactly with the compiler's variable order.
+Both paths preserve identical canonical snapshots, cardinalities and rank maps.
 MLIR checks cover live bounds, complete non-power-of-two and unconstrained
 8-bit cycles, sparse enum values, 130-bit ordinary fields and weights, zero
 weights, full 32-bit domains, reordered plans and failure retention in native,
 bytecode and WASM execution.
 Repeated plan attributes with the same capture layout compile once in the
-Simulation plan pass. Scalar source fields now use this primitive; the open
-contexts and container histories above keep the `randc` audit rows partial.
+Simulation plan pass. Scalar and fixed-array source leaves use this primitive;
+the open contexts and container histories above keep the `randc` audit rows
+partial.
 
 Fixed unpacked arrays of integral elements use their logical element bitstream
 for class and scope randomization, including multidimensional arrays and
@@ -85,9 +96,11 @@ plans. Whole unpacked arrays are not legal ordering operands. Fixed integral arr
 persistent per-element `rand_mode`, with multidimensional subarray setters,
 static sharing, and resets through the dynamic class hierarchy. Disabled
 four-state leaves preserve their X/Z symbols on successful commits. Queries
-require singular elements. Per-element cyclic histories, dynamic array modes,
-non-integral leaves, and generalized function ordering on selected paths remain
-open. A failed solve preserves the arrays. Generated proposal draws advance
+require singular elements. Integral `randc` arrays retain independent histories
+per leaf, including static sharing and qualified structure members. Dynamic
+container histories and modes, non-integral leaves, and generalized function
+ordering on selected paths remain open. A failed solve preserves the arrays.
+Generated proposal draws advance
 the caller's stream independently of whether the assignments are committed;
 the runtime solver's own draws remain transactional.
 
@@ -152,8 +165,11 @@ assignment tables, and lowers every admitted residual arithmetic expression
 into a parameterized Boolean sampling plan. The plan names random bits,
 state-capture bits and constraint modes explicitly. Bounded decision-diagram
 preparation and dead-gate elimination move additional work into compilation;
-wide popcount equalities use exact cardinality relations. Budget exhaustion
-retains the complete circuit rather than truncating its sample space.
+wide popcount equalities use exact cardinality relations. Preparation budgets
+cover inner diagram products as well as outer cofactor traversal. Exhaustion
+retains the complete circuit rather than truncating its sample space. The fixed
+cyclic-array MLIR regression checks that independent element constraints and
+live modes cannot expand an unbudgeted diagram product.
 
 Sampler input preparation uses linear passes over the lowered program and its
 declared bits: field boundaries use a bitmap, finished fields leave the column
@@ -488,7 +504,7 @@ graph walk.
 | `rand_mode` / `constraint_mode` | Class-wide and property-specific `rand_mode` setters and queries are executable through zero-initialized disabled-property state. Instance properties use the object's mask; each static random property has one class-wide mode word shared by every instance. Both `C::property.rand_mode(...)` and object-qualified static-property forms address that shared word, and class-wide calls use dynamic-class dispatch to update the exact inherited static set. Disabled properties retain their current values, participate in constraints as state variables, consume no search-domain bits, and are not written on success. Class-wide `constraint_mode(on_off)` and named-block setters and queries are executable through a separate disabled-block mask for up to 64 effective inherited constraint blocks. Overrides retain the base block's stable bit; `constraint ... extends` declarations append under that same bit. The all-enabled constraint path retains its Z3-planned sampler. Any disabled block bypasses plan-specific narrowing and extra draws, uses the generated live-mask checker, and passes both property and constraint masks to the deterministic residual solver. Inline constraints remain unmaskable. Fixed unpacked integral arrays also have an arbitrary-width disabled-leaf bitmap. Element and subarray setters preserve every other leaf's mode; whole-array and class-wide setters reset the bitmap. A static array shares its bitmap across instances, and dynamic-class dispatch resets derived arrays through base handles. Invalid array indices have no mode storage. Exact masked plan sampling freezes the inactive leaves, and four-state commits preserve their complete symbols. If all random properties or array elements are disabled, `randomize()` checks current values against the enabled hard constraints without advancing the object stream or writing properties. |
 | `solve before` | Direct rand-property DAGs are executable. The compiler validates self edges and cycles, reorients pure alias classes toward the earliest ordered member, and emits conditional sampling as MLIR when Z3 proves complete global/component tables or exact structural plans whose transitive dependencies follow the order. Residual programs retain constraint-block-aware ordering edges. For packed integral aggregates of arbitrary width, the compiled-plan sampler selects the optimal enabled soft priorities, then counts existential projections of each active topological layer and samples its distinct legal values uniformly. Compiler and runtime DAG plans defer partially ordered fields to their latest legal layer and include unordered fields in the final joint group. Cofactoring the original relation preserves constraints on later fields. Live captures, semantic domains, partial rand modes and constraint modes use the same exact policy; disabling an ordering block removes its edges. Remaining unordered fields use their conditional joint distribution. Version-2 metadata carries multiword before/after masks and validates padding, block identities and declaration cycles before applying modes. Real ordering and general selected paths remain incomplete. Without compiler Z3, narrow ordered residual traversal retains its 2^20 semantic-assignment limit and wide ordered residuals are diagnosed. |
 | `dist` | With compiler-generated plans, direct packed integral or enum `rand` targets up to 64 bits support constant and state-valued two-state endpoints, unsigned state weights of arbitrary width, original range mass after filtering, additive overlapping items, and a single noncontiguous default item. Exact projected counts preserve target weights independently of unweighted companion completions in arbitrarily wide aggregates. Enabled soft distributions follow global soft priority; whole-target solve-before ordering conditions the distribution on preceding choices. Multiple active distributions combine their per-value masses while retaining every legal binding. State guards and candidate guards fully solved by preceding always-active or same-block edges are supported. Split-target ordering, unresolved candidate activation, independent function-priority stages with distributions, expression targets, candidate-dependent weights or endpoints, unknown-plane state endpoints, and real ranges remain explicit boundaries. `dist` on `randc` and default `:=` are illegal. Without compiler Z3, the existing bounded checked 64-bit policy remains. |
-| `randc` | Executable for integral semantic domains of at most 2^32 values in a representation through 32 bits, including sparse signed enums and qualified structure members. Each field keeps a keyed permutation; enum holes never become semantic values. Compiler Z3 produces one shared relation for completion probes. Cyclic fields are accepted sequentially with later cyclic and ordinary fields free, then ordinary fields are sampled with every cyclic value frozen. Rejected semantic values advance within the permutation; an exhausted remainder restarts a full cycle and an entirely unsuccessful fresh cycle fails. Tentative histories and properties commit only after the final solve succeeds. Native, bytecode and WASM MLIR cover mixed and joint fields, 130-bit ordinary values, checker calls, modes, explicit selection and failure preservation. Static fields retain shared class-wide histories. Arbitrary changes to an existing cycle's constraints, function-priority stages, per-element array histories and aliased object cycles remain open. The runtime four-round Feistel permutation remains independent of Z3; existing GoogleTests prove bijectivity through width 16 and exercise the bytecode intrinsic. Larger representations and semantic domains are diagnosed. |
+| `randc` | Executable for integral scalar and fixed-array leaves through 32 bits, including sparse signed enums and qualified structure members. Compiler Z3 produces one shared hard relation. Each cyclic stage projects its exact legal domain with later cyclic and ordinary fields free, then permutes dense legal ranks; ordinary fields are sampled with cyclic values frozen. Changed legal-domain snapshots restart the cycle, and tentative histories, fields and sampler RNG commit only after the final solve succeeds. Native, bytecode and WASM MLIR cover multidimensional and negative bounds, instance and static sharing, copied per-element histories, live bounds, checker calls, element modes, frozen X/Z, explicit selection and failure retention. Dynamic-container histories, equal-domain source constraint-context changes, runtime foreach combinations, function-priority stages and aliased object cycles remain open. The runtime permutation and projected sampling remain independent of Z3. Larger leaf representations are diagnosed. |
 | `pre_randomize` / `post_randomize` | Executable with virtual override semantics through the same compile-time-specialized dynamic-class plan as `randomize()`. The effective `pre_randomize` runs after receiver selection but before mode, constraint, property, or stream state is read. The effective `post_randomize` runs after all successful property and `randc` state commits, including a successful current-value check when every property is disabled, and is skipped on failure and null receivers. Inherited hooks receive a receiver cast to their declaring class. Package and design captures used by either hook are propagated through the generated call plan. |
 | Compiler Z3 planning | A pinned Z3 4.13.4 static library is built from source for compiler analysis. Residual programs are decoded into a temporary MLIR SMT bit-vector formula, then an in-process shim executes that formula through the Z3 API; no solver subprocess or SMT-LIB round trip is used. Z3 diagnoses constraints that are unsatisfiable for every runtime capture value and computes conservative per-property domains under a deterministic resource limit. Contiguous domains up to 64 bits are folded without modulo bias into the generated tier-0 proposal: power-of-two cardinalities use random low bits, while arbitrary cardinalities use generated 64-bit rejection sampling and overflow-safe cyclic retry traversal. Wider variables skip width-linear min/max discovery and instead use bounded solution enumeration when sparse. Direct signed and unsigned capture bounds up to 64 bits, including side-effect-free capture expressions evaluated once at driver entry, such as `x <= limit`, `x >= limit`, or their strict forms, become parameterized MLIR samplers: captures are masked once, signed endpoints are mapped to sign-bit-biased unsigned coordinates, strict endpoints are normalized with overflow guards, compatible lower and upper bounds and compile-time envelopes are intersected, and the runtime cardinality is sampled with unbiased 64-bit rejection. A zero cardinality represents the full 2^64-element domain and selects the original random draw while generated modulo operations use a nonzero safe divisor. An empty runtime intersection fails before modulo or fallback, while an exact Z3 proof removes both checking and fallback on the valid edge. Direct variable equalities are collapsed into Z3-verified alias classes, so constraints such as `x == y` sample one field and copy it instead of relying on rejection. Acyclic arithmetic, bitwise, comparison, reduction, logical, conditional-select, concatenation, and constant-replication definition chains such as `x == y + 1; y == z + 1` are extracted from the versioned RPN program, topologically ordered, and emitted directly as MLIR; these definitions may read runtime captures, so `x == f(capture)` becomes generated MLIR instead of runtime search. Cyclic components remain on the checker/runtime path. Alias classes and definitions share one dependency plan: a uniquely defined class member becomes the representative, definition reads are canonicalized to representatives, and aliases are copied after their defining chains. Hard constraints are partitioned deterministically by shared random properties before table planning, with capture dependencies tracked per constraint; the conservative component masks are exposed with the analysis so distribution-sensitive clients can prove that unresolved variables do not cross ordering layers. Capture-free residual formulas and connected components with at most 4096 representation bits are completely enumerated when they have at most 16 solutions. Clients that require the complete joint distribution can request bounded global enumeration even when a structural proposal is already exact; if that global enumeration exceeds its bound, component enumeration still proceeds. Each component table is independently Z3-proven and retained even when another component exceeds the limits or depends on a runtime capture; the whole-formula proof composes retained tables with structural capture plans, while unresolved components continue through the generated checker and runtime fallback. When every component is covered, the Cartesian product may be exact even with far more than 16 aggregate solutions and can bypass checking. Every complete solution set becomes a sorted assignment table: power-of-two cardinalities use random low bits, while other cardinalities use generated 64-bit rejection sampling that threads additional object-local PCG draws only across rejection edges and commits the accepted state once. `solve before` global and component tables instead become topologically layered decision trees, with uniform sampling at each conditional node. For exact structural plans, lowering computes the transitive property dependency closure after validating that every solver step was materialized, and routes any later-layer source that determines an earlier-layer target to the ordered residual fallback. When Z3 proves that a structural proposal or complete assignment-table product implies the hard formula, generated code commits directly. If a definition or alias overwrites an independently constrained target domain, the generated checker and runtime fallback are retained. The encoder preserves implicit conversions structurally instead of turning converted constants into runtime captures. Native compiler workers use Z3's thread-safe build with isolated thread-local contexts, while the non-pthread WebAssembly compiler retains single-threaded polling mode and a process gate. Z3 is statically linked only into compiler tools. Compiler-generated Boolean sampling plans preserve complete integral residual support in both target runtimes without a solver dependency. With `OBELISK_ENABLE_Z3=OFF`, conservative analysis retains the existing bounded traversal and its explicit support boundaries. |
 

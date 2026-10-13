@@ -918,10 +918,18 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       result.implicitConstructorSymbols[classType] = implicitConstructor;
 
     uint64_t ordinal = 0;
-    SmallVector<std::pair<Location, std::string>> cyclicDomainFields;
-    auto reserveCyclicDomain = [&](Location location, std::string name) {
+    struct CyclicDomainField {
+      Location location;
+      std::string name;
+      Type type;
+    };
+    SmallVector<CyclicDomainField> cyclicDomainFields;
+    auto reserveCyclicDomain = [&](Location location, std::string name,
+                                   Type valueType) {
       auto symbol = FlatSymbolRefAttr::get(context, name);
-      cyclicDomainFields.emplace_back(location, std::move(name));
+      cyclicDomainFields.push_back(
+          {location, std::move(name),
+           getRandomCyclicStateType(valueType, sim::StringType::get(context))});
       return symbol;
     };
     for (Operation *child : getChildren(classType)) {
@@ -1024,7 +1032,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
           sim::SimClassFieldDeclOp::create(
               builder, getSemanticLocation(property), name, classSymbol,
-              builder.getI64Type(), ordinal++, IntegerAttr{},
+              getRandomCyclicStateType(*type, builder.getI64Type()), ordinal++,
+              IntegerAttr{},
               /*isStatic=*/false, /*isWeak=*/false,
               builder.getStringAttr(debugName));
           return symbol;
@@ -1034,7 +1043,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         result.randcPositionFieldSymbols[property] =
             addRandCField("_randc_position", "__obelisk_randc_position");
         result.randcDomainFieldSymbols[property] = reserveCyclicDomain(
-            getSemanticLocation(property), fieldName + "_randc_domain");
+            getSemanticLocation(property), fieldName + "_randc_domain", *type);
         if (field->hasAttr(sim::metadata::randomVariableKind)) {
           field->setAttr(sim::metadata::randomCycleKeyField,
                          result.randcKeyFieldSymbols.lookup(property));
@@ -1042,7 +1051,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                          result.randcPositionFieldSymbols.lookup(property));
         }
       }
-      if (!isStatic && property.getRandMode() == semantic::SVRandMode::Rand)
+      if (!isStatic && property.getRandMode() != semantic::SVRandMode::None)
         if (auto layout = getFixedRandomArrayLayout(*type)) {
           std::string name = fieldName + "_element_modes";
           FlatSymbolRefAttr symbol = FlatSymbolRefAttr::get(context, name);
@@ -1089,18 +1098,22 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           if (!isStatic && member.isRandC) {
             attributes.push_back(builder.getNamedAttr(
                 "randc_key_field",
-                addField("_randc_key", builder.getI64Type())));
+                addField("_randc_key",
+                         getRandomCyclicStateType(member.type,
+                                                  builder.getI64Type()))));
             attributes.push_back(builder.getNamedAttr(
                 "randc_position_field",
-                addField("_randc_position", builder.getI64Type())));
+                addField("_randc_position",
+                         getRandomCyclicStateType(member.type,
+                                                  builder.getI64Type()))));
             attributes.push_back(builder.getNamedAttr(
                 "randc_domain_field",
                 reserveCyclicDomain(getSemanticLocation(property),
                                     fieldName + "_member_" +
-                                        std::to_string(index) +
-                                        "_randc_domain")));
+                                        std::to_string(index) + "_randc_domain",
+                                    member.type)));
           }
-          if (!isStatic && !member.isRandC)
+          if (!isStatic)
             if (auto layout = getFixedRandomArrayLayout(member.type))
               attributes.push_back(builder.getNamedAttr(
                   "element_mode_field",
@@ -1139,10 +1152,10 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     }
     // Append managed histories after the existing inventory so source fields
     // and their ordinal-derived symbols keep their identities.
-    for (const auto &[location, name] : cyclicDomainFields)
+    for (const auto &[location, name, type] : cyclicDomainFields)
       sim::SimClassFieldDeclOp::create(
-          builder, location, name, classSymbol, sim::StringType::get(context),
-          ordinal++, IntegerAttr{}, /*isStatic=*/false, /*isWeak=*/false,
+          builder, location, name, classSymbol, type, ordinal++, IntegerAttr{},
+          /*isStatic=*/false, /*isWeak=*/false,
           builder.getStringAttr("__obelisk_randc_domain"));
   }
 

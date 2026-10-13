@@ -203,11 +203,31 @@ public:
     return constrain(predicate);
   }
 
+  /// Build an existential projection directly. Eliminated inputs contribute
+  /// Boolean existence, so a satisfying branch can stop their search without
+  /// constructing the diagram of every later completion. A nonzero budget
+  /// tries retained inputs first; exhaustion leaves the caller free to retry
+  /// with the compiler's variable order in a fresh counter.
+  bool buildProjection(random::BooleanCircuit::ID predicate,
+                       const std::vector<bool> &keep, size_t budget = 0) {
+    if (keep.size() != variableCount || nodes.size() != 2)
+      return false;
+    constructionBudget = budget;
+    if (!convert(predicate, root, budget, 0, &keep, budget != 0))
+      return false;
+    constructionBudget = 0;
+    project(keep);
+    return true;
+  }
+
   /// Compiler-only preparation can stop optimizing at a resource budget and
   /// retain the exact Boolean plan. Runtime sampling never truncates a count.
   bool prepareDiagram(random::BooleanCircuit::ID predicate, size_t budget,
                       size_t circuitBudget) {
-    return convert(predicate, root, budget, circuitBudget);
+    constructionBudget = budget;
+    bool complete = convert(predicate, root, budget, circuitBudget);
+    constructionBudget = 0;
+    return complete;
   }
 
   /// Re-encode a completed decision diagram using the original named inputs.
@@ -474,6 +494,14 @@ private:
     std::vector<Key> pending{initial};
     ID result = 0;
     while (!pending.empty()) {
+      // Diagram products can expand inside one outer conversion step. Count
+      // this walk too, so bounded compiler preparation and speculative runtime
+      // projection cannot bypass their budget through a large conjunction.
+      if (constructionExhausted ||
+          (constructionBudget && --constructionBudget == 0)) {
+        constructionExhausted = true;
+        return 0;
+      }
       Key key = pending.back();
       if (resolved(key, result)) {
         pending.pop_back();
@@ -516,7 +544,8 @@ private:
   /// retain exactly the original relation and the same input inventory.
   bool extractLiterals(random::BooleanCircuit::ID predicate,
                        random::BooleanCircuit::ID &remaining, ID &literals,
-                       size_t &budget, size_t circuitBudget) {
+                       size_t &budget, size_t circuitBudget,
+                       const std::vector<bool> *keep = nullptr) {
     using CircuitID = random::BooleanCircuit::ID;
     remaining = predicate;
     literals = 1;
@@ -567,7 +596,7 @@ private:
       remaining = circuit->restrict(remaining, values, selected);
     }
     for (size_t variable = variableCount; variable-- != 0;)
-      if (selected[variable])
+      if (selected[variable] && (!keep || (*keep)[variable]))
         literals = values[variable] ? makeNode(variable, 0, literals)
                                     : makeNode(variable, literals, 0);
     return true;
@@ -578,7 +607,9 @@ private:
   // explode even when a modular product equality has only a handful of roots.
   // This walk prunes impossible prefixes before materializing their children.
   bool convert(random::BooleanCircuit::ID predicate, ID &result,
-               size_t budget = 0, size_t circuitBudget = 0) {
+               size_t budget = 0, size_t circuitBudget = 0,
+               const std::vector<bool> *keep = nullptr,
+               bool retainedFirst = false) {
     using CircuitID = random::BooleanCircuit::ID;
     struct Frame {
       CircuitID predicate;
@@ -587,8 +618,9 @@ private:
       bool propagated = false;
     };
     std::vector<Frame> pending{{predicate}};
+    std::vector<size_t> firstKept;
     while (!pending.empty()) {
-      if ((budget && --budget == 0) ||
+      if (constructionExhausted || (budget && --budget == 0) ||
           (circuitBudget && circuit->getNodes().size() > circuitBudget))
         return false;
       Frame &frame = pending.back();
@@ -605,7 +637,7 @@ private:
       // projections; this is simplification, not a restriction of the domain.
       if (!frame.propagated) {
         if (!extractLiterals(id, frame.remaining, frame.literals, budget,
-                             circuitBudget))
+                             circuitBudget, keep))
           return false;
         frame.propagated = true;
       }
@@ -620,6 +652,28 @@ private:
         continue;
       }
       size_t variable = circuit->firstVariable(id);
+      if (retainedFirst) {
+        // Decide retained inputs first. Once their relevant prefix is fixed,
+        // the eliminated suffix needs one witness rather than all completions.
+        // Cache one minimum per circuit node, including new cofactors; no
+        // variable-width dependency bitmap is built for each node.
+        const auto &circuitNodes = circuit->getNodes();
+        while (firstKept.size() != circuitNodes.size()) {
+          size_t index = firstKept.size();
+          const auto &node = circuitNodes[index];
+          size_t first = variableCount;
+          if (node.opcode == random::PlanOpcode::RandomBit) {
+            if (node.b >= variableCount)
+              return false;
+            if ((*keep)[node.b])
+              first = node.b;
+          } else if (node.opcode == random::PlanOpcode::And)
+            first = std::min(firstKept[node.a / 2], firstKept[node.b / 2]);
+          firstKept.push_back(first);
+        }
+        if (firstKept[id / 2] != variableCount)
+          variable = firstKept[id / 2];
+      }
       if (variable >= variableCount)
         return false;
       CircuitID low = circuit->cofactor(id, variable, false);
@@ -628,22 +682,31 @@ private:
         pending.push_back({low});
         continue;
       }
+      if (keep && !(*keep)[variable] && circuits.at(low) == 1) {
+        circuits.emplace(id, 1);
+        pending.pop_back();
+        continue;
+      }
       if (!circuits.count(high)) {
         pending.push_back({high});
         continue;
       }
-      circuits.emplace(id,
-                       makeNode(variable, circuits.at(low), circuits.at(high)));
+      circuits.emplace(
+          id, keep && !(*keep)[variable]
+                  ? disjunction(circuits.at(low), circuits.at(high))
+                  : makeNode(variable, circuits.at(low), circuits.at(high)));
       pending.pop_back();
     }
     result = circuits.at(predicate);
-    return true;
+    return !constructionExhausted;
   }
 
   random::BooleanCircuit *circuit;
   size_t variableCount;
   ID root = 0;
   ID viewRoot = 0;
+  size_t constructionBudget = 0;
+  bool constructionExhausted = false;
   std::vector<bool> fixed, fixedValues, sampled;
   std::vector<size_t> levels;
   std::vector<Node> nodes;

@@ -38,6 +38,10 @@ struct FixedRandomArrayLayout {
 std::optional<FixedRandomArrayLayout>
 getFixedRandomArrayLayout(mlir::Type type);
 
+/// Preserve fixed unpacked dimensions while replacing each integral leaf by
+/// one cyclic history value. Scalars have one history of stateType.
+mlir::Type getRandomCyclicStateType(mlir::Type type, mlir::Type stateType);
+
 struct QualifiedRandomMember {
   // Declaration-order indices into the root unpacked structure.
   llvm::SmallVector<int64_t> path;

@@ -139,14 +139,19 @@ public:
              ((request.offset + bit) % 64)) &
             1))
         return SamplerResult::Invalid;
-    ModelCounter completions(circuit, bits);
-    if (!completions.build(predicate()))
-      return SamplerResult::Invalid;
     std::vector<bool> keep(bits.size(), false);
     for (size_t bit = 0; bit != bits.size(); ++bit)
       keep[bit] = physicalBits[bit] >= request.offset &&
                   physicalBits[bit] - request.offset < request.width;
-    completions.project(keep);
+    ModelCounter completions(circuit, bits);
+    if (!completions.buildProjection(predicate(), keep, 4096)) {
+      // Sparse domains often benefit from deciding the cyclic bits first.
+      // Broad arithmetic projections may need the compiler's interleaving;
+      // discard the bounded attempt and construct the exact relation there.
+      completions = ModelCounter(circuit, bits);
+      if (!completions.buildProjection(predicate(), keep))
+        return SamplerResult::Invalid;
+    }
     if (completions.count().zero())
       return SamplerResult::Unsatisfiable;
 

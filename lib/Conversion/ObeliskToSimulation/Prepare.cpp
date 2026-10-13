@@ -2591,6 +2591,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         return abort();
       }
       uint64_t scopeId = source->second.scopeId;
+      Type valueType = source->second.type;
       auto addState = [&](StringRef path, StringRef debugName, Type type) {
         uint64_t id = nextStorageId++;
         DescriptorInfo descriptor{DescriptorInfo::Kind::Storage, id, scopeId,
@@ -2604,10 +2605,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                                       schedule::ComputeObservabilityKindAttr{},
                                       sim::VPITypeSemanticsAttr{});
       };
-      addState(keyPath, "__obelisk_static_randc_key", i64);
-      addState(positionPath, "__obelisk_static_randc_position", i64);
-      addState(domainPath, "__obelisk_static_randc_domain",
-               sim::StringType::get(context));
+      Type wordState = getRandomCyclicStateType(valueType, i64);
+      addState(keyPath, "__obelisk_static_randc_key", wordState);
+      addState(positionPath, "__obelisk_static_randc_position", wordState);
+      addState(
+          domainPath, "__obelisk_static_randc_domain",
+          getRandomCyclicStateType(valueType, sim::StringType::get(context)));
       staticRandCStatePaths[property] = {
           std::move(keyPath), std::move(positionPath), std::move(domainPath)};
     }
@@ -2635,6 +2638,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto member = cast<DictionaryAttr>(attribute);
         NamedAttrList attributes(member);
         if (member.getAs<BoolAttr>("is_randc").getValue()) {
+          Type valueType = member.getAs<TypeAttr>("type").getValue();
           if (nextStorageId > UINT64_MAX - 3) {
             emitError(getSemanticLocation(property))
                 << "static structure member cyclic state exceeds the storage "
@@ -2657,10 +2661,15 @@ void ObeliskSimPreparePass::runOnOperation() {
                 sim::VPITypeSemanticsAttr{});
             return builder.getStringAttr(path);
           };
-          attributes.set("randc_key_path", addState("_key", i64));
-          attributes.set("randc_position_path", addState("_position", i64));
-          attributes.set("randc_domain_path",
-                         addState("_domain", sim::StringType::get(context)));
+          Type wordState = getRandomCyclicStateType(valueType, i64);
+          attributes.set("randc_key_path", addState("_key", wordState));
+          attributes.set("randc_position_path",
+                         addState("_position", wordState));
+          attributes.set(
+              "randc_domain_path",
+              addState("_domain",
+                       getRandomCyclicStateType(
+                           valueType, sim::StringType::get(context))));
         }
         updated.push_back(attributes.getDictionary(context));
       }
@@ -5730,16 +5739,18 @@ void ObeliskSimPreparePass::runOnOperation() {
                   member.getAs<TypeAttr>("semantic_type").getValue();
               auto width = getRandomPropertyWidth(memberType);
               bool randc = member.getAs<BoolAttr>("is_randc").getValue();
+              auto cyclicWidth = sim::getPackedWidth(memberType);
+              if (auto layout = getFixedRandomArrayLayout(memberType))
+                cyclicWidth = layout->elementWidth;
               unsigned memberMode =
                   member.getAs<IntegerAttr>("mode_index").getInt();
               if (!width || *width == 0 || memberMode >= 64 ||
-                  (randc &&
-                   (!sim::getPackedWidth(memberType) || *width > 32))) {
+                  (randc && (!cyclicWidth || *cyclicWidth > 32))) {
                 emitError(getSemanticLocation(property))
                     << "random structure members currently require fixed "
-                       "integral values, IEEE real values or rand integral "
+                       "integral values, IEEE real values or integral "
                        "arrays; randc members require "
-                       "packed values no wider than 32 bits";
+                       "integral leaves no wider than 32 bits";
                 invalid = true;
                 continue;
               }
@@ -6702,12 +6713,6 @@ void ObeliskSimPreparePass::runOnOperation() {
             continue;
           }
           bool isRandC = property.getRandMode() == semantic::SVRandMode::RandC;
-          if (isRandC && isa<sim::UnpackedArrayType>(*type)) {
-            emitError(getSemanticLocation(property))
-                << "randc fixed arrays require per-element cyclic state";
-            invalid = true;
-            continue;
-          }
           FlatSymbolRefAttr randcKeyField =
               randcKeyFieldSymbols.lookup(property);
           FlatSymbolRefAttr randcPositionField =
@@ -6736,12 +6741,18 @@ void ObeliskSimPreparePass::runOnOperation() {
               randcPositionPath = builder.getStringAttr(state->second.position);
             }
           }
-          if (isRandC &&
-              (*width > 32 || ((!randcKeyField || !randcPositionField) &&
-                               (!randcKeyPath || !randcPositionPath)))) {
+          auto cyclicWidth = sim::getPackedWidth(*type);
+          if (auto layout = getFixedRandomArrayLayout(*type))
+            cyclicWidth = layout->elementWidth;
+          if (isRandC && ((!cyclicWidth || *cyclicWidth > 32) ||
+                          ((!randcKeyField || !randcPositionField) &&
+                           (!randcKeyPath || !randcPositionPath)))) {
             emitError(getSemanticLocation(property))
-                << "randc properties must be packed integral values no wider "
-                   "than 32 bits";
+                << (isa<sim::UnpackedArrayType>(*type)
+                        ? "randc array leaves must be integral values no wider "
+                          "than 32 bits"
+                        : "randc properties must be packed integral values no "
+                          "wider than 32 bits");
             invalid = true;
             continue;
           }

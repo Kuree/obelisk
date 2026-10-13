@@ -1,9 +1,9 @@
 // RUN: not obelisk-opt %s --split-input-file '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s
 // IEEE 1800-2023 18.5.9 requires integral or real solve-before operands;
-// a whole unpacked array is not integral. A randc array requires independent
-// element cycles, so it must not silently become a single aggregate cycle.
+// a whole unpacked array is not integral. The implementation's 32-bit randc
+// limit applies independently to each array leaf under 18.4.2.
 // CHECK-DAG: error: solve before operands must be integral random values
-// CHECK-DAG: error: randc fixed arrays require per-element cyclic state
+// CHECK-DAG: error: randc array leaves must be integral values no wider than 32 bits
 
 module {
   obelisk.sv.symbol.definition @definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 60001 : i64} {
@@ -55,8 +55,8 @@ module {
   }
   obelisk.sv.symbol.root @root attributes {hierarchical_name = "$root", name = "$root", node_id = 60022 : i64} {
     obelisk.sv.symbol.compilation_unit @unit attributes {hierarchical_name = "$unit", node_id = 60023 : i64} {
-      obelisk.sv.type.class_type @C attributes {bitstream_width = 12 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", semantic_type = !obelisk.class_handle<@root::@unit::@C>, this_variable_path = "C::this", this_variable_symbol = @root::@unit::@C::@this, node_id = 60024 : i64} {
-        obelisk.sv.symbol.class_property @values attributes {hierarchical_name = "C::values", name = "values", rand_mode = 2 : i32, semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, node_id = 60025 : i64} {
+      obelisk.sv.type.class_type @C attributes {bitstream_width = 70 : i64, declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [], has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C", implemented_interfaces = [], is_abstract = false, is_final = false, is_interface = false, is_uninstantiated = false, name = "C", semantic_type = !obelisk.class_handle<@root::@unit::@C>, this_variable_path = "C::this", this_variable_symbol = @root::@unit::@C::@this, node_id = 60024 : i64} {
+        obelisk.sv.symbol.class_property @values attributes {hierarchical_name = "C::values", name = "values", rand_mode = 2 : i32, semantic_type = !obelisk.ranged_unpacked_array<1 : 0 x !obelisk.ranged_packed_array<32 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>>, node_id = 60025 : i64} {
         }
         obelisk.sv.symbol.class_property @pick attributes {hierarchical_name = "C::pick", name = "pick", rand_mode = 1 : i32, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>, node_id = 60026 : i64} {
         }

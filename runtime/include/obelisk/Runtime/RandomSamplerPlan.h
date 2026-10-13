@@ -190,12 +190,14 @@ public:
   }
   const std::vector<PlanNode> &getNodes() const { return nodes; }
 
-  /// Restrict the earliest remaining variable. Hash-consing the simplified
+  /// Restrict one variable. Hash-consing the simplified
   /// cofactors lets the sampler construct only the final relation's decision
   /// diagram, without constructing diagrams for intermediate arithmetic.
   ID cofactor(ID root, uint32_t variable, bool high) {
     auto known = [&](ID id, ID &result) {
-      if (firstVariable(id) != variable) {
+      if (firstVariable(id) > variable ||
+          (nodes[id / 2].opcode == PlanOpcode::RandomBit &&
+           nodes[id / 2].b != variable)) {
         result = id;
         return true;
       }
