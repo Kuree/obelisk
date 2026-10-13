@@ -2425,7 +2425,9 @@ struct FunctionalCoverageSetQueryIndex {
       predicatePrograms[node.selector].push_back(&node);
       predicateNodes.emplace(node.id, &node);
       if (node.kind == CrossPredicateKind::ElementSelect ||
-          node.kind == CrossPredicateKind::RangeSelect)
+          node.kind == CrossPredicateKind::RangeSelect ||
+          (node.kind >= CrossPredicateKind::ShiftLeft &&
+           node.kind <= CrossPredicateKind::ArithmeticShiftRight))
         pendingIndices.push_back(
             schema.crossPredicateOperands[node.firstOperand + 1]);
       else if (node.kind == CrossPredicateKind::Conditional)
@@ -2929,7 +2931,7 @@ struct PreparedCrossValueIndex {
   struct Axis {
     uint64_t item = 0;
     uint32_t width = 0, binFirst = 0, binWidth = 0;
-    bool fourState = false, indexFirst = false;
+    bool fourState = false, indexFirst = false, binaryValues = true;
     std::vector<uint32_t> avalVariables, bvalVariables, valueAvalVariables,
         valueBvalVariables;
     obelisk::coverage::CoverageSignedness signedness;
@@ -2938,7 +2940,11 @@ struct PreparedCrossValueIndex {
     std::unique_ptr<Image> avalImage, bvalImage;
     IndexMap<uint64_t, uint32_t> binOrdinals;
     IndexMap<uint64_t, Root> templateBins;
-    IndexMap<std::pair<uintptr_t, uintptr_t>, Root> associated;
+    struct Associated {
+      Root root;
+      bool binaryValues;
+    };
+    IndexMap<std::pair<uintptr_t, uintptr_t>, Associated> associated;
   };
 
   PreparedFunctionalConstruction &prepared;
@@ -2984,7 +2990,8 @@ struct PreparedCrossValueIndex {
   }
 
   Root associated(Axis &axis, const std::shared_ptr<CompiledSet> &set,
-                  const std::shared_ptr<CompiledSet> &mask = nullptr) {
+                  const std::shared_ptr<CompiledSet> &mask = nullptr,
+                  bool *binaryValues = nullptr) {
     auto &queries = prepared.query();
     if (!set || set->graph != axis.source ||
         (mask && mask->domain != set->domain)) {
@@ -2995,13 +3002,17 @@ struct PreparedCrossValueIndex {
     auto key = std::make_pair(reinterpret_cast<uintptr_t>(set.get()),
                               reinterpret_cast<uintptr_t>(mask.get()));
     auto found = axis.associated.find(key);
-    if (found != axis.associated.end())
-      return found->second;
+    if (found != axis.associated.end()) {
+      if (binaryValues)
+        *binaryValues = found->second.binaryValues;
+      return found->second.root;
+    }
     if (!queries.prepare(*set) || (mask && !queries.prepare(*mask))) {
       status = queries.status;
       return 0;
     }
     Root result = 0;
+    bool binary = true;
     std::vector<uint64_t> fixed((uint64_t{axis.width} + 63) / 64);
     for (const auto &[bval, root] : set->groups) {
       Root remaining = root;
@@ -3012,6 +3023,8 @@ struct PreparedCrossValueIndex {
       }
       if (!remaining)
         continue;
+      binary &= std::all_of(bval.begin(), bval.end(),
+                            [](uint64_t limb) { return limb == 0; });
       Root aval = axis.avalImage->project(remaining);
       Root bplane = axis.bvalImage->project(axis.source->cube(bval, fixed));
       result = relation->unite(result, relation->intersect(aval, bplane));
@@ -3021,7 +3034,9 @@ struct PreparedCrossValueIndex {
         return 0;
       }
     }
-    axis.associated.emplace(key, result);
+    axis.associated.emplace(key, Axis::Associated{result, binary});
+    if (binaryValues)
+      *binaryValues = binary;
     return result;
   }
 
@@ -3125,9 +3140,11 @@ struct PreparedCrossValueIndex {
           const auto *bin = queries.bin(bins->second[ordinal]);
           axis.binOrdinals.emplace(bin->id, ordinal);
           Root binLabel = label(axis, ordinal);
+          bool binary = true;
           Root binValues = associated(
               axis, queries.subject(*bin, prepared.suppressedTransitions),
-              queries.mask(*bin));
+              queries.mask(*bin), &binary);
+          axis.binaryValues &= binary;
           axis.relation = relation->unite(
               axis.relation, relation->intersect(binLabel, binValues));
           auto &authored = axis.templateBins[bin->templateBin];
@@ -3177,8 +3194,10 @@ struct PreparedCrossValueIndex {
             for (uint32_t bit = 0; bit != axis.width; ++bit) {
               value.aval[bit] =
                   relation->makeNode(axis.avalVariables[bit], 0, 1);
+              // Iterator values come from the associated bins. Their cached
+              // plane summary avoids modeling X/Z absent from every bin.
               value.bval[bit] =
-                  axis.fourState
+                  axis.fourState && !axis.binaryValues
                       ? relation->makeNode(axis.bvalVariables[bit], 0, 1)
                       : 0;
               if (value.isSigned && bit + 1 == axis.width)

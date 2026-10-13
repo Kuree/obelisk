@@ -643,6 +643,12 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
     const unaryView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
     assert.ok(unaryView.rows[0][0].includes(operator + '(cp)'), unaryView.rows[0][0]);
   }
+  selection.operand_count = '2';
+  for (const [kind, operator] of [['33', '<<'], ['34', '>>'], ['35', '<<<'], ['36', '>>>']]) {
+    selection.kind = kind;
+    const shiftView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(shiftView.rows[0][0].includes('(cp ' + operator + ' 0x5)'), shiftView.rows[0][0]);
+  }
   selection.kind = '31';
   selection.operand_count = '3';
   data.cross_predicate_operands.push('80');

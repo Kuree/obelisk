@@ -266,6 +266,18 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
         case ir::SVBinaryOperator::Subtract:
           plan.kind = Kind::Subtract;
           break;
+        case ir::SVBinaryOperator::LogicalShiftLeft:
+          plan.kind = Kind::ShiftLeft;
+          break;
+        case ir::SVBinaryOperator::LogicalShiftRight:
+          plan.kind = Kind::ShiftRight;
+          break;
+        case ir::SVBinaryOperator::ArithmeticShiftLeft:
+          plan.kind = Kind::ArithmeticShiftLeft;
+          break;
+        case ir::SVBinaryOperator::ArithmeticShiftRight:
+          plan.kind = Kind::ArithmeticShiftRight;
+          break;
         default:
           return std::nullopt;
         }

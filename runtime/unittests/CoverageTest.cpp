@@ -2765,6 +2765,32 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
+TEST(CoverageDatabaseTest, ShiftPredicateKindsAreValidatedAndRoundTrip) {
+  using namespace obelisk::coverage;
+  for (CrossPredicateKind kind :
+       {CrossPredicateKind::ShiftLeft, CrossPredicateKind::ShiftRight,
+        CrossPredicateKind::ArithmeticShiftLeft,
+        CrossPredicateKind::ArithmeticShiftRight}) {
+    Database schema = makeSymbolicCrossWithSchema();
+    auto &node = schema.crossPredicateNodes.back();
+    node.kind = kind;
+    node.bitWidth = 2;
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    ASSERT_EQ(validate(schema), Status::Ok);
+    std::vector<uint8_t> bytes;
+    ASSERT_EQ(serialize(schema, bytes), Status::Ok);
+    Database parsed;
+    ASSERT_EQ(parse(bytes.data(), bytes.size(), parsed), Status::Ok);
+    EXPECT_EQ(parsed.crossPredicateNodes.back().kind, kind);
+    EXPECT_EQ(parsed.crossPredicateOperands, schema.crossPredicateOperands);
+    node.operandCount = 1;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+    node.operandCount = 2;
+    node.elementWidth = 1;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+  }
+}
+
 TEST(CoverageDatabaseTest, PooledPredicateOperandsValidateEveryRangeAndEdge) {
   using namespace obelisk::coverage;
   for (CrossPredicateKind kind :

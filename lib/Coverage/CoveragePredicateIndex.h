@@ -53,10 +53,14 @@ private:
   }
 
   Value window(const CrossPredicateNode &node, const Value &source,
-               Value ordinal, Root indeterminate) {
+               Value ordinal, Root indeterminate,
+               std::pair<Root, Root> padding = {1, 1}) {
     Value result;
-    result.aval.assign(node.bitWidth, 1);
-    result.bval.assign(node.bitWidth, 1);
+    result.aval.assign(node.bitWidth,
+                       graph.unite(graph.subtract(padding.first, indeterminate),
+                                   indeterminate));
+    result.bval.assign(node.bitWidth,
+                       graph.unite(padding.second, indeterminate));
     const uint64_t prefix = node.bitWidth - node.elementWidth;
     const uint64_t elements =
         (source.aval.size() + 2 * prefix) / node.elementWidth;
@@ -85,9 +89,10 @@ private:
       add.bitWidth = ordinal.aval.size();
       ordinal = evaluate(add, std::move(ordinal), std::move(offset));
     }
-    Root invalid = indeterminate;
+    Root outside = 0;
     for (uint32_t bit = levels; bit != ordinal.aval.size(); ++bit)
-      invalid = graph.unite(invalid, ordinal.aval[bit]);
+      outside = graph.unite(outside, ordinal.aval[bit]);
+    Root invalid = graph.unite(indeterminate, outside);
     if (invalid == 1)
       return result;
 
@@ -123,13 +128,22 @@ private:
       uint64_t first = position + minimum[level];
       uint64_t last = position + maximum[level];
       if (first >= prefix + source.aval.size() || last < prefix) {
-        planes = {1, 1};
+        planes = padding;
         return true;
       }
-      if (first >= prefix && last < prefix + source.aval.size() &&
-          sameEnd[first - prefix] >= last - prefix) {
-        planes = {source.aval[first - prefix], source.bval[first - prefix]};
-        return true;
+      uint64_t column = first % node.elementWidth;
+      uint64_t low = first < prefix ? prefix + column : first;
+      uint64_t high =
+          last >= prefix + source.aval.size()
+              ? prefix + source.aval.size() - node.elementWidth + column
+              : last;
+      if (sameEnd[low - prefix] >= high - prefix) {
+        Planes value{source.aval[low - prefix], source.bval[low - prefix]};
+        if ((first >= prefix && last < prefix + source.aval.size()) ||
+            value == padding) {
+          planes = value;
+          return true;
+        }
       }
       auto found = memo.find(key);
       if (found == memo.end())
@@ -169,7 +183,7 @@ private:
             pending.push_back({high});
           continue;
         }
-        Planes left{1, 1}, right{1, 1};
+        Planes left = padding, right = padding;
         if ((one != 1 && !known(low, left)) ||
             (one != 0 && !known(high, right)) || !graph.reserveDerivedState()) {
           failed = true;
@@ -195,9 +209,13 @@ private:
         failed = true;
         return {};
       }
-      result.aval[bit] =
-          graph.unite(graph.subtract(planes.first, invalid), invalid);
-      result.bval[bit] = graph.unite(planes.second, invalid);
+      auto guarded = [&](Root root, Root fill) {
+        return graph.unite(graph.unite(graph.subtract(root, invalid),
+                                       graph.intersect(fill, outside)),
+                           indeterminate);
+      };
+      result.aval[bit] = guarded(planes.first, padding.first);
+      result.bval[bit] = guarded(planes.second, padding.second);
     }
     return result;
   }
@@ -328,6 +346,84 @@ private:
       result.bval[bit] = graph.unite(mux.bval[bit], invalid);
     }
     return result;
+  }
+
+  Value shift(const CrossPredicateNode &node, const Value &source,
+              Value index) {
+    Value widened;
+    const Value *input = &source;
+    if (source.aval.size() != node.bitWidth) {
+      widened = source;
+      resize(widened, node.bitWidth,
+             node.signedness == CoverageSignedness::Signed);
+      input = &widened;
+    }
+    if (!node.bitWidth || index.aval.size() > UINT32_MAX - 2) {
+      failed = true;
+      return {};
+    }
+    const bool left = node.kind == CrossPredicateKind::ShiftLeft ||
+                      node.kind == CrossPredicateKind::ArithmeticShiftLeft;
+    const bool signFill =
+        node.kind == CrossPredicateKind::ArithmeticShiftRight &&
+        node.signedness == CoverageSignedness::Signed;
+    std::pair<Root, Root> padding{signFill ? input->aval.back() : 0,
+                                  signFill ? input->bval.back() : 0};
+    Root indeterminate = 0;
+    bool fixed = true, oversized = false;
+    uint64_t amount = 0;
+    for (uint32_t bit = 0; bit != index.aval.size(); ++bit) {
+      indeterminate = graph.unite(indeterminate, index.bval[bit]);
+      fixed &= index.aval[bit] <= 1;
+      if (index.aval[bit] == 1) {
+        if (bit >= 32)
+          oversized = true;
+        else
+          amount |= uint64_t{1} << bit;
+      }
+    }
+    Value result;
+    if (indeterminate == 1) {
+      result.aval.assign(node.bitWidth, 1);
+      result.bval = result.aval;
+      return result;
+    }
+    if (fixed && indeterminate == 0) {
+      result.aval.assign(node.bitWidth, padding.first);
+      result.bval.assign(node.bitWidth, padding.second);
+      if (oversized || amount >= node.bitWidth)
+        return result;
+      for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+        uint64_t position = left ? uint64_t{bit} - amount : bit + amount;
+        if (position < node.bitWidth) {
+          result.aval[bit] = input->aval[position];
+          result.bval[bit] = input->bval[position];
+        }
+      }
+      return result;
+    }
+    // Shift counts are unsigned and self-determined. Preserve every bit;
+    // the extra high bits also prevent the projection offset from wrapping.
+    uint32_t precision = std::max<size_t>(index.aval.size(), 64) + 2;
+    resize(index, precision, false);
+    CrossPredicateNode projection;
+    projection.kind = CrossPredicateKind::RangeSelect;
+    projection.bitWidth = node.bitWidth;
+    projection.elementWidth = 1;
+    if (left) {
+      Value origin;
+      origin.aval.assign(precision, 0);
+      origin.bval = origin.aval;
+      uint64_t prefix = node.bitWidth - 1;
+      for (uint32_t bit = 0; bit != 64; ++bit)
+        origin.aval[bit] = (prefix >> bit) & 1;
+      CrossPredicateNode subtract;
+      subtract.kind = CrossPredicateKind::Subtract;
+      subtract.bitWidth = precision;
+      index = evaluate(subtract, std::move(origin), std::move(index));
+      projection.flags = CrossPredicateBaseNamesHigh;
+    }
+    return window(projection, *input, std::move(index), indeterminate, padding);
   }
 
   Value evaluateVariadic(const CrossPredicateNode &node,
@@ -628,6 +724,9 @@ public:
         else if (node->kind == CrossPredicateKind::ElementSelect ||
                  node->kind == CrossPredicateKind::RangeSelect)
           value = select(*node, *operands[0], *operands[1]);
+        else if (node->kind >= CrossPredicateKind::ShiftLeft &&
+                 node->kind <= CrossPredicateKind::ArithmeticShiftRight)
+          value = shift(*node, *operands[0], *operands[1]);
         else
           value = evaluate(*node, *operands[0],
                            operands.size() > 1 ? *operands[1] : Value{});

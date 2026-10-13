@@ -4632,7 +4632,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     if (!selector || !selector->predicateRoot || !node.bitWidth ||
         !enumBetween(node.kind, CrossPredicateKind::Value,
-                     CrossPredicateKind::Concatenate) ||
+                     CrossPredicateKind::ArithmeticShiftRight) ||
         (node.signedness != CoverageSignedness::Signed &&
          node.signedness != CoverageSignedness::Unsigned) ||
         (node.flags & ~(CrossPredicateTwoState | CrossPredicateAscending |

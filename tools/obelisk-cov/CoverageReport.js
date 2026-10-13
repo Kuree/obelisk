@@ -250,7 +250,7 @@ const predicateTextCache = new Map();
 const predicateText = (g, root) => {
   const key = g.type + '|' + g.configuration + '|' + root;
   if (predicateTextCache.has(key)) return predicateTextCache.get(key);
-  const operators = {4:'==',5:'!=',6:'===',7:'!==',8:'<',9:'<=',10:'>',11:'>=',13:'&&',14:'||',16:'&',17:'|',18:'^',19:'~^',20:'+',21:'-'};
+  const operators = {4:'==',5:'!=',6:'===',7:'!==',8:'<',9:'<=',10:'>',11:'>=',13:'&&',14:'||',16:'&',17:'|',18:'^',19:'~^',20:'+',21:'-',33:'<<',34:'>>',35:'<<<',36:'>>>'};
   const unaryOperators = {12:'!',15:'~',24:'-',25:'&',26:'|',27:'^',28:'~&',29:'~|',30:'~^'};
   const pending = [{id:root}], pieces = [];
   let visits = 0, length = 0;
