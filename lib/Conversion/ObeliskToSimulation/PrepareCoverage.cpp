@@ -53,6 +53,8 @@ struct PlannedCrossPredicate {
   uint32_t bitWidth = 0;
   coverage::CoverageSignedness signedness;
   uint32_t flags = 0, targetOrdinal = 0;
+  uint32_t elementWidth = 0;
+  int64_t indexBase = 0;
 };
 
 // Iterator-free subtrees are ordinary typed constructor expressions. The
@@ -112,7 +114,56 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
       plan.targetOrdinal = target->second;
     } else {
       plan.operands = simlowering::getChildren(op);
-      if (isa<ir::SVConversionExpressionOp>(op)) {
+      if (isa<ir::SVElementSelectExpressionOp, ir::SVRangeSelectExpressionOp>(
+              op)) {
+        const bool element = isa<ir::SVElementSelectExpressionOp>(op);
+        if (plan.operands.size() != (element ? 2u : 3u))
+          return std::nullopt;
+        auto base = simlowering::getNormalizedSemanticType(plan.operands[0]);
+        if (failed(base) || !sim::getPackedWidth(*base))
+          return std::nullopt;
+        plan.elementWidth = 1;
+        if (auto array = dyn_cast<sim::PackedArrayType>(*base)) {
+          auto width = sim::getPackedWidth(array.getElementType());
+          if (!width || !*width)
+            return std::nullopt;
+          plan.elementWidth = *width;
+        }
+        auto type = plan.operands[0]->getAttrOfType<TypeAttr>("semantic_type");
+        bool ascending = false;
+        if (type) {
+          if (auto range =
+                  dyn_cast<ir::RangedPackedArrayType>(type.getValue())) {
+            plan.indexBase = range.getRight();
+            ascending = range.getLeft() < range.getRight();
+          } else if (auto integer =
+                         dyn_cast<ir::IntegralType>(type.getValue())) {
+            plan.indexBase = integer.getRight();
+            ascending = integer.getLeft() < integer.getRight();
+          }
+        }
+        if (ascending)
+          plan.flags |= coverage::CrossPredicateAscending;
+        if (element) {
+          plan.kind = Kind::ElementSelect;
+        } else {
+          auto selection =
+              cast<ir::SVRangeSelectExpressionOp>(op).getSelectionKind();
+          if (selection == ir::SVRangeSelectionKind::Simple)
+            plan.operands[1] = plan.operands[2];
+          else if ((ascending &&
+                    selection == ir::SVRangeSelectionKind::IndexedUp) ||
+                   (!ascending &&
+                    selection == ir::SVRangeSelectionKind::IndexedDown))
+            plan.flags |= coverage::CrossPredicateBaseNamesHigh;
+          plan.operands.resize(2);
+          // The captured constructor index is constant in the Boolean graph.
+          // Cross-item-dependent windows require a separate shifting program.
+          if (dependent.lookup(plan.operands[1]))
+            return std::nullopt;
+          plan.kind = Kind::RangeSelect;
+        }
+      } else if (isa<ir::SVConversionExpressionOp>(op)) {
         if (plan.operands.size() != 1)
           return std::nullopt;
         plan.kind = Kind::Cast;
@@ -3473,6 +3524,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                       node.signedness = entry.signedness;
                       node.ordinal = ordinal++;
                       node.flags = entry.flags;
+                      node.elementWidth = entry.elementWidth;
+                      node.indexBase = entry.indexBase;
                       if (!entry.operands.empty())
                         node.left = ids.lookup(entry.operands[0]);
                       if (entry.operands.size() > 1)

@@ -244,7 +244,8 @@ private:
          << " width=" << predicate.bitWidth
          << " signedness=" << raw(predicate.signedness)
          << " ordinal=" << predicate.ordinal << " flags=" << predicate.flags
-         << '\n';
+         << " element_width=" << predicate.elementWidth
+         << " index_base=" << predicate.indexBase << '\n';
     for (const coverage::CrossSelectorOperand &operand :
          db.crossSelectorOperands)
       os << "cross_selector_operand node=" << operand.node

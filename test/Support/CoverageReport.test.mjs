@@ -620,6 +620,21 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
   const wideSetView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.ok(wideSetView.rows[0][0].includes(
     'intersect {<low,0x5>} matches 0x10000000000000000'), wideSetView.rows[0][0]);
+  const selection = data.cross_predicate_nodes[2];
+  selection.kind = '22';
+  selection.bit_width = '1';
+  selection.element_width = '1';
+  selection.index_base = '64';
+  selection.flags = '2';
+  const selectView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(selectView.rows[0][0].includes('cp[0x5]'), selectView.rows[0][0]);
+  selection.kind = '23';
+  selection.bit_width = '4';
+  for (const [flags, operator] of [['0', '+:'], ['2', '-:'], ['4', '-:'], ['6', '+:']]) {
+    selection.flags = flags;
+    const rangeView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(rangeView.rows[0][0].includes('cp[0x5 ' + operator + ' 4]'), rangeView.rows[0][0]);
+  }
   data.cross_predicate_nodes[2].left = '82';
   const bounded = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.ok(bounded.rows[0][0].includes('...'));

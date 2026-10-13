@@ -115,6 +115,8 @@ def CrossPredicateBitXor : CoverageCrossPredicateKind<"BitXor", 18>;
 def CrossPredicateBitXnor : CoverageCrossPredicateKind<"BitXnor", 19>;
 def CrossPredicateAdd : CoverageCrossPredicateKind<"Add", 20>;
 def CrossPredicateSubtract : CoverageCrossPredicateKind<"Subtract", 21>;
+def CrossPredicateElementSelect : CoverageCrossPredicateKind<"ElementSelect", 22>;
+def CrossPredicateRangeSelect : CoverageCrossPredicateKind<"RangeSelect", 23>;
 
 class CoverageExpressionOwnerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -363,7 +365,7 @@ def FunctionalClassTypes : CoverageSection<"FunctionalClassTypes", 60, 16, 0, 1>
 def FunctionalVirtualInterfaceTypes : CoverageSection<"FunctionalVirtualInterfaceTypes", 61, 16, 0, 1>;
 def FunctionalVirtualInterfaceScopes : CoverageSection<"FunctionalVirtualInterfaceScopes", 62, 16, 0, 1>;
 
-def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 72, 0, 1>;
+def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 80, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -427,7 +429,8 @@ def DomainCrossPredicateKind : CoverageFieldDomain<
      CrossPredicateBitXor,
      CrossPredicateBitXnor,
      CrossPredicateAdd,
-     CrossPredicateSubtract]>;
+     CrossPredicateSubtract, CrossPredicateElementSelect,
+     CrossPredicateRangeSelect]>;
 def DomainFunctionalItemKind : CoverageFieldDomain<
     "FunctionalItemKind", "Enum", [FunctionalCoverpoint, FunctionalCross]>;
 def DomainFunctionalBinKind : CoverageFieldDomain<
@@ -2213,10 +2216,9 @@ def CPNSignedness : CoverageField<"Signedness", "signedness", 56, CovU32> {
 }
 def CPNOrdinal : CoverageField<"Ordinal", "ordinal", 60, CovU32>;
 def CPNFlags : CoverageField<"Flags", "flags", 64, CovU32> {
-  let semantic = "Flags"; let validMask = 1;
+  let semantic = "Flags"; let validMask = 7;
 }
-def CPNReserved : CoverageField<"Reserved", "reserved", 68, CovU32> {
-  let semantic = "ReservedZero";
-}
+def CPNElementWidth : CoverageField<"ElementWidth", "element_width", 68, CovU32>;
+def CPNIndexBase : CoverageField<"IndexBase", "index_base", 72, CovS64>;
 def CrossPredicateNodeRecord : CoverageRecord<"CrossPredicateNodeRecord", CrossPredicateNodes,
-    [CPNId, CPNSelector, CPNLeft, CPNRight, CPNExpression, CPNTarget, CPNKind, CPNBitWidth, CPNSignedness, CPNOrdinal, CPNFlags, CPNReserved]>;
+    [CPNId, CPNSelector, CPNLeft, CPNRight, CPNExpression, CPNTarget, CPNKind, CPNBitWidth, CPNSignedness, CPNOrdinal, CPNFlags, CPNElementWidth, CPNIndexBase]>;

@@ -6,8 +6,9 @@
 
 // IEEE 1800-2023 19.6.1.2: the parent sees every associated value of each
 // bin selected by its child. A symbolic child's witness is not a value filter
-// for the queue-based parent's unsupported bit-select expression.
+// for the queue-based parent's function call.
 module top;
+  function automatic bit odd(bit [1:0] value); return value[0]; endfunction
   bit [1:0] a;
   bit b;
   covergroup cg;
@@ -15,7 +16,7 @@ module top;
     ca: coverpoint a { bins all = {[0:3]}; }
     cb: coverpoint b { bins zero = {0}; }
     product: cross ca, cb {
-      bins selected = (product with (ca == 0)) with (ca[0] == 1);
+      bins selected = (product with (ca == 0)) with (odd(ca));
     }
   endgroup
   cg cov;

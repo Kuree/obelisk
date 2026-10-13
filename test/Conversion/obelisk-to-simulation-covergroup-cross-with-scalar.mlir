@@ -54,11 +54,14 @@ endmodule
 module mixed;
   bit [2:0] a;
   bit b;
+  function automatic logic low_bit(logic [2:0] value);
+    return value[0];
+  endfunction
   covergroup cg(bit enabled);
     ca: coverpoint a { bins all = {[0:7]}; }
     cb: coverpoint b { bins zero = {0}; }
     product: cross ca, cb {
-      bins selected = (product with (enabled)) with (ca == 0);
+      bins selected = (product with (enabled)) with (low_bit(ca) == 0);
     }
   endgroup
   cg cov = new(1);

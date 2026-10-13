@@ -64,13 +64,14 @@ endmodule
 
 //--- mixed.sv
 module mixed;
+  function automatic bit odd(bit [1:0] value); return value[0]; endfunction
   bit [1:0] a;
   bit b;
   covergroup cg;
     ca: coverpoint a { bins all = {[0:3]}; }
     cb: coverpoint b { bins zero = {0}; }
     product: cross ca, cb {
-      bins selected = (product with (ca == 0)) with (ca[0] == 1);
+      bins selected = (product with (ca == 0)) with (odd(ca));
     }
   endgroup
   cg cov = new;

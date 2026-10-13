@@ -2637,6 +2637,8 @@ void jsonReport(
           out.attribute("signedness", static_cast<uint32_t>(node.signedness));
           out.attribute("ordinal", node.ordinal);
           out.attribute("flags", node.flags);
+          out.attribute("element_width", node.elementWidth);
+          out.attribute("index_base", node.indexBase);
         });
     });
     out.attributeArray("cross_selector_operands", [&] {

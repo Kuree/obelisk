@@ -51,6 +51,136 @@ private:
           graph.unite(result, graph.unite(left.bval[bit], right.bval[bit]));
     return result;
   }
+
+  Value select(const CrossPredicateNode &node, const Value &source,
+               Value index) {
+    Value result;
+    result.aval.assign(node.bitWidth, 1);
+    result.bval.assign(node.bitWidth, 1);
+    if (!node.elementWidth || source.aval.empty() ||
+        source.aval.size() % node.elementWidth ||
+        node.bitWidth % node.elementWidth ||
+        (node.kind == CrossPredicateKind::ElementSelect &&
+         node.bitWidth != node.elementWidth) ||
+        index.aval.size() > UINT32_MAX - 2) {
+      failed = true;
+      return {};
+    }
+    // Normalize the self-determined index without truncating wide values or
+    // wrapping negative indices back into the source. The extra sign bits
+    // cover both an unsigned index and a signed 64-bit declared bound.
+    uint32_t precision = std::max<size_t>(index.aval.size(), 64) + 2;
+    resize(index, precision, index.isSigned);
+    Value boundary;
+    boundary.aval.resize(precision);
+    boundary.bval.assign(precision, 0);
+    for (uint32_t bit = 0; bit != precision; ++bit)
+      boundary.aval[bit] =
+          bit < 64 ? (uint64_t(node.indexBase) >> bit) & 1 : node.indexBase < 0;
+    CrossPredicateNode subtract;
+    subtract.kind = CrossPredicateKind::Subtract;
+    subtract.bitWidth = precision;
+    Value ordinal =
+        node.flags & CrossPredicateAscending
+            ? evaluate(subtract, std::move(boundary), std::move(index))
+            : evaluate(subtract, std::move(index), std::move(boundary));
+    Root indeterminate = 0;
+    for (Root bit : ordinal.bval)
+      indeterminate = graph.unite(indeterminate, bit);
+    if (indeterminate == 1)
+      return result;
+
+    bool fixed = indeterminate == 0;
+    for (Root bit : ordinal.aval)
+      fixed &= bit <= 1;
+    if (node.kind == CrossPredicateKind::RangeSelect && !fixed) {
+      failed = true;
+      return {};
+    }
+    if (fixed) {
+      // Constant indices copy only the selected window. Decode just the
+      // magnitude that can overlap the physical source; an arbitrarily wide
+      // out-of-range index is all X, without a source copy or large shifts.
+      const bool negative = ordinal.aval.back();
+      bool carry = negative, tooWide = false;
+      uint64_t magnitude = 0;
+      for (uint32_t bit = 0; bit != precision; ++bit) {
+        bool input = bool(ordinal.aval[bit]) ^ negative;
+        bool digit = input ^ carry;
+        carry &= input;
+        if (digit) {
+          if (bit >= 64)
+            tooWide = true;
+          else
+            magnitude |= uint64_t{1} << bit;
+        }
+      }
+      const uint64_t bound =
+          negative ? uint64_t{node.bitWidth} / node.elementWidth
+                   : (source.aval.size() + uint64_t{node.bitWidth}) /
+                             node.elementWidth +
+                         1;
+      if (tooWide || magnitude > bound)
+        return result;
+      int64_t offset = magnitude * node.elementWidth;
+      if (negative)
+        offset = -offset;
+      if (node.flags & CrossPredicateBaseNamesHigh)
+        offset -= node.bitWidth - node.elementWidth;
+      for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+        // Unsigned addition also handles a partially negative window safely.
+        uint64_t position = uint64_t(offset) + bit;
+        if (position < source.aval.size()) {
+          result.aval[bit] = source.aval[position];
+          result.bval[bit] = source.bval[position];
+        }
+      }
+      return result;
+    }
+
+    uint32_t elements = source.aval.size() / node.elementWidth;
+    uint32_t levels = 0;
+    for (uint32_t count = elements; count > 1; count = count / 2 + count % 2)
+      ++levels;
+    Root invalid = indeterminate;
+    for (uint32_t bit = levels; bit != precision; ++bit)
+      invalid = graph.unite(invalid, ordinal.aval[bit]);
+    if (invalid == 1)
+      return result;
+
+    // Adjacent elements are paired at every level. Their total physical size
+    // shrinks geometrically, so selecting any packed element takes O(source
+    // bits + index bits), apart from the memoized Boolean graph operations.
+    Value mux = source;
+    for (uint32_t level = 0; elements > 1; ++level) {
+      Root one = ordinal.aval[level], zero = notRoot(one);
+      uint32_t pairs = elements / 2 + elements % 2;
+      for (uint32_t pair = 0; pair != pairs; ++pair)
+        for (uint32_t bit = 0; bit != node.elementWidth; ++bit) {
+          uint32_t output = pair * node.elementWidth + bit;
+          uint32_t low = pair * 2 * node.elementWidth + bit;
+          uint32_t high = low + node.elementWidth;
+          mux.aval[output] = graph.unite(
+              graph.intersect(zero, mux.aval[low]),
+              graph.intersect(one,
+                              pair * 2 + 1 < elements ? mux.aval[high] : 1));
+          mux.bval[output] = graph.unite(
+              graph.intersect(zero, mux.bval[low]),
+              graph.intersect(one,
+                              pair * 2 + 1 < elements ? mux.bval[high] : 1));
+        }
+      elements = pairs;
+      mux.aval.resize(uint64_t{elements} * node.elementWidth);
+      mux.bval.resize(uint64_t{elements} * node.elementWidth);
+    }
+    for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+      result.aval[bit] =
+          graph.unite(graph.subtract(mux.aval[bit], invalid), invalid);
+      result.bval[bit] = graph.unite(mux.bval[bit], invalid);
+    }
+    return result;
+  }
+
   Value evaluate(const CrossPredicateNode &node, Value left, Value right) {
     using Kind = CrossPredicateKind;
     if (node.kind == Kind::Cast) {
@@ -205,7 +335,11 @@ public:
           failed = true;
           return 0;
         }
-        value = evaluate(*node, a->second, node->right ? b->second : Value{});
+        if (node->kind == CrossPredicateKind::ElementSelect ||
+            node->kind == CrossPredicateKind::RangeSelect)
+          value = select(*node, a->second, b->second);
+        else
+          value = evaluate(*node, a->second, node->right ? b->second : Value{});
       }
       if (value.aval.size() != node->bitWidth ||
           value.bval.size() != node->bitWidth || exhausted()) {

@@ -2763,6 +2763,40 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
+TEST(CoverageDatabaseTest, SymbolicSelectLayoutsAreValidatedAndRoundTrip) {
+  using namespace obelisk::coverage;
+  Database schema = makeSymbolicCrossWithSchema();
+  auto &select = schema.crossPredicateNodes.back();
+  select.kind = CrossPredicateKind::ElementSelect;
+  select.elementWidth = 1;
+  select.indexBase = -1;
+  select.flags = CrossPredicateAscending;
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  ASSERT_EQ(validate(schema), Status::Ok);
+  std::vector<uint8_t> bytes;
+  ASSERT_EQ(serialize(schema, bytes), Status::Ok);
+  Database parsed;
+  ASSERT_EQ(parse(bytes.data(), bytes.size(), parsed), Status::Ok);
+  EXPECT_EQ(parsed.crossPredicateNodes.back().elementWidth, 1u);
+  EXPECT_EQ(parsed.crossPredicateNodes.back().indexBase, -1);
+  auto reject = [&](auto mutate) {
+    Database invalid = schema;
+    mutate(invalid.crossPredicateNodes.back());
+    EXPECT_EQ(validate(invalid), Status::InvalidReference);
+  };
+  reject([](auto &node) { node.elementWidth = 0; });
+  reject([](auto &node) { node.elementWidth = 3; });
+  reject([](auto &node) { node.bitWidth = 2; });
+  reject([](auto &node) { node.flags |= CrossPredicateBaseNamesHigh; });
+  reject([](auto &node) { node.kind = CrossPredicateKind::Equal; });
+  schema.crossPredicateNodes.back().kind = CrossPredicateKind::RangeSelect;
+  schema.crossPredicateNodes.back().bitWidth = 3;
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  EXPECT_EQ(validate(schema), Status::Ok);
+  schema.crossPredicateNodes.back().right = 200;
+  EXPECT_EQ(validate(schema), Status::InvalidReference);
+}
+
 TEST_F(CoverageRuntimeDesignTest, SymbolicPredicateSnapshotsPreserveXAndZ) {
   using namespace obelisk::coverage;
   Database schema = makeSymbolicCrossWithSchema();

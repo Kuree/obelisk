@@ -267,6 +267,14 @@ const predicateText = (g, root) => {
     else if (kind === 3 || kind === 12 || kind === 15) {
       append(kind === 3 ? n.bit_width + "'(" : kind === 12 ? '!(' : '~(');
       pending.push({text:')'}, {id:n.left});
+    } else if (kind === 22 || kind === 23) {
+      pending.push({text:']'});
+      if (kind === 23) {
+        const plus = Boolean(num(n.flags) & 2) === Boolean(num(n.flags) & 4);
+        pending.push({text:' ' + (plus ? '+:' : '-:') + ' ' +
+                          BigInt(n.bit_width) / BigInt(n.element_width)});
+      }
+      pending.push({id:n.right}, {text:'['}, {id:n.left});
     } else {
       append('(');
       pending.push({text:')'}, {id:n.right}, {text:' ' + (operators[kind] || '?') + ' '}, {id:n.left});

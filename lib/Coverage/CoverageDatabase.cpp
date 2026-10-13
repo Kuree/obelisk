@@ -1622,6 +1622,8 @@ Status encodeSections(const Database &db, const StringTable &strings,
           p, static_cast<uint32_t>(v.signedness));
       CrossPredicateNodeRecord::setOrdinal(p, v.ordinal);
       CrossPredicateNodeRecord::setFlags(p, v.flags);
+      CrossPredicateNodeRecord::setElementWidth(p, v.elementWidth);
+      CrossPredicateNodeRecord::setIndexBase(p, v.indexBase);
     });
   }
   finish();
@@ -1971,6 +1973,8 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, static_cast<uint32_t>(v.signedness));
     hashScalar(h, v.ordinal);
     hashScalar(h, v.flags);
+    hashScalar(h, v.elementWidth);
+    hashScalar(h, v.indexBase);
   }
   for (const auto &v : db.crossSelectorOperands) {
     hashScalar(h, uint32_t(25));
@@ -4573,6 +4577,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                       node.kind == CrossPredicateKind::Value;
     const bool boolean = (node.kind >= CrossPredicateKind::Equal &&
                           node.kind <= CrossPredicateKind::LogicalOr);
+    const bool select = node.kind == CrossPredicateKind::ElementSelect ||
+                        node.kind == CrossPredicateKind::RangeSelect;
     const bool arity = leaf    ? !node.left && !node.right
                        : unary ? node.left && !node.right
                                : node.left && node.right;
@@ -4589,12 +4595,24 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     if (!selector || !selector->predicateRoot || !node.bitWidth ||
         !enumBetween(node.kind, CrossPredicateKind::Value,
-                     CrossPredicateKind::Subtract) ||
+                     CrossPredicateKind::RangeSelect) ||
         (node.signedness != CoverageSignedness::Signed &&
          node.signedness != CoverageSignedness::Unsigned) ||
-        (node.flags & ~CrossPredicateTwoState) || !arity ||
-        (node.left && !left) || (node.right && !right) || !validOperand(left) ||
-        !validOperand(right) ||
+        (node.flags & ~(CrossPredicateTwoState | CrossPredicateAscending |
+                        CrossPredicateBaseNamesHigh)) ||
+        (!select && (node.elementWidth || node.indexBase ||
+                     (node.flags & ~CrossPredicateTwoState))) ||
+        (node.kind != CrossPredicateKind::RangeSelect &&
+         (node.flags & CrossPredicateBaseNamesHigh)) ||
+        !arity || (node.left && !left) || (node.right && !right) ||
+        !validOperand(left) || !validOperand(right) ||
+        (select &&
+         (!node.elementWidth || !left || left->bitWidth % node.elementWidth ||
+          node.bitWidth % node.elementWidth ||
+          (node.kind == CrossPredicateKind::ElementSelect &&
+           node.bitWidth != node.elementWidth))) ||
+        (node.kind == CrossPredicateKind::RangeSelect &&
+         (!right || right->kind != CrossPredicateKind::Value)) ||
         node.ordinal != predicateOrdinals[node.selector]++ ||
         (boolean && node.bitWidth != 1) ||
         ((node.kind == CrossPredicateKind::Target) != (node.target != 0)) ||
@@ -8141,7 +8159,9 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                       static_cast<CoverageSignedness>(
                           CrossPredicateNodeRecord::getSignedness(p)),
                       CrossPredicateNodeRecord::getOrdinal(p),
-                      CrossPredicateNodeRecord::getFlags(p)});
+                      CrossPredicateNodeRecord::getFlags(p),
+                      CrossPredicateNodeRecord::getElementWidth(p),
+                      CrossPredicateNodeRecord::getIndexBase(p)});
                  return Status::Ok;
                });
     if (st != Status::Ok)

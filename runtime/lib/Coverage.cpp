@@ -2380,6 +2380,7 @@ struct FunctionalCoverageSetQueryIndex {
       predicatePrograms;
   IndexMap<std::pair<uint64_t, uint32_t>, const Set *> predicateValues;
   IndexMap<uint64_t, FunctionalMagnitude> wideMatches;
+  IndexSet<uint64_t> indexTargets;
   FunctionalMagnitude
   matchCount(const obelisk::coverage::ResolvedCrossSelectorBinding &binding) {
     if (!(binding.flags & obelisk::coverage::ResolvedCrossSelectorWideMatches))
@@ -2418,8 +2419,34 @@ struct FunctionalCoverageSetQueryIndex {
     indexRows(schema.resolvedFunctionalValueSets, sets);
     indexRows(schema.resolvedFunctionalItems, items);
     indexRows(schema.resolvedFunctionalTupleSets, tupleSets);
-    for (const auto &node : schema.crossPredicateNodes)
+    IndexMap<uint64_t, const CrossPredicateNode *> predicateNodes;
+    std::vector<uint64_t> pendingIndices;
+    for (const auto &node : schema.crossPredicateNodes) {
       predicatePrograms[node.selector].push_back(&node);
+      predicateNodes.emplace(node.id, &node);
+      if (node.kind == CrossPredicateKind::ElementSelect)
+        pendingIndices.push_back(node.right);
+    }
+    // Index operands precede data operands in the variable order. Otherwise
+    // an ordinary variable bit-select can require an exponential Boolean
+    // graph. Visit each index-subtree node once, including shared operands.
+    IndexSet<uint64_t> visitedIndices;
+    while (!pendingIndices.empty()) {
+      uint64_t id = pendingIndices.back();
+      pendingIndices.pop_back();
+      if (!visitedIndices.insert(id).second)
+        continue;
+      auto found = predicateNodes.find(id);
+      if (found == predicateNodes.end())
+        continue;
+      const auto &node = *found->second;
+      if (node.kind == CrossPredicateKind::Target)
+        indexTargets.insert(node.target);
+      if (node.left)
+        pendingIndices.push_back(node.left);
+      if (node.right)
+        pendingIndices.push_back(node.right);
+    }
     for (const auto &[id, ordinal] : sets) {
       const auto &set = schema.resolvedFunctionalValueSets[ordinal];
       if (set.role == ResolvedFunctionalValueSetRole::PredicateValue)
@@ -2897,7 +2924,7 @@ struct PreparedCrossValueIndex {
   struct Axis {
     uint64_t item = 0;
     uint32_t width = 0, binFirst = 0, binWidth = 0;
-    bool fourState = false;
+    bool fourState = false, indexFirst = false;
     std::vector<uint32_t> avalVariables, bvalVariables, valueAvalVariables,
         valueBvalVariables;
     obelisk::coverage::CoverageSignedness signedness;
@@ -3013,6 +3040,7 @@ struct PreparedCrossValueIndex {
       axis.width = target.tupleBitWidth;
       axis.signedness = target.tupleSignedness;
       axis.fourState = target.tupleFlags & CrossTargetDomainFourState;
+      axis.indexFirst = queries.indexTargets.count(target.target);
       auto bins = prepared.binsByItem.find(axis.item);
       uint64_t last = bins == prepared.binsByItem.end() || bins->second.empty()
                           ? 0
@@ -3054,9 +3082,11 @@ struct PreparedCrossValueIndex {
       for (uint32_t bit = 0; bit != axis.width; ++bit)
         physicalBits.emplace_back(&axis - axes.data(), bit);
     }
-    detail::sortByKey(
-        physicalBits.begin(), physicalBits.end(),
-        [](const auto &bit) { return std::make_pair(~bit.second, bit.first); });
+    detail::sortByKey(physicalBits.begin(), physicalBits.end(),
+                      [&](const auto &bit) {
+                        return std::make_tuple(!axes[bit.first].indexFirst,
+                                               ~bit.second, bit.first);
+                      });
     uint32_t relationVariable = labelVariable, valueVariable = 0;
     for (const auto &physical : physicalBits)
       for (uint32_t plane = 0; plane != 2; ++plane) {

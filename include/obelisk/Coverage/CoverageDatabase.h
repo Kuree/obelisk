@@ -476,8 +476,15 @@ struct CrossPredicateNode {
   uint32_t bitWidth = 0;
   CoverageSignedness signedness = CoverageSignedness::Unsigned;
   uint32_t ordinal = 0, flags = 0;
+  /// Selects address outer packed elements, relative to the declared right
+  /// bound. RangeSelect has a captured constructor index; its result can be
+  /// wider than the source and includes X padding for missing bits.
+  uint32_t elementWidth = 0;
+  int64_t indexBase = 0;
 };
 inline constexpr uint32_t CrossPredicateTwoState = uint32_t{1} << 0;
+inline constexpr uint32_t CrossPredicateAscending = uint32_t{1} << 1;
+inline constexpr uint32_t CrossPredicateBaseNamesHigh = uint32_t{1} << 2;
 
 struct CrossSelectorOperand {
   uint64_t node = 0;
