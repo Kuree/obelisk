@@ -189,7 +189,6 @@ module {
   }
 }
 
-
 // IEEE 1800-2023 18.6.2 invokes hooks on every enabled random object.
 // Descendant hooks are guarded by every ancestor's rand_mode and null state;
 // pre hooks run before sampling and post hooks run only on the success path.

@@ -1,12 +1,8 @@
 // RUN: obelisk -O3 --vpi=off %s -o %t.native
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.native > %t.native.out
-// RUN: %t.reference > %t.reference.out
-// RUN: %t.bytecode > %t.bytecode.out
-// RUN: diff -u %t.reference.out %t.native.out
-// RUN: diff -u %t.reference.out %t.bytecode.out
 // RUN: FileCheck %s < %t.native.out
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 
 // LRM 9.4.2: all four-state value transitions wake change observers; only
 // Table 9-2 transitions on the LSB wake edge observers. Repeated stores do

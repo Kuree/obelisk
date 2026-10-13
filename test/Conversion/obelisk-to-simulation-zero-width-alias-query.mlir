@@ -1,6 +1,7 @@
 // RUN: %split-file %s %t
 // RUN: obelisk-opt %t/zero.mlir --obelisk-sim-prepare 2>&1 | FileCheck %s --implicit-check-not='error:'
 // RUN: obelisk-opt %t/stream.mlir --obelisk-sim-prepare 2>&1 | FileCheck %s --implicit-check-not='error:'
+
 // Speculative storage-alias queries must reject non-addressable expressions
 // before attempting to normalize their void-typed children.
 // CHECK: simulation.design
@@ -60,7 +61,6 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
     }
   }
 }
-
 
 //--- stream.mlir
 module attributes {obelisk.coverage.language_version = 2023 : i32} {

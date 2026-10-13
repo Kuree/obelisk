@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --implicit-check-not=schedule.eval.tier2_convergence
-// RUN: sed 's/module attributes {/module attributes {obelisk.native.closed_executable,/' %s > %t.closed.mlir
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{obelisk.native.closed_executable}"' > %t.closed.mlir
 // RUN: obelisk-opt %t.closed.mlir --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.lowered.mlir
 // RUN: FileCheck %s --check-prefix=REUSE --implicit-check-not='llvm.func @__obelisk_direct_fragment_1_1.__obelisk_execute.two_state(' < %t.lowered.mlir
 // RUN: FileCheck %s --check-prefix=RETAIN < %t.lowered.mlir

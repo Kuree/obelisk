@@ -1,25 +1,10 @@
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %target_clang -fPIC \
-// RUN:   -shared -nostdlib %S/Inputs/vpi_net_probe.c \
-// RUN:   -I%resource_dir/include \
-// RUN:   -Wl,-soname,libobelisk_vpi_net_probe.so \
-// RUN:   -o %t.dir/lib/libobelisk_vpi_net_probe.so
-// RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=auto %s \
-// RUN:   lib/libobelisk_vpi_net_probe.so -o bin/read-auto
-// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=auto %s \
-// RUN:   lib/libobelisk_vpi_net_probe.so -o bin/full-auto
-// RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=generic %s \
-// RUN:   lib/libobelisk_vpi_net_probe.so -o bin/read-generic
-// RUN: cd %t.dir && obelisk --execution-tier=bytecode --vpi=read %s \
-// RUN:   lib/libobelisk_vpi_net_probe.so -o bin/read-bytecode
-// RUN: %t.dir/bin/read-generic > %t.oracle.out
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_net_probe.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_net_probe.so -o %t.dir/lib/libobelisk_vpi_net_probe.so
+// RUN: cd %t.dir && obelisk -O2 --vpi=read --native-scheduler=auto %s lib/libobelisk_vpi_net_probe.so -o bin/read-auto
+// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=auto %s lib/libobelisk_vpi_net_probe.so -o bin/full-auto
 // RUN: %t.dir/bin/read-auto > %t.read-auto.out
-// RUN: %t.dir/bin/full-auto > %t.full-auto.out
-// RUN: %t.dir/bin/read-bytecode > %t.bytecode.out
-// RUN: diff -u %t.oracle.out %t.read-auto.out
-// RUN: diff -u %t.oracle.out %t.full-auto.out
-// RUN: diff -u %t.oracle.out %t.bytecode.out
-// RUN: FileCheck %s < %t.oracle.out
+// RUN: FileCheck %s < %t.read-auto.out
+// RUN: %t.dir/bin/full-auto | diff -u %t.read-auto.out -
 
 // The backdoor reads a net and a variable inside a submodule while the design
 // is running. Nets have no directly addressable handle once observability is

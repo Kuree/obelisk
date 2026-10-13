@@ -88,8 +88,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[IDENTITY:.*]] = simulation.logic.constant 0 : i4, 0 : i4 : !simulation.logic<4>
 // CHECK: %[[E0:.*]] = simulation.packed.flatten %{{.*}} -> !simulation.logic<4>

@@ -1,12 +1,8 @@
-// RUN: obelisk -O3 --vpi=off --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
-// RUN: %t.eval > %t.eval.out
-// RUN: %t.generic > %t.generic.out
-// RUN: %t.bytecode > %t.bytecode.out
-// RUN: diff -u %t.generic.out %t.eval.out
-// RUN: diff -u %t.bytecode.out %t.eval.out
-// RUN: FileCheck %s < %t.eval.out
+// RUN: obelisk --vpi=off -O3 --native-scheduler=eval %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s < %t.native.out
+// RUN: obelisk --vpi=off -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 
 // Private arrays initialized by a bounded loop can be local to each evaluator
 // invocation. Partial writes must retain state between invocations (LRM 6.21).

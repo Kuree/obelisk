@@ -1,0 +1,5 @@
+// The wasm32 target keeps the generic VPI guard of native-generic-vpi-guard.sv.
+// RUN: %split-file %S/native-generic-vpi-guard.sv %t
+// RUN: obelisk --target=wasm32 -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/wasm.sv -o %t/wasm.ll
+// RUN: FileCheck %S/native-generic-vpi-guard.sv --check-prefix=GUARD < %t/wasm.ll
+// RUN: FileCheck %S/native-generic-vpi-guard.sv --check-prefix=WASM < %t/wasm.ll

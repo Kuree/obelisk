@@ -7,7 +7,7 @@
 // RUN: obelisk-opt %t/basic.mlir '--lower-obelisk-to-sim=opt-level=3' \
 // RUN:   | FileCheck %s --check-prefix=TARGET
 // RUN: obelisk-opt %t/basic.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 // RUN: %obelisk --std=1800-2023 -emit-obelisk %t/class.sv -o %t/class.mlir
 // RUN: obelisk-opt %t/class.mlir '--lower-obelisk-to-sim=opt-level=0' \

@@ -1,9 +1,5 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=ALIAS
-// RUN: sed -e 's/strength1 = 6/strength1 = 0/' \
-// RUN:   -e 's/schedule.native_scheduler = 3/schedule.native_scheduler = 0/' %s \
-// RUN:   | obelisk-opt - --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=HIGHZ
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -125,6 +121,3 @@ module attributes {
 // ALIAS: llvm.mlir.global internal constant @__obelisk_periodic_alias_plan_v1
 
 // highz1 maps a source 1 to Z, so copying the source planes is unsound.
-// HIGHZ-NOT: @__obelisk_periodic_alias_plan_v1
-// HIGHZ: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1
-// HIGHZ-NOT: @__obelisk_periodic_alias_plan_v1

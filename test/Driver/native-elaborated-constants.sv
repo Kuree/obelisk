@@ -1,15 +1,8 @@
-// RUN: obelisk -O0 %s -o %t.o0.native
-// RUN: %t.o0.native > %t.o0.native.out
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
-// RUN: %t.o0.bytecode > %t.o0.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o0.bytecode.out
-// RUN: obelisk -O3 %s -o %t.o3.native
-// RUN: %t.o3.native > %t.o3.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
-// RUN: %t.o3.bytecode > %t.o3.bytecode.out
-// RUN: diff -u %t.o3.native.out %t.o3.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o3.native.out
-// RUN: FileCheck %s --implicit-check-not=unreachable-param-wait < %t.o3.native.out
+// RUN: obelisk -O3 %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s --implicit-check-not=unreachable-param-wait < %t.native.out
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 // RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=SIM
 
 package constant_pkg;

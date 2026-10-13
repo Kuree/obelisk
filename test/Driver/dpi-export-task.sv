@@ -1,16 +1,9 @@
-// RUN: %target_clang -fPIC -c \
-// RUN:   %S/Inputs/dpi_export_task_impl.c \
-// RUN:   -I%resource_dir/include -o %t.o
+// RUN: %target_clang -fPIC -c %S/Inputs/dpi_export_task_impl.c -I%resource_dir/include -o %t.o
 // RUN: obelisk %s %t.o -o %t.native
 // RUN: %t.native | FileCheck %s --check-prefix=OUTPUT
 // RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s --check-prefix=OUTPUT
-// RUN: obelisk --emit-dpi-header %s -o %t.h
-// RUN: FileCheck %s --check-prefix=HEADER < %t.h
-// RUN: %llvm_dist/bin/clang -x c -fsyntax-only -include %t.h \
-// RUN:   -I%resource_dir/include /dev/null
-// RUN: not obelisk --target=wasm32 -O0 -emit-llvm %s -o %t.wasm.ll 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=WASM
+// RUN: not obelisk --target=wasm32 -O0 -emit-llvm %s -o %t.wasm.ll 2>&1 | FileCheck %s --check-prefix=WASM
 
 module dpi_export_task;
   import "DPI-C" context task drive(output int value);

@@ -4,15 +4,11 @@
 // two planes one limb apart, so the tiers must marshal the planes separately.
 // Copying one contiguous run instead turns x and z into 0 for every logic
 // value narrower than a limb.
-// RUN: obelisk --native-scheduler=generic %s -o %t.native
-// RUN: obelisk --native-scheduler=aot %s -o %t.aot
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
+// RUN: obelisk -O3 --native-scheduler=aot %s -o %t.native
 // RUN: %t.native > %t.native.out
-// RUN: %t.aot > %t.aot.out
-// RUN: %t.bytecode > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: diff -u %t.native.out %t.aot.out
 // RUN: FileCheck %s < %t.native.out
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 
 module native_four_state_frame_carry;
   logic clock = 0;

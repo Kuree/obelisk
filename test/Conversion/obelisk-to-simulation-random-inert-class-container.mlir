@@ -113,7 +113,6 @@ module {
   }
 }
 
-
 // With no compatible concrete element class in the closed world, every
 // element of the abstract-class array is necessarily null. IEEE 1800-2023
 // 18.4 requires no allocation or randomization and retains its unconstrained

@@ -3,8 +3,6 @@
 // RUN: FileCheck %s --check-prefix=GROUP < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=STATE < %t.llvm.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-forward-segments.test.
-
 // Reversed source spawn order still produces dependency-ranked computation.
 // The old model-wide forward-scan controller is absent.
 // PLAN-LABEL: llvm.func @__obelisk_eval_ranked_group_0(
@@ -158,6 +156,3 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
   }
 }
-
-// Only startup and the timed checker use node dispatch; clock work must
-// execute through the native coordinator at both optimization levels.

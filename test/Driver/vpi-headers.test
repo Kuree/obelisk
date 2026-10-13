@@ -1,0 +1,4 @@
+// The resource directory installs the standard VPI headers.
+// RUN: test -f %resource_dir/include/vpi_user.h
+// RUN: test -f %resource_dir/include/sv_vpi_user.h
+// RUN: test -f %resource_dir/include/vpi_compatibility.h

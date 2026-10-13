@@ -1,12 +1,9 @@
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s < %t.native.out
 // RUN: obelisk -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.log
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.log
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.eval > %t.eval.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.eval.out
-// RUN: FileCheck %s < %t.eval.out
 
 // IEEE 1800-2023 6.21, 7.4.5, 11.5.1: automatic array arguments and
 // temporaries retain initialization, declared-range indexing and overlapping

@@ -1,10 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=off}))' > %t.off
 // RUN: FileCheck %s < %t.off
-// RUN: sed 's/observability = 0/observability = 1/g' %s \
-// RUN:   | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=read}))' \
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{match={observability = 0 : i32} set={observability = 1 : i32}},simulation.design(obelisk-sim-sccp{vpi=read}))' \
 // RUN:   | FileCheck %s
-// RUN: sed 's/observability = 0/observability = 2/g' %s \
-// RUN:   | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=full}))' \
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-edit-attributes{match={observability = 0 : i32} set={observability = 2 : i32}},simulation.design(obelisk-sim-sccp{vpi=full}))' \
 // RUN:   | FileCheck %s --check-prefix=FULL
 
 // IEEE 1800-2017 6.6.6 gives supply0 and supply1 nets supply strength, and

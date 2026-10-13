@@ -5,8 +5,7 @@
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
+// RUN: %t.generic | diff -u %t.auto.out -
 
 module checkpoint_clock_source(output logic clk = 0);
   integer cycles = 0;

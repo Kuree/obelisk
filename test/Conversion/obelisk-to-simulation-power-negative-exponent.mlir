@@ -57,7 +57,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[BASE:.*]] = simulation.packed.flatten
 // CHECK: %[[EXP:.*]] = simulation.packed.flatten

@@ -2,8 +2,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=read}))' | FileCheck %s --check-prefix=READ
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,mem2reg,canonicalize,obelisk-sim-thread-suspension)),test-obelisk-activation-regions)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=REGION
 // REGION: regions @writer valid=1
-// RUN: sed 's/!simulation.unpacked_array<0 : 1 x !record>/!simulation.packed_array<1 : 0 x !record>/g' %s > %t.packed.mlir
-// RUN: obelisk-opt %t.packed.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-simplify-bodies{vpi=off},simulation.func(canonicalize,sroa,mem2reg,canonicalize,obelisk-sim-thread-suspension)),test-obelisk-activation-regions)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=REGION
 // IEEE 1800-2023 6.8 Table 6-7: unwritten four-state lanes remain X;
 // two-state lanes remain zero. Private fields need no copy-in or flush when
 // every mutable field is defined before reading in each activation.

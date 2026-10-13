@@ -89,7 +89,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-
 // The old coordinator and exact-member bits are cleared before execution.
 // If execution republishes the exact member, conversion must consume that
 // member and republish the coordinator so the complete convergence body runs

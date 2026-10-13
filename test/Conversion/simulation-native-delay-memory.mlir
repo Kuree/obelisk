@@ -1,11 +1,11 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-native-delay-memory.test.
-
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_run_aot_nodes
 // Ten million nonzero suspensions must retain O(live actors), not O(timesteps),
-// generic calendar entries even when only the native calendar is consulted.
+// generic calendar entries even when only the native calendar is consulted;
+// the runtime bound is unit-tested by
+// Scheduler.AOTDelayIndexStaysBoundedWithoutGenericCalendarQueries.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/edge_kind = 1 : i32/edge_kind = 2 : i32/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=OTHER-EDGE
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=match={edge_kind = 1 : i32} set={edge_kind = 2 : i32}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=OTHER-EDGE
 
 // IEEE 1800-2017 14.16: "It is possible for a drive statement to execute at a
 // time that is not coincident with its clocking event. Such drive statements

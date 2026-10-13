@@ -2,8 +2,6 @@
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: obelisk-opt %t.llvm.mlir --pass-pipeline='builtin.module(llvm.func(mem2reg))' | FileCheck %s --check-prefix=SSA
 
-// Runtime behavior is checked in ../Runtime/simulation-eval-wide-publication-runtime.test.
-
 // A 65-bit blocking copy must publish both words without leaving generated
 // evaluation. A high-word-only change wakes change observers, not vector
 // posedge observers: vector edges use only the LSB (LRM 9.4.2).

@@ -163,7 +163,6 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
   }
 }
 
-
 // -----
 
 // CHECK-LABEL: simulation.design @clobbered

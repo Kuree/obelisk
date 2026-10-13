@@ -3,9 +3,9 @@
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py > %t/o0.txt
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2> %t/o0.txt
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=3' \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py > %t/o3.txt
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2> %t/o3.txt
 // RUN: diff %t/o0.txt %t/o3.txt
 // RUN: FileCheck %s --check-prefix=HIER < %t/o0.txt
 

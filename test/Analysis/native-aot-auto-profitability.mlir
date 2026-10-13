@@ -2,18 +2,9 @@
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=ANALYSIS
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' \
-// RUN:   | sed 's/cost = 5/cost = 1500/' \
-// RUN:   | obelisk-opt - -o /dev/null \
-// RUN:     --pass-pipeline='builtin.module(test-obelisk-native-aot-analysis)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=LARGE
-// RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
 // RUN:   | FileCheck %s --check-prefix=FUSION
-// RUN: sed 's/native_scheduler = 0 : i32/native_scheduler = 3 : i32, schedule.native_scheduler.auto_requested/' %s \
-// RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' \
-// RUN:   | FileCheck %s --check-prefix=FUSION
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 3 : i32, schedule.native_scheduler.auto_requested}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=FUSION
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=LOWERING
@@ -23,7 +14,6 @@
 // generated eval even without a structural periodic-clock candidate.
 
 // ANALYSIS: native-aot eligible=true fully=false selected=false periodic=false
-// LARGE: native-aot eligible=true fully=false selected=true periodic=false cost=1502/1504
 
 // FUSION-NOT: __obelisk_eval_body
 

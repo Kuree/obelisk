@@ -1,31 +1,14 @@
 // RUN: obelisk --target=wasm32 -O0 -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: obelisk --target=wasm32 -O3 -c %s -o %t.o
-// RUN: %llvm_dist/bin/llvm-readobj --file-headers --sections %t.o \
-// RUN:   | FileCheck %s --check-prefix=OBJECT
+// RUN: %llvm_dist/bin/llvm-readobj --file-headers --sections %t.o | FileCheck %s --check-prefix=OBJECT
 // RUN: obelisk --help | FileCheck %s --check-prefix=HELP
-// RUN: not obelisk --target=wasm64 -emit-llvm %s -o %t.bad.ll 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=BAD-TARGET
+// RUN: not obelisk --target=wasm64 -emit-llvm %s -o %t.bad.ll 2>&1 | FileCheck %s --check-prefix=BAD-TARGET
 //
 // Exercise executable-link validation without depending on a host Emscripten
 // installation. Relocating the driver lets this test provide a private target
 // support tree, while deliberately incomplete sysroots reach each wasm-only
-// validation boundary before lld is invoked.
-// RUN: %split-file %s %t
-// RUN: cp %obelisk %t/no-runtime/bin/obelisk
-// RUN: cp %obelisk %t/no-libs/bin/obelisk
-// RUN: not %t/no-runtime/bin/obelisk --target=wasm32 -O0 \
-// RUN:   --sysroot=%t/missing %s -o %t/missing.wasm 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=MISSING-SYSROOT
-// RUN: not %t/no-runtime/bin/obelisk --target=wasm32 -O0 \
-// RUN:   --sysroot=%t/wasm64-sysroot %s -o %t/wasm64.wasm 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=WASM64-SYSROOT
-// RUN: not %t/no-runtime/bin/obelisk --target=wasm32 -O0 \
-// RUN:   --sysroot=%t/no-runtime-sysroot %s -o %t/no-runtime.wasm 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=MISSING-RUNTIME
-// RUN: not %t/no-libs/bin/obelisk --target=wasm32 -O0 \
-// RUN:   --sysroot=%t/no-libs-sysroot %s -o %t/no-libs.wasm 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=MISSING-LIBS
+// validation boundary before lld is invoked (wasm-target-sysroot.test).
 
 module wasm_target;
   logic [63:0] value;

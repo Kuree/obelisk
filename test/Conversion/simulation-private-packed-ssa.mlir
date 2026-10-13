@@ -3,8 +3,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=READ
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=FULL
 
-// Runtime behavior is checked in ../Runtime/simulation-private-packed-ssa.test.
-
 // Forward whole values and nested packed views without converting their value
 // domain. Two unknown bits straddle the native word boundary: one X and one Z.
 // The bytecode reference is encoded from the original storage-based program.

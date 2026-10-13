@@ -2,8 +2,10 @@ add_mlir_library(ObeliskAnalysisTestPasses
   AccessFootprintAnalysisTestPass.cpp
   ActivationMemoryAnalysisTestPass.cpp
   ActivationPhaseAnalysisTestPass.cpp
+  BytecodeImageTestPass.cpp
   ClockInferenceAnalysisTestPass.cpp
   CombinationalDependencyAnalysisTestPass.cpp
+  CoverageSchemaTestPass.cpp
   ManagedClassLayoutAnalysisTestPass.cpp
   LocalStorageAnalysisTestPass.cpp
   NativeAOTAnalysisTestPass.cpp
@@ -14,6 +16,8 @@ add_mlir_library(ObeliskAnalysisTestPasses
   StaticSpecializationAnalysisTestPass.cpp
   StateDomainTestPass.cpp
   StorageWriteAnalysisTestPass.cpp
+  ModuleTestPasses.cpp
+  NativeBackendTestPipeline.cpp
   ValueInterfacesTestPass.cpp
 
   EXCLUDE_FROM_LIBMLIR
@@ -23,9 +27,18 @@ add_mlir_library(ObeliskAnalysisTestPasses
   ObeliskSimulationOpsIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskCoverage
   ObeliskSimulationAnalysis
   ObeliskSimulationIR
+  MLIRAsmParser
   MLIRIR
+  MLIRLLVMDialect
   MLIRPass
+  MLIRSCFDialect
+  MLIRSCFUtils
   LLVMCore
+)
+
+target_include_directories(ObeliskAnalysisTestPasses PRIVATE
+  "${PROJECT_SOURCE_DIR}/runtime/include"
 )

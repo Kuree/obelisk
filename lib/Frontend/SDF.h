@@ -8,6 +8,8 @@
 #ifndef OBELISK_LIB_FRONTEND_SDF_H
 #define OBELISK_LIB_FRONTEND_SDF_H
 
+#include "obelisk/Frontend/SDF.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -48,7 +50,8 @@ public:
 private:
   friend std::unique_ptr<SDFAnnotationDatabase>
   buildSDFAnnotationDatabase(slang::ast::Compilation &,
-                             const slang::SourceManager &);
+                             const slang::SourceManager &,
+                             const SDFResourceLimits &);
 
   llvm::DenseMap<const slang::ast::TimingPathSymbol *, DelayAnnotations>
       timingPathAnnotations;
@@ -59,7 +62,8 @@ private:
 /// elaborated design. Returns null after any fatal annotation diagnostic.
 std::unique_ptr<SDFAnnotationDatabase>
 buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
-                           const slang::SourceManager &sourceManager);
+                           const slang::SourceManager &sourceManager,
+                           const SDFResourceLimits &limits);
 
 } // namespace obelisk::frontend
 

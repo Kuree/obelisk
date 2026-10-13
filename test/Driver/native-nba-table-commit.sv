@@ -2,10 +2,6 @@
 // RUN: FileCheck %s --check-prefix=IR < %t.ll
 // RUN: obelisk -O3 -fno-lto --compile-threads=8 --native-scheduler=auto %s -o %t.auto
 // RUN: %t.auto | FileCheck %s
-// RUN: obelisk -O0 --native-scheduler=auto %s -o %t.o0
-// RUN: %t.o0 | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.generic | FileCheck %s
 // IR: @__obelisk_eval_nba_commit_offsets_v1
 // IR-LABEL: define {{.*}}@__obelisk_eval_dispatch_v1(
 // IR-NOT: @__obelisk_eval_nba_commit_

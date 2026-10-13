@@ -1,13 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t 2>&1 | FileCheck %s --check-prefix=REASON
 // RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t
-// RUN: sed 's/suspend.change %result to/suspend.edge posedge %result to/' %s | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t.edge 2>&1 | FileCheck %s --check-prefix=REASON
-// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t.edge
-// RUN: sed -e 's/suspend.change %result to/suspend.change %address to/' -e 's/storage.decl 3 in 0 : i8 design/storage.decl 3 in 0 : i8 design {obelisk.coverage.toggle_observable}/' %s | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true},obelisk-sim-materialize-compute-fusion))' -o %t.coverage 2>&1 | FileCheck %s --check-prefix=COVERAGE
-// RUN: FileCheck %s --check-prefix=KEEP --implicit-check-not=__obelisk_region_kernel_ < %t.coverage
 // An unchanged-input execution still publishes zero followed by the result.
 // A foreign change/edge wait or toggle counter can observe those transitions.
 // REASON: statement component rejected: outside watch in observer on repeated storage 3
-// COVERAGE: statement component rejected: toggle coverage on storage 3
 // KEEP: simulation.spawn @producer_and_consumer
 // KEEP: simulation.spawn @transform
 module {

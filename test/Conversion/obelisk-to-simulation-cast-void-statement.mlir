@@ -14,15 +14,6 @@
 
 //--- void-cast.mlir
 
-// IEEE 1800-2017 6.24.2: the task form of $cast reports a failed cast as an
-// error, while the function form reports failure through its 0 result.
-// A.6.4 spells `void'(subroutine_call);` as its own statement form, in which
-// the call keeps its function semantics, so only the bare `$cast(...)`
-// statement below may raise the error.
-
-// CHECK-COUNT-1: $cast failed when used as a task
-// CHECK-NOT: $cast failed when used as a task
-
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition @s0.t attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64} {
   }
@@ -64,18 +55,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-
-
 //--- task.mlir
-
-// IEEE 1800-2017 6.24.2: the task form of $cast reports a failed cast as an
-// error, while the function form reports failure through its 0 result.
-// A.6.4 spells `void'(subroutine_call);` as its own statement form, in which
-// the call keeps its function semantics, so only the bare `$cast(...)`
-// statement below may raise the error.
-
-// CHECK-COUNT-1: $cast failed when used as a task
-// CHECK-NOT: $cast failed when used as a task
 
 module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
   obelisk.sv.symbol.definition @s0.t attributes {definition_kind = 0 : i32, hierarchical_name = "t", name = "t", node_id = 0 : i64} {

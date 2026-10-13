@@ -1,0 +1,14 @@
+// Scopes in waveforms of the designs in dump-vcd.sv.
+//
+// A VCD may have multiple root scopes. Flattening the synthetic design root
+// must retain all independently elaborated top-level modules.
+//
+// Explicit generic scheduling still needs the waveform database even with VPI
+// disabled, and an individual variable is a valid $dumpvars selection.
+// RUN: %split-file %S/dump-vcd.sv %t
+// RUN: cd %t && obelisk multiple-tops.sv -o %t/multiple-tops.sim
+// RUN: cd %t && %t/multiple-tops.sim
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=MULTIPLE --implicit-check-not='$root' < %t/multiple.vcd
+// RUN: cd %t && obelisk --native-scheduler=generic selected.sv -o %t/selected.sim
+// RUN: cd %t && %t/selected.sim
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=SELECTED < %t/selected.vcd

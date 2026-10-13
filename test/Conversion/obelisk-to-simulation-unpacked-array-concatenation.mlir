@@ -66,7 +66,6 @@ module {
   }
 }
 
-
 // `{a3, 4, 5, a3, 6}` spreads the three elements of `a3` twice among the four
 // single-element items, filling the nine-element target in item order.
 // CHECK-LABEL: simulation.func private @unit_0

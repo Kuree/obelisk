@@ -4,10 +4,10 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER --implicit-check-not=add.__obelisk_bytecode_entry --implicit-check-not=observe.__obelisk_bytecode_entry
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify | FileCheck %s --check-prefix=LLVM
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
+// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=INSTRUCTIONS
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
+// RUN:   --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=STATE
 
 module attributes {

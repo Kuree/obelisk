@@ -1,4 +1,10 @@
 // RUN: obelisk-opt %s '--test-obelisk-activation-regions=slice-root=1' -o /dev/null 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @carried_result agree
+// COMPARE: inputs @different_exit_values agree
+
 // Finite does not mean dead. A carried SSA result and different values on
 // early/normal exits must survive slicing, even with no stores in the body.
 module {

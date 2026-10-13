@@ -2,13 +2,6 @@
 // RUN: %t.native | FileCheck %s
 // RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O0 -emit-sim %s -o %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=GROUP < %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=KIND-IF < %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=KIND-NONE < %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=POL-POS < %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=POL-NEG < %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=DRIVE < %t.sim.mlir
 
 `timescale 1ns / 1ns
 

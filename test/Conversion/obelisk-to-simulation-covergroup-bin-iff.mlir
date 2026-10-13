@@ -4,7 +4,7 @@
 // RUN: FileCheck %s --check-prefix=OBELISK < %t/input.mlir
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SIM
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py > %t/schema.txt
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2> %t/schema.txt
 // RUN: FileCheck %s --check-prefix=SCHEMA < %t/schema.txt
 // RUN: obelisk -emit-obelisk %t/layout.sv -o - | FileCheck %s --check-prefix=LAYOUT
 

@@ -1,0 +1,7 @@
+// Help output lists the public and hidden driver options.
+// RUN: obelisk -h | FileCheck %s --check-prefix=SHORT-HELP
+// RUN: obelisk --help-hidden | FileCheck %s --check-prefix=HIDDEN-HELP
+
+// SHORT-HELP: OVERVIEW: Obelisk ahead-of-time SystemVerilog compiler
+// SHORT-HELP: -emit-slang
+// HIDDEN-HELP: -Xslang

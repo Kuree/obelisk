@@ -55,7 +55,6 @@ module attributes {
   }
 }
 
-
 // CHECK: simulation.func private @unit_0(
 // CHECK-SAME: %[[MEM:[^:]*]]: !simulation.ref<!simulation.unpacked_array<3 : 0 x !simulation.packed_array<7 : 0 x !simulation.logic<1>>, #simulation.storage_layout<size = 4, alignment = 1, stride = 1, offsets = []>>>
 // CHECK-SAME: %[[IDX:[^:]*]]: !simulation.ref<!simulation.packed_array<1 : 0 x !simulation.logic<1>>>

@@ -1,23 +1,61 @@
-// RUN: %split-file %s %t
-// RUN: obelisk-opt %t/input.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-specialize-static-state-nba))' > %t/static.mlir
-// RUN: obelisk-opt %t/static.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-transfers,schedule-share-native-transfers)' | FileCheck %s --check-prefix=BOUND
-// RUN: obelisk-opt %t/static.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWERED
-// RUN: sed 's/direct = true, guarded = false/direct = false, guarded = true/g' %t/static.mlir > %t/guarded.mlir
-// RUN: obelisk-opt %t/guarded.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-transfers,schedule-share-native-transfers)' | FileCheck %s --check-prefix=BOUND
-// RUN: sed -f %t/generic-captures.sed %t/static.mlir > %t/mixed.mlir
-// RUN: obelisk-opt %t/mixed.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-transfers,schedule-share-native-transfers)' > %t/shared.mlir
-// RUN: FileCheck %s --check-prefix=SHARED < %t/shared.mlir
-// RUN: sed 's/\(static_state_root<descriptor = 0, width = 8, \)direct = false/\1direct = true/g' %t/mixed.mlir > %t/source.mlir
-// RUN: obelisk-opt %t/source.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-transfers,schedule-share-native-transfers)' | FileCheck %s --check-prefix=SOURCE
-// RUN: sed 's/\(static_state_root<descriptor = 2, width = 8, \)direct = false/\1direct = true/g' %t/mixed.mlir > %t/destination.mlir
-// RUN: obelisk-opt %t/destination.mlir --pass-pipeline='builtin.module(prepare-native-schedule-inputs,schedule-plan-native-state,prepare-native-process-frames,schedule-plan-native-transfers,schedule-share-native-transfers)' | FileCheck %s --check-prefix=DESTINATION
-// RUN: sed 's/direct = false/direct = true/g' %t/shared.mlir > %t/stale.mlir
-// RUN: not obelisk-opt %t/stale.mlir --mlir-print-op-on-diagnostic=false --pass-pipeline='builtin.module(schedule-plan-native-actors,schedule-specialize-native-captures,convert-simulation-to-native-schedule,prepare-native-managed-roots,schedule-mark-clean-native-nba,schedule-specialize-native-eval,schedule-prepare-native-transfer-kernels)' 2>&1 | FileCheck %s --check-prefix=STALE
+// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
+// RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
+// RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
+// RUN:   --schedule-share-native-transfers \
+// RUN:   | FileCheck %s --check-prefix=BOUND
+// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
+// RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
+// RUN:   | FileCheck %s --check-prefix=LOWERED
+// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 3, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 3, width = 8, direct = false, guarded = true, nba = false>"' \
+// RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
+// RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
+// RUN:   --schedule-share-native-transfers \
+// RUN:   | FileCheck %s --check-prefix=BOUND
+// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph --obelisk-sim-specialize-static-state-nba \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = false, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="[#schedule.static_actor_root<function = @first, descriptor = 0, read = true, write = false>, #schedule.static_actor_root<function = @first, descriptor = 1, read = false, write = true>, #schedule.static_actor_root<function = @second, descriptor = 1, read = true, write = false>, #schedule.static_actor_root<function = @second, descriptor = 2, read = false, write = true>]" replace-to=[]' \
+// RUN:   -o %t.mixed
+// RUN: obelisk-opt %t.mixed \
+// RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
+// RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
+// RUN:   --schedule-share-native-transfers \
+// RUN:   | FileCheck %s --check-prefix=SHARED
+// RUN: obelisk-opt %t.mixed \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
+// RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
+// RUN:   --schedule-share-native-transfers \
+// RUN:   | FileCheck %s --check-prefix=SOURCE
+// RUN: obelisk-opt %t.mixed \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
+// RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
+// RUN:   --schedule-share-native-transfers \
+// RUN:   | FileCheck %s --check-prefix=DESTINATION
+// RUN: not obelisk-opt %t.mixed \
+// RUN:   --prepare-native-schedule-inputs --schedule-plan-native-state \
+// RUN:   --prepare-native-process-frames --schedule-plan-native-transfers \
+// RUN:   --schedule-share-native-transfers \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 0, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 0, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 1, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 1, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.static_state_root<descriptor = 2, width = 8, direct = false, guarded = false, nba = false>" replace-to="#schedule.static_state_root<descriptor = 2, width = 8, direct = true, guarded = false, nba = false>"' \
+// RUN:   --schedule-plan-native-actors --schedule-specialize-native-captures \
+// RUN:   --convert-simulation-to-native-schedule --prepare-native-managed-roots \
+// RUN:   --schedule-mark-clean-native-nba --schedule-specialize-native-eval \
+// RUN:   --schedule-prepare-native-transfer-kernels -o /dev/null 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=STALE
 
 // IEEE 1800-2023 4.9.1/4.9.6 and 9.4.2 require the same activation and
 // publication behavior after sharing. Replacing descriptor-bound accesses
 // with opaque runtime calls invalidated the generated schedule's NBA ownership
-// assumptions in RV32IM. A matching value/capture ABI is insufficient.
+// assumptions in RV32IM. A matching value/capture ABI is insufficient. Guarded
+// roots (third RUN) still carry descriptor-bound accesses.
 // BOUND-LABEL: module
 // BOUND-NOT: schedule.transfer.
 // LOWERED-NOT: __obelisk_transfer_kernel
@@ -26,7 +64,8 @@
 // LOWERED: llvm.func @second.__obelisk_group_body
 // LOWERED-NOT: __obelisk_transfer_kernel
 
-// An unrelated specialized root must not disable all transfer sharing.
+// With generic captures on the copied roots, an unrelated specialized root
+// must not disable all transfer sharing.
 // SHARED: schedule.transfer.activation
 // SHARED-SAME: actor = @copies::@first
 // SHARED-SAME: kernel = @__obelisk_transfer_kernel_0
@@ -35,22 +74,24 @@
 // SHARED-SAME: kernel = @__obelisk_transfer_kernel_0
 // SHARED: schedule.transfer.kernel
 // SHARED-SAME: sym_name = "__obelisk_transfer_kernel_0"
+
+// A direct source root keeps only the copy that reads it unshared.
 // SOURCE-LABEL: module
 // SOURCE-NOT: schedule.transfer.activation {{.*}}actor = @copies::@first
 // SOURCE: schedule.transfer.activation
 // SOURCE-SAME: actor = @copies::@second
 // SOURCE-NOT: schedule.transfer.
+
+// A direct destination root keeps only the copy that writes it unshared.
 // DESTINATION-LABEL: module
 // DESTINATION: schedule.transfer.activation
 // DESTINATION-SAME: actor = @copies::@first
 // DESTINATION-NOT: schedule.transfer.
+
+// Once every root is direct again, the shared plan would erase the
+// descriptor-bound storage accesses the specialized bodies rely on.
 // STALE: transfer plan cannot erase specialized storage bindings
 
-//--- generic-captures.sed
-s/\(static_state_root<descriptor = [012], width = 8, \)direct = true/\1direct = false/g
-s/actorRoots = \[[^]]*\]/actorRoots = []/g
-
-//--- input.mlir
 !ref = !simulation.ref<!simulation.logic<8>>
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

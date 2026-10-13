@@ -133,7 +133,6 @@ module {
   }
 }
 
-
 // A nested rand container participates in the child's constraint solve. Its
 // size is resized before element randomization. Both the constrained dynamic
 // array and the unconstrained queue are gated by the outer rand handle, a

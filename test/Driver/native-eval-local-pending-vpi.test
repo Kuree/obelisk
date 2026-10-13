@@ -1,0 +1,7 @@
+// VPI read and full access keep the local pending results of
+// native-eval-local-pending.sv; full access changes the eval plan.
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read --native-scheduler=eval %S/native-eval-local-pending.sv -o %t.read
+// RUN: %t.read | FileCheck %S/native-eval-local-pending.sv --check-prefix=OUTPUT
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full --native-scheduler=eval --mlir-timing %S/native-eval-local-pending.sv -o %t.full 2> %t.full.timing
+// RUN: FileCheck %S/native-eval-local-pending.sv --check-prefix=FULL-PLAN < %t.full.timing
+// RUN: %t.full | FileCheck %S/native-eval-local-pending.sv --check-prefix=OUTPUT

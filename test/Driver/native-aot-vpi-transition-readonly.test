@@ -1,0 +1,8 @@
+// A read-only VPI plugin under full and read access (inputs in
+// native-aot-vpi-transition.sv).
+// RUN: %split-file %S/native-aot-vpi-transition.sv %t
+// RUN: %target_clang -fPIC -shared -nostdlib %t/readonly.c -I%resource_dir/include -Wl,-soname,libnative_aot_vpi_readonly.so -o %t/libnative_aot_vpi_readonly.so
+// RUN: cd %t && obelisk --vpi=full --native-scheduler=aot %t/design.sv libnative_aot_vpi_readonly.so -o readonly
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t/readonly 2>&1 | FileCheck %S/native-aot-vpi-transition.sv --check-prefix=READONLY
+// RUN: cd %t && obelisk --vpi=read --native-scheduler=aot %t/design.sv libnative_aot_vpi_readonly.so -o readmode
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t/readmode 2>&1 | FileCheck %S/native-aot-vpi-transition.sv --check-prefix=READMODE

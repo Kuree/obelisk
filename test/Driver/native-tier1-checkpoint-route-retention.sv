@@ -1,33 +1,29 @@
-// RUN: obelisk -O3 --compile-threads=1 --native-scheduler=auto -emit-llvm %s -o %t.ll
-// RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --compile-threads=8 --native-scheduler=auto -emit-llvm %s -o %t.threaded.ll
-// RUN: diff -u %t.ll %t.threaded.ll
-// RUN: obelisk -O3 -fno-lto --compile-threads=8 --native-scheduler=auto %s -o %t.auto
-// RUN: %llvm_dist/bin/llvm-nm %t.auto | FileCheck %s --check-prefix=SYMBOLS
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
-// RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: sed -e 's/#4 clk/#5 clk/' -e 's/#6 clk/#5 clk/' %s > %t.periodic.sv
-// RUN: obelisk -O3 --native-scheduler=auto %t.periodic.sv -o %t.periodic
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.periodic > %t.periodic.out 2> %t.periodic.trace
-// RUN: diff -u %t.generic.out %t.periodic.out
+// RUN: obelisk -O3 --native-scheduler=eval --top=clockless_top %s -o %t.clockless
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.clockless 2> %t.clockless.trace | FileCheck %s
+// RUN: FileCheck %s --check-prefix=EVAL < %t.clockless.trace
+// RUN: obelisk -O3 --native-scheduler=eval --top=periodic_top %s -o %t.periodic
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.periodic 2> %t.periodic.trace | FileCheck %s
 // RUN: FileCheck %s --check-prefix=PERIODIC < %t.periodic.trace
 
-module native_tier1_checkpoint_route_retention;
+// IEEE 1800-2023 6.8, 10.4.2: retaining an eval route across a runtime
+// checkpoint must neither hide an NBA's X/Z update nor prevent recovery to
+// known values. Unequal clock phases keep the clockless wrapper; equal phases
+// normalize to a periodic plan. Both match the generic scheduler's output.
+// That neither wrapper reseeds variant selectors or pending proofs is checked
+// on the generated IR in
+// Conversion/simulation-eval-clockless-route-retention.mlir and
+// Conversion/simulation-periodic-reset-publication.mlir.
+module checkpoint_route_retention #(parameter int LOW = 4, parameter int HIGH = 6);
   logic clk = 0;
   integer cycles = 0;
-  // Unequal phase delays retain the clockless wrapper under normalization.
   initial forever begin
-    #4 clk <= 0;
-    #6 clk <= 1;
+    #LOW clk <= 0;
+    #HIGH clk <= 1;
     cycles += 1;
   end
-  logic [7:0] q[128];
-  logic [7:0] inverted[128];
-  for (genvar i = 0; i < 128; i++) begin : g
+  logic [7:0] q[4];
+  logic [7:0] inverted[4];
+  for (genvar i = 0; i < 4; i++) begin : g
     initial q[i] = i;
     always @(posedge clk) begin
       if (cycles == 4) q[i] <= 'x;
@@ -45,39 +41,37 @@ module native_tier1_checkpoint_route_retention;
     for (int i = 0; i < 32; i++) result[i*8 +: 8] = data;
     return result;
   endfunction
-  always_comb line = make_line(inverted[31]);
-  // IEEE 1800-2023 6.8, 10.4.2: retaining a route across a checkpoint must
-  // neither hide an NBA's X/Z update nor prevent recovery to known values.
+  always_comb line = make_line(inverted[3]);
   initial begin
     message = "runtime checkpoint";
     $display("%f %s", fraction, message);
     repeat (10) begin
       @(posedge clk);
       #1;
-      $display("%0d %h %h %h", cycles, q[31], inverted[31], line[7:0]);
+      $display("%0d %h %h %h", cycles, q[3], inverted[3], line[7:0]);
     end
     $finish;
   end
 endmodule
 
-// The hot wrapper must not reseed variant selectors or pending proofs. The
-// plan-installation invalidator remains responsible for fresh executions.
-// LLVM-LABEL: define {{.*}}i32 @__obelisk_aot_schedule_run_v1(
-// LLVM-NOT: @__obelisk_eval_selected_variant_v1_
-// LLVM-NOT: @__obelisk_eval_route_promotion_pending_v1
-// LLVM: call i32 @obelisk_rt_v1_scheduler_run_aot_nodes
-// TRACE: eval_dispatches={{[1-9][0-9]*}}
-// PERIODIC: periodic_preparations={{[1-9][0-9]*}}
-// OUTPUT: 1 20 df df
-// OUTPUT-NEXT: 2 21 de de
-// OUTPUT-NEXT: 3 22 dd dd
-// OUTPUT-NEXT: 4 xx xx xx
-// OUTPUT-NEXT: 5 xx xx xx
-// OUTPUT-NEXT: 6 zz xx xx
-// OUTPUT-NEXT: 7 xx xx xx
-// OUTPUT-NEXT: 8 1f e0 e0
-// OUTPUT-NEXT: 9 20 df df
-// OUTPUT-NEXT: 10 21 de de
+module clockless_top;
+  checkpoint_route_retention #(.LOW(4), .HIGH(6)) dut();
+endmodule
 
-// SYMBOLS-NOT: __obelisk_eval_variant_dispatch_v1_
-// SYMBOLS-NOT: __obelisk_eval_function_route_v1_
+module periodic_top;
+  checkpoint_route_retention #(.LOW(5), .HIGH(5)) dut();
+endmodule
+
+// EVAL: eval_dispatches={{[1-9][0-9]*}}
+// PERIODIC: periodic_preparations={{[1-9][0-9]*}}
+// CHECK: 1.250000 runtime checkpoint
+// CHECK-NEXT: 1 04 fb fb
+// CHECK-NEXT: 2 05 fa fa
+// CHECK-NEXT: 3 06 f9 f9
+// CHECK-NEXT: 4 xx xx xx
+// CHECK-NEXT: 5 xx xx xx
+// CHECK-NEXT: 6 zz xx xx
+// CHECK-NEXT: 7 xx xx xx
+// CHECK-NEXT: 8 03 fc fc
+// CHECK-NEXT: 9 04 fb fb
+// CHECK-NEXT: 10 05 fa fa

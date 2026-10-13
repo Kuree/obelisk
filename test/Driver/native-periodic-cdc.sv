@@ -1,17 +1,9 @@
 // RUN: obelisk -O2 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.generic > %t.generic.out
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.auto.diag
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.eval.diag
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: diff -u %t.generic.out %t.eval.out
-// RUN: FileCheck %s < %t.eval.out
+// RUN: FileCheck %s < %t.auto.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
-// RUN: FileCheck %s --check-prefix=DIAG < %t.eval.diag
 // RUN: obelisk -O0 --native-scheduler=eval %s -o %t.o0
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o0 > %t.o0.out 2> %t.o0.diag
-// RUN: diff -u %t.generic.out %t.o0.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o0 2> %t.o0.diag | diff -u %t.auto.out -
 // RUN: FileCheck %s --check-prefix=DIAG < %t.o0.diag
 
 module cdc_sink(input bit fast, slow, sparse, input logic [7:0] data);

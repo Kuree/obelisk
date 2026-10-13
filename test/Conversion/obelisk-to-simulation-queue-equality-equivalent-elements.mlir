@@ -92,8 +92,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[L:.*]] = simulation.ref.load %arg1
 // CHECK: %[[R:.*]] = simulation.ref.load %arg2

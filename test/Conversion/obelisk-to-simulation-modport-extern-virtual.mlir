@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed -e 's/is_interface_extern, name/is_fork_join, is_interface_extern, name/g' -e 's/() -> !obelisk.void, false/() -> (), true/g' -e 's/subroutine_kind = 0/subroutine_kind = 1/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=FORKJOIN
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=has=is_interface_extern set={is_fork_join}' '--test-obelisk-edit-attributes=replace-from="!obelisk.subroutine<() -> !obelisk.void, false>" replace-to="!obelisk.subroutine<() -> (), true>"' '--test-obelisk-edit-attributes=match={subroutine_kind = 0 : i32} set={subroutine_kind = 1 : i32}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=FORKJOIN
 
 // Virtual dispatch compares the receiver against the real interface-instance
 // scopes, while invoking the provider implementations in different modules.

@@ -1,9 +1,5 @@
 // RUN: obelisk -O3 --native-scheduler=eval --mlir-timing %s -o %t.eval 2> %t.plan
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.eval.out
-// RUN: FileCheck %s < %t.eval.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval 2> %t.diag | FileCheck %s
 // RUN: FileCheck %s --check-prefix=PLAN < %t.plan
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
 

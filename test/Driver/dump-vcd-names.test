@@ -1,0 +1,12 @@
+// Default waveform file names and positive time scales of the designs in
+// dump-vcd.sv.
+// IEEE 1800-2017 3.14.2 permits timeprecision through 100s. Preserve the
+// positive decimal exponent in the compiler/runtime waveform boundary.
+// RUN: %split-file %S/dump-vcd.sv %t
+// RUN: cd %t && obelisk default-name.sv -o %t/default-name.sim
+// RUN: cd %t && %t/default-name.sim
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=DEFAULT-NAME < %t/dump.vcd
+// RUN: cd %t && obelisk positive-timescale.sv -o %t/positive-timescale-native.sim
+// RUN: cd %t && %t/positive-timescale-native.sim
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=POSITIVE-TIMESCALE < %t/positive.vcd
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=POSITIVE-PORTS < %t/positive-ports.vcd

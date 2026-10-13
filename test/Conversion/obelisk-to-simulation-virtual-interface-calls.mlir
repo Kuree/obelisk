@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed '/symbol.procedural_block/s/procedure_kind = 0/procedure_kind = 3/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SENS
-// RUN: sed 's/virtual_interface_call_import, //g' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MODPORT
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=op=obelisk.sv.symbol.procedural_block match={procedure_kind = 0 : i32} set={procedure_kind = 3 : i32}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SENS
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=has=virtual_interface_call_import remove=virtual_interface_call_import' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MODPORT
 
 module {
   obelisk.sv.symbol.definition @s0.bus_if attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64} {

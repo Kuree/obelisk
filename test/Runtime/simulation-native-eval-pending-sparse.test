@@ -1,50 +1,5 @@
-// RUN: %python %S/Inputs/gen-native-eval-pending-sparse.py > %t.input.mlir
-// RUN: obelisk-opt %t.input.mlir --finalize-native-llvm -o %t.llvm.mlir
-// RUN: FileCheck %s < %t.llvm.mlir
-// RUN: obelisk-opt %t.input.mlir --finalize-native-llvm --mlir-disable-threading -o %t.serial.mlir
-// RUN: diff -u %t.llvm.mlir %t.serial.mlir
-// RUN: %python %S/Inputs/gen-native-eval-pending-sparse.py --helper > %t.helper.c
-// RUN: %llvm_dist/bin/clang -c %t.helper.c -o %t.helper.o
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang %t.o0.o %t.helper.o -o %t.o0.exe
-// RUN: %t.o0.exe
-// RUN: mlir-translate --mlir-to-llvmir %t.llvm.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang %t.o3.o %t.helper.o -o %t.o3.exe
-// RUN: %t.o3.exe
-// RUN: %python %S/Inputs/gen-native-eval-pending-sparse.py --canonical > %t.canonical.mlir
-// RUN: obelisk-opt %t.canonical.mlir --finalize-native-llvm -o %t.reference.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.reference.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.reference.o
-// RUN: %llvm_dist/bin/clang %t.reference.o %t.helper.o -o %t.reference.exe
-// RUN: %t.reference.exe
-// RUN: %python %S/Inputs/gen-native-eval-pending-sparse.py --finish > %t.finish.input.mlir
-// RUN: obelisk-opt %t.finish.input.mlir --finalize-native-llvm -o %t.finish.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.finish.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.finish.o
-// RUN: %llvm_dist/bin/clang %t.finish.o %t.helper.o -o %t.finish.exe
-// RUN: %t.finish.exe
+// Execute the self-checking program of ../Conversion/simulation-native-eval-pending-sparse.mlir.
 
-// LRM 4.9.4/10.4.2: every captured value/XZ pair remains attached to its
-// target through outlined calls and a canonical handoff, and is consumed once.
-// There are 70 roots but only five nonempty canonical bitmap words. A query
-// helper with no direct accumulator access must still see the private index.
-// Cold calls outside the eval closure adopt/export only their root scope and
-// a second consume observes an empty capture (LRM 4.9.4/10.4.2).
-// CHECK: llvm.func internal @capture4096.__obelisk_pending
-// CHECK-LABEL: llvm.func @capture4096()
-// CHECK-NOT: llvm.mlir.addressof @acc0
-// CHECK: llvm.mlir.addressof @acc4096
-// CHECK-NOT: llvm.mlir.addressof @acc0
-// CHECK: llvm.return
-// CHECK: llvm.func internal @consume4096.__obelisk_pending
-// CHECK-NOT: @canonical_only.__obelisk_pending
-// CHECK-LABEL: llvm.func @canonical_only()
-// CHECK: llvm.return
-// CHECK: llvm.func internal @query.__obelisk_pending
-// CHECK: llvm.func internal @pending4096.__obelisk_pending
-// CHECK: llvm.func internal @__obelisk_eval_dispatch_v1.__obelisk_pending
-// CHECK: llvm.call @obelisk_rt_v1_scheduler_execute_aot_actor
-// CHECK: llvm.func @__obelisk_eval_dispatch_v1()
-// 5 bitmap words + 70 value/XZ pairs + one transient word = 146 words.
-// CHECK: llvm.mlir.constant(146 : i64)
-// CHECK: llvm.alloca
-// A successful finish cancels every sparse bitmap word before the next
-// private consumer or wrapper export (LRM 20.2, 4.9.4).
+// RUN: obelisk-opt %S/../Conversion/simulation-native-eval-pending-sparse.mlir --finalize-native-llvm | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang %t.o %S/Inputs/native-eval-pending-sparse.c -o %t.exe
+// RUN: %t.exe

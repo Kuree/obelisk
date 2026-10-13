@@ -7,6 +7,7 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Support/LogicalResult.h"
 
+#include "obelisk/Frontend/SDF.h"
 #include "obelisk/Frontend/SourceTokens.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -73,6 +74,7 @@ struct FrontendOptions {
   uint32_t maxProtectedEnvelopeDepth = 64;
   uint64_t maxProtectedEnvelopeBytes = 64 * 1024 * 1024;
   uint32_t maxProtectedEnvelopeCount = 4096;
+  SDFResourceLimits sdfLimits;
 };
 
 /// Run preprocessing without parsing or elaborating the resulting token

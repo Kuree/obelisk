@@ -1,22 +1,10 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval -emit-llvm %s -o %t.ll
-// RUN: FileCheck %s --check-prefix=LIBRARY < %t.ll
-// RUN: obelisk --clocked-kernels=immediate -O0 --vpi=off --native-scheduler=eval %s -o %t.o0
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval -emit-llvm %s -o - | FileCheck %s --check-prefix=LIBRARY
 // RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.o3 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read --native-scheduler=eval %s -o %t.read
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full --native-scheduler=eval --mlir-timing %s -o %t.full 2> %t.full.timing
-// RUN: FileCheck %s --check-prefix=FULL-PLAN < %t.full.timing
-// RUN: %t.o3 --execution-tier=bytecode > %t.reference
-// RUN: %t.o0 > %t.o0.out
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.o3 > %t.o3.out 2> %t.o3.diag
-// RUN: %t.read > %t.read.out
-// RUN: %t.full > %t.full.out
-// RUN: diff -u %t.reference %t.o0.out
-// RUN: diff -u %t.reference %t.o3.out
-// RUN: diff -u %t.reference %t.read.out
-// RUN: diff -u %t.reference %t.full.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.o3.out
 // RUN: FileCheck %s --check-prefix=COMMITS < %t.o3.diag
+// RUN: %t.o3 --execution-tier=bytecode | diff -u %t.o3.out -
 
 // LRM 4.9.3/4.9.4, 10.4.2: reads see current state while captured pending
 // updates remain private. The equal second capture overwrites the different

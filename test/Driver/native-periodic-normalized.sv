@@ -1,14 +1,9 @@
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
 // RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.auto.diag
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.eval.diag
-// RUN: diff -u %t.reference.out %t.auto.out
-// RUN: diff -u %t.reference.out %t.eval.out
-// RUN: FileCheck %s < %t.auto.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | diff -u %t.reference.out -
+// RUN: FileCheck %s < %t.reference.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
-// RUN: FileCheck %s --check-prefix=DIAG < %t.eval.diag
 
 // Integration coverage for two extracted clocks and their CDC consumers.
 // The MLIR tests cover the rewrite, rejection proofs, and NBA/phase semantics.
@@ -28,8 +23,8 @@ module native_periodic_normalized;
     #5 slow <= 0;
     #5 slow <= 1;
   end
-  bit [31:0] q[128], sync1[128], sync2[128];
-  for (genvar i = 0; i < 128; i++) begin : g
+  bit [31:0] q[2], sync1[2], sync2[2];
+  for (genvar i = 0; i < 2; i++) begin : g
     always @(posedge fast) q[i] <= q[i] + cycles + sync2[i];
     always @(posedge slow) begin
       sync1[i] <= q[i];

@@ -4,5 +4,6 @@
 # used by obelisk-translate. Keep this source invariant next to the direct
 # importer tests and the production Driver annotation tests.
 # SOURCE: auto sdfModule =
-# SOURCE-NEXT: importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true);
+# SOURCE-NEXT: importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true,
+# SOURCE-NEXT: maxStaticSDFFileBytes);
 # SOURCE-NOT: parseSDFFile

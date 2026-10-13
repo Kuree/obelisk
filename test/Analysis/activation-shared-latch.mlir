@@ -1,7 +1,6 @@
 // RUN: obelisk-opt %s --test-obelisk-activation-regions='thread-control=true' -o %t.analyzed 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
-// RUN: sed 's/constant 1 : i32/constant 0 : i32/' %s | obelisk-opt --test-obelisk-activation-regions='thread-control=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=NO-PROGRESS
 // RUN: obelisk-opt %s --test-obelisk-activation-regions -o /dev/null 2>&1 | FileCheck %s --check-prefix=NO-PROGRESS
 
 // A shared early-break dispatcher must not hide a finite induction loop.

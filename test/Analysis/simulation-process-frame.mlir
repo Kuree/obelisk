@@ -2,7 +2,7 @@
 // RUN:   --pass-pipeline='builtin.module(test-obelisk-simulation-process-frame-analysis)' \
 // RUN:   2>&1 | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | %python %S/../Conversion/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // This test owns the process-frame contract directly; the native RUN also
 // checks that lowering preserves the analysis's alignment guarantees.

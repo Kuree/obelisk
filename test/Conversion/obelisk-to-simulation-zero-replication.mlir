@@ -137,8 +137,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: simulation.return %{{.*}} : !simulation.packed_array<1 : 0 x !simulation.logic<1>>
 

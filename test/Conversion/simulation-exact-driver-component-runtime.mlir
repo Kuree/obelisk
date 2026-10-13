@@ -1,12 +1,16 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
 
-// Runtime behavior is checked in ../Runtime/simulation-exact-driver-component-runtime.test.
-
 // A selected stateful-cohort publication may bound the raw driver interval,
 // but it must still resolve and notify every net bit in the selected bit's
 // collapsed pass-connected component.
 // LLVM-LABEL: llvm.func @cohort_member
-// LLVM-COUNT-1: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
+// Codegen passes only the selected driver bit [16, 17); expanding it to the
+// collapsed component is the runtime's job and is executed by
+// ../Runtime/simulation-exact-driver-component-runtime.test.
+// LLVM: %[[BEGIN:.*]] = llvm.mlir.constant(16 : i64) : i64
+// LLVM-NEXT: %[[END:.*]] = llvm.mlir.constant(17 : i64) : i64
+// LLVM-NEXT: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers(%{{.*}}, %[[BEGIN]], %[[END]])
+// LLVM-NOT: llvm.call @obelisk_rt_v1_scheduler_resolve_drivers
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

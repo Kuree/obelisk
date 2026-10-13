@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=SSA < %t.mlir
-// RUN: sed 's/module attributes {/module attributes {schedule.native.max_inline_ops = 1 : i64,/' %s | obelisk-opt --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_inline_ops = 1 : i64}"' --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BUDGET --implicit-check-not=group_children --implicit-check-not=dataflow_executor --implicit-check-not=dataflow_candidate
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-hierarchy.test.
 

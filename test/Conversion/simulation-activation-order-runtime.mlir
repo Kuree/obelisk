@@ -1,12 +1,20 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' -o %t.graph.mlir
 // RUN: FileCheck %s --check-prefix=GRAPH < %t.graph.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-activation-order-runtime.test.
-
 // The initial producer has a later ID than its combinational consumer.
 // Sampling in later time slots is race-free regardless of startup ordering.
 // The graph must be acyclic as well as producing the correct settled values.
+// Both driver writes wake the consumer body through a change sensitivity on
+// `input`, and the consumer body is ordered after both writers and before the
+// final reader, without a feedback group.
 // GRAPH: compute_graph =
+// GRAPH-SAME: #schedule.fragment<id = 1, function = @a_consumer, block = 1, region = active, action = suspend_change
+// GRAPH-SAME: #schedule.fragment<id = 3, function = @z_driver, block = 0, region = active, action = suspend_delay
+// GRAPH-SAME: #schedule.fragment<id = 4, function = @z_driver, block = 1, region = active, action = suspend_delay
+// GRAPH-SAME: #schedule.fragment<id = 5, function = @z_driver, block = 2, region = active, action = terminate
+// GRAPH-SAME: #schedule.edge<source = 3, target = 1, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 0, {{[^>]*}}trigger = change>
+// GRAPH-SAME: #schedule.edge<source = 4, target = 1, kind = sensitivity, resource = <effect = watch, resource = storage, target = descriptor, descriptor = 0, {{[^>]*}}trigger = change>
+// GRAPH-SAME: groups = [#schedule.group<fragments = [0], schedule = acyclic, feedback = []>, #schedule.group<fragments = [2], schedule = acyclic, feedback = []>, #schedule.group<fragments = [3], schedule = acyclic, feedback = []>, #schedule.group<fragments = [4], schedule = acyclic, feedback = []>, #schedule.group<fragments = [1], schedule = acyclic, feedback = []>, #schedule.group<fragments = [5], schedule = acyclic, feedback = []>]
 // GRAPH-NOT: schedule = convergence
 // GRAPH-NOT: schedule = control_loop
 module attributes {

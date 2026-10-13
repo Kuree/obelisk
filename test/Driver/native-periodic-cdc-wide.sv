@@ -1,9 +1,5 @@
 // RUN: obelisk -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.generic > %t.generic.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.diag
-// RUN: diff -u %t.generic.out %t.eval.out
-// RUN: FileCheck %s < %t.eval.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval 2> %t.diag | FileCheck %s
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
 
 module cdc_wide_stage(input bit clock, input logic [7:0] d,

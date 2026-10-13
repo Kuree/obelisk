@@ -1,13 +1,10 @@
-// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s \
-// RUN:   -o %t.ll 2> %t.timing
+// RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=EVAL < %t.ll
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.auto > %t.auto.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > /dev/null 2> %t.diag
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.diag
+// RUN: %t.generic | diff -u %t.auto.out -
 // RUN: FileCheck %s --check-prefix=DIAG < %t.diag
 
 // A large event-driven island can use generated eval without a structural

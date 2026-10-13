@@ -1,18 +1,9 @@
 // RUN: obelisk-opt %s --obelisk-sim-materialize-clocked-control | FileCheck %s --check-prefix=STATE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=PLAN --check-prefix=BARRIER < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.llvm.mlir
-// RUN: FileCheck %s --check-prefix=BARRIER < %t.llvm.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.read.llvm.mlir
-// RUN: FileCheck %s --check-prefix=VPIBARRIER < %t.read.llvm.mlir
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.full.llvm.mlir
-// RUN: FileCheck %s --check-prefix=PLAN < %t.full.llvm.mlir
-// RUN: FileCheck %s --check-prefix=NBAKNOWN < %t.full.llvm.mlir
-// RUN: FileCheck %s --check-prefix=VPIBARRIER < %t.full.llvm.mlir
-
-// Runtime behavior is checked in ../Runtime/simulation-direct-output-runtime.test.
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --check-prefix=VPIBARRIER
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-materialize-clocked-control,obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=full},convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=PLAN --check-prefix=VPIBARRIER
 
 // Writable capability alone must likewise preserve Tier 1: no writer or
 // callback is attached in this fixture. Actual mutation is a cold handoff.

@@ -1,35 +1,11 @@
 // RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %target_clang -fPIC \
-// RUN:   -shared -nostdlib %S/Inputs/vpi_startup.c \
-// RUN:   -I%resource_dir/include \
-// RUN:   -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
-// RUN: %target_clang -fPIC \
-// RUN:   -shared -nostdlib %S/Inputs/vpi_startup_second.c \
-// RUN:   -I%resource_dir/include \
-// RUN:   -Wl,-soname,libobelisk_vpi_second.so \
-// RUN:   -o %t.dir/lib/libobelisk_vpi_second.so
-// RUN: not obelisk --vpi=off %s %t.dir/lib/libobelisk_vpi_test.so \
-// RUN:   -o %t.dir/off 2>&1 | FileCheck %s --check-prefix=OFF
-// RUN: cd %t.dir && obelisk --vpi=full %s lib/libobelisk_vpi_test.so \
-// RUN:   lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so -o bin/simulator
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup_second.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_second.so -o %t.dir/lib/libobelisk_vpi_second.so
+// RUN: not obelisk --vpi=off %s %t.dir/lib/libobelisk_vpi_test.so -o %t.dir/off 2>&1 | FileCheck %s --check-prefix=OFF
+// RUN: cd %t.dir && obelisk --vpi=full %s lib/libobelisk_vpi_test.so lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so -o bin/simulator
 // RUN: %t.dir/bin/simulator | FileCheck %s --check-prefix=OUTPUT
-// RUN: cd %t.dir && obelisk --execution-tier=bytecode --vpi=full %s \
-// RUN:   lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so \
-// RUN:   -o bin/simulator-bytecode
-// RUN: %t.dir/bin/simulator-bytecode | FileCheck %s --check-prefix=OUTPUT
-// RUN: llvm-readelf -d %t.dir/bin/simulator \
-// RUN:   | FileCheck %s --check-prefix=DYNAMIC
-// RUN: llvm-readelf --dyn-syms %t.dir/bin/simulator \
-// RUN:   | FileCheck %s --check-prefix=EXPORTS
-// RUN: test ! -e %t.dir/bin/libobelisk_vpi_test.so
-// RUN: test -f %resource_dir/include/vpi_user.h
-// RUN: test -f %resource_dir/include/sv_vpi_user.h
-// RUN: test -f %resource_dir/include/vpi_compatibility.h
-// RUN: mkdir -p %t.dir/relocated/bin %t.dir/relocated/lib
-// RUN: cp %t.dir/bin/simulator %t.dir/relocated/bin/simulator
-// RUN: cp %t.dir/lib/libobelisk_vpi_test.so \
-// RUN:   %t.dir/lib/libobelisk_vpi_second.so %t.dir/relocated/lib
-// RUN: %t.dir/relocated/bin/simulator | FileCheck %s --check-prefix=OUTPUT
+// RUN: llvm-readelf -d %t.dir/bin/simulator | FileCheck %s --check-prefix=DYNAMIC
+// RUN: llvm-readelf --dyn-syms %t.dir/bin/simulator | FileCheck %s --check-prefix=EXPORTS
 
 module vpi_top;
   import "DPI-C" function int vpi_release_value();

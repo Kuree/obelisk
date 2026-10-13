@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: sed 's/native_scheduler = 0/native_scheduler = 2/' %s | not obelisk-opt - --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=AOT-REJECT
+// RUN: not obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 2 : i32}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),convert-obelisk-sim-processes-to-llvm-coroutines)' 2>&1 | FileCheck %s --check-prefix=AOT-REJECT
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

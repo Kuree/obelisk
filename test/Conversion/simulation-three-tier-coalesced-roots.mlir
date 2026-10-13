@@ -1,17 +1,22 @@
 // RUN: obelisk-opt %s --obelisk-sim-materialize-graph-regions -o %t
 // RUN: FileCheck %s < %t
-// RUN: obelisk-opt %t -o %t.roundtrip
-// RUN: diff %t %t.roundtrip
-// RUN: sed 's/width = 16, owner = 0/width = 17, owner = 0/' %t > %t.extra
-// RUN: not obelisk-opt %t.extra -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
-// RUN: sed 's/low = 4, width = 8, dynamic/low = 4, width = 4, dynamic/g; s/low = 8, width = 8, dynamic/low = 9, width = 7, dynamic/g' %t > %t.gap
-// RUN: not obelisk-opt %t.gap -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
-// RUN: sed 's/width = 16, owner = 0/width = 15, owner = 0/' %t > %t.missing
-// RUN: not obelisk-opt %t.missing -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: sed 's/width = 16, owner = 0, tier = tier1/width = 16, owner = 0, tier = tier3/' %t > %t.tier
-// RUN: not obelisk-opt %t.tier -o /dev/null 2>&1 | FileCheck %s --check-prefix=TIER
-// RUN: sed 's/width = 16, owner = 0, tier = tier1>/width = 16, owner = 0, tier = tier1>, #schedule.scheduled_root<resource = storage, descriptor = 9, low = 8, width = 8, owner = 0, tier = tier1>/' %t > %t.overlap
-// RUN: not obelisk-opt %t.overlap -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERLAP
+// RUN: obelisk-opt %t | diff %t -
+// RUN: obelisk-opt %t \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 17, owner = 0, tier = tier1>"' \
+// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
+// RUN: obelisk-opt %t \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 4, width = 8, dynamic = false, deferred = false, trigger = none>" replace-to="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 4, width = 4, dynamic = false, deferred = false, trigger = none>"' \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 8, width = 8, dynamic = false, deferred = false, trigger = none>" replace-to="#schedule.effect<effect = write, resource = storage, target = descriptor, descriptor = 9, formal = 0, low = 9, width = 7, dynamic = false, deferred = false, trigger = none>"' \
+// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXTRA
+// RUN: obelisk-opt %t \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 15, owner = 0, tier = tier1>"' \
+// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: obelisk-opt %t \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>" replace-to="#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier3>"' \
+// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=TIER
+// RUN: obelisk-opt %t \
+// RUN:   '--test-obelisk-edit-attributes=replace-from="[#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>]" replace-to="[#schedule.scheduled_root<resource = storage, descriptor = 9, low = 0, width = 16, owner = 0, tier = tier1>, #schedule.scheduled_root<resource = storage, descriptor = 9, low = 8, width = 8, owner = 0, tier = tier1>]"' \
+// RUN:   | not obelisk-opt -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERLAP
 
 // Adjacent partial writes have one owner after kernel formation. The compact
 // root covers both writes, although neither write covers the whole root.

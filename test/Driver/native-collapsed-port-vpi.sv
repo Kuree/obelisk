@@ -1,20 +1,11 @@
-// RUN: mkdir -p %t.dir
-// RUN: obelisk -O0 --vpi=full -emit-sim %s -o %t.dir/sim.mlir
-// RUN: FileCheck %s --check-prefix=COLLAPSE < %t.dir/sim.mlir
-// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_collapsed_ports.c -I%resource_dir/include -o %t.dir/probe.so
-// RUN: obelisk -O0 --vpi=full %s %t.dir/probe.so -o %t.dir/o0
-// RUN: %t.dir/o0 +WRITE | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.dir/probe.so -o %t.dir/o3 2> %t.dir/timing
-// RUN: FileCheck %s --check-prefix=ADMISSION < %t.dir/timing
-// RUN: %t.dir/o3 +WRITE | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic %s %t.dir/probe.so -o %t.dir/generic
-// RUN: %t.dir/generic +WRITE | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %s %t.dir/probe.so -o %t.dir/bytecode
-// RUN: %t.dir/bytecode +WRITE | FileCheck %s
-// RUN: obelisk -O3 --vpi=read %s %t.dir/probe.so -o %t.dir/read
-// RUN: %t.dir/read | FileCheck %s
-// RUN: obelisk -O3 --vpi=read --execution-tier=bytecode %s %t.dir/probe.so -o %t.dir/read-bytecode
-// RUN: %t.dir/read-bytecode | FileCheck %s
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_collapsed_ports.c -I%resource_dir/include -o %t.probe.so
+// RUN: obelisk -O3 --vpi=full --mlir-timing %s %t.probe.so -o %t.o3 2> %t.timing
+// RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
+// RUN: %t.o3 +WRITE | FileCheck %s
+// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %s %t.probe.so -o %t.bytecode
+// RUN: %t.bytecode +WRITE | FileCheck %s
+// RUN: obelisk -O3 --vpi=read %s %t.probe.so -o %t.read
+// RUN: %t.read | FileCheck %s
 // CHECK-NOT: FAIL:
 // ADMISSION: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 

@@ -1,8 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-ranked-group-latch.test.
-
 // IEEE 1800-2023 9.2.2.3: a closed latch holds its last assigned
 // bits, including untouched X bits. Data changes while closed; reopening
 // captures the new data. The latch shares a ranked helper with its neighbors;

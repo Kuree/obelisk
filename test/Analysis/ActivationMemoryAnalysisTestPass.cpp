@@ -212,6 +212,11 @@ public:
                                  llvm::cl::init(false)};
   Option<bool> inputs{*this, "inputs", llvm::cl::init(false)};
   Option<bool> idempotence{*this, "idempotence", llvm::cl::init(false)};
+  Option<bool> compareInputDependencies{
+      *this, "compare-input-dependencies",
+      llvm::cl::desc("check the input-only dependency proof against full "
+                     "publication analysis instead of printing regions"),
+      llvm::cl::init(false)};
   Option<unsigned> idempotenceMaximumOperations{
       *this, "idempotence-maximum-operations", llvm::cl::init(500000)};
   Option<int64_t> sliceRoot{*this, "slice-root", llvm::cl::init(-1)};
@@ -226,6 +231,10 @@ public:
         if (!functions.empty() &&
             !llvm::is_contained(functions, function.getSymName().str()))
           continue;
+        if (compareInputDependencies) {
+          compare(function, handles);
+          continue;
+        }
         auto trace =
             [&](obelisk::analysis::ActivationRegionAnalysis::TracePhase phase,
                 Operation *view) {
@@ -407,6 +416,30 @@ public:
       }
     });
     markAllAnalysesPreserved();
+  }
+
+private:
+  /// Whenever full publication analysis has value dependencies, the cheaper
+  /// input-only proof must succeed with the same publication inputs.
+  void compare(obelisk::sim::SimFuncOp function,
+               const obelisk::analysis::HandleDataflowAnalysis &handles) {
+    using obelisk::analysis::ActivationMemoryAnalysis;
+    using obelisk::analysis::ActivationRegionAnalysis;
+    ActivationRegionAnalysis full(
+        function, handles, {},
+        ActivationMemoryAnalysis::DependencyMode::ReachingValues);
+    if (!full.getMemory().hasValueDependencies())
+      return;
+    ActivationRegionAnalysis inputs(
+        function, handles, {}, ActivationMemoryAnalysis::DependencyMode::Inputs);
+    if (!inputs.getMemory().hasInputDependencies() ||
+        full.getMemory().getValueInputs() !=
+            inputs.getMemory().getValueInputs()) {
+      function.emitError("input-only dependency proof disagrees with full "
+                         "publication analysis");
+      return signalPassFailure();
+    }
+    llvm::errs() << "inputs @" << function.getSymName() << " agree\n";
   }
 };
 } // namespace

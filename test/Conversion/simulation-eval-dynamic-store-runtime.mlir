@@ -1,12 +1,34 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-eval-dynamic-store-runtime.test.
-
 // Dynamic blocking stores clip to the packed root. Unknown payload bits are
 // preserved; invalid writes must neither modify data nor wake change observers.
-// LRM 11.5.1 and 9.4.2. Exercise the same input in native and bytecode modes.
-// PLAN: llvm.func @__obelisk_eval_dispatch_v1
+// LRM 11.5.1 and 9.4.2.
+// The slice write is enabled only for a known index whose 2-bit window
+// overlaps the 32-bit root; its clipped window mask blends the payload into
+// both planes, so an invalid index leaves the cell unchanged. Observers are
+// woken only when either plane actually changed.
+// PLAN-LABEL: llvm.func @publish.__obelisk_eval_body_0(
+// PLAN: llvm.load {{.*}} -> i32
+// PLAN: %[[INDEX_UNKNOWN:.*]] = llvm.load {{.*}} -> i32
+// PLAN: %[[KNOWN:.*]] = llvm.icmp "eq" %[[INDEX_UNKNOWN]], %{{.*}} : i32
+// PLAN: %[[VALID:.*]] = llvm.and %{{.*}}, %[[KNOWN]] : i1
+// PLAN: %[[IN_RANGE:.*]] = llvm.and %[[VALID]], %{{.*}} : i1
+// PLAN: %[[ENABLE:.*]] = llvm.and %[[IN_RANGE]], %{{.*}} : i1
+// PLAN: %[[WINDOW:.*]] = llvm.shl %{{.*}}, %{{.*}} : i64
+// PLAN: %[[MASK:.*]] = llvm.select %[[ENABLE]], %[[WINDOW]], %{{.*}} : i1, i64
+// PLAN: %[[DELTA:.*]] = llvm.xor %[[OLD:.*]], %{{.*}} : i64
+// PLAN: %[[KEEP:.*]] = llvm.and %[[MASK]], %[[DELTA]] : i64
+// PLAN: llvm.xor %[[OLD]], %[[KEEP]] : i64
+// PLAN: %[[DELTA_X:.*]] = llvm.xor %[[OLD_X:.*]], %{{.*}} : i64
+// PLAN: %[[KEEP_X:.*]] = llvm.and %[[MASK]], %[[DELTA_X]] : i64
+// PLAN: llvm.xor %[[OLD_X]], %[[KEEP_X]] : i64
+// PLAN: %[[SAME:.*]] = llvm.icmp "eq" %{{.*}}, %{{.*}} : i64
+// PLAN-NEXT: llvm.cond_br %[[SAME]], ^[[DONE:bb[0-9]+]], ^[[WAKE:bb[0-9]+]]
+// PLAN-NEXT: ^[[WAKE]]:
+// PLAN: llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// PLAN: ^[[DONE]]:
+// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 !wide = !simulation.logic<32>
 !wref = !simulation.ref<!wide>
 !ref = !simulation.ref<i1>

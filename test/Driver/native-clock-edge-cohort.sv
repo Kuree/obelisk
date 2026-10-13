@@ -1,18 +1,14 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
-// RUN: FileCheck %s --check-prefix=LLVM < %t.ll
+// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --mlir-timing %s -o %t.native 2> %t.timing
 // RUN: FileCheck %s --check-prefix=COHORT < %t.timing
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off %s -o %t.native
+// RUN: %llvm_dist/bin/llvm-nm %t.native | FileCheck %s --check-prefix=LLVM
 // RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=generic %s -o %t.reference
-// RUN: obelisk --clocked-kernels=immediate -O3 --execution-tier=bytecode %s -o %t.bytecode
-// RUN: %t.native > %t.native.out
 // RUN: %t.reference > %t.reference.out
-// RUN: %t.bytecode > %t.bytecode.out
-// RUN: diff -u %t.reference.out %t.native.out
-// RUN: diff -u %t.reference.out %t.bytecode.out
-// RUN: FileCheck %s < %t.native.out
+// RUN: %t.native | diff -u %t.reference.out -
+// RUN: FileCheck %s < %t.reference.out
 
 // LRM 4.5-4.7, 9.2.2.4, 9.4.2, 10.4.2: preserve exact edge selection,
-// NBA barriers and per-process statement order across multiple ready words.
+// NBA barriers and per-process statement order across multiple ready words:
+// the 68 clocked members need two 64-bit words.
 // The async reset and separate clock must not acquire the main cohort's
 // activations, including coincident physical edges and X/Z transitions.
 module clock_edge_member #(parameter int K = 1);
@@ -34,15 +30,15 @@ endmodule
 module native_clock_edge_cohort;
   bit clk = 0, other_clk = 0, reset = 1;
   logic four_clk = 0;
-  logic [7:0] q[130];
+  logic [7:0] q[66];
   int other = 0, async_q = 0, four_rises[2] = '{default: 0};
   int four_falls = 0;
   always #5 clk = ~clk;
   always #3 other_clk = ~other_clk;
-  for (genvar k = 0; k < 130; k++) begin
+  for (genvar k = 0; k < 66; k++) begin
     clock_edge_member #(k + 1) member();
   end
-  for (genvar k = 0; k < 130; k++) begin
+  for (genvar k = 0; k < 66; k++) begin
     always_ff @(posedge clk)
       if (reset) q[k] <= 0;
       else q[k] <= q[k] + k + 1;
@@ -63,7 +59,7 @@ module native_clock_edge_cohort;
     #1; four_clk = 1;
     #1; four_clk = 0;
     #30;
-    for (int i = 0; i < 130; i++)
+    for (int i = 0; i < 66; i++)
       if (q[i] !== 8'(3 * (i + 1))) $fatal(1, "lane %0d: %0d", i, q[i]);
     $display("clock cohort: other=%0d async=%0d rises=%0d,%0d falls=%0d",
              other, async_q, four_rises[0], four_rises[1], four_falls);
@@ -71,6 +67,6 @@ module native_clock_edge_cohort;
   end
 endmodule
 
-// LLVM: define {{.*}}void @__obelisk_eval_ranked_group_
-// COHORT: obelisk ranked groups: {{.*}} clocked_members=132
+// LLVM: t {{.*}}__obelisk_eval_ranked_group_
+// COHORT: obelisk ranked groups: {{.*}} clocked_members=68
 // CHECK: clock cohort: other=6 async=3 rises=2,2 falls=1

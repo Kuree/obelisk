@@ -1,9 +1,8 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
+// RUN: FileCheck %s --check-prefix=DISPLAY < %t.llvm.mlir
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.read.llvm.mlir
-
-// Runtime behavior is checked in ../Runtime/simulation-nba-settle-display-runtime.test.
 
 // Read-only VPI with no readers must preserve the same native lowering and
 // mixed-tier checkpoint semantics, including clock phase and X clearing.
@@ -14,6 +13,17 @@
 // Empty-barrier bypass must not suppress the second commit, and canonical
 // handover must clear B's initial X. No display may execute in a dry-run probe.
 // PLAN-DAG: llvm.call @obelisk_rt_v1_eval_display
+// Displays execute only in the real eval bodies of writer and cascade (and
+// their two-state forms), never in a predicate or dry-run probe.
+// DISPLAY-LABEL: llvm.func @writer.__obelisk_eval_body_0(
+// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
+// DISPLAY-LABEL: llvm.func @cascade.__obelisk_eval_body_0(
+// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
+// DISPLAY-LABEL: llvm.func @writer.__obelisk_eval_body_0.__obelisk_two_state_0(
+// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
+// DISPLAY-LABEL: llvm.func @cascade.__obelisk_eval_body_0.__obelisk_two_state_0(
+// DISPLAY: llvm.call @obelisk_rt_v1_eval_display(
+// DISPLAY-NOT: llvm.call @obelisk_rt_v1_eval_display(
 // PLAN-DAG: llvm.func @__obelisk_eval_dispatch_v1
 // PLAN-DAG: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 

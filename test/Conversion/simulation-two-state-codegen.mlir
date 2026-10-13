@@ -5,9 +5,7 @@
 // RUN:   FileCheck %s --check-prefix=AOT
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | \
 // RUN:   FileCheck %s --check-prefix=BYTECODE
-// RUN: sed 's/llvm.data_layout =/obelisk.native.optimization_level = 3 : i32, obelisk.native.max_state_domain_functions = 0 : i64, llvm.data_layout =/' %s | \
-// RUN:   obelisk-opt - --convert-obelisk-sim-processes-to-llvm-coroutines | \
-// RUN:   FileCheck %s --check-prefix=BUDGET
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{obelisk.native.optimization_level = 3 : i32, obelisk.native.max_state_domain_functions = 0 : i64}"' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BUDGET
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

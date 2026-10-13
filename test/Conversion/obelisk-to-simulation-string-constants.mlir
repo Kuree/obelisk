@@ -68,7 +68,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: simulation.string.literal "  a  "
 // CHECK: simulation.string.literal "x,y"

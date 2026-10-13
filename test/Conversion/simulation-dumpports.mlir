@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
+// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 // RUN: env OBELISK_TEST_INPUT=%s OBELISK_TEST_OUTPUT=%t.off \
 // RUN:   OBELISK_TEST_VPI=off %obj_root/test/obelisk-design-database-dump-test \

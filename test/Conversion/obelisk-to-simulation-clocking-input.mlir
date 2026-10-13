@@ -1,9 +1,9 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
-// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "2"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SKEW
-// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "1.5", clocking_input_skew_delay_is_real = true/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=REAL-SKEW
-// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "-1"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=BAD-SKEW
-// RUN: sed 's/clocking_access_direction = 0 : i32, clocking_event_edge/clocking_access_direction = 1 : i32, clocking_event_edge/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=OUTPUT-READ
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=match={clocking_input_skew_one_step} remove=clocking_input_skew_one_step set={clocking_input_skew_delay = \"0\"}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=match={clocking_input_skew_one_step} remove=clocking_input_skew_one_step set={clocking_input_skew_delay = \"2\"}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=SKEW
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=match={clocking_input_skew_one_step} remove=clocking_input_skew_one_step set={clocking_input_skew_delay = \"1.5\", clocking_input_skew_delay_is_real = true}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=REAL-SKEW
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={clocking_input_skew_one_step} remove=clocking_input_skew_one_step set={clocking_input_skew_delay = \"-1\"}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=BAD-SKEW
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={clocking_access_direction = 0 : i32} has=clocking_event_edge set={clocking_access_direction = 1 : i32}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=OUTPUT-READ
 
 module {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}

@@ -34,7 +34,6 @@ module attributes {
   }
 }
 
-
 // CHECK-LABEL: llvm.func @main
 // CHECK:      llvm.call @obelisk_rt_v1_native_state_sync
 // CHECK:      %[[PERSIST:.*]] = llvm.mlir.constant(2 : i32) : i32

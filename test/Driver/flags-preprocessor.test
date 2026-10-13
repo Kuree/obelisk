@@ -1,0 +1,16 @@
+// Include paths, macro definitions, and the include depth limit.
+// RUN: obelisk -emit-slang --include-directory %S/Inputs/include %S/Inputs/include_user.sv | FileCheck %s --check-prefix=INCLUDE
+// RUN: obelisk -emit-slang -isystem %S/Inputs/include %S/Inputs/macros.sv | FileCheck %s --check-prefix=SYSTEM-INCLUDE
+// RUN: obelisk -emit-slang -D FROM_DRIVER %S/Inputs/macros.sv | FileCheck %s --check-prefix=MACRO-DEFINED
+// RUN: obelisk -emit-slang -DFROM_DRIVER -UFROM_DRIVER %S/Inputs/macros.sv | FileCheck %s --check-prefix=MACRO-UNDEFINED
+// RUN: obelisk -emit-slang --max-include-depth=3 -I%S/Inputs/depth %S/Inputs/depth/main.sv | FileCheck %s --check-prefix=DEPTH
+// RUN: not obelisk -emit-slang --max-include-depth=1 -I%S/Inputs/depth %S/Inputs/depth/main.sv 2>&1 | FileCheck %s --check-prefix=DEPTH-ERROR
+
+// INCLUDE: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "include_user"
+// INCLUDE: !slang.packed_array<6 : 0 x
+// SYSTEM-INCLUDE: hierarchical_name = "macro_was_undefined"
+// MACRO-DEFINED: hierarchical_name = "macro_was_defined"
+// MACRO-UNDEFINED: hierarchical_name = "macro_was_undefined"
+// DEPTH: hierarchical_name = "nested_include"
+// DEPTH: !slang.packed_array<5 : 0 x
+// DEPTH-ERROR: error: exceeded max include depth

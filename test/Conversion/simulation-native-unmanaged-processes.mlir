@@ -1,5 +1,4 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-print-ir-after=prepare-native-managed-roots -o /dev/null 2>&1 | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-print-ir-after=prepare-native-managed-roots -o /dev/null 2>&1 | grep "simulation.func @recursive_caller" | FileCheck %s --check-prefix=RECURSIVE
 
 // A process needs no managed root scope when it holds only scalar state,
 // including fixed unpacked arrays of scalars, and its calls reach only such
@@ -71,6 +70,7 @@ module attributes {
 // CHECK: IR Dump After {{.*}}PrepareNativeManagedRootsPass
 // CHECK: simulation.func @scalar_caller({{.*}}obelisk.native.unmanaged
 // CHECK: simulation.func @array_holder({{.*}}obelisk.native.unmanaged
-
-// RECURSIVE: simulation.func @recursive_caller(
-// RECURSIVE-NOT: obelisk.native.unmanaged
+// The NOT range ends at the next line, so it covers only the header.
+// CHECK: simulation.func @recursive_caller(
+// CHECK-NOT: obelisk.native.unmanaged
+// CHECK-NEXT: simulation.call @recursive(

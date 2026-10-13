@@ -1,7 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir 2>&1 | FileCheck %s --check-prefix=PROOF
 // RUN: FileCheck %s --check-prefix=LOWER < %t.mlir
 
-// Runtime coverage in ../Runtime/simulation-nba-unchanged.test.
 // An equal-value NBA is inert only if no earlier NBA is pending and no
 // blocking writer can intervene. Equality includes the X/Z plane, and a
 // partial store must ignore its neighboring bits. LRM 4.3, 4.6, 4.9.4, 10.4.2.

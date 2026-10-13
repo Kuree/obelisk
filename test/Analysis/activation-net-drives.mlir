@@ -1,4 +1,9 @@
 // RUN: obelisk-opt %s --test-obelisk-activation-regions='publications=true reaching-values=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @isolated agree
+
 // IEEE 1800-2023 6.6.1, 4.9.1: only a plain single-driver wire may use the
 // driver's publication as its resolved value. Delays, strengths, user
 // resolution, connected aliases and competing drivers retain resolution.

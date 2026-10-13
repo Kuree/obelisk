@@ -82,7 +82,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: simulation.observer.bind
 // CHECK: simulation.suspend.observe

@@ -1,12 +1,8 @@
 // RUN: obelisk --clocked-kernels=immediate -O3 --vpi=off --native-scheduler=eval --mlir-timing %s -o %t.o3 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
-// RUN: obelisk --clocked-kernels=immediate -O0 --vpi=off --native-scheduler=eval %s -o %t.o0
-// RUN: %t.o3 --execution-tier=bytecode > %t.reference
-// RUN: %t.o0 > %t.o0.out
 // RUN: %t.o3 > %t.o3.out
-// RUN: diff -u %t.reference %t.o0.out
-// RUN: diff -u %t.reference %t.o3.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.o3.out
+// RUN: %t.o3 --execution-tier=bytecode | diff -u %t.o3.out -
 
 // LRM 4.9.4/10.4.2: differently masked captures must both be retained.
 // The current local form requires one fixed mask per root. Mixed remains on

@@ -15,6 +15,8 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/BinaryFormat/Magic.h"
+#include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -99,6 +101,41 @@ LogicalResult sanitizeBundledBuildPaths(StringRef path, StringRef supportRoot) {
   return success();
 }
 
+/// The generated modules use LLVM's unified LTO pipeline, which accepts only
+/// bitcode compiled for it. LLD diagnoses an incompatible module only after
+/// optimizing the whole program, so reject it before linking.
+LogicalResult checkUnifiedLTOInputs(ArrayRef<NativeLinkInput> inputs) {
+  for (const NativeLinkInput &input : inputs) {
+    if (input.kind != NativeLinkInput::Kind::File)
+      continue;
+    ErrorOr<std::unique_ptr<MemoryBuffer>> buffer =
+        MemoryBuffer::getFile(input.path);
+    // LLD reports unreadable inputs itself.
+    if (!buffer || identify_magic((*buffer)->getBuffer()) != file_magic::bitcode)
+      continue;
+    Expected<std::vector<BitcodeModule>> modules =
+        getBitcodeModuleList((*buffer)->getMemBufferRef());
+    if (!modules) {
+      consumeError(modules.takeError());
+      continue;
+    }
+    for (BitcodeModule &module : *modules) {
+      Expected<BitcodeLTOInfo> info = module.getLTOInfo();
+      if (!info) {
+        consumeError(info.takeError());
+        continue;
+      }
+      if (!info->UnifiedLTO) {
+        errs() << "obelisk: error: LTO input '" << input.path
+               << "' is not unified LTO bitcode; compile it with "
+                  "-funified-lto\n";
+        return failure();
+      }
+    }
+  }
+  return success();
+}
+
 LogicalResult linkELFExecutable(
     ArrayRef<std::string> modulePaths, StringRef outputPath,
     StringRef supportRoot, StringRef driverExecutablePath,
@@ -106,6 +143,8 @@ LogicalResult linkELFExecutable(
     ArrayRef<SharedLibraryInput> sharedLibraryInputs, uint32_t optLevel,
     bool noLTO, uint32_t linkThreads, bool thinLTO, bool dpi, bool vpiEnabled) {
   bool fullLTO = optLevel != 0 && !noLTO && !thinLTO;
+  if ((fullLTO || thinLTO) && failed(checkUnifiedLTOInputs(nativeLinkInputs)))
+    return failure();
   FailureOr<HostCRuntimeInputs> hostRuntime =
       discoverHostCRuntime(kTargetTriple, driverExecutablePath);
   if (failed(hostRuntime))

@@ -76,7 +76,6 @@ module attributes {
   }
 }
 
-
 // CHECK: simulation.func private @unit_1(
 // CHECK-SAME: %[[FLAG:[^:]*]]: !simulation.ref<!simulation.logic<1>>
 // CHECK: %[[IN:.*]] = simulation.logic.resize

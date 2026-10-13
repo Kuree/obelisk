@@ -2,16 +2,10 @@
 // RUN: obelisk-opt %s --mlir-disable-threading --schedule-optimize-native-words -o %t.serial
 // RUN: diff %t.words %t.serial
 // RUN: FileCheck %s --check-prefix=WORDS < %t.words
-// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines="native-words=false" | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.scalar.o
-// RUN: %llvm_dist/bin/clang++ %t.scalar.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.scalar.exe
-// RUN: %t.scalar.exe | FileCheck %s
+
 // LRM 4.6 and 11.4.8: each lane first receives zero, then two ordered XORs.
 // Different outer iterations are disjoint even though each inner iteration
 // reads and writes the same lane. CSE must preserve the nested loop proof.

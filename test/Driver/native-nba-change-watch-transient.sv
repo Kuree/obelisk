@@ -1,12 +1,8 @@
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: %t.reference > %t.reference.out
 // RUN: %t.auto --execution-tier=native > %t.native.out
-// RUN: %t.auto --execution-tier=bytecode > %t.bytecode.out
-// RUN: diff -u %t.reference.out %t.native.out
-// RUN: diff -u %t.reference.out %t.bytecode.out
 // RUN: FileCheck %s < %t.native.out
+// RUN: %t.auto --execution-tier=bytecode | diff -u %t.native.out -
 
 // Roots watched only by waits for any change merge their NBAs, but a bit
 // rewritten with a different value in one barrier must still wake those

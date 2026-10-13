@@ -163,7 +163,6 @@ module {
   }
 }
 
-
 // A monomorphic recursive rand-object path contributes its packed leaves to
 // the root's single assignment and randomizes existing container elements.
 // Every handle remains unchanged. A null intermediate object or a disabled

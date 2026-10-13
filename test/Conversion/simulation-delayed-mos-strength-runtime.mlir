@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LLVM
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // Runtime behavior is checked in ../Runtime/simulation-delayed-mos-strength-runtime.test.
 

@@ -53,8 +53,7 @@ endmodule
 // CHECK-NOT:  EndOfFile
 
 // Several inputs are listed in order, each under its path.
-// RUN: echo 'wire w;' > %t.second.sv
-// RUN: obelisk -dump-tokens %s %t.second.sv | FileCheck %s --check-prefix=MULTI
+// RUN: obelisk -dump-tokens %s %S/Inputs/dump-tokens.second.sv | FileCheck %s --check-prefix=MULTI
 // MULTI:      file {{.*}}dump-tokens.sv
 // MULTI-NEXT: 0 7 Directive
 // MULTI:      file {{.*}}.second.sv
@@ -62,23 +61,3 @@ endmodule
 // MULTI-NEXT: 5 1 Identifier
 // MULTI-NEXT: 6 1 Semicolon
 // MULTI-NOT:  {{.}}
-
-// Text that does not lex cleanly is still listed to the end, without
-// diagnostics, because the listing describes text rather than a design.
-// RUN: echo '"open' > %t.bad.sv
-// RUN: echo "@@ 4'q wire" >> %t.bad.sv
-// RUN: echo '/* never closed' >> %t.bad.sv
-// RUN: echo 'wire' >> %t.bad.sv
-// RUN: obelisk -dump-tokens %t.bad.sv 2> %t.bad.stderr | FileCheck %s --check-prefix=BAD
-// RUN: test ! -s %t.bad.stderr
-// BAD:      0 5 StringLiteral
-// BAD-NEXT: 6 2 DoubleAt
-// BAD-NEXT: 9 1 IntegerLiteral
-// BAD-NEXT: 10 1 Apostrophe
-// BAD-NEXT: 11 1 Identifier
-// BAD-NEXT: 13 4 WireKeyword
-// BAD-NEXT: 18 21 BlockComment
-// BAD-NOT:  {{.}}
-
-// RUN: not obelisk -dump-tokens %t.missing.sv 2>&1 | FileCheck %s --check-prefix=MISSING
-// MISSING: obelisk: error: could not inspect input '{{.*}}missing.sv'

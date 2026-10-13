@@ -104,8 +104,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[MSG:.*]], %[[CODE:.*]] = simulation.file.error_string
 // CHECK: %[[BITS:.*]] = simulation.string.to_packed %[[MSG]] : (!simulation.string) -> i800

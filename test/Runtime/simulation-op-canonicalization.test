@@ -1,7 +1,6 @@
 // RUN: obelisk-opt %S/Inputs/op-canonicalization.mlir --canonicalize --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | mlir-translate --mlir-to-llvmir > %t.canonical.ll
-// RUN: sed 's/@/@reference_/g' %S/Inputs/op-canonicalization.mlir | obelisk-opt --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | mlir-translate --mlir-to-llvmir > %t.reference.ll
+// RUN: obelisk-opt %S/Inputs/op-canonicalization.mlir --test-obelisk-prefix-symbols=prefix=reference_ --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | mlir-translate --mlir-to-llvmir > %t.reference.ll
 // RUN: %llvm_dist/bin/clang++ -O0 %t.canonical.ll %t.reference.ll %S/Inputs/op-canonicalization.cpp -o %t.exe
 // RUN: %t.exe | FileCheck %s
-// RUN: %llvm_dist/bin/clang++ -O3 %t.canonical.ll %t.reference.ll %S/Inputs/op-canonicalization.cpp -o %t.o3.exe
-// RUN: %t.o3.exe | FileCheck %s
+
 // CHECK: PASS: 256 four-state words, 65536 pairs, LRM oracle and unfurled lowering

@@ -138,7 +138,6 @@ module {
   }
 }
 
-
 // -----
 
 // Two continuous assignments to disjoint parts of one variable are separate

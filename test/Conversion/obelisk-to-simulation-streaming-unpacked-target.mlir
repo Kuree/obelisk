@@ -44,7 +44,6 @@ module {
   }
 }
 
-
 // The reordering is bounded by the target's six-bit bit-stream width, not by
 // the size of the eight-bit source stream.
 // CHECK: %[[WIDTH:.*]] = arith.constant 6 : i64

@@ -1,14 +1,9 @@
 // RUN: obelisk -O3 --execution-tier=native --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --execution-tier=native --native-scheduler=eval %s -o %t.eval
 // RUN: obelisk -O0 --native-scheduler=generic %s -o %t.reference
 // RUN: %t.reference > %t.reference.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.auto.diag
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.eval.diag
-// RUN: diff -u %t.reference.out %t.auto.out
-// RUN: diff -u %t.reference.out %t.eval.out
-// RUN: FileCheck %s < %t.auto.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto 2> %t.auto.diag | diff -u %t.reference.out -
+// RUN: FileCheck %s < %t.reference.out
 // RUN: FileCheck %s --check-prefix=DIAG < %t.auto.diag
-// RUN: FileCheck %s --check-prefix=DIAG < %t.eval.diag
 
 // Finite runtime waiters keep periodic bootstrap active among many generated
 // actors. A child created after time has advanced must enter the live index,

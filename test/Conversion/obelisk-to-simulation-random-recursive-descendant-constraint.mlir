@@ -189,7 +189,6 @@ module {
   }
 }
 
-
 // A recursively nested object's constraint participates in the same solve as
 // its random leaf. Every rand handle edge and null ancestor gates both the
 // leaf and the descendant constraint block. Non-rand members are captured

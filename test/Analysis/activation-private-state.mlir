@@ -1,6 +1,17 @@
 // RUN: obelisk-opt %s --test-obelisk-activation-regions -o %t.analyzed 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @pure_call agree
+// COMPARE: inputs @captured_read agree
+// COMPARE: inputs @local_slot agree
+// COMPARE: inputs @merged_reference agree
+// COMPARE: inputs @flushed_slot agree
+// COMPARE: inputs @formal_read agree
+
+// COMPARE: inputs @default_slots agree
 
 !pair = !simulation.unpacked_array<0 : 1 x i8>
 module {

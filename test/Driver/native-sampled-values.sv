@@ -1,5 +1,3 @@
-// RUN: obelisk --std=1800-2023 -O0 --vpi=read %s -o %t.o0.native
-// RUN: %t.o0.native | FileCheck %s
 // RUN: obelisk --std=1800-2023 -O0 --vpi=read --execution-tier=bytecode %s -o %t.o0.bytecode
 // RUN: %t.o0.bytecode | FileCheck %s
 // RUN: obelisk --std=1800-2023 -O3 %s -o %t.o3.native

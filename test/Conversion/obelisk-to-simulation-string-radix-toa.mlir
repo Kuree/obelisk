@@ -62,7 +62,6 @@ module {
   }
 }
 
-
 // CHECK: simulation.string.format_integer {{.*}} radix = <decimal> signed = true
 // CHECK: simulation.string.format_integer {{.*}} radix = <hex> signed = true
 // CHECK: simulation.string.format_integer {{.*}} radix = <octal> signed = true

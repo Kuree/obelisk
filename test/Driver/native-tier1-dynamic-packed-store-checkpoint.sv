@@ -1,12 +1,9 @@
+// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s < %t.native.out
 // RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.auto > %t.auto.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: FileCheck %s < %t.auto.out
 
 // Generated indexed stores retain complete source-order transitions and
 // bounded selection semantics (IEEE 1800-2023 4.6(a), 9.4.2, 11.5.1).

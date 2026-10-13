@@ -1,24 +1,10 @@
-// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s \
-// RUN:   -o %t.native
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s \
-// RUN:   -o %t.bytecode
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s \
-// RUN:   -o %t.bytecode-o0
-// RUN: obelisk -O3 --vpi=off --native-scheduler=aot %s \
-// RUN:   -o %t.aot
-// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode \
-// RUN:   -G N=17 -G SLOW=1024 -G CYCLES=3 %s -o %t.slow-dominant
-// RUN: %t.native > %t.native.out
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode > %t.bytecode.out
-// RUN: %t.bytecode-o0 > %t.bytecode-o0.out
-// RUN: %t.aot > %t.aot.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.slow-dominant \
-// RUN:   > %t.slow-dominant.out 2> %t.slow-dominant.diag
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode-o0.out
-// RUN: diff -u %t.native.out %t.aot.out
 // RUN: FileCheck %s < %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=SLOW < %t.slow-dominant.out
+// RUN: obelisk -O3 --vpi=off --native-scheduler=generic %s -o %t.native
+// RUN: %t.native | diff -u %t.bytecode.out -
+// RUN: obelisk -O3 --vpi=off --execution-tier=bytecode -G N=17 -G SLOW=1024 -G CYCLES=3 %s -o %t.slow-dominant
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.slow-dominant 2> %t.slow-dominant.diag | FileCheck %s --check-prefix=SLOW
 // RUN: FileCheck %s --check-prefix=SLOW-DIAG < %t.slow-dominant.diag
 
 // More than the bytecode scheduler's cohort threshold of independent direct

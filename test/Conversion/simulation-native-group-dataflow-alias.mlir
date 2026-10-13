@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=LE < %t.mlir
-// RUN: sed 's/"e-m:e-p/"E-m:e-p/' %s | obelisk-opt --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BE
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"E-m:e-p:64:64-i64:64-n8:16:32:64-S128\"}"' --obelisk-materialize-native-eval-groups | FileCheck %s --check-prefix=BE
 
 // Runtime behavior is checked in ../Runtime/simulation-native-group-dataflow-alias.test.
 

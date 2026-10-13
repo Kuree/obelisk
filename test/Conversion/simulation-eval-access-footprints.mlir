@@ -2,8 +2,11 @@
 // RUN: FileCheck %s < %t.mlir
 
 // Only off-diagonal matrix elements are reachable. The whole-array guard
-// must exclude the uninitialized diagonal while retaining the output root.
-// Runtime X/Z and invalidation coverage lives in the paired Runtime test.
+// must exclude the uninitialized diagonal while retaining the output root, so
+// an X/Z store to the diagonal does not unpromote the kernel. Stores publish
+// X/Z through __obelisk_eval_promotion_publish_unknown_v1
+// (simulation-eval-promotion-word-scan.mlir), and the runtime invalidates only
+// proofs whose ranges overlap (runtime/unittests/PromotionRangeIndexTest.cpp).
 !row = !simulation.unpacked_array<0 : 2 x !simulation.logic<3>>
 !matrix = !simulation.unpacked_array<0 : 2 x !row>
 module attributes {

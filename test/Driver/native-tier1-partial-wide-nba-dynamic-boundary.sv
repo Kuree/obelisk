@@ -1,12 +1,9 @@
+// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.ll 2> %t.diag
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=PROOF < %t.diag
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.auto > %t.auto.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
 
 // A dynamic part-select in this repeated loop is a Tier-2 fragment. The
 // generated queue cannot own every NBA site on the overlapping wide root,

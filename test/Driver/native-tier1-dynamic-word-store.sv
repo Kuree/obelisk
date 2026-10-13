@@ -1,12 +1,9 @@
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
 // RUN: obelisk -O3 --native-scheduler=eval --mlir-timing -emit-llvm %s -o %t.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.eval > %t.eval.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.eval.out
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.eval.out
 
 // IEEE 1800-2023 4.6(a), 9.4.2 and 11.5.1: preserve source order and X/Z;
 // partial out-of-range writes affect only in-range bits, while wholly invalid

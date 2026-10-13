@@ -5,8 +5,8 @@
 // RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),encode-obelisk-sim-to-bytecode)' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
+// RUN:   --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)),encode-obelisk-sim-to-bytecode,test-obelisk-print-bytecode{state=true})' \
+// RUN:   -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2017 6.8 and 29.3.2-29.3.4: a sequential UDP's output is its

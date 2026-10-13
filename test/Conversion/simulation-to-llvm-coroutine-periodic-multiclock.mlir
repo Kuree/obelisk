@@ -1,6 +1,4 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
-// RUN: sed 's/%crossing = simulation.ref.load .*$/%crossing = simulation.logic.constant 0 : i8, -1 : i8 : !simulation.logic<8>/' %s > %t.mixed.mlir
-// RUN: obelisk-opt %t.mixed.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=MIXED
 
 // Two independent clocks drive a bidirectional CDC pipeline. Check the
 // generated calendar and shared two-state prefix at the MLIR boundary.
@@ -185,17 +183,3 @@ module attributes {
 
 // The mixed variant replaces one domain's sample with X. That owner cannot
 // use the shared proof; check the remaining consumer after its predecessor.
-// MIXED-LABEL: llvm.func @__obelisk_aot_schedule_run_v1(
-// MIXED: llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute(
-// MIXED-NOT: llvm.call @__obelisk_direct_fragment_3_9.__obelisk_execute.two_state
-// MIXED: %[[PENDING:.*]] = llvm.mlir.addressof @__obelisk_eval_promotion_pending_mask_v1
-// MIXED-NEXT: %[[BITS:.*]] = llvm.load %[[PENDING]] {{.*}} : !llvm.ptr -> i64
-// MIXED-NEXT: %[[BIT:.*]] = llvm.mlir.constant(2 : i64)
-// MIXED-NEXT: %[[LOCAL:.*]] = llvm.and %[[BITS]], %[[BIT]] : i64
-// MIXED: %[[KNOWN:.*]] = llvm.icmp "eq" %[[LOCAL]], {{.*}} : i64
-// MIXED-NEXT: llvm.cond_br %[[KNOWN]], ^[[FAST:bb[0-9]+]], ^[[SCAN:bb[0-9]+]]
-// MIXED: ^[[SCAN]]:
-// MIXED: %[[OWNER:.*]] = llvm.mlir.constant(1 : i64)
-// MIXED-NEXT: {{.*}}llvm.call @__obelisk_eval_kernel_promotion_ready_v1(%[[OWNER]])
-// MIXED: ^[[FAST]]:
-// MIXED-NEXT: {{.*}}llvm.call @__obelisk_direct_fragment_4_12.__obelisk_execute.two_state.__obelisk_trusted

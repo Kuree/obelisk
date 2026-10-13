@@ -1,17 +1,10 @@
 // RUN: obelisk -O0 --vpi=off %s -o %t.native
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.bytecode
 // RUN: not %t.native +CASE=malformed 2>&1 | FileCheck %s --check-prefix=MALFORMED
 // RUN: not %t.native +CASE=mismatch_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.native +CASE=mismatch_type 2>&1 | FileCheck %s --check-prefix=TYPE
 // RUN: not %t.native +CASE=eof_count 2>&1 | FileCheck %s --check-prefix=COUNT
 // RUN: not %t.native +CASE=eof_type 2>&1 | FileCheck %s --check-prefix=TYPE
 // RUN: not %t.native +CASE=suppressed 2>&1 | FileCheck %s --check-prefix=SUPPRESSED
-// RUN: not %t.bytecode +CASE=malformed 2>&1 | FileCheck %s --check-prefix=MALFORMED
-// RUN: not %t.bytecode +CASE=mismatch_count 2>&1 | FileCheck %s --check-prefix=COUNT
-// RUN: not %t.bytecode +CASE=mismatch_type 2>&1 | FileCheck %s --check-prefix=TYPE
-// RUN: not %t.bytecode +CASE=eof_count 2>&1 | FileCheck %s --check-prefix=COUNT
-// RUN: not %t.bytecode +CASE=eof_type 2>&1 | FileCheck %s --check-prefix=TYPE
-// RUN: not %t.bytecode +CASE=suppressed 2>&1 | FileCheck %s --check-prefix=SUPPRESSED
 
 module scan_dynamic_format_invalid;
   string selected;

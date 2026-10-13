@@ -1,6 +1,13 @@
 // RUN: obelisk-opt %s '--test-obelisk-activation-regions=inputs=true' -o %t.analyzed 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @ascending agree
+// COMPARE: inputs @descending agree
+// COMPARE: inputs @modular_ne agree
+
 // IEEE 1800-2023 11.6 and 12.7: a known packed counter remains known under
 // constant add/sub and resizing, but its narrow storage width controls wrap.
 !counter = !simulation.packed_array<1 : 0 x !simulation.logic<1>>

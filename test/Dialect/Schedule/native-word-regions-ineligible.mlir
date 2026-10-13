@@ -554,7 +554,6 @@ module {
   }
 }
 
-
 // -----
 
 // Do not speculate operations with undefined scalar rows.
@@ -616,7 +615,6 @@ module {
   }
 }
 
-
 // -----
 
 // A conditional cross-lane recurrence still cannot be reordered.
@@ -677,7 +675,6 @@ module {
     }
   }
 }
-
 
 // -----
 
@@ -802,7 +799,6 @@ module {
     }
   }
 }
-
 
 // -----
 

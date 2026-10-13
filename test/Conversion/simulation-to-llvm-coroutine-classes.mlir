@@ -206,7 +206,6 @@ module attributes {
   }
 }
 
-
 // CHECK: llvm.func @obelisk_rt_v1_object_bits_insert(!llvm.ptr, i64, i64, i64, i32, i64, i32) -> i32
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_class_descriptor
 // CHECK-LABEL: llvm.mlir.global internal constant @Derived.__obelisk_interfaces

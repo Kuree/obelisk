@@ -1,4 +1,9 @@
 // RUN: obelisk-opt %s '--test-obelisk-activation-regions=inputs=true' -o /dev/null 2>&1 | FileCheck %s
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @join_ranges agree
+
 // Join paths with partially overlapping intervals on multiple roots. A later
 // whole-word read depends only on bits not definitely initialized on both paths.
 // CHECK-LABEL: regions @join_ranges valid=1

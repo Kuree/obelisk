@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' > %t.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py < %t.mlir | FileCheck %s
+// RUN: obelisk-opt %t.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s
 
 module attributes {obelisk.coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.root @root attributes {

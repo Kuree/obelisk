@@ -41,7 +41,6 @@ module {
   }
 }
 
-
 // CHECK: simulation.code_unit.decl {{[0-9]+}} in 1 function hierarchy "port_initializer.value.$static_initializer" debug "value"
 
 // The initializer runs as a zero-time call before the initial process spawns.

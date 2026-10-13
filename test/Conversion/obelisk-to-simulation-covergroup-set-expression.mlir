@@ -3,7 +3,7 @@
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   > %t/lowered.mlir
 // RUN: FileCheck %s --check-prefix=LOWER < %t/lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py < %t/lowered.mlir \
+// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 
 // IEEE 1800-2017 19.5.1.2 permits any array except an associative array as a

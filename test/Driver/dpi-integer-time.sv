@@ -1,10 +1,6 @@
 // RUN: %target_clang -fPIC -c \
 // RUN:   %S/Inputs/dpi_integer_time.c \
 // RUN:   -I%resource_dir/include -o %t.o
-// RUN: obelisk -O0 --vpi=off %s %t.o -o %t.o0.native
-// RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s %t.o -o %t.o0.bytecode
-// RUN: %t.o0.bytecode | FileCheck %s
 // RUN: obelisk -O3 --vpi=off %s %t.o -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
 // RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s %t.o -o %t.o3.bytecode

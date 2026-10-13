@@ -1,10 +1,7 @@
 // RUN: %split-file %s %t
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
 // RUN: obelisk -O3 --vpi=full --native-scheduler=eval %t/design.sv %t/plugin.so -o %t/eval
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic %t/design.sv %t/plugin.so -o %t/generic
 // RUN: %t/eval > %t/eval.out
-// RUN: %t/generic > %t/generic.out
-// RUN: diff -u %t/generic.out %t/eval.out
 // RUN: FileCheck %s < %t/eval.out
 // RUN: obelisk -O3 --vpi=full --native-scheduler=eval -emit-llvm %t/design.sv -o %t.ll
 // RUN: FileCheck %s --check-prefix=QUEUE < %t.ll

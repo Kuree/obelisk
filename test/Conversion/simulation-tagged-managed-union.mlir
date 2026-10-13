@@ -1,12 +1,11 @@
 // RUN: obelisk-opt %s | FileCheck %s --check-prefix=SIM
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | %python %S/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=INSTRUCTIONS
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=INSTRUCTIONS
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE-SHELL
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off require-bytecode=true' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o %t.first
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' -o %t.second
-// RUN: cmp %t.first %t.second
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | diff %t.first -
 
 !tagged = !simulation.unpacked_union<fields = [
   #simulation.field<name = "object", type = !simulation.class_handle<@Node>, ordinal = 0, packedOffset = 0>,

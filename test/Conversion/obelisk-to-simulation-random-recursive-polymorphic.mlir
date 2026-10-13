@@ -281,7 +281,6 @@ module {
   }
 }
 
-
 // A polymorphic descendant is inspected only after all ancestor handles are
 // proven non-null. Its runtime class selects a frozen whole-graph solver plan.
 // A constraint declared by the descendant's one-level owner participates in

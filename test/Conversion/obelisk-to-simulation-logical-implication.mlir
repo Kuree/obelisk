@@ -140,8 +140,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // `a -> b` negates the left operand and branches on the negation, so the
 // right operand is only loaded on the path that needs it. Negating the truth

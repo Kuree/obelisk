@@ -1,7 +1,7 @@
 // RUN: %split-file %s %t
 // RUN: %obelisk -emit-obelisk --std=1800-2023 %t/input.sv -o %t/input.mlir
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
 // IEEE 1800-2023 19.5.5 and 19.5.6 apply transition exclusions after

@@ -907,7 +907,6 @@ module {
   }
 }
 
-
 // -----
 
 // A packed slice becomes a typed view; change is replaced by any.

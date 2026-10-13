@@ -1,10 +1,10 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/extern_implementation_count = 1/extern_implementation_count = 0/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MISSING
-// RUN: sed 's/extern_implementation_count = 1/extern_implementation_count = 2/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MULTI
-// RUN: sed 's/extern_implementation_paths = \["top.p.foo"\]/extern_implementation_paths = []/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=METADATA
-// RUN: sed 's/extern_implementation_paths = \["top.p.foo"\]/extern_implementation_paths = ["top.missing.foo"]/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=RESOLUTION
-// RUN: sed 's/is_interface_extern, name = "foo"/is_fork_join, is_interface_extern, name = "foo"/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=FORKJOIN
-// RUN: sed '/hierarchical_name = "top.p.foo"/s/subroutine_kind = 0/subroutine_kind = 1/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ABI
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={extern_implementation_count = 1 : i64} set={extern_implementation_count = 0 : i64}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={extern_implementation_count = 1 : i64} set={extern_implementation_count = 2 : i64}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=MULTI
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={extern_implementation_paths = [\"top.p.foo\"]} set={extern_implementation_paths = []}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=METADATA
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={extern_implementation_paths = [\"top.p.foo\"]} set={extern_implementation_paths = [\"top.missing.foo\"]}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=RESOLUTION
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={is_interface_extern, name = \"foo\"} set={is_fork_join}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=FORKJOIN
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={hierarchical_name = \"top.p.foo\", subroutine_kind = 0 : i32} set={subroutine_kind = 1 : i32}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ABI
 
 // A static call names the empty interface-extern stub, but freezes the sole
 // modport-exported implementation as an ordinary direct function call.

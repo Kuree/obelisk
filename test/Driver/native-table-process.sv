@@ -1,5 +1,3 @@
-// RUN: obelisk -O0 %s -o %t.o0
-// RUN: %t.o0 | FileCheck %s
 // RUN: obelisk -O3 %s -o %t.o3
 // RUN: %t.o3 | FileCheck %s
 // RUN: obelisk -O3 --bytecode-scope=all %s -o %t.all

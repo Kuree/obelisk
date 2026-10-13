@@ -49,7 +49,6 @@ module {
   }
 }
 
-
 // CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} in 2 initial hierarchy "port_time_zero_top.reader.$code_unit_13"
 // CHECK-DAG: simulation.code_unit.decl {{[0-9]+}} in 1 port_initialize hierarchy "port_time_zero_top.reader.$port_connection_0"
 

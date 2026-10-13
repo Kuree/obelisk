@@ -1,7 +1,7 @@
 // RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
 // RUN:   | FileCheck %s --check-prefix=IR
 // RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
-// RUN:   | %python %S/../Conversion/Inputs/dump-coverage-schema.py \
+// RUN:   | obelisk-opt --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 // RUN: %obelisk --std=1800-2023 -O0 --target=native \
 // RUN:   --coverage=functional -o %t.native %s

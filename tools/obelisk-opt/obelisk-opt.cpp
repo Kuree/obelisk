@@ -40,8 +40,10 @@ int main(int argc, char **argv) {
   obelisk::registerAccessFootprintAnalysisTestPass();
   obelisk::registerActivationMemoryAnalysisTestPass();
   obelisk::registerActivationPhaseAnalysisTestPass();
+  obelisk::registerBytecodeImageTestPass();
   obelisk::registerClockInferenceAnalysisTestPass();
   obelisk::registerCombinationalDependencyAnalysisTestPass();
+  obelisk::registerCoverageSchemaTestPass();
   obelisk::registerStorageWriteAnalysisTestPass();
   obelisk::registerManagedClassLayoutAnalysisTestPass();
   obelisk::registerLocalStorageAnalysisTestPass();
@@ -52,6 +54,8 @@ int main(int argc, char **argv) {
   obelisk::registerSimulationVPIAnalysisTestPass();
   obelisk::registerStaticSpecializationAnalysisTestPass();
   obelisk::registerStateDomainTestPasses();
+  obelisk::registerModuleTestPasses();
+  obelisk::registerNativeBackendTestPipeline();
   obelisk::registerValueInterfacesTestPass();
 #endif
 

@@ -1,8 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-ranked-group-read-before-write.test.
-
 // IEEE 1800-2023 9.2.2.2.1: a written variable is excluded from
 // always_comb sensitivity. Reading the old private value before replacing it
 // must not become an algebraic fixpoint or forward the replacement backward.
@@ -142,6 +140,3 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
   }
 }
-
-// Only startup and the timed checker use node dispatch; clock work must
-// execute through the native coordinator at both optimization levels.

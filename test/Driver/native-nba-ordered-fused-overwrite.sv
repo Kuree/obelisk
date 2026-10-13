@@ -1,13 +1,6 @@
-// RUN: obelisk -O0 --native-scheduler=generic %s -o %t.o0
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: obelisk -O3 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.timing
 // RUN: FileCheck %s --check-prefix=TIER < %t.timing
-// RUN: %t.o0 > %t.o0.out
-// RUN: %t.generic > %t.generic.out
-// RUN: %t.auto > %t.auto.out
-// RUN: diff -u %t.o0.out %t.generic.out
-// RUN: diff -u %t.o0.out %t.auto.out
-// RUN: FileCheck %s < %t.auto.out
+// RUN: %t.auto | FileCheck %s
 
 // `q <= 0; if (en) q <= 1;` performs two NBAs, so q goes 1 -> 0 -> 1 and the
 // negedge observer wakes every cycle (IEEE 1800-2017 4.6(b), 9.4.2). Fusing

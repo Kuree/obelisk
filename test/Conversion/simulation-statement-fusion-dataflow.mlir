@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: sed 's/module {/module attributes {schedule.native.max_inline_ops = 1 : i64} {/' %s > %t.low-inline.mlir
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_inline_ops = 1 : i64}"' > %t.low-inline.mlir
 // RUN: obelisk-opt %t.low-inline.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
-// RUN: sed 's/module {/module attributes {schedule.native.max_statement_ops = 1 : i64} {/' %s > %t.low-statement.mlir
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{schedule.native.max_statement_ops = 1 : i64}"' > %t.low-statement.mlir
 // RUN: obelisk-opt %t.low-statement.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements{explain=true}))' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BUDGET
 // BUDGET: statement component rejected: operation budget
 

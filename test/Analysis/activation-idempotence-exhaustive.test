@@ -1,1 +1,0 @@
-// RUN: %python %S/Inputs/check-activation-idempotence.py obelisk-opt

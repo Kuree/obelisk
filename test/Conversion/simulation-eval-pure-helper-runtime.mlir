@@ -1,13 +1,22 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-eval-pure-helper-runtime.test.
-
 // A context-free value helper followed by a termination poll must not create
 // a checkpoint per activation. Real finish/fatal effects still use cold routes.
 // The predicate may duplicate this helper, but must not duplicate stateful ones.
-// PLAN: llvm.func @publish.__obelisk_eval_body_0.__obelisk_checkpoint_path
-// PLAN: llvm.func @__obelisk_eval_dispatch_v1
+// The checkpoint predicate re-evaluates the context-free helper and the
+// termination poll to decide the path without a checkpoint; it publishes
+// nothing and calls nothing else.
+// PLAN-LABEL: llvm.func @identity(
+// PLAN-NOT: llvm.store
+// PLAN: {{^  }}}
+// PLAN-LABEL: llvm.func @publish.__obelisk_eval_body_0.__obelisk_checkpoint_path_0(
+// PLAN-NOT: llvm.{{store|call}}
+// PLAN: llvm.call @identity(
+// PLAN-NEXT: llvm.call @obelisk_rt_v1_scheduler_termination_requested(
+// PLAN-NOT: llvm.{{store|call}}
+// PLAN: {{^  }}}
+// PLAN-LABEL: llvm.func @__obelisk_eval_dispatch_v1
 // The initial checker finishes through its ordinary timed continuation, not
 // an eval-owner checkpoint. Neither clock activation may leave the evaluator.
 !wide = !simulation.logic<65>

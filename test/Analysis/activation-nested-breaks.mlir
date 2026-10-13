@@ -1,6 +1,13 @@
 // RUN: obelisk-opt %s '--test-obelisk-activation-regions=inputs=true' -o %t.analyzed 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @break_join agree
+// COMPARE: inputs @break_fill agree
+// COMPARE: inputs @exit_initializer agree
+
 // A break may bypass the normal loop exit and join the enclosing continuation
 // (IEEE 1800-2023 12.8). Proving the recurrence does not certify an unbounded
 // side path: the whole-activation CFG must still have no unproved cycle.

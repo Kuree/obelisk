@@ -1,7 +1,0 @@
-// RUN: %python %S/../Analysis/Inputs/gen-native-ranked-chain.py > %t.input.mlir
-// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' -o /dev/null 2> %t.trace
-// RUN: FileCheck %s < %t.trace
-// Hundreds of CFG fragments must not duplicate this owner's whole summary.
-// Its 128 independent state bits and one trigger have 129 read ranges and
-// 128 write ranges, independent of the number of fragment identities.
-// CHECK: obelisk ranked memory: body=chain.__obelisk_eval_body_0 reads=129 writes=128{{$}}

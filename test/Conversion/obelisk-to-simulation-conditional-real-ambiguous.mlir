@@ -45,7 +45,6 @@ module {
   }
 }
 
-
 // The ambiguous arm compares the two reals and keeps a matching value; the
 // 0.0 default is reached only when they differ.
 // CHECK: arith.cmpf oeq

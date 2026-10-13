@@ -59,7 +59,6 @@ module {
   }
 }
 
-
 // CHECK: simulation.func private @unit_0(
 // CHECK-DAG: %[[NET:[^:]*]]: !simulation.net<!simulation.logic<1>>
 // CHECK-DAG: !simulation.driver<!simulation.logic<1>>

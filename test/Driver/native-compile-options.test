@@ -1,0 +1,9 @@
+// Compile threads and VPI read access leave native.sv's output unchanged;
+// --threads is rejected for executables.
+// RUN: obelisk -O1 --compile-threads=1 %S/native.sv -o %t.o1.t1.exe
+// RUN: %t.o1.t1.exe > %t.o1.t1.out
+// RUN: obelisk -O1 --compile-threads=4 %S/native.sv -o %t.o1.t4.exe
+// RUN: %t.o1.t4.exe | diff -u %t.o1.t1.out -
+// RUN: not obelisk --threads=2 %S/native.sv -o %t.threads 2>&1 | FileCheck %S/native.sv --check-prefix=THREADS
+// RUN: obelisk --vpi=read %S/native.sv -o %t.vpi
+// RUN: %t.vpi | diff -u %t.o1.t1.out -

@@ -1,26 +1,21 @@
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=PUBLICATION
-// RUN: sed -e 's/code_unit.decl 4 in 0 initial/code_unit.decl 4 in 0 always/' \
-// RUN:   -e 's/attributes {entry_kind = 1 : i32, code_unit_id = 4/attributes {entry_kind = 3 : i32, code_unit_id = 4/' %s \
-// RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=LIVE-ARG
-// RUN: sed -e 's/schedule.native.region_body,/schedule.native.region_body/' \
-// RUN:   -e '/schedule.eval.reconstructs_continuation_args/d' %s \
-// RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=UNCERTIFIED-REGION
-// RUN: sed 's/{site = #schedule.continuation<id = 1>}/{schedule.procedural_event_wait, site = #schedule.continuation<id = 1>}/' %s \
-// RUN:   | obelisk-opt - -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)'
-
-// A source event control is inactive while its controlled statement runs.
-// The generated coordinator must suppress only that compact owner's self
-// publication without retaining a runtime transition callback.
+// RUN:   -o %t.mlir
+// RUN: FileCheck %s < %t.mlir
+// RUN: FileCheck %s --check-prefix=PUBLICATION < %t.mlir
+// RUN: obelisk-opt %s --verify-each=0 --pass-pipeline='builtin.module(\
+// RUN:   test-obelisk-edit-attributes{op=simulation.code_unit.decl match={id = 4 : i64} set={code_unit_kind = 3 : i32}},\
+// RUN:   test-obelisk-edit-attributes{match={code_unit_id = 4 : i64} set={entry_kind = 3 : i32}},\
+// RUN:   simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=LIVE-ARG
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(\
+// RUN:   test-obelisk-edit-attributes{has=schedule.eval.reconstructs_continuation_args remove=schedule.eval.reconstructs_continuation_args},\
+// RUN:   simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=UNCERTIFIED
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(\
+// RUN:   test-obelisk-edit-attributes{match={site = #schedule.continuation<id = 1>} set={schedule.procedural_event_wait}},\
+// RUN:   simulation.design(obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s --check-prefix=EVENT
 
 // Exercise the production Tier-1 -> Tier-2 path.  The hand-authored graph
 // keeps the convergence ownership stable so this test characterizes lowering,
@@ -252,13 +247,6 @@ module attributes {
 // CHECK-LABEL: llvm.func @__obelisk_eval_four_state_nba_handoff_v1
 
 // CHECK: llvm.return
-// Immutable forwarded captures need no coroutine state, even without a
-// previously supplied certificate. Extraction proves their reconstruction.
-// LIVE-ARG-LABEL: llvm.func @reset.__obelisk_eval_body_0(
-// LIVE-ARG: llvm.return
-// UNCERTIFIED-REGION-LABEL: llvm.func @loop.__obelisk_eval_body_0(
-// UNCERTIFIED-REGION: llvm.xor
-// UNCERTIFIED-REGION: llvm.return
 
 // The ordinary writer retains the direct static call.
 // PUBLICATION-LABEL: llvm.func @clock.__obelisk_coro_ramp
@@ -273,3 +261,30 @@ module attributes {
 // PUBLICATION: llvm.call @obelisk_rt_v1_scheduler_signal_transition
 // PUBLICATION-NOT: llvm.call @obelisk_rt_v1_scheduler_static_transition
 // PUBLICATION: llvm.return
+
+// Reset becomes an always process (code unit 4). Its immutable forwarded
+// captures need no coroutine state, even without a previously supplied
+// certificate. Extraction proves their reconstruction.
+// LIVE-ARG-LABEL: llvm.func @reset.__obelisk_eval_body_0(
+// LIVE-ARG: llvm.return
+
+// Without the reconstruction certificate the region body still lowers to an
+// eval body.
+// UNCERTIFIED-LABEL: llvm.func @loop.__obelisk_eval_body_0(
+// UNCERTIFIED: llvm.xor
+// UNCERTIFIED: llvm.return
+
+// IEEE 1800-2023 9.4.2: when the loop's wait is a procedural event control,
+// the source event control is inactive while its controlled statement runs.
+// The loop's own write publishes only the other owner's ingress bit,
+// suppressing its self wakeup without retaining a runtime transition callback.
+// EVENT-LABEL: llvm.func @loop.__obelisk_eval_body_0(
+// EVENT: %[[INGRESS:.*]] = llvm.mlir.addressof @__obelisk_aot_model_ingress_v1
+// EVENT-NEXT: %[[OTHER:.*]] = llvm.mlir.constant(2 : i64)
+// EVENT-NEXT: %[[NONE:.*]] = llvm.mlir.constant(0 : i64)
+// EVENT-NEXT: %[[BITS:.*]] = llvm.select %{{.*}}, %[[OTHER]], %[[NONE]]
+// EVENT-NEXT: %[[QUEUED:.*]] = llvm.load %[[INGRESS]]
+// EVENT-NEXT: %[[MERGED:.*]] = llvm.or %[[QUEUED]], %[[BITS]]
+// EVENT-NEXT: llvm.store %[[MERGED]], %[[INGRESS]]
+// EVENT-NOT: llvm.call @obelisk_rt_
+// EVENT: llvm.return

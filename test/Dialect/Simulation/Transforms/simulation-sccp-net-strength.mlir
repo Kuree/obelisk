@@ -1,6 +1,5 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=off}))' | FileCheck %s
 // RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=read}))' | FileCheck %s
-// RUN: sed -e 's/strength0 = 0/strength1 = 0/' -e 's/constant false, false/constant true, false/' %s | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-sccp{vpi=off}))' | FileCheck %s
 // RUN: obelisk-opt %s --test-obelisk-sim-state-domain -o /dev/null 2>&1 | FileCheck %s --check-prefix=DOMAIN
 
 // A high-Z strength turns a known driver payload into Z (LRM 6.3.2, 6.6).

@@ -112,7 +112,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK:      %[[FIELD:.*]] = simulation.class.field_ref {{.*}}@{{.*}}arr
 // CHECK:      %[[ARRAY:.*]] = simulation.managed.load %[[FIELD]]

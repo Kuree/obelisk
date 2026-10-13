@@ -1,26 +1,15 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' -o %t.group.mlir
 // RUN: FileCheck %s --check-prefix=GROUP < %t.group.mlir
 // RUN: FileCheck %s --check-prefix=NO-SNAPSHOTS < %t.group.mlir
-// RUN: obelisk-opt %t.group.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: FileCheck %s --check-prefix=NATIVE < %t.ll
-// RUN: sed 's/entry_kind = 4 : i32/entry_kind = 6 : i32/g; s/always_comb/always_latch/g' %s > %t.latch.mlir
-// RUN: obelisk-opt %t.latch.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
-// RUN: sed '/^      simulation.ref.store %next to %output : !word, !ref$/p' %s > %t.repeated.mlir
-// RUN: obelisk-opt %t.repeated.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
-// RUN: sed 's/%raw = simulation.ref.load %input/%raw = simulation.ref.load %output/' %s > %t.retained.mlir
-// RUN: obelisk-opt %t.retained.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion,simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
-// RUN: sed '/simulation.func @first(/s/descriptor_id = 0/descriptor_id = 2/; s/@first(%ctx, %input, %middle)/@first(%ctx, %output, %middle)/' %s > %t.feedback.mlir
-// RUN: obelisk-opt %t.feedback.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
-// RUN: sed '/%bufferDest = simulation.context.storage/s/\[0\]/[1]/' %s > %t.task-writer.mlir
-// RUN: obelisk-opt %t.task-writer.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SEPARATE
-
-// Runtime behavior is checked in ../Runtime/simulation-local-ranked-task.test.
 
 // Conditional computation and a reconvergent chain run in one ranked native
 // activation while a task supplies stimulus. Publications and timed task work
 // remain owned by the shared loop. Initial X, known, X and known transitions
 // must all reach the output. No test relies on cross-process race ordering.
+// Full VPI access keeps the processes separate; other separating variants are
+// in simulation-local-ranked-task-separate.mlir.
 // GROUP: simulation.spawn @__obelisk_region_kernel_
 // GROUP-NOT: simulation.func @first(
 // GROUP-NOT: simulation.func @second(

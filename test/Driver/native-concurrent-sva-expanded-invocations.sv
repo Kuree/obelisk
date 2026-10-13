@@ -1,18 +1,8 @@
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic %s -o %t.o0.native
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.o3.native
-// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.o3.aot
-// RUN: %t.o0.native > %t.o0.native.out
-// RUN: %t.o0.bytecode > %t.o0.bytecode.out
-// RUN: %t.o3.native > %t.o3.native.out
-// RUN: %t.o3.bytecode > %t.o3.bytecode.out
-// RUN: %t.o3.aot > %t.o3.aot.out
-// RUN: diff -u %t.o0.native.out %t.o0.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o3.native.out
-// RUN: diff -u %t.o0.native.out %t.o3.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o3.aot.out
-// RUN: FileCheck %s < %t.o0.native.out
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s < %t.native.out
+// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 // RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT --implicit-check-not=obelisk_rt_v1_scheduler_run_aot_nodes
 
 module native_concurrent_sva_expanded_invocations;

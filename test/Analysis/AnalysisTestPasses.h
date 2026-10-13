@@ -8,8 +8,10 @@ namespace obelisk {
 void registerAccessFootprintAnalysisTestPass();
 void registerActivationMemoryAnalysisTestPass();
 void registerActivationPhaseAnalysisTestPass();
+void registerBytecodeImageTestPass();
 void registerClockInferenceAnalysisTestPass();
 void registerCombinationalDependencyAnalysisTestPass();
+void registerCoverageSchemaTestPass();
 void registerManagedClassLayoutAnalysisTestPass();
 void registerLocalStorageAnalysisTestPass();
 void registerNativeAOTAnalysisTestPass();
@@ -20,6 +22,8 @@ void registerSimulationVPIAnalysisTestPass();
 void registerStaticSpecializationAnalysisTestPass();
 void registerStateDomainTestPasses();
 void registerStorageWriteAnalysisTestPass();
+void registerModuleTestPasses();
+void registerNativeBackendTestPipeline();
 void registerValueInterfacesTestPass();
 
 } // namespace obelisk

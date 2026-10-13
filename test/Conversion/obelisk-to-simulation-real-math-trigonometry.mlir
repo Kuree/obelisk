@@ -107,7 +107,6 @@ module attributes {
   }
 }
 
-
 // CHECK-DAG: math.sin
 // CHECK-DAG: math.cos
 // CHECK-DAG: math.tan

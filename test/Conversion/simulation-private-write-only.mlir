@@ -1,7 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=OFF
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VISIBLE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VISIBLE
-// RUN: sed 's@// DUMP@@' %s | obelisk-opt --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=VISIBLE
 
 // Forwarding can leave several writes and no reads of a private design root.
 // Its value may be discarded only when neither state nor change is observable.
@@ -22,9 +21,6 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
       %value = arith.constant 23 : i8
-      // DUMP %levels = arith.constant 0 : i64
-      // DUMP %scope = simulation.bytes.constant ""
-      // DUMP simulation.dump.vars %ctx, %levels, %scope : (!simulation.context, i64, !simulation.bytes) -> ()
       simulation.call @write(%ctx, %value) : (!simulation.context, i8) -> ()
       %read = simulation.call @read(%ctx) : (!simulation.context) -> i8
       %actor = simulation.spawn @watch(%ctx) : !simulation.context -> !simulation.process

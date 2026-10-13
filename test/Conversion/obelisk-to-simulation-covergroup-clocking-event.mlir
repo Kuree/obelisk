@@ -5,7 +5,7 @@
 // RUN: obelisk-opt %t/event-list.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=NOLEGACY
 // RUN: obelisk-opt %t/event-list.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 // RUN: obelisk-opt %t/event-list.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   --mlir-disable-threading -o %t/serial.mlir

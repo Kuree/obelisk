@@ -55,6 +55,7 @@
 # RUN: %python -c "import base64,hashlib,re,sys; h=open(sys.argv[1]).read(); policy=re.search(r'<meta[^>]*Content-Security-Policy[^>]*content=\"([^\"]*)\"',h).group(1); hashes=re.findall(r\"'sha256-([^']+)'\",policy); style=re.search(r'<style>(.*?)</style>',h,re.S).group(1); scripts=[m.group(1) for m in re.finditer(r'<script[^>]*>(.*?)</script>',h,re.S)]; bodies=[style,*scripts]; assert style==open(sys.argv[2]).read(); assert len(hashes)==len(bodies)==3 and hashes==[base64.b64encode(hashlib.sha256(v.encode()).digest()).decode() for v in bodies]" %t.html %S/../../tools/obelisk-cov/CoverageReport.css
 # RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); m=d['metrics']['line']; assert m['threshold'] == 90.0 and m['threshold_pass'] is True" %t.html
 # RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %S/../../tools/obelisk-cov/CoverageReport.js 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' 'row:1|alpha|1|2|1|4 unique' 'row:dut.sv:1:3|line|1|covered|alpha' 'row:dut.sv:1:9|line|0|excluded: generated|' 'row:dut.sv:2|excluded|0|excluded: entire generated line|' %}
+
 # The report carries each source file's text and slang token listing, which
 # the page uses to show and color the source.
 # RUN: %python -c "import json,sys; h=open(sys.argv[1]).read(); d=json.loads(h.split('type=\"application/json\">',1)[1].split('</script>',1)[0]); s=d['sources']; assert [(v['file'],v['path'],v['status'],v['text']) for v in s] == [('10','dut.sv','ok','line\nexcluded\n')]; assert s[0]['tokens'] == '0 4 Identifier\n5 8 Identifier\n'" %t.html
@@ -206,8 +207,6 @@
 # HTML: <main id="main"></main>
 # HTML: <script id="coverage-data" type="application/json">
 
-
-
 # BAD-THRESHOLD: line: 0.00% (0/1), partial 0 [FAIL >= 1.00%]
 # DUPLICATE: duplicate run UUID
 # AGGREGATE: runs: 1
@@ -221,8 +220,6 @@
 # ILLEGAL-TEXT: top.dut.cg.cp.bad instance 1 test "illegal-report": 1 at time 42 - "illegal fixture bin"
 
 # EXCLUSION-TEXT: bin one: 1 [excluded] {excluded: fixture waiver}
-
-
 
 # TYPE-CONFLICT: functional_configuration_option.type_consistency
 # APINT-CAP: automatic cross union exceeds traversal limits

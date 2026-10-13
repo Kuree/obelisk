@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/clocking_input_skew_one_step/clocking_input_skew_delay = "0"/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=match={clocking_input_skew_one_step} remove=clocking_input_skew_one_step set={clocking_input_skew_delay = \"0\"}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
 
 module {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}

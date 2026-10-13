@@ -2,7 +2,7 @@
 // RUN: obelisk -emit-obelisk %t/input.sv -o %t/input.mlir
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   > %t/lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py < %t/lowered.mlir \
+// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 
 // IEEE 1800-2017 Tables 19-3 and 19-4 define weight and goal as static

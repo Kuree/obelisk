@@ -40,8 +40,8 @@ module window_case #(parameter W = 3)(output bit done);
       expected = '1;
       index = i;
       packed_data[$signed(index) +: W] = 'z;
-      for (j = 0; j < W*25; ++j)
-        if (j >= i && j < i+W) expected[j] = 1'bz;
+      for (j = i < 0 ? 0 : i; j < i+W && j < W*25; ++j)
+        expected[j] = 1'bz;
       #1;
       if (packed_data !== expected) $fatal(1, "clipped window W=%0d i=%0d", W, i);
       for (j = 0; j < W; ++j)

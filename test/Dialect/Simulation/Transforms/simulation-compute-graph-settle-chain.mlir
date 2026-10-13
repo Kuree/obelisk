@@ -85,7 +85,6 @@ module {
   }
 }
 
-
 // CHECK: compute_graph = #schedule.graph<
 // The producer of `middle_inst.out` wakes its consumer ...
 // CHECK-SAME: #schedule.edge<source = 6, target = 4, kind = sensitivity

@@ -122,8 +122,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[PREFIX:.*]] = simulation.string.literal "N="
 // CHECK: %[[TAIL:.*]], %[[FOUND:.*]] = simulation.plusarg.value %{{.*}}, %[[PREFIX]]

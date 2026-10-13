@@ -1,0 +1,8 @@
+// VPI reads of local state under read and full access (inputs in
+// native-aot-vpi-transition.sv).
+// RUN: %split-file %S/native-aot-vpi-transition.sv %t
+// RUN: %target_clang -fPIC -shared -nostdlib %t/local_read.c -I%resource_dir/include -Wl,-soname,libnative_aot_vpi_local_read.so -o %t/libnative_aot_vpi_local_read.so
+// RUN: cd %t && obelisk -O3 --vpi=read --native-scheduler=generic %t/local_read.sv libnative_aot_vpi_local_read.so -o local_read
+// RUN: %t/local_read | FileCheck %S/native-aot-vpi-transition.sv --check-prefix=LOCAL-READ
+// RUN: cd %t && obelisk -O3 --vpi=full --native-scheduler=generic %t/local_read.sv libnative_aot_vpi_local_read.so -o local_full
+// RUN: %t/local_full | FileCheck %S/native-aot-vpi-transition.sv --check-prefix=LOCAL-READ

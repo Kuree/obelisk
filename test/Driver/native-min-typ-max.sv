@@ -1,19 +1,9 @@
-// RUN: obelisk -O0 --timing=typ %s -o %t.typ.o0.native
-// RUN: %t.typ.o0.native | FileCheck %s --check-prefix=TYP
-// RUN: obelisk -O0 --execution-tier=bytecode --timing=typ %s -o %t.typ.o0.bytecode
-// RUN: %t.typ.o0.bytecode | FileCheck %s --check-prefix=TYP
-// RUN: obelisk -O3 --timing=typ %s -o %t.typ.o3.native
-// RUN: %t.typ.o3.native | FileCheck %s --check-prefix=TYP
-// RUN: obelisk -O3 --execution-tier=bytecode --timing=typ %s -o %t.typ.o3.bytecode
-// RUN: %t.typ.o3.bytecode | FileCheck %s --check-prefix=TYP
-// RUN: obelisk -O3 --timing=min %s -o %t.min.native
-// RUN: %t.min.native | FileCheck %s --check-prefix=MIN
-// RUN: obelisk -O3 --execution-tier=bytecode --timing=min %s -o %t.min.bytecode
-// RUN: %t.min.bytecode | FileCheck %s --check-prefix=MIN
-// RUN: obelisk -O3 --timing=max %s -o %t.max.native
-// RUN: %t.max.native | FileCheck %s --check-prefix=MAX
-// RUN: obelisk -O3 --execution-tier=bytecode --timing=max %s -o %t.max.bytecode
-// RUN: %t.max.bytecode | FileCheck %s --check-prefix=MAX
+// RUN: obelisk -O3 --timing=typ %s -o %t.typ
+// RUN: %t.typ | FileCheck %s --check-prefix=TYP
+// RUN: obelisk -O3 --timing=min %s -o %t.min
+// RUN: %t.min | FileCheck %s --check-prefix=MIN
+// RUN: obelisk -O3 --timing=max %s -o %t.max
+// RUN: %t.max | FileCheck %s --check-prefix=MAX
 // RUN: not obelisk --timing=middle %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=INVALID
 
 // IEEE 1800-2017 11.11 defines min:typ:max expressions. Selection applies

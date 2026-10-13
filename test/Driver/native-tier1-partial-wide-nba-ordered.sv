@@ -1,12 +1,9 @@
+// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
 // RUN: obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.ll
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.auto > %t.auto.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
 
 // Two statements overlap on a wide root, and the loop executes one site
 // repeatedly. The suspension-live string requires a runtime continuation;

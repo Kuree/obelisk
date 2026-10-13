@@ -1,12 +1,6 @@
-// RUN: obelisk -O2 --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk -O2 --native-scheduler=auto %s -o %t.auto
-// RUN: %t.generic > %t.generic.out
-// RUN: %t.auto > %t.auto.out
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: FileCheck %s < %t.auto.out
-// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: %t.eval > %t.eval.out
-// RUN: diff -u %t.generic.out %t.eval.out
+// RUN: obelisk -O3 --native-scheduler=eval %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s < %t.native.out
 
 // A `$display` inside a clocked block is a runtime leaf reached on every
 // activation, so the owner has no generated path a route probe could guard.

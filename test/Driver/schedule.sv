@@ -1,8 +1,7 @@
 // RUN: obelisk -emit-schedule --threads=2 --vpi=read %s | FileCheck %s
 // RUN: obelisk -emit-sim --vpi=full %s | FileCheck %s --check-prefix=FULL-VPI
 // RUN: obelisk -emit-schedule --compile-threads=1 %s > %t.one
-// RUN: obelisk -emit-schedule --compile-threads=4 %s > %t.many
-// RUN: diff %t.one %t.many
+// RUN: obelisk -emit-schedule --compile-threads=4 %s | diff %t.one -
 // RUN: obelisk -emit-schedule --mlir-print-debuginfo %s | FileCheck %s --check-prefix=LOC
 // RUN: not obelisk -emit-schedule --threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-THREADS
 // RUN: not obelisk -emit-schedule --compile-threads=0 %s 2>&1 | FileCheck %s --check-prefix=BAD-COMPILE-THREADS
@@ -11,6 +10,9 @@
 module schedule_smoke;
   logic source;
   logic destination;
+  // LOC: schedule @design #schedule.graph<
+  // LOC-SAME: source_locations = [
+  // LOC-SAME: #1 = "{{.*schedule.sv}}":[[# @LINE + 1]]:3
   always_comb destination = source;
 endmodule
 
@@ -24,10 +26,6 @@ endmodule
 // CHECK-SAME: #schedule.region<kind = observed
 // CHECK-SAME: #schedule.region<kind = reactive
 // CHECK-SAME: #schedule.region<kind = postponed
-
-// LOC: schedule @design #schedule.graph<
-// LOC-SAME: source_locations = [
-// LOC-SAME: #1 = "{{.*schedule.sv}}":14:3
 
 // BAD-THREADS: error: --threads must be greater than zero
 // BAD-COMPILE-THREADS: error: --compile-threads must be greater than zero

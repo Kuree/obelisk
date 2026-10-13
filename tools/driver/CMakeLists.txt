@@ -23,6 +23,7 @@ file(APPEND "${OBELISK_RESOURCE_DIR}/include/sv_vpi_user.h"
 set(LLVM_LINK_COMPONENTS
   Analysis
   BinaryFormat
+  BitReader
   BitWriter
   CodeGen
   Core

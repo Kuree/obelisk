@@ -107,7 +107,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     ^exit:
       simulation.return
     }
-    // The runtime test invokes these same MLIR bodies before and after unroll.
+    // The root calls each body, so every loop stays reachable from the design.
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32, code_unit_id = 4 : i64} {
       simulation.call @indexed(%ctx) : (!simulation.context) -> ()
       %sum = simulation.call @carried(%ctx) : (!simulation.context) -> i32

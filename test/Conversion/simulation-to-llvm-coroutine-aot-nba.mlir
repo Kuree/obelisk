@@ -1,36 +1,22 @@
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --implicit-check-not=simulation.nba.enqueue
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.mlir
+// RUN: FileCheck %s --implicit-check-not=simulation.nba.enqueue < %t.mlir
+// RUN: FileCheck %s --check-prefix=PERIODIC < %t.mlir
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT --implicit-check-not='llvm.call @obelisk_rt_v1_scheduler_static_transition'
 // RUN: obelisk-opt %s \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph{vpi=full},obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
 // RUN:   | FileCheck %s --check-prefix=DIRECT
-// RUN: obelisk-opt %s \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-specialize-static-state-nba),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=PERIODIC
-// RUN: sed 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' %s \
-// RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=TWO-STATE
-// RUN: sed -e 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' \
-// RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {schedule.eval.inductive_two_state, entry_kind = 1 : i32/' %s \
-// RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=TWO-STATE-STAGE
-// RUN: sed -e 's/schedule.native_scheduler = 2/schedule.native_scheduler = 3/' \
-// RUN:   -e 's/attributes {entry_kind = 1 : i32/attributes {schedule.eval.selected_two_state, entry_kind = 1 : i32/' %s \
-// RUN:   | obelisk-opt - \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=SELECTED-STAGE
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(test-obelisk-set-module-attributes{attrs="{schedule.native_scheduler = 3 : i32}"},simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s --check-prefix=TWO-STATE
 // RUN: obelisk-opt %s -o /dev/null \
 // RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-native-aot-analysis)' \
 // RUN:   2>&1 | FileCheck %s --check-prefix=PERIODIC-ANALYSIS
 
 // PERIODIC-ANALYSIS: native-aot eligible=true fully=true selected=true periodic=true
 // Exercise AOT NBA planning and materialization from hand-authored simulation
-// IR. Driver option parsing is deliberately outside this pass test.
+// IR. Driver option parsing is deliberately outside this pass test. Staged
+// two-state writers are in
+// simulation-to-llvm-coroutine-aot-nba-two-state-stage.mlir.
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -158,6 +144,7 @@ module attributes {
   }
 }
 
+
 // CHECK-DAG: llvm.mlir.global internal constant @__obelisk_aot_nba_roots_v1
 // CHECK-DAG: llvm.mlir.global internal constant @__obelisk_aot_nba_sites_v1
 // CHECK-DAG: llvm.mlir.global internal @__obelisk_aot_nba_accumulator_0
@@ -255,47 +242,3 @@ module attributes {
 // TWO-STATE-NOT: llvm.load %[[FAST_UNKNOWN_ADDR]]
 // TWO-STATE-NOT: llvm.store {{.*}}, %[[FAST_UNKNOWN_ADDR]]
 // TWO-STATE: llvm.return
-
-// State-domain analysis derives a precise proof for this NBA's stored value
-// and exact destination root. Its staged write uses the dirty bit as validity
-// and can omit write-mask, region, valid, and summary traffic. It must still
-// clear a stale unknown lane left by a coincident four-state writer in the
-// shared accumulator.
-// TWO-STATE-STAGE-LABEL: llvm.func @process(
-// TWO-STATE-STAGE: %[[ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// TWO-STATE-STAGE: %[[VALUE:.*]] = llvm.getelementptr %[[ACC]][0]
-// TWO-STATE-STAGE: llvm.store {{.*}}, %[[VALUE]]
-// TWO-STATE-STAGE: %[[STAGE_UNKNOWN:.*]] = llvm.getelementptr %[[ACC]][32]
-// TWO-STATE-STAGE: %[[STAGE_ZERO:.*]] = llvm.mlir.constant(0 : i64)
-// TWO-STATE-STAGE: llvm.store %[[STAGE_ZERO]], %[[STAGE_UNKNOWN]]
-// TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][64]
-// TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][96]
-// TWO-STATE-STAGE-NOT: llvm.getelementptr %[[ACC]][100]
-// TWO-STATE-STAGE: %[[DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
-// TWO-STATE-STAGE: %[[DIRTY_WORD:.*]] = llvm.getelementptr %[[DIRTY]][0]
-// TWO-STATE-STAGE: llvm.store {{.*}}, %[[DIRTY_WORD]]
-// TWO-STATE-STAGE-NOT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1
-// TWO-STATE-STAGE-LABEL: llvm.func @process.__obelisk_native_execute
-
-// A selected two-state body may use fixed value/mask/region metadata, but a
-// coincident four-state owner can have staged X in the shared accumulator.
-// Without the stronger per-access root proof, explicitly overwrite the
-// staged unknown field with zero to preserve last-writer semantics.
-// SELECTED-STAGE-LABEL: llvm.func @process(
-// SELECTED-STAGE: llvm.mlir.constant(0 : i8)
-// SELECTED-STAGE: %[[ZERO8:.*]] = llvm.mlir.constant(0 : i8)
-// SELECTED-STAGE: %[[ZERO64:.*]] = llvm.zext %[[ZERO8]] : i8 to i64
-// SELECTED-STAGE: %[[SELECTED_ACC:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_accumulator_0
-// SELECTED-STAGE: %[[SELECTED_VALUE:.*]] = llvm.getelementptr %[[SELECTED_ACC]][0]
-// SELECTED-STAGE: llvm.store {{.*}}, %[[SELECTED_VALUE]]
-// SELECTED-STAGE: %[[SELECTED_UNKNOWN:.*]] = llvm.getelementptr %[[SELECTED_ACC]][32]
-// SELECTED-STAGE: %[[MASKED_ZERO:.*]] = llvm.and %[[ZERO64]], {{.*}} : i64
-// SELECTED-STAGE: llvm.store %[[MASKED_ZERO]], %[[SELECTED_UNKNOWN]]
-// SELECTED-STAGE-NOT: llvm.getelementptr %[[SELECTED_ACC]][64]
-// SELECTED-STAGE-NOT: llvm.getelementptr %[[SELECTED_ACC]][96]
-// SELECTED-STAGE-NOT: llvm.getelementptr %[[SELECTED_ACC]][100]
-// SELECTED-STAGE: %[[SELECTED_DIRTY:.*]] = llvm.mlir.addressof @__obelisk_aot_nba_dirty_roots_v1
-// SELECTED-STAGE: %[[SELECTED_DIRTY_WORD:.*]] = llvm.getelementptr %[[SELECTED_DIRTY]][0]
-// SELECTED-STAGE: llvm.store {{.*}}, %[[SELECTED_DIRTY_WORD]]
-// SELECTED-STAGE-NOT: llvm.mlir.addressof @__obelisk_aot_nba_dirty_summary_v1
-// SELECTED-STAGE-LABEL: llvm.func @process.__obelisk_native_execute

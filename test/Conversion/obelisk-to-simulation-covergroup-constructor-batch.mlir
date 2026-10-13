@@ -4,7 +4,7 @@
 // RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
 // RUN:   > %t/lowered.mlir
 // RUN: FileCheck %s < %t/lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py < %t/lowered.mlir \
+// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 // RUN: %python %S/Inputs/mutate-functional-batch.py formal-reorder \
 // RUN:   < %t/lowered.mlir \

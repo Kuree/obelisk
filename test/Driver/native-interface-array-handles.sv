@@ -1,9 +1,3 @@
-// RUN: obelisk -O0 --top=native_interface_array_handles %s -o %t.o0.native
-// RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -O0 --native-scheduler=generic --top=native_interface_array_handles %s -o %t.o0.generic
-// RUN: %t.o0.generic | FileCheck %s
-// RUN: obelisk -O0 --execution-tier=bytecode --top=native_interface_array_handles %s -o %t.o0.bytecode
-// RUN: %t.o0.bytecode | FileCheck %s
 // RUN: obelisk -O3 --top=native_interface_array_handles %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
 // RUN: obelisk -O3 --execution-tier=bytecode --top=native_interface_array_handles %s -o %t.o3.bytecode

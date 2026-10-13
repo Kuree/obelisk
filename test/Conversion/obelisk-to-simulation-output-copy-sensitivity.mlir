@@ -1,5 +1,4 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/procedure_kind = 3/procedure_kind = 4/' %s | obelisk-opt - '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // IEEE 1800-2023 9.2.2.2.1 and 9.2.2.3: copy-out is a write in the
 // caller. Preserve the pre-call snapshot, but exclude the copied-out actual
 // from both always_comb and always_latch sensitivity.

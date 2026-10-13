@@ -1,0 +1,6 @@
+// Mixed NBA writers under full VPI access (inputs in
+// native-aot-vpi-transition.sv).
+// RUN: %split-file %S/native-aot-vpi-transition.sv %t
+// RUN: obelisk -O2 --vpi=full --native-scheduler=aot %t/mixed_nba.sv -o %t/mixed_nba
+// RUN: %t/mixed_nba | FileCheck %S/native-aot-vpi-transition.sv --check-prefix=MIXED-NBA
+// RUN: obelisk -O2 --vpi=full -emit-sim %t/mixed_nba.sv -o - | FileCheck %S/native-aot-vpi-transition.sv --check-prefix=MIXED-IR

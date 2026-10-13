@@ -6367,7 +6367,8 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     return failure();
 
   std::unique_ptr<SDFAnnotationDatabase> sdfAnnotations =
-      buildSDFAnnotationDatabase(*compilation, driver.sourceManager);
+      buildSDFAnnotationDatabase(*compilation, driver.sourceManager,
+                                 options.sdfLimits);
   if (!sdfAnnotations)
     return failure();
 

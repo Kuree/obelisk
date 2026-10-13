@@ -251,8 +251,6 @@ module {
   }
 }
 
-
-
 // CHECK: simulation.class.decl @[[CLASS:[A-Za-z0-9_.$]+]] id 1
 // CHECK-SAME: simulation.constraint_mode_field = @[[MODE:[A-Za-z0-9_.$]+]]
 

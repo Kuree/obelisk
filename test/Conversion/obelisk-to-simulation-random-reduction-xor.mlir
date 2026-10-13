@@ -166,8 +166,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.design
 // The accumulator starts at the operand's low bit and folds one bit per step.
 // CHECK: %[[BIT0:.*]] = arith.cmpi ne, %{{.*}}, %{{.*}} : i64

@@ -72,7 +72,6 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
   }
 }
 
-
 // Repeating the same semantic sites twice must append four queue entries.
 // This fixture is already at the conversion boundary, so spell out the two
 // iterations without leaving an scf.for for a later pipeline stage to lower.

@@ -1,53 +1,14 @@
 // RUN: %split-file %s %t
-// RUN: mkdir -p %t.dir/lib %t.dir/bin
-// RUN: %target_clang -fPIC \
-// RUN:   -shared -nostdlib %t/plugin.c \
-// RUN:   -I%resource_dir/include \
-// RUN:   -Wl,-soname,libnative_aot_vpi_transition.so \
-// RUN:   -o %t.dir/lib/libnative_aot_vpi_transition.so
-// RUN: %target_clang -fPIC \
-// RUN:   -shared -nostdlib %t/readonly.c \
-// RUN:   -I%resource_dir/include \
-// RUN:   -Wl,-soname,libnative_aot_vpi_readonly.so \
-// RUN:   -o %t.dir/lib/libnative_aot_vpi_readonly.so
-// RUN: %target_clang -fPIC \
-// RUN:   -shared -nostdlib %t/local_read.c \
-// RUN:   -I%resource_dir/include \
-// RUN:   -Wl,-soname,libnative_aot_vpi_local_read.so \
-// RUN:   -o %t.dir/lib/libnative_aot_vpi_local_read.so
-// RUN: cd %t.dir && obelisk --vpi=full --native-scheduler=aot %t/design.sv \
-// RUN:   lib/libnative_aot_vpi_transition.so -o bin/simulator
-// RUN: cd %t.dir && obelisk --vpi=full --native-scheduler=aot %t/design.sv \
-// RUN:   lib/libnative_aot_vpi_readonly.so -o bin/readonly
-// RUN: cd %t.dir && obelisk --vpi=read --native-scheduler=aot %t/design.sv \
-// RUN:   lib/libnative_aot_vpi_readonly.so -o bin/readmode
-// RUN: cd %t.dir && obelisk -O3 --vpi=read --native-scheduler=generic \
-// RUN:   %t/local_read.sv lib/libnative_aot_vpi_local_read.so \
-// RUN:   -o bin/local_read
-// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
-// RUN:   -emit-llvm %t/design.sv -o bin/guarded.ll
-// RUN: cd %t.dir && obelisk -O2 --vpi=full --native-scheduler=aot \
-// RUN:   %t/mixed_nba.sv -o bin/mixed_nba
-// RUN: obelisk -O2 --vpi=full -emit-sim %t/mixed_nba.sv \
-// RUN:   -o %t.dir/bin/mixed_nba.mlir
-// RUN: FileCheck %s --check-prefix=GUARD < %t.dir/bin/guarded.ll
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/simulator 2>&1 \
-// RUN:   | FileCheck %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/readonly 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=READONLY
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.dir/bin/readmode 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=READMODE
-// RUN: %t.dir/bin/local_read | FileCheck %s --check-prefix=LOCAL-READ
-// RUN: %t.dir/bin/mixed_nba | FileCheck %s --check-prefix=MIXED-NBA
-// RUN: FileCheck %s --check-prefix=MIXED-IR < %t.dir/bin/mixed_nba.mlir
-// RUN: cd %t.dir && obelisk -O3 --vpi=full --native-scheduler=generic \
-// RUN:   %t/design.sv lib/libnative_aot_vpi_transition.so -o bin/generic
-// RUN: %t.dir/bin/generic | FileCheck %s --check-prefix=GENERIC
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm \
-// RUN:   %t/design.sv -o - | FileCheck %s --check-prefix=GENERIC-IR
-// RUN: cd %t.dir && obelisk -O3 --vpi=full --native-scheduler=generic \
-// RUN:   %t/local_read.sv lib/libnative_aot_vpi_local_read.so -o bin/local_full
-// RUN: %t.dir/bin/local_full | FileCheck %s --check-prefix=LOCAL-READ
+// RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -Wl,-soname,libnative_aot_vpi_transition.so -o %t/libnative_aot_vpi_transition.so
+// RUN: cd %t && obelisk --vpi=full --native-scheduler=aot %t/design.sv libnative_aot_vpi_transition.so -o simulator
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t/simulator 2>&1 | FileCheck %s
+// RUN: obelisk -O2 --vpi=full --native-scheduler=aot -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GUARD
+// RUN: cd %t && obelisk -O3 --vpi=full --native-scheduler=generic %t/design.sv libnative_aot_vpi_transition.so -o generic
+// RUN: %t/generic | FileCheck %s --check-prefix=GENERIC
+// RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GENERIC-IR
+
+// The readonly plugin, local reads, and mixed NBA cases are in
+// native-aot-vpi-transition-{readonly,local-read,mixed-nba}.test.
 
 //--- design.sv
 module native_aot_vpi_transition;

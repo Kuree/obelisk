@@ -1,13 +1,11 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s \
-// RUN:   -o %t.auto.ll 2> %t.timing
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=GENERATED < %t.auto.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.auto.ll
 // RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: %t.auto > %t.auto.out
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
+// RUN: %t.generic | diff -u %t.auto.out -
 
 // Two NBA statements each write all 128 bits of one root per activation.
 // IEEE 1800-2023 4.6(b) and 10.4.2 perform both updates in order. The

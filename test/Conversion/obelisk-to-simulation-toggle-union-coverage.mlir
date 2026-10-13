@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --split-input-file --obelisk-sim-prepare-coverage | FileCheck %s
 // RUN: obelisk-opt %s --split-input-file --obelisk-sim-prepare-coverage \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=DIMS
 
 !mixed = !simulation.packed_struct<[
@@ -53,7 +53,7 @@ module attributes {obelisk.coverage.metrics = ["toggle"]} {
 // CHECK-SAME: obelisk.coverage.toggle_initial_unknown = array<i8: -1, 1>
 // CHECK-SAME: obelisk.coverage.toggle_initial_value = array<i8: 0, 0>
 // CHECK: simulation.storage.decl 0 {{.*}}obelisk.coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 9 : i64{{.*}}]
-// DIMS-LABEL: schema 1
+// DIMS-LABEL: schema 0
 // DIMS: dimension kind=PackedUnion offset=0 width=9
 // DIMS: dimension kind=Tag offset=8 width=1
 
@@ -81,7 +81,7 @@ module attributes {obelisk.coverage.metrics = ["toggle"]} {
 // CHECK-SAME: obelisk.coverage.toggle_initial_unknown = array<i8: 1, 6>
 // CHECK-SAME: obelisk.coverage.toggle_initial_value = array<i8: 0, 0>
 // CHECK: simulation.storage.decl 0 {{.*}}obelisk.coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 11 : i64{{.*}}]
-// DIMS-LABEL: schema 2
+// DIMS-LABEL: schema 0
 // DIMS: dimension kind=UnpackedUnion offset=0 width=11
 // DIMS: dimension kind=Field offset=0 width=1
 // DIMS: dimension kind=Field offset=1 width=8
@@ -116,7 +116,7 @@ module attributes {obelisk.coverage.metrics = ["toggle"]} {
 // CHECK-SAME: obelisk.coverage.toggle_initial_unknown = array<i8: 0>
 // CHECK-SAME: obelisk.coverage.toggle_initial_value = array<i8: 0>
 // CHECK: simulation.storage.decl 0 {{.*}}obelisk.coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 1 : i64{{.*}}, {{.*}}low = 64 : i64, width = 1 : i64{{.*}}]
-// DIMS-LABEL: schema 3
+// DIMS-LABEL: schema 0
 // DIMS: dimension kind=UnpackedUnion offset=0 width=2
 // DIMS: dimension kind=Field offset=1 width=1
 // DIMS: dimension kind=UnpackedStruct offset=1 width=1

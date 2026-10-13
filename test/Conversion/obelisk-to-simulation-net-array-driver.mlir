@@ -47,7 +47,6 @@ module {
   }
 }
 
-
 // CHECK: simulation.net.decl [[NET:[0-9]+]] in {{[0-9]+}} : !simulation.unpacked_array<1 : 0 x !simulation.packed_array<1 : 0 x !simulation.logic<1>>>
 // CHECK-SAME: hierarchy "net_array_driver.n"
 

@@ -9,7 +9,6 @@
 // counter updates. Extract timing without changing the public waveform or
 // moving the counters after the public clock's NBA-triggered consumers.
 // A second copy uses a period of 5, so checkpoints coincide at time 40.
-// Runtime comparison with the untransformed IR is in Runtime/.
 // EXTRACT: simulation.spawn @__obelisk_periodic_tick_
 // EXTRACT-LABEL: simulation.func private @clock
 // EXTRACT-SAME: schedule.periodic_control
@@ -27,9 +26,15 @@
 // EXTRACT: simulation.ref.load
 // EXTRACT: arith.xori
 // EXTRACT: simulation.ref.store
+// The period-5 copy gets its own tick.
+// EXTRACT-LABEL: simulation.func private @__obelisk_periodic_tick_
+// EXTRACT: simulation.time.constant 5
+// EXTRACT: simulation.suspend.delay
 // VPI-NOT: schedule.periodic_control
 // VPI-NOT: __obelisk_periodic_tick_
-// PLAN: __obelisk_periodic_clock_plan_v1
+// Both clocks enter the runtime's periodic plan.
+// PLAN: llvm.mlir.global internal constant @__obelisk_periodic_clock_plan_v1() {{.*}} : !llvm.array<2 x struct<
+// PLAN: llvm.mlir.addressof @__obelisk_periodic_clock_plan_v1
 // PLAN: llvm.call @obelisk_rt_v1_scheduler_prepare_periodic_aot
 
 module attributes {

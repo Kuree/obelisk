@@ -64,7 +64,6 @@ module attributes {
   }
 }
 
-
 // DIAG: warning: always procedure has no timing control
 
 // The zero-delay loop keeps its plain back edge; nothing is scheduled for it.

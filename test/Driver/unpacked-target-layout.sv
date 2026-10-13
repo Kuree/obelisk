@@ -1,5 +1,5 @@
-// RUN: obelisk -emit-obelisk %s | sed 's/module attributes {/module attributes {llvm.data_layout = "e-p:64:64-i64:64-i128:128", /' | obelisk-opt --obelisk-sim-prepare | FileCheck %s --check-prefix=ALIGN16
-// RUN: obelisk -emit-obelisk %s | sed 's/module attributes {/module attributes {llvm.data_layout = "e-p:32:32-i64:64-i128:64", /' | obelisk-opt --obelisk-sim-prepare | FileCheck %s --check-prefix=ALIGN8
+// RUN: obelisk -emit-obelisk %s | obelisk-opt '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-p:64:64-i64:64-i128:128\"}"' --obelisk-sim-prepare | FileCheck %s --check-prefix=ALIGN16
+// RUN: obelisk -emit-obelisk %s | obelisk-opt '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-p:32:32-i64:64-i128:64\"}"' --obelisk-sim-prepare | FileCheck %s --check-prefix=ALIGN8
 
 // Deliberately different target ABIs must produce different record offsets
 // and array strides even when both compilations run on the same host.

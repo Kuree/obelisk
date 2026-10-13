@@ -47,7 +47,6 @@ module {
   }
 }
 
-
 // A verbosity of 0 selects Table 20-1's "prints nothing" row, so the finish
 // request stands alone.
 // CHECK-LABEL: simulation.func private @unit_0

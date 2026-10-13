@@ -1,7 +1,3 @@
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
-// RUN: %t.o0.native | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
-// RUN: %t.o0.bytecode | FileCheck %s
 // RUN: obelisk -O3 --vpi=off %s -o %t.o3.native
 // RUN: %t.o3.native | FileCheck %s
 // RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode

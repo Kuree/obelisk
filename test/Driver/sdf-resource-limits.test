@@ -1,0 +1,9 @@
+// The production driver bounds static SDF annotation with these limits; the
+// sdf-*-limit tests lower them through the test driver.
+// RUN: %test-obelisk --test-print-sdf-limits | FileCheck %s
+// CHECK: file-bytes=67108864
+// CHECK-NEXT: cache-bytes=268435456
+// CHECK-NEXT: cache-files=256
+// CHECK-NEXT: cache-entries=1048576
+// CHECK-NEXT: matched-updates=1048576
+// CHECK-NEXT: application-work=4194304

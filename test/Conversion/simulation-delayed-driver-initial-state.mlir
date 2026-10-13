@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | %python %S/Inputs/dump-bytecode-instructions.py --state | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2017 4.9.1, 6.7.1, 10.3.3, and 30.5: a net and an ordinary
 // continuous-assignment contribution start at Z while the time-zero

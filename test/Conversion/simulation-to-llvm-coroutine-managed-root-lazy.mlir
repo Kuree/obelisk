@@ -69,7 +69,6 @@ module attributes {
   }
 }
 
-
 // CHECK-LABEL: llvm.func @root.__obelisk_coro_ramp(
 // CHECK: llvm.store %{{.*}}, %[[RECORD:[0-9]+]] {{{.*}}obelisk.managed_root_activation_prologue}
 // CHECK-NOT: llvm.call @obelisk_rt_v1_gc_managed_root_range_push

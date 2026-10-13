@@ -2,13 +2,9 @@
 // RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
 // RUN: obelisk -O3 --vpi=full --native-scheduler=eval --mlir-timing %t/design.sv %t/plugin.so -o %t/eval 2> %t.timing
 // RUN: FileCheck %s --check-prefix=PLAN < %t.timing
-// RUN: obelisk -O0 --vpi=full --native-scheduler=eval %t/design.sv %t/plugin.so -o %t/o0
 // RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %t/design.sv %t/plugin.so -o %t/bytecode
 // RUN: %t/eval > %t/eval.out
-// RUN: %t/o0 > %t/o0.out
-// RUN: %t/bytecode > %t/reference
-// RUN: diff -u %t/reference %t/eval.out
-// RUN: diff -u %t/reference %t/o0.out
+// RUN: %t/bytecode | diff -u %t/eval.out -
 // RUN: FileCheck %s < %t/eval.out
 
 // LRM 4.9.4/10.4.2: the clock captures its operands before this Active

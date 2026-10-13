@@ -2,6 +2,16 @@
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
 // RUN: obelisk-opt %s --test-obelisk-activation-memory -o /dev/null 2>&1 | FileCheck %s --check-prefix=MEM
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @signed agree
+// COMPARE: inputs @unsigned agree
+// COMPARE: inputs @reverse_operand agree
+// COMPARE: inputs @descending agree
+// COMPARE: inputs @zero_trip agree
+// COMPARE: inputs @shifted agree
+
 // IEEE 1800-2023 12.7.1 and 11.6: the inner limit is an invariant outer
 // induction, and the final step must fit the actual integer width. No source
 // loop is replicated. Per-context bounds keep the triangular memory footprint.

@@ -51,7 +51,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 
 // 4259906 is 0x410042: the packed value keeps the zero byte.

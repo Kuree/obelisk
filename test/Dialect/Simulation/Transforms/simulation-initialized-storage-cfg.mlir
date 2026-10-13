@@ -3,9 +3,11 @@
 // RUN: diff %t.threaded %t.serial
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage))' | FileCheck %s
 // RUN: obelisk-opt %s --mlir-disable-threading --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage))' | FileCheck %s
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-propagate-initialized-storage{vpi=full}))' | FileCheck %s --check-prefix=VPI
 
 // LRM 6.8 requires declaration initialization before all process startups.
 // A CFG preheader is unconditional; a skipped initialization edge is not.
+// Full VPI access may write the storage, so every read stays a load.
 module {
   simulation.design @cfg_initialization {
     simulation.scope.decl 0

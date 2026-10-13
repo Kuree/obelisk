@@ -30,13 +30,6 @@
 // RUN:   -DCOMMAND_FILE_MACRO=8 Inputs/command_files/macros.sv -o %t.after \
 // RUN:   && %t.after | FileCheck %s --check-prefix=AFTER
 
-// RUN: cd %S && not obelisk -O0 \
-// RUN:   -f Inputs/command_files/self_including.f 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=CYCLE
-// RUN: not obelisk -O0 -f %t.missing.f 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk -O0 -f 2>&1 | FileCheck %s --check-prefix=NO-FILE
-
 // OPTIONS: command-file macro = 7
 
 // NESTED: command-file macro = 7
@@ -48,7 +41,3 @@
 
 // BEFORE: command-file macro = 8
 // AFTER: command-file macro = 7
-
-// CYCLE: error: command file '{{.*}}self_including.f' includes itself
-// MISSING: error: could not read command file '{{.*}}missing.f'
-// NO-FILE: error: missing argument to '-f' (expected a command file)

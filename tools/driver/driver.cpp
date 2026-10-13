@@ -935,7 +935,7 @@ static void writeBindingReport(ModuleOp module, raw_ostream &output) {
 
 static obelisk::frontend::FrontendOptions buildFrontendOptions(
     const InputArgList &args, bool &valid,
-    const obelisk::driver::ProtectedEnvelopeConfiguration &protectConfig) {
+    const obelisk::driver::DriverConfiguration &config) {
   obelisk::frontend::FrontendOptions options;
   // Split only the conventional '+' aliases. A canonical -I or -D value may
   // itself contain '+' (a directory name or an arithmetic macro expression).
@@ -1045,16 +1045,17 @@ static obelisk::frontend::FrontendOptions buildFrontendOptions(
           : obelisk::frontend::LanguageVersion::IEEE1800_2023;
   for (std::string argument : args.getAllArgValues(OPT_Xslang))
     options.slangArgs.push_back(std::move(argument));
-  options.protectedEnvelopeProvider = protectConfig.provider;
-  options.maxProtectedEnvelopeDepth = protectConfig.maxDepth;
-  options.maxProtectedEnvelopeBytes = protectConfig.maxBytes;
-  options.maxProtectedEnvelopeCount = protectConfig.maxCount;
+  options.protectedEnvelopeProvider = config.provider;
+  options.maxProtectedEnvelopeDepth = config.maxDepth;
+  options.maxProtectedEnvelopeBytes = config.maxBytes;
+  options.maxProtectedEnvelopeCount = config.maxCount;
+  options.sdfLimits = config.sdfLimits;
   return options;
 }
 
 static int executeCompilation(
     const InputArgList &args,
-    const obelisk::driver::ProtectedEnvelopeConfiguration &protectConfig) {
+    const obelisk::driver::DriverConfiguration &config) {
   SmallVector<std::string> inputs;
   for (const Arg *arg : args.filtered(OPT_INPUT))
     inputs.emplace_back(arg->getValue());
@@ -1064,7 +1065,7 @@ static int executeCompilation(
 
   bool valid = true;
   obelisk::frontend::FrontendOptions frontendOptions =
-      buildFrontendOptions(args, valid, protectConfig);
+      buildFrontendOptions(args, valid, config);
   // Command files were already spliced into argv, so anything they contributed
   // is present here as an ordinary input.
   if (inputs.empty()) {
@@ -1588,7 +1589,7 @@ static int executeCompilation(
 
 int obelisk::driver::runObeliskDriver(
     int argc, char **argv,
-    const ProtectedEnvelopeConfiguration &protectConfig) {
+    const DriverConfiguration &config) {
   driverExecutablePath = sys::fs::getMainExecutable(
       argv[0], reinterpret_cast<void *>(&runObeliskDriver));
   const OptTable &optionTable = obelisk::driver::getDriverOptTable();
@@ -1647,7 +1648,7 @@ int obelisk::driver::runObeliskDriver(
 #endif
   }
 
-  int status = executeCompilation(args, protectConfig);
+  int status = executeCompilation(args, config);
   // A reusable Emscripten module does not exit after callMain(), so its libc
   // streams do not get the process-exit flush a native invocation receives.
   // Flush explicitly to deliver linker diagnostics to print/printErr.

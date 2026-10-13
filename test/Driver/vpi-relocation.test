@@ -1,0 +1,10 @@
+// VPI libraries load through the executable's relative RUNPATH, so vpi.sv's
+// simulator still runs after moving it together with its libraries.
+// RUN: mkdir -p %t.dir/lib %t.dir/bin %t.dir/relocated/bin %t.dir/relocated/lib
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_test.so -o %t.dir/lib/libobelisk_vpi_test.so
+// RUN: %target_clang -fPIC -shared -nostdlib %S/Inputs/vpi_startup_second.c -I%resource_dir/include -Wl,-soname,libobelisk_vpi_second.so -o %t.dir/lib/libobelisk_vpi_second.so
+// RUN: cd %t.dir && obelisk --vpi=full %S/vpi.sv lib/libobelisk_vpi_test.so lib/libobelisk_vpi_test.so lib/libobelisk_vpi_second.so -o bin/simulator
+// RUN: test ! -e %t.dir/bin/libobelisk_vpi_test.so
+// RUN: cp %t.dir/bin/simulator %t.dir/relocated/bin/simulator
+// RUN: cp %t.dir/lib/libobelisk_vpi_test.so %t.dir/lib/libobelisk_vpi_second.so %t.dir/relocated/lib
+// RUN: %t.dir/relocated/bin/simulator | FileCheck %S/vpi.sv --check-prefix=OUTPUT

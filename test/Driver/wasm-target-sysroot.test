@@ -1,0 +1,9 @@
+// Incomplete or mismatched wasm32 sysroots are diagnosed before linking. The
+// relocated compilers and sysroot trees are split from wasm-target.sv.
+// RUN: %split-file %S/wasm-target.sv %t
+// RUN: cp %obelisk %t/no-runtime/bin/obelisk
+// RUN: cp %obelisk %t/no-libs/bin/obelisk
+// RUN: not %t/no-runtime/bin/obelisk --target=wasm32 -O0 --sysroot=%t/missing %S/wasm-target.sv -o %t/missing.wasm 2>&1 | FileCheck %S/wasm-target.sv --check-prefix=MISSING-SYSROOT
+// RUN: not %t/no-runtime/bin/obelisk --target=wasm32 -O0 --sysroot=%t/wasm64-sysroot %S/wasm-target.sv -o %t/wasm64.wasm 2>&1 | FileCheck %S/wasm-target.sv --check-prefix=WASM64-SYSROOT
+// RUN: not %t/no-runtime/bin/obelisk --target=wasm32 -O0 --sysroot=%t/no-runtime-sysroot %S/wasm-target.sv -o %t/no-runtime.wasm 2>&1 | FileCheck %S/wasm-target.sv --check-prefix=MISSING-RUNTIME
+// RUN: not %t/no-libs/bin/obelisk --target=wasm32 -O0 --sysroot=%t/no-libs-sysroot %S/wasm-target.sv -o %t/no-libs.wasm 2>&1 | FileCheck %S/wasm-target.sv --check-prefix=MISSING-LIBS

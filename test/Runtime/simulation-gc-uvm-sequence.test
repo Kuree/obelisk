@@ -1,0 +1,14 @@
+// RUN: obelisk-opt %S/../Conversion/simulation-gc-uvm-sequence.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{vpi=off prune-native=true},simulation.design(obelisk-sim-optimize-native-regions),simulation.design(obelisk-sim-plan-native-partitions),convert-obelisk-sim-processes-to-llvm-coroutines,materialize-runtime-byte-globals)' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.sequence.o
+// RUN: %llvm_dist/bin/clang++ %t.sequence.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.sequence.exe
+// RUN: env OBELISK_RT_GC_THRESHOLD=256 OBELISK_RT_GC_DIAGNOSTICS=1 %t.sequence.exe 2>&1 | FileCheck %s --check-prefix=SEQUENCE
+// RUN: %t.sequence.exe 2>&1 | FileCheck %s --check-prefix=SEQUENCE-RESULT
+
+// UVM-shaped class testbenches run with a GC threshold small enough that the
+// heap collects many times. Every collection must keep each strongly
+// reachable object (IEEE 1800-2023 8.29): handles in class fields, static
+// members, queues, mailboxes, forked workers and suspended process frames.
+// With a periodic clock, collections move to the designated point once per
+// cycle. Twenty transactions of data 3*id; the scoreboard keeps the last four.
+// SEQUENCE: {{^}}total=570 kept=4 last=19{{$}}
+// SEQUENCE: obelisk-gc-diagnostics collections={{[1-9][0-9]*}} designated={{[1-9][0-9]*}} {{.*}} polled=0
+// SEQUENCE-RESULT: {{^}}total=570 kept=4 last=19{{$}}

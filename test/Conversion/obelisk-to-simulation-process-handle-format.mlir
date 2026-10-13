@@ -136,7 +136,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[NULL:.*]] = simulation.process.null
 // CHECK: simulation.process.equal %{{.*}}, %[[NULL]]

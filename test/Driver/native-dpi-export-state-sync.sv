@@ -2,10 +2,6 @@
 // RUN: FileCheck %s --check-prefix=LLVM --implicit-check-not=obelisk_rt_v1_native_state_bind_shared < %t.ll
 // RUN: obelisk -O3 --native-scheduler=eval %s -o %t.eval
 // RUN: %t.eval | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: %t.auto | FileCheck %s
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.generic | FileCheck %s
 // RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
 

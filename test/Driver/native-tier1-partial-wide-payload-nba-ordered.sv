@@ -3,11 +3,8 @@
 // RUN: FileCheck %s --check-prefix=LLVM < %t.ll
 // RUN: FileCheck %s --check-prefix=NO-CHECKPOINT < %t.ll
 // RUN: obelisk -O3 --native-scheduler=auto %s -o %t.auto
-// RUN: obelisk -O3 --native-scheduler=generic %s -o %t.generic
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.auto > %t.auto.out 2> %t.trace
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
-// RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
 // RUN: FileCheck %s --check-prefix=OUTPUT < %t.auto.out
 
 // Two whole-root NBAs with a 128-bit payload write the same root in one

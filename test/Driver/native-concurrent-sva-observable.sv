@@ -1,12 +1,8 @@
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic %s -o %t.generic
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
+// RUN: %t.native > %t.native.out 2>&1
+// RUN: FileCheck %s < %t.native.out
 // RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.aot
-// RUN: %t.generic > %t.generic.out 2>&1
-// RUN: %t.bytecode > %t.bytecode.out 2>&1
-// RUN: %t.aot > %t.aot.out 2>&1
-// RUN: diff -u %t.generic.out %t.bytecode.out
-// RUN: diff -u %t.generic.out %t.aot.out
-// RUN: FileCheck %s < %t.aot.out
+// RUN: %t.bytecode 2>&1 | diff -u %t.native.out -
 // RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
 // RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT --implicit-check-not=obelisk_rt_v1_scheduler_run_aot_nodes
 

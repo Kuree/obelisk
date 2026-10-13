@@ -1,0 +1,9 @@
+// Command-file expansion diagnoses include cycles, missing files, and a -f
+// without a file name.
+// RUN: cd %S && not obelisk -O0 -f Inputs/command_files/self_including.f 2>&1 | FileCheck %s --check-prefix=CYCLE
+// RUN: not obelisk -O0 -f %t.missing.f 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -O0 -f 2>&1 | FileCheck %s --check-prefix=NO-FILE
+
+// CYCLE: error: command file '{{.*}}self_including.f' includes itself
+// MISSING: error: could not read command file '{{.*}}missing.f'
+// NO-FILE: error: missing argument to '-f' (expected a command file)

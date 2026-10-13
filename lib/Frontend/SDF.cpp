@@ -51,15 +51,24 @@ struct SDFNode {
   unsigned column = 1;
 };
 
+/// Spell a byte limit the way its diagnostics name it, e.g. "64 MiB".
+std::string formatByteLimit(uint64_t bytes) {
+  constexpr uint64_t mebibyte = 1024 * 1024;
+  if (bytes && bytes % mebibyte == 0)
+    return (Twine(bytes / mebibyte) + " MiB").str();
+  return (Twine(bytes) + "-byte").str();
+}
+
 class SDFParser {
 public:
-  SDFParser(StringRef filename, StringRef input)
-      : filename(filename), input(input) {}
+  SDFParser(StringRef filename, StringRef input, uint64_t maxInputBytes)
+      : filename(filename), input(input), maxInputBytes(maxInputBytes) {}
 
   std::optional<SDFNode> parse() {
-    constexpr size_t maxInputBytes = 64 * 1024 * 1024;
     if (input.size() > maxInputBytes) {
-      error(1, 1, "SDF input exceeds the supported 64 MiB limit");
+      error(1, 1,
+            Twine("SDF input exceeds the supported ") +
+                formatByteLimit(maxInputBytes) + " limit");
       return std::nullopt;
     }
     skipTrivia();
@@ -191,6 +200,7 @@ private:
 
   StringRef filename;
   StringRef input;
+  uint64_t maxInputBytes;
   size_t cursor = 0;
   unsigned line = 1;
   unsigned column = 1;
@@ -1697,9 +1707,10 @@ private:
 
 mlir::FailureOr<mlir::OwningOpRef<mlir::ModuleOp>>
 importSDF(StringRef sourceName, StringRef contents, mlir::MLIRContext &context,
-          bool verifyIR) {
+          bool verifyIR, uint64_t maxInputBytes) {
   context.getOrLoadDialect<sdf::ObeliskSDFDialect>();
-  std::optional<SDFNode> root = SDFParser(sourceName, contents).parse();
+  std::optional<SDFNode> root =
+      SDFParser(sourceName, contents, maxInputBytes).parse();
   if (!root)
     return mlir::failure();
   auto module = SDFMLIRImporter(sourceName, context).import(*root);
@@ -1869,7 +1880,8 @@ bool SDFAnnotationDatabase::isAppliedCall(
 
 std::unique_ptr<SDFAnnotationDatabase>
 buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
-                           const slang::SourceManager &sourceManager) {
+                           const slang::SourceManager &sourceManager,
+                           const SDFResourceLimits &limits) {
   auto result = std::make_unique<SDFAnnotationDatabase>();
   // The parser has already classified every expanded system-identifier
   // token, including macro expansion and token pasting. Use that compact CST
@@ -1900,7 +1912,7 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
             annotationScope(*candidate.call, inventory, candidate.owner))
       orderedCandidates.push_back({candidate.call, scope, startup->second});
   }
-  constexpr size_t maxAnnotationApplicationWork = 1 << 22;
+  const uint64_t maxAnnotationApplicationWork = limits.maxApplicationWork;
   size_t annotationApplicationWork = 0;
   DenseSet<const slang::ast::CallExpression *> unorderedCalls;
   auto contains = [](StringRef outer, StringRef inner) {
@@ -1938,11 +1950,11 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
     std::shared_ptr<const ParsedSDF> contents;
   };
   StringMap<CachedSDF> parsedSDFCache;
-  constexpr size_t maxStaticSDFFileBytes = 64 * 1024 * 1024;
-  constexpr size_t maxStaticSDFCacheBytes = 256 * 1024 * 1024;
-  constexpr size_t maxStaticSDFCacheFiles = 256;
-  constexpr size_t maxStaticSDFCacheEntries = 1 << 20;
-  constexpr size_t maxMatchedDelayUpdates = 1 << 20;
+  const uint64_t maxStaticSDFFileBytes = limits.maxFileBytes;
+  const uint64_t maxStaticSDFCacheBytes = limits.maxCacheBytes;
+  const uint64_t maxStaticSDFCacheFiles = limits.maxCacheFiles;
+  const uint64_t maxStaticSDFCacheEntries = limits.maxCacheEntries;
+  const uint64_t maxMatchedDelayUpdates = limits.maxMatchedUpdates;
   size_t parsedSDFCacheBytes = 0;
   size_t parsedSDFCacheEntries = 0;
   size_t matchedDelayUpdates = 0;
@@ -2039,8 +2051,9 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       size_t sourceBytes = (*buffer)->getBufferSize();
       if (sourceBytes > maxStaticSDFFileBytes) {
         callDiagnostic(sourceManager, *call, "error",
-                       "SDF file exceeds the 64 MiB static annotation "
-                       "resource limit");
+                       Twine("SDF file exceeds the ") +
+                           formatByteLimit(maxStaticSDFFileBytes) +
+                           " static annotation resource limit");
         invalid = true;
         continue;
       }
@@ -2056,7 +2069,8 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       // normalization boundary. The database consumes that transient IR and
       // retains no SDF operation or runtime state.
       auto sdfModule =
-          importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true);
+          importSDF(*filename, (*buffer)->getBuffer(), sdfContext, true,
+                    maxStaticSDFFileBytes);
       std::optional<ParsedSDF> parsed =
           failed(sdfModule) ? std::nullopt : consumeSDFIR(**sdfModule);
       if (!parsed) {

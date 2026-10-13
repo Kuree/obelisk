@@ -1,0 +1,8 @@
+// Annex J library options reject a bootstrap file that is not a library list
+// and are unavailable for wasm32 (see dpi-annex-j.sv).
+// RUN: not obelisk %S/dpi-annex-j.sv -sv_liblist %S/Inputs/dpi_annex_j_bootstrap.c -o %t.bad 2>&1 | FileCheck %s --check-prefix=BAD-BOOTSTRAP
+// RUN: not obelisk --target=wasm32 %S/dpi-annex-j.sv -sv_lib direct -o %t.wasm 2>&1 | FileCheck %s --check-prefix=WASM
+// RUN: not obelisk --target=wasm32 %S/dpi-annex-j.sv -sv_liblist %t.missing -o %t.wasm 2>&1 | FileCheck %s --check-prefix=WASM
+
+// BAD-BOOTSTRAP: must begin with #!SV_LIBRARIES
+// WASM: Annex J DPI libraries require --target=native

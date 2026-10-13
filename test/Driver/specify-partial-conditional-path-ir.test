@@ -1,0 +1,9 @@
+// Lowered condition groups, kinds, and polarities of the partial conditional
+// paths in specify-partial-conditional-path.sv.
+// RUN: obelisk -O0 -emit-sim %S/specify-partial-conditional-path.sv -o %t.sim.mlir
+// RUN: FileCheck %S/specify-partial-conditional-path.sv --check-prefix=GROUP < %t.sim.mlir
+// RUN: FileCheck %S/specify-partial-conditional-path.sv --check-prefix=KIND-IF < %t.sim.mlir
+// RUN: FileCheck %S/specify-partial-conditional-path.sv --check-prefix=KIND-NONE < %t.sim.mlir
+// RUN: FileCheck %S/specify-partial-conditional-path.sv --check-prefix=POL-POS < %t.sim.mlir
+// RUN: FileCheck %S/specify-partial-conditional-path.sv --check-prefix=POL-NEG < %t.sim.mlir
+// RUN: FileCheck %S/specify-partial-conditional-path.sv --check-prefix=DRIVE < %t.sim.mlir

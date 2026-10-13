@@ -2,8 +2,6 @@
 // RUN: obelisk-opt %t.sim.mlir --encode-obelisk-sim-to-bytecode --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.native.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-sampled-dynamic-array.test.
-
 // The selector and array are sampled before the Active writes. The snapshot
 // contains the proven array roots, excluding unrelated storage. An invalid
 // lane is X for four-state data and zero for two-state data (LRM 7.4.5, 16.5.1).

@@ -5,8 +5,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-process-cfg),obelisk-sim-build-compute-graph{vpi=read},obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),encode-obelisk-sim-to-bytecode{vpi=read},convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.read.llvm.mlir
 // RUN: FileCheck %s --check-prefix=READ < %t.read.llvm.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-disjoint-dynamic-nba-runtime.test.
-
 // Empty dynamic slots must bypass stale address/value/unknown loads in all
 // three commit variants. The runtime checks below cover independent slots,
 // aliasing lanes, and negative/out-of-range/unknown indices.

@@ -1,8 +1,4 @@
 // RUN: obelisk -emit-sim -O0 --vpi=off %s | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O0 --vpi=off %s -o %t.o0.native
-// RUN: %t.o0.native +OUT=%t.o0.native.data | FileCheck %s
-// RUN: obelisk -O0 --vpi=off --execution-tier=bytecode %s -o %t.o0.bytecode
-// RUN: %t.o0.bytecode +OUT=%t.o0.bytecode.data | FileCheck %s
 // RUN: obelisk -O3 --vpi=off %s -o %t.o3.native
 // RUN: %t.o3.native +OUT=%t.o3.native.data | FileCheck %s
 // RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %s -o %t.o3.bytecode

@@ -49,7 +49,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK:      %[[BITS:.*]] = simulation.logic.to_bits %{{.*}} : !simulation.logic<8> -> i8
 // CHECK-NEXT: simulation.real.from_integer %[[BITS]] signed = false : i8 -> f64

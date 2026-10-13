@@ -36,7 +36,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[FD:.*]] = simulation.file.open
 // A zero descriptor means the open failed, so the read is branched around.

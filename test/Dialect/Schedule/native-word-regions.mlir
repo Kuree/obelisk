@@ -1,5 +1,6 @@
 // RUN: obelisk-opt %s --split-input-file --schedule-optimize-native-words | FileCheck %s
 // RUN: obelisk-opt %s --split-input-file --schedule-optimize-native-words --convert-schedule-word-regions --canonicalize | FileCheck %s --check-prefix=LOWER
+
 // Native width is justified by bounded lane dataflow, independently of X/Z.
 // The input has no knownness certificate: XOR must retain both planes.
 module {
@@ -270,7 +271,6 @@ module {
   }
 }
 
-
 // -----
 // Ordered repeated writes to one identical lane map remain independent.
 // CHECK-LABEL: simulation.func @repeated_write
@@ -278,7 +278,6 @@ module {
 // CHECK-COUNT-2: simulation.ref.store
 // LOWER-LABEL: simulation.func @repeated_write
 // LOWER-COUNT-2: simulation.ref.store
-
 
 module {
   simulation.design @repeated_write attributes {
@@ -326,7 +325,6 @@ module {
     }
   }
 }
-
 
 // -----
 

@@ -1,0 +1,4 @@
+// Frontend and obelisk-dialect forms of the associative arrays in
+// native-associative-array-core.sv.
+// RUN: obelisk -emit-slang %S/native-associative-array-core.sv | FileCheck %S/native-associative-array-core.sv --check-prefix=SLANG
+// RUN: obelisk -emit-obelisk %S/native-associative-array-core.sv | FileCheck %S/native-associative-array-core.sv --check-prefix=OBELISK

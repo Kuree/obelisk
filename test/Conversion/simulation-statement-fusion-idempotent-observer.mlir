@@ -1,4 +1,5 @@
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s
+
 // IEEE 1800-2023 4.3: an exclusively owned conditional hold may remain an
 // outside observer when a path-sensitive proof establishes idempotence under
 // unchanged inputs. Keep its original state and activation protocol. Old-state
@@ -80,7 +81,6 @@ module {
   }
 }
 
-
 // -----
 
 // CHECK-LABEL: simulation.design @snapshot_observer
@@ -157,7 +157,6 @@ module {
     }
   }
 }
-
 
 // -----
 

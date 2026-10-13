@@ -1,8 +1,6 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),encode-obelisk-sim-to-bytecode,convert-obelisk-sim-processes-to-llvm-coroutines)' -o %t.native.mlir
 // RUN: FileCheck %s --check-prefix=PLAN --implicit-check-not=': !llvm.ptr -> i65536' < %t.native.mlir
 
-// Runtime behavior is checked in ../Runtime/simulation-wide-word-runtime.test.
-
 // Check full vector equality, two distinct low limbs, and the far end of both
 // planes. Force native -O0 execution so constant folding cannot hide codegen
 // errors; compare against the true bytecode tier and literal expected values.

@@ -79,8 +79,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
 // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i64

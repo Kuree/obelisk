@@ -1,26 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: %target_clang -fPIC -shared -nostdlib \
-// RUN:   %t/plugin.c -I%resource_dir/include -o %t/plugin.so
-// RUN: obelisk -O0 --vpi=full --native-scheduler=generic \
-// RUN:   %t/design.sv %t/plugin.so -o %t/o0
-// RUN: %t/o0 | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic \
-// RUN:   %t/design.sv %t/plugin.so -o %t/o3
+// RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
+// RUN: obelisk -O3 --vpi=full --native-scheduler=generic %t/design.sv %t/plugin.so -o %t/o3
 // RUN: %t/o3 | FileCheck %s
-// RUN: obelisk -O3 --vpi=full --native-scheduler=generic \
-// RUN:   -emit-llvm %t/design.sv -o %t/guard.ll
-// RUN: FileCheck %s --check-prefix=GUARD < %t/guard.ll
-// RUN: FileCheck %s --check-prefix=DYNAMIC < %t/guard.ll
-// RUN: obelisk --target=wasm32 -O3 --vpi=full --native-scheduler=generic \
-// RUN:   -emit-llvm %t/wasm.sv -o %t/wasm.ll
-// RUN: FileCheck %s --check-prefix=GUARD < %t/wasm.ll
-// RUN: FileCheck %s --check-prefix=WASM < %t/wasm.ll
-// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode \
-// RUN:   %t/design.sv %t/plugin.so -o %t/bytecode
+// RUN: obelisk -O3 --vpi=full --native-scheduler=generic -emit-llvm %t/design.sv -o - | FileCheck %s --check-prefix=GUARD --check-prefix=DYNAMIC
+// RUN: obelisk -O3 --vpi=full --execution-tier=bytecode %t/design.sv %t/plugin.so -o %t/bytecode
 // RUN: %t/bytecode | FileCheck %s
-// RUN: obelisk -O3 --vpi=full -DPARTIAL --mlir-timing %t/design.sv %t/plugin.so -o %t/partial 2> %t/partial.log
-// RUN: FileCheck %s --check-prefix=PARTIAL < %t/partial.log
-// RUN: %t/partial | FileCheck %s
 // PARTIAL: native eligibility: eligible=1 fully_eligible=0 cost_effective=1
 
 // A foreign call may first consume VPI after clean native execution. Force

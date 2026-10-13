@@ -1,15 +1,8 @@
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic %s -o %t.generic-o0
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.generic-o3
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
-// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
-// RUN: %t.generic-o0 > %t.generic-o0.out
-// RUN: %t.generic-o3 > %t.generic-o3.out
-// RUN: %t.bytecode-o0 > %t.bytecode-o0.out
-// RUN: %t.bytecode-o3 > %t.bytecode-o3.out
-// RUN: diff -u %t.generic-o0.out %t.generic-o3.out
-// RUN: diff -u %t.generic-o0.out %t.bytecode-o0.out
-// RUN: diff -u %t.generic-o0.out %t.bytecode-o3.out
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic-o0.out
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
+// RUN: obelisk --std=1800-2023 -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 // RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=IR
 
 module native_sampled_explicit_clock_condition;

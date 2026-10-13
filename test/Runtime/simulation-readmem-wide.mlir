@@ -1,21 +1,9 @@
-// RUN: cp %S/Inputs/readmem-wide.hex %t.hex
-// RUN: cp %S/Inputs/readmem-wide.bin %t.bin
-// RUN: sed -e 's|INPUT_HEX|%t.hex|' -e 's|INPUT_BIN|%t.bin|' %s > %t.input.mlir
-// RUN: obelisk-opt %t.input.mlir --pass-pipeline='builtin.module(encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llc -filetype=obj -relocation-model=pic %t.ll -o %t.o
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(encode-obelisk-sim-to-bytecode{vpi=off},convert-obelisk-sim-processes-to-llvm-coroutines)' | mlir-translate --mlir-to-llvmir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --execution-tier=native | FileCheck %s
-// RUN: %t.exe --execution-tier=bytecode | FileCheck %s
-// RUN: opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.opt.o
-// RUN: %llvm_dist/bin/clang++ %t.opt.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.opt.exe
-// RUN: %t.opt.exe --execution-tier=native | FileCheck %s
-// RUN: %t.opt.exe --execution-tier=bytecode | FileCheck %s
-// RUN: echo 2 > %t.bin
-// RUN: not %t.opt.exe --execution-tier=native 2>&1 | FileCheck %s --check-prefix=INVALID
-// RUN: not %t.opt.exe --execution-tier=bytecode 2>&1 | FileCheck %s --check-prefix=INVALID
-// RUN: echo G > %t.hex
-// RUN: not %t.opt.exe --execution-tier=native 2>&1 | FileCheck %s --check-prefix=INVALID
-// RUN: not %t.opt.exe --execution-tier=bytecode 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: rm -rf %t.d && mkdir -p %t.d/valid %t.d/bad-bin %t.d/bad-hex && cp %S/Inputs/readmem-wide.hex %S/Inputs/readmem-wide.bin %t.d/valid && cp %S/Inputs/readmem-wide.hex %t.d/bad-bin && cp %S/Inputs/readmem-invalid.bin %t.d/bad-bin/readmem-wide.bin && cp %S/Inputs/readmem-wide.bin %t.d/bad-hex && cp %S/Inputs/readmem-invalid.hex %t.d/bad-hex/readmem-wide.hex
+// RUN: cd %t.d/valid && %t.exe | FileCheck %s
+// RUN: cd %t.d/bad-bin && not %t.exe 2>&1 | FileCheck %s --check-prefix=INVALID
+// RUN: cd %t.d/bad-hex && not %t.exe 2>&1 | FileCheck %s --check-prefix=INVALID
 
 // LRM 21.4: retain low destination bits for overlong words, preserve X/Z,
 // ignore underscores and comments, and leave address markers as separate
@@ -39,7 +27,7 @@ module attributes {
       %eof_kind = arith.constant 0 : i32
       %expected_address = arith.constant 291 : i64
       %ok0 = arith.constant true
-      %hex_path = simulation.bytes.constant "INPUT_HEX"
+      %hex_path = simulation.bytes.constant "readmem-wide.hex"
       %hex_fd = simulation.file.open %ctx, %hex_path, %mode : (!simulation.context, !simulation.bytes, !simulation.bytes) -> i32
       %word1, %kind1, %address1 = simulation.file.readmem_token %ctx, %hex_fd {radix = #simulation.radix<hex>} : (!simulation.context, i32) -> (!simulation.logic<64>, i32, i64)
       %expected1 = simulation.logic.constant 81985529216486895 : i64, 0 : i64 : !simulation.logic<64>
@@ -86,7 +74,7 @@ module attributes {
       %kind_ok8 = arith.cmpi eq, %kind8, %eof_kind : i32
       %ok8 = arith.andi %ok7, %kind_ok8 : i1
       simulation.file.close %ctx, %hex_fd : (!simulation.context, i32) -> ()
-      %bin_path = simulation.bytes.constant "INPUT_BIN"
+      %bin_path = simulation.bytes.constant "readmem-wide.bin"
       %bin_fd = simulation.file.open %ctx, %bin_path, %mode : (!simulation.context, !simulation.bytes, !simulation.bytes) -> i32
       %word9, %kind9, %address9 = simulation.file.readmem_token %ctx, %bin_fd {radix = #simulation.radix<binary>} : (!simulation.context, i32) -> (!simulation.logic<64>, i32, i64)
       %expected9 = simulation.logic.constant 12297829382473034405 : i64, 12 : i64 : !simulation.logic<64>

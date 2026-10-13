@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=0}))' | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=0}),encode-obelisk-sim-to-bytecode{vpi=off})' | %python %S/../../../Conversion/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=0}),encode-obelisk-sim-to-bytecode{vpi=off},test-obelisk-print-bytecode)' -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 
 module attributes {

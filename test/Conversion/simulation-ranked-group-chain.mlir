@@ -2,8 +2,6 @@
 // RUN: FileCheck %s --check-prefix=PLAN < %t.llvm.mlir
 // RUN: FileCheck %s --check-prefix=TRACE < %t.trace
 
-// Runtime behavior is checked in ../Runtime/simulation-ranked-group-chain.test.
-
 // A periodic source feeds continuous copies. The copies share one ranked
 // computation body under the shared dispatcher.
 // TRACE: obelisk eval owner: bit=0 actor=6 continuation=9 compute_node=15 group=__obelisk_eval_ranked_group_0 executor=__obelisk_direct_fragment_6_9.__obelisk_execute
@@ -159,6 +157,3 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
     }
   }
 }
-
-// Only startup and the timed checker use node dispatch; clock work must
-// execute through the native coordinator at both optimization levels.

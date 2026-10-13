@@ -11,12 +11,12 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=TRANSPORT
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | sed 's/, simulation.negative_timing_delay_commit//' \
-// RUN:   | obelisk-opt --test-obelisk-native-aot-analysis 2>&1 \
+// RUN:   '--test-obelisk-edit-attributes=has=simulation.negative_timing_delay_commit remove=simulation.negative_timing_delay_commit' \
+// RUN:   --test-obelisk-native-aot-analysis -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CERT-MISS
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | sed 's/ {simulation.negative_timing_transport_activation}//' \
-// RUN:   | obelisk-opt --test-obelisk-native-aot-analysis 2>&1 \
+// RUN:   '--test-obelisk-edit-attributes=has=simulation.negative_timing_transport_activation remove=simulation.negative_timing_transport_activation' \
+// RUN:   --test-obelisk-native-aot-analysis -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=CERT-MISS
 
 // IEEE 1800-2017 31.9.2's shared delayed-terminal example. At 0.01 ns

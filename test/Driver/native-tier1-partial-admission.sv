@@ -1,28 +1,11 @@
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s \
-// RUN:   -o %t.auto.ll 2> %t.timing
+// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto --mlir-timing -emit-llvm %s -o %t.auto.ll 2> %t.timing
 // RUN: FileCheck %s --check-prefix=ADMISSION < %t.timing
 // RUN: FileCheck %s --check-prefix=EVAL < %t.auto.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=auto %s -o %t.auto
 // RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=generic %s -o %t.generic
-// RUN: %t.auto > %t.auto.out
 // RUN: %t.generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.auto.out
 // RUN: obelisk --clocked-kernels=immediate -O3 --native-scheduler=eval %s -o %t.eval
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > %t.eval.out 2> %t.eval.diag
-// RUN: diff -u %t.generic.out %t.eval.out
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval 2> %t.eval.diag | diff -u %t.generic.out -
 // RUN: FileCheck %s --check-prefix=DIAG < %t.eval.diag
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read --mlir-timing -emit-llvm %s -o %t.read.ll 2> %t.read.timing
-// RUN: FileCheck %s --check-prefix=ADMISSION < %t.read.timing
-// RUN: FileCheck %s --check-prefix=EVAL < %t.read.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full --mlir-timing -emit-llvm %s -o %t.full.ll 2> %t.full.timing
-// RUN: FileCheck %s --check-prefix=ADMISSION < %t.full.timing
-// RUN: FileCheck %s --check-prefix=EVAL < %t.full.ll
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=read %s -o %t.read
-// RUN: obelisk --clocked-kernels=immediate -O3 --vpi=full %s -o %t.full
-// RUN: %t.read > %t.read.out
-// RUN: %t.full > %t.full.out
-// RUN: diff -u %t.generic.out %t.read.out
-// RUN: diff -u %t.generic.out %t.full.out
 
 // An unrelated testbench string and real value exclude its actor. The clocked
 // RTL still owns most of the graph and must retain its generated eval island.

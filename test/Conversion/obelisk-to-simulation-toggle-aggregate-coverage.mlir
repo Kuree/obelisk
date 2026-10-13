@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare-coverage | FileCheck %s
 // RUN: obelisk-opt %s --obelisk-sim-prepare-coverage \
-// RUN:   | %python %S/Inputs/dump-coverage-schema.py \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=DIMENSIONS
 
 !memory = !simulation.unpacked_array<3 : 1 x !simulation.packed_array<0 : 7 x !simulation.logic<1>>>

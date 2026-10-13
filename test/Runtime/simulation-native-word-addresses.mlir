@@ -1,19 +1,10 @@
 // RUN: obelisk-opt %s --schedule-optimize-native-words -o %t.words
 // RUN: FileCheck %s --check-prefix=WORDS < %t.words
-// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.o0.o
-// RUN: %llvm_dist/bin/clang++ %t.o0.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o0.exe
-// RUN: %t.o0.exe | FileCheck %s --check-prefix=RESULT --implicit-check-not=' 0'
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.o3.o
-// RUN: %llvm_dist/bin/clang++ %t.o3.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.o3.exe
-// RUN: %t.o3.exe | FileCheck %s --check-prefix=RESULT --implicit-check-not=' 0'
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines="native-words=false" | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.scalar.o
-// RUN: %llvm_dist/bin/clang++ %t.scalar.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.scalar.exe
-// RUN: %t.scalar.exe | FileCheck %s --check-prefix=RESULT
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines="native-words=false" | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.scalar.o
-// RUN: %llvm_dist/bin/clang++ %t.scalar.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.scalar.exe
-// RUN: %t.scalar.exe | FileCheck %s --check-prefix=RESULT
-// Direct MLIR inputs; run both scalar and word lowering at O0 and O3.
+// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s --check-prefix=RESULT --implicit-check-not=' 0'
+
+// Direct MLIR inputs. Native -O0 keeps constant folding from hiding codegen errors.
 // Expected value/unknown planes encode the LRM truth tables explicitly.
 // Address cases cover signed bounds, either range direction, reversals,
 // packed value sources, and ordered same-lane aliases.

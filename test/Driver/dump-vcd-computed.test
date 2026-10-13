@@ -1,0 +1,10 @@
+// Waveform file names of the designs in dump-vcd.sv.
+//
+// The LRM permits a string expression and an omitted argument as file names.
+// RUN: %split-file %S/dump-vcd.sv %t
+// RUN: cd %t && obelisk computed.sv -o %t/computed.sim
+// RUN: cd %t && %t/computed.sim
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=COMPUTED < %t/computed.vcd
+// RUN: cd %t && obelisk --execution-tier=bytecode computed.sv -o %t/computed-bytecode.sim
+// RUN: cd %t && %t/computed-bytecode.sim
+// RUN: FileCheck %S/dump-vcd.sv --check-prefix=COMPUTED < %t/computed.vcd

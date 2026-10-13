@@ -44,6 +44,5 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: simulation.suspend.edge_iff change %{{.*}} iff %{{.*}} to

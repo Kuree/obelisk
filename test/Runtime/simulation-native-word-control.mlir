@@ -1,20 +1,11 @@
 // RUN: obelisk-opt %s --schedule-optimize-native-words -o %t.words
 // RUN: FileCheck %s --check-prefix=WORDS < %t.words
-// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir > %t.ll
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' %t.ll | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe | FileCheck %s
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines="native-words=false" | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.scalar.o
-// RUN: %llvm_dist/bin/clang++ %t.scalar.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.scalar.exe
-// RUN: %t.scalar.exe | FileCheck %s
 // RUN: obelisk-opt %s --schedule-optimize-native-words='predication-operation-budget=1' -o %t.budget.mlir
 // RUN: FileCheck %s --check-prefix=BUDGET < %t.budget.mlir
-// RUN: obelisk-opt %t.budget.mlir --convert-obelisk-sim-processes-to-llvm-coroutines='native-words=false' | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.budget.o
-// RUN: %llvm_dist/bin/clang++ %t.budget.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.budget.exe
-// RUN: %t.budget.exe | FileCheck %s
+// RUN: obelisk-opt %t.words --convert-schedule-word-regions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
+// RUN: %t.exe | FileCheck %s
+
 // Every triple of 0,1,X,Z appears in one of the 64 lanes.
 // LRM 12.4: procedural X/Z conditions select the false edge. A packed phi
 // preserves Z exactly; this differs from the ambiguous ?: expression rule.

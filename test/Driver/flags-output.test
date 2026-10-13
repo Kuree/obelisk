@@ -1,0 +1,19 @@
+// Output selection: -o, debug locations, inputs after --, standard input, and
+// the last action option, which controls the representation that is emitted.
+// RUN: obelisk -emit-slang -o %t %S/Inputs/macros.sv
+// RUN: FileCheck %s --check-prefix=OUTPUT --input-file=%t
+// RUN: obelisk -emit-slang --mlir-print-debuginfo %S/Inputs/macros.sv | FileCheck %s --check-prefix=DEBUG
+// RUN: cd %S/Inputs && obelisk -emit-slang -- -dash_input.sv | FileCheck %s --check-prefix=DASH-DASH
+// RUN: obelisk -emit-slang - < %S/Inputs/macros.sv | FileCheck %s --check-prefix=STDIN
+// RUN: obelisk -emit-obelisk -emit-slang %S/Inputs/macros.sv | FileCheck %s --check-prefix=LAST-SLANG
+// RUN: obelisk -emit-slang -emit-obelisk %S/Inputs/macros.sv | FileCheck %s --check-prefix=LAST-OBELISK
+
+// OUTPUT: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// DEBUG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// DEBUG: loc(
+// DASH-DASH: hierarchical_name = "dash_dash_input"
+// STDIN: hierarchical_name = "macro_was_undefined"
+// LAST-SLANG: slang.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// LAST-SLANG-NOT: obelisk.
+// LAST-OBELISK: obelisk.sv.symbol.instance @{{[^ ]+}} attributes {{.*}}hierarchical_name = "macro_was_undefined"
+// LAST-OBELISK-NOT: slang.

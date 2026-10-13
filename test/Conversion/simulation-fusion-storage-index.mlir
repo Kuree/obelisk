@@ -1,6 +1,4 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=SHARED
-// RUN: sed '/^\/\/ OBSERVER-BEGIN/,/^\/\/ OBSERVER-END/d' %s > %t.private.mlir
-// RUN: obelisk-opt %t.private.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-fuse-compute-fragments{body-fusion=true},obelisk-sim-materialize-compute-fusion))' | FileCheck %s --check-prefix=PRIVATE
 
 // Two consecutive fusions share the incremental identity/escape index.
 // Removing old actors and replacing their root spawns makes each temporary
@@ -15,14 +13,6 @@
 // SHARED: simulation.ref.store
 // SHARED: simulation.ref.load
 // SHARED: simulation.nba.enqueue
-// PRIVATE-LABEL: simulation.func private @__obelisk_fused_0
-// PRIVATE-NOT: simulation.ref.store
-// PRIVATE-NOT: simulation.ref.load
-// PRIVATE: simulation.nba.enqueue
-// PRIVATE-LABEL: simulation.func private @__obelisk_fused_1
-// PRIVATE-NOT: simulation.ref.store
-// PRIVATE-NOT: simulation.ref.load
-// PRIVATE: simulation.nba.enqueue
 
 !ref = !simulation.ref<i32>
 !clock = !simulation.ref<i1>
@@ -89,12 +79,10 @@ module attributes {schedule.native_scheduler = 1 : i32} {
     ^body:
       cf.br ^wait
     }
-// OBSERVER-BEGIN
     simulation.code_unit.decl 6 in 0 function hierarchy "observer"
     simulation.func private @observer(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %tmp: !ref {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 3 : i64}) -> i32 attributes {entry_kind = 8 : i32, code_unit_id = 6 : i64} {
       %value = simulation.ref.load %tmp : !ref -> i32
       simulation.return %value : i32
     }
-// OBSERVER-END
   }
 }

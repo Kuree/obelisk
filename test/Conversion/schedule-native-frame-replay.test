@@ -4,8 +4,8 @@
 // RUN: obelisk-opt %t.frames --pass-pipeline='builtin.module(schedule-plan-native-actors,schedule-specialize-native-captures,convert-simulation-to-native-schedule,prepare-native-managed-roots,schedule-mark-clean-native-nba,schedule-specialize-native-eval,schedule-annotate-compact-nba,prepare-native-fragments,schedule-plan-native-eval-ownership,schedule-plan-native-executable-nodes,schedule-resolve-native-eval,materialize-native-processes,convert-prepared-sim-processes-to-llvm-coroutines)' > %t.replayed
 // RUN: obelisk-opt %S/simulation-to-llvm-coroutine.mlir --convert-obelisk-sim-processes-to-llvm-coroutines > %t.original
 // RUN: diff -u %t.original %t.replayed
-// RUN: sed 's/abi = array<i64: /abi = array<i64: 999, /' %t.frames > %t.stale
-// RUN: not obelisk-opt %t.stale --schedule-plan-native-actors 2>&1 | FileCheck %s --check-prefix=STALE
-// RUN: sed -e 's/code_unit_id = 9000001 : i64/code_unit_id = 9100001 : i64/' -e 's/simulation.code_unit.decl 9000001 /simulation.code_unit.decl 9100001 /' %t.frames > %t.identity
-// RUN: not obelisk-opt %t.identity --schedule-plan-native-actors 2>&1 | FileCheck %s --check-prefix=STALE
+// RUN: not obelisk-opt %t.frames '--test-obelisk-edit-attributes=replace-from="array<i64: 104, 8, 3523840585993111342, 0>" replace-to="array<i64: 999, 104, 8, 3523840585993111342, 0>"' --schedule-plan-native-actors 2>&1 | FileCheck %s --check-prefix=STALE
+// RUN: not obelisk-opt %t.frames --verify-each=0 '--test-obelisk-edit-attributes=match={code_unit_id = 9000001 : i64} set={code_unit_id = 9100001 : i64}' '--test-obelisk-edit-attributes=op=simulation.code_unit.decl match={id = 9000001 : i64} set={id = 9100001 : i64}' --schedule-plan-native-actors 2>&1 | FileCheck %s --check-prefix=STALE
+// A recorded ABI that no longer matches the canonical layout, or a changed
+// process identity, invalidates the recorded frame.
 // STALE: native frame replay rejected changed canonical ABI inputs

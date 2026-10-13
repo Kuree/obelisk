@@ -1,6 +1,11 @@
 // RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true inputs=true' -o %t.analyzed 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @whole_copy agree
+
 // An array copy in each iteration publishes the next element's old value
 // until that element is assigned. Only the final reaching versions are free
 // of the incoming scratch state. These facts alone do not authorize hiding

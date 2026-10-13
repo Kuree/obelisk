@@ -3,17 +3,11 @@
 // RUN: obelisk -O3 -fno-lto --vpi=off --compile-threads=8 %s -o %t.parallel
 // RUN: cmp %t.serial %t.parallel
 // RUN: %t.serial | FileCheck %s
-// RUN: rm -rf %t.lto.ordered.serial.thinlto-cache %t.lto.ordered.parallel.thinlto-cache
-// RUN: obelisk -O3 -flto --vpi=off --compile-threads=1 %s -o %t.lto.ordered.serial
-// RUN: obelisk -O3 -flto --vpi=off --compile-threads=8 %s -o %t.lto.ordered.parallel
-// RUN: cmp %t.lto.ordered.serial %t.lto.ordered.parallel
-// RUN: %t.lto.ordered.parallel | FileCheck %s
-// RUN: obelisk -O3 -flto --vpi=off --compile-threads=1 %S/native.sv -o %t.full.serial
-// RUN: obelisk -O3 -flto --vpi=off --compile-threads=8 %S/native.sv -o %t.full.parallel
-// RUN: cmp %t.full.serial %t.full.parallel
 
 // Keep enough live coroutine bodies to exercise native module partitioning.
 // Changing worker count must preserve optimization boundaries and the binary.
+// The ThinLTO link of the same design is checked in
+// native-partition-determinism-thinlto.test.
 // PARTITIONS: obelisk backend timing: partition 0
 // PARTITIONS: obelisk backend timing: partition 1
 // CHECK: sum=528

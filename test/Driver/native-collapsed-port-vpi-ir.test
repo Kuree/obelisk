@@ -1,0 +1,2 @@
+// Full VPI keeps the collapsed ports of native-collapsed-port-vpi.sv visible.
+// RUN: obelisk -O0 --vpi=full -emit-sim %S/native-collapsed-port-vpi.sv -o - | FileCheck %S/native-collapsed-port-vpi.sv --check-prefix=COLLAPSE

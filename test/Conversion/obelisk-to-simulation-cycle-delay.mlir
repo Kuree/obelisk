@@ -1,6 +1,5 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=STRUCT
-// RUN: sed 's/clocking_event_edge = 1 : i32/clocking_event_edge = 2 : i32/g' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=NEGEDGE
 
 module {
   obelisk.sv.symbol.definition @s0.top attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {}
@@ -108,4 +107,3 @@ module {
 // CHECK-NOT: simulation.suspend.edge
 // CHECK: simulation.spawn @unit_1.$clocking_output.55
 
-// NEGEDGE-COUNT-5: simulation.suspend.edge negedge

@@ -79,7 +79,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: %[[NULL:.*]] = simulation.class.null
 // CHECK: simulation.class.id %[[NULL]]

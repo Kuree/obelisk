@@ -245,8 +245,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK-SAME: %[[THIS:[a-z0-9]+]]: !simulation.class_handle<@[[CLASS:[A-Za-z0-9_.$]+]]>
 // CHECK-SAME: simulation.hierarchical_name = "C::setit"

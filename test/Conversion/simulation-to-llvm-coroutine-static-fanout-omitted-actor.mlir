@@ -1,35 +1,13 @@
-// RUN: %split-file %s %t
-// RUN: obelisk-opt %t/input.mlir \
-// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep))' \
-// RUN:   > %t/planned.mlir
-// RUN: obelisk-opt %t/planned.mlir \
-// RUN:   --pass-pipeline='builtin.module(convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=EXACT
-// RUN: sed -f %t/noncertified.sed %t/planned.mlir > %t/noncertified.mlir
-// RUN: obelisk-opt %t/noncertified.mlir -o /dev/null \
-// RUN:   --pass-pipeline='builtin.module(test-obelisk-native-aot-analysis)' \
-// RUN:   2>&1 | FileCheck %s --check-prefix=ACTORS
-// RUN: obelisk-opt %t/noncertified.mlir \
-// RUN:   --pass-pipeline='builtin.module(convert-obelisk-sim-processes-to-llvm-coroutines)' \
-// RUN:   | FileCheck %s --check-prefix=BRIDGED
+// RUN: obelisk-opt %s \
+// RUN:   --pass-pipeline='builtin.module(simulation.design(obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' \
+// RUN:   | FileCheck %s
 
-// EXACT: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
-// ACTORS: native-aot eligible=true fully=false{{.*}}forced_hybrid=true
-// ACTORS-NEXT: actor 0 @root
-// ACTORS-NEXT: actor 1 @ordinary
-// ACTORS-NEXT: actor 2 @clock
-// ACTORS-NEXT: bytecode @coordinator bb1
-// BRIDGED-LABEL: module attributes
-// BRIDGED: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
-// BRIDGED: llvm.func @obelisk_rt_v1_scheduler_signal_transition
+// The planner certifies the exact Clause 31 clock coordinator as the sole
+// runtime-owned omission.
+// simulation-to-llvm-coroutine-static-fanout-bridged.mlir covers an omitted
+// actor the planner did not certify.
+// CHECK: llvm.mlir.global internal constant @__obelisk_aot_static_fanout_v1
 
-// The planner first certifies the exact Clause 31 clock coordinator as the
-// sole runtime-owned omission. The sed variant preserves that actor inventory
-// but changes the omitted function to a different cold callback and makes its
-// spawn dynamic. NativeAOT therefore has no actor slot for it, but static
-// fanout keeps its Watch dependency on the runtime transition bridge.
-
-//--- input.mlir
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -191,9 +169,3 @@ module attributes {
     }
   }
 }
-
-//--- noncertified.sed
-s/code_unit.decl 2 in 0 always/code_unit.decl 2 in 0 final/
-s/entry_kind = 3 : i32, home_region = 8 : i32, simulation.timing_check_coordinator/entry_kind = 2 : i32, home_region = 2 : i32, internal, simulation.multiclock_sequence_eos_coordinator, schedule.concurrent_eos_coordinator, schedule.concurrent_eos_counted, schedule.detached_controls/
-s/simulation.suspend.clock_set %arg1 conditions 0 edges \[1\] indices \[-1\] site 23 to \^bb1 : !simulation.ref<!simulation.logic<1>>/simulation.return/
-/simulation.func @ordinary/,/^    }/ s|      cf.br \^bb1|      %spawn = simulation.spawn @coordinator(%arg0, %0) : !simulation.context, !simulation.ref<!simulation.logic<1>> -> !simulation.process\n      cf.br ^bb1|

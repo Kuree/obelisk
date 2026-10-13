@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/!descending = !obelisk.ranged_unpacked_array<1 : 0/!descending = !obelisk.ranged_unpacked_array<2 : 0/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SHAPE
-// RUN: sed 's/!descending = !obelisk.ranged_unpacked_array<1 : 0 x !vif>/!descending = !obelisk.ranged_unpacked_array<1 : 0 x i32>/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ELEMENT
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=replace-from="!obelisk.ranged_unpacked_array<1 : 0 x !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.descending::@s7, \"\">>" replace-to="!obelisk.ranged_unpacked_array<2 : 0 x !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.descending::@s7, \"\">>"' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SHAPE
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=replace-from="!obelisk.ranged_unpacked_array<1 : 0 x !obelisk.virtual_interface<@s2.$root::@s5.top::@s6.descending::@s7, \"\">>" replace-to="!obelisk.ranged_unpacked_array<1 : 0 x i32>"' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=ELEMENT
 
 // IEEE 1800-2017 25.9 permits a real interface instance to initialize a
 // compatible virtual-interface variable. 7.6 applies that conversion by

@@ -1,0 +1,31 @@
+// Module-library options are a driver/frontend contract, so these checks emit
+// the first MLIR representation after elaboration rather than inspecting a
+// third-party AST dump.
+// RUN: obelisk --help | FileCheck %s --check-prefix=LIBRARY-HELP
+
+// The conventional plus spelling is an ordered extension list. Reversing it
+// reverses which same-named library file is selected.
+// RUN: obelisk -emit-slang -y %S/Inputs/library/discovery/extensions +libext+.first+.first+.second %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=FIRST-EXT
+// RUN: obelisk -emit-slang -y %S/Inputs/library/discovery/extensions +libext+.second+.first %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=SECOND-EXT
+
+// Directory order is the outer search dimension. An unused syntax-error file
+// proves that -y discovery does not enumerate or parse unrelated sources.
+// RUN: obelisk -emit-slang -y %S/Inputs/library/discovery/dir_first -y %S/Inputs/library/discovery/dir_second -Y .svlib %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=FIRST-DIR
+// RUN: obelisk -emit-slang -y %S/Inputs/library/discovery/dir_second -y %S/Inputs/library/discovery/dir_first -Y .svlib %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=SECOND-DIR
+
+// -v is the conventional spelling; the preexisting -l spelling remains a
+// compatibility alias and shares the same occurrence order.
+// RUN: obelisk -emit-slang -Wno-error=duplicate-definition -v %S/Inputs/library/discovery/explicit_first.sv -l %S/Inputs/library/discovery/explicit_last.sv %S/Inputs/library/discovery/top.sv 2>&1 | FileCheck %s --check-prefix=EXPLICIT-LAST
+// RUN: obelisk -emit-slang -v first=%S/Inputs/library/discovery/explicit_first.sv -v second=%S/Inputs/library/discovery/explicit_last.sv %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=NAMED-FIRST
+// RUN: obelisk -emit-slang -v second=%S/Inputs/library/discovery/explicit_last.sv -v first=%S/Inputs/library/discovery/explicit_first.sv %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=NAMED-SECOND
+
+// LIBRARY-HELP: --libmap <file>
+// LIBRARY-HELP: -v <file>
+// FIRST-EXT: hierarchical_name = "library_top.choice.first_extension"
+// SECOND-EXT: hierarchical_name = "library_top.choice.second_extension"
+// FIRST-DIR: hierarchical_name = "library_top.choice.first_directory"
+// SECOND-DIR: hierarchical_name = "library_top.choice.second_directory"
+// EXPLICIT-LAST: warning: duplicate definition of 'library_choice'
+// EXPLICIT-LAST: hierarchical_name = "library_top.choice.explicit_last"
+// NAMED-FIRST: hierarchical_name = "library_top.choice.explicit_first"
+// NAMED-SECOND: hierarchical_name = "library_top.choice.explicit_last"

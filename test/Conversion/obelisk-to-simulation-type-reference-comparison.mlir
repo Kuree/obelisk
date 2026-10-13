@@ -230,8 +230,6 @@ module {
   }
 }
 
-
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[TWO:.*]] = arith.constant 2 : i32
 // CHECK-DAG: %[[FALSE:.*]] = arith.constant false

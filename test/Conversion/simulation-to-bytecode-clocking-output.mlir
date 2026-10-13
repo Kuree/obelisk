@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py \
+// RUN:   --test-obelisk-print-bytecode -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE

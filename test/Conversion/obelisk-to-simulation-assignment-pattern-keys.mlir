@@ -61,7 +61,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK-DAG: %[[FALSE:.*]] = simulation.logic.constant false, false
 // CHECK-DAG: %[[TRUE:.*]] = simulation.logic.constant true, false

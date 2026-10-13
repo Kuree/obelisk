@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed 's/virtual_interface_access_direction = 1 : i32/virtual_interface_access_direction = 0 : i32/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=INPUT-WRITE
-// RUN: sed '/node_id = 91/s/@s2.\$root::@s5.top::@s12.bus_if/@s2.\$root::@s5.top::@s200.other::@s201.bus_if/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SPECIALIZATION
-// RUN: sed -e '/node_id = 110/s/top.raw_vif/top.other_vif/g' -e '/node_id = 110/s/@s90.raw_vif/@s203.other_vif/' -e '/node_id = 110/s/@s2.\$root::@s5.top::@s12.bus_if/@s2.\$root::@s5.top::@s200.other::@s201.bus_if/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=COMPARE-SPECIALIZATION
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={virtual_interface_access_direction = 1 : i32} set={virtual_interface_access_direction = 0 : i32}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=INPUT-WRITE
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={node_id = 91 : i64} replace-from=@s2.$root::@s5.top::@s12.bus_if replace-to=@s2.$root::@s5.top::@s200.other::@s201.bus_if' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=SPECIALIZATION
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={node_id = 110 : i64} set={referenced_path = \"top.other_vif\", referenced_symbol = @s2.$root::@s4.top::@s5.top::@s203.other_vif}' '--test-obelisk-edit-attributes=match={node_id = 110 : i64} replace-from=@s2.$root::@s5.top::@s12.bus_if replace-to=@s2.$root::@s5.top::@s200.other::@s201.bus_if' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=COMPARE-SPECIALIZATION
 
 module {
   obelisk.sv.symbol.definition @s0.bus_if attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 0 : i64} {}

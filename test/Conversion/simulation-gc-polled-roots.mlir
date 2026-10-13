@@ -4,7 +4,7 @@
 // polls: an allocating loop, a recursive builder, string churn, and a virtual
 // call whose overrides differ. The input is the native backend's view of this
 // source (`obelisk -O0 --vpi=off`, so calls stay calls) ahead of its passes;
-// ../Runtime/simulation-gc-uvm.test runs it with a collection at every
+// ../Runtime/simulation-gc-polled-roots.test runs it with a collection at every
 // opportunity, which reclaims a handle if any of these calls skips its roots.
 //
 // | // Handles live in a caller across callees that collect at their own polls:

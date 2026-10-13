@@ -358,7 +358,31 @@ set_target_properties(ObeliskNativePartitionTests PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
 )
 
+# Exhaustive oracles for compiler analyses: each enumerates a family of small
+# programs and checks every proof against direct execution.
+add_llvm_executable(ObeliskAnalysisOracleTests EXCLUDE_FROM_ALL
+  Support/ActivationOracleTest.cpp
+  Support/BoundedLoopOracleTest.cpp
+)
+llvm_update_compile_flags(ObeliskAnalysisOracleTests)
+target_link_libraries(ObeliskAnalysisOracleTests PRIVATE
+  ObeliskSimulationAnalysis
+  ObeliskSimulationIR
+  ObeliskScheduleIR
+  MLIRArithDialect
+  MLIRControlFlowDialect
+  MLIRFuncDialect
+  MLIRParser
+  MLIRSCFDialect
+  MLIRUBDialect
+  GTest::gtest_main
+)
+set_target_properties(ObeliskAnalysisOracleTests PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/runtime/unittests"
+)
+
 set(OBELISK_RUNTIME_UNIT_TARGETS
+  ObeliskAnalysisOracleTests
   ObeliskNativePartitionTests
   ObeliskGeneratedArithmeticRuntimeTests
   ObeliskGeneratedClassBitstreamBytecode
@@ -397,6 +421,28 @@ set(_obelisk_driver_test_dependencies)
 if(TARGET obelisk-host-c-runtime-test)
   list(APPEND _obelisk_driver_test_dependencies obelisk-host-c-runtime-test)
 endif()
+
+# Repository and build-graph lints inspect sources, archives, and an isolated
+# CMake graph rather than compiler behavior, so they run outside the lit
+# regression suite: ODS custom-assembly coverage, the pay-for-play runtime
+# feature layout, and incremental native-support rebuilds.
+set(_obelisk_lint_dir "${PROJECT_SOURCE_DIR}/utils/lint")
+add_custom_target(check-obelisk-lint
+  COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-assembly-formats.py"
+    "${OBELISK_LLVM_DIST_DIR}" "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}"
+  COMMAND "${Python_EXECUTABLE}"
+    "${_obelisk_lint_dir}/check-dynamic-scan-feature-layout.py"
+    "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/runtime/libobelisk_rt.a"
+    "${OBELISK_LLVM_DIST_DIR}"
+  COMMAND "${Python_EXECUTABLE}" "${_obelisk_lint_dir}/check-native-support.py"
+    "${CMAKE_COMMAND}" "${CMAKE_CURRENT_BINARY_DIR}/lint/native-support"
+    "${PROJECT_SOURCE_DIR}" "${OBELISK_LLVM_DIST_DIR}"
+    "${OBELISK_SLANG_SOURCE_DIR}" "${PROJECT_BINARY_DIR}/include"
+  DEPENDS obelisk_rt
+  COMMENT "Running the Obelisk repository and build-graph lints"
+  USES_TERMINAL
+)
+set_target_properties(check-obelisk-lint PROPERTIES FOLDER "Tests")
 
 add_lit_testsuite(check-obelisk "Running the Obelisk regression tests"
   ${CMAKE_CURRENT_BINARY_DIR}

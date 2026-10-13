@@ -3,7 +3,7 @@
 // RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
 // RUN:   > %t/lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py < %t/lowered.mlir \
+// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 // RUN: FileCheck %s --check-prefix=LOWER < %t/lowered.mlir
 // RUN: obelisk-opt %t/lowered.mlir \
@@ -13,8 +13,7 @@
 // RUN:   '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
 // RUN:   > %t/explicit-bin-lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py \
-// RUN:   < %t/explicit-bin-lowered.mlir \
+// RUN: obelisk-opt %t/explicit-bin-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=EXPLICIT-BIN
 // RUN: FileCheck %s --check-prefix=EXPLICIT-SIM \
 // RUN:   < %t/explicit-bin-lowered.mlir
@@ -25,8 +24,7 @@
 // RUN:   '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
 // RUN:   > %t/and-selector-lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py \
-// RUN:   < %t/and-selector-lowered.mlir \
+// RUN: obelisk-opt %t/and-selector-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=AND-SELECTOR
 // RUN: obelisk-opt %t/and-selector-lowered.mlir \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
@@ -35,8 +33,7 @@
 // RUN:   '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
 // RUN:   > %t/or-selector-lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py \
-// RUN:   < %t/or-selector-lowered.mlir \
+// RUN: obelisk-opt %t/or-selector-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=OR-SELECTOR
 // RUN: obelisk-opt %t/or-selector-lowered.mlir \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
@@ -46,8 +43,7 @@
 // RUN:   '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
 // RUN:   > %t/transition-selector-lowered.mlir
-// RUN: %python %S/Inputs/dump-coverage-schema.py \
-// RUN:   < %t/transition-selector-lowered.mlir \
+// RUN: obelisk-opt %t/transition-selector-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=TRANSITION-SELECTOR
 // RUN: obelisk-opt %t/transition-selector-lowered.mlir \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null

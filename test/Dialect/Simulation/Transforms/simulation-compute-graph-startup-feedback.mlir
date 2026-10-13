@@ -1,5 +1,4 @@
-// RUN: %python %S/../../../Conversion/Inputs/gen-startup-phases.py 2 --feedback > %t.mlir
-// RUN: obelisk-opt %t.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-simulation-schedule-analysis)' > %t.graph 2> %t.ranks
+// RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),test-obelisk-simulation-schedule-analysis)' > %t.graph 2> %t.ranks
 // RUN: FileCheck %s --check-prefix=GRAPH < %t.graph
 // RUN: FileCheck %s --check-prefix=RANK < %t.ranks
 
@@ -24,3 +23,55 @@
 // RANK-NEXT: bb0 rank=3
 // RANK-NEXT: func @root entry=6
 // RANK-NEXT: bb0 rank=6
+
+module {
+  simulation.design @startup_phases {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 root_initializer hierarchy "root"
+    simulation.storage.decl 0 in 0 : i1 design
+    simulation.code_unit.decl 2 in 0 initial hierarchy "initial0"
+    simulation.code_unit.decl 3 in 0 initial hierarchy "initial1"
+    simulation.code_unit.decl 4 in 0 always hierarchy "always0"
+    simulation.code_unit.decl 5 in 0 always hierarchy "always1"
+    simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {
+      %p_initial0 = simulation.spawn @initial0(%ctx) :
+          !simulation.context -> !simulation.process
+      %p_always0 = simulation.spawn @always0(%ctx) :
+          !simulation.context -> !simulation.process
+      %p_initial1 = simulation.spawn @initial1(%ctx) :
+          !simulation.context -> !simulation.process
+      %p_always1 = simulation.spawn @always1(%ctx) :
+          !simulation.context -> !simulation.process
+      simulation.return
+    }
+    simulation.func @initial0(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 2 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      %one = arith.constant true
+      simulation.ref.store %one to %ref : i1, !simulation.ref<i1>
+      simulation.return
+    }
+    simulation.func @initial1(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 3 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      %one = arith.constant true
+      simulation.ref.store %one to %ref : i1, !simulation.ref<i1>
+      simulation.return
+    }
+    simulation.func @always0(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 3 : i32, code_unit_id = 4 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      simulation.suspend.change %ref to ^done : !simulation.ref<i1>
+    ^done:
+      simulation.return
+    }
+    simulation.func @always1(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
+        attributes {entry_kind = 3 : i32, code_unit_id = 5 : i64} {
+      %ref = simulation.context.storage %ctx[0] : !simulation.ref<i1>
+      simulation.suspend.change %ref to ^done : !simulation.ref<i1>
+    ^done:
+      simulation.return
+    }
+  }
+}

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | %python %S/Inputs/dump-bytecode-instructions.py | FileCheck %s --check-prefix=BYTECODE
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 1800-2017 21.2.1.7 requires each unpacked array nested in a managed
 // container to retain its assignment-pattern shape. The container descriptor

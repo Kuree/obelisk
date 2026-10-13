@@ -1,0 +1,13 @@
+// Missing operands and empty plus-list elements are rejected by the Obelisk
+// option layer before the frontend is invoked.
+// RUN: not obelisk -emit-slang -v 2>&1 | FileCheck %s --check-prefix=MISSING-V
+// RUN: not obelisk -emit-slang --libmap 2>&1 | FileCheck %s --check-prefix=MISSING-MAP
+// RUN: not obelisk -emit-slang +libext+.first++second %S/Inputs/library/discovery/top.sv 2>&1 | FileCheck %s --check-prefix=EMPTY-EXT
+// RUN: not obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/missing.map %S/Inputs/library/discovery/map_top.sv 2>&1 | FileCheck %s --check-prefix=MISSING-MAP-FILE
+// RUN: not obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/recursive.map %S/Inputs/library/discovery/map_top.sv 2>&1 | FileCheck %s --check-prefix=RECURSIVE-MAP
+
+// MISSING-V: error: -v: missing argument
+// MISSING-MAP: error: --libmap: missing argument
+// EMPTY-EXT: error: empty module library extension in '+libext+.first++second'
+// MISSING-MAP-FILE: error: {{.*}}missing.map
+// RECURSIVE-MAP: error: library map{{.*}}includes itself recursively

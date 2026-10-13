@@ -1,26 +1,10 @@
-// RUN: cd %S && obelisk -emit-slang %s -o %t.slang.mlir
-// RUN: FileCheck %s --check-prefix=MLIR < %t.slang.mlir
-// RUN: FileCheck %s --check-prefix=NO-SDF < %t.slang.mlir
-// RUN: cd %S && obelisk -O3 --native-scheduler=auto -emit-llvm %s -o %t.aot.ll
-// RUN: FileCheck %s --check-prefix=AOT-NO-SDF < %t.aot.ll
-// RUN: cd %S && obelisk -O0 --native-scheduler=generic %s -o %t.generic-o0
-// RUN: cd %S && obelisk -O3 --native-scheduler=generic %s -o %t.generic-o3
-// RUN: cd %S && obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
-// RUN: cd %S && obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode-o3
-// RUN: cd %S && obelisk -O0 --native-scheduler=auto %s -o %t.auto-o0
-// RUN: cd %S && obelisk -O3 --native-scheduler=auto %s -o %t.auto-o3
-// RUN: %t.generic-o0 > %t.generic-o0.out
-// RUN: %t.generic-o3 > %t.generic-o3.out
-// RUN: %t.bytecode-o0 > %t.bytecode-o0.out
-// RUN: %t.bytecode-o3 > %t.bytecode-o3.out
-// RUN: %t.auto-o0 > %t.auto-o0.out
-// RUN: %t.auto-o3 > %t.auto-o3.out
-// RUN: diff -u %t.generic-o0.out %t.generic-o3.out
-// RUN: diff -u %t.generic-o0.out %t.bytecode-o0.out
-// RUN: diff -u %t.generic-o0.out %t.bytecode-o3.out
-// RUN: diff -u %t.generic-o0.out %t.auto-o0.out
-// RUN: diff -u %t.generic-o0.out %t.auto-o3.out
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic-o0.out
+// RUN: cd %S && obelisk -emit-slang %s -o - | FileCheck %s --check-prefix=MLIR --check-prefix=NO-SDF
+// RUN: cd %S && obelisk -O3 --native-scheduler=auto -emit-llvm %s -o - | FileCheck %s --check-prefix=AOT-NO-SDF
+// RUN: cd %S && obelisk -O3 --native-scheduler=generic %s -o %t.generic
+// RUN: %t.generic > %t.generic.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic.out
+// RUN: cd %S && obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.generic.out -
 
 `timescale 1ns / 1ns
 

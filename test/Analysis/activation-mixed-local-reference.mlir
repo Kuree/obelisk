@@ -1,6 +1,11 @@
 // RUN: obelisk-opt %s '--test-obelisk-activation-regions=reaching-values=true inputs=true slice-root=1' -o %t.analyzed 2>&1 | FileCheck %s
 // RUN: obelisk-opt %s -o %t.original
 // RUN: diff %t.original %t.analyzed
+// RUN: obelisk-opt %s '--test-obelisk-activation-regions=compare-input-dependencies=true' -o /dev/null 2>&1 | FileCheck %s --check-prefix=COMPARE
+
+// The input-only dependency proof agrees with full publication analysis.
+// COMPARE: inputs @select_slot agree
+
 // A reference select can read either canonical storage or a private slot.
 // Both memory versions and the selector influence the publication. The slot
 // store must survive executable slicing, even though the load also has a

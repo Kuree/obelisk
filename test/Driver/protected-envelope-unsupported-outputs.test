@@ -1,0 +1,8 @@
+// Unsupported protected envelopes in protected-envelope-unsupported.sv leave
+// neither preprocessed text nor an executable behind.
+// RUN: not obelisk -E %S/protected-envelope-unsupported.sv > %t.preprocessed 2> %t.preprocess.stderr
+// RUN: FileCheck %S/protected-envelope-unsupported.sv --input-file=%t.preprocess.stderr
+// RUN: test ! -s %t.preprocessed
+// RUN: not obelisk %S/protected-envelope-unsupported.sv -o %t.exe 2> %t.native.stderr
+// RUN: FileCheck %S/protected-envelope-unsupported.sv --input-file=%t.native.stderr
+// RUN: test ! -e %t.exe

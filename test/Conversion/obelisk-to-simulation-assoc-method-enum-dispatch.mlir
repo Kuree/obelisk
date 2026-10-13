@@ -152,7 +152,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK: simulation.container.size
 // CHECK: simulation.assoc.exists

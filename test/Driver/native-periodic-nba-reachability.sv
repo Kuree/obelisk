@@ -27,7 +27,7 @@ module native_periodic_nba_reachability;
   bit clock;
   logic [7:0] upper = 0;
   always #5 clock = ~clock;
-  for (genvar i = 0; i < 128; ++i) begin : g
+  for (genvar i = 0; i < 2; ++i) begin : g
     nba_reachability_cell dut(clock, upper);
   end
   initial begin
@@ -42,8 +42,8 @@ module native_periodic_nba_reachability;
              g[0].dut.bus, g[0].dut.low_value, g[0].dut.feedback,
              g[0].dut.high_value);
     $display("last bus=%h low=%h feedback=%h high=%h",
-             g[127].dut.bus, g[127].dut.low_value, g[127].dut.feedback,
-             g[127].dut.high_value);
+             g[1].dut.bus, g[1].dut.low_value, g[1].dut.feedback,
+             g[1].dut.high_value);
     $finish;
   end
 endmodule

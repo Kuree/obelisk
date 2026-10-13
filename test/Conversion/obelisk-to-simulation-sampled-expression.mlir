@@ -1,8 +1,6 @@
 // RUN: obelisk-opt %s --lower-obelisk-to-sim=opt-level=0 -o %t.sim.mlir
 // RUN: FileCheck %s --check-prefix=PLAN < %t.sim.mlir
 
-// Runtime behavior is checked in ../Runtime/obelisk-to-simulation-sampled-expression.test.
-
 // IEEE 1800-2023 16.5.1, 16.9.3: $sampled(data+1), $past(data+1),
 // and $fell($past(flag)) evaluate sampled operands recursively. The clocked
 // process changes data and index before evaluating these expressions, while
@@ -14,7 +12,9 @@
 // PLAN: %[[SUM:.*]] = simulation.logic.binary add %[[FLAT]], {{.*}}
 // PLAN: simulation.ref.load %arg2
 // PLAN: %[[INDEX:.*]] = simulation.assert.sampled_read {{.*}} from %arg4
-// PLAN: simulation.array.extract_dynamic %[[DATA]]
+// PLAN-NEXT: %[[INDEX_BITS:.*]] = simulation.packed.flatten %[[INDEX]]
+// PLAN-NEXT: %[[SELECTOR:.*]] = simulation.logic.resize %[[INDEX_BITS]]
+// PLAN-NEXT: simulation.array.extract_dynamic %[[DATA]][%[[SELECTOR]]]
 // PLAN: %[[PACKED:.*]] = simulation.packed.unflatten %[[SUM]]
 // PLAN: simulation.assert.sampled_history {{.*}} from %[[PACKED]]
 // PLAN: %[[FLAG:.*]] = simulation.assert.sampled_read {{.*}} from %arg3

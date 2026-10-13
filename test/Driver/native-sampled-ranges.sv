@@ -1,12 +1,8 @@
-// RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic %s -o %t.generic-o0
-// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.generic-o3
-// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode-o0
-// RUN: %t.generic-o0 > %t.generic-o0.out
-// RUN: %t.generic-o3 > %t.generic-o3.out
-// RUN: %t.bytecode-o0 > %t.bytecode-o0.out
-// RUN: diff -u %t.generic-o0.out %t.generic-o3.out
-// RUN: diff -u %t.generic-o0.out %t.bytecode-o0.out
-// RUN: FileCheck %s --check-prefix=OUTPUT < %t.generic-o0.out
+// RUN: obelisk --std=1800-2023 -O3 --native-scheduler=generic %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s --check-prefix=OUTPUT < %t.native.out
+// RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 // RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic -emit-llvm %s | FileCheck %s --check-prefix=GENERIC --implicit-check-not=__obelisk_bytecode_image_v1
 // RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT
 // RUN: obelisk --std=1800-2023 -O0 --native-scheduler=generic -emit-llvm %S/declaration-initializers.sv | FileCheck %s --check-prefix=NO-SAMPLED --implicit-check-not=obelisk_rt_v1_native_state_sync --implicit-check-not=__obelisk_execution_extension_v1

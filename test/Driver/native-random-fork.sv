@@ -1,15 +1,8 @@
-// RUN: obelisk -O0 --std=1800-2023 %s -o %t.o0.native
-// RUN: %t.o0.native --seed=71 > %t.o0.native.out
-// RUN: obelisk -O0 --execution-tier=bytecode --std=1800-2023 %s -o %t.o0.bytecode
-// RUN: %t.o0.bytecode --seed=71 > %t.o0.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o0.bytecode.out
-// RUN: obelisk -O3 --std=1800-2023 %s -o %t.o3.native
-// RUN: %t.o3.native --seed=71 > %t.o3.native.out
-// RUN: obelisk -O3 --execution-tier=bytecode --std=1800-2023 %s -o %t.o3.bytecode
-// RUN: %t.o3.bytecode --seed=71 > %t.o3.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o3.native.out
-// RUN: diff -u %t.o0.native.out %t.o3.bytecode.out
-// RUN: FileCheck %s < %t.o0.native.out
+// RUN: obelisk -O3 --std=1800-2023 %s -o %t.native
+// RUN: %t.native --seed=71 > %t.native.out
+// RUN: FileCheck %s < %t.native.out
+// RUN: obelisk -O3 --execution-tier=bytecode --std=1800-2023 %s -o %t.bytecode
+// RUN: %t.bytecode --seed=71 | diff -u %t.native.out -
 
 module native_random_fork;
   initial begin

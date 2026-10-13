@@ -1,0 +1,13 @@
+# ThinLTO links the partitions of native-partition-determinism.sv. Changing
+# worker count must not change the executable. Remove stale caches first so
+# both links compile every partition.
+# RUN: rm -rf %t.serial.thinlto-cache %t.parallel.thinlto-cache
+# RUN: obelisk -O3 -flto --vpi=off --compile-threads=1 %S/native-partition-determinism.sv -o %t.serial
+# RUN: obelisk -O3 -flto --vpi=off --compile-threads=8 %S/native-partition-determinism.sv -o %t.parallel
+# RUN: cmp %t.serial %t.parallel
+# RUN: %t.parallel | FileCheck %S/native-partition-determinism.sv
+
+# An unpartitioned design takes full LTO, whose single LTO partition does not
+# depend on the worker count. The generated module it links must not either.
+# RUN: obelisk -O3 -flto --vpi=off --compile-threads=1 %S/native.sv -emit-llvm -o %t.full.ll
+# RUN: obelisk -O3 -flto --vpi=off --compile-threads=8 %S/native.sv -emit-llvm -o - | diff %t.full.ll -

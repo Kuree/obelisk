@@ -1,4 +1,0 @@
-# RUN: %python %S/../Inputs/check-dynamic-scan-feature-layout.py %source_root %runtime_archive %llvm_dist
-
-# Inspect the existing archive and native/wasm build graphs. Individual link
-# jobs live in dynamic-scan-link-*.test so lit can schedule them independently.

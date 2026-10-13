@@ -1,0 +1,8 @@
+// The AOT, bytecode, and eval schedules of native-aot-scheduler.sv print the
+// same output.
+// RUN: obelisk --clocked-kernels=immediate --native-scheduler=aot %S/native-aot-scheduler.sv -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: obelisk --clocked-kernels=immediate --native-scheduler=aot --execution-tier=bytecode %S/native-aot-scheduler.sv -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
+// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=eval %S/native-aot-scheduler.sv -o %t.eval
+// RUN: %t.eval | diff -u %t.native.out -

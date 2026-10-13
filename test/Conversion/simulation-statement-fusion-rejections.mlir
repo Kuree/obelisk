@@ -65,7 +65,6 @@ module {
   }
 }
 
-
 // -----
 
 // Actual feedback keeps its original event-driven execution.

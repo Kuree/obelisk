@@ -53,7 +53,6 @@ module {
   }
 }
 
-
 // CHECK-LABEL: simulation.func private @unit_0
 // CHECK:      %[[PRODUCED:.*]] = simulation.context.storage %arg0[0]
 // CHECK-NOT:  simulation.ref.store {{.*}} to %[[PRODUCED]]

@@ -2,10 +2,10 @@
 // RUN:   %S/Inputs/dpi_impl.c \
 // RUN:   -I%resource_dir/include -o %t.o
 // RUN: obelisk %s %t.o -o %t.native
-// RUN: /bin/sh -c '"%t.native" > "%t.native.out"; test $? -eq 19'
+// RUN: not --status=19 %t.native > %t.native.out
 // RUN: test ! -s %t.native.out
 // RUN: obelisk --execution-tier=bytecode %s %t.o -o %t.bytecode
-// RUN: /bin/sh -c '"%t.bytecode" > "%t.bytecode.out"; test $? -eq 19'
+// RUN: not --status=19 %t.bytecode > %t.bytecode.out
 // RUN: test ! -s %t.bytecode.out
 
 module dpi_failure;

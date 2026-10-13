@@ -1,4 +1,4 @@
-// RUN: sed 's/^module {/module attributes {schedule.native_scheduler = 3 : i32} {/' %S/simulation-statement-fusion.mlir > %t.mlir
+// RUN: obelisk-opt %S/simulation-statement-fusion.mlir '--test-obelisk-set-module-attributes=attrs="{schedule.native_scheduler = 3 : i32}"' > %t.mlir
 // RUN: obelisk-opt %t.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion{materialize-eval-bodies=false},schedule-plan-combinational-statements,obelisk-sim-materialize-compute-fusion{materialize-eval-bodies=false}))' -o %t.fused.mlir
 // RUN: FileCheck %s --check-prefix=EARLY --implicit-check-not=__obelisk_eval_body < %t.fused.mlir
 // RUN: obelisk-opt %t.fused.mlir --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph,obelisk-sim-materialize-compute-fusion,obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph))' | FileCheck %s --check-prefix=LATE --implicit-check-not=producer_and_consumer.__obelisk_eval_body --implicit-check-not=transform.__obelisk_eval_body

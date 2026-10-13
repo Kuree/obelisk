@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
-// RUN: sed -e 's/extern_implementation_count = 2/extern_implementation_count = 0/' -e 's/extern_implementation_paths = \["top.q.work", "top.p.work"\]/extern_implementation_paths = []/' -e 's/extern_implementation_symbols = \[@s3.\$root::@s6.top::@s25.q::@s26.provider::@s27.work, @s3.\$root::@s6.top::@s15.p::@s16.provider::@s17.work\]/extern_implementation_symbols = []/' %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
-// RUN: sed 's/extern_implementation_count = 2/extern_implementation_count = 3/' %s | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=METADATA
+// RUN: obelisk-opt %s '--test-obelisk-edit-attributes=match={extern_implementation_count = 2 : i64} set={extern_implementation_count = 0 : i64, extern_implementation_paths = [], extern_implementation_symbols = []}' '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=ZERO
+// RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=match={extern_implementation_count = 2 : i64} set={extern_implementation_count = 3 : i64}' '--lower-obelisk-to-sim=opt-level=0' 2>&1 | FileCheck %s --check-prefix=METADATA
 
 // A fork/join extern task statically spawns every provider through the
 // ordinary task-call ABI. Output and inout retain completion-only copy-out,

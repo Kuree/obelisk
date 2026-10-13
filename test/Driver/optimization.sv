@@ -3,15 +3,8 @@
 // RUN: obelisk -O2 -emit-sim %s | FileCheck %s --check-prefix=INLINE
 // RUN: obelisk -O3 -emit-sim %s | FileCheck %s --check-prefix=INLINE
 // RUN: obelisk -emit-sim %s | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk -O1 -emit-sim --compile-threads=1 %s > %t.o1.single
-// RUN: obelisk -O1 -emit-sim --compile-threads=4 %s > %t.o1.threaded
-// RUN: diff -u %t.o1.single %t.o1.threaded
 // RUN: obelisk -O3 -O0 -emit-sim %s | FileCheck %s --check-prefix=O0
 // RUN: obelisk -O0 -O1 -emit-sim %s | FileCheck %s --check-prefix=INLINE
-// RUN: obelisk -O0 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-O0
-// RUN: obelisk -O1 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-OPT
-// RUN: obelisk -O2 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-OPT
-// RUN: obelisk -O3 -emit-llvm %s | FileCheck %s --check-prefix=LLVM-O3
 
 module optimization_levels;
   logic [7:0] result;

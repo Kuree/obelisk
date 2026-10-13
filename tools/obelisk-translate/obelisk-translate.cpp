@@ -13,9 +13,16 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Tools/mlir-translate/MlirTranslateMain.h"
 #include "mlir/Tools/mlir-translate/Translation.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/SourceMgr.h"
 
 using namespace mlir;
+
+// Lets tests reach the importer's input-size limit with a small file.
+static llvm::cl::opt<uint64_t> sdfMaxInputBytes(
+    "sdf-max-input-bytes", llvm::cl::ReallyHidden,
+    llvm::cl::desc("Largest SDF input --import-sdf accepts"),
+    llvm::cl::init(obelisk::frontend::SDFResourceLimits().maxFileBytes));
 
 int main(int argc, char **argv) {
   TranslateFromMLIRRegistration exportLLVM(
@@ -42,7 +49,8 @@ int main(int argc, char **argv) {
          MLIRContext *context) -> OwningOpRef<Operation *> {
         const llvm::MemoryBuffer *buffer = sourceMgr.getMemoryBuffer(1);
         auto module = obelisk::frontend::importSDF(
-            buffer->getBufferIdentifier(), buffer->getBuffer(), *context);
+            buffer->getBufferIdentifier(), buffer->getBuffer(), *context,
+            /*verifyIR=*/true, sdfMaxInputBytes);
         if (failed(module))
           return {};
         return OwningOpRef<Operation *>((*module).release().getOperation());

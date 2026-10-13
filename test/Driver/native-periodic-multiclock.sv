@@ -1,23 +1,11 @@
 // RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=auto --mlir-timing %s -o %t.auto 2> %t.auto.timing
 // RUN: FileCheck %s --check-prefix=ELIGIBILITY < %t.auto.timing
-// RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=eval %s -o %t.eval
-// RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=generic %s -o %t.generic
-// RUN: obelisk --clocked-kernels=immediate -O2 -emit-llvm --native-scheduler=eval %s -o - \
-// RUN:   | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk --clocked-kernels=immediate -O2 -emit-llvm --native-scheduler=eval %s -o - | FileCheck %s --check-prefix=LLVM
 // RUN: %t.auto > %t.auto.out
-// RUN: %t.eval > %t.eval.out
-// RUN: %t.generic > %t.generic.out
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval > /dev/null 2> %t.eval.diag
-// RUN: diff -u %t.generic.out %t.auto.out
-// RUN: diff -u %t.generic.out %t.eval.out
 // RUN: FileCheck %s < %t.auto.out
-// RUN: FileCheck %s --check-prefix=DIAG \
-// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.eval.diag
-// RUN: obelisk --clocked-kernels=immediate -O0 --native-scheduler=eval %s -o %t.eval-o0
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval-o0 > %t.eval-o0.out 2> %t.eval-o0.diag
-// RUN: diff -u %t.generic.out %t.eval-o0.out
-// RUN: FileCheck %s --check-prefix=DIAG \
-// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.eval-o0.diag
+// RUN: obelisk --clocked-kernels=immediate -O2 --native-scheduler=eval %s -o %t.eval
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.eval 2> %t.eval.diag | diff -u %t.auto.out -
+// RUN: FileCheck %s --check-prefix=DIAG --implicit-check-not=obelisk-periodic-reject < %t.eval.diag
 
 // Periods 4 and 12 produce coincident edges at time 6, 18, and 30. Both source
 // bits share one packed physical root and cross separate port projections;

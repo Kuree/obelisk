@@ -1,0 +1,14 @@
+// Multiple maps are applied in command-line order, which establishes the
+// default library search priority.
+// RUN: obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/first.map --libmap %S/Inputs/library/discovery/maps/second.map %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=FIRST-MAP
+// RUN: obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/second.map --libmap %S/Inputs/library/discovery/maps/first.map %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=SECOND-MAP
+// RUN: obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/first.map -v explicit=%S/Inputs/library/discovery/explicit_last.sv %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=FIRST-MAP
+// RUN: obelisk -emit-slang -v explicit=%S/Inputs/library/discovery/explicit_last.sv --libmap %S/Inputs/library/discovery/maps/first.map %S/Inputs/library/discovery/top.sv | FileCheck %s --check-prefix=EXPLICIT-PRIORITY
+
+// Equal-specificity mappings of one file into two libraries are an error.
+// RUN: not obelisk -emit-slang --libmap %S/Inputs/library/discovery/maps/duplicate.map %S/Inputs/library/discovery/map_top.sv 2>&1 | FileCheck %s --check-prefix=DUPLICATE-MAP
+
+// EXPLICIT-PRIORITY: hierarchical_name = "library_top.choice.explicit_last"
+// FIRST-MAP: hierarchical_name = "library_top.choice.first_map"
+// SECOND-MAP: hierarchical_name = "library_top.choice.second_map"
+// DUPLICATE-MAP: error: {{.*}}mapped.sv{{.*}}matches multiple libraries

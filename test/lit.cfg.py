@@ -4,11 +4,19 @@ import os
 import shutil
 import sys
 
-import lit.formats
 from lit.llvm import llvm_config
 
+sys.path.insert(
+    0, os.path.join(os.path.dirname(__file__), os.pardir, "utils", "lit")
+)
+from obelisk_lit_format import ObeliskShTest
+
 config.name = "OBELISK"
-config.test_format = lit.formats.ShTest()
+with open(os.path.join(os.path.dirname(__file__), "lit-policy-exemptions.txt")) as f:
+    policy_exemptions = [
+        line.strip() for line in f if line.strip() and not line.startswith("#")
+    ]
+config.test_format = ObeliskShTest(policy_exemptions)
 config.suffixes = [".mlir", ".sv", ".test", ".sdf"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.obelisk_obj_root, "test")
@@ -26,6 +34,11 @@ config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
 config.substitutions.append(
     ("%protect-obelisk", config.obelisk_protect_test_executable)
+)
+# The same test driver lowers resource limits so tests can reach them with
+# small inputs (see test/Support/ProtectedEnvelopeTestMain.cpp).
+config.substitutions.append(
+    ("%test-obelisk", config.obelisk_protect_test_executable)
 )
 config.substitutions.append(
     ("%protect-inline-wipe-test", config.obelisk_protect_inline_wipe_test_executable)

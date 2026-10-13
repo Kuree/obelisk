@@ -1,17 +1,10 @@
 // XFAIL: *
 // Slang v11 does not accept package-qualified user-defined nettypes here.
-// RUN: obelisk -O0 %s -o %t.o0.native
-// RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.o0.bytecode
-// RUN: obelisk -O3 %s -o %t.o3.native
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
-// RUN: %t.o0.native > %t.o0.native.out
-// RUN: %t.o0.bytecode > %t.o0.bytecode.out
-// RUN: %t.o3.native > %t.o3.native.out
-// RUN: %t.o3.bytecode > %t.o3.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o0.bytecode.out
-// RUN: diff -u %t.o0.native.out %t.o3.native.out
-// RUN: diff -u %t.o0.native.out %t.o3.bytecode.out
-// RUN: FileCheck %s < %t.o0.native.out
+// RUN: obelisk -O3 %s -o %t.native
+// RUN: %t.native > %t.native.out
+// RUN: FileCheck %s < %t.native.out
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 
 // IEEE 1800-2017 6.6.7 and 6.7.3: user-defined nettypes are atomic,
 // resolve all driver contributions, and invoke resolution at time zero.

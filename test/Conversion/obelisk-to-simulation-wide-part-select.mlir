@@ -60,7 +60,6 @@ module {
   }
 }
 
-
 // CHECK: simulation.func private @unit_0(
 // CHECK-SAME: %[[X:[^:]*]]: !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
 // CHECK-SAME: %[[R:[^:]*]]: !simulation.ref<!simulation.packed_array<5 : 0 x !simulation.logic<1>>>

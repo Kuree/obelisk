@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
-// RUN:   | %python %S/Inputs/dump-bytecode-instructions.py --state \
+// RUN:   --test-obelisk-print-bytecode=state=true -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s
 
 module attributes {

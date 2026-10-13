@@ -1,11 +1,10 @@
-// RUN: obelisk %s -o %t.native
+// RUN: obelisk -O3 %s -o %t.native
 // RUN: %t.native > %t.native.out
-// RUN: obelisk --execution-tier=bytecode %s -o %t.bytecode
-// RUN: %t.bytecode > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
+// RUN: FileCheck %s < %t.native.out
+// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
+// RUN: %t.bytecode | diff -u %t.native.out -
 // RUN: obelisk -emit-llvm %s -o %t.hybrid.ll
 // RUN: FileCheck %s --check-prefix=HYBRID < %t.hybrid.ll
-// RUN: FileCheck %s < %t.native.out
 // RUN: not obelisk --native-scheduler=aot %s -o %t.aot 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=AOT-ERROR
 

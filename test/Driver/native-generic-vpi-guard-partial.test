@@ -1,0 +1,7 @@
+// A partially admitted design keeps the VPI guard of
+// native-generic-vpi-guard.sv for its generic remainder.
+// RUN: %split-file %S/native-generic-vpi-guard.sv %t
+// RUN: %target_clang -fPIC -shared -nostdlib %t/plugin.c -I%resource_dir/include -o %t/plugin.so
+// RUN: obelisk -O3 --vpi=full -DPARTIAL --mlir-timing %t/design.sv %t/plugin.so -o %t/partial 2> %t/partial.log
+// RUN: FileCheck %S/native-generic-vpi-guard.sv --check-prefix=PARTIAL < %t/partial.log
+// RUN: %t/partial | FileCheck %S/native-generic-vpi-guard.sv

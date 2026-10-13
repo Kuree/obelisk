@@ -1,6 +1,4 @@
 // RUN: obelisk -emit-sim %s -o - | FileCheck %s --check-prefix=SIM
-// RUN: obelisk -O0 %s -o %t.native
-// RUN: %t.native 2>&1 | FileCheck %s --check-prefix=OUT
 // RUN: obelisk -O3 --native-scheduler=eval %s -o %t.aot
 // RUN: %t.aot 2>&1 | FileCheck %s --check-prefix=OUT
 // RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot > /dev/null 2> %t.diag

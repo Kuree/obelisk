@@ -1,0 +1,12 @@
+// Frontend options that take a value diagnose a missing argument.
+// RUN: not obelisk -D 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -U 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -I 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk --include-directory 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -isystem 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -y 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -Y 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: not obelisk -l 2>&1 | FileCheck %s --check-prefix=MISSING
+
+// MISSING: obelisk: error:
+// MISSING-SAME: missing argument
