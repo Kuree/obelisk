@@ -31,6 +31,8 @@ struct PreparedClassDeclarations {
       randcKeyFieldSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
       randcPositionFieldSymbols;
+  llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
+      randcDomainFieldSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr> methodSymbols;
   llvm::DenseMap<mlir::Operation *, mlir::FlatSymbolRefAttr>
       implicitConstructorSymbols;

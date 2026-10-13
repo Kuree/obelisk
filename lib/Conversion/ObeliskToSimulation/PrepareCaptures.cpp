@@ -696,7 +696,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         rewrittenProperties.push_back(property);
         for (StringRef name :
              {randomPropertyPathAttrName, randomRandCKeyPathAttrName,
-              randomRandCPositionPathAttrName}) {
+              randomRandCPositionPathAttrName, randomRandCDomainPathAttrName}) {
           auto path = property.getAs<StringAttr>(name);
           if (!path)
             continue;

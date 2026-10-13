@@ -1933,6 +1933,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto &classFieldSymbols = classes->fieldSymbols;
   auto &randcKeyFieldSymbols = classes->randcKeyFieldSymbols;
   auto &randcPositionFieldSymbols = classes->randcPositionFieldSymbols;
+  auto &randcDomainFieldSymbols = classes->randcDomainFieldSymbols;
   auto &classMethodSymbols = classes->methodSymbols;
   auto &implicitConstructorSymbols = classes->implicitConstructorSymbols;
   auto &virtualMethodSlots = classes->virtualMethodSlots;
@@ -2472,12 +2473,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     return abort();
 
   // A static randc property shares one cycle across every object. Its source
-  // value already has class-wide storage; materialize the two compiler-owned
-  // cycle words beside that storage instead of adding per-instance fields.
+  // value already has class-wide storage; materialize compiler-owned cycle
+  // words and the managed domain beside it instead of per-instance fields.
   // These descriptors participate in the ordinary capture ABI, so native and
   // bytecode execution retain exactly the same persistent cycle state.
-  llvm::DenseMap<Operation *, std::pair<std::string, std::string>>
-      staticRandCStatePaths;
+  struct StaticRandCStatePaths {
+    std::string key, position, domain;
+  };
+  llvm::DenseMap<Operation *, StaticRandCStatePaths> staticRandCStatePaths;
   uint64_t nextStorageId = 0;
   for (const auto &entry : descriptors)
     if (entry.second.kind == DescriptorInfo::Kind::Storage) {
@@ -2573,36 +2576,40 @@ void ObeliskSimPreparePass::runOnOperation() {
             << "static randc property has no class-wide storage descriptor";
         return abort();
       }
-      if (nextStorageId > UINT64_MAX - 2) {
+      if (nextStorageId > UINT64_MAX - 3) {
         emitError(getSemanticLocation(property))
             << "static randc state exceeds the storage descriptor space";
         return abort();
       }
       std::string keyPath = (propertyPath + ".$randc_key").str();
       std::string positionPath = (propertyPath + ".$randc_position").str();
-      if (descriptors.count(keyPath) || descriptors.count(positionPath)) {
+      std::string domainPath = (propertyPath + ".$randc_domain").str();
+      if (descriptors.count(keyPath) || descriptors.count(positionPath) ||
+          descriptors.count(domainPath)) {
         emitError(getSemanticLocation(property))
             << "static randc state conflicts with an existing design object";
         return abort();
       }
-      auto addState = [&](StringRef path, StringRef debugName) {
+      uint64_t scopeId = source->second.scopeId;
+      auto addState = [&](StringRef path, StringRef debugName, Type type) {
         uint64_t id = nextStorageId++;
-        DescriptorInfo descriptor{DescriptorInfo::Kind::Storage, id,
-                                  source->second.scopeId, i64,
-                                  sim::NetResolutionKind::Wire};
-        descriptor.rootType = i64;
+        DescriptorInfo descriptor{DescriptorInfo::Kind::Storage, id, scopeId,
+                                  type, sim::NetResolutionKind::Wire};
+        descriptor.rootType = type;
         descriptors[path] = descriptor;
-        sim::SimStorageDeclOp::create(
-            builder, getSemanticLocation(property), id, source->second.scopeId,
-            i64, sim::Lifetime::Design, builder.getStringAttr(path),
-            builder.getStringAttr(debugName),
-            schedule::ComputeObservabilityKindAttr{},
-            sim::VPITypeSemanticsAttr{});
+        sim::SimStorageDeclOp::create(builder, getSemanticLocation(property),
+                                      id, scopeId, type, sim::Lifetime::Design,
+                                      builder.getStringAttr(path),
+                                      builder.getStringAttr(debugName),
+                                      schedule::ComputeObservabilityKindAttr{},
+                                      sim::VPITypeSemanticsAttr{});
       };
-      addState(keyPath, "__obelisk_static_randc_key");
-      addState(positionPath, "__obelisk_static_randc_position");
-      staticRandCStatePaths[property] = {std::move(keyPath),
-                                         std::move(positionPath)};
+      addState(keyPath, "__obelisk_static_randc_key", i64);
+      addState(positionPath, "__obelisk_static_randc_position", i64);
+      addState(domainPath, "__obelisk_static_randc_domain",
+               sim::StringType::get(context));
+      staticRandCStatePaths[property] = {
+          std::move(keyPath), std::move(positionPath), std::move(domainPath)};
     }
 
   for (semantic::SVClassTypeOp classType : classSources)
@@ -2628,30 +2635,32 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto member = cast<DictionaryAttr>(attribute);
         NamedAttrList attributes(member);
         if (member.getAs<BoolAttr>("is_randc").getValue()) {
-          if (nextStorageId > UINT64_MAX - 2) {
+          if (nextStorageId > UINT64_MAX - 3) {
             emitError(getSemanticLocation(property))
                 << "static structure member cyclic state exceeds the storage "
                    "descriptor space";
             return abort();
           }
-          auto addState = [&](StringRef suffix) -> StringAttr {
+          auto addState = [&](StringRef suffix, Type type) -> StringAttr {
             std::string path = (llvm::Twine(getHierarchyName(property)) +
                                 ".$rand_member_" + llvm::Twine(index) + suffix)
                                    .str();
             uint64_t id = nextStorageId++;
             descriptors[path] = {DescriptorInfo::Kind::Storage, id, scopeId,
-                                 i64, sim::NetResolutionKind::Wire};
-            descriptors[path].rootType = i64;
+                                 type, sim::NetResolutionKind::Wire};
+            descriptors[path].rootType = type;
             sim::SimStorageDeclOp::create(
-                builder, getSemanticLocation(property), id, scopeId, i64,
+                builder, getSemanticLocation(property), id, scopeId, type,
                 sim::Lifetime::Design, builder.getStringAttr(path),
                 builder.getStringAttr("__obelisk_static_member_randc_state"),
                 schedule::ComputeObservabilityKindAttr{},
                 sim::VPITypeSemanticsAttr{});
             return builder.getStringAttr(path);
           };
-          attributes.set("randc_key_path", addState("_key"));
-          attributes.set("randc_position_path", addState("_position"));
+          attributes.set("randc_key_path", addState("_key", i64));
+          attributes.set("randc_position_path", addState("_position", i64));
+          attributes.set("randc_domain_path",
+                         addState("_domain", sim::StringType::get(context)));
         }
         updated.push_back(attributes.getDictionary(context));
       }
@@ -6723,8 +6732,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (isRandC && isStatic) {
             auto state = staticRandCStatePaths.find(property);
             if (state != staticRandCStatePaths.end()) {
-              randcKeyPath = builder.getStringAttr(state->second.first);
-              randcPositionPath = builder.getStringAttr(state->second.second);
+              randcKeyPath = builder.getStringAttr(state->second.key);
+              randcPositionPath = builder.getStringAttr(state->second.position);
             }
           }
           if (isRandC &&
@@ -7658,11 +7667,23 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getNamedAttr("randc_key_field", property.randcKeyField));
           attributes.push_back(builder.getNamedAttr(
               "randc_position_field", property.randcPositionField));
+          attributes.push_back(builder.getNamedAttr(
+              "randc_domain_field",
+              property.structMember
+                  ? property.structMember.getAs<FlatSymbolRefAttr>(
+                        "randc_domain_field")
+                  : randcDomainFieldSymbols.lookup(property.source)));
         } else {
           attributes.push_back(builder.getNamedAttr(randomRandCKeyPathAttrName,
                                                     property.randcKeyPath));
           attributes.push_back(builder.getNamedAttr(
               randomRandCPositionPathAttrName, property.randcPositionPath));
+          attributes.push_back(builder.getNamedAttr(
+              randomRandCDomainPathAttrName,
+              property.structMember
+                  ? property.structMember.getAs<StringAttr>("randc_domain_path")
+                  : builder.getStringAttr(
+                        staticRandCStatePaths.lookup(property.source).domain)));
         }
       }
       if (!property.domains.empty()) {

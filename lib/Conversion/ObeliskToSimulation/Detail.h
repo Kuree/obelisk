@@ -314,6 +314,8 @@ inline constexpr ::mlir::StringLiteral randomRandCKeyPathAttrName =
     "randc_key_path";
 inline constexpr ::mlir::StringLiteral randomRandCPositionPathAttrName =
     "randc_position_path";
+inline constexpr ::mlir::StringLiteral randomRandCDomainPathAttrName =
+    "randc_domain_path";
 inline constexpr ::mlir::StringLiteral randomTotalWidthAttrName =
     "simulation.random_total_width";
 inline constexpr ::mlir::StringLiteral randomVariableAttrName =

@@ -3061,12 +3061,12 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         convert(*source, *resultType, false, getSemanticLocation(op));
     if (failed(converted))
       return failure();
+    // IEEE 1800-2023 8.12 copies the RNG, modes and cyclic histories along
+    // with the properties. A shallow copy must not seed a fresh stream.
     Value copy = sim::SimClassCopyOp::create(
                      builder, getSemanticLocation(op), *resultType,
                      function.getBody().front().getArgument(0), *converted)
                      .getResult();
-    if (failed(initializeObjectRandomStream(copy, getSemanticLocation(op))))
-      return failure();
     return copy;
   }
   if (isa<semantic::SVConcatenationExpressionOp>(op))

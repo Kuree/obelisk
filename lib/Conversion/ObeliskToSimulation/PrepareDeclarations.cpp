@@ -918,6 +918,12 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       result.implicitConstructorSymbols[classType] = implicitConstructor;
 
     uint64_t ordinal = 0;
+    SmallVector<std::pair<Location, std::string>> cyclicDomainFields;
+    auto reserveCyclicDomain = [&](Location location, std::string name) {
+      auto symbol = FlatSymbolRefAttr::get(context, name);
+      cyclicDomainFields.emplace_back(location, std::move(name));
+      return symbol;
+    };
     for (Operation *child : getChildren(classType)) {
       auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
       if (!property)
@@ -1027,6 +1033,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             addRandCField("_randc_key", "__obelisk_randc_key");
         result.randcPositionFieldSymbols[property] =
             addRandCField("_randc_position", "__obelisk_randc_position");
+        result.randcDomainFieldSymbols[property] = reserveCyclicDomain(
+            getSemanticLocation(property), fieldName + "_randc_domain");
         if (field->hasAttr(sim::metadata::randomVariableKind)) {
           field->setAttr(sim::metadata::randomCycleKeyField,
                          result.randcKeyFieldSymbols.lookup(property));
@@ -1085,6 +1093,12 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             attributes.push_back(builder.getNamedAttr(
                 "randc_position_field",
                 addField("_randc_position", builder.getI64Type())));
+            attributes.push_back(builder.getNamedAttr(
+                "randc_domain_field",
+                reserveCyclicDomain(getSemanticLocation(property),
+                                    fieldName + "_member_" +
+                                        std::to_string(index) +
+                                        "_randc_domain")));
           }
           if (!isStatic && !member.isRandC)
             if (auto layout = getFixedRandomArrayLayout(member.type))
@@ -1123,6 +1137,13 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                            addRandomField("__obelisk_constraint_mode",
                                           "__obelisk_constraint_mode"));
     }
+    // Append managed histories after the existing inventory so source fields
+    // and their ordinal-derived symbols keep their identities.
+    for (const auto &[location, name] : cyclicDomainFields)
+      sim::SimClassFieldDeclOp::create(
+          builder, location, name, classSymbol, sim::StringType::get(context),
+          ordinal++, IntegerAttr{}, /*isStatic=*/false, /*isWeak=*/false,
+          builder.getStringAttr("__obelisk_randc_domain"));
   }
 
   for (const auto &[derived, directBase] : inheritedCovergroupProperties) {

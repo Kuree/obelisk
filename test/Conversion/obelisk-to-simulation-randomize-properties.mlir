@@ -1,4 +1,5 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: %if compiled-sampler %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=PLAN %}
+// RUN: %if !compiled-sampler %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=FALLBACK %}
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
@@ -120,29 +121,41 @@ module attributes {
 // CHECK-NEXT: %[[D_B_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1]
 // CHECK-NEXT: %[[D_KEY_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_key]
 // CHECK-NEXT: %[[D_POS_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_position]
+// CHECK-NEXT: %[[D_DOMAIN_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_1_randc_domain]
 // CHECK-NEXT: %[[D_C_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_4]
-// CHECK: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
+// FALLBACK: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
 // CHECK: %[[D_A_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s3_C_field_0]
-// CHECK-NEXT: simulation.managed.load %[[D_A_REF]]
+// CHECK-NEXT: %[[D_A_VALUE:.*]] = simulation.managed.load %[[D_A_REF]]
+// CHECK-NEXT: %[[D_A_CAPTURE:.*]] = arith.extui %[[D_A_VALUE]] : i32 to i64
 // CHECK: %[[D_STATE_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s20_D_field_0]
-// CHECK-NEXT: simulation.managed.load %[[D_STATE_REF]]
+// CHECK-NEXT: %[[D_STATE_VALUE:.*]] = simulation.managed.load %[[D_STATE_REF]]
+// CHECK: %[[D_STATE_GUARD:.*]] = arith.cmpi slt, %[[D_STATE_VALUE]],
+// CHECK-NEXT: %[[D_GUARD_CAPTURE:.*]] = arith.extui %[[D_STATE_GUARD]] : i1 to i64
 // The inline predicate joins the compiled completion relation. Frozen a and
 // the derived state limit are captured before cyclic acceptance and commit.
+// PLAN: simulation.random.cycle_sample
+// PLAN: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
 // CHECK: simulation.random.solve
-// CHECK-SAME: captures(
+// PLAN-SAME: %[[D_A_CAPTURE]], %[[D_GUARD_CAPTURE]] {program
+// FALLBACK-SAME: captures(
 // CHECK: simulation.managed.store {{.*}} to %[[D_B_REF]]
+// PLAN-NEXT: simulation.managed.store {{.*}} to %[[D_DOMAIN_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_KEY_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_POS_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_C_REF]]
 // CHECK: %[[C_B_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1]
 // CHECK-NEXT: %[[C_KEY_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_key]
 // CHECK-NEXT: %[[C_POS_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_position]
+// CHECK-NEXT: %[[C_DOMAIN_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_1_randc_domain]
 // CHECK-NEXT: %[[C_C_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_4]
 // CHECK: %[[C_A_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_0]
-// CHECK-NEXT: simulation.managed.load %[[C_A_REF]]
+// CHECK-NEXT: %[[C_A_VALUE:.*]] = simulation.managed.load %[[C_A_REF]]
+// CHECK-NEXT: %[[C_A_CAPTURE:.*]] = arith.extui %[[C_A_VALUE]] : i32 to i64
 // CHECK: simulation.random.solve
-// CHECK-SAME: captures(
+// PLAN-SAME: %[[C_A_CAPTURE]] {program
+// FALLBACK-SAME: captures(
 // CHECK: simulation.managed.store {{.*}} to %[[C_B_REF]]
+// PLAN-NEXT: simulation.managed.store {{.*}} to %[[C_DOMAIN_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_KEY_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_POS_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_C_REF]]

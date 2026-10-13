@@ -371,12 +371,12 @@
         {
           "feature": "Constrained randc cycle restart",
           "status": "partial",
-          "detail": "Compiler Z3 plans let each cyclic candidate test for a legal completion with later cyclic and ordinary fields free. Rejected semantic values are skipped, enum holes do not consume the exhaustion budget, and exhausted remainders restart one full permutation. Accepted histories and all fields are published only after the final ordinary solve succeeds. Arbitrary changes to a live cycle's constraints and domains still need persistent restart tracking. A typed Simulation cyclic sampler now projects the legal field domain, permutes dense ranks and returns an exact canonical managed snapshot with transactional history and RNG outputs. Native and WASM MLIR cover sparse 32-bit domains, live bound changes, reordered plans with different completion counts, hard distribution support with wide weights, and frozen-state failures. This primitive is not yet connected to persistent source property fields; source constraint-context changes that preserve the legal domain also remain open."
+          "detail": "Compiler-admitted scalar source constraints now use one compiled relation and one shared cyclic operation to project exact legal domains, permute dense ranks and persist canonical managed snapshots. Live bound, block and inline changes, including unconstrained transitions, restart changed legal domains without scanning sparse declared ranges. Keys, positions, snapshots, fields and RNG are published only after the final ordinary solve succeeds. Native and WASM MLIR cover instance and static sharing, checker and frozen modes, shallow copy, wide ordinary fields and weights, reordered plans with different completion counts, zero weights and failure atomicity. Source constraint-context changes that preserve the legal domain, runtime foreach combinations, function-priority stages, per-element arrays and object aliasing remain open."
         },
         {
           "feature": "Multiple randc variables",
           "status": "partial",
-          "detail": "Integral cyclic fields through 32 bits, including qualified structure members and sparse signed enums, are accepted sequentially before ordinary fields. One shared compiled-plan solve operation probes every stage without retaining provisional assignments or sampler RNG. Native and WASM cover joint cycles, 130-bit ordinary fields, live modes, explicit selection and failure atomicity. Function-priority stages, per-element array histories, object aliasing and arbitrary cycle-domain changes remain open."
+          "detail": "Integral cyclic fields through 32 bits, including qualified structure members and sparse signed enums, are sampled sequentially from projected legal domains before ordinary fields. One shared compiled-plan cyclic operation serves every stage; only the final solve and successful commit publish histories and RNG. Native and WASM cover joint cycles, 130-bit ordinary fields, live modes, explicit selection and failure atomicity. Function-priority stages, per-element array histories, object aliasing and source constraint-context changes with equal legal domains remain open."
         },
         {
           "feature": "Randc real and dist on randc",
@@ -396,12 +396,17 @@
           "runtime/lib/RandSamplePlan.cpp",
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h",
           "runtime/lib/RandModelCount.h",
-          "lib/Dialect/Simulation/Transforms/CompileRandomPlans.cpp"
+          "lib/Dialect/Simulation/Transforms/CompileRandomPlans.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp",
+          "lib/Conversion/ObeliskToSimulation/PrepareCaptures.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
           "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
-          "test/Runtime/simulation-random-cyclic-domain-runtime.mlir"
+          "test/Runtime/simulation-random-cyclic-domain-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
         ]
       }
     },
@@ -633,7 +638,7 @@
         {
           "feature": "Nonzero weights never make an otherwise legal solve fail",
           "status": "partial",
-          "detail": "The compiled-plan samplers policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. General expression targets, unresolved activation and function-priority stage combinations remain diagnosed."
+          "detail": "The compiled-plan samplers policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. General expression targets, unresolved activation and function-priority stage combinations remain diagnosed. Source cyclic projection also retains exact positive support of ordinary distributions, including 130-bit captured weights, live support changes and zero-total-weight transactional failures."
         },
         {
           "feature": "Soft dist and dist with solve before",
@@ -673,7 +678,8 @@
           "runtime/unittests/RandSolveTest.cpp",
           "runtime/unittests/RandSolveWideTest.cpp",
           "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-dynamic-dist-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-dynamic-dist-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
         ]
       }
     },
@@ -1022,7 +1028,7 @@
         {
           "feature": "Randc implicit priority",
           "status": "partial",
-          "detail": "Cyclic candidates are accepted before the ordinary solve, with later cyclic and ordinary bits existentially free during completion checks. Ordinary solve-before edges and soft preferences are sampled only after cyclic values are frozen. MLIR covers mixed and joint cyclic fields; function-priority stages and arbitrary cycle-domain changes remain incomplete."
+          "detail": "Cyclic stages project exact hard legal domains before the ordinary solve, with later cyclic and ordinary bits existentially free. Ordinary solve-before edges and soft preferences are sampled only after cyclic values are frozen. MLIR covers mixed and joint cyclic fields, persistent live scalar-domain changes, static sharing, copied histories, wide distribution support and transactional failure. Function-priority stages, runtime foreach combinations, per-element array and aliased-object histories, and source constraint-context changes with equal legal domains remain incomplete."
         }
       ],
       "evidence": {
@@ -1060,7 +1066,9 @@
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
           "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
           "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
         ]
       }
     },
@@ -1717,7 +1725,7 @@
         {
           "feature": "Randc domain changes",
           "status": "partial",
-          "detail": "General joint cycle-domain invalidation remains open."
+          "detail": "Persistent exact domain snapshots restart scalar instance, qualified structure-member and static cycles after live legal-domain changes, including state bounds, constraint modes and inline or unconstrained transitions. Static histories are shared across instances; failed solves and disabled fields retain prior history. Equal-domain source context changes, per-element arrays, aliased objects and generalized function-priority stages remain open."
         }
       ],
       "evidence": {
@@ -1762,7 +1770,9 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir"
         ]
       }
     },
@@ -2171,7 +2181,7 @@
         {
           "feature": "Object hierarchical seeding and copy",
           "status": "supported",
-          "detail": "New objects split the creator stream; object copying creates a reseeded stream."
+          "detail": "New objects split the creator stream. Shallow copies preserve RNG state, modes and cyclic histories under 8.12 without reseeding the copied stream."
         },
         {
           "feature": "Static-initializer object seeding",
@@ -2186,12 +2196,14 @@
           "runtime/lib/Runtime.cpp",
           "lib/Conversion/ObeliskToSimulation/LowerUnitCalls.cpp",
           "lib/Conversion/ObeliskToSimulation/Prepare.cpp",
-          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp"
+          "lib/Conversion/ObeliskToSimulation/PrepareDeclarations.cpp",
+          "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp"
         ],
         "tests": [
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir"
         ]
       }
     },

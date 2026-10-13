@@ -1,5 +1,6 @@
 // RUN: obelisk -emit-slang %s | obelisk-opt --convert-slang-to-obelisk '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' -o %t.obelisk.mlir
-// RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s
+// RUN: %if compiled-sampler %{ obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s --check-prefix=CHECK --check-prefix=PLAN %}
+// RUN: %if !compiled-sampler %{ obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' | FileCheck %s --check-prefix=CHECK --check-prefix=FALLBACK %}
 // RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
 // RUN: obelisk-opt %t.obelisk.mlir '--lower-obelisk-to-sim=opt-level=0 early-symbol-dce=false' \
@@ -75,9 +76,10 @@
 // CHECK-NEXT: %{{.*}} = simulation.ref.load %[[D_DS_MODE]]
 // CHECK: simulation.ref.load %[[S_VALUE]] : !simulation.ref<i32>
 // CHECK: simulation.ref.load %[[CYCLE_VALUE]]
+// PLAN: simulation.ref.load %[[DS_VALUE]] : !simulation.ref<i32>
 // CHECK: ^[[C_RANDOM_TEST]]:
 // CHECK: simulation.class.is_instance %[[RANDOM_OBJECT]] is @__obelisk_class_s3_C
-// CHECK: simulation.ref.load %[[DS_VALUE]] : !simulation.ref<i32>
+// FALLBACK: simulation.ref.load %[[DS_VALUE]] : !simulation.ref<i32>
 // CHECK: simulation.ref.store {{.*}} to %[[S_VALUE]] : i32, !simulation.ref<i32>
 // CHECK: simulation.ref.store {{.*}} to %[[CYCLE_VALUE]]
 // CHECK: simulation.ref.store {{.*}} to %[[DS_VALUE]] : i32, !simulation.ref<i32>

@@ -38,23 +38,25 @@ structure `randc` declarations and nonsingular mode queries are diagnosed.
 Dynamic container members, random object members, real array members, member
 `randc` arrays, and structures in recursively randomized objects remain open.
 
-Constrained scalar `randc` fields through 32 bits now share one compiled
-Z3 relation with ordinary fields. Each cyclic candidate is checked for a legal
-completion with later cyclic and ordinary fields free. Rejected semantic values
-are skipped; enum holes do not count as exhausted values. An exhausted remainder
-starts a fresh permutation, and one full unsuccessful permutation terminates the
-solve. Provisional assignments and sampler RNG are discarded. After accepting
-all cyclic fields, the same plan samples ordinary fields with cyclic values
-frozen; ordinary soft preferences and `solve before` remain conditional on those
-values. Automatic temporary storage holds tentative histories until the complete
-solve succeeds. MLIR covers mixed fields, coupled cyclic fields, sparse signed
-enums after a 130-bit ordinary field, checker calls, frozen modes, disabled
-blocks on a fresh instance, explicit selection and failure atomicity in native,
-bytecode and WASM execution. The new stage construction emits a fixed amount of
-IR per cyclic field, reuses one program attribute and compiler plan, and builds
-masks from 64-bit constants and SSA extensions. Arbitrary changes to an existing
-cycle's constraints still need persistent restart tracking; function-priority
-stages, per-element array histories and aliased object cycles remain open.
+For compiled scalar constraints, `randc` fields through 32 bits share one Z3
+relation with ordinary fields. Each stage projects an exact legal domain with
+later cyclic and ordinary fields free, then permutes its dense ranks. Persistent
+managed snapshots detect domain changes caused by live bounds, constraint modes
+and inline constraints, including transitions to an unconstrained full range.
+Instance fields, qualified structure members and static storage retain their
+own histories; static histories are shared across objects. Automatic temporary
+storage holds assignments, keys, positions, snapshots and sampler RNG until the
+complete solve succeeds. The same plan then samples ordinary fields with cyclic
+values frozen, keeping ordinary soft preferences and `solve before` conditional
+on them. Inactive fields and checker calls preserve histories. Shallow copies
+retain RNG, modes and cyclic histories under 8.12. Source MLIR tests cover these
+paths in native, bytecode and WASM execution, including sparse signed enums
+after a 130-bit ordinary field. Stage construction emits a fixed number of
+operations per cyclic field, reuses one cycle operation and compiler plan, and
+builds masks from 64-bit constants and SSA extensions. Source constraint-context
+changes that preserve the legal domain, runtime foreach combinations,
+function-priority stages, per-element array histories and aliased object cycles
+remain open.
 
 The typed `simulation.random.cycle_sample` primitive projects the compiler's
 hard relation onto one cyclic field, then permutes dense legal ranks. Sparse
@@ -71,9 +73,8 @@ MLIR checks cover live bounds, complete non-power-of-two and unconstrained
 weights, full 32-bit domains, reordered plans and failure retention in native,
 bytecode and WASM execution.
 Repeated plan attributes with the same capture layout compile once in the
-Simulation plan pass. Connecting the primitive to persistent source property
-fields, and tracking source constraint-context changes with equal legal domains,
-remain open; these typed tests do not close the source `randc` audit rows.
+Simulation plan pass. Scalar source fields now use this primitive; the open
+contexts and container histories above keep the `randc` audit rows partial.
 
 Fixed unpacked arrays of integral elements use their logical element bitstream
 for class and scope randomization, including multidimensional arrays and

@@ -1,4 +1,5 @@
-// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: %if compiled-sampler %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=PLAN %}
+// RUN: %if !compiled-sampler %{ obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=CHECK --check-prefix=FALLBACK %}
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
@@ -78,6 +79,7 @@ module attributes {
 // CHECK-SAME: %[[OBJECT_REF:arg[0-9]+]]: !simulation.ref<!simulation.class_handle<@__obelisk_class_s3_C>>
 // CHECK-SAME: %[[KEY_REF:arg[0-9]+]]: !simulation.ref<i64>
 // CHECK-SAME: %[[POSITION_REF:arg[0-9]+]]: !simulation.ref<i64>
+// CHECK-SAME: %[[DOMAIN_REF:arg[0-9]+]]: !simulation.ref<!simulation.string>
 // CHECK: %[[OBJECT:.*]] = simulation.ref.load %[[OBJECT_REF]] {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_C>
 // CHECK: %[[IS_D:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s24_D
 // CHECK: cf.cond_br %[[IS_D]]
@@ -92,10 +94,11 @@ module attributes {
 // CHECK: cf.cond_br %[[IS_C]]
 // The inline signed predicate is encoded in the shared compiled relation.
 // CHECK: simulation.random.solve_wide
-// CHECK: cf.cond_br %{{.*}}, ^[[D_SUCCESS:bb[0-9]+]]
+// CHECK: cf.cond_br %{{[^, ]+}}, ^[[D_SUCCESS:bb[0-9]+]]
 // CHECK: ^[[D_SUCCESS]]
 // CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
 // CHECK-NEXT: simulation.ref.store {{.*}} to %[[CYCLE_REF]] : !simulation.packed_array<1 : 0 x i1>, !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// PLAN-NEXT: simulation.ref.store {{.*}} to %[[DOMAIN_REF]] : !simulation.string, !simulation.ref<!simulation.string>
 // CHECK-NEXT: simulation.ref.store {{.*}} to %[[KEY_REF]] : i64, !simulation.ref<i64>
 // CHECK-NEXT: simulation.ref.store {{.*}} to %[[POSITION_REF]] : i64, !simulation.ref<i64>
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_X_REF]]
@@ -104,10 +107,11 @@ module attributes {
 // CHECK: simulation.ref.load %[[KEY_REF]] : !simulation.ref<i64>
 // CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
 // CHECK: simulation.random.solve_wide
-// CHECK: cf.cond_br %{{.*}}, ^[[C_SUCCESS:bb[0-9]+]]
+// CHECK: cf.cond_br %{{[^, ]+}}, ^[[C_SUCCESS:bb[0-9]+]]
 // CHECK: ^[[C_SUCCESS]]
 // CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
 // CHECK-NEXT: simulation.ref.store {{.*}} to %[[CYCLE_REF]] : !simulation.packed_array<1 : 0 x i1>, !simulation.ref<!simulation.packed_array<1 : 0 x i1>>
+// PLAN-NEXT: simulation.ref.store {{.*}} to %[[DOMAIN_REF]] : !simulation.string, !simulation.ref<!simulation.string>
 // CHECK-NEXT: simulation.ref.store {{.*}} to %[[KEY_REF]] : i64, !simulation.ref<i64>
 // CHECK-NEXT: simulation.ref.store {{.*}} to %[[POSITION_REF]] : i64, !simulation.ref<i64>
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_X_REF]]
