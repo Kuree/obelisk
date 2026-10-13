@@ -22,6 +22,7 @@ bool alignUp(uint64_t value, uint64_t alignment, uint64_t &result);
 uint64_t layoutChecksum(const obelisk_rt_frame_layout_v1 &layout);
 bool validContinuation(const obelisk_rt_frame_layout_v1 &layout,
                        uint32_t continuation);
+/// The wait field at `offset` of a layout accepted by validateLayout.
 const obelisk_rt_frame_field_v1 *
 findWaitField(const obelisk_rt_frame_layout_v1 &layout, uint64_t offset);
 obelisk_rt_status

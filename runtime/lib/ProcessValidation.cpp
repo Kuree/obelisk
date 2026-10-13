@@ -60,12 +60,19 @@ bool validContinuation(const obelisk_rt_frame_layout_v1 &layout,
 
 const obelisk_rt_frame_field_v1 *
 findWaitField(const obelisk_rt_frame_layout_v1 &layout, uint64_t offset) {
-  for (uint32_t index = 0; index != layout.field_count; ++index) {
-    const obelisk_rt_frame_field_v1 &field = layout.fields[index];
-    if (field.kind == OBELISK_RT_FRAME_WAIT && field.offset == offset)
-      return &field;
-  }
-  return nullptr;
+  // validateLayout admits only fields at strictly increasing offsets, so a
+  // process with a large frame finds its wait without visiting every local.
+  const obelisk_rt_frame_field_v1 *begin = layout.fields;
+  const obelisk_rt_frame_field_v1 *end = begin + layout.field_count;
+  const obelisk_rt_frame_field_v1 *field = std::lower_bound(
+      begin, end, offset,
+      [](const obelisk_rt_frame_field_v1 &field, uint64_t offset) {
+        return field.offset < offset;
+      });
+  if (field == end || field->offset != offset ||
+      field->kind != OBELISK_RT_FRAME_WAIT)
+    return nullptr;
+  return field;
 }
 
 obelisk_rt_status
