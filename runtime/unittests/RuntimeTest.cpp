@@ -6175,6 +6175,138 @@ TEST(ManagedHeap, PolledCollectionReclaimsOnlyAtPollsAndBetweenActivations) {
   run(/*designate=*/true);
 }
 
+TEST(ManagedHeap, PolledAllocationLeavesCollectorsWaitingForAPoll) {
+  // Another thread requests a collection while this thread's activation
+  // allocates. Under polled collection the activation registers its managed
+  // values only at polls, so its allocations must not park for the collector:
+  // the collector waits until the activation polls with its live values
+  // registered. It then reclaims every unreachable object and keeps every
+  // reachable one. Afterwards no object and no root registration outlives its
+  // owner. Eager rooting registers the activation's values on entry and parks
+  // at its first allocation instead.
+  auto run = [](bool polled) {
+    SCOPED_TRACE(polled ? "polled" : "eager");
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+    if (polled)
+      obelisk_rt_managed_heap_poll_collections(context->managedHeap);
+    // Only the explicit request below collects.
+    ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX),
+              OBELISK_RT_OK);
+    auto statistics = [&] {
+      obelisk_rt_gc_statistics_v1 result{};
+      EXPECT_EQ(obelisk_rt_v1_gc_statistics(context, &result), OBELISK_RT_OK);
+      return result;
+    };
+    obelisk_rt_gc_lane_v1 *activation = nullptr;
+    obelisk_rt_gc_lane_v1 *collector = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &activation),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &collector), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(activation), OBELISK_RT_OK);
+    auto allocate = [&] {
+      obelisk_rt_object_v1 *object = nullptr;
+      EXPECT_EQ(
+          obelisk_rt_v1_object_allocate(activation, &nodeDescriptor, &object),
+          OBELISK_RT_OK);
+      return object;
+    };
+    auto link = [](obelisk_rt_object_v1 *from, obelisk_rt_object_v1 *to) {
+      EXPECT_EQ(obelisk_rt_v1_object_field_store(from, kNodeLinkOffset, to),
+                OBELISK_RT_OK);
+    };
+
+    // Reachable: a static root, and a chain held only by the activation.
+    obelisk_rt_object_v1 *kept = allocate();
+    ASSERT_EQ(obelisk_rt_v1_gc_static_root_register(context, &kept),
+              OBELISK_RT_OK);
+    obelisk_rt_object_v1 *head = allocate();
+    obelisk_rt_object_v1 *middle = allocate();
+    obelisk_rt_object_v1 *tail = allocate();
+    link(head, middle);
+    link(middle, tail);
+    uint64_t tailID = obelisk_rt_v1_object_id(tail);
+    // Unreachable once the activation drops it.
+    link(allocate(), allocate());
+    obelisk_rt_managed_word_v1 slots[]{
+        obelisk_rt_managed_word_from_object(head)};
+    obelisk_rt_gc_managed_root_range_v1 range{};
+    auto registerChain = [&] {
+      EXPECT_EQ(obelisk_rt_v1_gc_managed_root_range_push(activation, &range,
+                                                          slots, 1),
+                OBELISK_RT_OK);
+    };
+    if (!polled)
+      registerChain();
+
+    std::atomic<obelisk_rt_status> collected{OBELISK_RT_INVALID_LIFECYCLE};
+    std::thread worker([&] {
+      obelisk_rt_status status = obelisk_rt_v1_gc_lane_enter(collector);
+      if (status == OBELISK_RT_OK)
+        status = obelisk_rt_v1_gc_collect(collector);
+      if (status == OBELISK_RT_OK)
+        status = obelisk_rt_v1_gc_lane_leave(collector);
+      collected.store(status);
+    });
+    while (!obelisk_rt_managed_heap_collection_requested(context->managedHeap))
+      std::this_thread::yield();
+
+    constexpr unsigned garbage = 64;
+    if (polled) {
+      // The collector keeps waiting through every allocation.
+      for (unsigned index = 0; index != garbage; ++index)
+        allocate();
+      EXPECT_TRUE(
+          obelisk_rt_managed_heap_collection_requested(context->managedHeap));
+      EXPECT_EQ(statistics().collection_count, 0u);
+      // Compiled code registers its live values at the poll.
+      registerChain();
+    } else {
+      // Eager rooting parks at the allocation; the collector runs meanwhile.
+      allocate();
+      EXPECT_EQ(statistics().collection_count, 1u);
+      EXPECT_EQ(statistics().reclaimed_objects, 2u);
+      for (unsigned index = 1; index != garbage; ++index)
+        allocate();
+    }
+    // A poll lets a waiting collector run.
+    EXPECT_EQ(obelisk_rt_v1_gc_safepoint(activation), OBELISK_RT_OK);
+    worker.join();
+    EXPECT_EQ(collected.load(), OBELISK_RT_OK);
+    obelisk_rt_gc_statistics_v1 afterPoll = statistics();
+    EXPECT_EQ(afterPoll.collection_count, 1u);
+    EXPECT_EQ(afterPoll.allocated_objects, 6u + garbage);
+    EXPECT_EQ(afterPoll.reclaimed_objects, polled ? 2u + garbage : 2u);
+    EXPECT_EQ(afterPoll.live_objects, polled ? 4u : 4u + garbage);
+    // The registered chain survived intact.
+    obelisk_rt_object_v1 *loaded = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_object_field_load(head, kNodeLinkOffset, &loaded),
+              OBELISK_RT_OK);
+    EXPECT_EQ(loaded, middle);
+    ASSERT_EQ(obelisk_rt_v1_object_field_load(middle, kNodeLinkOffset, &loaded),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_object_id(loaded), tailID);
+    ASSERT_EQ(obelisk_rt_v1_gc_managed_root_range_pop(activation, &range),
+              OBELISK_RT_OK);
+
+    // Once nothing holds them, every object is reclaimed: none leaks, and no
+    // root registration outlives the activation that owned it.
+    ASSERT_EQ(obelisk_rt_v1_gc_static_root_unregister(context, &kept),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_collect(activation), OBELISK_RT_OK);
+    obelisk_rt_gc_statistics_v1 final = statistics();
+    EXPECT_EQ(final.live_objects, 0u);
+    EXPECT_EQ(final.live_bytes, 0u);
+    EXPECT_EQ(final.reclaimed_objects, final.allocated_objects);
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_leave(activation), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(activation), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_gc_lane_destroy(collector), OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(context);
+  };
+  run(/*polled=*/true);
+  run(/*polled=*/false);
+}
+
 TEST(ManagedHeap, SerializesConcurrentCollectionRequestsWithoutDeadlock) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

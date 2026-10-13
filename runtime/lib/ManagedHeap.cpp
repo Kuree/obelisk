@@ -1257,6 +1257,10 @@ public:
   bool collectionIsPending() const {
     return collectionPending.load(std::memory_order_acquire);
   }
+  /// Whether a collector waits for the active lanes to park.
+  bool collectionIsRequested() const {
+    return collectionRequested.load(std::memory_order_acquire);
+  }
   /// Collections made at designated collection points.
   std::atomic<uint64_t> designatedCollections{0};
 
@@ -2578,6 +2582,10 @@ obelisk_rt_managed_heap_collect_between_activations(obelisk_rt_context *context)
 void obelisk_rt_managed_heap_poll_collections(ManagedHeap *heap) {
   if (heap)
     heap->pollCollections();
+}
+
+bool obelisk_rt_managed_heap_collection_requested(ManagedHeap *heap) {
+  return heap && heap->collectionIsRequested();
 }
 
 bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap) {

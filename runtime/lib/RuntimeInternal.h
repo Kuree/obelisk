@@ -2757,6 +2757,8 @@ bool obelisk_rt_managed_heap_collections_designated(ManagedHeap *heap);
 /// pressure instead of collecting (OBELISK_RT_EXECUTION_POLLED_COLLECTION).
 void obelisk_rt_managed_heap_poll_collections(ManagedHeap *heap);
 bool obelisk_rt_managed_heap_collections_polled(ManagedHeap *heap);
+/// Whether a collector waits for the active lanes to park.
+bool obelisk_rt_managed_heap_collection_requested(ManagedHeap *heap);
 /// Reclaim pressure that is due between two activations. Does nothing while
 /// this thread runs a managed activation.
 obelisk_rt_status
