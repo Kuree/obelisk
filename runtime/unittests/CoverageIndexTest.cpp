@@ -1,4 +1,5 @@
 #include "../../lib/Coverage/CoverageIndex.h"
+#include "../../lib/Coverage/CoverageDecisionIndex.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>
@@ -8,6 +9,47 @@
 #include <stdexcept>
 
 using namespace obelisk::coverage::detail;
+
+TEST(CoverageDecisionIndexTest, SharedSetOperationsAgreeWithSmallValueOracle) {
+  DecisionIndex index(4);
+  auto range = index.interval({1}, {10});
+  auto odd = index.cube({1}, {14});
+  auto removed = index.cube({2}, {5});
+  auto selected = index.subtract(index.intersect(range, odd), removed);
+  auto united = index.unite(range, odd);
+  uint64_t selectedCount = 0, unionCount = 0;
+  for (uint64_t value = 0; value != 16; ++value) {
+    bool inRange = value >= 1 && value <= 10;
+    bool inOdd = value & 1;
+    bool inRemoved = (value & ~uint64_t{5}) == 2;
+    auto singleton = index.cube({value}, {0});
+    EXPECT_EQ(index.intersect(selected, singleton) != 0,
+              inRange && inOdd && !inRemoved);
+    EXPECT_EQ(index.intersect(united, singleton) != 0, inRange || inOdd);
+    selectedCount += inRange && inOdd && !inRemoved;
+    unionCount += inRange || inOdd;
+  }
+  for (uint64_t cap : {uint64_t{1}, uint64_t{3}, uint64_t{16}}) {
+    EXPECT_EQ(index.cardinality(selected, cap), std::min(cap, selectedCount));
+    EXPECT_EQ(index.cardinality(united, cap), std::min(cap, unionCount));
+  }
+  EXPECT_EQ(index.subtract(united, united), 0u);
+  EXPECT_FALSE(index.exhausted());
+}
+
+TEST(CoverageDecisionIndexTest, WideCardinalitySaturatesAndExpansionIsBounded) {
+  DecisionIndex index(65);
+  auto all = index.interval({0, 0}, {1, UINT64_MAX});
+  auto one = index.interval({1, 0}, {1, 0});
+  EXPECT_EQ(index.cardinality(all, UINT64_MAX), UINT64_MAX);
+  EXPECT_EQ(index.cardinality(one, UINT64_MAX), 1u);
+  EXPECT_EQ(index.cardinality(index.subtract(all, one), 7), 7u);
+  EXPECT_EQ(index.cardinality(index.intersect(all, one), 7), 1u);
+  EXPECT_FALSE(index.exhausted());
+  DecisionIndex limited(65, 8);
+  limited.cube({0, 0}, {0, 0});
+  EXPECT_TRUE(limited.exhausted());
+}
 
 TEST(CoverageIndexTest, TypeHierarchyUsesDirectEdgesAndHandlesUnorderedChains) {
   struct Type {

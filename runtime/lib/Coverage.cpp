@@ -3,6 +3,7 @@
 #include "ContainerStorageInternal.h"
 #include "RuntimeInternal.h"
 
+#include "../../lib/Coverage/CoverageDecisionIndex.h"
 #include "../../lib/Coverage/CoverageIndex.h"
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
@@ -1299,9 +1300,12 @@ struct CoverageResult {
   bool contributes = false;
 };
 
-void markStaticallyEmptyStateBins(
-    obelisk::coverage::Database &schema, uint64_t typeID,
-    const obelisk::coverage::Digest &configuration);
+struct FunctionalCoverageSetQueryIndex;
+obelisk_rt_status
+markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
+                             uint64_t typeID,
+                             const obelisk::coverage::Digest &configuration,
+                             FunctionalCoverageSetQueryIndex &setQueries);
 obelisk_rt_status
 deriveTransitionExclusions(const obelisk::coverage::Database &schema,
                            uint64_t typeID,
@@ -2057,6 +2061,12 @@ struct IntegralCoverageShape {
   std::vector<uint64_t> wildcard;
 };
 
+bool makeIntegralCoverageShape(
+    const obelisk::coverage::Database &schema,
+    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
+    uint32_t bitWidth, obelisk::coverage::CoverageSignedness signedness,
+    IntegralCoverageShape &shape);
+
 bool coverageShapeIntersectsPrefix(const IntegralCoverageShape &shape,
                                    const std::vector<uint64_t> &prefix,
                                    int64_t remainingBit, uint32_t bitWidth);
@@ -2162,106 +2172,622 @@ enumerateIntegralShapeUnion(const std::vector<IntegralCoverageShape> &shapes,
   return OBELISK_RT_OK;
 }
 
-/// Compute an exact union cardinality, saturating only after the prefix proof
-/// establishes that at least `cap` values exist. The search budget may still
-/// reject an adversarial fragmented union, but resource exhaustion is never
-/// guessed to mean that the threshold was reached.
-obelisk_rt_status integralShapeUnionCardinalityCapped(
-    const std::vector<IntegralCoverageShape> &shapes, uint32_t bitWidth,
-    uint64_t cap, uint64_t &result) {
-  struct Frame {
-    FunctionalMagnitude prefix;
-    int64_t remainingBit = -1;
-    std::vector<size_t> candidates;
-  };
-  result = 0;
-  if (!cap || !bitWidth)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  if (shapes.empty())
-    return OBELISK_RT_OK;
-  const uint64_t limit = obelisk::coverage::ParseLimits{}.maxRecords;
-  Frame root;
-  root.prefix.resize(functionalLimbCount(bitWidth));
-  root.remainingBit = static_cast<int64_t>(bitWidth) - 1;
-  root.candidates.resize(shapes.size());
-  std::iota(root.candidates.begin(), root.candidates.end(), size_t{0});
-  std::vector<Frame> search;
-  search.push_back(std::move(root));
-  uint64_t visited = 0;
-  while (!search.empty()) {
-    if (visited++ == limit)
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    Frame frame = std::move(search.back());
-    search.pop_back();
-    std::vector<size_t> intersecting;
-    intersecting.reserve(frame.candidates.size());
-    bool contained = false;
-    for (size_t index : frame.candidates) {
-      const IntegralCoverageShape &shape = shapes[index];
-      if (!coverageShapeIntersectsPrefix(shape, frame.prefix,
-                                         frame.remainingBit, bitWidth))
-        continue;
-      if (coverageShapeContainsPrefix(shape, frame.prefix, frame.remainingBit,
-                                      bitWidth)) {
-        contained = true;
-        break;
-      }
-      intersecting.push_back(index);
-    }
-    if (!contained && intersecting.empty())
-      continue;
-    if (contained || frame.remainingBit < 0) {
-      const uint64_t bits = frame.remainingBit < 0
-                                ? 0
-                                : static_cast<uint64_t>(frame.remainingBit) + 1;
-      if (bits >= 64 || (uint64_t{1} << bits) >= cap - result) {
-        result = cap;
-        return OBELISK_RT_OK;
-      }
-      result += uint64_t{1} << bits;
-      continue;
-    }
-    if (search.size() > limit - 2)
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    Frame one{frame.prefix, frame.remainingBit - 1, intersecting};
-    setCubeBit(one.prefix, static_cast<uint32_t>(frame.remainingBit), true);
-    search.push_back(std::move(one));
-    search.push_back({std::move(frame.prefix), frame.remainingBit - 1,
-                      std::move(intersecting)});
+struct StateCoverageInterval {
+  // Most-significant limb first, so the radix key and numeric order agree.
+  std::vector<uint64_t> low;
+  std::vector<uint64_t> high;
+  size_t bin = SIZE_MAX;
+  bool empty = false;
+};
+
+bool advanceStateCoverageEndpoint(std::vector<uint64_t> &endpoint,
+                                  bool increment) {
+  for (size_t reverse = endpoint.size(); reverse != 0; --reverse) {
+    uint64_t &limb = endpoint[reverse - 1];
+    if (increment ? ++limb != 0 : limb-- != 0)
+      return true;
   }
-  return OBELISK_RT_OK;
+  return false;
 }
 
-bool resolvedFunctionalValueSetsIntersect(
+template <typename Real>
+bool makeRealStateCoverageInterval(
+    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
+    StateCoverageInterval &interval) {
+  using namespace obelisk::coverage;
+  double sourceLow, sourceHigh;
+  std::memcpy(&sourceLow, &atom.realLowBits, sizeof(sourceLow));
+  std::memcpy(&sourceHigh, &atom.realHighBits, sizeof(sourceHigh));
+  bool lowerUnbounded = atom.flags & FunctionalValueAtomLowerUnbounded;
+  bool upperUnbounded = atom.flags & FunctionalValueAtomUpperUnbounded;
+  Real low = lowerUnbounded ? -std::numeric_limits<Real>::infinity()
+                            : static_cast<Real>(sourceLow);
+  Real high = upperUnbounded ? std::numeric_limits<Real>::infinity()
+                             : static_cast<Real>(sourceHigh);
+  if (std::isnan(low) || std::isnan(high))
+    return false;
+  if (!lowerUnbounded &&
+      (low < sourceLow ||
+       (low == sourceLow && !(atom.flags & FunctionalValueAtomLowerInclusive))))
+    low = std::nextafter(low, std::numeric_limits<Real>::infinity());
+  if (!upperUnbounded && (high > sourceHigh ||
+                          (high == sourceHigh &&
+                           !(atom.flags & FunctionalValueAtomUpperInclusive))))
+    high = std::nextafter(high, -std::numeric_limits<Real>::infinity());
+  interval.empty = low > high;
+  auto rank = [](Real value) -> uint64_t {
+    using Bits = std::conditional_t<sizeof(Real) == sizeof(uint32_t), uint32_t,
+                                    uint64_t>;
+    Bits bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    constexpr Bits sign = Bits{1} << (sizeof(Bits) * 8 - 1);
+    // Collapse -0 and +0 into one rank. Adjacent representable values then
+    // have adjacent ranks, including at zero and at the infinity boundaries.
+    return bits & sign ? static_cast<Bits>(~bits)
+                       : static_cast<Bits>((bits | sign) - 1);
+  };
+  interval.low = {rank(low)};
+  interval.high = {rank(high)};
+  return true;
+}
+
+bool makeStateCoverageInterval(
     const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueSet &left,
-    const obelisk::coverage::ResolvedFunctionalValueSet &right);
+    const obelisk::coverage::ResolvedFunctionalValueSet &set,
+    const obelisk::coverage::ResolvedFunctionalValueAtom &atom, bool shortReal,
+    StateCoverageInterval &interval) {
+  using namespace obelisk::coverage;
+  if (set.kind == FunctionalValueSetKind::Real)
+    return shortReal ? makeRealStateCoverageInterval<float>(atom, interval)
+                     : makeRealStateCoverageInterval<double>(atom, interval);
+  IntegralCoverageShape shape;
+  if (!makeIntegralCoverageShape(schema, atom, set.bitWidth, set.signedness,
+                                 shape))
+    return false;
+  if (shape.interval) {
+    interval.low.assign(shape.low.rbegin(), shape.low.rend());
+    interval.high.assign(shape.high.rbegin(), shape.high.rend());
+    if (!(atom.flags & FunctionalValueAtomLowerInclusive) &&
+        !advanceStateCoverageEndpoint(interval.low, true))
+      interval.empty = true;
+    if (!(atom.flags & FunctionalValueAtomUpperInclusive) &&
+        !advanceStateCoverageEndpoint(interval.high, false))
+      interval.empty = true;
+  } else {
+    // A prefix cube is one interval. Other cubes retain symbolic subtraction.
+    bool fixed = false;
+    for (size_t ordinal = 0; ordinal != shape.wildcard.size(); ++ordinal) {
+      uint64_t wildcard = shape.wildcard[ordinal];
+      uint64_t valid = ordinal + 1 == shape.wildcard.size() && set.bitWidth % 64
+                           ? lowBitsMask(set.bitWidth % 64)
+                           : UINT64_MAX;
+      if ((fixed && wildcard) || (wildcard & (wildcard + 1)))
+        return false;
+      fixed |= wildcard != valid;
+    }
+    interval.low.assign(shape.value.rbegin(), shape.value.rend());
+    interval.high = interval.low;
+    for (size_t ordinal = 0; ordinal != shape.wildcard.size(); ++ordinal)
+      interval.high[shape.wildcard.size() - ordinal - 1] |=
+          shape.wildcard[ordinal];
+  }
+  interval.empty |= interval.high < interval.low;
+  return true;
+}
+
+void mergeStateCoverageIntervals(
+    std::vector<StateCoverageInterval> &intervals) {
+  obelisk::coverage::detail::sortByKey(
+      intervals.begin(), intervals.end(),
+      [](const auto &interval) -> const auto & { return interval.low; });
+  std::vector<StateCoverageInterval> merged;
+  merged.reserve(intervals.size());
+  for (auto &interval : intervals) {
+    if (interval.empty)
+      continue;
+    bool adjacent = false;
+    if (!merged.empty()) {
+      adjacent = interval.low <= merged.back().high;
+      if (!adjacent) {
+        auto successor = merged.back().high;
+        adjacent = advanceStateCoverageEndpoint(successor, true) &&
+                   interval.low <= successor;
+      }
+    }
+    if (adjacent) {
+      if (merged.back().high < interval.high)
+        merged.back().high = std::move(interval.high);
+    } else
+      merged.push_back(std::move(interval));
+  }
+  intervals = std::move(merged);
+}
+
+/// All references use ordinals: constructor staging may append schema rows.
+/// Numeric selectors share a canonical exclusion union and endpoint indexes.
+/// General cubes share decision graphs, grouped by their exact B plane so
+/// wildcard 0/1 expansion cannot accidentally consume constrained X/Z values.
+struct FunctionalCoverageSetQueryIndex {
+  using Set = obelisk::coverage::ResolvedFunctionalValueSet;
+  using Bin = obelisk::coverage::ResolvedFunctionalBin;
+  using Graph = obelisk::coverage::detail::DecisionIndex;
+  using Root = Graph::Root;
+  using DomainKey = std::tuple<uint32_t, uint32_t, uint32_t, bool>;
+  struct CompiledSet {
+    DomainKey domain;
+    Graph *graph = nullptr;
+    std::vector<uint64_t> sources;
+    bool numeric = true;
+    bool prepared = false;
+    std::vector<StateCoverageInterval> intervals;
+    IndexMap<std::vector<uint64_t>, size_t> endpoints;
+    IndexMap<std::vector<uint64_t>, Root> groups;
+    const StateCoverageInterval *
+    containing(const std::vector<uint64_t> &value) const {
+      auto position = endpoints.upper_bound(value);
+      if (position == endpoints.begin())
+        return nullptr;
+      const auto &interval = intervals[(--position)->second];
+      return value <= interval.high ? &interval : nullptr;
+    }
+    void indexEndpoints() {
+      for (size_t ordinal = 0; ordinal != intervals.size(); ++ordinal)
+        endpoints.emplace(intervals[ordinal].low, ordinal);
+    }
+  };
+
+  const obelisk::coverage::Database &schema;
+  uint64_t type;
+  obelisk::coverage::Digest configuration;
+  obelisk_rt_status status = OBELISK_RT_OK;
+  IndexMap<uint64_t, size_t> bins, sets, items, templateItems, plans, selectors,
+      crossPlans, tupleSets;
+  IndexMap<std::pair<uint64_t, uint64_t>, size_t> bindings, targetOrdinals;
+  IndexMap<uint64_t, std::vector<size_t>> alternatives;
+  IndexMap<uint64_t, std::vector<uint64_t>> exclusionSets;
+  IndexSet<uint64_t> shortRealItems;
+  IndexMap<DomainKey, std::unique_ptr<Graph>> graphs;
+  IndexMap<std::pair<bool, std::vector<uint64_t>>, std::shared_ptr<CompiledSet>>
+      compiled;
+  IndexMap<uint64_t, std::shared_ptr<CompiledSet>> binSets, masks;
+  IndexMap<std::tuple<uint64_t, uint64_t, bool>, std::shared_ptr<CompiledSet>>
+      selections;
+
+  FunctionalCoverageSetQueryIndex(
+      const obelisk::coverage::Database &schema, uint64_t type,
+      const obelisk::coverage::Digest &configuration)
+      : schema(schema), type(type), configuration(configuration) {
+    using namespace obelisk::coverage;
+    auto indexRows = [&](const auto &rows, auto &index) {
+      for (size_t ordinal = 0; ordinal != rows.size(); ++ordinal)
+        if (rows[ordinal].type == type &&
+            rows[ordinal].configuration == configuration)
+          index.emplace(rows[ordinal].id, ordinal);
+    };
+    indexRows(schema.resolvedFunctionalBins, bins);
+    indexRows(schema.resolvedFunctionalValueSets, sets);
+    indexRows(schema.resolvedFunctionalItems, items);
+    indexRows(schema.resolvedFunctionalTupleSets, tupleSets);
+    for (const auto &[id, ordinal] : items)
+      templateItems.emplace(
+          schema.resolvedFunctionalItems[ordinal].templateItem, ordinal);
+    for (size_t ordinal = 0;
+         ordinal != schema.resolvedFunctionalBinPlans.size(); ++ordinal) {
+      const auto &plan = schema.resolvedFunctionalBinPlans[ordinal];
+      if (plan.type == type && plan.configuration == configuration)
+        plans.emplace(plan.bin, ordinal);
+    }
+    for (size_t ordinal = 0; ordinal != schema.crossSelectorNodes.size();
+         ++ordinal)
+      selectors.emplace(schema.crossSelectorNodes[ordinal].id, ordinal);
+    for (size_t ordinal = 0; ordinal != schema.crossPlans.size(); ++ordinal)
+      crossPlans.emplace(schema.crossPlans[ordinal].item, ordinal);
+    for (const auto &target : schema.crossTargets)
+      targetOrdinals.emplace(std::make_pair(target.cross, target.target),
+                             target.ordinal);
+    for (size_t ordinal = 0;
+         ordinal != schema.resolvedCrossSelectorBindings.size(); ++ordinal) {
+      const auto &binding = schema.resolvedCrossSelectorBindings[ordinal];
+      if (binding.type == type && binding.configuration == configuration)
+        bindings.emplace(std::make_pair(binding.cross, binding.node), ordinal);
+    }
+    for (size_t ordinal = 0;
+         ordinal != schema.resolvedTransitionAlternatives.size(); ++ordinal) {
+      const auto &alternative = schema.resolvedTransitionAlternatives[ordinal];
+      if (alternative.type == type &&
+          alternative.configuration == configuration)
+        alternatives[alternative.bin].push_back(ordinal);
+    }
+    IndexSet<uint64_t> shortTemplates;
+    for (const auto &expression : schema.functionalExpressions)
+      if (expression.role == FunctionalExpressionRole::CoverpointSample &&
+          expression.resultKind == FunctionalExpressionResultKind::ShortReal)
+        shortTemplates.insert(expression.owner);
+    for (const auto &[id, ordinal] : items)
+      if (shortTemplates.count(
+              schema.resolvedFunctionalItems[ordinal].templateItem))
+        shortRealItems.insert(id);
+    for (const auto &[id, ordinal] : bins) {
+      const auto &bin = schema.resolvedFunctionalBins[ordinal];
+      if (bin.kind != FunctionalBinKind::State ||
+          !(bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) ||
+          (bin.flags & FunctionalBinEmpty))
+        continue;
+      auto plan = plans.find(id);
+      if (plan != plans.end())
+        exclusionSets[bin.item].push_back(
+            schema.resolvedFunctionalBinPlans[plan->second].valueSet);
+    }
+  }
+
+  template <typename Record>
+  static const Record *lookup(const IndexMap<uint64_t, size_t> &index,
+                              const std::vector<Record> &rows, uint64_t id) {
+    auto found = index.find(id);
+    return found == index.end() ? nullptr : &rows[found->second];
+  }
+  const Bin *bin(uint64_t id) const {
+    return lookup(bins, schema.resolvedFunctionalBins, id);
+  }
+  const Set *valueSet(uint64_t id) const {
+    return lookup(sets, schema.resolvedFunctionalValueSets, id);
+  }
+  const obelisk::coverage::ResolvedCrossSelectorBinding *
+  binding(uint64_t cross, uint64_t node) const {
+    auto found = bindings.find({cross, node});
+    return found == bindings.end()
+               ? nullptr
+               : &schema.resolvedCrossSelectorBindings[found->second];
+  }
+
+  std::shared_ptr<CompiledSet> compile(std::vector<uint64_t> sources,
+                                       bool shortReal) {
+    using namespace obelisk::coverage;
+    detail::sortByKey(sources.begin(), sources.end(),
+                      [](uint64_t id) { return id; });
+    sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
+    auto key = std::make_pair(shortReal, sources);
+    auto found = compiled.find(key);
+    if (found != compiled.end())
+      return found->second;
+    auto result = std::make_shared<CompiledSet>();
+    result->sources = std::move(sources);
+    for (uint64_t id : result->sources) {
+      const Set *set = valueSet(id);
+      if (!set) {
+        status = OBELISK_RT_INVALID_DESIGN;
+        return nullptr;
+      }
+      DomainKey domain = {static_cast<uint32_t>(set->kind), set->bitWidth,
+                          static_cast<uint32_t>(set->signedness), shortReal};
+      if (!result->graph) {
+        result->domain = domain;
+        auto graph = graphs.find(domain);
+        if (graph == graphs.end()) {
+          uint32_t width = set->kind == FunctionalValueSetKind::Real
+                               ? (shortReal ? 32 : 64)
+                               : set->bitWidth;
+          graph = graphs.emplace(domain, std::make_unique<Graph>(width)).first;
+        }
+        result->graph = graph->second.get();
+      } else if (domain != result->domain) {
+        status = OBELISK_RT_INVALID_DESIGN;
+        return nullptr;
+      }
+      if (!result->numeric)
+        continue;
+      for (uint32_t ordinal = 0; ordinal != set->atomCount; ++ordinal) {
+        StateCoverageInterval interval;
+        if (!makeStateCoverageInterval(
+                schema, *set,
+                schema.resolvedFunctionalValueAtoms[set->firstAtom + ordinal],
+                shortReal, interval)) {
+          result->numeric = false;
+          result->intervals.clear();
+          break;
+        }
+        result->intervals.push_back(std::move(interval));
+      }
+    }
+    if (result->numeric) {
+      mergeStateCoverageIntervals(result->intervals);
+      result->indexEndpoints();
+    }
+    compiled.emplace(std::move(key), result);
+    return result;
+  }
+
+  bool prepare(CompiledSet &set) {
+    using namespace obelisk::coverage;
+    if (set.prepared)
+      return status == OBELISK_RT_OK;
+    set.prepared = true;
+    if (!set.graph)
+      return true;
+    Graph &graph = *set.graph;
+    bool real = std::get<0>(set.domain) ==
+                static_cast<uint32_t>(FunctionalValueSetKind::Real);
+    uint32_t width = std::get<1>(set.domain);
+    bool shortReal = std::get<3>(set.domain);
+    std::vector<uint64_t> known(real ? 0 : functionalLimbCount(width));
+    auto add = [&](const std::vector<uint64_t> &bval, Root root) {
+      auto &group = set.groups[bval];
+      group = graph.unite(group, root);
+    };
+    if (set.numeric) {
+      for (const auto &interval : set.intervals)
+        add(known, graph.interval(interval.low, interval.high));
+    } else {
+      for (uint64_t id : set.sources) {
+        const auto &source = *valueSet(id);
+        for (uint32_t ordinal = 0; ordinal != source.atomCount; ++ordinal) {
+          const auto &atom =
+              schema.resolvedFunctionalValueAtoms[source.firstAtom + ordinal];
+          StateCoverageInterval interval;
+          if (makeStateCoverageInterval(schema, source, atom, shortReal,
+                                        interval)) {
+            if (!interval.empty)
+              add(known, graph.interval(interval.low, interval.high));
+            continue;
+          }
+          if (atom.kind != FunctionalValueAtomKind::IntegralValue) {
+            status = OBELISK_RT_INVALID_DESIGN;
+            return false;
+          }
+          std::vector<uint64_t> aval(atom.limbCount), bval(atom.limbCount),
+              wildcard(atom.limbCount);
+          for (uint32_t limbOrdinal = 0; limbOrdinal != atom.limbCount;
+               ++limbOrdinal) {
+            const auto &limb =
+                schema
+                    .resolvedFunctionalValueLimbs[atom.firstLimb + limbOrdinal];
+            uint64_t valid = limbOrdinal + 1 == atom.limbCount && width % 64
+                                 ? lowBitsMask(width % 64)
+                                 : UINT64_MAX;
+            wildcard[limbOrdinal] = limb.wildcardMask & valid;
+            aval[limbOrdinal] = limb.lowAval & ~wildcard[limbOrdinal] & valid;
+            bval[limbOrdinal] = limb.lowBval & ~wildcard[limbOrdinal] & valid;
+          }
+          if (source.signedness == CoverageSignedness::Signed) {
+            uint64_t sign = uint64_t{1} << ((width - 1) % 64);
+            aval[(width - 1) / 64] ^= sign & ~wildcard[(width - 1) / 64];
+          }
+          add(bval, graph.cube(aval, wildcard));
+        }
+      }
+    }
+    if (graph.exhausted())
+      status = OBELISK_RT_OUT_OF_RESOURCES;
+    return status == OBELISK_RT_OK;
+  }
+
+  std::shared_ptr<CompiledSet>
+  subject(const Bin &bin,
+          const std::unordered_set<uint64_t> &suppressedAlternatives) {
+    using namespace obelisk::coverage;
+    auto cached = binSets.find(bin.id);
+    if (cached != binSets.end())
+      return cached->second;
+    std::vector<uint64_t> sources;
+    if (bin.kind == FunctionalBinKind::State) {
+      auto plan = plans.find(bin.id);
+      if (plan == plans.end()) {
+        status = OBELISK_RT_INVALID_DESIGN;
+        return nullptr;
+      }
+      sources.push_back(
+          schema.resolvedFunctionalBinPlans[plan->second].valueSet);
+    } else if (bin.kind == FunctionalBinKind::Transition) {
+      auto found = alternatives.find(bin.id);
+      if (found == alternatives.end()) {
+        status = OBELISK_RT_INVALID_DESIGN;
+        return nullptr;
+      }
+      for (size_t ordinal : found->second) {
+        const auto &alternative =
+            schema.resolvedTransitionAlternatives[ordinal];
+        if (suppressedAlternatives.count(alternative.id))
+          continue;
+        if (!alternative.stepCount ||
+            uint64_t{alternative.firstStep} + alternative.stepCount >
+                schema.resolvedTransitionSteps.size()) {
+          status = OBELISK_RT_INVALID_DESIGN;
+          return nullptr;
+        }
+        const auto &terminal =
+            schema.resolvedTransitionSteps[alternative.firstStep +
+                                           alternative.stepCount - 1];
+        if (terminal.type != type || terminal.configuration != configuration ||
+            terminal.bin != bin.id || terminal.alternative != alternative.id ||
+            terminal.ordinal != alternative.stepCount - 1) {
+          status = OBELISK_RT_INVALID_DESIGN;
+          return nullptr;
+        }
+        sources.push_back(terminal.valueSet);
+      }
+    } else {
+      status = OBELISK_RT_INVALID_DESIGN;
+      return nullptr;
+    }
+    auto result = compile(std::move(sources), shortRealItems.count(bin.item));
+    binSets.emplace(bin.id, result);
+    return result;
+  }
+
+  std::shared_ptr<CompiledSet> mask(const Bin &bin) {
+    using namespace obelisk::coverage;
+    if (bin.kind != FunctionalBinKind::State)
+      return nullptr; // State exclusions do not remove transition values.
+    auto found = exclusionSets.find(bin.item);
+    if (found == exclusionSets.end())
+      return nullptr;
+    auto cached = masks.find(bin.item);
+    if (cached != masks.end())
+      return cached->second;
+    auto result = compile(found->second, shortRealItems.count(bin.item));
+    masks.emplace(bin.item, result);
+    return result;
+  }
+
+  bool intersects(uint64_t binID, uint64_t selectionID,
+                  const std::unordered_set<uint64_t> &suppressedAlternatives) {
+    const Bin *definition = bin(binID);
+    if (!definition) {
+      status = OBELISK_RT_INVALID_DESIGN;
+      return false;
+    }
+    auto left = subject(*definition, suppressedAlternatives);
+    auto right = compile({selectionID}, shortRealItems.count(definition->item));
+    auto excluded = mask(*definition);
+    if (left && excluded && left->domain != excluded->domain)
+      status = OBELISK_RT_INVALID_DESIGN;
+    if (!left || !right || status != OBELISK_RT_OK || !left->graph ||
+        left->domain != right->domain)
+      return false;
+    if (left->numeric && right->numeric && (!excluded || excluded->numeric)) {
+      auto key = std::make_tuple(
+          definition->item, selectionID,
+          definition->kind == obelisk::coverage::FunctionalBinKind::State);
+      auto cached = selections.find(key);
+      if (cached == selections.end()) {
+        auto trimmed = std::make_shared<CompiledSet>();
+        for (auto interval : right->intervals) {
+          if (excluded) {
+            if (const auto *range = excluded->containing(interval.low)) {
+              interval.low = range->high;
+              interval.empty |=
+                  !advanceStateCoverageEndpoint(interval.low, true);
+            }
+            if (const auto *range = excluded->containing(interval.high)) {
+              interval.high = range->low;
+              interval.empty |=
+                  !advanceStateCoverageEndpoint(interval.high, false);
+            }
+          }
+          if (!interval.empty && interval.low <= interval.high)
+            trimmed->intervals.push_back(std::move(interval));
+        }
+        trimmed->indexEndpoints();
+        cached = selections.emplace(key, std::move(trimmed)).first;
+      }
+      const auto &selected = *cached->second;
+      for (const auto &interval : left->intervals) {
+        auto position = selected.endpoints.upper_bound(interval.low);
+        if (position != selected.endpoints.begin()) {
+          auto previous = std::prev(position);
+          if (selected.intervals[previous->second].high >= interval.low)
+            position = previous;
+        }
+        if (position == selected.endpoints.end())
+          continue;
+        const auto &candidate = selected.intervals[position->second];
+        if (interval.high < candidate.low)
+          continue;
+        const auto &low = std::max(interval.low, candidate.low);
+        const auto &high = std::min(interval.high, candidate.high);
+        const auto *removed = excluded ? excluded->containing(low) : nullptr;
+        if (!removed)
+          return true;
+        auto next = removed->high;
+        if (advanceStateCoverageEndpoint(next, true) && next <= high)
+          return true;
+        // A trimmed interval ends in a legal value. If this overlap is
+        // wholly excluded, the subject ends before the next selector hull.
+      }
+      return false;
+    }
+    if (!prepare(*left) || !prepare(*right) ||
+        (excluded && !prepare(*excluded)))
+      return false;
+    Graph &graph = *left->graph;
+    for (const auto &[bval, root] : left->groups) {
+      auto selected = right->groups.find(bval);
+      if (selected == right->groups.end())
+        continue;
+      Root remaining = root;
+      if (excluded) {
+        auto removed = excluded->groups.find(bval);
+        if (removed != excluded->groups.end())
+          remaining = graph.subtract(root, removed->second);
+      }
+      Root overlap = graph.intersect(remaining, selected->second);
+      if (graph.exhausted()) {
+        status = OBELISK_RT_OUT_OF_RESOURCES;
+        return false;
+      }
+      if (overlap)
+        return true;
+    }
+    return false;
+  }
+
+  uint64_t
+  cardinality(uint64_t binID, uint64_t cap,
+              const std::unordered_set<uint64_t> &suppressedAlternatives) {
+    const Bin *definition = bin(binID);
+    if (!definition || !cap) {
+      status = !cap ? OBELISK_RT_INVALID_ARGUMENT : OBELISK_RT_INVALID_DESIGN;
+      return 0;
+    }
+    auto values = subject(*definition, suppressedAlternatives);
+    auto excluded = mask(*definition);
+    if (values && excluded && values->domain != excluded->domain)
+      status = OBELISK_RT_INVALID_DESIGN;
+    if (!values || status != OBELISK_RT_OK || !values->graph ||
+        !prepare(*values) || (excluded && !prepare(*excluded)))
+      return 0;
+    Graph &graph = *values->graph;
+    uint64_t result = 0;
+    for (const auto &[bval, root] : values->groups) {
+      Root remaining = root;
+      if (excluded) {
+        auto removed = excluded->groups.find(bval);
+        if (removed != excluded->groups.end())
+          remaining = graph.subtract(root, removed->second);
+      }
+      uint64_t count = graph.cardinality(remaining, cap);
+      if (graph.exhausted()) {
+        status = OBELISK_RT_OUT_OF_RESOURCES;
+        return 0;
+      }
+      if (count >= cap - result)
+        return cap;
+      result += count;
+    }
+    return result;
+  }
+};
+
 obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
     const obelisk::coverage::Database &schema, uint64_t type,
     const obelisk::coverage::Digest &configuration, uint64_t bin,
     const obelisk::coverage::ResolvedFunctionalValueSet &selection,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
-    bool &result);
+    FunctionalCoverageSetQueryIndex &setQueries, bool &result);
 bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
-                           const obelisk::coverage::CrossSelectorNode &root);
+                           const obelisk::coverage::CrossSelectorNode &root,
+                           FunctionalCoverageSetQueryIndex &setQueries);
 bool crossSelectorIsWithWrappedSet(
     const obelisk::coverage::Database &schema,
-    const obelisk::coverage::CrossSelectorNode &root);
+    const obelisk::coverage::CrossSelectorNode &root,
+    FunctionalCoverageSetQueryIndex &setQueries);
 bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
-                          const obelisk::coverage::CrossSelectorNode &root);
+                          const obelisk::coverage::CrossSelectorNode &root,
+                          FunctionalCoverageSetQueryIndex &setQueries);
 obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
     const obelisk::coverage::Database &schema, uint64_t type,
     const obelisk::coverage::Digest &configuration, uint64_t resolvedCross,
     const obelisk::coverage::CrossSelectorNode &root,
     const std::vector<uint64_t> &binTuple,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
-    bool &result);
+    FunctionalCoverageSetQueryIndex &setQueries, bool &result);
 obelisk_rt_status resolvedCrossSelectorSetCandidates(
     const obelisk::coverage::Database &schema, uint64_t type,
     const obelisk::coverage::Digest &configuration, uint64_t resolvedCross,
     const obelisk::coverage::CrossSelectorNode &root,
     const std::vector<std::vector<uint64_t>> &targetBins,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
+    FunctionalCoverageSetQueryIndex &setQueries,
     std::vector<std::vector<uint64_t>> &result);
 obelisk_rt_status
 emitFunctionalOverlapWarnings(const obelisk::coverage::Database &schema,
@@ -2666,6 +3192,23 @@ obelisk_rt_status resolveStaticFunctionalType(
   auto expressionSchema = [&](uint64_t id) -> const FunctionalExpression * {
     auto entry = expressionSchemas.find(id);
     return entry == expressionSchemas.end() ? nullptr : entry->second;
+  };
+  auto decodeRealBound = [&](const obelisk_rt_functional_value_v1 &value,
+                             uint64_t expressionID,
+                             bool &hasUnknown) -> std::optional<double> {
+    if (isFunctionalRealValueKind(value.kind))
+      return functionalRealValue(value);
+    const auto *expression = expressionSchema(expressionID);
+    FunctionalInteger integer;
+    bool unknown = false;
+    if (!expression ||
+        expression->resultKind != FunctionalExpressionResultKind::Integral ||
+        !decodeFunctionalInteger(value, expression->signedness, integer,
+                                 unknown))
+      return std::nullopt;
+    hasUnknown |= unknown;
+    long double magnitude = floatingFunctionalMagnitude(integer.magnitude);
+    return static_cast<double>(integer.negative ? -magnitude : magnitude);
   };
   std::vector<FunctionalConfigurationOption> configurationOptionRows;
   IndexMap<uint64_t, uint64_t> itemAtLeast;
@@ -4140,33 +4683,15 @@ obelisk_rt_status resolveStaticFunctionalType(
                 return OBELISK_RT_INVALID_DESIGN;
               uint64_t lowBits = 0, highBits = 0;
               bool hasUnknown = false;
-              auto decodeBound =
-                  [&](const obelisk_rt_functional_value_v1 &value,
-                      uint64_t expressionID) -> std::optional<double> {
-                if (isFunctionalRealValueKind(value.kind))
-                  return functionalRealValue(value);
-                const auto *expression = expressionSchema(expressionID);
-                FunctionalInteger integer;
-                bool unknown = false;
-                if (!expression ||
-                    expression->resultKind !=
-                        FunctionalExpressionResultKind::Integral ||
-                    !decodeFunctionalInteger(value, expression->signedness,
-                                             integer, unknown))
-                  return std::nullopt;
-                hasUnknown |= unknown;
-                long double magnitude =
-                    floatingFunctionalMagnitude(integer.magnitude);
-                return static_cast<double>(integer.negative ? -magnitude
-                                                            : magnitude);
-              };
-              auto lower = lowerUnbounded
-                               ? std::optional<double>(0)
-                               : decodeBound(*low, atom.lowerExpression);
+              auto lower =
+                  lowerUnbounded
+                      ? std::optional<double>(0)
+                      : decodeRealBound(*low, atom.lowerExpression, hasUnknown);
               auto upper = upperUnbounded ? std::optional<double>(0)
                            : singleton
                                ? lower
-                               : decodeBound(*high, atom.upperExpression);
+                               : decodeRealBound(*high, atom.upperExpression,
+                                                 hasUnknown);
               if (!lower || !upper)
                 return OBELISK_RT_INVALID_DESIGN;
               if (hasUnknown) {
@@ -5782,8 +6307,9 @@ obelisk_rt_status resolveStaticFunctionalType(
                                 return entry.id == node.valueSet;
                               });
       if (set == schema.functionalValueSets.end() || set->item != node.target ||
-          set->kind != FunctionalValueSetKind::Integral || !set->bitWidth ||
-          set->setExpression ||
+          (set->kind != FunctionalValueSetKind::Integral &&
+           set->kind != FunctionalValueSetKind::Real) ||
+          !set->bitWidth || set->setExpression ||
           set->flags != FunctionalValueSetNeedsResolution ||
           uint64_t{set->firstAtom} + set->atomCount >
               schema.functionalValueAtoms.size())
@@ -5823,7 +6349,8 @@ obelisk_rt_status resolveStaticFunctionalType(
         const FunctionalValueAtom &atom =
             schema.functionalValueAtoms[set->firstAtom + atomIndex];
         if (atom.kind != FunctionalValueAtomKind::IntegralValue &&
-            atom.kind != FunctionalValueAtomKind::IntegralRange)
+            atom.kind != FunctionalValueAtomKind::IntegralRange &&
+            atom.kind != FunctionalValueAtomKind::RealInterval)
           return OBELISK_RT_INVALID_DESIGN;
         const bool lowerUnbounded =
             atom.flags & FunctionalValueAtomLowerUnbounded;
@@ -5831,10 +6358,72 @@ obelisk_rt_status resolveStaticFunctionalType(
             atom.flags & FunctionalValueAtomUpperUnbounded;
         const auto *low =
             lowerUnbounded ? nullptr : expressionValue(atom.lowerExpression);
+        const bool singleton =
+            atom.kind == FunctionalValueAtomKind::IntegralValue ||
+            (atom.kind == FunctionalValueAtomKind::RealInterval &&
+             !atom.upperExpression && !upperUnbounded);
         const auto *high = upperUnbounded ? nullptr
-                           : atom.kind == FunctionalValueAtomKind::IntegralValue
-                               ? low
-                               : expressionValue(atom.upperExpression);
+                           : singleton ? low
+                                       : expressionValue(atom.upperExpression);
+        if ((!lowerUnbounded && !low) || (!upperUnbounded && !high))
+          return OBELISK_RT_INVALID_DESIGN;
+        if (set->kind == FunctionalValueSetKind::Real) {
+          if (atom.kind != FunctionalValueAtomKind::RealInterval)
+            return OBELISK_RT_INVALID_DESIGN;
+          bool hasUnknown = false;
+          auto lower =
+              lowerUnbounded
+                  ? std::optional<double>(0)
+                  : decodeRealBound(*low, atom.lowerExpression, hasUnknown);
+          auto upper =
+              upperUnbounded ? std::optional<double>(0)
+              : singleton
+                  ? lower
+                  : decodeRealBound(*high, atom.upperExpression, hasUnknown);
+          if (!lower || !upper)
+            return OBELISK_RT_INVALID_DESIGN;
+          if (hasUnknown) {
+            std::fputs(
+                "warning: cross bin real intersect value contains X or Z "
+                "and is ignored\n",
+                stderr);
+            continue;
+          }
+          if ((!lowerUnbounded && !std::isfinite(*lower)) ||
+              (!upperUnbounded && !std::isfinite(*upper)))
+            return OBELISK_RT_INVALID_DESIGN;
+          if (!lowerUnbounded && !upperUnbounded && *lower > *upper) {
+            std::fputs("warning: cross bin real intersect range has reversed "
+                       "bounds and is ignored\n",
+                       stderr);
+            continue;
+          }
+          const auto *sample = lookup(coverpointSamples, node.target);
+          bool shortReal =
+              sample &&
+              sample->resultKind == FunctionalExpressionResultKind::ShortReal;
+          if (shortReal && singleton &&
+              (std::abs(*lower) > std::numeric_limits<float>::max() ||
+               static_cast<double>(static_cast<float>(*lower)) != *lower)) {
+            std::fputs("warning: cross bin real intersect value changes value "
+                       "when converted to the effective coverpoint type and "
+                       "is ignored\n",
+                       stderr);
+            continue;
+          }
+          uint64_t lowBits = 0, highBits = 0;
+          std::memcpy(&lowBits, &*lower, sizeof(lowBits));
+          std::memcpy(&highBits, &*upper, sizeof(highBits));
+          pending.atoms.push_back(
+              {resolvedSetID, lowBits, highBits, 0, 0,
+               static_cast<uint32_t>(pending.atoms.size()), atom.kind,
+               atom.flags & (FunctionalValueAtomLowerInclusive |
+                             FunctionalValueAtomUpperInclusive |
+                             FunctionalValueAtomLowerUnbounded |
+                             FunctionalValueAtomUpperUnbounded |
+                             FunctionalValueAtomRealRange)});
+          continue;
+        }
         const FunctionalExpression *lowExpression =
             lowerUnbounded ? nullptr : expressionSchema(atom.lowerExpression);
         const FunctionalExpression *highExpression =
@@ -6554,7 +7143,12 @@ obelisk_rt_status resolveStaticFunctionalType(
   fingerprintInput.resolvedFunctionalTupleSetComponents.insert(
       fingerprintInput.resolvedFunctionalTupleSetComponents.end(),
       resolvedTupleComponentRows.begin(), resolvedTupleComponentRows.end());
-  markStaticallyEmptyStateBins(fingerprintInput, typeID, Digest{});
+  FunctionalCoverageSetQueryIndex setQueries(fingerprintInput, typeID,
+                                             Digest{});
+  obelisk_rt_status stateExclusionStatus = markStaticallyEmptyStateBins(
+      fingerprintInput, typeID, Digest{}, setQueries);
+  if (stateExclusionStatus != OBELISK_RT_OK)
+    return stateExclusionStatus;
   std::unordered_set<uint64_t> suppressedTransitionAlternatives;
   std::unordered_set<uint64_t> emptyTransitionBins;
   obelisk_rt_status transitionExclusionStatus = deriveTransitionExclusions(
@@ -6718,16 +7312,17 @@ obelisk_rt_status resolveStaticFunctionalType(
         return OBELISK_RT_INVALID_DESIGN;
 
       bool hasSignificantAlternative = false;
-      if (crossSelectorUsesWith(schema, *node)) {
+      if (crossSelectorUsesWith(schema, *node, setQueries)) {
         std::vector<std::vector<uint64_t>> candidateTuples;
-        if (crossSelectorIsWithWrappedSet(schema, *node)) {
+        if (crossSelectorIsWithWrappedSet(schema, *node, setQueries)) {
           std::vector<std::vector<uint64_t>> targetBinIDs(allTargetBins.size());
           for (size_t ordinal = 0; ordinal != allTargetBins.size(); ++ordinal)
             for (const ResolvedFunctionalBin *bin : allTargetBins[ordinal])
               targetBinIDs[ordinal].push_back(bin->id);
           obelisk_rt_status selectorStatus = resolvedCrossSelectorSetCandidates(
               fingerprintInput, typeID, Digest{}, cross->id, *node,
-              targetBinIDs, suppressedTransitionAlternatives, candidateTuples);
+              targetBinIDs, suppressedTransitionAlternatives, setQueries,
+              candidateTuples);
           if (selectorStatus != OBELISK_RT_OK)
             return selectorStatus;
         } else {
@@ -6758,7 +7353,7 @@ obelisk_rt_status resolveStaticFunctionalType(
             obelisk_rt_status selectorStatus =
                 resolvedCrossSelectorSelectsBinTuple(
                     fingerprintInput, typeID, Digest{}, cross->id, *node, tuple,
-                    suppressedTransitionAlternatives, selected);
+                    suppressedTransitionAlternatives, setQueries, selected);
             if (selectorStatus != OBELISK_RT_OK)
               return selectorStatus;
             if (selected)
@@ -6778,7 +7373,7 @@ obelisk_rt_status resolveStaticFunctionalType(
           hasSignificantAlternative = true;
         }
       } else {
-        const bool usesSet = crossSelectorUsesSet(schema, *node);
+        const bool usesSet = crossSelectorUsesSet(schema, *node, setQueries);
         obelisk_rt_status selectorStatus = decodeCrossSelectorDNF(
             schema, *node, recordLimit, alternatives, usesSet);
         if (selectorStatus != OBELISK_RT_OK)
@@ -6849,7 +7444,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                 bool intersects = false;
                 selectionStatus = resolvedFunctionalBinIntersectsValueSet(
                     fingerprintInput, typeID, Digest{}, bin->id, *selectedSet,
-                    suppressedTransitionAlternatives, intersects);
+                    suppressedTransitionAlternatives, setQueries, intersects);
                 selected = selectionStatus == OBELISK_RT_OK && intersects;
               }
               return term.negated ? !selected : selected;
@@ -6890,7 +7485,8 @@ obelisk_rt_status resolveStaticFunctionalType(
           std::vector<std::vector<uint64_t>> candidates;
           selectorStatus = resolvedCrossSelectorSetCandidates(
               fingerprintInput, typeID, Digest{}, cross->id, *node,
-              targetBinIDs, suppressedTransitionAlternatives, candidates);
+              targetBinIDs, suppressedTransitionAlternatives, setQueries,
+              candidates);
           if (selectorStatus != OBELISK_RT_OK)
             return selectorStatus;
           for (const auto &tuple : candidates) {
@@ -7319,6 +7915,7 @@ obelisk_rt_status createResolvedFunctionalType(
   FunctionalCoverageTypeState type;
   type.configuration = configuration;
   auto metadata = std::make_shared<FunctionalCoverageQueryMetadata>();
+  FunctionalCoverageSetQueryIndex setQueries(schema, typeID, configuration);
   metadata->templates = coverage.constructionSchemas;
   using namespace obelisk::coverage;
   const auto optionsByOwner = detail::groupRecords(
@@ -7640,7 +8237,7 @@ obelisk_rt_status createResolvedFunctionalType(
       const auto *resolvedBin = &metadata->bins[resolvedBinPosition->second];
       FunctionalCoverageCrossState::ExplicitBin explicitBin;
       explicitBin.bin = resolvedBin->id;
-      if (crossSelectorUsesWith(schema, *selector)) {
+      if (crossSelectorUsesWith(schema, *selector, setQueries)) {
         std::vector<std::vector<uint64_t>> targetBins(cross.targets.size());
         for (size_t targetOrdinal = 0; targetOrdinal != cross.targets.size();
              ++targetOrdinal) {
@@ -7662,10 +8259,11 @@ obelisk_rt_status createResolvedFunctionalType(
                     [](uint64_t bin) { return bin; });
         }
         std::vector<std::vector<uint64_t>> candidateTuples;
-        if (crossSelectorIsWithWrappedSet(schema, *selector)) {
+        if (crossSelectorIsWithWrappedSet(schema, *selector, setQueries)) {
           obelisk_rt_status selectorStatus = resolvedCrossSelectorSetCandidates(
               schema, typeID, configuration, cross.id, *selector, targetBins,
-              type.suppressedTransitionAlternatives, candidateTuples);
+              type.suppressedTransitionAlternatives, setQueries,
+              candidateTuples);
           if (selectorStatus != OBELISK_RT_OK)
             return selectorStatus;
         } else {
@@ -7693,7 +8291,8 @@ obelisk_rt_status createResolvedFunctionalType(
             obelisk_rt_status selectorStatus =
                 resolvedCrossSelectorSelectsBinTuple(
                     schema, typeID, configuration, cross.id, *selector, tuple,
-                    type.suppressedTransitionAlternatives, selected);
+                    type.suppressedTransitionAlternatives, setQueries,
+                    selected);
             if (selectorStatus != OBELISK_RT_OK)
               return selectorStatus;
             if (selected)
@@ -7714,7 +8313,8 @@ obelisk_rt_status createResolvedFunctionalType(
           explicitBin.alternatives.push_back(std::move(rectangle));
         }
       } else {
-        const bool usesSet = crossSelectorUsesSet(schema, *selector);
+        const bool usesSet =
+            crossSelectorUsesSet(schema, *selector, setQueries);
         obelisk_rt_status selectorStatus = decodeCrossSelectorDNF(
             schema, *selector, obelisk::coverage::ParseLimits{}.maxRecords,
             alternatives, usesSet);
@@ -7766,7 +8366,7 @@ obelisk_rt_status createResolvedFunctionalType(
                     resolvedFunctionalBinIntersectsValueSet(
                         schema, typeID, configuration, candidate.id,
                         *selectedSet, type.suppressedTransitionAlternatives,
-                        intersects);
+                        setQueries, intersects);
                 if (status != OBELISK_RT_OK)
                   return status;
                 selected = intersects;
@@ -7854,7 +8454,7 @@ obelisk_rt_status createResolvedFunctionalType(
           std::vector<std::vector<uint64_t>> candidates;
           selectorStatus = resolvedCrossSelectorSetCandidates(
               schema, typeID, configuration, cross.id, *selector, targetBins,
-              type.suppressedTransitionAlternatives, candidates);
+              type.suppressedTransitionAlternatives, setQueries, candidates);
           if (selectorStatus != OBELISK_RT_OK)
             return selectorStatus;
           for (const auto &tuple : candidates) {
@@ -9200,176 +9800,9 @@ bool makeIntegralCoverageShape(
   return true;
 }
 
-bool integralCoverageShapesIntersect(const IntegralCoverageShape &left,
-                                     const IntegralCoverageShape &right,
-                                     uint32_t bitWidth) {
-  if (left.interval && right.interval)
-    return compareIntegralBitVectors(left.high, right.low) >= 0 &&
-           compareIntegralBitVectors(right.high, left.low) >= 0;
-  if (!left.interval && !right.interval) {
-    for (uint32_t ordinal = 0; ordinal != left.value.size(); ++ordinal)
-      if ((left.value[ordinal] ^ right.value[ordinal]) &
-          ~left.wildcard[ordinal] & ~right.wildcard[ordinal])
-        return false;
-    return true;
-  }
-
-  const IntegralCoverageShape &interval = left.interval ? left : right;
-  const IntegralCoverageShape &cube = left.interval ? right : left;
-  // Digit-DP over the signed-order-biased bit vectors. The two comparison
-  // states track the candidate against the inclusive low/high bounds; only
-  // nine states are possible regardless of the coverpoint width.
-  bool states[3][3] = {};
-  states[1][1] = true;
-  auto compareBit = [](int relation, bool candidate, bool bound) {
-    if (relation)
-      return relation;
-    if (candidate == bound)
-      return 0;
-    return candidate ? 1 : -1;
-  };
-  for (uint32_t reverse = bitWidth; reverse != 0; --reverse) {
-    const uint32_t bit = reverse - 1;
-    const uint32_t limb = bit / 64;
-    const uint64_t mask = uint64_t{1} << (bit % 64);
-    const bool wildcard = (cube.wildcard[limb] & mask) != 0;
-    const bool cubeBit = (cube.value[limb] & mask) != 0;
-    const bool lowBit = (interval.low[limb] & mask) != 0;
-    const bool highBit = (interval.high[limb] & mask) != 0;
-    bool next[3][3] = {};
-    for (int lowRelation = -1; lowRelation <= 1; ++lowRelation)
-      for (int highRelation = -1; highRelation <= 1; ++highRelation) {
-        if (!states[lowRelation + 1][highRelation + 1])
-          continue;
-        for (unsigned candidate = 0; candidate != 2; ++candidate) {
-          if (!wildcard && bool(candidate) != cubeBit)
-            continue;
-          const int nextLow = compareBit(lowRelation, candidate != 0, lowBit);
-          const int nextHigh =
-              compareBit(highRelation, candidate != 0, highBit);
-          if (nextLow < 0 || nextHigh > 0)
-            continue;
-          next[nextLow + 1][nextHigh + 1] = true;
-        }
-      }
-    for (unsigned low = 0; low != 3; ++low)
-      for (unsigned high = 0; high != 3; ++high)
-        states[low][high] = next[low][high];
-  }
-  for (int lowRelation = 0; lowRelation <= 1; ++lowRelation)
-    for (int highRelation = -1; highRelation <= 0; ++highRelation)
-      if (states[lowRelation + 1][highRelation + 1])
-        return true;
-  return false;
-}
-
-bool resolvedFunctionalValueSetsIntersect(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueSet &left,
-    const obelisk::coverage::ResolvedFunctionalValueSet &right) {
-  using namespace obelisk::coverage;
-  if (left.kind != right.kind || left.bitWidth != right.bitWidth ||
-      left.signedness != right.signedness)
-    return false;
-  auto realAtomsIntersect = [](const ResolvedFunctionalValueAtom &lhs,
-                               const ResolvedFunctionalValueAtom &rhs) {
-    double lhsLow = 0.0, lhsHigh = 0.0, rhsLow = 0.0, rhsHigh = 0.0;
-    std::memcpy(&lhsLow, &lhs.realLowBits, sizeof(lhsLow));
-    std::memcpy(&lhsHigh, &lhs.realHighBits, sizeof(lhsHigh));
-    std::memcpy(&rhsLow, &rhs.realLowBits, sizeof(rhsLow));
-    std::memcpy(&rhsHigh, &rhs.realHighBits, sizeof(rhsHigh));
-    const bool lhsUpperUnbounded =
-        lhs.flags & FunctionalValueAtomUpperUnbounded;
-    const bool lhsLowerUnbounded =
-        lhs.flags & FunctionalValueAtomLowerUnbounded;
-    const bool rhsUpperUnbounded =
-        rhs.flags & FunctionalValueAtomUpperUnbounded;
-    const bool rhsLowerUnbounded =
-        rhs.flags & FunctionalValueAtomLowerUnbounded;
-    if (!lhsUpperUnbounded && !rhsLowerUnbounded &&
-        (lhsHigh < rhsLow ||
-         (lhsHigh == rhsLow &&
-          (!(lhs.flags & FunctionalValueAtomUpperInclusive) ||
-           !(rhs.flags & FunctionalValueAtomLowerInclusive)))))
-      return false;
-    if (!rhsUpperUnbounded && !lhsLowerUnbounded &&
-        (rhsHigh < lhsLow ||
-         (rhsHigh == lhsLow &&
-          (!(rhs.flags & FunctionalValueAtomUpperInclusive) ||
-           !(lhs.flags & FunctionalValueAtomLowerInclusive)))))
-      return false;
-    return true;
-  };
-  if (left.kind == FunctionalValueSetKind::Real) {
-    for (uint32_t leftIndex = 0; leftIndex != left.atomCount; ++leftIndex)
-      for (uint32_t rightIndex = 0; rightIndex != right.atomCount; ++rightIndex)
-        if (realAtomsIntersect(
-                schema.resolvedFunctionalValueAtoms[left.firstAtom + leftIndex],
-                schema.resolvedFunctionalValueAtoms[right.firstAtom +
-                                                    rightIndex]))
-          return true;
-    return false;
-  }
-  if (left.kind != FunctionalValueSetKind::Integral)
-    return false;
-  auto integralCubesIntersect = [&](const ResolvedFunctionalValueAtom &lhs,
-                                    const ResolvedFunctionalValueAtom &rhs) {
-    if (lhs.kind != FunctionalValueAtomKind::IntegralValue ||
-        rhs.kind != FunctionalValueAtomKind::IntegralValue ||
-        lhs.limbCount != rhs.limbCount)
-      return false;
-    for (uint32_t ordinal = 0; ordinal != lhs.limbCount; ++ordinal) {
-      const auto &leftLimb =
-          schema.resolvedFunctionalValueLimbs[lhs.firstLimb + ordinal];
-      const auto &rightLimb =
-          schema.resolvedFunctionalValueLimbs[rhs.firstLimb + ordinal];
-      const uint64_t valid = ordinal + 1 == lhs.limbCount && left.bitWidth % 64
-                                 ? lowBitsMask(left.bitWidth % 64)
-                                 : UINT64_MAX;
-      const uint64_t leftWildcard = leftLimb.wildcardMask & valid;
-      const uint64_t rightWildcard = rightLimb.wildcardMask & valid;
-      const uint64_t leftBval = leftLimb.lowBval & ~leftWildcard & valid;
-      const uint64_t rightBval = rightLimb.lowBval & ~rightWildcard & valid;
-      const uint64_t jointlyConstrained =
-          ~(leftWildcard | rightWildcard) & valid;
-      // Wildcard-bin X/Z/? positions expand only to known 0 and 1. They
-      // therefore cannot intersect a constrained X/Z value from the other
-      // cube. At jointly constrained positions, case equality defines the
-      // exact four-state intersection.
-      if ((leftBval & rightWildcard) || (rightBval & leftWildcard) ||
-          ((leftLimb.lowAval ^ rightLimb.lowAval) & jointlyConstrained) ||
-          ((leftBval ^ rightBval) & jointlyConstrained))
-        return false;
-    }
-    return true;
-  };
-  for (uint32_t leftIndex = 0; leftIndex != left.atomCount; ++leftIndex) {
-    const auto &leftAtom =
-        schema.resolvedFunctionalValueAtoms[left.firstAtom + leftIndex];
-    IntegralCoverageShape leftShape;
-    for (uint32_t rightIndex = 0; rightIndex != right.atomCount; ++rightIndex) {
-      const auto &rightAtom =
-          schema.resolvedFunctionalValueAtoms[right.firstAtom + rightIndex];
-      if (leftAtom.kind == FunctionalValueAtomKind::IntegralValue &&
-          rightAtom.kind == FunctionalValueAtomKind::IntegralValue &&
-          integralCubesIntersect(leftAtom, rightAtom))
-        return true;
-      if (!makeIntegralCoverageShape(schema, leftAtom, left.bitWidth,
-                                     left.signedness, leftShape))
-        continue;
-      IntegralCoverageShape rightShape;
-      if (!makeIntegralCoverageShape(schema, rightAtom, right.bitWidth,
-                                     right.signedness, rightShape))
-        continue;
-      if (integralCoverageShapesIntersect(leftShape, rightShape, left.bitWidth))
-        return true;
-    }
-  }
-  return false;
-}
-
 /// Apply IEEE 1800-2023 19.6.1.1 value-set selection to one resolved
-/// coverpoint bin. State bins use their value set. Transition bins use the
+/// coverpoint bin. State bins subtract the union of ignore/illegal sets.
+/// Transition bins use the
 /// last step of every surviving transition alternative; the cross selects the
 /// bin when any such terminal value set intersects the requested set.
 obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
@@ -9377,77 +9810,22 @@ obelisk_rt_status resolvedFunctionalBinIntersectsValueSet(
     const obelisk::coverage::Digest &configuration, uint64_t binID,
     const obelisk::coverage::ResolvedFunctionalValueSet &selection,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
-    bool &result) {
-  using namespace obelisk::coverage;
+    FunctionalCoverageSetQueryIndex &setQueries, bool &result) {
   result = false;
-  if (selection.type != type || selection.configuration != configuration)
+  if (&schema != &setQueries.schema || type != setQueries.type ||
+      configuration != setQueries.configuration || selection.type != type ||
+      selection.configuration != configuration)
     return OBELISK_RT_INVALID_DESIGN;
-  auto bin = std::find_if(schema.resolvedFunctionalBins.begin(),
-                          schema.resolvedFunctionalBins.end(),
-                          [&](const auto &candidate) {
-                            return candidate.type == type &&
-                                   candidate.configuration == configuration &&
-                                   candidate.id == binID;
-                          });
-  if (bin == schema.resolvedFunctionalBins.end())
-    return OBELISK_RT_INVALID_DESIGN;
-
-  if (bin->kind == FunctionalBinKind::State) {
-    auto plan = std::find_if(
-        schema.resolvedFunctionalBinPlans.begin(),
-        schema.resolvedFunctionalBinPlans.end(), [&](const auto &candidate) {
-          return candidate.type == type &&
-                 candidate.configuration == configuration &&
-                 candidate.bin == binID;
-        });
-    if (plan == schema.resolvedFunctionalBinPlans.end() || !plan->valueSet)
-      return OBELISK_RT_INVALID_DESIGN;
-    const ResolvedFunctionalValueSet *valueSet =
-        findResolvedValueSet(schema, configuration, plan->valueSet);
-    if (!valueSet || valueSet->type != type)
-      return OBELISK_RT_INVALID_DESIGN;
-    result = resolvedFunctionalValueSetsIntersect(schema, *valueSet, selection);
-    return OBELISK_RT_OK;
-  }
-  if (bin->kind != FunctionalBinKind::Transition)
-    return OBELISK_RT_INVALID_DESIGN;
-
-  bool sawAlternative = false;
-  for (const ResolvedTransitionAlternative &alternative :
-       schema.resolvedTransitionAlternatives) {
-    if (alternative.type != type ||
-        alternative.configuration != configuration || alternative.bin != binID)
-      continue;
-    sawAlternative = true;
-    if (!alternative.stepCount ||
-        uint64_t{alternative.firstStep} + alternative.stepCount >
-            schema.resolvedTransitionSteps.size())
-      return OBELISK_RT_INVALID_DESIGN;
-    const ResolvedTransitionStep &terminal =
-        schema.resolvedTransitionSteps[alternative.firstStep +
-                                       alternative.stepCount - 1];
-    if (terminal.type != type || terminal.configuration != configuration ||
-        terminal.bin != binID || terminal.alternative != alternative.id ||
-        terminal.ordinal != alternative.stepCount - 1)
-      return OBELISK_RT_INVALID_DESIGN;
-    if (suppressedTransitionAlternatives.count(alternative.id))
-      continue;
-    const ResolvedFunctionalValueSet *terminalSet =
-        findResolvedValueSet(schema, configuration, terminal.valueSet);
-    if (!terminalSet || terminalSet->type != type)
-      return OBELISK_RT_INVALID_DESIGN;
-    if (resolvedFunctionalValueSetsIntersect(schema, *terminalSet, selection)) {
-      result = true;
-      return OBELISK_RT_OK;
-    }
-  }
-  return sawAlternative ? OBELISK_RT_OK : OBELISK_RT_INVALID_DESIGN;
+  result = setQueries.intersects(binID, selection.id,
+                                 suppressedTransitionAlternatives);
+  return setQueries.status;
 }
 
 bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
-                           const obelisk::coverage::CrossSelectorNode &root) {
+                           const obelisk::coverage::CrossSelectorNode &root,
+                           FunctionalCoverageSetQueryIndex &setQueries) {
   std::vector<const obelisk::coverage::CrossSelectorNode *> worklist{&root};
-  std::unordered_set<uint64_t> visited;
+  IndexSet<uint64_t> visited;
   while (!worklist.empty()) {
     const auto *node = worklist.back();
     worklist.pop_back();
@@ -9461,14 +9839,11 @@ bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
         return false;
       uint64_t childID =
           schema.crossSelectorOperands[node->firstOperand + ordinal].operand;
-      auto child = std::find_if(
-          schema.crossSelectorNodes.begin(), schema.crossSelectorNodes.end(),
-          [&](const auto &candidate) {
-            return candidate.id == childID && candidate.cross == root.cross;
-          });
-      if (child == schema.crossSelectorNodes.end())
+      const auto *child = setQueries.lookup(setQueries.selectors,
+                                            schema.crossSelectorNodes, childID);
+      if (!child || child->cross != root.cross)
         return false;
-      worklist.push_back(&*child);
+      worklist.push_back(child);
     }
   }
   return false;
@@ -9476,10 +9851,11 @@ bool crossSelectorUsesWith(const obelisk::coverage::Database &schema,
 
 bool crossSelectorIsWithWrappedSet(
     const obelisk::coverage::Database &schema,
-    const obelisk::coverage::CrossSelectorNode &root) {
+    const obelisk::coverage::CrossSelectorNode &root,
+    FunctionalCoverageSetQueryIndex &setQueries) {
   using namespace obelisk::coverage;
   const CrossSelectorNode *node = &root;
-  std::unordered_set<uint64_t> visited;
+  IndexSet<uint64_t> visited;
   while (node->kind == CrossSelectorKind::With) {
     if (!visited.insert(node->id).second || node->operandCount != 1 ||
         uint64_t{node->firstOperand} >= schema.crossSelectorOperands.size())
@@ -9488,23 +9864,20 @@ bool crossSelectorIsWithWrappedSet(
         schema.crossSelectorOperands[node->firstOperand];
     if (operand.node != node->id || operand.ordinal != 0)
       return false;
-    auto child = std::find_if(schema.crossSelectorNodes.begin(),
-                              schema.crossSelectorNodes.end(),
-                              [&](const CrossSelectorNode &candidate) {
-                                return candidate.id == operand.operand &&
-                                       candidate.cross == root.cross;
-                              });
-    if (child == schema.crossSelectorNodes.end())
+    const auto *child = setQueries.lookup(
+        setQueries.selectors, schema.crossSelectorNodes, operand.operand);
+    if (!child || child->cross != root.cross)
       return false;
-    node = &*child;
+    node = child;
   }
   return node->kind == CrossSelectorKind::Set;
 }
 
 bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
-                          const obelisk::coverage::CrossSelectorNode &root) {
+                          const obelisk::coverage::CrossSelectorNode &root,
+                          FunctionalCoverageSetQueryIndex &setQueries) {
   std::vector<const obelisk::coverage::CrossSelectorNode *> worklist{&root};
-  std::unordered_set<uint64_t> visited;
+  IndexSet<uint64_t> visited;
   while (!worklist.empty()) {
     const auto *node = worklist.back();
     worklist.pop_back();
@@ -9518,14 +9891,11 @@ bool crossSelectorUsesSet(const obelisk::coverage::Database &schema,
         return false;
       uint64_t childID =
           schema.crossSelectorOperands[node->firstOperand + ordinal].operand;
-      auto child = std::find_if(
-          schema.crossSelectorNodes.begin(), schema.crossSelectorNodes.end(),
-          [&](const auto &candidate) {
-            return candidate.id == childID && candidate.cross == root.cross;
-          });
-      if (child == schema.crossSelectorNodes.end())
+      const auto *child = setQueries.lookup(setQueries.selectors,
+                                            schema.crossSelectorNodes, childID);
+      if (!child || child->cross != root.cross)
         return false;
-      worklist.push_back(&*child);
+      worklist.push_back(child);
     }
   }
   return false;
@@ -9536,145 +9906,13 @@ obelisk_rt_status resolvedFunctionalBinCardinalityCapped(
     const obelisk::coverage::Digest &configuration, uint64_t binID,
     uint64_t cap,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
-    uint64_t &result) {
-  using namespace obelisk::coverage;
+    FunctionalCoverageSetQueryIndex &setQueries, uint64_t &result) {
   result = 0;
-  if (!cap)
-    return OBELISK_RT_INVALID_ARGUMENT;
-  auto bin = std::find_if(schema.resolvedFunctionalBins.begin(),
-                          schema.resolvedFunctionalBins.end(),
-                          [&](const auto &candidate) {
-                            return candidate.type == type &&
-                                   candidate.configuration == configuration &&
-                                   candidate.id == binID;
-                          });
-  if (bin == schema.resolvedFunctionalBins.end())
+  if (&schema != &setQueries.schema || type != setQueries.type ||
+      configuration != setQueries.configuration)
     return OBELISK_RT_INVALID_DESIGN;
-  std::vector<const ResolvedFunctionalValueSet *> sets;
-  if (bin->kind == FunctionalBinKind::State) {
-    auto plan = std::find_if(
-        schema.resolvedFunctionalBinPlans.begin(),
-        schema.resolvedFunctionalBinPlans.end(), [&](const auto &candidate) {
-          return candidate.type == type &&
-                 candidate.configuration == configuration &&
-                 candidate.bin == binID;
-        });
-    const auto *set =
-        plan == schema.resolvedFunctionalBinPlans.end()
-            ? nullptr
-            : findResolvedValueSet(schema, configuration, plan->valueSet);
-    if (!set || set->type != type)
-      return OBELISK_RT_INVALID_DESIGN;
-    sets.push_back(set);
-  } else if (bin->kind == FunctionalBinKind::Transition) {
-    bool sawAlternative = false;
-    for (const ResolvedTransitionAlternative &alternative :
-         schema.resolvedTransitionAlternatives) {
-      if (alternative.type != type ||
-          alternative.configuration != configuration ||
-          alternative.bin != binID)
-        continue;
-      sawAlternative = true;
-      if (!alternative.stepCount ||
-          uint64_t{alternative.firstStep} + alternative.stepCount >
-              schema.resolvedTransitionSteps.size())
-        return OBELISK_RT_INVALID_DESIGN;
-      if (suppressedTransitionAlternatives.count(alternative.id))
-        continue;
-      const auto &terminal =
-          schema.resolvedTransitionSteps[alternative.firstStep +
-                                         alternative.stepCount - 1];
-      const auto *set =
-          findResolvedValueSet(schema, configuration, terminal.valueSet);
-      if (!set || set->type != type)
-        return OBELISK_RT_INVALID_DESIGN;
-      sets.push_back(set);
-    }
-    if (!sawAlternative)
-      return OBELISK_RT_INVALID_DESIGN;
-  } else {
-    return OBELISK_RT_INVALID_DESIGN;
-  }
-  if (sets.empty())
-    return OBELISK_RT_OK;
-
-  if (sets.front()->kind == FunctionalValueSetKind::Real) {
-    std::set<double> singletons;
-    for (const ResolvedFunctionalValueSet *set : sets) {
-      if (set->kind != FunctionalValueSetKind::Real)
-        return OBELISK_RT_INVALID_DESIGN;
-      for (uint32_t ordinal = 0; ordinal != set->atomCount; ++ordinal) {
-        const auto &atom =
-            schema.resolvedFunctionalValueAtoms[set->firstAtom + ordinal];
-        double low = 0.0, high = 0.0;
-        std::memcpy(&low, &atom.realLowBits, sizeof(low));
-        std::memcpy(&high, &atom.realHighBits, sizeof(high));
-        if (low != high || atom.flags != (FunctionalValueAtomLowerInclusive |
-                                          FunctionalValueAtomUpperInclusive)) {
-          result = cap;
-          return OBELISK_RT_OK;
-        }
-        singletons.insert(low == 0.0 ? 0.0 : low);
-        if (singletons.size() >= cap) {
-          result = cap;
-          return OBELISK_RT_OK;
-        }
-      }
-    }
-    result = singletons.size();
-    return OBELISK_RT_OK;
-  }
-
-  std::vector<IntegralCoverageShape> shapes;
-  std::set<std::vector<uint64_t>> exactFourStateValues;
-  for (const ResolvedFunctionalValueSet *set : sets) {
-    if (set->kind != FunctionalValueSetKind::Integral ||
-        set->bitWidth != sets.front()->bitWidth ||
-        set->signedness != sets.front()->signedness)
-      return OBELISK_RT_INVALID_DESIGN;
-    for (uint32_t ordinal = 0; ordinal != set->atomCount; ++ordinal) {
-      const auto &atom =
-          schema.resolvedFunctionalValueAtoms[set->firstAtom + ordinal];
-      bool exactFourState = atom.kind == FunctionalValueAtomKind::IntegralValue;
-      bool hasBval = false;
-      std::vector<uint64_t> exactKey;
-      if (exactFourState) {
-        exactKey.reserve(atom.limbCount * 2);
-        for (uint32_t limbOrdinal = 0; limbOrdinal != atom.limbCount;
-             ++limbOrdinal) {
-          const auto &limb =
-              schema.resolvedFunctionalValueLimbs[atom.firstLimb + limbOrdinal];
-          exactFourState &= limb.wildcardMask == 0;
-          hasBval |= limb.lowBval != 0;
-          exactKey.push_back(limb.lowAval);
-          exactKey.push_back(limb.lowBval);
-        }
-      }
-      if (exactFourState && hasBval) {
-        exactFourStateValues.insert(std::move(exactKey));
-        if (exactFourStateValues.size() >= cap) {
-          result = cap;
-          return OBELISK_RT_OK;
-        }
-        continue;
-      }
-      IntegralCoverageShape shape;
-      if (!makeIntegralCoverageShape(schema, atom, set->bitWidth,
-                                     set->signedness, shape))
-        return OBELISK_RT_INVALID_DESIGN;
-      shapes.push_back(std::move(shape));
-    }
-  }
-  uint64_t knownCardinality = 0;
-  obelisk_rt_status status = integralShapeUnionCardinalityCapped(
-      shapes, sets.front()->bitWidth, cap, knownCardinality);
-  if (status != OBELISK_RT_OK)
-    return status;
-  result = knownCardinality >=
-                   cap - std::min<uint64_t>(exactFourStateValues.size(), cap)
-               ? cap
-               : knownCardinality + exactFourStateValues.size();
-  return OBELISK_RT_OK;
+  result = setQueries.cardinality(binID, cap, suppressedTransitionAlternatives);
+  return setQueries.status;
 }
 
 obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
@@ -9683,74 +9921,43 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
     const obelisk::coverage::CrossSelectorNode &root,
     const std::vector<uint64_t> &binTuple,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
-    bool &result) {
+    FunctionalCoverageSetQueryIndex &setQueries, bool &result) {
   using namespace obelisk::coverage;
   result = false;
-  auto cross = std::find_if(
-      schema.resolvedFunctionalItems.begin(),
-      schema.resolvedFunctionalItems.end(), [&](const auto &candidate) {
-        return candidate.type == type &&
-               candidate.configuration == configuration &&
-               candidate.id == resolvedCross &&
-               candidate.kind == FunctionalItemKind::Cross;
-      });
-  if (cross == schema.resolvedFunctionalItems.end() ||
+  const auto *cross = setQueries.lookup(
+      setQueries.items, schema.resolvedFunctionalItems, resolvedCross);
+  if (!cross || cross->kind != FunctionalItemKind::Cross ||
       root.cross != cross->templateItem)
     return OBELISK_RT_INVALID_DESIGN;
-  auto plan = std::find_if(schema.crossPlans.begin(), schema.crossPlans.end(),
-                           [&](const CrossPlan &candidate) {
-                             return candidate.item == cross->templateItem;
-                           });
-  if (plan == schema.crossPlans.end() || binTuple.size() != plan->targetCount ||
+  const auto *plan = setQueries.lookup(setQueries.crossPlans, schema.crossPlans,
+                                       cross->templateItem);
+  if (!plan || binTuple.size() != plan->targetCount ||
       uint64_t{plan->firstTarget} + plan->targetCount >
           schema.crossTargets.size())
     return OBELISK_RT_INVALID_DESIGN;
 
-  std::unordered_map<uint64_t, const CrossSelectorNode *> nodes;
-  for (const CrossSelectorNode &node : schema.crossSelectorNodes)
-    if (node.cross == root.cross)
-      nodes.emplace(node.id, &node);
   std::vector<uint64_t> resolvedTargets;
   resolvedTargets.reserve(plan->targetCount);
   for (uint32_t ordinal = 0; ordinal != plan->targetCount; ++ordinal) {
     const CrossTarget &target =
         schema.crossTargets[plan->firstTarget + ordinal];
-    auto resolvedTarget = std::find_if(
-        schema.resolvedFunctionalItems.begin(),
-        schema.resolvedFunctionalItems.end(), [&](const auto &candidate) {
-          return candidate.type == type &&
-                 candidate.configuration == configuration &&
-                 candidate.templateItem == target.target &&
-                 candidate.kind == FunctionalItemKind::Coverpoint;
-        });
+    const auto *resolvedTarget =
+        setQueries.lookup(setQueries.templateItems,
+                          schema.resolvedFunctionalItems, target.target);
+    const auto *bin = setQueries.bin(binTuple[ordinal]);
     if (target.cross != root.cross || target.ordinal != ordinal ||
-        resolvedTarget == schema.resolvedFunctionalItems.end())
-      return OBELISK_RT_INVALID_DESIGN;
-    auto bin = std::find_if(schema.resolvedFunctionalBins.begin(),
-                            schema.resolvedFunctionalBins.end(),
-                            [&](const auto &candidate) {
-                              return candidate.type == type &&
-                                     candidate.configuration == configuration &&
-                                     candidate.id == binTuple[ordinal] &&
-                                     candidate.item == resolvedTarget->id;
-                            });
-    if (bin == schema.resolvedFunctionalBins.end())
+        !resolvedTarget ||
+        resolvedTarget->kind != FunctionalItemKind::Coverpoint || !bin ||
+        bin->item != resolvedTarget->id)
       return OBELISK_RT_INVALID_DESIGN;
     resolvedTargets.push_back(resolvedTarget->id);
   }
 
   auto bindingFor = [&](uint64_t node) {
-    return std::find_if(schema.resolvedCrossSelectorBindings.begin(),
-                        schema.resolvedCrossSelectorBindings.end(),
-                        [&](const auto &binding) {
-                          return binding.type == type &&
-                                 binding.configuration == configuration &&
-                                 binding.cross == resolvedCross &&
-                                 binding.node == node;
-                        });
+    return setQueries.binding(resolvedCross, node);
   };
-  std::unordered_map<uint64_t, bool> memo;
-  std::unordered_set<uint64_t> evaluating;
+  IndexMap<uint64_t, bool> memo;
+  IndexMap<uint64_t, bool> evaluating;
   std::function<obelisk_rt_status(const CrossSelectorNode &, bool &)> evaluate =
       [&](const CrossSelectorNode &node, bool &selected) -> obelisk_rt_status {
     auto memoized = memo.find(node.id);
@@ -9758,52 +9965,36 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       selected = memoized->second;
       return OBELISK_RT_OK;
     }
-    if (!evaluating.insert(node.id).second)
+    bool &active = evaluating[node.id];
+    if (active)
       return OBELISK_RT_INVALID_DESIGN;
+    active = true;
     auto finish = [&](bool value) {
-      evaluating.erase(node.id);
+      active = false;
       memo.emplace(node.id, value);
       selected = value;
       return OBELISK_RT_OK;
     };
     bool base = false;
     if (node.kind == CrossSelectorKind::Binsof) {
-      auto target = std::find_if(
-          schema.crossTargets.begin() + plan->firstTarget,
-          schema.crossTargets.begin() + plan->firstTarget + plan->targetCount,
-          [&](const CrossTarget &candidate) {
-            return candidate.target == node.target;
-          });
-      if (target ==
-          schema.crossTargets.begin() + plan->firstTarget + plan->targetCount)
+      auto target = setQueries.targetOrdinals.find({root.cross, node.target});
+      if (target == setQueries.targetOrdinals.end() ||
+          target->second >= binTuple.size())
         return OBELISK_RT_INVALID_DESIGN;
-      auto bin = std::find_if(
-          schema.resolvedFunctionalBins.begin(),
-          schema.resolvedFunctionalBins.end(), [&](const auto &candidate) {
-            return candidate.type == type &&
-                   candidate.configuration == configuration &&
-                   candidate.id == binTuple[target->ordinal];
-          });
-      if (bin == schema.resolvedFunctionalBins.end())
+      const auto *bin = setQueries.bin(binTuple[target->second]);
+      if (!bin)
         return OBELISK_RT_INVALID_DESIGN;
       base = !node.bin || bin->templateBin == node.bin;
       if (base && node.valueSet) {
         auto binding = bindingFor(node.id);
-        if (binding == schema.resolvedCrossSelectorBindings.end() ||
-            !binding->valueSet)
+        if (!binding || !binding->valueSet)
           return OBELISK_RT_INVALID_DESIGN;
-        auto set = std::find_if(schema.resolvedFunctionalValueSets.begin(),
-                                schema.resolvedFunctionalValueSets.end(),
-                                [&](const auto &entry) {
-                                  return entry.type == type &&
-                                         entry.configuration == configuration &&
-                                         entry.id == binding->valueSet;
-                                });
-        if (set == schema.resolvedFunctionalValueSets.end())
+        const auto *set = setQueries.valueSet(binding->valueSet);
+        if (!set)
           return OBELISK_RT_INVALID_DESIGN;
         obelisk_rt_status status = resolvedFunctionalBinIntersectsValueSet(
             schema, type, configuration, bin->id, *set,
-            suppressedTransitionAlternatives, base);
+            suppressedTransitionAlternatives, setQueries, base);
         if (status != OBELISK_RT_OK)
           return status;
       }
@@ -9826,11 +10017,12 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       for (uint32_t ordinal = 0; ordinal != expected; ++ordinal) {
         const auto &operand =
             schema.crossSelectorOperands[node.firstOperand + ordinal];
-        auto child = nodes.find(operand.operand);
+        const auto *child = setQueries.lookup(
+            setQueries.selectors, schema.crossSelectorNodes, operand.operand);
         if (operand.node != node.id || operand.ordinal != ordinal ||
-            child == nodes.end())
+            (!child || child->cross != root.cross))
           return OBELISK_RT_INVALID_DESIGN;
-        obelisk_rt_status status = evaluate(*child->second, operands[ordinal]);
+        obelisk_rt_status status = evaluate(*child, operands[ordinal]);
         if (status != OBELISK_RT_OK)
           return status;
       }
@@ -9845,17 +10037,14 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       return finish(base);
 
     auto binding = bindingFor(node.id);
-    if (binding == schema.resolvedCrossSelectorBindings.end() ||
-        binding->withExpression != node.withExpression || !binding->tupleSet)
+    if (!binding || binding->withExpression != node.withExpression ||
+        !binding->tupleSet)
       return OBELISK_RT_INVALID_DESIGN;
-    auto tupleSet = std::find_if(
-        schema.resolvedFunctionalTupleSets.begin(),
-        schema.resolvedFunctionalTupleSets.end(), [&](const auto &set) {
-          return set.type == type && set.configuration == configuration &&
-                 set.id == binding->tupleSet && set.selector == node.id &&
-                 set.elementMode == FunctionalTupleElementMode::ValueTuple;
-        });
-    if (tupleSet == schema.resolvedFunctionalTupleSets.end() ||
+    const auto *tupleSet = setQueries.lookup(setQueries.tupleSets,
+                                             schema.resolvedFunctionalTupleSets,
+                                             binding->tupleSet);
+    if (!tupleSet || tupleSet->selector != node.id ||
+        tupleSet->elementMode != FunctionalTupleElementMode::ValueTuple ||
         uint64_t{tupleSet->firstTuple} + tupleSet->tupleCount >
             schema.resolvedFunctionalTupleSetTuples.size())
       return OBELISK_RT_INVALID_DESIGN;
@@ -9875,21 +10064,14 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
         const auto &component =
             schema.resolvedFunctionalTupleSetComponents[tuple.firstComponent +
                                                         componentOrdinal];
-        auto set = std::find_if(schema.resolvedFunctionalValueSets.begin(),
-                                schema.resolvedFunctionalValueSets.end(),
-                                [&](const auto &entry) {
-                                  return entry.type == type &&
-                                         entry.configuration == configuration &&
-                                         entry.id == component.valueSet;
-                                });
+        const auto *set = setQueries.valueSet(component.valueSet);
         if (component.ordinal != componentOrdinal ||
-            component.target != resolvedTargets[componentOrdinal] ||
-            set == schema.resolvedFunctionalValueSets.end())
+            component.target != resolvedTargets[componentOrdinal] || !set)
           return OBELISK_RT_INVALID_DESIGN;
         bool intersects = false;
         obelisk_rt_status status = resolvedFunctionalBinIntersectsValueSet(
             schema, type, configuration, binTuple[componentOrdinal], *set,
-            suppressedTransitionAlternatives, intersects);
+            suppressedTransitionAlternatives, setQueries, intersects);
         if (status != OBELISK_RT_OK)
           return status;
         if (!intersects) {
@@ -9912,7 +10094,7 @@ obelisk_rt_status resolvedCrossSelectorSelectsBinTuple(
       uint64_t containedValues = 0;
       obelisk_rt_status status = resolvedFunctionalBinCardinalityCapped(
           schema, type, configuration, binTuple[ordinal], cap,
-          suppressedTransitionAlternatives, containedValues);
+          suppressedTransitionAlternatives, setQueries, containedValues);
       if (status != OBELISK_RT_OK)
         return status;
       if (!containedValues)
@@ -9932,13 +10114,14 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
     const obelisk::coverage::CrossSelectorNode &root,
     const std::vector<std::vector<uint64_t>> &targetBins,
     const std::unordered_set<uint64_t> &suppressedTransitionAlternatives,
+    FunctionalCoverageSetQueryIndex &setQueries,
     std::vector<std::vector<uint64_t>> &result) {
   using namespace obelisk::coverage;
   result.clear();
   const uint64_t limit = ParseLimits{}.maxRecords;
-  std::set<std::vector<uint64_t>> unique;
+  IndexSet<std::vector<uint64_t>> unique;
   std::vector<const CrossSelectorNode *> worklist{&root};
-  std::unordered_set<uint64_t> visited;
+  IndexSet<uint64_t> visited;
   while (!worklist.empty()) {
     const CrossSelectorNode *node = worklist.back();
     worklist.pop_back();
@@ -9951,36 +10134,21 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
           return OBELISK_RT_INVALID_DESIGN;
         uint64_t childID =
             schema.crossSelectorOperands[node->firstOperand + ordinal].operand;
-        auto child = std::find_if(
-            schema.crossSelectorNodes.begin(), schema.crossSelectorNodes.end(),
-            [&](const auto &candidate) {
-              return candidate.id == childID && candidate.cross == root.cross;
-            });
-        if (child == schema.crossSelectorNodes.end())
+        const auto *child = setQueries.lookup(
+            setQueries.selectors, schema.crossSelectorNodes, childID);
+        if (!child || child->cross != root.cross)
           return OBELISK_RT_INVALID_DESIGN;
-        worklist.push_back(&*child);
+        worklist.push_back(child);
       }
       continue;
     }
-    auto binding = std::find_if(
-        schema.resolvedCrossSelectorBindings.begin(),
-        schema.resolvedCrossSelectorBindings.end(), [&](const auto &entry) {
-          return entry.type == type && entry.configuration == configuration &&
-                 entry.cross == resolvedCross && entry.node == node->id;
-        });
-    auto tupleSet =
-        binding == schema.resolvedCrossSelectorBindings.end()
-            ? schema.resolvedFunctionalTupleSets.end()
-            : std::find_if(schema.resolvedFunctionalTupleSets.begin(),
-                           schema.resolvedFunctionalTupleSets.end(),
-                           [&](const auto &entry) {
-                             return entry.type == type &&
-                                    entry.configuration == configuration &&
-                                    entry.id == binding->tupleSet &&
-                                    entry.selector == node->id;
-                           });
-    if (tupleSet == schema.resolvedFunctionalTupleSets.end() ||
-        targetBins.size() == 0 ||
+    const auto *binding = setQueries.binding(resolvedCross, node->id);
+    const auto *tupleSet =
+        binding ? setQueries.lookup(setQueries.tupleSets,
+                                    schema.resolvedFunctionalTupleSets,
+                                    binding->tupleSet)
+                : nullptr;
+    if (!tupleSet || tupleSet->selector != node->id || targetBins.empty() ||
         uint64_t{tupleSet->firstTuple} + tupleSet->tupleCount >
             schema.resolvedFunctionalTupleSetTuples.size())
       return OBELISK_RT_INVALID_DESIGN;
@@ -9999,8 +10167,7 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
            targetOrdinal != valueTuple.componentCount; ++targetOrdinal) {
         const auto &component = schema.resolvedFunctionalTupleSetComponents
                                     [valueTuple.firstComponent + targetOrdinal];
-        const auto *selection =
-            findResolvedValueSet(schema, configuration, component.valueSet);
+        const auto *selection = setQueries.valueSet(component.valueSet);
         if (!selection || selection->type != type ||
             component.ordinal != targetOrdinal)
           return OBELISK_RT_INVALID_DESIGN;
@@ -10008,7 +10175,7 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
           bool intersects = false;
           obelisk_rt_status status = resolvedFunctionalBinIntersectsValueSet(
               schema, type, configuration, bin, *selection,
-              suppressedTransitionAlternatives, intersects);
+              suppressedTransitionAlternatives, setQueries, intersects);
           if (status != OBELISK_RT_OK)
             return status;
           if (intersects)
@@ -10034,7 +10201,7 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
         bool selected = false;
         obelisk_rt_status status = resolvedCrossSelectorSelectsBinTuple(
             schema, type, configuration, resolvedCross, root, candidate,
-            suppressedTransitionAlternatives, selected);
+            suppressedTransitionAlternatives, setQueries, selected);
         if (status != OBELISK_RT_OK)
           return status;
         if (selected && unique.insert(candidate).second) {
@@ -10045,7 +10212,8 @@ obelisk_rt_status resolvedCrossSelectorSetCandidates(
       }
     }
   }
-  std::sort(result.begin(), result.end());
+  detail::sortByKey(result.begin(), result.end(),
+                    [](const auto &tuple) -> const auto & { return tuple; });
   return OBELISK_RT_OK;
 }
 
@@ -10510,195 +10678,6 @@ bool integralShapeCoveredByUnion(
   return true;
 }
 
-bool valueSetCoveredBy(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueSet &subject,
-    const std::vector<const obelisk::coverage::ResolvedFunctionalValueSet *>
-        &exclusions) {
-  for (uint32_t subjectIndex = 0; subjectIndex != subject.atomCount;
-       ++subjectIndex) {
-    const auto &subjectAtom =
-        schema.resolvedFunctionalValueAtoms[subject.firstAtom + subjectIndex];
-    bool covered = false;
-    for (const auto *exclusion : exclusions) {
-      for (uint32_t exclusionIndex = 0; exclusionIndex != exclusion->atomCount;
-           ++exclusionIndex) {
-        const auto &exclusionAtom =
-            schema.resolvedFunctionalValueAtoms[exclusion->firstAtom +
-                                                exclusionIndex];
-        if (atomContains(schema, *exclusion, exclusionAtom, subject,
-                         subjectAtom)) {
-          covered = true;
-          break;
-        }
-      }
-      if (covered)
-        break;
-    }
-    if (!covered &&
-        subject.kind == obelisk::coverage::FunctionalValueSetKind::Integral) {
-      IntegralCoverageShape subjectShape;
-      if (makeIntegralCoverageShape(schema, subjectAtom, subject.bitWidth,
-                                    subject.signedness, subjectShape)) {
-        std::vector<IntegralCoverageShape> exclusionShapes;
-        for (const auto *exclusion : exclusions) {
-          if (exclusion->kind != subject.kind ||
-              exclusion->bitWidth != subject.bitWidth ||
-              exclusion->signedness != subject.signedness)
-            continue;
-          for (uint32_t exclusionIndex = 0;
-               exclusionIndex != exclusion->atomCount; ++exclusionIndex) {
-            IntegralCoverageShape shape;
-            if (makeIntegralCoverageShape(
-                    schema,
-                    schema.resolvedFunctionalValueAtoms[exclusion->firstAtom +
-                                                        exclusionIndex],
-                    subject.bitWidth, subject.signedness, shape))
-              exclusionShapes.push_back(std::move(shape));
-          }
-        }
-        if (!exclusionShapes.empty())
-          covered = integralShapeCoveredByUnion(subjectShape, exclusionShapes,
-                                                subject.bitWidth);
-      }
-    }
-    if (!covered)
-      return false;
-  }
-  return true;
-}
-
-struct StateCoverageInterval {
-  // Most-significant limb first, so the radix key and numeric order agree.
-  std::vector<uint64_t> low;
-  std::vector<uint64_t> high;
-  size_t bin = SIZE_MAX;
-  bool empty = false;
-};
-
-bool advanceStateCoverageEndpoint(std::vector<uint64_t> &endpoint,
-                                  bool increment) {
-  for (size_t reverse = endpoint.size(); reverse != 0; --reverse) {
-    uint64_t &limb = endpoint[reverse - 1];
-    if (increment ? ++limb != 0 : limb-- != 0)
-      return true;
-  }
-  return false;
-}
-
-template <typename Real>
-bool makeRealStateCoverageInterval(
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom,
-    StateCoverageInterval &interval) {
-  using namespace obelisk::coverage;
-  double sourceLow, sourceHigh;
-  std::memcpy(&sourceLow, &atom.realLowBits, sizeof(sourceLow));
-  std::memcpy(&sourceHigh, &atom.realHighBits, sizeof(sourceHigh));
-  bool lowerUnbounded = atom.flags & FunctionalValueAtomLowerUnbounded;
-  bool upperUnbounded = atom.flags & FunctionalValueAtomUpperUnbounded;
-  Real low = lowerUnbounded ? -std::numeric_limits<Real>::infinity()
-                            : static_cast<Real>(sourceLow);
-  Real high = upperUnbounded ? std::numeric_limits<Real>::infinity()
-                             : static_cast<Real>(sourceHigh);
-  if (std::isnan(low) || std::isnan(high))
-    return false;
-  if (!lowerUnbounded &&
-      (low < sourceLow ||
-       (low == sourceLow && !(atom.flags & FunctionalValueAtomLowerInclusive))))
-    low = std::nextafter(low, std::numeric_limits<Real>::infinity());
-  if (!upperUnbounded && (high > sourceHigh ||
-                          (high == sourceHigh &&
-                           !(atom.flags & FunctionalValueAtomUpperInclusive))))
-    high = std::nextafter(high, -std::numeric_limits<Real>::infinity());
-  interval.empty = low > high;
-  auto rank = [](Real value) -> uint64_t {
-    using Bits = std::conditional_t<sizeof(Real) == sizeof(uint32_t), uint32_t,
-                                    uint64_t>;
-    Bits bits;
-    std::memcpy(&bits, &value, sizeof(bits));
-    constexpr Bits sign = Bits{1} << (sizeof(Bits) * 8 - 1);
-    // Collapse -0 and +0 into one rank. Adjacent representable values then
-    // have adjacent ranks, including at zero and at the infinity boundaries.
-    return bits & sign ? static_cast<Bits>(~bits)
-                       : static_cast<Bits>((bits | sign) - 1);
-  };
-  interval.low = {rank(low)};
-  interval.high = {rank(high)};
-  return true;
-}
-
-bool makeStateCoverageInterval(
-    const obelisk::coverage::Database &schema,
-    const obelisk::coverage::ResolvedFunctionalValueSet &set,
-    const obelisk::coverage::ResolvedFunctionalValueAtom &atom, bool shortReal,
-    StateCoverageInterval &interval) {
-  using namespace obelisk::coverage;
-  if (set.kind == FunctionalValueSetKind::Real)
-    return shortReal ? makeRealStateCoverageInterval<float>(atom, interval)
-                     : makeRealStateCoverageInterval<double>(atom, interval);
-  IntegralCoverageShape shape;
-  if (!makeIntegralCoverageShape(schema, atom, set.bitWidth, set.signedness,
-                                 shape))
-    return false;
-  if (shape.interval) {
-    interval.low.assign(shape.low.rbegin(), shape.low.rend());
-    interval.high.assign(shape.high.rbegin(), shape.high.rend());
-    if (!(atom.flags & FunctionalValueAtomLowerInclusive) &&
-        !advanceStateCoverageEndpoint(interval.low, true))
-      interval.empty = true;
-    if (!(atom.flags & FunctionalValueAtomUpperInclusive) &&
-        !advanceStateCoverageEndpoint(interval.high, false))
-      interval.empty = true;
-  } else {
-    // A prefix cube is one interval. Other cubes retain symbolic subtraction.
-    bool fixed = false;
-    for (size_t ordinal = 0; ordinal != shape.wildcard.size(); ++ordinal) {
-      uint64_t wildcard = shape.wildcard[ordinal];
-      uint64_t valid = ordinal + 1 == shape.wildcard.size() && set.bitWidth % 64
-                           ? lowBitsMask(set.bitWidth % 64)
-                           : UINT64_MAX;
-      if ((fixed && wildcard) || (wildcard & (wildcard + 1)))
-        return false;
-      fixed |= wildcard != valid;
-    }
-    interval.low.assign(shape.value.rbegin(), shape.value.rend());
-    interval.high = interval.low;
-    for (size_t ordinal = 0; ordinal != shape.wildcard.size(); ++ordinal)
-      interval.high[shape.wildcard.size() - ordinal - 1] |=
-          shape.wildcard[ordinal];
-  }
-  interval.empty |= interval.high < interval.low;
-  return true;
-}
-
-void mergeStateCoverageIntervals(
-    std::vector<StateCoverageInterval> &intervals) {
-  obelisk::coverage::detail::sortByKey(
-      intervals.begin(), intervals.end(),
-      [](const auto &interval) -> const auto & { return interval.low; });
-  std::vector<StateCoverageInterval> merged;
-  merged.reserve(intervals.size());
-  for (auto &interval : intervals) {
-    if (interval.empty)
-      continue;
-    bool adjacent = false;
-    if (!merged.empty()) {
-      adjacent = interval.low <= merged.back().high;
-      if (!adjacent) {
-        auto successor = merged.back().high;
-        adjacent = advanceStateCoverageEndpoint(successor, true) &&
-                   interval.low <= successor;
-      }
-    }
-    if (adjacent) {
-      if (merged.back().high < interval.high)
-        merged.back().high = std::move(interval.high);
-    } else
-      merged.push_back(std::move(interval));
-  }
-  intervals = std::move(merged);
-}
-
 struct ExactTransitionWord {
   uint64_t alternative = 0;
   uint64_t bin = 0;
@@ -11053,9 +11032,11 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   return OBELISK_RT_OK;
 }
 
-void markStaticallyEmptyStateBins(
-    obelisk::coverage::Database &schema, uint64_t typeID,
-    const obelisk::coverage::Digest &configuration) {
+obelisk_rt_status
+markStaticallyEmptyStateBins(obelisk::coverage::Database &schema,
+                             uint64_t typeID,
+                             const obelisk::coverage::Digest &configuration,
+                             FunctionalCoverageSetQueryIndex &setQueries) {
   using namespace obelisk::coverage;
   IndexMap<uint64_t, const ResolvedFunctionalBinPlan *> plans;
   for (const auto &plan : schema.resolvedFunctionalBinPlans)
@@ -11174,7 +11155,12 @@ void markStaticallyEmptyStateBins(
       if (remaining[binIndex] != SIZE_MAX)
         continue;
     }
-    if (valueSetCoveredBy(schema, *subject, group.sets))
+    // Reuse frozen symbolic unions for general cubes. Do not rebuild or
+    // rescan all exclusion atoms for each ordinary bin.
+    uint64_t cardinality = setQueries.cardinality(bin.id, 1, {});
+    if (setQueries.status != OBELISK_RT_OK)
+      return setQueries.status;
+    if (!cardinality)
       bin.flags |= FunctionalBinEmpty;
   }
   // Sort all queries once and sweep the canonical union. Each atom and
@@ -11200,6 +11186,7 @@ void markStaticallyEmptyStateBins(
   for (size_t bin = 0; bin != remaining.size(); ++bin)
     if (remaining[bin] == 0)
       schema.resolvedFunctionalBins[bin].flags |= FunctionalBinEmpty;
+  return OBELISK_RT_OK;
 }
 
 const FunctionalCoverageCrossState *

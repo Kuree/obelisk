@@ -46,6 +46,40 @@ namespace obelisk {
 
 namespace {
 
+Operation *peelFunctionalValueCast(Operation *expression,
+                                   uint64_t effectiveWidth,
+                                   Type effectiveType) {
+  const bool pointIsReal =
+      effectiveType && isa<Float32Type, Float64Type>(effectiveType);
+
+  auto conversion = dyn_cast<ir::SVConversionExpressionOp>(expression);
+  BoolAttr implicit = expression->getAttrOfType<BoolAttr>("is_implicit");
+  if (!conversion || !implicit || !implicit.getValue())
+    return expression;
+  FailureOr<Type> normalized =
+      simlowering::getNormalizedSemanticType(expression);
+  std::optional<unsigned> width =
+      succeeded(normalized) ? sim::getPackedWidth(*normalized) : std::nullopt;
+  SmallVector<Operation *> children = simlowering::getChildren(conversion);
+  if (children.size() != 1)
+    return expression;
+  // Slang materializes the 19.5.7 cast to the effective
+  // coverpoint type as the outer child of the bins/range
+  // node. Inventory its input so runtime resolution can
+  // diagnose lossy values and clip partially representable
+  // ranges. Any inner expression-context conversion stays
+  // intact and remains part of b's original value.
+  if (width && *width == effectiveWidth)
+    return children.front();
+  if (pointIsReal && succeeded(normalized) && *normalized == effectiveType) {
+    auto source = simlowering::getNormalizedSemanticType(children.front());
+    if (succeeded(source) && (isa<Float32Type, Float64Type>(*source) ||
+                              sim::getPackedWidth(*source)))
+      return children.front();
+  }
+  return expression;
+}
+
 using simlowering::coverageOrderKey;
 using simlowering::sortCoverageRecords;
 
@@ -3615,9 +3649,13 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     std::optional<unsigned> width =
                         succeeded(normalized) ? sim::getPackedWidth(*normalized)
                                               : std::nullopt;
-                    if (!width || !*width || *width > UINT32_MAX) {
+                    const bool targetIsReal =
+                        succeeded(normalized) &&
+                        isa<Float32Type, Float64Type>(*normalized);
+                    if (!targetIsReal &&
+                        (!width || !*width || *width > UINT32_MAX)) {
                       condition.emitError("binsof intersect target must have "
-                                          "an integral v1 type");
+                                          "an integral or real v1 type");
                       return failure();
                     }
                     valueSetID = stableFunctionalEntityID(
@@ -3635,13 +3673,19 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     PendingValueSet selected;
                     selected.set.id = valueSetID;
                     selected.set.item = targetItemID;
-                    selected.set.bitWidth = *width;
+                    selected.set.bitWidth = targetIsReal ? 64 : *width;
+                    selected.set.kind =
+                        targetIsReal
+                            ? coverage::FunctionalValueSetKind::Real
+                            : coverage::FunctionalValueSetKind::Integral;
                     auto targetSourceType =
                         targetChildren.front()->getAttrOfType<TypeAttr>(
                             "semantic_type");
                     selected.set.signedness =
-                        targetSourceType && simlowering::isSignedSemanticType(
-                                                targetSourceType.getValue())
+                        targetIsReal
+                            ? coverage::CoverageSignedness::NotApplicable
+                        : targetSourceType && simlowering::isSignedSemanticType(
+                                                  targetSourceType.getValue())
                             ? coverage::CoverageSignedness::Signed
                             : coverage::CoverageSignedness::Unsigned;
                     selected.set.flags =
@@ -3655,8 +3699,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     }
                     for (auto [atomOrdinal, value] :
                          llvm::enumerate(intersections)) {
+                      auto valueRange =
+                          dyn_cast<ir::SVValueRangeExpressionOp>(value);
                       SmallVector<Operation *> endpoints =
-                          simlowering::getChildren(value);
+                          valueRange ? simlowering::getChildren(value)
+                                     : SmallVector<Operation *>{};
                       Operation *lower =
                           endpoints.empty() ? value : endpoints.front();
                       Operation *upper =
@@ -3672,16 +3719,26 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                             "one bounded endpoint");
                         return failure();
                       }
+                      lower = peelFunctionalValueCast(
+                          lower, selected.set.bitWidth, *normalized);
+                      if (upper)
+                        upper = peelFunctionalValueCast(
+                            upper, selected.set.bitWidth, *normalized);
                       coverage::FunctionalValueAtom atom;
                       atom.valueSet = valueSetID;
                       atom.ordinal = atomOrdinal;
                       atom.kind =
-                          upper
+                          targetIsReal
+                              ? coverage::FunctionalValueAtomKind::RealInterval
+                          : upper
                               ? coverage::FunctionalValueAtomKind::IntegralRange
                               : coverage::FunctionalValueAtomKind::
                                     IntegralValue;
                       atom.flags = coverage::FunctionalValueAtomLowerInclusive |
                                    coverage::FunctionalValueAtomUpperInclusive;
+                      if (targetIsReal && upper) {
+                        atom.flags |= coverage::FunctionalValueAtomRealRange;
+                      }
                       if (lowerUnbounded)
                         atom.flags |=
                             coverage::FunctionalValueAtomLowerUnbounded;
@@ -4626,45 +4683,15 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                       signalPassFailure();
                       return;
                     }
-                    auto peelEffectiveTypeCast = [&](Operation *expression) {
-                      auto conversion =
-                          dyn_cast<ir::SVConversionExpressionOp>(expression);
-                      BoolAttr implicit =
-                          expression->getAttrOfType<BoolAttr>("is_implicit");
-                      if (!conversion || !implicit || !implicit.getValue())
-                        return expression;
-                      FailureOr<Type> normalized =
-                          simlowering::getNormalizedSemanticType(expression);
-                      std::optional<unsigned> width =
-                          succeeded(normalized)
-                              ? sim::getPackedWidth(*normalized)
-                              : std::nullopt;
-                      SmallVector<Operation *> children =
-                          simlowering::getChildren(conversion);
-                      if (children.size() != 1)
-                        return expression;
-                      // Slang materializes the 19.5.7 cast to the effective
-                      // coverpoint type as the outer child of the bins/range
-                      // node. Inventory its input so runtime resolution can
-                      // diagnose lossy values and clip partially representable
-                      // ranges. Any inner expression-context conversion stays
-                      // intact and remains part of b's original value.
-                      if (width && *width == pointBitWidth)
-                        return children.front();
-                      if (pointIsReal && succeeded(normalized) &&
-                          *normalized == *normalizedPointType) {
-                        auto source = simlowering::getNormalizedSemanticType(
-                            children.front());
-                        if (succeeded(source) &&
-                            (isa<Float32Type, Float64Type>(*source) ||
-                             sim::getPackedWidth(*source)))
-                          return children.front();
-                      }
-                      return expression;
-                    };
-                    lower = peelEffectiveTypeCast(lower);
+                    lower = peelFunctionalValueCast(
+                        lower, pointBitWidth,
+                        succeeded(normalizedPointType) ? *normalizedPointType
+                                                       : Type{});
                     if (upper)
-                      upper = peelEffectiveTypeCast(upper);
+                      upper = peelFunctionalValueCast(
+                          upper, pointBitWidth,
+                          succeeded(normalizedPointType) ? *normalizedPointType
+                                                         : Type{});
                     coverage::FunctionalValueAtom atom;
                     atom.valueSet = valueSetID;
                     atom.ordinal = atomOrdinal;
