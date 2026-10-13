@@ -246,6 +246,59 @@ public:
     }
     return failed ? 0 : scale(result, nodes[root].variable, cap);
   }
+
+  /// Enumerate a bounded finite set in unsigned order. Words use little-endian
+  /// limbs, like cube(). Count before walking free variables so sparse wide
+  /// domains cost their graph and output sizes, never their type cardinality.
+  /// Failure leaves the caller's output unchanged.
+  bool enumerate(Root root, uint32_t maxValues,
+                 std::vector<std::vector<uint64_t>> &result) {
+    uint64_t count = cardinality(root, uint64_t{maxValues} + 1);
+    if (failed || count > maxValues)
+      return false;
+    std::vector<std::vector<uint64_t>> values;
+    values.reserve(count);
+    if (count) {
+      std::vector<uint64_t> word((uint64_t{width} + 63) / 64);
+      struct Frame {
+        Root root;
+        uint32_t variable;
+        uint8_t stage = 0;
+      };
+      std::vector<Frame> stack{{root, 0}};
+      while (!stack.empty()) {
+        Frame &frame = stack.back();
+        if (!frame.root) {
+          stack.pop_back();
+          continue;
+        }
+        if (frame.variable == width) {
+          assert(frame.root == 1);
+          values.push_back(word);
+          stack.pop_back();
+          continue;
+        }
+        uint32_t bit = width - frame.variable - 1;
+        uint64_t mask = uint64_t{1} << (bit % 64);
+        if (frame.stage == 2) {
+          word[bit / 64] &= ~mask;
+          stack.pop_back();
+          continue;
+        }
+        bool one = frame.stage++;
+        if (one)
+          word[bit / 64] |= mask;
+        else
+          word[bit / 64] &= ~mask;
+        Root next = nodes[frame.root].variable == frame.variable
+                        ? child(frame.root, one)
+                        : frame.root;
+        stack.push_back({next, frame.variable + 1});
+      }
+    }
+    result.swap(values);
+    return true;
+  }
 };
 
 } // namespace obelisk::coverage::detail

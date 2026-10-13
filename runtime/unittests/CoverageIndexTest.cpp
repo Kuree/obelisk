@@ -185,6 +185,77 @@ TEST(CoverageDecisionIndexTest, WideCardinalitySaturatesAndExpansionIsBounded) {
   EXPECT_TRUE(limited.exhausted());
 }
 
+TEST(CoverageDecisionIndexTest, EnumerationAgreesWithSmallValueOracle) {
+  for (uint32_t trial = 0; trial != 32; ++trial) {
+    DecisionIndex index(4);
+    uint64_t low = trial % 8, high = 8 + trial % 8;
+    uint64_t wildcard = (trial * 5) & 15, fixed = (trial * 3) & 15;
+    auto range = index.interval({low}, {high});
+    auto cube = index.cube({fixed}, {wildcard});
+    for (uint32_t operation = 0; operation != 3; ++operation) {
+      auto root = operation == 0   ? index.unite(range, cube)
+                  : operation == 1 ? index.intersect(range, cube)
+                                   : index.subtract(range, cube);
+      std::vector<std::vector<uint64_t>> expected, actual;
+      for (uint64_t value = 0; value != 16; ++value) {
+        bool inRange = low <= value && value <= high;
+        bool inCube = (value & ~wildcard) == (fixed & ~wildcard);
+        if (operation == 0   ? inRange || inCube
+            : operation == 1 ? inRange && inCube
+                             : inRange && !inCube)
+          expected.push_back({value});
+      }
+      ASSERT_TRUE(index.enumerate(root, 16, actual));
+      EXPECT_EQ(actual, expected);
+    }
+    EXPECT_FALSE(index.exhausted());
+  }
+}
+
+TEST(CoverageDecisionIndexTest, EnumerationCrossesLimbBoundariesAndFreeBits) {
+  DecisionIndex index(65);
+  auto root = index.interval({0, UINT64_MAX - 1}, {1, 1});
+  std::vector<std::vector<uint64_t>> actual;
+  ASSERT_TRUE(index.enumerate(root, 4, actual));
+  EXPECT_EQ(actual, (std::vector<std::vector<uint64_t>>{
+                        {UINT64_MAX - 1, 0}, {UINT64_MAX, 0}, {0, 1}, {1, 1}}));
+
+  DecisionIndex wide(513);
+  std::vector<uint64_t> value(9), wildcard(9);
+  value[8] = 1;
+  wildcard[0] = 3;
+  root = wide.cube(value, wildcard);
+  ASSERT_TRUE(wide.enumerate(root, 4, actual));
+  ASSERT_EQ(actual.size(), 4u);
+  for (uint64_t low = 0; low != 4; ++low) {
+    value[0] = low;
+    EXPECT_EQ(actual[low], value);
+  }
+  EXPECT_FALSE(wide.exhausted());
+}
+
+TEST(CoverageDecisionIndexTest, EnumerationFailurePreservesPublishedValues) {
+  DecisionIndex index(513);
+  const std::vector<std::vector<uint64_t>> previous{{23, 42}};
+  auto actual = previous;
+  EXPECT_FALSE(index.enumerate(1, 4096, actual));
+  EXPECT_EQ(actual, previous);
+  EXPECT_FALSE(index.enumerate(1, 0, actual));
+  EXPECT_EQ(actual, previous);
+  EXPECT_TRUE(index.enumerate(0, 0, actual));
+  EXPECT_TRUE(actual.empty());
+
+  DecisionIndex zeroWidth(0);
+  EXPECT_TRUE(zeroWidth.enumerate(1, 1, actual));
+  EXPECT_EQ(actual, (std::vector<std::vector<uint64_t>>{{}}));
+
+  DecisionIndex exhausted(65, 8);
+  auto root = exhausted.cube({0, 0}, {0, 0});
+  actual = previous;
+  EXPECT_FALSE(exhausted.enumerate(root, 4096, actual));
+  EXPECT_EQ(actual, previous);
+}
+
 TEST(CoverageIndexTest, TypeHierarchyUsesDirectEdgesAndHandlesUnorderedChains) {
   struct Type {
     uint64_t id, base;
