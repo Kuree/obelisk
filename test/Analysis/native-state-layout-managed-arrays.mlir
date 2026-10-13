@@ -28,8 +28,9 @@ module {
 
 // Skipping root-free bytes must not hide the following string field. Every
 // managed array element remains a root, including overlapping union roots.
+// The RAM is allocated after the other roots so their offsets stay small.
 // CHECK: native-state bits=268436096
-// CHECK-NEXT: bound 1 offset=0 width=268435456 four-state=true{{$}}
-// CHECK-NEXT: bound 2 offset=268435456 width=384 four-state=false roots=64, 192, 320{{$}}
-// CHECK-NEXT: bound 3 offset=268435840 width=192 four-state=true roots=0, 64, 128 candidate-roots=0:2,64:2,128:2{{$}}
-// CHECK-NEXT: bound 4 offset=268436032 width=64 four-state=false roots=0{{$}}
+// CHECK-NEXT: bound 1 offset=0 width=384 four-state=false roots=64, 192, 320{{$}}
+// CHECK-NEXT: bound 2 offset=384 width=192 four-state=true roots=0, 64, 128 candidate-roots=0:2,64:2,128:2{{$}}
+// CHECK-NEXT: bound 3 offset=576 width=64 four-state=false roots=0{{$}}
+// CHECK-NEXT: bound 4 offset=640 width=268435456 four-state=true{{$}}

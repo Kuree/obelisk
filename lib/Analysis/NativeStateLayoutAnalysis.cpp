@@ -20,6 +20,12 @@ using namespace mlir;
 namespace obelisk::analysis {
 namespace {
 
+/// Storage roots wider than this are allocated after all other state. Such
+/// roots are memories addressed through a computed index, so their own offset
+/// adds no work; allocated in declaration order they would push the offsets
+/// of later scalars past what a single move instruction can materialize.
+constexpr uint64_t maximumLeadingRootBits = uint64_t(1) << 16;
+
 uint64_t encodeStaticHandle(uint32_t id) {
   return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
                                          0);
@@ -105,18 +111,30 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
                              type});
     return success();
   };
+  auto allocateStorage = [&](sim::SimStorageDeclOp declaration) {
+    uint64_t offset;
+    uint64_t handle;
+    if (failed(allocate(declaration.getType(),
+                        containsFourStateLogic(declaration.getType()), offset,
+                        handle))) {
+      declaration.emitError("native storage must have a fixed packed width");
+      return failure();
+    }
+    layout.storage[declaration.getId()] = handle;
+    layout.storageOffsets[declaration.getId()] = offset;
+    return success();
+  };
+  SmallVector<sim::SimStorageDeclOp> trailingStorage;
   WalkResult walked = module.walk([&](Operation *operation) {
     if (auto declaration = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      uint64_t offset;
-      uint64_t handle;
-      if (failed(allocate(declaration.getType(),
-                          containsFourStateLogic(declaration.getType()), offset,
-                          handle))) {
-        declaration.emitError("native storage must have a fixed packed width");
-        return WalkResult::interrupt();
+      std::optional<unsigned> width =
+          getSimulationStorageBitWidth(declaration.getType());
+      if (width && *width > maximumLeadingRootBits) {
+        trailingStorage.push_back(declaration);
+        return WalkResult::advance();
       }
-      layout.storage[declaration.getId()] = handle;
-      layout.storageOffsets[declaration.getId()] = offset;
+      if (failed(allocateStorage(declaration)))
+        return WalkResult::interrupt();
     } else if (auto declaration = dyn_cast<sim::SimNetDeclOp>(operation)) {
       uint64_t offset;
       uint64_t handle;
@@ -239,6 +257,9 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
   });
   if (walked.wasInterrupted())
     return failure();
+  for (sim::SimStorageDeclOp declaration : trailingStorage)
+    if (failed(allocateStorage(declaration)))
+      return failure();
 
   for (Driver &driver : layout.driverLayouts)
     driver.initialX = initialXDrivers.contains(driver.id);
