@@ -1,5 +1,6 @@
 #include "../../lib/Coverage/CoverageIndex.h"
 #include "../../lib/Coverage/CoverageDecisionIndex.h"
+#include "../../lib/Coverage/CoverageTransitionIndex.h"
 #include "gtest/gtest.h"
 
 #include <algorithm>
@@ -9,6 +10,110 @@
 #include <stdexcept>
 
 using namespace obelisk::coverage::detail;
+
+TEST(CoverageTransitionIndexTest,
+     FixedLanguagesAgreeWithExhaustiveFiniteWordOracle) {
+  using obelisk::coverage::TransitionRepetitionKind;
+  std::mt19937 random(1947);
+  for (uint32_t trial = 0; trial != 32; ++trial) {
+    DecisionIndex values(2);
+    TransitionIndex index(values, 2, 1);
+    auto label = [&](uint8_t mask) {
+      DecisionIndex::Root result = 0;
+      for (uint64_t value = 0; value != 4; ++value)
+        if (mask & (1 << value))
+          result = values.unite(result, values.cube({value}, {0}));
+      return result;
+    };
+    std::array<uint8_t, 3> ordinary;
+    std::array<std::array<uint8_t, 2>, 3> exclusions;
+    std::vector<TransitionIndex::Step> steps;
+    for (auto &mask : ordinary) {
+      mask = 1 + random() % 15;
+      steps.push_back({label(mask), 1, 1, TransitionRepetitionKind::Once});
+    }
+    for (auto &word : exclusions) {
+      word = {static_cast<uint8_t>(random() % 16),
+              static_cast<uint8_t>(random() % 16)};
+      index.addExclusion({label(word[0]), label(word[1])});
+    }
+    bool expected = false;
+    for (uint32_t encoded = 0; encoded != 64; ++encoded) {
+      std::array<uint8_t, 3> word{static_cast<uint8_t>(encoded & 3),
+                                  static_cast<uint8_t>((encoded >> 2) & 3),
+                                  static_cast<uint8_t>(encoded >> 4)};
+      bool matches = true, excluded = false;
+      for (size_t ordinal = 0; ordinal != word.size(); ++ordinal)
+        matches &= bool(ordinary[ordinal] & (1 << word[ordinal]));
+      for (const auto &removed : exclusions)
+        for (size_t offset = 0; offset != 2; ++offset)
+          excluded |= (removed[0] & (1 << word[offset])) &&
+                      (removed[1] & (1 << word[offset + 1]));
+      expected |= matches && !excluded;
+    }
+    EXPECT_EQ(index.hasAcceptedWord(steps), expected) << "trial=" << trial;
+    EXPECT_FALSE(index.exhausted());
+  }
+}
+
+TEST(CoverageTransitionIndexTest,
+     ManyDisjointExclusionsRespectLinearWorkBudget) {
+  using obelisk::coverage::TransitionRepetitionKind;
+  constexpr uint32_t width = 8, count = 64;
+  DecisionIndex values(width);
+  TransitionIndex index(values, width, 1, count * width * 8);
+  auto terminal = values.cube({127}, {0});
+  std::vector<TransitionIndex::Step> ordinary;
+  for (uint32_t value = 0; value != count; ++value) {
+    auto start = values.cube({value}, {0});
+    index.addExclusion({start, terminal});
+    ordinary.push_back({start, 1, 1, TransitionRepetitionKind::Once});
+  }
+  // Each sample activates a different exclusion prefix. The ordinary word
+  // avoids every terminal, and its proof must fit a budget linear in the
+  // word count and width rather than rescan all exclusions for every sample.
+  ordinary.push_back(
+      {values.cube({count}, {0}), 1, 1, TransitionRepetitionKind::Once});
+  EXPECT_TRUE(index.hasAcceptedWord(ordinary));
+  EXPECT_FALSE(index.exhausted());
+}
+
+TEST(CoverageTransitionIndexTest,
+     GapRepetitionsRespectExclusionsAndKnownSampleDomain) {
+  using obelisk::coverage::TransitionRepetitionKind;
+  for (bool fourState : {false, true}) {
+    for (auto repetition : {TransitionRepetitionKind::Goto,
+                            TransitionRepetitionKind::Nonconsecutive}) {
+      DecisionIndex values(3);
+      auto known = values.interval({0}, {3});
+      TransitionIndex index(values, 3, fourState ? 1 : known);
+      index.addExclusion({known, known});
+      // A two-state full-domain repetition has no possible separating gap.
+      // A four-state X/Z sample can separate its two known occurrences.
+      EXPECT_EQ(index.hasAcceptedWord({{known, 2, 2, repetition}}), fourState);
+      EXPECT_FALSE(index.exhausted());
+    }
+  }
+  for (bool binaryDomain : {false, true}) {
+    for (auto repetition : {TransitionRepetitionKind::Goto,
+                            TransitionRepetitionKind::Nonconsecutive}) {
+      DecisionIndex values(2);
+      auto zero = values.cube({0}, {0}), one = values.cube({1}, {0});
+      TransitionIndex index(values, 2,
+                            binaryDomain ? values.interval({0}, {1}) : 1);
+      index.addExclusion({zero, one});
+      // Goto requires adjacency after its final occurrence. Nonconsecutive
+      // can avoid that pair with a value outside both step sets, when one
+      // exists in the sample domain.
+      EXPECT_EQ(
+          index.hasAcceptedWord({{zero, 1, 1, repetition},
+                                 {one, 1, 1, TransitionRepetitionKind::Once}}),
+          !binaryDomain &&
+              repetition == TransitionRepetitionKind::Nonconsecutive);
+      EXPECT_FALSE(index.exhausted());
+    }
+  }
+}
 
 TEST(CoverageDecisionIndexTest, SharedSetOperationsAgreeWithSmallValueOracle) {
   DecisionIndex index(4);

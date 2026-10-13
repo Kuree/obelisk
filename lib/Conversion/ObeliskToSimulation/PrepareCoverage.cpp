@@ -2347,6 +2347,14 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             descriptor.bitWidth = *forcedBitWidth;
             descriptor.signedness = *forcedSignedness;
           }
+          if (role == coverage::FunctionalExpressionRole::CoverpointSample &&
+              descriptor.resultKind ==
+                  coverage::FunctionalExpressionResultKind::Integral) {
+            auto type = expression->getAttrOfType<TypeAttr>("semantic_type");
+            if (type && simlowering::isFourStateSemanticType(type.getValue()))
+              descriptor.flags |=
+                  coverage::FunctionalExpressionCoverpointFourState;
+          }
           schema.functionalExpressions.push_back(descriptor);
           expression->setAttr(
               sim::metadata::coverageFunctionalExpressionId,

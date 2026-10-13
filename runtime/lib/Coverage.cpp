@@ -5,6 +5,7 @@
 
 #include "../../lib/Coverage/CoverageDecisionIndex.h"
 #include "../../lib/Coverage/CoverageIndex.h"
+#include "../../lib/Coverage/CoverageTransitionIndex.h"
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
 #include "obelisk/Runtime/StableHash.h"
@@ -76,7 +77,7 @@ struct FunctionalCoverageQueryMetadata {
     size_t activeSlot = 0;
   };
   struct SampleItem {
-    bool trackTransitionLength = false;
+    uint64_t transitionLengthLimit = 0;
     size_t value = SIZE_MAX;
     size_t iff = SIZE_MAX;
     std::vector<SampleTransition> transitions;
@@ -9347,8 +9348,16 @@ prepareFunctionalSampleMetadata(const obelisk::coverage::Database &schema,
         return OBELISK_RT_INVALID_DESIGN;
     }
     auto &sampleItem = metadata.sampleItems[item->second];
-    sampleItem.trackTransitionLength |=
-        (bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) != 0;
+    if (bin.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) {
+      uint64_t maximumLength = 0;
+      for (uint32_t ordinal = 0; ordinal != alternative.stepCount; ++ordinal)
+        maximumLength = saturatingAdd(
+            maximumLength,
+            schema.resolvedTransitionSteps[alternative.firstStep + ordinal]
+                .upperBound);
+      sampleItem.transitionLengthLimit =
+          std::max(sampleItem.transitionLengthLimit, maximumLength);
+    }
     sampleItem.transitions.push_back({&alternative, &definition,
                                       position->second,
                                       metadata.transitionSlotCount++});
@@ -10553,145 +10562,11 @@ bool coverageShapeContainsPrefix(const IntegralCoverageShape &shape,
   return true;
 }
 
-bool integralShapeCoveredByUnion(
-    const IntegralCoverageShape &subject,
-    const std::vector<IntegralCoverageShape> &exclusions, uint32_t bitWidth) {
-  struct Frame {
-    int64_t remainingBit = -1;
-    int64_t decisionBit = -1;
-    bool decisionOne = false;
-    uint8_t stage = 0;
-    bool zeroBranch = false;
-    bool oneBranch = false;
-    std::vector<size_t> candidates;
-  };
-
-  std::vector<uint64_t> prefix((uint64_t{bitWidth} + 63) / 64);
-  std::vector<Frame> stack;
-  Frame root;
-  root.remainingBit = static_cast<int64_t>(bitWidth) - 1;
-  root.candidates.resize(exclusions.size());
-  for (size_t index = 0; index != exclusions.size(); ++index)
-    root.candidates[index] = index;
-  stack.push_back(std::move(root));
-
-  auto popCovered = [&] {
-    int64_t decisionBit = stack.back().decisionBit;
-    bool decisionOne = stack.back().decisionOne;
-    stack.pop_back();
-    if (decisionOne)
-      setCubeBit(prefix, static_cast<uint32_t>(decisionBit), false);
-  };
-  while (!stack.empty()) {
-    Frame &frame = stack.back();
-    if (frame.stage == 0) {
-      std::vector<size_t> intersecting;
-      intersecting.reserve(frame.candidates.size());
-      bool covered = false;
-      for (size_t index : frame.candidates) {
-        const auto &exclusion = exclusions[index];
-        if (!coverageShapeIntersectsPrefix(exclusion, prefix,
-                                           frame.remainingBit, bitWidth))
-          continue;
-        if (coverageShapeContainsPrefix(exclusion, prefix, frame.remainingBit,
-                                        bitWidth)) {
-          covered = true;
-          break;
-        }
-        intersecting.push_back(index);
-      }
-      if (covered || (frame.remainingBit < 0 && !intersecting.empty())) {
-        popCovered();
-        continue;
-      }
-      if (intersecting.empty())
-        return false;
-      frame.candidates = std::move(intersecting);
-      bool cubePartition = !subject.interval ||
-                           coverageShapeContainsPrefix(
-                               subject, prefix, frame.remainingBit, bitWidth);
-      for (size_t index : frame.candidates)
-        cubePartition &= !exclusions[index].interval;
-      if (cubePartition) {
-        int64_t relevantBit = -1;
-        auto includeConstraints = [&](const IntegralCoverageShape &shape) {
-          if (shape.interval)
-            return;
-          uint32_t lastLimb = static_cast<uint32_t>(frame.remainingBit) / 64;
-          for (uint32_t ordinal = 0; ordinal <= lastLimb; ++ordinal) {
-            uint64_t constrained = ~shape.wildcard[ordinal];
-            if (ordinal == lastLimb)
-              constrained &= lowBitsMask(
-                  static_cast<uint32_t>(frame.remainingBit) % 64 + 1);
-            if (!constrained)
-              continue;
-            uint32_t bit = 0;
-            while (constrained >>= 1)
-              ++bit;
-            relevantBit =
-                std::max(relevantBit, static_cast<int64_t>(ordinal) * 64 + bit);
-          }
-        };
-        includeConstraints(subject);
-        for (size_t index : frame.candidates)
-          includeConstraints(exclusions[index]);
-        if (relevantBit < 0)
-          return false;
-        frame.remainingBit = relevantBit;
-      }
-      auto subjectBranchExists = [&](bool one) {
-        setCubeBit(prefix, static_cast<uint32_t>(frame.remainingBit), one);
-        bool exists = coverageShapeIntersectsPrefix(
-            subject, prefix, frame.remainingBit - 1, bitWidth);
-        setCubeBit(prefix, static_cast<uint32_t>(frame.remainingBit), false);
-        return exists;
-      };
-      frame.zeroBranch = subjectBranchExists(false);
-      frame.oneBranch = subjectBranchExists(true);
-      if (!frame.zeroBranch && !frame.oneBranch)
-        return false;
-      frame.stage = 1;
-      if (frame.zeroBranch) {
-        Frame child;
-        child.remainingBit = frame.remainingBit - 1;
-        child.decisionBit = frame.remainingBit;
-        child.candidates = frame.candidates;
-        stack.push_back(std::move(child));
-        continue;
-      }
-    }
-    if (frame.stage == 1) {
-      frame.stage = 2;
-      if (frame.oneBranch) {
-        setCubeBit(prefix, static_cast<uint32_t>(frame.remainingBit), true);
-        Frame child;
-        child.remainingBit = frame.remainingBit - 1;
-        child.decisionBit = frame.remainingBit;
-        child.decisionOne = true;
-        child.candidates = frame.candidates;
-        stack.push_back(std::move(child));
-        continue;
-      }
-    }
-    popCovered();
-  }
-  return true;
-}
-
-struct ExactTransitionWord {
-  uint64_t alternative = 0;
-  uint64_t bin = 0;
-  uint64_t item = 0;
-  uint32_t flags = 0;
-  std::vector<const obelisk::coverage::ResolvedFunctionalValueSet *> valueSets;
-};
-
-/// Derive the post-distribution subtraction required by IEEE 1800-2023
-/// 19.5.5 and 19.5.6. Bounded ordinary and exclusion alternatives yield finite
-/// symbolic words. Integral ranges are decomposed into prefix cubes and each
-/// word is represented as a Cartesian product in a concatenated bit space.
-/// Union containment in that space is exact and does not enumerate values.
-/// No derived matcher state enters the v1 database identity.
+/// IEEE 1800-2023 19.5.5-.6 removes complete ordinary sequences containing
+/// a finite excluded subsequence. Ordinary goto/nonconsecutive gaps are a
+/// regular language, not a finite list of words. Share exclusion prefix and
+/// decision graphs per point and prove emptiness by product reachability.
+/// Derived graphs are private and do not enter the database identity.
 obelisk_rt_status
 deriveTransitionExclusions(const obelisk::coverage::Database &schema,
                            uint64_t typeID,
@@ -10699,9 +10574,11 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
                            std::unordered_set<uint64_t> &suppressedAlternatives,
                            std::unordered_set<uint64_t> &emptyBins) {
   using namespace obelisk::coverage;
+  using Graph = detail::DecisionIndex;
+  using Language = detail::TransitionIndex;
   constexpr uint64_t maxDerivationWork = uint64_t{1} << 14;
   uint64_t derivationWork = 0;
-  auto consumeWork = [&](uint64_t amount = 1) {
+  auto consumeWork = [&](uint64_t amount) {
     if (amount > maxDerivationWork - derivationWork)
       return false;
     derivationWork += amount;
@@ -10709,7 +10586,7 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   };
   suppressedAlternatives.clear();
   emptyBins.clear();
-  IndexSet<uint64_t> affectedItems;
+  IndexSet<uint64_t> affectedItems, fourStateTemplates, fourStateItems;
   IndexMap<uint64_t, const ResolvedFunctionalBin *> bins;
   for (const auto &bin : schema.resolvedFunctionalBins) {
     if (bin.type != typeID || bin.configuration != configuration)
@@ -10722,18 +10599,105 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   }
   if (affectedItems.empty())
     return OBELISK_RT_OK;
-
-  std::vector<ExactTransitionWord> words;
+  for (const auto &expression : schema.functionalExpressions)
+    if (expression.role == FunctionalExpressionRole::CoverpointSample &&
+        (expression.flags & FunctionalExpressionCoverpointFourState))
+      fourStateTemplates.insert(expression.owner);
+  for (const auto &item : schema.resolvedFunctionalItems)
+    if (item.type == typeID && item.configuration == configuration &&
+        fourStateTemplates.count(item.templateItem))
+      fourStateItems.insert(item.id);
   IndexMap<uint64_t, const ResolvedFunctionalValueSet *> valueSets;
   for (const auto &set : schema.resolvedFunctionalValueSets)
     if (set.type == typeID && set.configuration == configuration)
       valueSets.emplace(set.id, &set);
-  IndexMap<uint64_t, size_t> ordinaryAlternativeCounts;
-  IndexMap<uint64_t, size_t> ordinaryWordCounts;
-  IndexMap<uint64_t, uint64_t> ordinaryWordBins;
   IndexMap<uint64_t, const TransitionProgram *> programs;
   for (const auto &program : schema.transitionPrograms)
     programs.emplace(program.bin, &program);
+  struct Ordinary {
+    uint64_t alternative, bin;
+    std::vector<Language::Step> steps;
+  };
+  struct Point {
+    uint32_t width = 0;
+    CoverageSignedness signedness = CoverageSignedness::NotApplicable;
+    std::unique_ptr<Graph> values;
+    std::unique_ptr<Language> language;
+    IndexMap<uint64_t, Graph::Root> sets;
+    std::vector<Ordinary> ordinary;
+  };
+  IndexMap<uint64_t, Point> points;
+  IndexMap<uint64_t, uint64_t> ordinaryCounts, suppressedCounts;
+  auto labelFor = [&](Point &point, uint64_t item,
+                      const ResolvedFunctionalValueSet &set,
+                      Graph::Root &label) -> obelisk_rt_status {
+    if (set.kind != FunctionalValueSetKind::Integral || !set.bitWidth ||
+        uint64_t{set.firstAtom} + set.atomCount >
+            schema.resolvedFunctionalValueAtoms.size())
+      return OBELISK_RT_INVALID_DESIGN;
+    if (!point.values) {
+      if (set.bitWidth == UINT32_MAX)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      point.width = set.bitWidth;
+      point.signedness = set.signedness;
+      // Known transition sets reject every X/Z sample, so one extra decision
+      // bit represents the entire unknown class. It is a legal gap only for
+      // a four-state coverpoint. This preserves the original sample domain.
+      uint32_t width = point.width + 1;
+      point.values = std::make_unique<Graph>(width);
+      std::vector<uint64_t> zero(functionalLimbCount(width), 0);
+      std::vector<uint64_t> knownWildcard = zero;
+      for (uint32_t ordinal = 0; ordinal != point.width / 64; ++ordinal)
+        knownWildcard[ordinal] = UINT64_MAX;
+      if (point.width % 64)
+        knownWildcard[point.width / 64] = lowBitsMask(point.width % 64);
+      Graph::Root domain = fourStateItems.count(item)
+                               ? 1
+                               : point.values->cube(zero, knownWildcard);
+      point.language = std::make_unique<Language>(*point.values, width, domain);
+    } else if (point.width != set.bitWidth ||
+               point.signedness != set.signedness)
+      return OBELISK_RT_INVALID_DESIGN;
+    if (auto found = point.sets.find(set.id); found != point.sets.end()) {
+      label = found->second;
+      return OBELISK_RT_OK;
+    }
+    label = 0;
+    const uint32_t limbs = functionalLimbCount(point.width + 1);
+    for (uint32_t ordinal = 0; ordinal != set.atomCount; ++ordinal) {
+      if (!consumeWork(uint64_t{set.bitWidth} + 2))
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      const auto &atom =
+          schema.resolvedFunctionalValueAtoms[set.firstAtom + ordinal];
+      if (atom.valueSet != set.id || atom.ordinal != ordinal)
+        return OBELISK_RT_INVALID_DESIGN;
+      StateCoverageInterval interval;
+      Graph::Root root;
+      if (makeStateCoverageInterval(schema, set, atom, false, interval)) {
+        if (interval.empty)
+          continue;
+        interval.low.insert(interval.low.begin(), limbs - interval.low.size(),
+                            0);
+        interval.high.insert(interval.high.begin(),
+                             limbs - interval.high.size(), 0);
+        root = point.values->interval(interval.low, interval.high);
+      } else {
+        IntegralCoverageShape shape;
+        if (!makeIntegralCoverageShape(schema, atom, set.bitWidth,
+                                       set.signedness, shape) ||
+            shape.interval)
+          return OBELISK_RT_INVALID_DESIGN;
+        shape.value.resize(limbs, 0);
+        shape.wildcard.resize(limbs, 0);
+        root = point.values->cube(shape.value, shape.wildcard);
+      }
+      label = point.values->unite(label, root);
+      if (point.values->exhausted())
+        return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    point.sets.emplace(set.id, label);
+    return OBELISK_RT_OK;
+  };
   for (const auto &alternative : schema.resolvedTransitionAlternatives) {
     if (alternative.type != typeID ||
         alternative.configuration != configuration)
@@ -10764,270 +10728,87 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
         uint64_t{definition.firstStep} + definition.stepCount >
             schema.transitionSteps.size())
       return OBELISK_RT_INVALID_DESIGN;
-    struct Dimension {
-      const ResolvedFunctionalValueSet *set;
-      uint64_t lower, upper;
-    };
-    std::vector<Dimension> dimensions;
-    dimensions.reserve(alternative.stepCount);
-    uint64_t wordCount = 1, maximumLength = 0;
+    bool exclusion =
+        bin->second->flags & (FunctionalBinIgnore | FunctionalBinIllegal);
+    auto &point = points.emplace(bin->second->item).first->second;
+    std::vector<Language::Step> steps;
+    steps.reserve(alternative.stepCount);
+    uint64_t maximumLength = 0, wordCount = 1;
     for (uint32_t ordinal = 0; ordinal != alternative.stepCount; ++ordinal) {
       const auto &step =
           schema.resolvedTransitionSteps[alternative.firstStep + ordinal];
-      auto set = valueSets.find(step.valueSet);
       const auto repetition =
           schema.transitionSteps[definition.firstStep + ordinal].repetition;
+      auto set = valueSets.find(step.valueSet);
+      bool bounded = repetition == TransitionRepetitionKind::Once ||
+                     repetition == TransitionRepetitionKind::Consecutive;
       if (step.alternative != alternative.id || step.ordinal != ordinal ||
-          (repetition != TransitionRepetitionKind::Once &&
-           repetition != TransitionRepetitionKind::Consecutive) ||
+          (!bounded &&
+           (exclusion ||
+            (repetition != TransitionRepetitionKind::Goto &&
+             repetition != TransitionRepetitionKind::Nonconsecutive))) ||
           !step.lowerBound || step.upperBound < step.lowerBound ||
           step.upperBound == TransitionUnbounded ||
           (repetition == TransitionRepetitionKind::Once &&
            (step.lowerBound != 1 || step.upperBound != 1)) ||
-          set == valueSets.end() ||
-          set->second->kind != FunctionalValueSetKind::Integral)
+          set == valueSets.end())
         return OBELISK_RT_INVALID_DESIGN;
       if (step.upperBound > maxDerivationWork - maximumLength)
         return OBELISK_RT_OUT_OF_RESOURCES;
       maximumLength += step.upperBound;
-      uint64_t choices = step.upperBound - step.lowerBound + 1;
-      if (wordCount > maxDerivationWork / choices)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      wordCount *= choices;
-      dimensions.push_back({set->second, step.lowerBound, step.upperBound});
+      Graph::Root label;
+      obelisk_rt_status status =
+          labelFor(point, bin->second->item, *set->second, label);
+      if (status != OBELISK_RT_OK)
+        return status;
+      steps.push_back({label, step.lowerBound, step.upperBound, repetition});
+      if (exclusion) {
+        uint64_t choices = step.upperBound - step.lowerBound + 1;
+        if (wordCount > maxDerivationWork / choices)
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        wordCount *= choices;
+      }
     }
-    if (!(bin->second->flags & (FunctionalBinIgnore | FunctionalBinIllegal))) {
-      ++ordinaryAlternativeCounts[bin->second->id];
-      ordinaryWordCounts.emplace(alternative.id, wordCount);
-      ordinaryWordBins.emplace(alternative.id, alternative.bin);
+    if (!exclusion) {
+      ++ordinaryCounts[bin->second->id];
+      point.ordinary.push_back(
+          {alternative.id, alternative.bin, std::move(steps)});
+      continue;
     }
-    // Enumerate complete bounded words. No growing prefix or whole schema is
-    // copied per repetition count, and work is charged to the word data
-    // emitted.
-    std::vector<uint64_t> repetitions(dimensions.size());
-    for (uint64_t encodedWord = 0; encodedWord != wordCount; ++encodedWord) {
-      uint64_t remainder = encodedWord, length = 0;
-      for (size_t reverse = dimensions.size(); reverse != 0; --reverse) {
+    std::vector<uint64_t> repetitions(steps.size());
+    for (uint64_t encoded = 0; encoded != wordCount; ++encoded) {
+      uint64_t remainder = encoded, length = 0;
+      for (size_t reverse = steps.size(); reverse != 0; --reverse) {
         size_t ordinal = reverse - 1;
-        const auto &dimension = dimensions[ordinal];
-        uint64_t choices = dimension.upper - dimension.lower + 1;
-        repetitions[ordinal] = dimension.lower + remainder % choices;
+        const auto &step = steps[ordinal];
+        uint64_t choices = step.upper - step.lower + 1;
+        repetitions[ordinal] = step.lower + remainder % choices;
         remainder /= choices;
         length += repetitions[ordinal];
       }
       if (!consumeWork(length))
         return OBELISK_RT_OUT_OF_RESOURCES;
-      ExactTransitionWord word{alternative.id,
-                               alternative.bin,
-                               bin->second->item,
-                               bin->second->flags,
-                               {}};
-      word.valueSets.reserve(length);
-      for (size_t ordinal = 0; ordinal != dimensions.size(); ++ordinal)
-        word.valueSets.insert(word.valueSets.end(), repetitions[ordinal],
-                              dimensions[ordinal].set);
-      words.push_back(std::move(word));
-    }
-  }
-
-  auto wildcardPlane = [](uint32_t bitWidth) {
-    std::vector<uint64_t> result((uint64_t{bitWidth} + 63) / 64, UINT64_MAX);
-    if (bitWidth % 64)
-      result.back() = lowBitsMask(bitWidth % 64);
-    return result;
-  };
-
-  auto appendShapeCubes = [&](const IntegralCoverageShape &shape,
-                              uint32_t bitWidth,
-                              std::vector<IntegralCoverageShape> &cubes) {
-    if (!shape.interval) {
-      if (!consumeWork())
-        return false;
-      cubes.push_back(shape);
-      return true;
-    }
-    struct Frame {
-      std::vector<uint64_t> prefix;
-      int64_t remainingBit = -1;
-    };
-    std::vector<Frame> stack;
-    stack.push_back({std::vector<uint64_t>((uint64_t{bitWidth} + 63) / 64),
-                     static_cast<int64_t>(bitWidth) - 1});
-    while (!stack.empty()) {
-      if (!consumeWork())
-        return false;
-      Frame frame = std::move(stack.back());
-      stack.pop_back();
-      if (!coverageShapeIntersectsPrefix(shape, frame.prefix,
-                                         frame.remainingBit, bitWidth))
-        continue;
-      if (coverageShapeContainsPrefix(shape, frame.prefix, frame.remainingBit,
-                                      bitWidth)) {
-        IntegralCoverageShape cube;
-        cube.value = std::move(frame.prefix);
-        cube.wildcard.assign(cube.value.size(), 0);
-        if (frame.remainingBit >= 0) {
-          uint32_t limb = static_cast<uint32_t>(frame.remainingBit) / 64;
-          for (uint32_t ordinal = 0; ordinal < limb; ++ordinal)
-            cube.wildcard[ordinal] = UINT64_MAX;
-          cube.wildcard[limb] =
-              lowBitsMask(static_cast<uint32_t>(frame.remainingBit) % 64 + 1);
-        }
-        cubes.push_back(std::move(cube));
-        continue;
-      }
-      if (frame.remainingBit < 0)
-        return false;
-      Frame one = frame;
-      --frame.remainingBit;
-      setCubeBit(one.prefix, static_cast<uint32_t>(one.remainingBit), true);
-      --one.remainingBit;
-      stack.push_back(std::move(one));
-      stack.push_back(std::move(frame));
-    }
-    return true;
-  };
-
-  auto valueSetCubes = [&](const ResolvedFunctionalValueSet &set,
-                           std::vector<IntegralCoverageShape> &cubes) {
-    if (!set.bitWidth || uint64_t{set.firstAtom} + set.atomCount >
-                             schema.resolvedFunctionalValueAtoms.size())
-      return OBELISK_RT_INVALID_DESIGN;
-    for (uint32_t ordinal = 0; ordinal != set.atomCount; ++ordinal) {
-      const auto &atom =
-          schema.resolvedFunctionalValueAtoms[set.firstAtom + ordinal];
-      IntegralCoverageShape shape;
-      if (atom.valueSet != set.id || atom.ordinal != ordinal ||
-          !makeIntegralCoverageShape(schema, atom, set.bitWidth, set.signedness,
-                                     shape))
-        return OBELISK_RT_INVALID_DESIGN;
-      if (!appendShapeCubes(shape, set.bitWidth, cubes))
+      std::vector<Graph::Root> word;
+      word.reserve(length);
+      for (size_t ordinal = 0; ordinal != steps.size(); ++ordinal)
+        word.insert(word.end(), repetitions[ordinal], steps[ordinal].values);
+      point.language->addExclusion(word);
+      if (point.language->exhausted())
         return OBELISK_RT_OUT_OF_RESOURCES;
     }
-    return OBELISK_RT_OK;
-  };
-
-  IndexMap<uint64_t, std::vector<IntegralCoverageShape>> cachedValueSetCubes;
-  auto buildWordCubes = [&](const ExactTransitionWord &word,
-                            uint32_t totalSteps, uint32_t stepOffset,
-                            std::vector<IntegralCoverageShape> &result) {
-    if (word.valueSets.empty() || stepOffset > totalSteps ||
-        word.valueSets.size() > totalSteps - stepOffset)
-      return OBELISK_RT_INVALID_DESIGN;
-    const uint32_t stepWidth = word.valueSets.front()->bitWidth;
-    const auto signedness = word.valueSets.front()->signedness;
-    if (!stepWidth || uint64_t{stepWidth} * totalSteps > UINT32_MAX)
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    const uint32_t totalWidth = stepWidth * totalSteps;
-    std::vector<const std::vector<IntegralCoverageShape> *> dimensions;
-    dimensions.reserve(word.valueSets.size());
-    for (const auto *valueSet : word.valueSets) {
-      const auto &set = *valueSet;
-      if (set.bitWidth != stepWidth || set.signedness != signedness)
-        return OBELISK_RT_INVALID_DESIGN;
-      auto cached = cachedValueSetCubes.emplace(set.id);
-      if (cached.second) {
-        obelisk_rt_status status = valueSetCubes(set, cached.first->second);
-        if (status != OBELISK_RT_OK)
-          return status;
-      }
-      const auto &stepCubes = cached.first->second;
-      if (stepCubes.empty()) {
-        result.clear();
-        return OBELISK_RT_OK;
-      }
-      dimensions.push_back(&stepCubes);
-    }
-    uint64_t cubeCount = 1;
-    for (const auto *dimension : dimensions) {
-      if (cubeCount > maxDerivationWork / dimension->size())
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      cubeCount *= dimension->size();
-    }
-    if (!consumeWork(cubeCount))
-      return OBELISK_RT_OUT_OF_RESOURCES;
-    result.reserve(cubeCount);
-    // Construct complete words directly. Copying a full-width prefix for each
-    // step was quadratic in sequence length even for singleton value sets.
-    for (uint64_t encodedCube = 0; encodedCube != cubeCount; ++encodedCube) {
-      IntegralCoverageShape combined;
-      combined.value.assign((uint64_t{totalWidth} + 63) / 64, 0);
-      combined.wildcard = wildcardPlane(totalWidth);
-      uint64_t remainder = encodedCube;
-      for (size_t reverse = dimensions.size(); reverse != 0; --reverse) {
-        size_t step = reverse - 1;
-        const auto &dimension = *dimensions[step];
-        const auto &stepCube = dimension[remainder % dimension.size()];
-        remainder /= dimension.size();
-        const uint32_t destination = (stepOffset + step) * stepWidth;
-        for (uint32_t bit = 0; bit != stepWidth; ++bit) {
-          setCubeBit(combined.value, destination + bit,
-                     cubeBit(stepCube.value, bit));
-          setCubeBit(combined.wildcard, destination + bit,
-                     cubeBit(stepCube.wildcard, bit));
-        }
-      }
-      result.push_back(std::move(combined));
-    }
-    return OBELISK_RT_OK;
-  };
-
-  IndexMap<uint64_t, std::vector<const ExactTransitionWord *>> exclusionsByItem;
-  for (const auto &word : words)
-    if (word.flags & (FunctionalBinIgnore | FunctionalBinIllegal))
-      exclusionsByItem[word.item].push_back(&word);
-  IndexMap<uint64_t, size_t> suppressedPerBin;
-  IndexMap<uint64_t, size_t> suppressedWordCounts;
-  for (const auto &word : words) {
-    if (word.flags & (FunctionalBinIgnore | FunctionalBinIllegal))
-      continue;
-    std::vector<IntegralCoverageShape> ordinaryCubes;
-    obelisk_rt_status status = buildWordCubes(
-        word, static_cast<uint32_t>(word.valueSets.size()), 0, ordinaryCubes);
-    if (status != OBELISK_RT_OK)
-      return status;
-    std::vector<IntegralCoverageShape> exclusionCubes;
-    auto exclusions = exclusionsByItem.find(word.item);
-    if (exclusions == exclusionsByItem.end())
-      continue;
-    for (const auto *excludedWord : exclusions->second) {
-      const auto &exclusion = *excludedWord;
-      if (exclusion.valueSets.size() > word.valueSets.size())
-        continue;
-      for (uint32_t offset = 0;
-           offset + exclusion.valueSets.size() <= word.valueSets.size();
-           ++offset) {
-        std::vector<IntegralCoverageShape> window;
-        status = buildWordCubes(exclusion,
-                                static_cast<uint32_t>(word.valueSets.size()),
-                                offset, window);
-        if (status != OBELISK_RT_OK)
-          return status;
-        exclusionCubes.insert(exclusionCubes.end(),
-                              std::make_move_iterator(window.begin()),
-                              std::make_move_iterator(window.end()));
-      }
-    }
-    const uint32_t totalWidth =
-        word.valueSets.front()->bitWidth * word.valueSets.size();
-    bool suppressed = !ordinaryCubes.empty();
-    for (const auto &ordinaryCube : ordinaryCubes)
-      if (!integralShapeCoveredByUnion(ordinaryCube, exclusionCubes,
-                                       totalWidth)) {
-        suppressed = false;
-        break;
-      }
-    if (suppressed) {
-      ++suppressedWordCounts[word.alternative];
-    }
   }
-  for (const auto &[alternative, count] : ordinaryWordCounts)
-    if (suppressedWordCounts[alternative] == count) {
-      suppressedAlternatives.insert(alternative);
-      ++suppressedPerBin[ordinaryWordBins.at(alternative)];
+  for (auto &[item, point] : points)
+    for (const auto &ordinary : point.ordinary) {
+      bool survives = point.language->hasAcceptedWord(ordinary.steps);
+      if (point.language->exhausted())
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      if (!survives) {
+        suppressedAlternatives.insert(ordinary.alternative);
+        ++suppressedCounts[ordinary.bin];
+      }
     }
-  for (const auto &[bin, count] : ordinaryAlternativeCounts)
-    if (suppressedPerBin[bin] == count)
+  for (auto [bin, count] : ordinaryCounts)
+    if (suppressedCounts[bin] == count)
       emptyBins.insert(bin);
   return OBELISK_RT_OK;
 }
@@ -13524,9 +13305,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
         auto advance = [&](const ActiveState &activeState,
                            bool fromPrevious) -> bool {
           ActiveState sampledState = activeState;
-          if (sampleItem.trackTransitionLength)
+          if (sampleItem.transitionLengthLimit)
             sampledState.samplesConsumed =
-                saturatingAdd(sampledState.samplesConsumed, 1);
+                std::min(sampleItem.transitionLengthLimit,
+                         saturatingAdd(sampledState.samplesConsumed, 1));
           auto recordHit = [&] {
             hit = true;
             shortestHit = std::min(shortestHit, sampledState.samplesConsumed);

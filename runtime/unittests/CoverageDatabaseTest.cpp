@@ -1916,6 +1916,34 @@ TEST(CoverageDatabaseTest, RejectsMalformedFunctionalFormals) {
   EXPECT_STREQ(diagnostic.field, "functional_expression");
 }
 
+TEST(CoverageDatabaseTest,
+     CoverpointSampleDomainSurvivesRoundTripAndIsRoleSpecific) {
+  Database db = makeTypedDatabase();
+  auto sample = std::find_if(db.functionalExpressions.begin(),
+                             db.functionalExpressions.end(),
+                             [](const auto &e) { return e.id == 9000001; });
+  ASSERT_NE(sample, db.functionalExpressions.end());
+  sample->flags = FunctionalExpressionCoverpointFourState;
+  db.schemaFingerprint = computeSchemaFingerprint(db);
+  Diagnostic diagnostic;
+  std::vector<uint8_t> bytes;
+  ASSERT_EQ(serialize(db, bytes, &diagnostic), Status::Ok) << diagnostic.detail;
+  Database parsed;
+  ASSERT_EQ(parse(bytes.data(), bytes.size(), parsed, {}, &diagnostic),
+            Status::Ok)
+      << diagnostic.detail;
+  auto restored = std::find_if(parsed.functionalExpressions.begin(),
+                               parsed.functionalExpressions.end(),
+                               [](const auto &e) { return e.id == 9000001; });
+  ASSERT_NE(restored, parsed.functionalExpressions.end());
+  EXPECT_EQ(restored->flags, FunctionalExpressionCoverpointFourState);
+  // The same bit is not valid on real values or constructor/default helpers.
+  db.functionalExpressions.front().flags =
+      FunctionalExpressionCoverpointFourState;
+  EXPECT_EQ(validate(db, &diagnostic), Status::InvalidReference);
+  EXPECT_STREQ(diagnostic.field, "functional_expression");
+}
+
 TEST(CoverageDatabaseTest, RejectsBinWithExpressionOwnedByCrossBin) {
   Database db = makeTypedDatabase();
   FunctionalExpression expression;

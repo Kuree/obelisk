@@ -5499,6 +5499,57 @@ TEST_F(CoverageRuntimeDesignTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       GappedTransitionExclusionsKeepHistoryBoundedAndPreserveCleanMatches) {
+  using namespace obelisk::coverage;
+  for (auto repetition : {TransitionRepetitionKind::Goto,
+                          TransitionRepetitionKind::Nonconsecutive}) {
+    Database schema = makeRepeatedExclusionSchema(2, 2, 1, 1);
+    schema.transitionSteps.front().repetition = repetition;
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    obelisk_rt_context *context = createContextForSchema(schema);
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(createRepeatedExclusionFunctional(context, false, 1, &handle),
+              OBELISK_RT_OK);
+    GuardedTransitionSample sample{context, handle};
+    ASSERT_EQ(sample(1), OBELISK_RT_OK);
+    for (uint32_t ordinal = 0; ordinal != 128; ++ordinal) {
+      ASSERT_EQ(sample(3), OBELISK_RT_OK);
+      size_t states = 0;
+      for (const auto &active :
+           context->coverage->instances.at(handle).transitionActive)
+        if (active)
+          states += active->size();
+      EXPECT_LE(states, 6u);
+    }
+    ASSERT_EQ(sample(1), OBELISK_RT_OK);
+    if (repetition == TransitionRepetitionKind::Nonconsecutive)
+      ASSERT_EQ(sample(3), OBELISK_RT_OK);
+    ASSERT_EQ(sample(2), OBELISK_RT_OK);
+    const auto &bins = context->coverage->instances.at(handle).bins;
+    EXPECT_FALSE(bins.front().flags & FunctionalBinEmpty);
+    EXPECT_EQ(bins.front().count, 1u);
+    // The earlier adjacent ignored pair remains part of every completed
+    // ordinary match even though its iff is disabled.
+    for (uint8_t value : {1, 1, 2})
+      ASSERT_EQ(sample(value), OBELISK_RT_OK);
+    EXPECT_EQ(bins.front().count, 1u);
+    EXPECT_TRUE(saveCoverage(context, "gapped-disabled-exclusions")
+                    .illegalBinDiagnostics.empty());
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handle, 20, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, 1);
+    EXPECT_EQ(total, 1);
+    EXPECT_DOUBLE_EQ(percentage, 100.0);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
        HugeRepeatedTransitionExclusionDerivationFailsBeforePublication) {
   auto schema =
       makeRepeatedExclusionSchema(UINT64_MAX - 1, UINT64_MAX - 1, 1, 1);

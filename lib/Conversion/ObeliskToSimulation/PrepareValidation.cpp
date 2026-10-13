@@ -1362,18 +1362,19 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         }
         if (pointHasTransitionExclusion && !defaultSequence &&
             !multipleBinsHasVariableLengthTransition) {
-          // Transition subtraction is performed after distribution. The
-          // runtime accepts bounded symbolic integral words for both
-          // ordinary and exclusion bins, including consecutive repetition.
-          // This excludes goto/nonconsecutive repetition and
-          // set expressions whose subtraction would require a more general
-          // temporal language operation.
+          // Transition subtraction is performed after distribution. Only
+          // excluded sequences must have bounded length (19.5.5-.6).
+          // Ordinary scalar bins may contain goto/nonconsecutive repetition;
+          // symbolic language subtraction handles their unbounded gaps.
+          bool exclusionBin =
+              bin.getBinsKind() != semantic::SVCoverageBinKind::Bins;
           if (basicFinite) {
             for (const CoverageTransitionSetChildren &set :
                  transitionChildren->transitions)
               for (const CoverageTransitionRangeChildren &range : set.ranges) {
                 basicFinite &=
-                    (range.repeatKind ==
+                    (!exclusionBin ||
+                     range.repeatKind ==
                          semantic::SVCoverageTransitionRepeatKind::None ||
                      range.repeatKind ==
                          semantic::SVCoverageTransitionRepeatKind::
@@ -1384,9 +1385,10 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
           if (!basicFinite) {
             emitError(getSemanticLocation(op))
                 << "transition ignore_bins and illegal_bins currently require "
-                   "integral bounded transitions, scalar or unsized "
+                   "integral bounded excluded transitions, scalar or unsized "
                    "arrays, with optional consecutive repetition and no "
-                   "set expression";
+                   "set expression; ordinary scalar transitions may use "
+                   "goto or nonconsecutive repetition";
             invalid = true;
           }
         }

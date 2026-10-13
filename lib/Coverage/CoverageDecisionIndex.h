@@ -140,6 +140,10 @@ public:
       : width(width), limit(limit), nodes{{width, 0, 0}, {width, 1, 1}} {}
 
   bool exhausted() const { return failed; }
+  uint32_t variable(Root root) const { return nodes[root].variable; }
+  Root child(Root root, bool one) const {
+    return one ? nodes[root].one : nodes[root].zero;
+  }
   Root makeNode(uint32_t variable, Root zero, Root one) {
     if (failed)
       return 0;

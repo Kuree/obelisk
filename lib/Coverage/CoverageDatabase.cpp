@@ -3862,6 +3862,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     if (setResult)
       validFlags =
           !(expression.flags & ~FunctionalExpressionSetElementFourState);
+    else if (expression.role == FunctionalExpressionRole::CoverpointSample &&
+             scalarResult)
+      validFlags =
+          !(expression.flags & ~FunctionalExpressionCoverpointFourState);
     else if (expression.role == FunctionalExpressionRole::SamplingEvent) {
       constexpr uint32_t eventFlags = FunctionalExpressionSamplingEventBlock |
                                       FunctionalExpressionSamplingEventEnd;

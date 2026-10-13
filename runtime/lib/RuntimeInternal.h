@@ -1841,7 +1841,9 @@ struct FunctionalCoverageTransitionState {
   uint32_t gapForbiddenOrdinal = UINT32_MAX;
   uint64_t repetitionsConsumed = 0;
   bool excluded = false;
-  /// Actual sampled prefix length, distinct from the number of stored steps.
+  /// Sampled prefix length, capped at the longest finite exclusion word.
+  /// Lengths beyond that cap are equivalent for exclusion containment, so
+  /// unbounded gaps cannot accumulate one state per historical sample age.
   /// Zero when no transition exclusion needs this history.
   uint64_t samplesConsumed = 0;
 };

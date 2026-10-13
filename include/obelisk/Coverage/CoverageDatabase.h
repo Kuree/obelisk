@@ -295,6 +295,10 @@ inline constexpr uint32_t FunctionalExpressionSamplingEventBlock = uint32_t{1}
                                                                    << 1;
 inline constexpr uint32_t FunctionalExpressionSamplingEventEnd = uint32_t{1}
                                                                  << 2;
+/// The coverpoint's integral sample domain includes X and Z. Gap repetitions
+/// need this even when all explicitly declared transition values are known.
+inline constexpr uint32_t FunctionalExpressionCoverpointFourState = uint32_t{1}
+                                                                    << 3;
 
 struct FunctionalFormal {
   /// Constructor input actuals are captured when new executes; constructor

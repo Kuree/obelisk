@@ -1307,8 +1307,9 @@ def FEResultKind: CoverageField<"ResultKind", "result_kind", 24, CovU32> {
 def FEFlags     : CoverageField<"Flags", "flags", 28, CovU32> {
   // Bit 0 records that a state-bin set expression has four-state elements.
   // Bits 1 and 2 identify block sampling events and their end boundary.
+  // Bit 3 records a coverpoint sample's four-state integral domain.
   // Handwritten validation enforces the result/role-specific contracts.
-  let semantic = "Flags"; let validMask = 7;
+  let semantic = "Flags"; let validMask = 15;
 }
 def FESemanticDigest : CoverageField<"SemanticDigest", "semantic_digest", 32, CovDigest> {
   let semantic = "Digest";
