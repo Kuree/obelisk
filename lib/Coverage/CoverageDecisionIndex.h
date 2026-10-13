@@ -140,6 +140,7 @@ public:
       : width(width), limit(limit), nodes{{width, 0, 0}, {width, 1, 1}} {}
 
   bool exhausted() const { return failed; }
+  uint32_t getWidth() const { return width; }
   uint32_t variable(Root root) const { return nodes[root].variable; }
   Root child(Root root, bool one) const {
     return one ? nodes[root].one : nodes[root].zero;
@@ -298,6 +299,79 @@ public:
     }
     result.swap(values);
     return true;
+  }
+};
+
+/// Existential image of a shared decision graph. A variable map preserves the
+/// order of retained variables; UINT32_MAX removes a variable. Each source
+/// node is translated once across all roots submitted to this image, including
+/// roots shared by overlapping bins. Source and destination may be the same.
+class DecisionProjectionIndex {
+  DecisionIndex &source, &destination;
+  std::vector<uint32_t> variables;
+  IndexMap<DecisionIndex::Root, DecisionIndex::Root> translated;
+  bool failed = false;
+
+public:
+  DecisionProjectionIndex(DecisionIndex &source, DecisionIndex &destination,
+                          std::vector<uint32_t> variables)
+      : source(source), destination(destination),
+        variables(std::move(variables)) {
+    failed = this->variables.size() != source.getWidth();
+    uint64_t next = 0;
+    for (uint32_t variable : this->variables) {
+      if (variable == UINT32_MAX)
+        continue;
+      if (variable < next || variable >= destination.getWidth())
+        failed = true;
+      next = uint64_t{variable} + 1;
+    }
+  }
+
+  bool exhausted() const {
+    return failed || source.exhausted() || destination.exhausted();
+  }
+
+  DecisionIndex::Root project(DecisionIndex::Root root) {
+    using Root = DecisionIndex::Root;
+    auto known = [&](Root value, Root &result) {
+      if (value < 2) {
+        result = value;
+        return true;
+      }
+      auto found = translated.find(value);
+      if (found == translated.end())
+        return false;
+      result = found->second;
+      return true;
+    };
+    if (exhausted())
+      return 0;
+    std::vector<Root> stack{root};
+    Root result = 0;
+    while (!stack.empty() && !exhausted()) {
+      Root value = stack.back();
+      if (known(value, result)) {
+        stack.pop_back();
+        continue;
+      }
+      Root zero = 0, one = 0;
+      if (!known(source.child(value, false), zero)) {
+        stack.push_back(source.child(value, false));
+        continue;
+      }
+      if (!known(source.child(value, true), one)) {
+        stack.push_back(source.child(value, true));
+        continue;
+      }
+      uint32_t variable = variables[source.variable(value)];
+      result = variable == UINT32_MAX
+                   ? destination.unite(zero, one)
+                   : destination.makeNode(variable, zero, one);
+      translated.emplace(value, result);
+      stack.pop_back();
+    }
+    return exhausted() ? 0 : result;
   }
 };
 

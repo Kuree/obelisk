@@ -256,6 +256,76 @@ TEST(CoverageDecisionIndexTest, EnumerationFailurePreservesPublishedValues) {
   EXPECT_EQ(actual, previous);
 }
 
+TEST(CoverageDecisionIndexTest, ProjectionAgreesWithFiniteRelationOracle) {
+  for (uint32_t trial = 0; trial != 32; ++trial) {
+    DecisionIndex relation(6), values(3);
+    uint64_t low = trial % 16, high = 32 + trial % 32;
+    uint64_t wildcard = (trial * 7) & 63;
+    auto range = relation.interval({low}, {high});
+    auto cube = relation.cube({trial}, {wildcard});
+    auto root = relation.subtract(range, cube);
+    DecisionProjectionIndex image(
+        relation, values, {0, UINT32_MAX, UINT32_MAX, 1, UINT32_MAX, 2});
+    auto selected = image.project(root);
+    std::vector<std::vector<uint64_t>> actual, expected;
+    std::array<bool, 8> present{};
+    for (uint64_t value = 0; value != 64; ++value) {
+      if (low <= value && value <= high &&
+          (value & ~wildcard) != (trial & ~wildcard))
+        present[((value >> 3) & 4) | ((value >> 1) & 2) | (value & 1)] = true;
+    }
+    for (uint64_t value = 0; value != 8; ++value)
+      if (present[value])
+        expected.push_back({value});
+    ASSERT_TRUE(values.enumerate(selected, 8, actual));
+    EXPECT_EQ(actual, expected);
+    EXPECT_EQ(image.project(root), selected);
+    EXPECT_FALSE(image.exhausted());
+  }
+}
+
+TEST(CoverageDecisionIndexTest, ProjectionDeduplicatesOverlappingWideBins) {
+  DecisionIndex relation(67), values(65);
+  // Two bin-label bits followed by a 65-bit value. All four labels contain
+  // the same interval across a limb boundary; the image contains four values.
+  auto interval = values.interval({0, UINT64_MAX - 1}, {1, 1});
+  std::vector<uint32_t> offsets(65);
+  for (uint32_t variable = 0; variable != 65; ++variable)
+    offsets[variable] = variable + 2;
+  DecisionProjectionIndex expand(values, relation, std::move(offsets));
+  auto root = expand.project(interval);
+  ASSERT_EQ(relation.cardinality(root, 17), 16u);
+  std::vector<uint32_t> variables(67, UINT32_MAX);
+  for (uint32_t variable = 2; variable != 67; ++variable)
+    variables[variable] = variable - 2;
+  DecisionProjectionIndex image(relation, values, std::move(variables));
+  std::vector<std::vector<uint64_t>> actual;
+  ASSERT_TRUE(values.enumerate(image.project(root), 4, actual));
+  EXPECT_EQ(actual, (std::vector<std::vector<uint64_t>>{
+                        {UINT64_MAX - 1, 0}, {UINT64_MAX, 0}, {0, 1}, {1, 1}}));
+  EXPECT_FALSE(image.exhausted());
+}
+
+TEST(CoverageDecisionIndexTest, ProjectionValidatesOrderingAndTracksResources) {
+  DecisionIndex source(4), target(2);
+  auto root = source.interval({1}, {14});
+  DecisionProjectionIndex invalid(source, target,
+                                  {1, 0, UINT32_MAX, UINT32_MAX});
+  EXPECT_TRUE(invalid.exhausted());
+  EXPECT_EQ(invalid.project(root), 0u);
+  DecisionProjectionIndex shortMap(source, target, {0, 1});
+  EXPECT_TRUE(shortMap.exhausted());
+  DecisionIndex limited(4, 2);
+  DecisionProjectionIndex import(source, limited, {0, 1, 2, 3});
+  EXPECT_EQ(import.project(root), 0u);
+  EXPECT_TRUE(import.exhausted());
+
+  DecisionProjectionIndex exists(source, source,
+                                 {0, UINT32_MAX, UINT32_MAX, 3});
+  EXPECT_EQ(exists.project(root), 1u);
+  EXPECT_FALSE(exists.exhausted());
+}
+
 TEST(CoverageIndexTest, TypeHierarchyUsesDirectEdgesAndHandlesUnorderedChains) {
   struct Type {
     uint64_t id, base;

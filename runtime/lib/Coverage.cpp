@@ -10653,7 +10653,6 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     std::unique_ptr<Graph> values;
     std::unique_ptr<Language> language;
     IndexMap<uint64_t, Graph::Root> sets;
-    IndexMap<Graph::Root, Graph::Root> imported;
     IndexMap<uint64_t, Graph::Root> binTerminals;
     std::vector<Ordinary> ordinary;
   };
@@ -10831,13 +10830,18 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   for (auto &[item, point] : points) {
     bool projectTerminals = setQueries.needsTransitionValues(item);
     Graph *target = nullptr;
+    std::unique_ptr<obelisk::coverage::detail::DecisionProjectionIndex> image;
     if (projectTerminals) {
       FunctionalCoverageSetQueryIndex::DomainKey domain = {
           static_cast<uint32_t>(FunctionalValueSetKind::Integral), point.width,
           static_cast<uint32_t>(point.signedness), false};
       target = &setQueries.graphFor(domain);
-      point.imported.emplace(0, 0);
-      point.imported.emplace(1, 1);
+      std::vector<uint32_t> variables(uint64_t{point.width} + 1, UINT32_MAX);
+      for (uint32_t variable = 1; variable <= point.width; ++variable)
+        variables[variable] = variable - 1;
+      image =
+          std::make_unique<obelisk::coverage::detail::DecisionProjectionIndex>(
+              *point.values, *target, std::move(variables));
     }
     for (const auto &ordinary : point.ordinary) {
       Graph::Root terminals =
@@ -10861,34 +10865,9 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
           return OBELISK_RT_INVALID_DESIGN;
         terminals = point.values->child(terminals, false);
       }
-      std::vector<Graph::Root> pending{terminals};
-      while (!pending.empty()) {
-        Graph::Root root = pending.back();
-        if (point.imported.count(root)) {
-          pending.pop_back();
-          continue;
-        }
-        auto zero = point.imported.find(point.values->child(root, false));
-        if (zero == point.imported.end()) {
-          pending.push_back(point.values->child(root, false));
-          continue;
-        }
-        auto one = point.imported.find(point.values->child(root, true));
-        if (one == point.imported.end()) {
-          pending.push_back(point.values->child(root, true));
-          continue;
-        }
-        Graph::Root imported = target->makeNode(
-            point.values->variable(root) - 1, zero->second, one->second);
-        if (target->exhausted())
-          return OBELISK_RT_OUT_OF_RESOURCES;
-        point.imported.emplace(root, imported);
-        pending.pop_back();
-      }
       auto &combined = point.binTerminals[ordinary.bin];
-      combined =
-          target->unite(combined, point.imported.find(terminals)->second);
-      if (target->exhausted())
+      combined = target->unite(combined, image->project(terminals));
+      if (image->exhausted())
         return OBELISK_RT_OUT_OF_RESOURCES;
     }
     for (auto [bin, root] : point.binTerminals)
