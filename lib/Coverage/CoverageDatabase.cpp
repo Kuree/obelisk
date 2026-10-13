@@ -4570,13 +4570,17 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     const auto *left = lookupRecord(predicatesByID, node.left);
     const auto *right = lookupRecord(predicatesByID, node.right);
     const auto *value = findExpression(node.expression);
-    const bool unary = node.kind == CrossPredicateKind::Cast ||
+    const bool reduction = node.kind >= CrossPredicateKind::ReductionAnd &&
+                           node.kind <= CrossPredicateKind::ReductionXnor;
+    const bool unary = reduction || node.kind == CrossPredicateKind::Negate ||
+                       node.kind == CrossPredicateKind::Cast ||
                        node.kind == CrossPredicateKind::LogicalNot ||
                        node.kind == CrossPredicateKind::BitNot;
     const bool leaf = node.kind == CrossPredicateKind::Target ||
                       node.kind == CrossPredicateKind::Value;
-    const bool boolean = (node.kind >= CrossPredicateKind::Equal &&
-                          node.kind <= CrossPredicateKind::LogicalOr);
+    const bool boolean =
+        reduction || (node.kind >= CrossPredicateKind::Equal &&
+                      node.kind <= CrossPredicateKind::LogicalOr);
     const bool select = node.kind == CrossPredicateKind::ElementSelect ||
                         node.kind == CrossPredicateKind::RangeSelect;
     const bool arity = leaf    ? !node.left && !node.right
@@ -4595,7 +4599,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     }
     if (!selector || !selector->predicateRoot || !node.bitWidth ||
         !enumBetween(node.kind, CrossPredicateKind::Value,
-                     CrossPredicateKind::RangeSelect) ||
+                     CrossPredicateKind::ReductionXnor) ||
         (node.signedness != CoverageSignedness::Signed &&
          node.signedness != CoverageSignedness::Unsigned) ||
         (node.flags & ~(CrossPredicateTwoState | CrossPredicateAscending |

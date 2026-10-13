@@ -250,6 +250,7 @@ const predicateText = (g, root) => {
   const key = g.type + '|' + g.configuration + '|' + root;
   if (predicateTextCache.has(key)) return predicateTextCache.get(key);
   const operators = {4:'==',5:'!=',6:'===',7:'!==',8:'<',9:'<=',10:'>',11:'>=',13:'&&',14:'||',16:'&',17:'|',18:'^',19:'~^',20:'+',21:'-'};
+  const unaryOperators = {12:'!',15:'~',24:'-',25:'&',26:'|',27:'^',28:'~&',29:'~|',30:'~^'};
   const pending = [{id:root}], pieces = [];
   let visits = 0, length = 0;
   const append = value => { value = String(value); pieces.push(value.slice(0, Math.max(0, 1024 - length))); length += value.length; };
@@ -264,8 +265,8 @@ const predicateText = (g, root) => {
       const value = predicateOperands.get(g.type + '|' + g.configuration + '|' + n.selector + '|' + n.ordinal);
       append(value ? valueText(g.type, g.configuration, value) : 'operand ' + n.expression);
     } else if (kind === 2) append(templateItems.get(n.target) || n.target);
-    else if (kind === 3 || kind === 12 || kind === 15) {
-      append(kind === 3 ? n.bit_width + "'(" : kind === 12 ? '!(' : '~(');
+    else if (kind === 3 || unaryOperators[kind]) {
+      append(kind === 3 ? n.bit_width + "'(" : unaryOperators[kind] + '(');
       pending.push({text:')'}, {id:n.left});
     } else if (kind === 22 || kind === 23) {
       pending.push({text:']'});

@@ -26,12 +26,16 @@ bool predicateResultIs(PredicateKind kind, uint64_t left, uint64_t right,
   DecisionIndex graph(0);
   PredicateDecisionIndex index(graph);
   const Signedness sign = isSigned ? Signedness::Signed : Signedness::Unsigned;
-  const bool unary = kind == PredicateKind::Cast ||
+  const bool reduction = kind >= PredicateKind::ReductionAnd &&
+                         kind <= PredicateKind::ReductionXnor;
+  const bool unary = reduction || kind == PredicateKind::Negate ||
+                     kind == PredicateKind::Cast ||
                      kind == PredicateKind::LogicalNot ||
                      kind == PredicateKind::BitNot;
-  const uint32_t resultWidth =
-      kind >= PredicateKind::Equal && kind <= PredicateKind::LogicalOr ? 1
-                                                                       : width;
+  const uint32_t resultWidth = reduction || (kind >= PredicateKind::Equal &&
+                                             kind <= PredicateKind::LogicalOr)
+                                   ? 1
+                                   : width;
   std::vector<PredicateNode> rows = {
       {1, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 0, 0},
       {2, 1, 0, 0, 0, 0, PredicateKind::Value, width, sign, 1, 0},
@@ -134,6 +138,81 @@ TEST(CoveragePredicateIndexTest, SignedComparisonAndTruncatingArithmetic) {
   EXPECT_TRUE(predicateResultIs(PredicateKind::GreaterEqual, 5, 0, 0, 2, true));
   EXPECT_TRUE(predicateResultIs(PredicateKind::Add, 5, 1, 0, 2));
   EXPECT_TRUE(predicateResultIs(PredicateKind::Subtract, 0, 1, 5, 2));
+}
+
+TEST(CoveragePredicateIndexTest, UnaryOperatorsFollowFourStateLRMTables) {
+  const PredicateKind reductions[] = {
+      PredicateKind::ReductionAnd, PredicateKind::ReductionOr,
+      PredicateKind::ReductionXor, PredicateKind::ReductionNand,
+      PredicateKind::ReductionNor, PredicateKind::ReductionXnor};
+  // Table 11-16 through 11-18 use {0, 1, Z, X}; Z always becomes X
+  // unless a known controlling value fixes the reduction's result.
+  const uint64_t tables[3][4][4] = {
+      {{0, 0, 0, 0}, {0, 1, 3, 3}, {0, 3, 3, 3}, {0, 3, 3, 3}},
+      {{0, 1, 3, 3}, {1, 1, 1, 1}, {3, 1, 3, 3}, {3, 1, 3, 3}},
+      {{0, 1, 3, 3}, {1, 0, 3, 3}, {3, 3, 3, 3}, {3, 3, 3, 3}}};
+  for (uint64_t a = 0; a != 4; ++a) {
+    for (uint32_t operation = 0; operation != 6; ++operation) {
+      uint64_t single = a < 2 ? (operation < 3 ? a : 1 - a) : 3;
+      EXPECT_TRUE(predicateResultIs(reductions[operation], a, 0, single));
+    }
+    for (uint64_t b = 0; b != 4; ++b) {
+      uint64_t value = a | (b << 2);
+      for (uint32_t operation = 0; operation != 6; ++operation) {
+        uint64_t expected = tables[operation % 3][a][b];
+        if (operation >= 3 && expected < 2)
+          expected = 1 - expected;
+        EXPECT_TRUE(
+            predicateResultIs(reductions[operation], value, 0, expected, 2));
+      }
+      // Arithmetic unknowns affect the entire result, with fixed-width
+      // two's-complement negation otherwise, independent of signedness.
+      uint64_t numeric = (0u - (a | (b << 1))) & 3;
+      uint64_t negative =
+          a < 2 && b < 2 ? (numeric & 1) | ((numeric & 2) << 1) : 15;
+      for (bool isSigned : {false, true})
+        EXPECT_TRUE(predicateResultIs(PredicateKind::Negate, value, 0, negative,
+                                      2, isSigned));
+    }
+  }
+  EXPECT_TRUE(
+      predicateResultIs(PredicateKind::Negate, 8, 0, 0, 2, false, true));
+}
+
+TEST(CoveragePredicateIndexTest, WideParityUsesABoundedLinearGraph) {
+  for (uint32_t width : {1u, 65u, 129u}) {
+    DecisionIndex graph(width, width * 256);
+    PredicateDecisionIndex index(graph);
+    PredicateNode input{
+        1, 1, 0, 0, 0, 1, PredicateKind::Target, width, Signedness::Unsigned,
+        0, 0};
+    PredicateNode parity{
+        2, 1, 1, 0, 0, 0, PredicateKind::ReductionXor, 1, Signedness::Unsigned,
+        1, 0};
+    auto root = index.compile(2, {&input, &parity}, [&](const auto &node) {
+      PredicateDecisionIndex::Value bits;
+      for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+        bits.aval.push_back(graph.makeNode(width - bit - 1, 0, 1));
+        bits.bval.push_back(0);
+      }
+      return bits;
+    });
+    ASSERT_FALSE(index.exhausted());
+    EXPECT_EQ(graph.cardinality(root, 100), width == 1 ? 1u : 100u);
+    for (uint32_t sample = 0; sample != 3; ++sample) {
+      std::vector<uint64_t> mask((width + 63) / 64);
+      uint32_t population = 0;
+      for (uint32_t bit = 0; bit != width; ++bit)
+        if (sample == 2 || (sample == 1 && bit == width - 1)) {
+          mask[bit / 64] |= uint64_t{1} << (bit % 64);
+          ++population;
+        }
+      auto assignment = graph.cube(mask, std::vector<uint64_t>(mask.size()));
+      EXPECT_EQ(graph.intersect(root, assignment),
+                population % 2 ? assignment : 0);
+    }
+    EXPECT_FALSE(index.exhausted());
+  }
 }
 
 TEST(CoveragePredicateIndexTest, WideEqualityFitsABitProportionalGraphBudget) {

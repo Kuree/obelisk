@@ -635,6 +635,13 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
     const rangeView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
     assert.ok(rangeView.rows[0][0].includes('cp[0x5 ' + operator + ' 4]'), rangeView.rows[0][0]);
   }
+  for (const [kind, operator] of [['24', '-'], ['25', '&'], ['26', '|'], ['27', '^'],
+                                 ['28', '~&'], ['29', '~|'], ['30', '~^']]) {
+    selection.kind = kind;
+    selection.right = '0';
+    const unaryView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(unaryView.rows[0][0].includes(operator + '(cp)'), unaryView.rows[0][0]);
+  }
   data.cross_predicate_nodes[2].left = '82';
   const bounded = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
   assert.ok(bounded.rows[0][0].includes('...'));

@@ -170,11 +170,32 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
         case ir::SVUnaryOperator::Plus:
           plan.kind = Kind::Cast;
           break;
+        case ir::SVUnaryOperator::Minus:
+          plan.kind = Kind::Negate;
+          break;
         case ir::SVUnaryOperator::LogicalNot:
           plan.kind = Kind::LogicalNot;
           break;
         case ir::SVUnaryOperator::BitwiseNot:
           plan.kind = Kind::BitNot;
+          break;
+        case ir::SVUnaryOperator::BitwiseAnd:
+          plan.kind = Kind::ReductionAnd;
+          break;
+        case ir::SVUnaryOperator::BitwiseOr:
+          plan.kind = Kind::ReductionOr;
+          break;
+        case ir::SVUnaryOperator::BitwiseXor:
+          plan.kind = Kind::ReductionXor;
+          break;
+        case ir::SVUnaryOperator::BitwiseNand:
+          plan.kind = Kind::ReductionNand;
+          break;
+        case ir::SVUnaryOperator::BitwiseNor:
+          plan.kind = Kind::ReductionNor;
+          break;
+        case ir::SVUnaryOperator::BitwiseXnor:
+          plan.kind = Kind::ReductionXnor;
           break;
         default:
           return std::nullopt;

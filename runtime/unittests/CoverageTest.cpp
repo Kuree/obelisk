@@ -2763,6 +2763,42 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
+TEST(CoverageDatabaseTest, UnaryPredicateKindsAreValidatedAndRoundTrip) {
+  using namespace obelisk::coverage;
+  for (CrossPredicateKind kind :
+       {CrossPredicateKind::Negate, CrossPredicateKind::ReductionAnd,
+        CrossPredicateKind::ReductionOr, CrossPredicateKind::ReductionXor,
+        CrossPredicateKind::ReductionNand, CrossPredicateKind::ReductionNor,
+        CrossPredicateKind::ReductionXnor}) {
+    Database schema = makeSymbolicCrossWithSchema();
+    schema.functionalExpressions.erase(
+        std::remove_if(schema.functionalExpressions.begin(),
+                       schema.functionalExpressions.end(),
+                       [](const auto &entry) { return entry.id == 100; }),
+        schema.functionalExpressions.end());
+    schema.crossPredicateNodes.erase(schema.crossPredicateNodes.begin() + 1);
+    auto &unary = schema.crossPredicateNodes.back();
+    unary.kind = kind;
+    unary.ordinal = 1;
+    unary.right = 0;
+    unary.bitWidth = kind == CrossPredicateKind::Negate ? 2 : 1;
+    schema.schemaFingerprint = computeSchemaFingerprint(schema);
+    ASSERT_EQ(validate(schema), Status::Ok);
+    std::vector<uint8_t> bytes;
+    ASSERT_EQ(serialize(schema, bytes), Status::Ok);
+    Database parsed;
+    ASSERT_EQ(parse(bytes.data(), bytes.size(), parsed), Status::Ok);
+    EXPECT_EQ(parsed.crossPredicateNodes.back().kind, kind);
+    unary.right = 200;
+    EXPECT_EQ(validate(schema), Status::InvalidReference);
+    if (kind != CrossPredicateKind::Negate) {
+      unary.right = 0;
+      unary.bitWidth = 2;
+      EXPECT_EQ(validate(schema), Status::InvalidReference);
+    }
+  }
+}
+
 TEST(CoverageDatabaseTest, SymbolicSelectLayoutsAreValidatedAndRoundTrip) {
   using namespace obelisk::coverage;
   Database schema = makeSymbolicCrossWithSchema();

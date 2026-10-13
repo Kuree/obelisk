@@ -117,6 +117,13 @@ def CrossPredicateAdd : CoverageCrossPredicateKind<"Add", 20>;
 def CrossPredicateSubtract : CoverageCrossPredicateKind<"Subtract", 21>;
 def CrossPredicateElementSelect : CoverageCrossPredicateKind<"ElementSelect", 22>;
 def CrossPredicateRangeSelect : CoverageCrossPredicateKind<"RangeSelect", 23>;
+def CrossPredicateNegate : CoverageCrossPredicateKind<"Negate", 24>;
+def CrossPredicateReductionAnd : CoverageCrossPredicateKind<"ReductionAnd", 25>;
+def CrossPredicateReductionOr : CoverageCrossPredicateKind<"ReductionOr", 26>;
+def CrossPredicateReductionXor : CoverageCrossPredicateKind<"ReductionXor", 27>;
+def CrossPredicateReductionNand : CoverageCrossPredicateKind<"ReductionNand", 28>;
+def CrossPredicateReductionNor : CoverageCrossPredicateKind<"ReductionNor", 29>;
+def CrossPredicateReductionXnor : CoverageCrossPredicateKind<"ReductionXnor", 30>;
 
 class CoverageExpressionOwnerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -430,7 +437,10 @@ def DomainCrossPredicateKind : CoverageFieldDomain<
      CrossPredicateBitXnor,
      CrossPredicateAdd,
      CrossPredicateSubtract, CrossPredicateElementSelect,
-     CrossPredicateRangeSelect]>;
+     CrossPredicateRangeSelect, CrossPredicateNegate,
+     CrossPredicateReductionAnd, CrossPredicateReductionOr,
+     CrossPredicateReductionXor, CrossPredicateReductionNand,
+     CrossPredicateReductionNor, CrossPredicateReductionXnor]>;
 def DomainFunctionalItemKind : CoverageFieldDomain<
     "FunctionalItemKind", "Enum", [FunctionalCoverpoint, FunctionalCross]>;
 def DomainFunctionalBinKind : CoverageFieldDomain<

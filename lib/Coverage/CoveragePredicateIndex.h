@@ -340,6 +340,45 @@ private:
       Truth input = truth(left);
       return predicate(input.zero, input.unknown);
     }
+    if (node.kind == Kind::Negate) {
+      Value zero;
+      zero.aval.assign(node.bitWidth, 0);
+      zero.bval = zero.aval;
+      zero.isSigned = left.isSigned;
+      CrossPredicateNode subtract = node;
+      subtract.kind = Kind::Subtract;
+      return evaluate(subtract, std::move(zero), std::move(left));
+    }
+    if (node.kind >= Kind::ReductionAnd && node.kind <= Kind::ReductionXnor) {
+      const bool conjunction =
+          node.kind == Kind::ReductionAnd || node.kind == Kind::ReductionNand;
+      const bool exclusive =
+          node.kind == Kind::ReductionXor || node.kind == Kind::ReductionXnor;
+      const bool inverted = node.kind == Kind::ReductionNand ||
+                            node.kind == Kind::ReductionNor ||
+                            node.kind == Kind::ReductionXnor;
+      Root one = conjunction ? 1 : 0, zero = conjunction ? 0 : 1;
+      Root parity = 0, indeterminate = 0;
+      // The operand is self-determined, even though its result is one bit.
+      // Fold each A/B pair once in the graph's interleaved variable order.
+      for (size_t bit = 0; bit != left.aval.size(); ++bit) {
+        Root a = left.aval[bit], b = left.bval[bit];
+        if (exclusive) {
+          parity = xorRoot(parity, a);
+          indeterminate = graph.unite(indeterminate, b);
+        } else {
+          Root knownOne = graph.subtract(a, b);
+          Root knownZero = notRoot(graph.unite(a, b));
+          one = conjunction ? graph.intersect(one, knownOne)
+                            : graph.unite(one, knownOne);
+          zero = conjunction ? graph.unite(zero, knownZero)
+                             : graph.intersect(zero, knownZero);
+        }
+      }
+      if (exclusive)
+        return predicate(inverted ? notRoot(parity) : parity, indeterminate);
+      return predicate(inverted ? zero : one, notRoot(graph.unite(one, zero)));
+    }
     if (node.kind == Kind::LogicalAnd || node.kind == Kind::LogicalOr) {
       Truth a = truth(left), b = truth(right);
       Root one = node.kind == Kind::LogicalAnd ? graph.intersect(a.one, b.one)
