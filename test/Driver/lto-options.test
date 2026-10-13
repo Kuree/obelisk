@@ -1,9 +1,10 @@
 # Check the selected runtime archive using an incomplete private support tree.
 # This distinguishes LTO from ordinary linking even when both produce the same
-# simulator output. Relocate the compiler so the real support tree is untouched.
+# simulator output. Relocate the compiler (a hard link, which finds its resources
+# beside the link) so the real support tree is untouched.
 # Flag precedence is checked in lto-options-precedence.test.
 # RUN: mkdir -p %t/bin %t/lib/obelisk/targets/%target_triple
-# RUN: cp %obelisk %t/bin/obelisk
+# RUN: ln -f %obelisk %t/bin/obelisk
 # RUN: touch %t/lib/obelisk/targets/%target_triple/.complete %t/lib/obelisk/targets/%target_triple/clang_rt.crtbegin.o
 
 # The default is non-LTO, including at the implicit -O3. -flto opts in only

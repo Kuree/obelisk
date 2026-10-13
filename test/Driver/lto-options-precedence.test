@@ -1,7 +1,7 @@
 # The last LTO flag wins, including flags expanded from a command file. The
 # selected runtime archive is observed as in lto-options.test.
 # RUN: mkdir -p %t/bin %t/lib/obelisk/targets/%target_triple
-# RUN: cp %obelisk %t/bin/obelisk
+# RUN: ln -f %obelisk %t/bin/obelisk
 # RUN: touch %t/lib/obelisk/targets/%target_triple/.complete %t/lib/obelisk/targets/%target_triple/clang_rt.crtbegin.o
 
 # RUN: not %t/bin/obelisk -flto -fno-lto %S/no-lto.sv -o %t/restored 2>&1 | FileCheck %s --check-prefix=OBJECT

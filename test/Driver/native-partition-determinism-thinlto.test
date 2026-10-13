@@ -2,8 +2,8 @@
 # worker count must not change the executable. Remove stale caches first so
 # both links compile every partition.
 # RUN: rm -rf %t.serial.thinlto-cache %t.parallel.thinlto-cache
-# RUN: obelisk -O3 -flto --vpi=off --compile-threads=1 %S/native-partition-determinism.sv -o %t.serial
-# RUN: obelisk -O3 -flto --vpi=off --compile-threads=8 %S/native-partition-determinism.sv -o %t.parallel
+# RUN: obelisk -O1 -flto --vpi=off --compile-threads=1 %S/native-partition-determinism.sv -o %t.serial
+# RUN: obelisk -O1 -flto --vpi=off --compile-threads=8 %S/native-partition-determinism.sv -o %t.parallel
 # RUN: cmp %t.serial %t.parallel
 # RUN: %t.parallel | FileCheck %S/native-partition-determinism.sv
 

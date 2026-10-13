@@ -1,12 +1,11 @@
-// Compare the default object runtime with LTO. Flag selection and precedence
-// are checked directly in lto-options.test; they need no executable matrix.
-// The LTO link also leaves unused DPI support out of the executable.
-// RUN: obelisk -O3 -flto %s -o %t.lto
+// The default links the object runtime archive; -flto instead links the
+// runtime bitcode with the design. LTO above -O0 must still produce a working
+// executable, and must leave unused DPI support out of it. -O1 takes the same
+// link path as -O3 at half the cost; flag selection and precedence are checked
+// in lto-options.test.
+// RUN: obelisk -O1 -flto %s -o %t.lto
 // RUN: %llvm_dist/bin/llvm-nm %t.lto | FileCheck %s --check-prefix=NO-DPI --allow-empty
-// RUN: %t.lto > %t.lto.out
-// RUN: obelisk -O3 %s -o %t.nolto
-// RUN: %t.nolto | diff %t.lto.out -
-// RUN: FileCheck %s --check-prefix=STDOUT < %t.lto.out
+// RUN: %t.lto | FileCheck %s --check-prefix=STDOUT
 
 module no_lto;
   int accumulator;

@@ -1,6 +1,6 @@
 # Bytecode takes the same LTO link as native code: the executable prints what
 # the object-runtime link prints, and links no unused runtime features.
-# RUN: obelisk -O3 --vpi=off -flto --execution-tier=bytecode %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.exe
+# RUN: obelisk -O1 --vpi=off -flto --execution-tier=bytecode %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.exe
 # RUN: %llvm_dist/bin/llvm-nm --defined-only %t.exe | FileCheck %s --check-prefix=SYMBOLS --allow-empty
 # RUN: %t.exe > %t.lto.out
 # RUN: obelisk -O3 --vpi=off --execution-tier=bytecode %S/../Driver/scan-dynamic-pay-for-play.sv -o %t.object

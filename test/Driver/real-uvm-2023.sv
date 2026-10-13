@@ -1,11 +1,12 @@
 // REQUIRES: real-uvm
 // RUN: obelisk -emit-slang --std=1800-2023 --single-unit -I%uvm \
 // RUN:   %uvm/uvm_pkg.sv %s > %t.slang.mlir
-// RUN: obelisk-opt %t.slang.mlir -o %t.roundtrip.mlir
-// RUN: obelisk-opt --convert-slang-to-obelisk %t.roundtrip.mlir \
+// RUN: obelisk-opt --convert-slang-to-obelisk %t.slang.mlir \
 // RUN:   | FileCheck %s
 
 // Keep one full, unmodified UVM package elaboration for this language mode.
+// Converting the emitted text also checks that the Slang dialect's printed
+// form of the whole package parses back.
 // This case concentrates on parameterized UVM classes, constructors, virtual
 // tasks, calls, and timing controls.
 class obelisk_uvm_test extends uvm_pkg::uvm_test;

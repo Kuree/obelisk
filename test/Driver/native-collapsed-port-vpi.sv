@@ -38,10 +38,12 @@ module collapsed_ports;
   collapsed_sink left(right.pin), right(left.pin);
   bit writable;
   bit clock;
-  int ticks[128];
+  // 48 clocked lanes are enough native cost for the partial island to be
+  // admitted beside the runtime-owned VPI testbench (24 or 32 are not).
+  int ticks[48];
   string message;
   always #1 clock = ~clock;
-  for (genvar i = 0; i < 128; ++i) begin
+  for (genvar i = 0; i < 48; ++i) begin
     always @(posedge clock) ticks[i] <= ticks[i] + 1;
   end
   initial begin
@@ -85,7 +87,7 @@ module collapsed_ports;
       if (collapse_check(0, 'hff) || result !== 'z) $fatal(1, "read Z");
       if (collapse_subscribe(0)) $fatal(1, "unsubscribe");
     end
-    if (ticks[127] == 0) $fatal(1, "partial native island did not run");
+    if (ticks[47] == 0) $fatal(1, "partial native island did not run");
     $display("%s", message);
     $finish;
   end

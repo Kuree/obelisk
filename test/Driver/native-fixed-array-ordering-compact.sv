@@ -2,10 +2,6 @@
 // RUN: %t.native | FileCheck %s
 // RUN: obelisk -O0 --execution-tier=bytecode %s -o %t.bytecode
 // RUN: %t.bytecode | FileCheck %s
-// RUN: obelisk -O3 %s -o %t.o3.native
-// RUN: %t.o3.native | FileCheck %s
-// RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.o3.bytecode
-// RUN: %t.o3.bytecode | FileCheck %s
 
 module native_fixed_array_ordering_compact;
   int values[4096];

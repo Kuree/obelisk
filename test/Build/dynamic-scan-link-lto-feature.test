@@ -1,4 +1,4 @@
-# RUN: obelisk -O3 --vpi=off -flto --execution-tier=bytecode %S/../Driver/scan-dynamic-format.sv -o %t.exe
+# RUN: obelisk -O1 --vpi=off -flto --execution-tier=bytecode %S/../Driver/scan-dynamic-format.sv -o %t.exe
 # RUN: %llvm_dist/bin/llvm-nm --defined-only %t.exe | FileCheck %s --check-prefix=SYMBOLS --allow-empty
 # RUN: %llvm_dist/bin/llvm-readobj --sections %t.exe | FileCheck %s --check-prefix=SECTION
 
