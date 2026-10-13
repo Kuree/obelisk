@@ -1,5 +1,8 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/lifecycle.mlir '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
+// RUN: obelisk-opt %t/lifecycle.mlir '--lower-obelisk-to-sim=opt-level=0' -o %t/output.mlir
+// RUN: FileCheck %s --input-file=%t/output.mlir
+// RUN: FileCheck %s --check-prefix=BASE --input-file=%t/output.mlir
+// RUN: FileCheck %s --check-prefix=DERIVED --input-file=%t/output.mlir
 
 // IEEE 1800-2017 18.6.2 and 18.11.1 require randomize(null) to invoke
 // pre_randomize(), check the current values, and invoke post_randomize() only
@@ -32,14 +35,20 @@
 // CHECK-SAME: %[[HOOK_OBJECT:arg[0-9]+]]: !simulation.ref<!simulation.class_handle<@__obelisk_class_s3_Base>>
 // CHECK-SAME: entry_kind = 4 : i32
 // CHECK: simulation.suspend.any %[[HOOK_OBJECT]], %[[HOOK_LIMIT]]
-// CHECK: simulation.func private @[[DERIVED_PLAN]]
-// CHECK: simulation.class.direct_call @[[DERIVED_PRE]]
-// CHECK: simulation.random.solve
-// CHECK: simulation.class.direct_call @[[BASE_POST]]
-// CHECK: simulation.func private @[[BASE_PLAN]]
-// CHECK: simulation.class.direct_call @[[BASE_PRE]]
-// CHECK: simulation.random.solve
-// CHECK: simulation.class.direct_call @[[BASE_POST]]
+// Helper emission order is unspecified. Check lifecycle order independently
+// inside each class plan rather than requiring derived-before-base emission.
+// BASE-DAG: simulation.func private @[[PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::pre_randomize"
+// BASE-DAG: simulation.func private @[[POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::post_randomize"
+// BASE-LABEL: simulation.func private @__obelisk_randomize_plan___obelisk_class_s3_Base_
+// BASE: simulation.class.direct_call @[[PRE]]
+// BASE: simulation.random.solve
+// BASE: simulation.class.direct_call @[[POST]]
+// DERIVED-DAG: simulation.func private @[[PRE:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Derived::pre_randomize"
+// DERIVED-DAG: simulation.func private @[[POST:unit_[0-9]+]]{{.*}}simulation.hierarchical_name = "Base::post_randomize"
+// DERIVED-LABEL: simulation.func private @__obelisk_randomize_plan___obelisk_class_s11_Derived_
+// DERIVED: simulation.class.direct_call @[[PRE]]
+// DERIVED: simulation.random.solve
+// DERIVED: simulation.class.direct_call @[[POST]]
 
 //--- lifecycle.mlir
 

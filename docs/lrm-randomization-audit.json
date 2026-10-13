@@ -371,12 +371,12 @@
         {
           "feature": "Constrained randc cycle restart",
           "status": "partial",
-          "detail": "A single randc property skips rejected values and restarts cycles; joint randc and rand properties need further cycle-domain review."
+          "detail": "Compiler Z3 plans let each cyclic candidate test for a legal completion with later cyclic and ordinary fields free. Rejected semantic values are skipped, enum holes do not consume the exhaustion budget, and exhausted remainders restart one full permutation. Accepted histories and all fields are published only after the final ordinary solve succeeds. Arbitrary changes to a live cycle's constraints and domains still need persistent restart tracking."
         },
         {
           "feature": "Multiple randc variables",
           "status": "partial",
-          "detail": "Each property has cycle state; the full LRM joint solvability and restart behavior needs dedicated coverage."
+          "detail": "Integral cyclic fields through 32 bits, including qualified structure members and sparse signed enums, are accepted sequentially before ordinary fields. One shared compiled-plan solve operation probes every stage without retaining provisional assignments or sampler RNG. Native and WASM cover joint cycles, 130-bit ordinary fields, live modes, explicit selection and failure atomicity. Function-priority stages, per-element array histories, object aliasing and arbitrary cycle-domain changes remain open."
         },
         {
           "feature": "Randc real and dist on randc",
@@ -397,7 +397,8 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-dist-randc.mlir"
+          "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
         ]
       }
     },
@@ -1018,7 +1019,7 @@
         {
           "feature": "Randc implicit priority",
           "status": "partial",
-          "detail": "Randc candidates are fixed before ordinary rand solving; combined cyclic solvability needs broader coverage."
+          "detail": "Cyclic candidates are accepted before the ordinary solve, with later cyclic and ordinary bits existentially free during completion checks. Ordinary solve-before edges and soft preferences are sampled only after cyclic values are frozen. MLIR covers mixed and joint cyclic fields; function-priority stages and arbitrary cycle-domain changes remain incomplete."
         }
       ],
       "evidence": {
@@ -1055,7 +1056,8 @@
           "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
           "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.mlir"
+          "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.mlir",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
         ]
       }
     },
@@ -1457,7 +1459,8 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
-          "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir"
+          "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
         ]
       }
     },
@@ -1755,7 +1758,8 @@
           "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
         ]
       }
     },
@@ -1789,7 +1793,8 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randomize-properties.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
         ]
       }
     },

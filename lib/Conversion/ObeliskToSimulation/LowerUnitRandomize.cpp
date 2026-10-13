@@ -8533,6 +8533,67 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     program[20 + byte] = static_cast<uint8_t>(programFlags >> (byte * 8));
 #endif
 
+  // All cyclic stages specialize the same compiled relation. Reuse its
+  // attribute rather than hashing and copying the serialized circuit for each
+  // candidate or field.
+  StringAttr samplerProgram;
+  auto getSamplerProgram = [&]() {
+    if (!samplerProgram)
+      samplerProgram = builder.getStringAttr(StringRef(
+          reinterpret_cast<const char *>(program.data()), program.size()));
+    return samplerProgram;
+  };
+  bool useCyclicPlan = false;
+#ifdef OBELISK_ENABLE_Z3
+  useCyclicPlan = !checkerOnly && hasRandC && !hasRuntimeForeachConstraint &&
+                  (emittedHard || emittedSoft);
+#endif
+  SmallVector<unsigned> cyclicProperties;
+  SmallVector<Value> cyclicMasks;
+  SmallVector<Value> cyclicInverseMasks;
+  SmallVector<Value> cyclicOffsets;
+  SmallVector<Value> cyclicKeys;
+  SmallVector<Value> cyclicPositions;
+  Block *cyclicPlanEntry = useCyclicPlan ? addBlock() : nullptr;
+  if (useCyclicPlan) {
+    cyclicKeys.resize(planned.size());
+    cyclicPositions.resize(planned.size());
+    Value remainingMask = activeGuardBits;
+    Type referenceType = sim::RefType::get(function.getContext(), i64);
+    for (auto [index, property] : llvm::enumerate(planned)) {
+      if (!property.isRandC)
+        continue;
+      cyclicProperties.push_back(index);
+      // Tentative histories live in automatic storage. A later cyclic field
+      // or ordinary solve may still fail, so none is published before commit.
+      cyclicKeys[index] = sim::SimRefAllocOp::create(
+          builder, location, referenceType, property.nextRandcKey);
+      cyclicPositions[index] = sim::SimRefAllocOp::create(
+          builder, location, referenceType, property.nextRandcPosition);
+      // Construct masks from bounded-width constants and SSA extensions.
+      // Materializing an aggregate-width APInt for every cyclic field would
+      // otherwise make host mask construction quadratic in the field count.
+      Value fieldMask =
+          constant64(APInt::getLowBitsSet(64, property.width).getZExtValue());
+      Value offset = constant64(propertyOffsets[index]);
+      if (assignmentType != i64) {
+        fieldMask = arith::ExtUIOp::create(builder, location, assignmentType,
+                                           fieldMask);
+        offset =
+            arith::ExtUIOp::create(builder, location, assignmentType, offset);
+      }
+      if (propertyOffsets[index])
+        fieldMask = arith::ShLIOp::create(builder, location, fieldMask, offset);
+      Value inverseMask =
+          arith::XOrIOp::create(builder, location, fieldMask, mask);
+      remainingMask =
+          arith::AndIOp::create(builder, location, remainingMask, inverseMask);
+      cyclicMasks.push_back(remainingMask);
+      cyclicInverseMasks.push_back(inverseMask);
+      cyclicOffsets.push_back(offset);
+    }
+  }
+
   // The compiler plan is proven for the all-enabled constraint set. If a
   // block is disabled at runtime, bypass plan-specific bounds, tables, and
   // extra draws; start a plain masked-domain search from the one object-stream
@@ -8544,7 +8605,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            disabledCheckBlock, ValueRange{},
                            enabledSamplingBlock, ValueRange{});
   setCurrent(enabledSamplingBlock);
-  Value randomDraw = hasRealProgram ? currentAssignment : nextAssignment(state);
+  Value randomDraw = (hasRealProgram || useCyclicPlan) ? currentAssignment
+                                                       : nextAssignment(state);
   Value start = arith::OrIOp::create(
       builder, location,
       arith::AndIOp::create(builder, location, randomDraw, mutableMask),
@@ -8572,9 +8634,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (hasArrayElementModes)
     usePlannedSampling = arith::AndIOp::create(
         builder, location, usePlannedSampling, randomizationEnabled);
-  cf::CondBranchOp::create(builder, location, usePlannedSampling,
-                           plannedSamplingBlock, ValueRange{},
-                           modeSamplingDispatchBlock, ValueRange{});
+  if (useCyclicPlan) {
+    // Initial permutation-key draws precede this branch. The ordinary
+    // dispatch that normally publishes their state is bypassed by staging.
+    storeRandomState(state);
+    cf::BranchOp::create(builder, location, cyclicPlanEntry);
+  } else
+    cf::CondBranchOp::create(builder, location, usePlannedSampling,
+                             plannedSamplingBlock, ValueRange{},
+                             modeSamplingDispatchBlock, ValueRange{});
   setCurrent(plannedSamplingBlock);
 
   auto sampleBoundedIndex = [&](uint64_t cardinality, Value draw,
@@ -8985,7 +9053,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Block *singleRandCLoop = nullptr;
   Block *singleRandCAdvance = nullptr;
   Block *singleRandCCommit = nullptr;
-  if (!checkerOnly && planned.size() == 1 && planned.front().isRandC) {
+  if (!useCyclicPlan && !checkerOnly && planned.size() == 1 &&
+      planned.front().isRandC) {
     singleRandCLoop = addBlock();
     singleRandCAdvance = addBlock();
     singleRandCCommit = addBlock();
@@ -9750,6 +9819,238 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return ConstraintCheck{satisfied, preferred};
   };
 
+  if (useCyclicPlan) {
+    // IEEE 1800-2023 18.4.2: accept cyclic values before drawing ordinary
+    // random variables. Probe each value with later cyclic fields existentially
+    // free. Discard provisional assignments and RNG updates; only the final
+    // solve, with every cyclic field frozen, supplies ordinary candidates.
+    // One shared solve operation serves all stages, so neither the program nor
+    // its compiler Z3 circuit is duplicated as the field count grows.
+    struct CyclicCandidate {
+      Value assignment, key, position, remaining, fresh;
+      SmallVector<Value> values() const {
+        return {assignment, key, position, remaining, fresh};
+      }
+    };
+    auto addCandidateArguments = [&](Block *block) {
+      return CyclicCandidate{block->addArgument(assignmentType, location),
+                             block->addArgument(i64, location),
+                             block->addArgument(i64, location),
+                             block->addArgument(i64, location),
+                             block->addArgument(builder.getI1Type(), location)};
+    };
+    SmallVector<Block *> entries, accepted, advances;
+    SmallVector<int32_t> stages;
+    for (unsigned stage = 0; stage != cyclicProperties.size(); ++stage) {
+      entries.push_back(addBlock());
+      accepted.push_back(addBlock());
+      advances.push_back(addBlock());
+      stages.push_back(stage);
+    }
+    Block *probe = addBlock();
+    CyclicCandidate candidate = addCandidateArguments(probe);
+    Value probeMask = probe->addArgument(assignmentType, location);
+    Value probeStage = probe->addArgument(builder.getI32Type(), location);
+    Block *probeAccepted = addBlock();
+    Block *probeRejected = addBlock();
+    Block *finalEntry = addBlock();
+    Value finalCandidate = finalEntry->addArgument(assignmentType, location);
+    Block *finalAccepted = addBlock();
+    Value finalAssignment =
+        finalAccepted->addArgument(assignmentType, location);
+    Value finalState = finalAccepted->addArgument(i64, location);
+
+    setCurrent(cyclicPlanEntry);
+    if (analysis.satisfiability == solver::Satisfiability::Unsatisfiable)
+      cf::CondBranchOp::create(builder, location, allConstraintsEnabled,
+                               failedBlock, ValueRange{}, entries.front(),
+                               ValueRange{currentAssignment});
+    else
+      cf::BranchOp::create(builder, location, entries.front(),
+                           ValueRange{currentAssignment});
+
+    for (auto [stage, propertyIndex] : llvm::enumerate(cyclicProperties)) {
+      const Property &property = planned[propertyIndex];
+      uint64_t cardinality = propertyDomainCardinality(property);
+      Value entryAssignment =
+          entries[stage]->addArgument(assignmentType, location);
+      CyclicCandidate acceptedCandidate;
+      acceptedCandidate.assignment =
+          accepted[stage]->addArgument(assignmentType, location);
+      acceptedCandidate.key = accepted[stage]->addArgument(i64, location);
+      acceptedCandidate.position = accepted[stage]->addArgument(i64, location);
+      CyclicCandidate advanceCandidate = addCandidateArguments(advances[stage]);
+
+      setCurrent(entries[stage]);
+      cf::BranchOp::create(
+          builder, location, probe,
+          ValueRange{
+              entryAssignment, property.nextRandcKey,
+              property.nextRandcPosition, constant64(cardinality),
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(false)),
+              cyclicMasks[stage],
+              arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                        builder.getI32IntegerAttr(stage))});
+
+      setCurrent(accepted[stage]);
+      sim::SimRefStoreOp::create(builder, location, acceptedCandidate.key,
+                                 cyclicKeys[propertyIndex]);
+      sim::SimRefStoreOp::create(builder, location, acceptedCandidate.position,
+                                 cyclicPositions[propertyIndex]);
+      cf::BranchOp::create(builder, location,
+                           stage + 1 == entries.size() ? finalEntry
+                                                       : entries[stage + 1],
+                           ValueRange{acceptedCandidate.assignment});
+
+      setCurrent(advances[stage]);
+      if (cardinality == 1) {
+        cf::BranchOp::create(builder, location, failedBlock);
+        continue;
+      }
+      Value nextRemaining = arith::SubIOp::create(
+          builder, location, advanceCandidate.remaining, constant64(1));
+      Value exhausted = arith::AndIOp::create(
+          builder, location, advanceCandidate.fresh,
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                nextRemaining, constant64(0)));
+      Value disabled = arith::XOrIOp::create(
+          builder, location, propertyEnabled[propertyIndex],
+          arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                    builder.getBoolAttr(true)));
+      exhausted = arith::OrIOp::create(builder, location, exhausted, disabled);
+      Block *candidateEntry = addBlock();
+      CyclicCandidate entry = addCandidateArguments(candidateEntry);
+      Block *rekey = addBlock();
+      Block *cycleBlock = addBlock();
+      CyclicCandidate active = addCandidateArguments(cycleBlock);
+      cf::CondBranchOp::create(
+          builder, location, exhausted, failedBlock, ValueRange{},
+          candidateEntry,
+          ValueRange{advanceCandidate.assignment, advanceCandidate.key,
+                     advanceCandidate.position, nextRemaining,
+                     advanceCandidate.fresh});
+
+      setCurrent(candidateEntry);
+      Value needsRekey =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                entry.position, constant64(0));
+      cf::CondBranchOp::create(builder, location, needsRekey, rekey,
+                               ValueRange{}, cycleBlock, entry.values());
+
+      setCurrent(rekey);
+      Value rekeyState = loadRandomState();
+      Value key = next64(rekeyState);
+      storeRandomState(rekeyState);
+      cf::BranchOp::create(
+          builder, location, cycleBlock,
+          ValueRange{
+              entry.assignment, key, entry.position, constant64(cardinality),
+              arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true))});
+
+      setCurrent(cycleBlock);
+      auto cycle = sim::SimRandomCycleNextOp::create(
+          builder, location, active.key, active.position,
+          builder.getI32IntegerAttr(llvm::Log2_64_Ceil(cardinality)));
+      Value valid =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ult,
+                                cycle.getValue(), constant64(cardinality));
+      Value bits =
+          property.domains.empty()
+              ? cycle.getValue()
+              : materializePropertyDomainIndex(property, cycle.getValue());
+      bits = arith::AndIOp::create(
+          builder, location, bits,
+          constant64(APInt::getLowBitsSet(64, property.width).getZExtValue()));
+      if (assignmentType != i64)
+        bits = arith::ExtUIOp::create(builder, location, assignmentType, bits);
+      if (propertyOffsets[propertyIndex])
+        bits = arith::ShLIOp::create(builder, location, bits,
+                                     cyclicOffsets[stage]);
+      Value assignment = arith::OrIOp::create(
+          builder, location, bits,
+          arith::AndIOp::create(builder, location, active.assignment,
+                                cyclicInverseMasks[stage]));
+      cf::CondBranchOp::create(
+          builder, location, valid, probe,
+          ValueRange{
+              assignment, active.key, cycle.getNextPosition(), active.remaining,
+              active.fresh, cyclicMasks[stage],
+              arith::ConstantOp::create(builder, location, builder.getI32Type(),
+                                        builder.getI32IntegerAttr(stage))},
+          candidateEntry,
+          ValueRange{active.assignment, active.key, cycle.getNextPosition(),
+                     active.remaining, active.fresh});
+    }
+
+    setCurrent(finalEntry);
+    cf::BranchOp::create(
+        builder, location, probe,
+        ValueRange{finalCandidate, constant64(0), constant64(0), constant64(0),
+                   arith::ConstantOp::create(builder, location,
+                                             builder.getI1Type(),
+                                             builder.getBoolAttr(false)),
+                   mutableMask,
+                   arith::ConstantOp::create(
+                       builder, location, builder.getI32Type(),
+                       builder.getI32IntegerAttr(entries.size()))});
+
+    setCurrent(probe);
+    Value probeState = loadRandomState();
+    Value solvedAssignment, solveSuccess, nextState;
+    if (wideProgram) {
+      auto solve = sim::SimRandomSolveWideOp::create(
+          builder, location, function.getBody().front().getArgument(0),
+          candidate.assignment, probeMask, relevantConstraintMode,
+          constant64(fallbackAttempts), probeState, increment, programCaptures,
+          getSamplerProgram());
+      solvedAssignment = solve.getAssignment();
+      solveSuccess = solve.getSuccess();
+      nextState = solve.getNextRngState();
+    } else {
+      auto solve = sim::SimRandomSolveOp::create(
+          builder, location, function.getBody().front().getArgument(0),
+          candidate.assignment, probeMask, relevantConstraintMode,
+          constant64(fallbackAttempts), probeState, increment, programCaptures,
+          getSamplerProgram());
+      solvedAssignment = solve.getAssignment();
+      solveSuccess = solve.getSuccess();
+      nextState = solve.getNextRngState();
+    }
+    cf::CondBranchOp::create(builder, location, solveSuccess, probeAccepted,
+                             ValueRange{}, probeRejected, ValueRange{});
+
+    setCurrent(probeRejected);
+    auto caseType = RankedTensorType::get({static_cast<int64_t>(stages.size())},
+                                          builder.getI32Type());
+    auto caseValues = DenseIntElementsAttr::get(caseType, ArrayRef(stages));
+    SmallVector<Value> retry = candidate.values();
+    SmallVector<ValueRange> retryOperands(stages.size(), ValueRange(retry));
+    cf::SwitchOp::create(builder, location, probeStage, failedBlock,
+                         ValueRange{}, caseValues, advances, retryOperands);
+
+    setCurrent(probeAccepted);
+    SmallVector<Value> acceptedValues{candidate.assignment, candidate.key,
+                                      candidate.position};
+    SmallVector<Value> finalValues{solvedAssignment, nextState};
+    SmallVector<ValueRange> acceptedOperands(stages.size(),
+                                             ValueRange(acceptedValues));
+    acceptedOperands.push_back(ValueRange(finalValues));
+    stages.push_back(stages.size());
+    accepted.push_back(finalAccepted);
+    caseType = RankedTensorType::get({static_cast<int64_t>(stages.size())},
+                                     builder.getI32Type());
+    caseValues = DenseIntElementsAttr::get(caseType, ArrayRef(stages));
+    cf::SwitchOp::create(builder, location, probeStage, failedBlock,
+                         ValueRange{}, caseValues, accepted, acceptedOperands);
+
+    setCurrent(finalAccepted);
+    storeRandomState(finalState);
+    cf::BranchOp::create(builder, location, commit,
+                         ValueRange{finalAssignment});
+  }
+
   // A randc value is solved before ordinary random variables, but a value
   // excluded by the active constraints is skipped rather than making the
   // whole randomize call fail. For the single-property case there are no
@@ -9970,8 +10271,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
-        builder.getStringAttr(StringRef(
-            reinterpret_cast<const char *>(program.data()), program.size())));
+        getSamplerProgram());
     storeRandomState(fallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
                              ValueRange{fallback.getAssignment()}, failedBlock,
@@ -9982,8 +10282,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, function.getBody().front().getArgument(0),
         fallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
-        builder.getStringAttr(StringRef(
-            reinterpret_cast<const char *>(program.data()), program.size())));
+        getSamplerProgram());
     storeRandomState(fallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, fallback.getSuccess(), commit,
                              ValueRange{fallback.getAssignment()}, failedBlock,
@@ -10044,8 +10343,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
-        builder.getStringAttr(StringRef(
-            reinterpret_cast<const char *>(program.data()), program.size())));
+        getSamplerProgram());
     storeRandomState(modeFallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
                              commit, ValueRange{modeFallback.getAssignment()},
@@ -10056,8 +10354,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, function.getBody().front().getArgument(0),
         modeFallbackStart, mutableMask, relevantConstraintMode,
         constant64(fallbackAttempts), fallbackState, increment, programCaptures,
-        builder.getStringAttr(StringRef(
-            reinterpret_cast<const char *>(program.data()), program.size())));
+        getSamplerProgram());
     storeRandomState(modeFallback.getNextRngState());
     cf::CondBranchOp::create(builder, location, modeFallback.getSuccess(),
                              commit, ValueRange{modeFallback.getAssignment()},
@@ -10096,8 +10393,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (failed(committed))
     return failure();
   Block *commitDone = addBlock();
-  for (auto [property, candidate, enabled] :
-       llvm::zip_equal(planned, *committed, propertyEnabled)) {
+  for (auto [index, entry] :
+       llvm::enumerate(llvm::zip_equal(planned, *committed, propertyEnabled))) {
+    auto [property, candidate, enabled] = entry;
     Block *store = addBlock();
     Block *nextProperty = addBlock();
     cf::CondBranchOp::create(builder, location, enabled, store, ValueRange{},
@@ -10218,10 +10516,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     } else if (failed(storeProperty(property, candidate)))
       return failure();
     if (property.isRandC) {
-      if (failed(storeReference(property.randcKeyReference,
-                                property.nextRandcKey, location)) ||
-          failed(storeReference(property.randcPositionReference,
-                                property.nextRandcPosition, location)))
+      Value key = property.nextRandcKey;
+      Value position = property.nextRandcPosition;
+      if (useCyclicPlan) {
+        key = sim::SimRefLoadOp::create(builder, location, i64,
+                                        cyclicKeys[index]);
+        position = sim::SimRefLoadOp::create(builder, location, i64,
+                                             cyclicPositions[index]);
+      }
+      if (failed(storeReference(property.randcKeyReference, key, location)) ||
+          failed(storeReference(property.randcPositionReference, position,
+                                location)))
         return failure();
     }
     cf::BranchOp::create(builder, location, nextProperty);

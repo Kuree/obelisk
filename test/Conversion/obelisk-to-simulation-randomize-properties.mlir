@@ -126,8 +126,10 @@ module attributes {
 // CHECK-NEXT: simulation.managed.load %[[D_A_REF]]
 // CHECK: %[[D_STATE_REF:.*]] = simulation.class.field_ref %[[DERIVED]][@__obelisk_class_s20_D_field_0]
 // CHECK-NEXT: simulation.managed.load %[[D_STATE_REF]]
-// CHECK: %[[D_INLINE_LIMIT:.*]] = arith.constant {{.*}}10 : i32
-// CHECK-NEXT: {{.*}} = arith.cmpi slt, {{.*}}, %[[D_INLINE_LIMIT]] : i32
+// The inline predicate joins the compiled completion relation. Frozen a and
+// the derived state limit are captured before cyclic acceptance and commit.
+// CHECK: simulation.random.solve
+// CHECK-SAME: captures(
 // CHECK: simulation.managed.store {{.*}} to %[[D_B_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_KEY_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[D_POS_REF]]
@@ -138,8 +140,8 @@ module attributes {
 // CHECK-NEXT: %[[C_C_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_4]
 // CHECK: %[[C_A_REF:.*]] = simulation.class.field_ref %[[OBJECT]][@__obelisk_class_s3_C_field_0]
 // CHECK-NEXT: simulation.managed.load %[[C_A_REF]]
-// CHECK: %[[C_INLINE_LIMIT:.*]] = arith.constant {{.*}}10 : i32
-// CHECK-NEXT: {{.*}} = arith.cmpi slt, {{.*}}, %[[C_INLINE_LIMIT]] : i32
+// CHECK: simulation.random.solve
+// CHECK-SAME: captures(
 // CHECK: simulation.managed.store {{.*}} to %[[C_B_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_KEY_REF]]
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[C_POS_REF]]

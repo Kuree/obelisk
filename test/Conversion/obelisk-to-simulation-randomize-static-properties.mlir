@@ -90,7 +90,8 @@ module attributes {
 // CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
 // CHECK: %[[IS_C:.*]] = simulation.class.is_instance %[[OBJECT]] is @__obelisk_class_s3_C
 // CHECK: cf.cond_br %[[IS_C]]
-// CHECK: arith.cmpi sgt, {{.*}}, {{.*}} : i32
+// The inline signed predicate is encoded in the shared compiled relation.
+// CHECK: simulation.random.solve_wide
 // CHECK: cf.cond_br %{{.*}}, ^[[D_SUCCESS:bb[0-9]+]]
 // CHECK: ^[[D_SUCCESS]]
 // CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
@@ -102,6 +103,7 @@ module attributes {
 // CHECK: simulation.ref.load %[[S_REF]] : !simulation.ref<i32>
 // CHECK: simulation.ref.load %[[KEY_REF]] : !simulation.ref<i64>
 // CHECK: simulation.ref.load %[[POSITION_REF]] : !simulation.ref<i64>
+// CHECK: simulation.random.solve_wide
 // CHECK: cf.cond_br %{{.*}}, ^[[C_SUCCESS:bb[0-9]+]]
 // CHECK: ^[[C_SUCCESS]]
 // CHECK: simulation.ref.store {{.*}} to %[[S_REF]] : i32, !simulation.ref<i32>
