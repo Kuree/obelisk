@@ -341,6 +341,20 @@ def ConvertNativeFunctionBodyPass
   let dependentDialects = ["mlir::LLVM::LLVMDialect", "mlir::math::MathDialect"];
 }
 
+def AddressNativeStateThroughBasesPass
+    : Pass<"address-native-state-through-bases", "mlir::ModuleOp"> {
+  let summary = "Address native state planes through one base per function";
+  let description = [{
+    Replaces every function's references to a native state plane global with
+    one invariant, dereferenceable load of the plane address from a base
+    global the optimizer cannot fold. Accesses stay GEP instructions off that
+    base, so code generation shares materialized offsets across the whole
+    function. Functions that access state in only one block, and coroutines,
+    keep the plane global. Run just before translation.
+  }];
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+}
+
 def FinalizeNativeLLVMPass
     : Pass<"finalize-native-llvm", "mlir::ModuleOp"> {
   let summary = "Finalize native scheduling, proofs and LLVM partition manifests";

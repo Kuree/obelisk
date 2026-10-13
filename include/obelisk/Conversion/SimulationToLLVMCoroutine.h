@@ -40,6 +40,11 @@ void materializeNativeScheduleActions(mlir::Operation *operation,
 mlir::LogicalResult
 lowerNativeScheduleActionsToLLVM(mlir::Operation *operation);
 
+/// Address each native state plane through one invariant base per function
+/// that accesses it in several blocks, instead of constant offsets from the
+/// plane global. Run last, just before translation to LLVM IR.
+mlir::LogicalResult addressNativeStateThroughBases(mlir::ModuleOp module);
+
 /// Add terminal conversion patterns after the native preparation pipeline.
 void populateSimulationCoroutineToLLVMPatterns(
     const mlir::LLVMTypeConverter &converter,

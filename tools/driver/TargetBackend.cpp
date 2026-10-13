@@ -1206,6 +1206,8 @@ LogicalResult emitTargetOutput(ModuleOp module,
              << '\n';
     markBackendTiming("global initializer balancing");
   }
+  if (failed(addressNativeStateThroughBases(module)))
+    return failure();
   llvm::LLVMContext llvmContext;
   std::unique_ptr<llvm::Module> llvmModule =
       translateModuleToLLVMIR(module, llvmContext, "obelisk");
