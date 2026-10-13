@@ -1312,7 +1312,8 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
                            uint64_t typeID,
                            const obelisk::coverage::Digest &configuration,
                            std::unordered_set<uint64_t> &suppressedAlternatives,
-                           std::unordered_set<uint64_t> &emptyBins);
+                           std::unordered_set<uint64_t> &emptyBins,
+                           FunctionalCoverageSetQueryIndex &setQueries);
 bool functionalBooleanTrue(const obelisk_rt_functional_value_v1 &value);
 
 struct FunctionalIdentityReservations {
@@ -2346,11 +2347,13 @@ struct FunctionalCoverageSetQueryIndex {
   IndexMap<std::pair<uint64_t, uint64_t>, size_t> bindings, targetOrdinals;
   IndexMap<uint64_t, std::vector<size_t>> alternatives;
   IndexMap<uint64_t, std::vector<uint64_t>> exclusionSets;
-  IndexSet<uint64_t> shortRealItems;
+  IndexSet<uint64_t> shortRealItems, transitionValueItems;
   IndexMap<DomainKey, std::unique_ptr<Graph>> graphs;
   IndexMap<std::pair<bool, std::vector<uint64_t>>, std::shared_ptr<CompiledSet>>
       compiled;
   IndexMap<uint64_t, std::shared_ptr<CompiledSet>> binSets, masks;
+  IndexMap<std::pair<DomainKey, Root>, std::shared_ptr<CompiledSet>>
+      transitionSets;
   IndexMap<std::tuple<uint64_t, uint64_t, bool>, std::shared_ptr<CompiledSet>>
       selections;
 
@@ -2383,9 +2386,14 @@ struct FunctionalCoverageSetQueryIndex {
       selectors.emplace(schema.crossSelectorNodes[ordinal].id, ordinal);
     for (size_t ordinal = 0; ordinal != schema.crossPlans.size(); ++ordinal)
       crossPlans.emplace(schema.crossPlans[ordinal].item, ordinal);
-    for (const auto &target : schema.crossTargets)
+    for (const auto &target : schema.crossTargets) {
       targetOrdinals.emplace(std::make_pair(target.cross, target.target),
                              target.ordinal);
+      auto item = templateItems.find(target.target);
+      if (item != templateItems.end())
+        transitionValueItems.insert(
+            schema.resolvedFunctionalItems[item->second].id);
+    }
     for (size_t ordinal = 0;
          ordinal != schema.resolvedCrossSelectorBindings.size(); ++ordinal) {
       const auto &binding = schema.resolvedCrossSelectorBindings[ordinal];
@@ -2441,6 +2449,46 @@ struct FunctionalCoverageSetQueryIndex {
                : &schema.resolvedCrossSelectorBindings[found->second];
   }
 
+  Graph &graphFor(const DomainKey &domain) {
+    auto found = graphs.find(domain);
+    if (found == graphs.end()) {
+      bool real = std::get<0>(domain) ==
+                  static_cast<uint32_t>(
+                      obelisk::coverage::FunctionalValueSetKind::Real);
+      uint32_t width =
+          real ? (std::get<3>(domain) ? 32 : 64) : std::get<1>(domain);
+      found = graphs.emplace(domain, std::make_unique<Graph>(width)).first;
+    }
+    return *found->second;
+  }
+
+  bool needsTransitionValues(uint64_t item) const {
+    return transitionValueItems.count(item);
+  }
+
+  void setTransitionValues(uint64_t bin, uint32_t width,
+                           obelisk::coverage::CoverageSignedness signedness,
+                           Root root) {
+    DomainKey domain = {
+        static_cast<uint32_t>(
+            obelisk::coverage::FunctionalValueSetKind::Integral),
+        width, static_cast<uint32_t>(signedness), false};
+    auto key = std::make_pair(domain, root);
+    auto found = transitionSets.find(key);
+    if (found == transitionSets.end()) {
+      auto set = std::make_shared<CompiledSet>();
+      set->domain = domain;
+      set->graph = &graphFor(domain);
+      set->numeric = false;
+      set->prepared = true;
+      if (root)
+        set->groups.emplace(
+            std::vector<uint64_t>(functionalLimbCount(width), 0), root);
+      found = transitionSets.emplace(key, std::move(set)).first;
+    }
+    binSets[bin] = found->second;
+  }
+
   std::shared_ptr<CompiledSet> compile(std::vector<uint64_t> sources,
                                        bool shortReal) {
     using namespace obelisk::coverage;
@@ -2463,14 +2511,7 @@ struct FunctionalCoverageSetQueryIndex {
                           static_cast<uint32_t>(set->signedness), shortReal};
       if (!result->graph) {
         result->domain = domain;
-        auto graph = graphs.find(domain);
-        if (graph == graphs.end()) {
-          uint32_t width = set->kind == FunctionalValueSetKind::Real
-                               ? (shortReal ? 32 : 64)
-                               : set->bitWidth;
-          graph = graphs.emplace(domain, std::make_unique<Graph>(width)).first;
-        }
-        result->graph = graph->second.get();
+        result->graph = &graphFor(domain);
       } else if (domain != result->domain) {
         status = OBELISK_RT_INVALID_DESIGN;
         return nullptr;
@@ -7154,7 +7195,7 @@ obelisk_rt_status resolveStaticFunctionalType(
   std::unordered_set<uint64_t> emptyTransitionBins;
   obelisk_rt_status transitionExclusionStatus = deriveTransitionExclusions(
       fingerprintInput, typeID, Digest{}, suppressedTransitionAlternatives,
-      emptyTransitionBins);
+      emptyTransitionBins, setQueries);
   if (transitionExclusionStatus != OBELISK_RT_OK)
     return transitionExclusionStatus;
   for (auto &bin : fingerprintInput.resolvedFunctionalBins)
@@ -7943,7 +7984,7 @@ obelisk_rt_status createResolvedFunctionalType(
   std::unordered_set<uint64_t> emptyTransitionBins;
   obelisk_rt_status transitionExclusionStatus = deriveTransitionExclusions(
       schema, typeID, configuration, type.suppressedTransitionAlternatives,
-      emptyTransitionBins);
+      emptyTransitionBins, setQueries);
   if (transitionExclusionStatus != OBELISK_RT_OK)
     return transitionExclusionStatus;
   std::unordered_set<uint64_t> transitionBinsWithAlternatives;
@@ -10572,7 +10613,8 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
                            uint64_t typeID,
                            const obelisk::coverage::Digest &configuration,
                            std::unordered_set<uint64_t> &suppressedAlternatives,
-                           std::unordered_set<uint64_t> &emptyBins) {
+                           std::unordered_set<uint64_t> &emptyBins,
+                           FunctionalCoverageSetQueryIndex &setQueries) {
   using namespace obelisk::coverage;
   using Graph = detail::DecisionIndex;
   using Language = detail::TransitionIndex;
@@ -10624,6 +10666,8 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     std::unique_ptr<Graph> values;
     std::unique_ptr<Language> language;
     IndexMap<uint64_t, Graph::Root> sets;
+    IndexMap<Graph::Root, Graph::Root> imported;
+    IndexMap<uint64_t, Graph::Root> binTerminals;
     std::vector<Ordinary> ordinary;
   };
   IndexMap<uint64_t, Point> points;
@@ -10797,16 +10841,72 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
         return OBELISK_RT_OUT_OF_RESOURCES;
     }
   }
-  for (auto &[item, point] : points)
+  for (auto &[item, point] : points) {
+    bool projectTerminals = setQueries.needsTransitionValues(item);
+    Graph *target = nullptr;
+    if (projectTerminals) {
+      FunctionalCoverageSetQueryIndex::DomainKey domain = {
+          static_cast<uint32_t>(FunctionalValueSetKind::Integral), point.width,
+          static_cast<uint32_t>(point.signedness), false};
+      target = &setQueries.graphFor(domain);
+      point.imported.emplace(0, 0);
+      point.imported.emplace(1, 1);
+    }
     for (const auto &ordinary : point.ordinary) {
-      bool survives = point.language->hasAcceptedWord(ordinary.steps);
+      Graph::Root terminals =
+          projectTerminals
+              ? point.language->terminalValues(ordinary.steps)
+              : (point.language->hasAcceptedWord(ordinary.steps) ? 1 : 0);
       if (point.language->exhausted())
         return OBELISK_RT_OUT_OF_RESOURCES;
-      if (!survives) {
+      if (!terminals) {
         suppressedAlternatives.insert(ordinary.alternative);
         ++suppressedCounts[ordinary.bin];
       }
+      if (!projectTerminals)
+        continue;
+      // Cross selectors use the final values of surviving sequences
+      // (19.6.1.1), not the untrimmed authored terminal set. Drop the known
+      // sample sentinel and import each shared graph node once per point.
+      if (terminals) {
+        if (point.values->variable(terminals) != 0 ||
+            point.values->child(terminals, true) != 0)
+          return OBELISK_RT_INVALID_DESIGN;
+        terminals = point.values->child(terminals, false);
+      }
+      std::vector<Graph::Root> pending{terminals};
+      while (!pending.empty()) {
+        Graph::Root root = pending.back();
+        if (point.imported.count(root)) {
+          pending.pop_back();
+          continue;
+        }
+        auto zero = point.imported.find(point.values->child(root, false));
+        if (zero == point.imported.end()) {
+          pending.push_back(point.values->child(root, false));
+          continue;
+        }
+        auto one = point.imported.find(point.values->child(root, true));
+        if (one == point.imported.end()) {
+          pending.push_back(point.values->child(root, true));
+          continue;
+        }
+        Graph::Root imported = target->makeNode(
+            point.values->variable(root) - 1, zero->second, one->second);
+        if (target->exhausted())
+          return OBELISK_RT_OUT_OF_RESOURCES;
+        point.imported.emplace(root, imported);
+        pending.pop_back();
+      }
+      auto &combined = point.binTerminals[ordinary.bin];
+      combined =
+          target->unite(combined, point.imported.find(terminals)->second);
+      if (target->exhausted())
+        return OBELISK_RT_OUT_OF_RESOURCES;
     }
+    for (auto [bin, root] : point.binTerminals)
+      setQueries.setTransitionValues(bin, point.width, point.signedness, root);
+  }
   for (auto [bin, count] : ordinaryCounts)
     if (suppressedCounts[bin] == count)
       emptyBins.insert(bin);
@@ -13355,21 +13455,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           if (!step.lowerBound || step.upperBound < step.lowerBound ||
               repetitionsConsumed >= step.upperBound)
             return false;
-          if (!matchesStep(ordinal)) {
-            if (activeState.gapForbiddenOrdinal != UINT32_MAX) {
-              if (activeState.gapForbiddenOrdinal >= alternative.stepCount)
-                return false;
-              if (!matchesStep(activeState.gapForbiddenOrdinal))
-                retain(sampledState, fromPrevious);
-            } else if (repetition ==
-                           obelisk::coverage::TransitionRepetitionKind::Goto ||
-                       repetition ==
-                           obelisk::coverage::TransitionRepetitionKind::
-                               Nonconsecutive) {
+          bool matched = matchesStep(ordinal);
+          if (activeState.gapForbiddenOrdinal != UINT32_MAX) {
+            if (activeState.gapForbiddenOrdinal >= alternative.stepCount)
+              return false;
+            // A nonconsecutive suffix may wait through values that also
+            // match its following step. Preserve both choices (19.5.2).
+            if (!matchesStep(activeState.gapForbiddenOrdinal))
               retain(sampledState, fromPrevious);
-            }
-            return true;
+          } else if (!matched &&
+                     (repetition ==
+                          obelisk::coverage::TransitionRepetitionKind::Goto ||
+                      repetition ==
+                          obelisk::coverage::TransitionRepetitionKind::
+                              Nonconsecutive)) {
+            retain(sampledState, fromPrevious);
           }
+          if (!matched)
+            return true;
           const uint64_t consumed = repetitionsConsumed + 1;
           if (consumed >= step.lowerBound) {
             if (ordinal + 1 == alternative.stepCount) {

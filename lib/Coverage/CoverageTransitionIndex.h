@@ -56,6 +56,7 @@ private:
   IndexMap<std::tuple<uint32_t, Root, Root>, Root> branches;
   IndexMap<AddKey, Root> added;
   IndexMap<uint64_t, Root> maps;
+  IndexMap<Root, Root> survivingMaps;
   IndexMap<std::pair<uint64_t, Root>, std::vector<uint64_t>> moves;
 
   bool consume() {
@@ -225,6 +226,40 @@ private:
     return moves.emplace(key, std::move(result)).first->second;
   }
 
+  Root surviving(Root map) {
+    std::vector<Root> pending{map};
+    while (!pending.empty() && !exhausted()) {
+      Root current = pending.back();
+      if (survivingMaps.count(current)) {
+        pending.pop_back();
+        continue;
+      }
+      const auto &node = nodes[current];
+      Root result;
+      if (node.variable == width)
+        result = node.head == 1 ? 0 : 1;
+      else {
+        auto zero = survivingMaps.find(node.zero);
+        if (zero == survivingMaps.end()) {
+          pending.push_back(node.zero);
+          continue;
+        }
+        auto one = survivingMaps.find(node.one);
+        if (one == survivingMaps.end()) {
+          pending.push_back(node.one);
+          continue;
+        }
+        result = values.makeNode(node.variable, zero->second, one->second);
+      }
+      if (!consume())
+        break;
+      survivingMaps.emplace(current, result);
+      pending.pop_back();
+    }
+    auto found = survivingMaps.find(map);
+    return exhausted() || found == survivingMaps.end() ? 0 : found->second;
+  }
+
 public:
   TransitionIndex(DecisionIndex &values, uint32_t width, Root domain,
                   size_t limit = size_t{1} << 18)
@@ -262,10 +297,14 @@ public:
     trie[current].terminal = true;
   }
 
-  bool hasAcceptedWord(const std::vector<Step> &steps) {
+private:
+  Root accepted(const std::vector<Step> &steps, bool stopAtFirst) {
     sealed = true;
-    if (steps.empty())
-      return false;
+    if (steps.empty() ||
+        std::any_of(steps.begin(), steps.end(),
+                    [](const Step &step) { return !step.values; }))
+      return 0;
+    Root terminals = 0;
     // ordinal, repetition count, nonconsecutive gap constraint, trie prefixes.
     using State = std::tuple<uint32_t, uint64_t, uint32_t, uint64_t>;
     IndexSet<State> visited;
@@ -283,10 +322,18 @@ public:
       const Step &step = steps[ordinal];
       uint64_t count = consumed + 1;
       const auto &matched = move(head, step.values);
+      if (ordinal + 1 == steps.size() && count >= step.lower &&
+          !matched.empty()) {
+        if (stopAtFirst)
+          return exhausted() ? 0 : 1;
+        Root available = values.intersect(step.values, surviving(mapFor(head)));
+        terminals = values.unite(terminals, available);
+        // No accepted terminal can lie outside the authored final step.
+        if (terminals == steps.back().values)
+          return exhausted() ? 0 : terminals;
+      }
       for (uint64_t next : matched) {
-        if (count >= step.lower) {
-          if (ordinal + 1 == steps.size())
-            return !exhausted();
+        if (count >= step.lower && ordinal + 1 < steps.size()) {
           retain({ordinal + 1, 0,
                   step.repetition == TransitionRepetitionKind::Nonconsecutive
                       ? ordinal
@@ -298,8 +345,7 @@ public:
       }
       Root gaps = 0;
       if (forbidden != UINT32_MAX)
-        gaps = values.subtract(
-            domain, values.unite(step.values, steps[forbidden].values));
+        gaps = values.subtract(domain, steps[forbidden].values);
       else if (step.repetition == TransitionRepetitionKind::Goto ||
                step.repetition == TransitionRepetitionKind::Nonconsecutive)
         gaps = values.subtract(domain, step.values);
@@ -307,7 +353,18 @@ public:
         for (uint64_t next : move(head, gaps))
           retain({ordinal, consumed, forbidden, next});
     }
-    return false;
+    return exhausted() ? 0 : terminals;
+  }
+
+public:
+  bool hasAcceptedWord(const std::vector<Step> &steps) {
+    return accepted(steps, true) != 0;
+  }
+
+  /// Values of the final authored step that complete at least one clean
+  /// sequence. This is the associated value set used by cross selectors.
+  Root terminalValues(const std::vector<Step> &steps) {
+    return accepted(steps, false);
   }
 };
 

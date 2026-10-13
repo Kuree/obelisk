@@ -29,7 +29,7 @@ TEST(CoverageTransitionIndexTest,
     std::array<std::array<uint8_t, 2>, 3> exclusions;
     std::vector<TransitionIndex::Step> steps;
     for (auto &mask : ordinary) {
-      mask = 1 + random() % 15;
+      mask = random() % 16;
       steps.push_back({label(mask), 1, 1, TransitionRepetitionKind::Once});
     }
     for (auto &word : exclusions) {
@@ -37,7 +37,7 @@ TEST(CoverageTransitionIndexTest,
               static_cast<uint8_t>(random() % 16)};
       index.addExclusion({label(word[0]), label(word[1])});
     }
-    bool expected = false;
+    uint8_t expectedTerminals = 0;
     for (uint32_t encoded = 0; encoded != 64; ++encoded) {
       std::array<uint8_t, 3> word{static_cast<uint8_t>(encoded & 3),
                                   static_cast<uint8_t>((encoded >> 2) & 3),
@@ -49,9 +49,38 @@ TEST(CoverageTransitionIndexTest,
         for (size_t offset = 0; offset != 2; ++offset)
           excluded |= (removed[0] & (1 << word[offset])) &&
                       (removed[1] & (1 << word[offset + 1]));
-      expected |= matches && !excluded;
+      if (matches && !excluded)
+        expectedTerminals |= 1 << word.back();
     }
-    EXPECT_EQ(index.hasAcceptedWord(steps), expected) << "trial=" << trial;
+    EXPECT_EQ(index.hasAcceptedWord(steps), expectedTerminals != 0)
+        << "trial=" << trial;
+    auto terminals = index.terminalValues(steps);
+    for (uint64_t value = 0; value != 4; ++value)
+      EXPECT_EQ(values.intersect(terminals, values.cube({value}, {0})) != 0,
+                bool(expectedTerminals & (1 << value)))
+          << "trial=" << trial << ", terminal=" << value;
+    EXPECT_FALSE(index.exhausted());
+  }
+}
+
+TEST(CoverageTransitionIndexTest, NonconsecutiveGapsMayMatchTheFollowingStep) {
+  using obelisk::coverage::TransitionRepetitionKind;
+  for (auto repetition : {TransitionRepetitionKind::Goto,
+                          TransitionRepetitionKind::Nonconsecutive}) {
+    DecisionIndex values(2);
+    TransitionIndex index(values, 2, 1);
+    auto zero = values.cube({0}, {0});
+    auto terminals = values.interval({1}, {3});
+    index.addExclusion({zero, values.cube({1}, {0})});
+    // 0,2,1 completes a legal nonconsecutive sequence ending in 1: its 2
+    // may match either the suffix gap or the following step. Goto requires
+    // that following step to be adjacent to 0, so it loses terminal 1.
+    EXPECT_EQ(index.terminalValues(
+                  {{zero, 1, 1, repetition},
+                   {terminals, 1, 1, TransitionRepetitionKind::Once}}),
+              repetition == TransitionRepetitionKind::Nonconsecutive
+                  ? terminals
+                  : values.interval({2}, {3}));
     EXPECT_FALSE(index.exhausted());
   }
 }
