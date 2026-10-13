@@ -477,7 +477,7 @@ struct CrossPredicateNode {
   CoverageSignedness signedness = CoverageSignedness::Unsigned;
   uint32_t ordinal = 0, flags = 0;
   /// Selects address outer packed elements, relative to the declared right
-  /// bound. RangeSelect has a captured constructor index; its result can be
+  /// bound. RangeSelect can address a variable window; its result can be
   /// wider than the source and includes X padding for missing bits.
   uint32_t elementWidth = 0;
   int64_t indexBase = 0;

@@ -29,9 +29,12 @@ private:
   IndexMap<std::tuple<uint32_t, Root, Root>, Root> unique;
   IndexMap<OperationKey, Root> operations;
   IndexMap<std::pair<Root, uint64_t>, uint64_t> counts;
+  size_t derivedStates = 0;
 
   bool reserveState() {
-    if (failed || nodes.size() + operations.size() + counts.size() >= limit) {
+    if (failed ||
+        nodes.size() + operations.size() + counts.size() + derivedStates >=
+            limit) {
       failed = true;
       return false;
     }
@@ -140,6 +143,15 @@ public:
       : width(width), limit(limit), nodes{{width, 0, 0}, {width, 1, 1}} {}
 
   bool exhausted() const { return failed; }
+  /// A projection's constant-size memo entries share the graph's work limit.
+  /// Charge each distinct derived state once, including states that reduce
+  /// to an existing Boolean root and would otherwise escape that limit.
+  bool reserveDerivedState() {
+    if (!reserveState())
+      return false;
+    ++derivedStates;
+    return true;
+  }
   uint32_t getWidth() const { return width; }
   uint32_t variable(Root root) const { return nodes[root].variable; }
   Root child(Root root, bool one) const {

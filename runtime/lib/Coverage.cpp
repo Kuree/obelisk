@@ -2424,11 +2424,12 @@ struct FunctionalCoverageSetQueryIndex {
     for (const auto &node : schema.crossPredicateNodes) {
       predicatePrograms[node.selector].push_back(&node);
       predicateNodes.emplace(node.id, &node);
-      if (node.kind == CrossPredicateKind::ElementSelect)
+      if (node.kind == CrossPredicateKind::ElementSelect ||
+          node.kind == CrossPredicateKind::RangeSelect)
         pendingIndices.push_back(node.right);
     }
     // Index operands precede data operands in the variable order. Otherwise
-    // an ordinary variable bit-select can require an exponential Boolean
+    // ordinary variable addressing can require an exponential Boolean
     // graph. Visit each index-subtree node once, including shared operands.
     IndexSet<uint64_t> visitedIndices;
     while (!pendingIndices.empty()) {

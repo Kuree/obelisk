@@ -2793,6 +2793,20 @@ TEST(CoverageDatabaseTest, SymbolicSelectLayoutsAreValidatedAndRoundTrip) {
   schema.crossPredicateNodes.back().bitWidth = 3;
   schema.schemaFingerprint = computeSchemaFingerprint(schema);
   EXPECT_EQ(validate(schema), Status::Ok);
+  // An iterator index is a normal typed operand, including when it names
+  // the same cross target as the selected value.
+  auto &address = schema.crossPredicateNodes[1];
+  auto expression = address.expression;
+  address = schema.crossPredicateNodes.front();
+  address.id = 201;
+  address.ordinal = 1;
+  schema.functionalExpressions.erase(
+      std::remove_if(schema.functionalExpressions.begin(),
+                     schema.functionalExpressions.end(),
+                     [&](const auto &entry) { return entry.id == expression; }),
+      schema.functionalExpressions.end());
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  EXPECT_EQ(validate(schema), Status::Ok);
   schema.crossPredicateNodes.back().right = 200;
   EXPECT_EQ(validate(schema), Status::InvalidReference);
 }

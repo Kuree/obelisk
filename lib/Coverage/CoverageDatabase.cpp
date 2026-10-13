@@ -4611,8 +4611,6 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           node.bitWidth % node.elementWidth ||
           (node.kind == CrossPredicateKind::ElementSelect &&
            node.bitWidth != node.elementWidth))) ||
-        (node.kind == CrossPredicateKind::RangeSelect &&
-         (!right || right->kind != CrossPredicateKind::Value)) ||
         node.ordinal != predicateOrdinals[node.selector]++ ||
         (boolean && node.bitWidth != 1) ||
         ((node.kind == CrossPredicateKind::Target) != (node.target != 0)) ||

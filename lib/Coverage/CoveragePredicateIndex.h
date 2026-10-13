@@ -52,6 +52,156 @@ private:
     return result;
   }
 
+  Value window(const CrossPredicateNode &node, const Value &source,
+               Value ordinal, Root indeterminate) {
+    Value result;
+    result.aval.assign(node.bitWidth, 1);
+    result.bval.assign(node.bitWidth, 1);
+    const uint64_t prefix = node.bitWidth - node.elementWidth;
+    const uint64_t elements =
+        (source.aval.size() + 2 * prefix) / node.elementWidth;
+    uint32_t levels = 0;
+    for (uint64_t count = elements; count > 1; count = count / 2 + count % 2)
+      ++levels;
+
+    // Unknown indices are handled by the final X guard. Their arbitrary
+    // numeric bits must not enlarge the addressing graph or its span bounds.
+    for (Root &bit : ordinal.aval)
+      bit = graph.subtract(bit, indeterminate);
+    std::fill(ordinal.bval.begin(), ordinal.bval.end(), 0);
+
+    // Virtual padding converts a partially negative start into a nonnegative
+    // address. A base naming the high element already includes this offset.
+    // All arithmetic retains the original self-determined index precision.
+    if (!(node.flags & CrossPredicateBaseNamesHigh)) {
+      const uint64_t padding = prefix / node.elementWidth;
+      Value offset;
+      offset.aval.assign(ordinal.aval.size(), 0);
+      offset.bval = offset.aval;
+      for (uint32_t bit = 0; bit != 64; ++bit)
+        offset.aval[bit] = (padding >> bit) & 1;
+      CrossPredicateNode add;
+      add.kind = CrossPredicateKind::Add;
+      add.bitWidth = ordinal.aval.size();
+      ordinal = evaluate(add, std::move(ordinal), std::move(offset));
+    }
+    Root invalid = indeterminate;
+    for (uint32_t bit = levels; bit != ordinal.aval.size(); ++bit)
+      invalid = graph.unite(invalid, ordinal.aval[bit]);
+    if (invalid == 1)
+      return result;
+
+    using Key = std::pair<uint32_t, uint64_t>;
+    using Planes = std::pair<Root, Root>;
+    IndexMap<Key, Planes> memo;
+    std::vector<uint64_t> minimum(levels + 1), maximum(levels + 1);
+    std::vector<uint32_t> active(levels + 1);
+    for (uint32_t level = 1; level <= levels; ++level) {
+      Root bit = ordinal.aval[level - 1];
+      uint64_t step = (uint64_t{1} << (level - 1)) * node.elementWidth;
+      minimum[level] = minimum[level - 1] + (bit == 1 ? step : 0);
+      maximum[level] = maximum[level - 1] + (bit ? step : 0);
+      active[level] = bit > 1 ? level : active[level - 1];
+    }
+    auto keyFor = [&](uint32_t level, uint64_t position) -> Key {
+      uint32_t remaining = active[level];
+      return {remaining, position + minimum[level] - minimum[remaining]};
+    };
+    // Homogeneous source columns need no mux state. This also handles a
+    // repeated sign-extension bit and identical packed elements in O(bits).
+    std::vector<uint32_t> sameEnd(source.aval.size());
+    for (size_t remaining = source.aval.size(); remaining; --remaining) {
+      size_t bit = remaining - 1;
+      size_t next = bit + uint64_t{node.elementWidth};
+      sameEnd[bit] = bit;
+      if (next < source.aval.size() && source.aval[bit] == source.aval[next] &&
+          source.bval[bit] == source.bval[next])
+        sameEnd[bit] = sameEnd[next];
+    }
+    auto known = [&](Key key, Planes &planes) {
+      auto [level, position] = key;
+      uint64_t first = position + minimum[level];
+      uint64_t last = position + maximum[level];
+      if (first >= prefix + source.aval.size() || last < prefix) {
+        planes = {1, 1};
+        return true;
+      }
+      if (first >= prefix && last < prefix + source.aval.size() &&
+          sameEnd[first - prefix] >= last - prefix) {
+        planes = {source.aval[first - prefix], source.bval[first - prefix]};
+        return true;
+      }
+      auto found = memo.find(key);
+      if (found == memo.end())
+        return false;
+      planes = found->second;
+      return true;
+    };
+    struct Frame {
+      Key key;
+      bool ready = false;
+    };
+    std::vector<Frame> pending;
+    // Adjacent output bits share the same (remaining address bits, source
+    // position) states. Each state is compiled once across the entire window;
+    // work is linear in typed bits and distinct bounded selector/graph states,
+    // rather than an independent source traversal for every output bit.
+    for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+      Key root = keyFor(levels, bit);
+      Planes planes;
+      pending.push_back({root});
+      while (!pending.empty() && !graph.exhausted()) {
+        Frame frame = pending.back();
+        if (known(frame.key, planes)) {
+          pending.pop_back();
+          continue;
+        }
+        auto [level, position] = frame.key;
+        const uint64_t step = (uint64_t{1} << (level - 1)) * node.elementWidth;
+        Key low = keyFor(level - 1, position);
+        Key high = keyFor(level - 1, position + step);
+        Root one = ordinal.aval[level - 1];
+        if (!frame.ready) {
+          pending.back().ready = true;
+          if (one != 1 && !known(low, planes))
+            pending.push_back({low});
+          if (one != 0 && !known(high, planes))
+            pending.push_back({high});
+          continue;
+        }
+        Planes left{1, 1}, right{1, 1};
+        if ((one != 1 && !known(low, left)) ||
+            (one != 0 && !known(high, right)) || !graph.reserveDerivedState()) {
+          failed = true;
+          return {};
+        }
+        if (one == 0)
+          planes = left;
+        else if (one == 1)
+          planes = right;
+        else {
+          Root zero = notRoot(one);
+          auto mux = [&](Root a, Root b) {
+            return graph.unite(graph.intersect(zero, a),
+                               graph.intersect(one, b));
+          };
+          planes = {mux(left.first, right.first),
+                    mux(left.second, right.second)};
+        }
+        memo.emplace(frame.key, planes);
+        pending.pop_back();
+      }
+      if (graph.exhausted() || !known(root, planes)) {
+        failed = true;
+        return {};
+      }
+      result.aval[bit] =
+          graph.unite(graph.subtract(planes.first, invalid), invalid);
+      result.bval[bit] = graph.unite(planes.second, invalid);
+    }
+    return result;
+  }
+
   Value select(const CrossPredicateNode &node, const Value &source,
                Value index) {
     Value result;
@@ -93,10 +243,9 @@ private:
     bool fixed = indeterminate == 0;
     for (Root bit : ordinal.aval)
       fixed &= bit <= 1;
-    if (node.kind == CrossPredicateKind::RangeSelect && !fixed) {
-      failed = true;
-      return {};
-    }
+    if (node.kind == CrossPredicateKind::RangeSelect && !fixed &&
+        node.bitWidth != node.elementWidth)
+      return window(node, source, std::move(ordinal), indeterminate);
     if (fixed) {
       // Constant indices copy only the selected window. Decode just the
       // magnitude that can overlap the physical source; an arbitrarily wide

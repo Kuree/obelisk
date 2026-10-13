@@ -157,10 +157,6 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
                     selection == ir::SVRangeSelectionKind::IndexedDown))
             plan.flags |= coverage::CrossPredicateBaseNamesHigh;
           plan.operands.resize(2);
-          // The captured constructor index is constant in the Boolean graph.
-          // Cross-item-dependent windows require a separate shifting program.
-          if (dependent.lookup(plan.operands[1]))
-            return std::nullopt;
           plan.kind = Kind::RangeSelect;
         }
       } else if (isa<ir::SVConversionExpressionOp>(op)) {
