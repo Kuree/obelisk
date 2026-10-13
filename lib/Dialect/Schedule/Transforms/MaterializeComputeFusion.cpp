@@ -647,22 +647,23 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
         return local;
       }
       Type type = allocation.getInitialValue().getType();
+      // The initializer is deliberately unrelated to pre-suspension state.
+      // Dense must-definition analysis below proves it unobservable, so use
+      // known zero bits where the type has them: an X/Z default would only
+      // weaken the state-domain facts of every later read.
       Value initial;
-      if (isa<IntegerType, FloatType>(type))
+      if (isa<FloatType>(type))
         initial = arith::ConstantOp::create(builder, allocation.getLoc(), type,
                                             builder.getZeroAttr(type));
-      else if (auto logic = dyn_cast<sim::LogicType>(type)) {
-        auto zero =
-            builder.getIntegerAttr(builder.getIntegerType(logic.getWidth()), 0);
-        initial = sim::SimLogicConstantOp::create(builder, allocation.getLoc(),
-                                                  logic, zero, zero);
-      } else if (sim::isAggregateType(type))
+      else if (FailureOr<Value> zero = sim::materializeKnownZero(
+                   builder, allocation.getLoc(), type);
+               succeeded(zero))
+        initial = *zero;
+      else if (sim::isAggregateType(type))
         initial = sim::SimAggregateDefaultOp::create(builder,
                                                      allocation.getLoc(), type);
       else
         return {};
-      // The initializer is deliberately unrelated to pre-suspension state.
-      // Dense must-definition analysis below proves it unobservable.
       auto local = sim::SimRefAllocOp::create(builder, allocation.getLoc(),
                                               allocation.getType(), initial);
       recreated.push_back(local);
@@ -1297,8 +1298,9 @@ uint64_t localizeActivationStorage(
     if (!root || !isa<sim::RefType>(reference.getType()))
       return;
     auto declaration = accessIndex.declarations.lookup(*root);
-    if (!declaration || cast<sim::RefType>(reference.getType()).getElementType() !=
-                            declaration.getType())
+    if (!declaration ||
+        cast<sim::RefType>(reference.getType()).getElementType() !=
+            declaration.getType())
       return;
     auto [eligible, inserted] = eligibleRoots.try_emplace(*root, false);
     if (inserted)
@@ -1441,20 +1443,17 @@ uint64_t localizeActivationStorage(
     }
     // A shared root needs its incoming value unless every bit is overwritten
     // on every exit and no earlier read observes it. Private initializers are
-    // unobservable under the write-before-read proof above.
+    // unobservable under the write-before-read proof above; known zero bits
+    // keep them from weakening the state-domain facts of later reads.
     Value initial;
     if (writeBack && (liveIns.contains(root) || !fullyWritten))
       initial = sim::SimRefLoadOp::create(builder, declaration.getLoc(), type,
                                           canonicalReference);
-    else if (isa<IntegerType>(type))
-      initial = arith::ConstantOp::create(builder, declaration.getLoc(), type,
-                                          builder.getZeroAttr(type));
-    else if (auto logic = dyn_cast<sim::LogicType>(type)) {
-      auto zero =
-          builder.getIntegerAttr(builder.getIntegerType(logic.getWidth()), 0);
-      initial = sim::SimLogicConstantOp::create(builder, declaration.getLoc(),
-                                                logic, zero, zero);
-    } else
+    else if (FailureOr<Value> zero =
+                 sim::materializeKnownZero(builder, declaration.getLoc(), type);
+             succeeded(zero))
+      initial = *zero;
+    else
       initial = sim::SimAggregateDefaultOp::create(builder,
                                                    declaration.getLoc(), type);
     auto local = sim::SimRefAllocOp::create(
@@ -1470,8 +1469,19 @@ uint64_t localizeActivationStorage(
       for (auto [use, original] : uses)
         use->set(original);
       local.erase();
-      if (initial.use_empty())
-        initial.getDefiningOp()->erase();
+      // The initializer may be a tree of zero elements; erase all of it.
+      SmallVector<Operation *> dead{initial.getDefiningOp()};
+      llvm::SmallPtrSet<Operation *, 8> erased;
+      while (!dead.empty()) {
+        Operation *operation = dead.pop_back_val();
+        if (!operation || operation == createdReference ||
+            erased.contains(operation) || !isOpTriviallyDead(operation))
+          continue;
+        for (Value operand : operation->getOperands())
+          dead.push_back(operand.getDefiningOp());
+        erased.insert(operation);
+        operation->erase();
+      }
       if (createdReference)
         createdReference->erase();
       continue;

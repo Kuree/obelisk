@@ -41,6 +41,28 @@ RootKey getRootKey(schedule::ComputeResourceKind resource,
   return {static_cast<unsigned>(resource), descriptor};
 }
 
+bool isGuardableRoot(Type type) {
+  std::optional<uint64_t> width = sim::getProvenanceSpan(type);
+  return hasUnknownPlane(type) && width && *width <= maximumGuardedRootBits;
+}
+
+/// Every four-state root a guarded proof may assume known.
+RootSet collectGuardableRoots(sim::SimDesignOp design) {
+  RootSet roots;
+  for (Operation &operation : design.getBody().front()) {
+    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
+      if (isGuardableRoot(storage.getType()))
+        roots.insert(getRootKey(schedule::ComputeResourceKind::Storage,
+                                storage.getId()));
+    } else if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
+      if (isGuardableRoot(net.getType()))
+        roots.insert(
+            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
+    }
+  }
+  return roots;
+}
+
 constexpr StateDomainFact bottomFact() {
   return {StateDomain::Bottom, StateDomainReason::Unresolved};
 }
@@ -174,6 +196,26 @@ StateDomainFact transferOperation(
                ? mayFourState(StateDomainReason::UnsupportedProducer)
                : found->second;
   };
+  // A dynamic load reads its root only through a valid selection; otherwise
+  // it yields the element default (IEEE 1800-2023 7.4.6, 11.5.1). Selections
+  // that are valid for every known value of their selectors are valid
+  // whenever this solve proves those selectors two-state.
+  StateDomain selection = StateDomain::TwoState;
+  if (auto load = dyn_cast<sim::SimRefLoadOp>(op)) {
+    auto root = provenance.find(load.getReference());
+    if (root != provenance.end() && root->second.dynamic) {
+      auto certificate = certificates.find(load.getReference());
+      selection =
+          certificate == certificates.end() ||
+                  !certificate->second.inBoundsIfKnown
+              ? StateDomain::MayFourState
+              : combineValues(certificate->second.knownSelectors, operandFact,
+                              StateDomainReason::DynamicExtractIndex)
+                    .domain;
+    }
+    if (selection == StateDomain::Bottom)
+      return bottomFact();
+  }
   auto isKnownRead = [&](Operation *read) {
     Value handle;
     if (auto load = dyn_cast<sim::SimRefLoadOp>(read))
@@ -181,13 +223,9 @@ StateDomainFact transferOperation(
     else
       handle = cast<sim::SimNetReadOp>(read).getNet();
     auto root = provenance.find(handle);
-    if (root == provenance.end() || !root->second.descriptor)
+    if (root == provenance.end() || !root->second.descriptor ||
+        selection != StateDomain::TwoState)
       return false;
-    if (isa<sim::SimRefLoadOp>(read) && root->second.dynamic) {
-      auto certificate = certificates.find(handle);
-      if (certificate == certificates.end() || !certificate->second.inBounds)
-        return false;
-    }
     return assumedKnownRoots.contains(
         getRootKey(root->second.resource, *root->second.descriptor));
   };
@@ -549,10 +587,18 @@ buildSummary(sim::SimFuncOp function,
     for (const IncomingSummary &incoming : argument.incoming)
       if (incoming.value)
         summary.dependents[incoming.value].push_back(node);
-  for (auto [index, operation] : llvm::enumerate(summary.operations))
+  for (auto [index, operation] : llvm::enumerate(summary.operations)) {
+    unsigned node = summary.blockArguments.size() + index;
     for (Value operand : operation->getOperands())
-      summary.dependents[operand].push_back(summary.blockArguments.size() +
-                                            index);
+      summary.dependents[operand].push_back(node);
+    // A dynamic load also depends on the selectors its bounds proof needs.
+    if (auto load = dyn_cast<sim::SimRefLoadOp>(operation)) {
+      auto certificate = summary.certificates.find(load.getReference());
+      if (certificate != summary.certificates.end())
+        for (Value selector : certificate->second.knownSelectors)
+          summary.dependents[selector].push_back(node);
+    }
+  }
   return summary;
 }
 
@@ -1289,15 +1335,16 @@ StateDomainAnalysis::computeInductiveOnly(const ValueFactProgram &program) {
   DenseSet<uint64_t> partialConnections;
   for (Operation &operation : design.getBody().front()) {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (hasUnknownPlane(storage.getType()))
+      if (isGuardableRoot(storage.getType()))
         candidates.insert(getRootKey(schedule::ComputeResourceKind::Storage,
                                      storage.getId()));
       continue;
     }
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
       if (hasUnknownPlane(net.getType())) {
-        candidates.insert(
-            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
+        if (isGuardableRoot(net.getType()))
+          candidates.insert(
+              getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
         if (std::optional<uint64_t> width =
                 sim::getProvenanceSpan(net.getType()))
           netWidths[net.getId()] = *width;
@@ -1557,19 +1604,7 @@ StateDomainAnalysis::computeAssumingKnownState(sim::SimDesignOp design) {
     design.emitOpError("cannot analyze a design with no body");
     return failure();
   }
-  RootSet assumedKnown;
-  for (Operation &operation : design.getBody().front()) {
-    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (hasUnknownPlane(storage.getType()))
-        assumedKnown.insert(getRootKey(schedule::ComputeResourceKind::Storage,
-                                       storage.getId()));
-      continue;
-    }
-    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
-      if (hasUnknownPlane(net.getType()))
-        assumedKnown.insert(
-            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
-  }
+  RootSet assumedKnown = collectGuardableRoots(design);
   ValueFactProgram program(design);
   FailureOr<DenseMap<Value, StateDomainFact>> guarded =
       computeValueFacts(program, assumedKnown);
@@ -1611,19 +1646,7 @@ StateDomainAnalysis::computeForSpecialization(sim::SimDesignOp design,
   if (failed(inductive))
     return failure();
   inductive->facts = std::move(*unconditional);
-  RootSet assumedKnown;
-  for (Operation &operation : design.getBody().front()) {
-    if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
-      if (hasUnknownPlane(storage.getType()))
-        assumedKnown.insert(getRootKey(schedule::ComputeResourceKind::Storage,
-                                       storage.getId()));
-      continue;
-    }
-    if (auto net = dyn_cast<sim::SimNetDeclOp>(operation))
-      if (hasUnknownPlane(net.getType()))
-        assumedKnown.insert(
-            getRootKey(schedule::ComputeResourceKind::Net, net.getId()));
-  }
+  RootSet assumedKnown = collectGuardableRoots(design);
   auto guarded = computeValueFacts(program, assumedKnown);
   if (failed(guarded))
     return failure();

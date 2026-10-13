@@ -5,6 +5,7 @@
 #include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
 #include "mlir/Analysis/DataFlow/IntegerRangeAnalysis.h"
 #include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "obelisk/Analysis/LogicBitAnalysis.h"
 #include "obelisk/Analysis/NetConnectivityAnalysis.h"
 #include "obelisk/Analysis/ScopedIntegerRangeAnalysis.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -29,6 +30,9 @@ schedule::ComputeResourceKind resourceKind(Type type) {
     return schedule::ComputeResourceKind::Event;
   return schedule::ComputeResourceKind::Unknown;
 }
+/// Known-conditional bounds proofs name at most this many selectors; more
+/// forget the proof rather than grow every reference fact.
+constexpr size_t maximumKnownSelectors = 4;
 struct ReferenceValue {
   bool initialized = false;
   HandleFact target;
@@ -64,6 +68,16 @@ struct ReferenceValue {
     a.dynamic |= b.dynamic || !inBounds;
     lhs.proof.constantAddress &= rhs.proof.constantAddress && exact;
     lhs.proof.inBounds &= rhs.proof.inBounds;
+    lhs.proof.inBoundsIfKnown &= rhs.proof.inBoundsIfKnown;
+    for (Value selector : rhs.proof.knownSelectors)
+      if (lhs.proof.inBoundsIfKnown &&
+          !llvm::is_contained(lhs.proof.knownSelectors, selector))
+        lhs.proof.knownSelectors.push_back(selector);
+    if (!lhs.proof.inBoundsIfKnown ||
+        lhs.proof.knownSelectors.size() > maximumKnownSelectors) {
+      lhs.proof.inBoundsIfKnown = false;
+      lhs.proof.knownSelectors.clear();
+    }
     if (!lhs.proof.laneKnown || !rhs.proof.laneKnown ||
         lhs.proof.low != rhs.proof.low || lhs.proof.width != rhs.proof.width ||
         lhs.proof.stride != rhs.proof.stride ||
@@ -90,9 +104,9 @@ class ReferenceAnalysis
 public:
   ReferenceAnalysis(DataFlowSolver &solver,
                     const DenseMap<uint64_t, uint64_t> &driverNets,
-                    ScopedIntegerRangeAnalysis *scopedRanges)
+                    ScopedIntegerRangeAnalysis *scopedRanges, bool logicBits)
       : SparseForwardDataFlowAnalysis(solver), driverNets(driverNets),
-        scopedRanges(scopedRanges) {}
+        scopedRanges(scopedRanges), logicBits(logicBits) {}
   LogicalResult visitOperation(Operation *op,
                                ArrayRef<const ReferenceLattice *> operands,
                                ArrayRef<ReferenceLattice *> results) override {
@@ -115,7 +129,7 @@ public:
                      0,
                      false,
                      {}};
-      value.proof.inBounds = true;
+      value.proof.inBounds = value.proof.inBoundsIfKnown = true;
       put(value);
     };
     auto forgetSelection = [&]() {
@@ -173,6 +187,41 @@ public:
         bool selectorValid = false;
         Value selector = op->getOperand(1);
         auto selectorWidth = sim::getPackedWidth(selector.getType());
+        Type parentType =
+            llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
+                .Case<sim::RefType, sim::DriverType>(
+                    [](auto type) { return type.getElementType(); });
+        // The inclusive signed selector values that address storage. Dynamic
+        // extracts and word views use physical bit offsets, including when
+        // their parent is an array. Declaration indices apply only to
+        // ref.array_element.
+        std::optional<std::pair<int64_t, int64_t>> validSelectors;
+        if (!array) {
+          auto parentWidth = sim::getProvenanceSpan(parentType);
+          if (parentWidth && *width <= *parentWidth &&
+              *parentWidth - *width <= uint64_t(INT64_MAX))
+            validSelectors = {0, int64_t(*parentWidth - *width)};
+        } else if (auto arrayType =
+                       dyn_cast<sim::UnpackedArrayType>(parentType)) {
+          validSelectors = {
+              std::min(arrayType.getLeft(), arrayType.getRight()),
+              std::max(arrayType.getLeft(), arrayType.getRight())};
+        } else if (auto arrayType =
+                       dyn_cast<sim::PackedArrayType>(parentType)) {
+          validSelectors = {
+              std::min(arrayType.getLeft(), arrayType.getRight()),
+              std::max(arrayType.getLeft(), arrayType.getRight())};
+        }
+        unsigned comparisonWidth =
+            std::max<unsigned>(selectorWidth.value_or(0), 65);
+        auto covers = [&](const APInt &low, const APInt &high) {
+          return validSelectors &&
+                 low.sext(comparisonWidth)
+                     .sge(
+                         APInt(comparisonWidth, validSelectors->first, true)) &&
+                 high.sext(comparisonWidth)
+                     .sle(APInt(comparisonWidth, validSelectors->second, true));
+        };
         if (selectorWidth && *selectorWidth <= 128 &&
             isa<IntegerType, sim::LogicType>(selector.getType())) {
           std::optional<ConstantIntRanges> bounds;
@@ -192,55 +241,45 @@ public:
               bounds = bounds ? bounds->intersection(*constraint) : *constraint;
           }
           if (bounds) {
-            unsigned comparisonWidth = std::max<unsigned>(*selectorWidth, 65);
-            APInt low = bounds->smin().sext(comparisonWidth);
-            APInt high = bounds->smax().sext(comparisonWidth);
-            auto inDeclaredRange = [&](int64_t left, int64_t right) {
-              bool valid =
-                  low.sge(
-                      APInt(comparisonWidth, std::min(left, right), true)) &&
-                  high.sle(APInt(comparisonWidth, std::max(left, right), true));
-              if (!valid && scopedRanges) {
-                const auto *scoped = getOrCreateFor<ScopedRangeLattice>(
-                    getProgramPointAfter(op), getProgramPointBefore(op));
-                valid = scopedRanges->proveBounds(
-                    selector, *scoped,
-                    APInt(comparisonWidth, std::min(left, right), true),
-                    APInt(comparisonWidth, std::max(left, right), true));
-              }
-              return valid;
-            };
-            Type parentType =
-                llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
-                    .Case<sim::RefType, sim::DriverType>(
-                        [](auto type) { return type.getElementType(); });
-            if (!array) {
-              // Dynamic extracts and word views use physical bit offsets,
-              // including when their parent is an array. Declaration indices
-              // apply only to ref.array_element.
-              auto parentWidth = sim::getProvenanceSpan(parentType);
-              selectorValid =
-                  parentWidth && *width <= *parentWidth && !low.isNegative() &&
-                  high.ule(APInt(comparisonWidth, *parentWidth - *width));
-              if (!selectorValid && parentWidth && *width <= *parentWidth &&
-                  scopedRanges) {
-                const auto *scoped = getOrCreateFor<ScopedRangeLattice>(
-                    getProgramPointAfter(op), getProgramPointBefore(op));
-                selectorValid = scopedRanges->proveBounds(
-                    selector, *scoped, APInt(comparisonWidth, 0),
-                    APInt(comparisonWidth, *parentWidth - *width));
-              }
-            } else if (auto arrayType =
-                           dyn_cast<sim::UnpackedArrayType>(parentType))
-              selectorValid =
-                  inDeclaredRange(arrayType.getLeft(), arrayType.getRight());
-            else if (auto arrayType =
-                         dyn_cast<sim::PackedArrayType>(parentType))
-              selectorValid =
-                  inDeclaredRange(arrayType.getLeft(), arrayType.getRight());
+            selectorValid = covers(bounds->smin(), bounds->smax());
+            if (!selectorValid && validSelectors && scopedRanges) {
+              const auto *scoped = getOrCreateFor<ScopedRangeLattice>(
+                  getProgramPointAfter(op), getProgramPointBefore(op));
+              selectorValid = scopedRanges->proveBounds(
+                  selector, *scoped,
+                  APInt(comparisonWidth, validSelectors->first, true),
+                  APInt(comparisonWidth, validSelectors->second, true));
+            }
+          }
+        }
+        // A four-state selector without that unconditional proof can still
+        // address storage for every value it takes once known. Its
+        // selections are then invalid only through X/Z bits (IEEE 1800-2023
+        // 7.4.6, 11.5.1), which consumers must exclude separately.
+        bool validIfKnown = selectorValid;
+        if (!selectorValid && logicBits && selectorWidth &&
+            isa<sim::LogicType>(selector.getType())) {
+          const LogicBitFacts &bits = getOrCreateFor<LogicBitLattice>(
+                                          getProgramPointAfter(op), selector)
+                                          ->getValue();
+          if (!bits.initialized)
+            return;
+          if (bits.known.getBitWidth() == *selectorWidth) {
+            auto [low, high] = getKnownValueSignedRange(bits);
+            validIfKnown = covers(low, high);
           }
         }
         c.inBounds &= selectorValid;
+        c.inBoundsIfKnown &= validIfKnown;
+        if (c.inBoundsIfKnown && !selectorValid &&
+            !llvm::is_contained(c.knownSelectors, selector)) {
+          if (c.knownSelectors.size() == maximumKnownSelectors) {
+            c.inBoundsIfKnown = false;
+            c.knownSelectors.clear();
+          } else {
+            c.knownSelectors.push_back(selector);
+          }
+        }
         bool wholeRoot = !p.dynamic && p.low == 0 && p.width == p.rootWidth &&
                          c.constantAddress;
         // Array selectors validate against their declared parent range before
@@ -249,10 +288,6 @@ public:
         // require the whole-root proof because they can overlap a boundary.
         bool boundedArray = array && !p.dynamic && c.constantAddress &&
                             c.laneKnown && !c.clipped;
-        Type parentType =
-            llvm::TypeSwitch<Type, Type>(op->getOperand(0).getType())
-                .Case<sim::RefType, sim::DriverType>(
-                    [](auto type) { return type.getElementType(); });
         auto stride = array ? sim::getArrayElementStorageStride(parentType)
                             : std::optional<uint64_t>{1};
         bool lane = !p.dynamic && c.laneKnown && *width && stride &&
@@ -380,11 +415,13 @@ private:
     }
     value.proof = {false, true, value.target.low, value.target.width, 0,
                    false, {}};
-    value.proof.inBounds = true;
+    value.proof.inBounds = value.proof.inBoundsIfKnown = true;
     propagateIfChanged(lattice, lattice->join(value));
   }
   const DenseMap<uint64_t, uint64_t> &driverNets;
   ScopedIntegerRangeAnalysis *scopedRanges;
+  /// Whether the solver also derives logic bit facts for selectors.
+  bool logicBits;
 };
 
 static sim::SimDesignOp getDriverDesign(sim::SimFuncOp function) {
@@ -488,7 +525,9 @@ solveHandles(sim::SimFuncOp function,
       dynamicSelectors
           ? solver.load<ScopedIntegerRangeAnalysis>(function.getOperation())
           : nullptr;
-  solver.load<ReferenceAnalysis>(driverNets, scopedRanges);
+  if (dynamicSelectors)
+    solver.load<SparseLogicBitAnalysis>();
+  solver.load<ReferenceAnalysis>(driverNets, scopedRanges, dynamicSelectors);
   if (failed(solver.initializeAndRun(function)))
     return result;
   auto record = [&](Value value) {
@@ -546,8 +585,7 @@ HandleDataflowAnalysis::analyze(sim::SimFuncOp function) const {
   });
   if (!hasHandles)
     return HandleDataflowResult();
-  HandleRevision revision{OperationFingerPrint(function), shape,
-                          driverDigest};
+  HandleRevision revision{OperationFingerPrint(function), shape, driverDigest};
   HandleResultCache &cache = getHandleResultCache();
   if (auto cached = cache.lookup(function, revision))
     return *cached;

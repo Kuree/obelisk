@@ -316,6 +316,59 @@ FailureOr<Value> materializeFrozenConstant(OpBuilder &builder,
   return value;
 }
 
+bool hasKnownZero(Type type) {
+  if (Type scalar = getPackedScalarType(type))
+    return isa<IntegerType, LogicType>(scalar);
+  if (auto array = dyn_cast<UnpackedArrayType>(type))
+    return hasKnownZero(array.getElementType());
+  if (!isa<UnpackedStructType>(type))
+    return false;
+  for (unsigned index = 0; index != getAggregateNumElements(type); ++index)
+    if (!hasKnownZero(getAggregateElementType(type, index)))
+      return false;
+  return true;
+}
+
+FailureOr<Value> materializeKnownZero(OpBuilder &builder, Location location,
+                                      Type type) {
+  if (Type scalar = getPackedScalarType(type)) {
+    Value value;
+    if (auto integer = dyn_cast<IntegerType>(scalar))
+      value = arith::ConstantOp::create(builder, location, integer,
+                                        builder.getZeroAttr(integer));
+    else if (auto logic = dyn_cast<LogicType>(scalar)) {
+      auto zero =
+          builder.getIntegerAttr(builder.getIntegerType(logic.getWidth()), 0);
+      value = SimLogicConstantOp::create(builder, location, logic, zero, zero);
+    } else
+      return failure();
+    if (type != scalar)
+      value = SimPackedUnflattenOp::create(builder, location, type, value);
+    return value;
+  }
+  if (auto array = dyn_cast<UnpackedArrayType>(type)) {
+    FailureOr<Value> element =
+        materializeKnownZero(builder, location, array.getElementType());
+    if (failed(element))
+      return failure();
+    return SimAggregateSplatOp::create(builder, location, type, *element)
+        .getResult();
+  }
+  if (isa<UnpackedStructType>(type)) {
+    SmallVector<Value> fields;
+    for (unsigned index = 0; index != getAggregateNumElements(type); ++index) {
+      FailureOr<Value> field = materializeKnownZero(
+          builder, location, getAggregateElementType(type, index));
+      if (failed(field))
+        return failure();
+      fields.push_back(*field);
+    }
+    return SimAggregateConstructOp::create(builder, location, type, fields)
+        .getResult();
+  }
+  return failure();
+}
+
 LogicalResult verifyNormalizedIndex(Operation *op, Type type) {
   if (isa<LogicType>(type))
     return success();

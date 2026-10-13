@@ -293,16 +293,18 @@ LogicalResult materializeEvalTwoStateVariants(
             llvm::SmallDenseSet<PhysicalRange, 8> &localRanges) -> bool {
       const auto &provenance = handles.facts;
       auto found = provenance.find(handle);
-      auto certificate = handles.certificates.find(handle);
-      if (found == provenance.end() || !found->second.descriptor ||
-          (found->second.dynamic &&
-           (certificate == handles.certificates.end() ||
-            !certificate->second.inBounds)))
+      // A dynamic selection's range is the hull of every storage it can
+      // address, and an invalid index addresses none: reads yield the element
+      // default and writes do nothing (IEEE 1800-2023 7.4.6, 11.5.1). The
+      // value-domain proofs reject reads that may be invalid. A hull too wide
+      // to scan on every readiness check is not guarded.
+      if (found == provenance.end() || !found->second.descriptor)
         return false;
       uint64_t width = found->second.width != 0 ? found->second.width
                                                 : found->second.rootWidth;
       if (width == 0 || found->second.low > found->second.rootWidth ||
-          width > found->second.rootWidth - found->second.low)
+          width > found->second.rootWidth - found->second.low ||
+          (found->second.dynamic && width > maximumGuardedRootBits))
         return false;
       auto insertRange = [&](uint64_t offset, uint64_t rangeWidth) {
         PhysicalRange range{offset, rangeWidth};

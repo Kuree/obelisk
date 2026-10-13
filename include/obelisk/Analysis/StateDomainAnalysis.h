@@ -102,6 +102,12 @@ struct InductiveStateRoot {
   }
 };
 
+/// Guarded facts assume canonical state known only after a readiness scan of
+/// its unknown plane proves it, and every pending check repeats that scan. A
+/// root or guarded range wider than this costs more to scan than a guarded
+/// activation can recover, so it never joins a guarded assumption.
+constexpr uint64_t maximumGuardedRootBits = uint64_t(1) << 16;
+
 llvm::StringRef stringifyStateDomain(StateDomain domain);
 
 /// The IEEE 1800-2023 value-domain transfer of one non-call operation, shared
@@ -158,7 +164,8 @@ public:
   computeInductiveOnly(sim::SimDesignOp design);
 
   /// Compute conditional facts under the boundary assumption that every
-  /// canonical logic storage/net root is currently known.  Unlike compute(),
+  /// canonical logic storage/net root is currently known, except roots too
+  /// wide for a readiness scan to guard.  Unlike compute(),
   /// this does not claim that those roots are globally inductive: clients must
   /// separately prove that the selected kernel writes only known values and
   /// must invalidate the specialization across asynchronous mutation.

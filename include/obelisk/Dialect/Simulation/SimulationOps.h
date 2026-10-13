@@ -88,6 +88,17 @@ uint64_t getDPISignatureHash(::mlir::ArrayAttr signature,
 materializeFrozenConstant(::mlir::OpBuilder &builder, ::mlir::Location location,
                           FrozenConstantAttr constant);
 
+/// Whether materializeKnownZero supports `type`: packed scalars and fixed
+/// unpacked arrays and structs of them, but not other state such as strings,
+/// handles and unpacked unions.
+bool hasKnownZero(::mlir::Type type);
+
+/// Materialize a value of `type` whose every bit is a known zero. Fails
+/// unless hasKnownZero(type).
+::mlir::FailureOr<::mlir::Value>
+materializeKnownZero(::mlir::OpBuilder &builder, ::mlir::Location location,
+                     ::mlir::Type type);
+
 /// Whether an operation transfers execution to a scheduler continuation.
 bool isSuspensionOp(::mlir::Operation *operation);
 

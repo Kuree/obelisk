@@ -84,7 +84,8 @@
 // BARRIER-NEXT: llvm.cond_br %[[EMPTY0]], ^[[DONE0:bb[0-9]+]](%[[OK0]] : i32), ^[[COMMIT0:bb[0-9]+]]
 // BARRIER-NEXT: ^[[COMMIT0]]:
 // BARRIER: ^[[DONE0]](%[[STATUS0:.*]]: i32):
-// BARRIER-NEXT: llvm.return %[[STATUS0]] : i32
+// BARRIER-NEXT: %[[EXIT0:.*]] = llvm.call @__obelisk_eval_route_promotion_boundary_v1(%[[STATUS0]]) : (i32) -> i32
+// BARRIER-NEXT: llvm.return %[[EXIT0]] : i32
 
 !words = !simulation.unpacked_array<0 : 31 x !simulation.logic<32>>
 

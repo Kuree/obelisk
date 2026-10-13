@@ -8,6 +8,7 @@
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include <cstdint>
 #include <optional>
 
@@ -47,12 +48,20 @@ struct HandleCertificate {
   bool clipped = false;
   mlir::Value directDynamicSelection;
   bool inBounds = false;
+  /// Every selection is valid once each of `knownSelectors` has no X/Z bits:
+  /// all values those selectors can take when known lie in range. `inBounds`
+  /// implies this with no selectors. An X/Z selector makes the selection
+  /// invalid (IEEE 1800-2023 7.4.6, 11.5.1), so only consumers that also
+  /// prove the selectors known may treat the access as valid.
+  bool inBoundsIfKnown = false;
+  llvm::SmallVector<mlir::Value, 2> knownSelectors;
   bool operator==(const HandleCertificate &rhs) const {
     return constantAddress == rhs.constantAddress &&
            laneKnown == rhs.laneKnown && low == rhs.low && width == rhs.width &&
            stride == rhs.stride && clipped == rhs.clipped &&
            directDynamicSelection == rhs.directDynamicSelection &&
-           inBounds == rhs.inBounds;
+           inBounds == rhs.inBounds && inBoundsIfKnown == rhs.inBoundsIfKnown &&
+           knownSelectors == rhs.knownSelectors;
   }
 };
 struct HandleDataflowResult {

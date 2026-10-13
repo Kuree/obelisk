@@ -184,8 +184,8 @@ module attributes {schedule.native_scheduler = 3 : i32} {
 // CHECK-LABEL: simulation.func private @process.__obelisk_eval_body_
 // CHECK: %[[CANON:.*]] = simulation.context.storage %{{.*}}[1]
 // CHECK-NOT: simulation.ref.load %[[CANON]]
-// CHECK: simulation.aggregate.default
-// CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
+// CHECK: %[[ZERO:.*]] = simulation.aggregate.splat
+// CHECK: %[[LOCAL:.*]] = simulation.ref.alloc %[[ZERO]]
 // CHECK: %[[FINAL:.*]] = simulation.ref.load %[[LOCAL]]
 // CHECK-NEXT: simulation.ref.store %[[FINAL]] to %[[CANON]]
 // CHECK-NEXT: simulation.return
