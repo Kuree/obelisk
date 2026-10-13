@@ -130,6 +130,7 @@ def CrossPredicateShiftLeft : CoverageCrossPredicateKind<"ShiftLeft", 33>;
 def CrossPredicateShiftRight : CoverageCrossPredicateKind<"ShiftRight", 34>;
 def CrossPredicateArithmeticShiftLeft : CoverageCrossPredicateKind<"ArithmeticShiftLeft", 35>;
 def CrossPredicateArithmeticShiftRight : CoverageCrossPredicateKind<"ArithmeticShiftRight", 36>;
+def CrossPredicateReplicate : CoverageCrossPredicateKind<"Replicate", 37>;
 
 class CoverageExpressionOwnerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -450,7 +451,8 @@ def DomainCrossPredicateKind : CoverageFieldDomain<
      CrossPredicateReductionNor, CrossPredicateReductionXnor,
      CrossPredicateConditional, CrossPredicateConcatenate,
      CrossPredicateShiftLeft, CrossPredicateShiftRight,
-     CrossPredicateArithmeticShiftLeft, CrossPredicateArithmeticShiftRight]>;
+     CrossPredicateArithmeticShiftLeft, CrossPredicateArithmeticShiftRight,
+     CrossPredicateReplicate]>;
 def DomainFunctionalItemKind : CoverageFieldDomain<
     "FunctionalItemKind", "Enum", [FunctionalCoverpoint, FunctionalCross]>;
 def DomainFunctionalBinKind : CoverageFieldDomain<

@@ -67,7 +67,9 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
   for (auto [ordinal, path] : llvm::enumerate(targetPaths))
     targets.try_emplace(cast<StringAttr>(path).getValue(), ordinal);
   llvm::DenseMap<Operation *, bool> dependent;
+  bool hasReplication = false;
   predicate->walk<WalkOrder::PostOrder>([&](Operation *op) {
+    hasReplication |= isa<ir::SVReplicationExpressionOp>(op);
     bool iterator = false;
     if (auto reference = dyn_cast<ir::SVNamedValueExpressionOp>(op))
       iterator = targets.contains(reference.getReferencedPath());
@@ -86,25 +88,34 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
     }
     if (plans.contains(op))
       continue;
-    FailureOr<Type> normalized = simlowering::getNormalizedSemanticType(op);
+    auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+    const bool zeroReplication = isa<ir::SVReplicationExpressionOp>(op) &&
+                                 semanticType &&
+                                 isa<ir::VoidType>(semanticType.getValue());
+    FailureOr<Type> normalized =
+        zeroReplication ? FailureOr<Type>(failure())
+                        : simlowering::getNormalizedSemanticType(op);
     Type scalar =
         succeeded(normalized) ? sim::getPackedScalarType(*normalized) : Type{};
-    std::optional<unsigned> width = sim::getPackedWidth(scalar);
-    if (!width || !*width || !isa<IntegerType, sim::LogicType>(scalar))
+    std::optional<unsigned> width = zeroReplication ? std::optional<unsigned>(0)
+                                    : scalar ? sim::getPackedWidth(scalar)
+                                             : std::nullopt;
+    if (!width || (!zeroReplication &&
+                   (!*width || !isa<IntegerType, sim::LogicType>(scalar))))
       return std::nullopt;
     PlannedCrossPredicate plan;
     plan.expression = op;
     plan.bitWidth = *width;
-    auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
     plan.signedness = semanticType && simlowering::isSignedSemanticType(
                                           semanticType.getValue())
                           ? coverage::CoverageSignedness::Signed
                           : coverage::CoverageSignedness::Unsigned;
-    plan.flags = semanticType && !simlowering::isFourStateSemanticType(
-                                     semanticType.getValue())
-                     ? coverage::CrossPredicateTwoState
-                     : 0;
-    if (!dependent.lookup(op)) {
+    plan.flags =
+        !zeroReplication && semanticType &&
+                !simlowering::isFourStateSemanticType(semanticType.getValue())
+            ? coverage::CrossPredicateTwoState
+            : 0;
+    if (!dependent.lookup(op) && !zeroReplication) {
       plan.kind = Kind::Value;
     } else if (auto reference = dyn_cast<ir::SVNamedValueExpressionOp>(op)) {
       auto target = targets.find(reference.getReferencedPath());
@@ -169,6 +180,38 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
             plan.operands.size() != conditional.getConditionCount() + 2)
           return std::nullopt;
         plan.kind = Kind::Conditional;
+      } else if (isa<ir::SVReplicationExpressionOp>(op)) {
+        if (plan.operands.size() != 2)
+          return std::nullopt;
+        auto spelling = simlowering::getConstantSpelling(plan.operands[0]);
+        auto countType =
+            simlowering::getNormalizedSemanticType(plan.operands[0]);
+        auto inputType =
+            simlowering::getNormalizedSemanticType(plan.operands[1]);
+        auto countWidth = succeeded(countType) ? sim::getPackedWidth(*countType)
+                                               : std::nullopt;
+        auto inputWidth = succeeded(inputType) ? sim::getPackedWidth(*inputType)
+                                               : std::nullopt;
+        if (!spelling || !countWidth || !*countWidth || !inputWidth ||
+            !*inputWidth)
+          return std::nullopt;
+        auto count = simlowering::parseSVInteger(
+            *spelling, *countWidth,
+            simlowering::getSemanticLocation(plan.operands[0]));
+        auto countSemanticType =
+            plan.operands[0]->getAttrOfType<TypeAttr>("semantic_type");
+        if (failed(count) || !count->unknown.isZero() ||
+            count->value.getActiveBits() > 32 ||
+            (countSemanticType &&
+             simlowering::isSignedSemanticType(countSemanticType.getValue()) &&
+             count->value.isNegative()) ||
+            uint64_t{*inputWidth} * count->value.getZExtValue() !=
+                plan.bitWidth)
+          return std::nullopt;
+        // The constant multiplier is encoded by the result/input widths.
+        // Inventory the payload once, including when its result has size zero.
+        plan.operands.erase(plan.operands.begin());
+        plan.kind = Kind::Replicate;
       } else if (isa<ir::SVConcatenationExpressionOp>(op)) {
         if (plan.operands.empty())
           return std::nullopt;
@@ -289,12 +332,11 @@ planCrossPredicate(Operation *predicate, ArrayAttr targetPaths) {
     for (Operation *child : llvm::reverse(plan.operands))
       pending.emplace_back(child, false);
   }
-  if (llvm::any_of(result, [](const auto &entry) {
+  if (hasReplication || llvm::any_of(result, [](const auto &entry) {
         return entry.kind == Kind::Conditional;
       })) {
-    // Capturing both arms eagerly must not execute an inactive call or
-    // mutation. The existing expression evaluator preserves short circuit
-    // behavior for predicates with such constructor subexpressions.
+    // Capturing operands eagerly must preserve conditional execution and
+    // replication's per-tuple effects, including for a zero multiplier.
     for (const auto &entry : result) {
       if (entry.kind != Kind::Value)
         continue;

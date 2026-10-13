@@ -289,6 +289,12 @@ const predicateText = (g, root) => {
         pending.push({id:operand(i)});
         if (i > 0) pending.push({text:' &&& '});
       }
+    } else if (kind === 37) {
+      const input = predicateNodes.get(operand(0));
+      const width = num(input?.bit_width || 0);
+      const concatenation = num(input?.kind) === 32;
+      append('{' + (width ? BigInt(n.bit_width) / BigInt(width) : '?') + (concatenation ? '' : '{'));
+      pending.push({text:concatenation ? '}' : '}}'}, {id:operand(0)});
     } else if (kind === 32) {
       append('{');
       pending.push({text:'}'});

@@ -4598,7 +4598,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     const bool unary = reduction || node.kind == CrossPredicateKind::Negate ||
                        node.kind == CrossPredicateKind::Cast ||
                        node.kind == CrossPredicateKind::LogicalNot ||
-                       node.kind == CrossPredicateKind::BitNot;
+                       node.kind == CrossPredicateKind::BitNot ||
+                       node.kind == CrossPredicateKind::Replicate;
     const bool leaf = node.kind == CrossPredicateKind::Target ||
                       node.kind == CrossPredicateKind::Value;
     const bool boolean =
@@ -4607,6 +4608,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     const bool select = node.kind == CrossPredicateKind::ElementSelect ||
                         node.kind == CrossPredicateKind::RangeSelect;
     const bool concatenate = node.kind == CrossPredicateKind::Concatenate;
+    const bool replication = node.kind == CrossPredicateKind::Replicate;
     const bool conditional = node.kind == CrossPredicateKind::Conditional;
     const bool arity = leaf          ? node.operandCount == 0
                        : unary       ? node.operandCount == 1
@@ -4618,7 +4620,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       const auto *operand = lookupRecord(
           predicatesByID, db.crossPredicateOperands[node.firstOperand + i]);
       if (!operand || operand->selector != node.selector ||
-          operand->ordinal >= node.ordinal)
+          operand->ordinal >= node.ordinal ||
+          (!operand->bitWidth && !concatenate))
         return fail(Status::InvalidReference, "cross_predicate_operand");
       if (concatenate)
         concatenatedWidth += operand->bitWidth;
@@ -4630,9 +4633,11 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                     node.bitWidth == target->second->tupleBitWidth &&
                     node.signedness == target->second->tupleSignedness;
     }
-    if (!selector || !selector->predicateRoot || !node.bitWidth ||
+    if (!selector || !selector->predicateRoot ||
+        (!node.bitWidth &&
+         (!replication || selector->predicateRoot == node.id)) ||
         !enumBetween(node.kind, CrossPredicateKind::Value,
-                     CrossPredicateKind::ArithmeticShiftRight) ||
+                     CrossPredicateKind::Replicate) ||
         (node.signedness != CoverageSignedness::Signed &&
          node.signedness != CoverageSignedness::Unsigned) ||
         (node.flags & ~(CrossPredicateTwoState | CrossPredicateAscending |
@@ -4644,6 +4649,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         !arity ||
         (concatenate && (concatenatedWidth != node.bitWidth ||
                          node.signedness != CoverageSignedness::Unsigned)) ||
+        (replication &&
+         (!left || !left->bitWidth || node.bitWidth % left->bitWidth ||
+          node.signedness != CoverageSignedness::Unsigned)) ||
         (select &&
          (!node.elementWidth || !left || left->bitWidth % node.elementWidth ||
           node.bitWidth % node.elementWidth ||

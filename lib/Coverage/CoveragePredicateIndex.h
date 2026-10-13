@@ -31,10 +31,16 @@ private:
   };
   Truth truth(const Value &value) {
     Root one = 0, zero = 1;
+    IndexSet<Root> ones, zeros;
     for (size_t bit = 0; bit != value.aval.size(); ++bit) {
-      one = graph.unite(one, graph.subtract(value.aval[bit], value.bval[bit]));
-      zero = graph.intersect(
-          zero, notRoot(graph.unite(value.aval[bit], value.bval[bit])));
+      Root knownOne = graph.subtract(value.aval[bit], value.bval[bit]);
+      Root knownZero = notRoot(graph.unite(value.aval[bit], value.bval[bit]));
+      // Replication and sign fill may reuse an observation many times. Fold
+      // it once so repeated bits cannot rebuild the completed graph prefix.
+      if (ones.insert(knownOne).second)
+        one = graph.unite(one, knownOne);
+      if (zeros.insert(knownZero).second)
+        zero = graph.intersect(zero, knownZero);
     }
     return {one, zero, notRoot(graph.unite(one, zero))};
   }
@@ -43,12 +49,15 @@ private:
   }
   Root unknown(const Value &left, const Value &right) {
     Root result = 0;
+    IndexSet<Root> observations;
     // Fold corresponding bits together in the graph's interleaved order.
     // Folding all of one operand first would repeatedly rebuild its prefix
     // when inserting the other operand's variables.
-    for (size_t bit = 0; bit != left.bval.size(); ++bit)
-      result =
-          graph.unite(result, graph.unite(left.bval[bit], right.bval[bit]));
+    for (size_t bit = 0; bit != left.bval.size(); ++bit) {
+      Root value = graph.unite(left.bval[bit], right.bval[bit]);
+      if (observations.insert(value).second)
+        result = graph.unite(result, value);
+    }
     return result;
   }
 
@@ -496,6 +505,26 @@ private:
     return result;
   }
 
+  Value replicate(const CrossPredicateNode &node, const Value &source) {
+    if (source.aval.empty() || node.bitWidth % source.aval.size() ||
+        node.signedness != CoverageSignedness::Unsigned) {
+      failed = true;
+      return {};
+    }
+    Value result;
+    result.aval.reserve(node.bitWidth);
+    result.bval.reserve(node.bitWidth);
+    // The payload is already evaluated once. Append every output bit once
+    // without introducing repeated operand records or intermediate vectors.
+    for (uint32_t bit = 0; bit != node.bitWidth; bit += source.aval.size()) {
+      result.aval.insert(result.aval.end(), source.aval.begin(),
+                         source.aval.end());
+      result.bval.insert(result.bval.end(), source.bval.begin(),
+                         source.bval.end());
+    }
+    return result;
+  }
+
   Value evaluate(const CrossPredicateNode &node, Value left, Value right) {
     using Kind = CrossPredicateKind;
     if (node.kind == Kind::Cast) {
@@ -525,24 +554,35 @@ private:
                             node.kind == Kind::ReductionXnor;
       Root one = conjunction ? 1 : 0, zero = conjunction ? 0 : 1;
       Root parity = 0, indeterminate = 0;
+      IndexSet<Root> ones, zeros, unknowns;
+      IndexMap<Root, uint8_t> parityBits;
       // The operand is self-determined, even though its result is one bit.
       // Fold each A/B pair once in the graph's interleaved variable order.
       for (size_t bit = 0; bit != left.aval.size(); ++bit) {
         Root a = left.aval[bit], b = left.bval[bit];
         if (exclusive) {
-          parity = xorRoot(parity, a);
-          indeterminate = graph.unite(indeterminate, b);
+          parityBits[a] ^= 1;
+          if (unknowns.insert(b).second)
+            indeterminate = graph.unite(indeterminate, b);
         } else {
           Root knownOne = graph.subtract(a, b);
           Root knownZero = notRoot(graph.unite(a, b));
-          one = conjunction ? graph.intersect(one, knownOne)
-                            : graph.unite(one, knownOne);
-          zero = conjunction ? graph.unite(zero, knownZero)
-                             : graph.intersect(zero, knownZero);
+          if (ones.insert(knownOne).second)
+            one = conjunction ? graph.intersect(one, knownOne)
+                              : graph.unite(one, knownOne);
+          if (zeros.insert(knownZero).second)
+            zero = conjunction ? graph.unite(zero, knownZero)
+                               : graph.intersect(zero, knownZero);
         }
       }
-      if (exclusive)
+      if (exclusive) {
+        // Equal Boolean terms cancel in pairs. B-plane terms still propagate
+        // unknowns, including an even number of replicated X/Z data bits.
+        for (const auto &[bit, odd] : parityBits)
+          if (odd)
+            parity = xorRoot(parity, bit);
         return predicate(inverted ? notRoot(parity) : parity, indeterminate);
+      }
       return predicate(inverted ? zero : one, notRoot(graph.unite(one, zero)));
     }
     if (node.kind == Kind::LogicalAnd || node.kind == Kind::LogicalOr) {
@@ -574,22 +614,25 @@ private:
       const bool logicalEquality =
           node.kind == Kind::Equal || node.kind == Kind::NotEqual;
       Root different = 0, knownDifferent = 0, caseDifferent = 0, less = 0;
+      IndexSet<Root> differences, knownDifferences;
       Root indeterminate = caseEquality ? 0 : unknown(left, right);
       for (uint32_t bit = 0; bit != width; ++bit) {
         Root a = left.aval[bit], b = right.aval[bit];
         Root difference = xorRoot(a, b);
         if (caseEquality) {
-          caseDifferent = graph.unite(
-              caseDifferent, graph.unite(difference, xorRoot(left.bval[bit],
-                                                             right.bval[bit])));
+          Root value =
+              graph.unite(difference, xorRoot(left.bval[bit], right.bval[bit]));
+          if (differences.insert(value).second)
+            caseDifferent = graph.unite(caseDifferent, value);
           continue;
         }
-        different = graph.unite(different, difference);
+        if (differences.insert(difference).second)
+          different = graph.unite(different, difference);
         if (logicalEquality) {
-          knownDifferent = graph.unite(
-              knownDifferent,
-              graph.subtract(difference,
-                             graph.unite(left.bval[bit], right.bval[bit])));
+          Root value = graph.subtract(
+              difference, graph.unite(left.bval[bit], right.bval[bit]));
+          if (knownDifferences.insert(value).second)
+            knownDifferent = graph.unite(knownDifferent, value);
           continue;
         }
         if (signedOperands && bit + 1 == width) {
@@ -707,6 +750,7 @@ public:
                            node->kind == CrossPredicateKind::LogicalNot ||
                            node->kind == CrossPredicateKind::BitNot ||
                            node->kind == CrossPredicateKind::Negate ||
+                           node->kind == CrossPredicateKind::Replicate ||
                            (node->kind >= CrossPredicateKind::ReductionAnd &&
                             node->kind <= CrossPredicateKind::ReductionXnor);
         const bool arity = node->kind == CrossPredicateKind::Conditional
@@ -727,6 +771,8 @@ public:
         else if (node->kind >= CrossPredicateKind::ShiftLeft &&
                  node->kind <= CrossPredicateKind::ArithmeticShiftRight)
           value = shift(*node, *operands[0], *operands[1]);
+        else if (node->kind == CrossPredicateKind::Replicate)
+          value = replicate(*node, *operands[0]);
         else
           value = evaluate(*node, *operands[0],
                            operands.size() > 1 ? *operands[1] : Value{});

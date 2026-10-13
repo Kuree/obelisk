@@ -649,6 +649,24 @@ const valueSet = (id, atoms) => ({type: '50', configuration: '500', id, atoms});
     const shiftView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
     assert.ok(shiftView.rows[0][0].includes('(cp ' + operator + ' 0x5)'), shiftView.rows[0][0]);
   }
+  selection.kind = '37';
+  selection.operand_count = '1';
+  data.cross_predicate_nodes[0].bit_width = '2';
+  for (const [width, count] of [['0', '0'], ['6', '3'], ['4294967294', '2147483647']]) {
+    selection.bit_width = width;
+    const replicationView = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+    assert.ok(replicationView.rows[0][0].includes('{' + count + '{cp}}'), replicationView.rows[0][0]);
+    assert.ok(replicationView.rows[0][0].length < 2048);
+  }
+  data.cross_predicate_nodes.push({id:'79', kind:'32', bit_width:'4', first_operand:'0', operand_count:'2'});
+  data.cross_predicate_operands.push('79');
+  selection.first_operand = '2';
+  selection.bit_width = '8';
+  const concatenatedReplication = view(loadReport(reportScript, JSON.stringify(data)), '#/cg/50/x');
+  assert.ok(concatenatedReplication.rows[0][0].includes('{2{cp, 0x5}}'), concatenatedReplication.rows[0][0]);
+  data.cross_predicate_nodes.pop();
+  data.cross_predicate_operands.pop();
+  selection.first_operand = '0';
   selection.kind = '31';
   selection.operand_count = '3';
   data.cross_predicate_operands.push('80');

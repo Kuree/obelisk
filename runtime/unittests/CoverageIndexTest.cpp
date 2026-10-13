@@ -509,6 +509,148 @@ TEST(CoveragePredicateIndexTest, VariableShiftsShareABoundedProjection) {
     }
 }
 
+TEST(CoveragePredicateIndexTest,
+     ReplicationPreservesPlanesAndEvaluatesPayloadOnce) {
+  for (uint32_t count : {0u, 1u, 3u, 65u}) {
+    DecisionIndex graph(0);
+    PredicateDecisionIndex index(graph);
+    uint32_t width = count * 4 + 1, calls = 0;
+    std::vector<PredicateNode> rows = {
+        {1, 1, 0, 0, 0, 1, PredicateKind::Target, 4, Signedness::Signed, 0, 0},
+        {2, 1, 0, 1, 0, 0, PredicateKind::Replicate, count * 4,
+         Signedness::Unsigned, 1, 0},
+        {3, 1, 1, 0, 0, 0, PredicateKind::Value, 1, Signedness::Unsigned, 2, 0},
+        {4, 1, 1, 2, 0, 0, PredicateKind::Concatenate, width,
+         Signedness::Unsigned, 3, 0},
+        {5, 1, 3, 0, 0, 0, PredicateKind::Value, width, Signedness::Unsigned, 4,
+         0},
+        {6, 1, 3, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned, 5,
+         0}};
+    std::vector<const PredicateNode *> program;
+    for (const auto &row : rows)
+      program.push_back(&row);
+    auto root =
+        index.compile(6, program, {1, 2, 3, 4, 5}, [&](const auto &node) {
+          PredicateDecisionIndex::Value bits;
+          if (node.id == 1)
+            ++calls;
+          for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+            uint32_t position = node.id == 5 && bit ? (bit - 1) % 4 : bit;
+            bits.aval.push_back(
+                node.id == 3 || (node.id == 5 && !bit) ? 1 : position % 2);
+            bits.bval.push_back(
+                node.id == 3 || (node.id == 5 && !bit) ? 0 : position / 2);
+          }
+          return bits;
+        });
+    EXPECT_EQ(root, 1u);
+    EXPECT_EQ(calls, 1u);
+    EXPECT_FALSE(index.exhausted());
+  }
+}
+
+TEST(CoveragePredicateIndexTest,
+     RepeatedVariableBitsHaveLinearObservationWork) {
+  constexpr uint32_t width = 129;
+  for (uint32_t count : {2u, 3u})
+    for (uint32_t observer = 0; observer != 8; ++observer) {
+      bool comparison = observer == 1;
+      DecisionIndex graph(width, width * 32);
+      PredicateDecisionIndex index(graph);
+      std::vector<PredicateNode> rows = {
+          {1, 1, 0, 0, 0, 1, PredicateKind::Target, width, Signedness::Unsigned,
+           0, 0},
+          {2, 1, 0, 1, 0, 0, PredicateKind::Replicate, width * count,
+           Signedness::Unsigned, 1, 0}};
+      if (comparison) {
+        rows.push_back({3, 1, 1, 0, 0, 0, PredicateKind::Value, width * count,
+                        Signedness::Unsigned, 2, 0});
+        rows.push_back({4, 1, 1, 2, 0, 0, PredicateKind::CaseEqual, 1,
+                        Signedness::Unsigned, 3, 0});
+      } else if (observer >= 2) {
+        rows.push_back(
+            {3, 1, 1, 1, 0, 0,
+             static_cast<PredicateKind>(uint32_t(PredicateKind::ReductionAnd) +
+                                        observer - 2),
+             1, Signedness::Unsigned, 2, 0});
+      }
+      std::vector<const PredicateNode *> program;
+      for (const auto &row : rows)
+        program.push_back(&row);
+      uint32_t calls = 0;
+      auto root = index.compile(
+          comparison      ? 4
+          : observer >= 2 ? 3
+                          : 2,
+          program,
+          comparison      ? std::vector<uint64_t>{1, 2, 3}
+          : observer >= 2 ? std::vector<uint64_t>{1, 2}
+                          : std::vector<uint64_t>{1},
+          [&](const auto &node) {
+            PredicateDecisionIndex::Value bits;
+            if (node.id == 1)
+              ++calls;
+            for (uint32_t bit = 0; bit != node.bitWidth; ++bit) {
+              bits.aval.push_back(
+                  node.id == 1 ? graph.makeNode(width - bit - 1, 0, 1) : 0);
+              bits.bval.push_back(0);
+            }
+            return bits;
+          });
+      ASSERT_FALSE(index.exhausted()) << count << ":" << observer;
+      std::vector<uint64_t> zeros((width + 63) / 64);
+      auto expected = graph.cube(zeros, zeros);
+      if (observer == 0 || observer == 3)
+        expected = graph.subtract(1, expected);
+      else if (observer == 2 || observer == 5) {
+        std::vector<uint64_t> ones(zeros.size(), UINT64_MAX);
+        ones.back() >>= 64 - width % 64;
+        expected = graph.cube(ones, zeros);
+        if (observer == 5)
+          expected = graph.subtract(1, expected);
+      } else if (observer == 4 || observer == 7) {
+        expected = 0;
+        if (count % 2)
+          for (uint32_t bit = 0; bit != width; ++bit)
+            expected = graph.makeNode(width - bit - 1, expected,
+                                      graph.subtract(1, expected));
+        if (observer == 7)
+          expected = graph.subtract(1, expected);
+      }
+      EXPECT_EQ(root, expected);
+      EXPECT_EQ(calls, 1u);
+      EXPECT_FALSE(index.exhausted());
+    }
+}
+
+TEST(CoveragePredicateIndexTest, EvenReplicatedParityStillPropagatesUnknowns) {
+  for (uint32_t count : {2u, 3u})
+    for (uint32_t a : {0u, 1u}) {
+      DecisionIndex graph(0);
+      PredicateDecisionIndex index(graph);
+      std::vector<PredicateNode> rows = {
+          {1, 1, 0, 0, 0, 1, PredicateKind::Target, 1, Signedness::Unsigned, 0,
+           0},
+          {2, 1, 0, 1, 0, 0, PredicateKind::Replicate, count,
+           Signedness::Unsigned, 1, 0},
+          {3, 1, 1, 1, 0, 0, PredicateKind::ReductionXor, 1,
+           Signedness::Unsigned, 2, 0},
+          {4, 1, 2, 0, 0, 0, PredicateKind::Value, 1, Signedness::Unsigned, 3,
+           0},
+          {5, 1, 2, 2, 0, 0, PredicateKind::CaseEqual, 1, Signedness::Unsigned,
+           4, 0}};
+      std::vector<const PredicateNode *> program;
+      for (const auto &row : rows)
+        program.push_back(&row);
+      auto root =
+          index.compile(5, program, {1, 2, 3, 4}, [&](const auto &node) {
+            return PredicateDecisionIndex::Value{{node.id == 1 ? a : 1}, {1}};
+          });
+      EXPECT_EQ(root, 1u);
+      EXPECT_FALSE(index.exhausted());
+    }
+}
+
 TEST(CoveragePredicateIndexTest, UniformShiftPaddingNeedsNoProjectionStates) {
   DecisionIndex graph(1, 3);
   PredicateDecisionIndex index(graph);
