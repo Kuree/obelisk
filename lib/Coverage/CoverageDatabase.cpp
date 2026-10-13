@@ -3597,6 +3597,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         formal.resultKind == FunctionalExpressionResultKind::Boolean ||
         formal.resultKind == FunctionalExpressionResultKind::Integral ||
         formal.resultKind == FunctionalExpressionResultKind::Real ||
+        formal.resultKind == FunctionalExpressionResultKind::ShortReal ||
         formal.resultKind == FunctionalExpressionResultKind::String ||
         formal.resultKind == FunctionalExpressionResultKind::Container ||
         formal.resultKind == FunctionalExpressionResultKind::ClassHandle ||
@@ -3725,7 +3726,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           expression.evaluationPhase ==
               FunctionalExpressionEvaluationPhase::Sample &&
           (expression.resultKind == FunctionalExpressionResultKind::Integral ||
-           expression.resultKind == FunctionalExpressionResultKind::Real);
+           isRealResultKind(expression.resultKind));
       break;
     case FunctionalExpressionRole::CoverpointIff:
       validContract =
@@ -3821,7 +3822,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
             expression.resultKind ==
                 FunctionalExpressionResultKind::Integral) ||
            (valueSet->kind == FunctionalValueSetKind::Real &&
-            expression.resultKind == FunctionalExpressionResultKind::Real)) &&
+            (isRealResultKind(expression.resultKind) ||
+             expression.resultKind ==
+                 FunctionalExpressionResultKind::Integral))) &&
           expression.evaluationPhase ==
               FunctionalExpressionEvaluationPhase::Constructor;
       break;
@@ -3894,7 +3897,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      FunctionalExpressionRole::FormalDefault) ||
         !enumBetween(expression.resultKind,
                      FunctionalExpressionResultKind::Boolean,
-                     FunctionalExpressionResultKind::Mailbox) ||
+                     FunctionalExpressionResultKind::ShortReal) ||
         !enumBetween(expression.signedness, CoverageSignedness::Unsigned,
                      CoverageSignedness::NotApplicable) ||
         !enumBetween(expression.evaluationPhase,
@@ -4014,9 +4017,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                                withExpressions.front()->semanticDigest;
     const FunctionalExpression *sampleExpression =
         sampleExpressionFor(bin ? bin->item : uint64_t{0});
-    bool realState =
-        state && sampleExpression &&
-        sampleExpression->resultKind == FunctionalExpressionResultKind::Real;
+    bool realState = state && sampleExpression &&
+                     isRealResultKind(sampleExpression->resultKind);
     bool wildcardEncodingValid = !bin ||
                                  !(bin->flags & FunctionalBinWildcard) ||
                                  !set || wildcardDefinitionValid(*set);
@@ -4143,7 +4145,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       break;
     }
     if (!validOwner || !ownerType || !optionLegal || !rhs ||
-        rhs->resultKind != expectedResult ||
+        (expectedResult == FunctionalExpressionResultKind::Real
+             ? !isRealResultKind(rhs->resultKind)
+             : rhs->resultKind != expectedResult) ||
         !enumBetween(plan.ownerKind,
                      FunctionalConfigurationOptionOwnerKind::Group,
                      FunctionalConfigurationOptionOwnerKind::Item) ||
@@ -4308,18 +4312,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       const CrossTarget &target =
           db.crossTargets[plan.firstTarget + targetIndex];
       const FunctionalItem *targetItem = findItem(target.target);
-      const FunctionalExpression *sample = nullptr;
-      for (const FunctionalExpression &expression : db.functionalExpressions)
-        if (expression.owner == target.target &&
-            expression.ownerKind == FunctionalExpressionOwnerKind::Item &&
-            expression.role == FunctionalExpressionRole::CoverpointSample) {
-          sample = &expression;
-          break;
-        }
+      const FunctionalExpression *sample = sampleExpressionFor(target.target);
       const bool integral =
           target.tupleResultKind == FunctionalExpressionResultKind::Integral;
-      const bool real =
-          target.tupleResultKind == FunctionalExpressionResultKind::Real;
+      const bool real = isRealResultKind(target.tupleResultKind);
       const bool fieldFourState =
           (target.tupleFlags & CrossTupleFieldFourState) != 0;
       const bool domainFourState =
@@ -4329,9 +4325,12 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           (target.tupleSignedness == CoverageSignedness::Signed ||
            target.tupleSignedness == CoverageSignedness::Unsigned);
       const bool validReal =
-          real && target.tupleBitWidth == 64 &&
+          real &&
+          target.tupleBitWidth ==
+              getRealResultBitWidth(target.tupleResultKind) &&
           target.tupleSignedness == CoverageSignedness::NotApplicable &&
-          !fieldFourState && (target.tupleBitOffset & 63) == 0;
+          !fieldFourState &&
+          (target.tupleBitOffset & (target.tupleBitWidth - 1)) == 0;
       if (target.cross != plan.item || target.ordinal != targetIndex ||
           !targetItem || targetItem->kind != FunctionalItemKind::Coverpoint ||
           targetItem->type != cross->type ||
@@ -6536,7 +6535,10 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
                      : valueSet->second->kind !=
                            FunctionalValueSetKind::Real) ||
                 valueSet->second->bitWidth !=
-                    resolvedTargetSamples[componentOrdinal]->bitWidth ||
+                    (isRealResultKind(
+                         resolvedTargetSamples[componentOrdinal]->resultKind)
+                         ? 64
+                         : resolvedTargetSamples[componentOrdinal]->bitWidth) ||
                 valueSet->second->signedness !=
                     resolvedTargetSamples[componentOrdinal]->signedness)) ||
               !resolvedSetIsConcreteSingleton(*valueSet->second))))

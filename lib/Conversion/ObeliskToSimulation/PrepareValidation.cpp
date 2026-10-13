@@ -339,7 +339,7 @@ validateCoverageSetExpressionType(Operation *expression,
   Type pointScalar =
       succeeded(pointType) ? sim::getPackedScalarType(*pointType) : Type{};
   if ((!pointScalar || !isa<IntegerType, sim::LogicType>(pointScalar)) &&
-      !(succeeded(pointType) && (*pointType).isF64())) {
+      !(succeeded(pointType) && isa<Float32Type, Float64Type>(*pointType))) {
     expression->emitError(
         "set_covergroup_expression has no supported enclosing coverpoint "
         "type");
@@ -897,8 +897,8 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         if ((formal.getDirection() != semantic::SVArgumentDirection::In &&
              formal.getDirection() != semantic::SVArgumentDirection::Ref) ||
             (!scalar &&
-             !(succeeded(type) &&
-               ((*type).isF64() || sim::isAggregateType(*type))) &&
+             !(succeeded(type) && (isa<Float32Type, Float64Type>(*type) ||
+                                   sim::isAggregateType(*type))) &&
              !string && !container && !classHandle && !chandle && !event &&
              !covergroup && !process && !virtualInterface && !semaphore &&
              !mailbox) ||
@@ -1052,7 +1052,7 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
       }
       FailureOr<Type> type = getNormalizedSemanticType(coverpoint);
       Type scalar = succeeded(type) ? sim::getPackedScalarType(*type) : Type{};
-      const bool real = succeeded(type) && (*type).isF64();
+      const bool real = succeeded(type) && isa<Float32Type, Float64Type>(*type);
       if ((!scalar || !isa<IntegerType, sim::LogicType>(scalar)) &&
           !(real && coverageLanguageVersion >= 2023)) {
         emitError(getSemanticLocation(op))

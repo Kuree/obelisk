@@ -29,6 +29,21 @@ indexInheritedFormalAliases(semantic::SVCovergroupTypeOp covergroup) {
       aliases[getDebugName(alias)].push_back(alias);
   return aliases;
 }
+
+Value captureObserverScalar(Value value, OpBuilder &builder, Location location,
+                            DenseMap<Value, Value> &references) {
+  Type type = value.getType();
+  if (!sim::getPackedWidth(type) && !isa<FloatType>(type))
+    return value;
+  // Constructor inputs are frozen values (LRM 19.3), but detached observers
+  // retain stable handles. Box each scalar once, including inherited aliases.
+  auto [entry, inserted] = references.try_emplace(value);
+  if (inserted)
+    entry->second = sim::SimRefAllocOp::create(
+        builder, location, sim::RefType::get(builder.getContext(), type),
+        value);
+  return entry->second;
+}
 } // namespace
 
 semantic::SVCovergroupTypeOp
@@ -1294,16 +1309,17 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
 
   DenseMap<unsigned, unsigned> capturedArguments;
   llvm::StringSet<> boundPaths;
+  auto formalAliases = indexInheritedFormalAliases(covergroup);
+  DenseMap<Value, Value> scalarReferences;
   for (Operation *child : getChildren(covergroup)) {
     auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
     if (!formal || formal.getIsCoverageSampleFormal().value_or(false))
       continue;
     SmallVector<std::string> paths{getHierarchyName(formal).str()};
-    for (Operation *candidate : getChildren(covergroup)) {
-      auto alias = dyn_cast<semantic::SVTransparentMemberSymbolOp>(candidate);
-      if (alias && getDebugName(alias) == getDebugName(formal))
+    if (auto aliases = formalAliases.find(getDebugName(formal));
+        aliases != formalAliases.end())
+      for (auto alias : aliases->second)
         paths.push_back(getHierarchyName(alias).str());
-    }
     for (StringRef path : paths) {
       if (!referencedPaths.contains(path) || !boundPaths.insert(path).second)
         continue;
@@ -1314,6 +1330,8 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
         return construct.emitError()
                << "referenced covergroup constructor formal '" << path
                << "' has no construction-time binding";
+      value = captureObserverScalar(value, builder, getSemanticLocation(formal),
+                                    scalarReferences);
       unsigned argument = captures.size() + fixedArguments;
       captures.push_back(value);
       argumentAttrs.push_back(
@@ -1494,16 +1512,17 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
       value = retype.getInput();
     return value.getDefiningOp<sim::SimArgumentRefFromPathOp>() != nullptr;
   };
+  auto formalAliases = indexInheritedFormalAliases(covergroup);
+  DenseMap<Value, Value> scalarReferences;
   for (Operation *child : getChildren(covergroup)) {
     auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
     if (!formal || formal.getIsCoverageSampleFormal().value_or(false))
       continue;
     SmallVector<std::string> paths{getHierarchyName(formal).str()};
-    for (Operation *candidate : getChildren(covergroup)) {
-      auto alias = dyn_cast<semantic::SVTransparentMemberSymbolOp>(candidate);
-      if (alias && getDebugName(alias) == getDebugName(formal))
+    if (auto aliases = formalAliases.find(getDebugName(formal));
+        aliases != formalAliases.end())
+      for (auto alias : aliases->second)
         paths.push_back(getHierarchyName(alias).str());
-    }
     for (StringRef path : paths) {
       if (!referencedPaths.contains(path) || !boundPaths.insert(path).second)
         continue;
@@ -1520,6 +1539,8 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
                << "clocking-event covergroup constructor ref formal '" << path
                << "' is bound through a dynamic reference path; dynamic "
                   "reference-path event watches are not executable yet";
+      value = captureObserverScalar(value, builder, getSemanticLocation(formal),
+                                    scalarReferences);
       unsigned argument = captures.size() + fixedArguments;
       captures.push_back(value);
       argumentAttrs.push_back(
@@ -2547,18 +2568,22 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
       if (failed(converted))
         return failure();
       value = *converted;
-    } else if (resultKind != coverage::FunctionalExpressionResultKind::Real ||
-               !value.getType().isF64()) {
+    } else if (!coverage::isRealResultKind(resultKind) ||
+               value.getType() !=
+                   (resultKind ==
+                            coverage::FunctionalExpressionResultKind::ShortReal
+                        ? Type(builder.getF32Type())
+                        : Type(builder.getF64Type()))) {
       expression->emitError(
           "sample-phase expression has an unsupported typed result");
       return failure();
     }
     Type type = value.getType();
     if ((!isa<IntegerType>(type) || !cast<IntegerType>(type).isSignless()) &&
-        !isa<sim::LogicType>(type) && !type.isF64()) {
+        !isa<sim::LogicType>(type) && !isa<Float32Type, Float64Type>(type)) {
       expression->emitError(
           "functional sample expression must lower to a signless integer, "
-          "!simulation.logic, or f64 value");
+          "!simulation.logic, f32, or f64 value");
       return failure();
     }
 

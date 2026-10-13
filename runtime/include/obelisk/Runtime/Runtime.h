@@ -4838,7 +4838,8 @@ obelisk_rt_status obelisk_rt_v1_context_seed(obelisk_rt_context *context,
 /// One schema-indexed value transported by the exact v1 functional-coverage
 /// ABI. Integral planes are little-endian byte strings of `value_size` bytes;
 /// the final byte is zero-padded above `bit_width`. Four-state values carry a
-/// second plane with the same layout. Real values point at one native double.
+/// second plane with the same layout. Real and shortreal values point at one
+/// native double or float, respectively.
 /// Argument references carry the exact owner/payload/tag triple used by
 /// argument_ref_load and have null value planes. String values carry an owned
 /// context string word in `payload` and have zero width and null value planes.
@@ -4879,7 +4880,10 @@ enum {
   OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE = 14,
   // Shared mailbox handle in owner, with message type in the schema. Null is
   // allowed; all other value fields are zero. The bound is instance state.
-  OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX = 15
+  OBELISK_RT_FUNCTIONAL_VALUE_MAILBOX = 15,
+  // IEEE binary32 payload: bit_width=32, value_size=4, unknown=null.
+  // Captures preserve the source bits, including signed zero and NaN payloads.
+  OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL = 16
 };
 typedef struct obelisk_rt_functional_value_v1 {
   uint64_t id;

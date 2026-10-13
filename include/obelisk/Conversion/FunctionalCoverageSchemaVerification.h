@@ -212,6 +212,8 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       return false;
     case coverage::FunctionalExpressionResultKind::Real:
       return type.isF64();
+    case coverage::FunctionalExpressionResultKind::ShortReal:
+      return type.isF32();
     case coverage::FunctionalExpressionResultKind::String:
       return isa<sim::StringType>(type);
     case coverage::FunctionalExpressionResultKind::ClassHandle:

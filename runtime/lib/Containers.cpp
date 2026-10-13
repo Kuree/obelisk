@@ -6362,7 +6362,7 @@ obelisk_rt_status obelisk_rt_reference_path_shape(obelisk_rt_object_v1 *path,
     widthMatches = snapshot.element->bit_width == bitWidth;
     break;
   case OBELISK_RT_ELEMENT_REAL:
-    widthMatches = bitWidth == 64;
+    widthMatches = bitWidth == snapshot.element->value_size * 8;
     break;
   case OBELISK_RT_ELEMENT_EVENT:
     widthMatches = bitWidth == 64;

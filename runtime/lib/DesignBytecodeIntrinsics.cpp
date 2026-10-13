@@ -383,9 +383,13 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
       result.unknown = frame.data + layout.offset + layout.size / 2;
       return layout.width != 0 && layout.size % 2 == 0;
     }
-    if (layout.kind == OBELISK_RT_DBREG_REAL64 &&
-        layout.size == sizeof(double)) {
-      result.kind = OBELISK_RT_FUNCTIONAL_VALUE_REAL;
+    if ((layout.kind == OBELISK_RT_DBREG_REAL32 &&
+         layout.size == sizeof(float)) ||
+        (layout.kind == OBELISK_RT_DBREG_REAL64 &&
+         layout.size == sizeof(double))) {
+      result.kind = layout.kind == OBELISK_RT_DBREG_REAL32
+                        ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+                        : OBELISK_RT_FUNCTIONAL_VALUE_REAL;
       result.value = frame.data + layout.offset;
       return true;
     }
@@ -1842,6 +1846,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         : reference ? OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF
         : output.kind == OBELISK_RT_DBREG_REAL64
             ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
+        : output.kind == OBELISK_RT_DBREG_REAL32
+            ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
         : output.kind == OBELISK_RT_DBREG_STRING
             ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
         : output.kind == OBELISK_RT_DBREG_LOGIC
@@ -1850,6 +1856,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (output.kind != OBELISK_RT_DBREG_BITS &&
         output.kind != OBELISK_RT_DBREG_LOGIC &&
         output.kind != OBELISK_RT_DBREG_REAL64 &&
+        output.kind != OBELISK_RT_DBREG_REAL32 &&
         output.kind != OBELISK_RT_DBREG_STRING && !reference && !container)
       return OBELISK_RT_INVALID_BYTECODE;
     uint64_t size = output.kind == OBELISK_RT_DBREG_REAL64
@@ -2635,7 +2642,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     bool event = output.kind == OBELISK_RT_DBREG_HANDLE &&
                  (output.flags & OBELISK_RT_DBREG_EVENT);
     uint64_t canonicalWidth = event ? 64 : output.width;
-    uint64_t scratchPlaneSize = ((canonicalWidth + 63) / 64) * 8;
+    uint64_t scratchPlaneSize = output.kind == OBELISK_RT_DBREG_REAL32
+                                    ? sizeof(float)
+                                    : ((canonicalWidth + 63) / 64) * 8;
     if (*bitWidth != canonicalWidth || *planeSize > scratchPlaneSize ||
         (event ? output.width != 256 || output.size != 32
                : output.size != scratchPlaneSize * (fourState ? 2 : 1)) ||
@@ -2684,7 +2693,9 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     bool event = input.kind == OBELISK_RT_DBREG_HANDLE &&
                  (input.flags & OBELISK_RT_DBREG_EVENT);
     uint64_t canonicalWidth = event ? 64 : input.width;
-    uint64_t scratchPlaneSize = ((canonicalWidth + 63) / 64) * 8;
+    uint64_t scratchPlaneSize = input.kind == OBELISK_RT_DBREG_REAL32
+                                    ? sizeof(float)
+                                    : ((canonicalWidth + 63) / 64) * 8;
     if (*bitWidth != canonicalWidth || *planeSize > scratchPlaneSize ||
         (event ? input.width != 256 || input.size != 32
                : input.size != scratchPlaneSize * (fourState ? 2 : 1)) ||

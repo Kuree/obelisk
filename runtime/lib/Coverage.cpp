@@ -113,6 +113,30 @@ struct FunctionalCoverageLoadedData {
 };
 
 namespace {
+
+bool isFunctionalRealValueKind(uint32_t kind) {
+  return kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL ||
+         kind == OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL;
+}
+
+std::optional<double>
+functionalRealValue(const obelisk_rt_functional_value_v1 &value) {
+  if (!value.value || value.unknown)
+    return std::nullopt;
+  if (value.kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL && value.bit_width == 64 &&
+      value.value_size == sizeof(double)) {
+    double real;
+    std::memcpy(&real, value.value, sizeof(real));
+    return real;
+  }
+  if (value.kind == OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL &&
+      value.bit_width == 32 && value.value_size == sizeof(float)) {
+    float real;
+    std::memcpy(&real, value.value, sizeof(real));
+    return static_cast<double>(real);
+  }
+  return std::nullopt;
+}
 using obelisk::coverage::detail::IndexMap;
 using obelisk::coverage::detail::IndexSet;
 using obelisk::coverage::detail::sortByKey;
@@ -2665,15 +2689,14 @@ obelisk_rt_status resolveStaticFunctionalType(
       continue;
     }
     if (plan.option == FunctionalConfigurationOptionKind::RealInterval) {
-      if (!expression || !encoded ||
-          expression->resultKind != FunctionalExpressionResultKind::Real ||
-          encoded->kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL ||
-          encoded->value_size != sizeof(double) || !encoded->value)
+      if (!expression || !encoded || !isRealResultKind(expression->resultKind))
         return OBELISK_RT_INVALID_DESIGN;
-      double interval = 0.0;
+      auto real = functionalRealValue(*encoded);
+      if (!real)
+        return OBELISK_RT_INVALID_DESIGN;
+      double interval = *real;
       uint64_t intervalBits = 0;
-      std::memcpy(&interval, encoded->value, sizeof(interval));
-      std::memcpy(&intervalBits, encoded->value, sizeof(intervalBits));
+      std::memcpy(&intervalBits, &interval, sizeof(intervalBits));
       if (!std::isfinite(interval) || interval <= 0.0)
         return OBELISK_RT_INVALID_DESIGN;
       const uint64_t resolvedOwnerID = group ? typeID : resolvedOwner->second;
@@ -3126,6 +3149,10 @@ obelisk_rt_status resolveStaticFunctionalType(
     auto item = resolvedItems.find(bin->item);
     if (item == resolvedItems.end())
       return OBELISK_RT_INVALID_DESIGN;
+    const auto *sample = lookup(coverpointSamples, bin->item);
+    const bool shortRealPoint =
+        sample &&
+        sample->resultKind == FunctionalExpressionResultKind::ShortReal;
     if (bin->kind == FunctionalBinKind::Cross) {
       uint64_t binID = resolvedFunctionalID("functional.resolved.bin", typeID,
                                             bin->id, 0, binIDs);
@@ -3851,7 +3878,9 @@ obelisk_rt_status resolveStaticFunctionalType(
           if (sourceFourState)
             value.unknown =
                 snapshot.unknown.data() + ordinal * snapshot.valueSize;
-          value.kind = sourceReal ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
+          value.kind = sourceReal ? (setExpression->bitWidth == 32
+                                         ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+                                         : OBELISK_RT_FUNCTIONAL_VALUE_REAL)
                        : sourceFourState
                            ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
                            : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
@@ -3859,17 +3888,11 @@ obelisk_rt_status resolveStaticFunctionalType(
         };
         auto decodeReal = [&](const obelisk_rt_functional_value_v1 &value,
                               double &result) {
-          if (value.bit_width == 32 && value.value_size == sizeof(float)) {
-            float source = 0.0f;
-            std::memcpy(&source, value.value, sizeof(source));
-            result = source;
-            return true;
-          }
-          if (value.bit_width == 64 && value.value_size == sizeof(double)) {
-            std::memcpy(&result, value.value, sizeof(result));
-            return true;
-          }
-          return false;
+          auto real = functionalRealValue(value);
+          if (!real)
+            return false;
+          result = *real;
+          return true;
         };
         auto appendInteger = [&](const FunctionalInteger &integer) {
           if (!functionalIntegerRepresentable(integer, set->bitWidth,
@@ -3902,6 +3925,15 @@ obelisk_rt_status resolveStaticFunctionalType(
           if (!std::isfinite(value)) {
             std::fputs("warning: functional bin set element is not a finite "
                        "real value and is ignored\n",
+                       stderr);
+            return OBELISK_RT_OK;
+          }
+          if (shortRealPoint &&
+              (std::abs(value) > std::numeric_limits<float>::max() ||
+               static_cast<double>(static_cast<float>(value)) != value)) {
+            std::fputs("warning: functional bin set real element changes value "
+                       "when converted to the effective coverpoint type and "
+                       "is ignored\n",
                        stderr);
             return OBELISK_RT_OK;
           }
@@ -4064,20 +4096,56 @@ obelisk_rt_status resolveStaticFunctionalType(
             if ((!lowerUnbounded && !low) || (!upperUnbounded && !high))
               return OBELISK_RT_INVALID_DESIGN;
             if (set->kind == FunctionalValueSetKind::Real) {
-              if ((!lowerUnbounded &&
-                   low->kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL) ||
-                  (!upperUnbounded &&
-                   high->kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL) ||
-                  atom.kind != FunctionalValueAtomKind::RealInterval)
+              if (atom.kind != FunctionalValueAtomKind::RealInterval)
                 return OBELISK_RT_INVALID_DESIGN;
               uint64_t lowBits = 0, highBits = 0;
-              double lowValue = 0.0, highValue = 0.0;
-              if (!lowerUnbounded)
-                std::memcpy(&lowValue, low->value, sizeof(lowValue));
-              if (!upperUnbounded && atom.upperExpression)
-                std::memcpy(&highValue, high->value, sizeof(highValue));
-              else if (!upperUnbounded)
-                highValue = lowValue;
+              bool hasUnknown = false;
+              auto decodeBound =
+                  [&](const obelisk_rt_functional_value_v1 &value,
+                      uint64_t expressionID) -> std::optional<double> {
+                if (isFunctionalRealValueKind(value.kind))
+                  return functionalRealValue(value);
+                const auto *expression = expressionSchema(expressionID);
+                FunctionalInteger integer;
+                bool unknown = false;
+                if (!expression ||
+                    expression->resultKind !=
+                        FunctionalExpressionResultKind::Integral ||
+                    !decodeFunctionalInteger(value, expression->signedness,
+                                             integer, unknown))
+                  return std::nullopt;
+                hasUnknown |= unknown;
+                long double magnitude =
+                    floatingFunctionalMagnitude(integer.magnitude);
+                return static_cast<double>(integer.negative ? -magnitude
+                                                            : magnitude);
+              };
+              auto lower = lowerUnbounded
+                               ? std::optional<double>(0)
+                               : decodeBound(*low, atom.lowerExpression);
+              auto upper = upperUnbounded ? std::optional<double>(0)
+                           : singleton
+                               ? lower
+                               : decodeBound(*high, atom.upperExpression);
+              if (!lower || !upper)
+                return OBELISK_RT_INVALID_DESIGN;
+              if (hasUnknown) {
+                std::fputs("warning: functional bin real element contains X "
+                           "or Z and is ignored\n",
+                           stderr);
+                continue;
+              }
+              double lowValue = *lower, highValue = *upper;
+              if (shortRealPoint && singleton &&
+                  (std::abs(lowValue) > std::numeric_limits<float>::max() ||
+                   static_cast<double>(static_cast<float>(lowValue)) !=
+                       lowValue)) {
+                std::fputs("warning: functional bin real element changes value "
+                           "when converted to the effective coverpoint type "
+                           "and is ignored\n",
+                           stderr);
+                continue;
+              }
               const uint32_t toleranceFlags =
                   atom.flags & (FunctionalValueAtomAbsoluteTolerance |
                                 FunctionalValueAtomRelativeTolerance);
@@ -4094,6 +4162,48 @@ obelisk_rt_status resolveStaticFunctionalType(
                   (!upperUnbounded && !std::isfinite(highValue)) ||
                   (!lowerUnbounded && !upperUnbounded && lowValue > highValue))
                 return OBELISK_RT_INVALID_DESIGN;
+              if (shortRealPoint && !singleton) {
+                // Intersect a real range with the binary32 domain. Each end
+                // moves at most one ULP after rounding; never enumerate values.
+                constexpr double limit = std::numeric_limits<float>::max();
+                double originalLow = lowValue, originalHigh = highValue;
+                if ((!lowerUnbounded && lowValue > limit) ||
+                    (!upperUnbounded && highValue < -limit)) {
+                  std::fputs("warning: functional bin real range is outside "
+                             "the effective coverpoint type and is ignored\n",
+                             stderr);
+                  continue;
+                }
+                if (!lowerUnbounded) {
+                  float clipped =
+                      static_cast<float>(std::max(lowValue, -limit));
+                  if (static_cast<double>(clipped) < lowValue)
+                    clipped = std::nextafter(
+                        clipped, std::numeric_limits<float>::infinity());
+                  lowValue = clipped;
+                }
+                if (!upperUnbounded) {
+                  float clipped =
+                      static_cast<float>(std::min(highValue, limit));
+                  if (static_cast<double>(clipped) > highValue)
+                    clipped = std::nextafter(
+                        clipped, -std::numeric_limits<float>::infinity());
+                  highValue = clipped;
+                }
+                if (!lowerUnbounded && !upperUnbounded &&
+                    lowValue > highValue) {
+                  std::fputs(
+                      "warning: functional bin real range has no values "
+                      "in the effective coverpoint type and is ignored\n",
+                      stderr);
+                  continue;
+                }
+                if ((!lowerUnbounded && lowValue != originalLow) ||
+                    (!upperUnbounded && highValue != originalHigh))
+                  std::fputs("warning: functional bin real range is clipped "
+                             "to the effective coverpoint type\n",
+                             stderr);
+              }
               std::memcpy(&lowBits, &lowValue, sizeof(lowBits));
               std::memcpy(&highBits, &highValue, sizeof(highBits));
               uint32_t resolvedOrdinal = pending.atoms.size();
@@ -4108,10 +4218,8 @@ obelisk_rt_status resolveStaticFunctionalType(
               continue;
             }
             if (set->kind != FunctionalValueSetKind::Integral ||
-                (!lowerUnbounded &&
-                 low->kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL) ||
-                (!upperUnbounded &&
-                 high->kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL))
+                (!lowerUnbounded && isFunctionalRealValueKind(low->kind)) ||
+                (!upperUnbounded && isFunctionalRealValueKind(high->kind)))
               return OBELISK_RT_INVALID_DESIGN;
             uint32_t limbCount = (uint64_t{set->bitWidth} + 63) / 64;
             bool wildcard = (bin->flags & FunctionalBinWildcard) != 0;
@@ -5135,7 +5243,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         resolvedItem ? lookup(coverpointSamples, resolvedItem->templateItem)
                      : nullptr;
     if (!resolvedItem || !sampleExpression ||
-        sampleExpression->resultKind == FunctionalExpressionResultKind::Real ||
+        isRealResultKind(sampleExpression->resultKind) ||
         !sampleExpression->bitWidth ||
         (sampleExpression->signedness != CoverageSignedness::Signed &&
          sampleExpression->signedness != CoverageSignedness::Unsigned))
@@ -5869,10 +5977,18 @@ obelisk_rt_status resolveStaticFunctionalType(
               std::any_of(component.bval.begin(), component.bval.end(),
                           [](uint64_t limb) { return limb != 0; }))
             return OBELISK_RT_INVALID_DESIGN;
-          if (target.tupleResultKind == FunctionalExpressionResultKind::Real) {
-            component.realBits = component.aval.front();
+          if (isRealResultKind(target.tupleResultKind)) {
             double real = 0.0;
-            std::memcpy(&real, &component.realBits, sizeof(real));
+            uint64_t encodedBits = component.aval.front();
+            if (target.tupleResultKind ==
+                FunctionalExpressionResultKind::ShortReal) {
+              float shortReal;
+              uint32_t bits = static_cast<uint32_t>(encodedBits);
+              std::memcpy(&shortReal, &bits, sizeof(shortReal));
+              real = shortReal;
+            } else
+              std::memcpy(&real, &encodedBits, sizeof(real));
+            std::memcpy(&component.realBits, &real, sizeof(real));
             if (!std::isfinite(real)) {
               usable = false;
               break;
@@ -5888,8 +6004,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         // component. Rebuild the key from canonical component planes.
         tuple.key.clear();
         for (const TupleComponentValue &component : tuple.components) {
-          if (component.target->tupleResultKind ==
-              FunctionalExpressionResultKind::Real) {
+          if (isRealResultKind(component.target->tupleResultKind)) {
             for (uint32_t byte = 0; byte != sizeof(uint64_t); ++byte)
               tuple.key.push_back(
                   static_cast<uint8_t>(component.realBits >> (byte * 8)));
@@ -5997,9 +6112,10 @@ obelisk_rt_status resolveStaticFunctionalType(
                       component.resolvedItem,
                       0,
                       0,
-                      component.target->tupleBitWidth,
-                      component.target->tupleResultKind ==
-                              FunctionalExpressionResultKind::Real
+                      isRealResultKind(component.target->tupleResultKind)
+                          ? 64
+                          : component.target->tupleBitWidth,
+                      isRealResultKind(component.target->tupleResultKind)
                           ? FunctionalValueSetKind::Real
                           : FunctionalValueSetKind::Integral,
                       0,
@@ -6010,8 +6126,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                       componentOrdinal,
                       ResolvedFunctionalValueSetRole::TupleComponent};
           PendingAtom atom;
-          atom.atom.kind = component.target->tupleResultKind ==
-                                   FunctionalExpressionResultKind::Real
+          atom.atom.kind = isRealResultKind(component.target->tupleResultKind)
                                ? FunctionalValueAtomKind::RealInterval
                                : FunctionalValueAtomKind::IntegralValue;
           atom.atom.flags = FunctionalValueAtomLowerInclusive |
@@ -8314,6 +8429,8 @@ bool validateValue(
     const obelisk::coverage::FunctionalClassType *classType = nullptr,
     uint64_t valueType = 0) {
   using Result = obelisk::coverage::FunctionalExpressionResultKind;
+  if (obelisk::coverage::isRealResultKind(result))
+    width = obelisk::coverage::getRealResultBitWidth(result);
   // Boolean schema descriptors have no integral type width, but their helper
   // ABI representation is the canonical one-bit logic value.
   if (result == Result::Boolean)
@@ -8436,9 +8553,11 @@ bool validateValue(
                  OBELISK_RT_MANAGED_CONTAINER));
   if (value.owner || value.payload || value.argument_ref_kind || !value.value)
     return false;
-  if (result == Result::Real)
-    return value.kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL &&
-           value.bit_width == 64 && value.value_size == sizeof(double) &&
+  if (obelisk::coverage::isRealResultKind(result))
+    return value.kind == (result == Result::ShortReal
+                              ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+                              : OBELISK_RT_FUNCTIONAL_VALUE_REAL) &&
+           value.bit_width == width && value.value_size == width / 8 &&
            !value.unknown;
   if (result != Result::Boolean && result != Result::Integral)
     return false;
@@ -8575,16 +8694,17 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
         return entry.id == setID && entry.configuration == configuration;
       });
   if (set == schema.resolvedFunctionalValueSets.end() ||
-      set->bitWidth != value.bit_width)
+      (set->kind == obelisk::coverage::FunctionalValueSetKind::Integral &&
+       set->bitWidth != value.bit_width))
     return false;
   for (uint32_t atomIndex = 0; atomIndex != set->atomCount; ++atomIndex) {
     const auto &atom =
         schema.resolvedFunctionalValueAtoms[set->firstAtom + atomIndex];
     if (atom.kind == obelisk::coverage::FunctionalValueAtomKind::RealInterval) {
-      if (value.kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL)
+      auto real = functionalRealValue(value);
+      if (!real)
         continue;
-      double actual = 0.0, low = 0.0, high = 0.0;
-      std::memcpy(&actual, value.value, sizeof(actual));
+      double actual = *real, low = 0.0, high = 0.0;
       std::memcpy(&low, &atom.realLowBits, sizeof(low));
       std::memcpy(&high, &atom.realHighBits, sizeof(high));
       bool lower =
@@ -8601,7 +8721,7 @@ bool valueSetMatches(const obelisk::coverage::Database &schema,
         return true;
       continue;
     }
-    if (value.kind == OBELISK_RT_FUNCTIONAL_VALUE_REAL)
+    if (isFunctionalRealValueKind(value.kind))
       continue;
     bool exact = true;
     for (uint32_t limbIndex = 0; limbIndex != atom.limbCount; ++limbIndex) {
@@ -13472,7 +13592,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
                    obelisk::coverage::FunctionalExpressionResultKind::Chandle;
     bool event = formal.resultKind ==
                  obelisk::coverage::FunctionalExpressionResultKind::Event;
-    if (chandle || event || covergroup || process || virtualInterface) {
+    if (obelisk::coverage::isRealResultKind(formal.resultKind)) {
+      uint32_t expected =
+          formal.resultKind ==
+                  obelisk::coverage::FunctionalExpressionResultKind::ShortReal
+              ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+              : OBELISK_RT_FUNCTIONAL_VALUE_REAL;
+      uint32_t width =
+          obelisk::coverage::getRealResultBitWidth(formal.resultKind);
+      if (kind != expected || bitWidth != width || valueSize != width / 8 ||
+          outUnknown)
+        return OBELISK_RT_INVALID_DESIGN;
+    } else if (chandle || event || covergroup || process || virtualInterface) {
       if (kind != (virtualInterface
                        ? OBELISK_RT_FUNCTIONAL_VALUE_VIRTUAL_INTERFACE
                    : process    ? OBELISK_RT_FUNCTIONAL_VALUE_PROCESS
@@ -13494,7 +13625,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
           bitWidth != sizeof(obelisk_rt_string_v1) * 8 ||
           valueSize != sizeof(obelisk_rt_string_v1) || outUnknown)
         return OBELISK_RT_INVALID_DESIGN;
-    } else if (kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
+    } else if (isFunctionalRealValueKind(kind) ||
+               kind == OBELISK_RT_FUNCTIONAL_VALUE_STRING ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_CLASS_HANDLE ||
                kind == OBELISK_RT_FUNCTIONAL_VALUE_SEMAPHORE ||
@@ -13510,7 +13642,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_formal_read(
     if (storedKind == OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF) {
       uint32_t fourState = kind == OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE;
       if (kind != OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL && !fourState &&
-          kind != OBELISK_RT_FUNCTIONAL_VALUE_REAL && !string && !container &&
+          !isFunctionalRealValueKind(kind) && !string && !container &&
           !classHandle && !chandle && !event && !covergroup && !process &&
           !virtualInterface && !semaphore && !mailbox)
         return OBELISK_RT_INVALID_ARGUMENT;

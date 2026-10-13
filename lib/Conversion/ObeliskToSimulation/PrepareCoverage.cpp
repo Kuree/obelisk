@@ -2267,9 +2267,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   coverage::FunctionalExpressionResultKind::String;
               descriptor.signedness =
                   coverage::CoverageSignedness::NotApplicable;
-            } else if ((*normalized).isF64()) {
+            } else if (isa<Float32Type, Float64Type>(*normalized)) {
               descriptor.resultKind =
-                  coverage::FunctionalExpressionResultKind::Real;
+                  (*normalized).isF32()
+                      ? coverage::FunctionalExpressionResultKind::ShortReal
+                      : coverage::FunctionalExpressionResultKind::Real;
               descriptor.signedness =
                   coverage::CoverageSignedness::NotApplicable;
             } else {
@@ -2753,9 +2755,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             descriptor.resultKind =
                 coverage::FunctionalExpressionResultKind::String;
             descriptor.signedness = coverage::CoverageSignedness::NotApplicable;
-          } else if ((*normalized).isF64()) {
+          } else if (isa<Float32Type, Float64Type>(*normalized)) {
             descriptor.resultKind =
-                coverage::FunctionalExpressionResultKind::Real;
+                (*normalized).isF32()
+                    ? coverage::FunctionalExpressionResultKind::ShortReal
+                    : coverage::FunctionalExpressionResultKind::Real;
             descriptor.signedness = coverage::CoverageSignedness::NotApplicable;
           } else {
             std::optional<unsigned> width = sim::getPackedWidth(*normalized);
@@ -3130,9 +3134,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     sim::getAggregateProvenanceSubelement(tupleType, ordinal);
                 std::optional<unsigned> packedWidth =
                     sim::getPackedWidth(fieldType);
-                const bool real = fieldType.isF64();
+                const bool real = isa<Float32Type, Float64Type>(fieldType);
                 const uint32_t bitWidth =
-                    real ? 64
+                    real ? cast<FloatType>(fieldType).getWidth()
                     : packedWidth && *packedWidth <= UINT32_MAX
                         ? static_cast<uint32_t>(*packedWidth)
                         : 0;
@@ -3191,8 +3195,12 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 target.tupleBitOffset = fieldLayout->first;
                 target.tupleBitWidth = bitWidth;
                 target.tupleResultKind =
-                    real ? coverage::FunctionalExpressionResultKind::Real
-                         : coverage::FunctionalExpressionResultKind::Integral;
+                    real
+                        ? (fieldType.isF32()
+                               ? coverage::FunctionalExpressionResultKind::
+                                     ShortReal
+                               : coverage::FunctionalExpressionResultKind::Real)
+                        : coverage::FunctionalExpressionResultKind::Integral;
                 target.tupleSignedness =
                     real       ? coverage::CoverageSignedness::NotApplicable
                     : isSigned ? coverage::CoverageSignedness::Signed
@@ -3981,8 +3989,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             }
             FailureOr<Type> normalizedPointType =
                 simlowering::getNormalizedSemanticType(pointChildren.front());
-            const bool pointIsReal = succeeded(normalizedPointType) &&
-                                     (*normalizedPointType).isF64();
+            const bool pointIsReal =
+                succeeded(normalizedPointType) &&
+                isa<Float32Type, Float64Type>(*normalizedPointType);
             uint64_t pointWidth = 0;
             if (succeeded(normalizedPointType))
               if (std::optional<unsigned> width =
@@ -4597,8 +4606,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 } else {
                   for (auto [atomOrdinal, value] :
                        llvm::enumerate(binChildren->values)) {
+                    auto valueRange =
+                        dyn_cast<ir::SVValueRangeExpressionOp>(value);
                     SmallVector<Operation *> endpoints =
-                        simlowering::getChildren(value);
+                        valueRange ? simlowering::getChildren(value)
+                                   : SmallVector<Operation *>{};
                     Operation *lower =
                         endpoints.empty() ? value : endpoints.front();
                     Operation *upper =
@@ -4614,8 +4626,6 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                       signalPassFailure();
                       return;
                     }
-                    auto valueRange =
-                        dyn_cast<ir::SVValueRangeExpressionOp>(value);
                     auto peelEffectiveTypeCast = [&](Operation *expression) {
                       auto conversion =
                           dyn_cast<ir::SVConversionExpressionOp>(expression);
@@ -4631,16 +4641,26 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                               : std::nullopt;
                       SmallVector<Operation *> children =
                           simlowering::getChildren(conversion);
+                      if (children.size() != 1)
+                        return expression;
                       // Slang materializes the 19.5.7 cast to the effective
                       // coverpoint type as the outer child of the bins/range
                       // node. Inventory its input so runtime resolution can
                       // diagnose lossy values and clip partially representable
                       // ranges. Any inner expression-context conversion stays
                       // intact and remains part of b's original value.
-                      return width && *width == pointBitWidth &&
-                                     children.size() == 1
-                                 ? children.front()
-                                 : expression;
+                      if (width && *width == pointBitWidth)
+                        return children.front();
+                      if (pointIsReal && succeeded(normalized) &&
+                          *normalized == *normalizedPointType) {
+                        auto source = simlowering::getNormalizedSemanticType(
+                            children.front());
+                        if (succeeded(source) &&
+                            (isa<Float32Type, Float64Type>(*source) ||
+                             sim::getPackedWidth(*source)))
+                          return children.front();
+                      }
+                      return expression;
                     };
                     lower = peelEffectiveTypeCast(lower);
                     if (upper)

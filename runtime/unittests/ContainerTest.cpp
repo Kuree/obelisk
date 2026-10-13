@@ -1922,6 +1922,72 @@ TEST_F(ManagedValueTest, ManagedWritesRejectCrossContextHandles) {
   obelisk_rt_v1_context_destroy(foreignContext);
 }
 
+TEST_F(ManagedValueTest, RealReferencePathsPreservePrecisionAndPayloads) {
+  for (uint64_t size : {sizeof(float), sizeof(double)}) {
+    const uint64_t width = size * 8;
+    const obelisk_rt_element_type_v1 element{OBELISK_RT_VERSION,
+                                             OBELISK_RT_ELEMENT_REAL,
+                                             910 + size,
+                                             0,
+                                             0,
+                                             size,
+                                             size,
+                                             width,
+                                             nullptr};
+    obelisk_rt_object_v1 *array = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &element, 1, &array),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_root_v1 arrayRoot{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+              OBELISK_RT_OK);
+    std::array<uint8_t, sizeof(double)> bits{};
+    bits[size - 1] = 0x80;
+    ASSERT_EQ(
+        obelisk_rt_v1_container_write(lane, array, 0, bits.data(), nullptr),
+        OBELISK_RT_OK);
+    obelisk_rt_object_v1 *path = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_reference_path_index_create(
+                  lane, array, 0, nullptr, 0, 0, nullptr, nullptr, 0, &path),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_root_v1 pathRoot{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &path),
+              OBELISK_RT_OK);
+    std::array<uint8_t, 16> loaded;
+    loaded.fill(0x5a);
+    ASSERT_EQ(obelisk_rt_v1_argument_ref_load(context, nullptr, nullptr, 0,
+                                              path, 0, 2, width, size, 0, 0,
+                                              loaded.data(), nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::memcmp(loaded.data(), bits.data(), size), 0);
+    for (size_t index = size; index != loaded.size(); ++index)
+      EXPECT_EQ(loaded[index], 0x5a);
+    loaded.fill(0x5a);
+    EXPECT_EQ(obelisk_rt_v1_argument_ref_load(
+                  context, nullptr, nullptr, 0, path, 0, 2,
+                  width == 32 ? 64 : 32, size, 0, 0, loaded.data(), nullptr),
+              OBELISK_RT_ARGUMENT_MISMATCH);
+    for (size_t index = 0; index != loaded.size(); ++index)
+      EXPECT_EQ(loaded[index], index < size ? 0 : 0x5a);
+    const uint32_t shortNaN = 0x7fc12345;
+    const uint64_t realNaN = UINT64_C(0x7ff81234deadbeef);
+    if (size == sizeof(float))
+      std::memcpy(bits.data(), &shortNaN, size);
+    else
+      std::memcpy(bits.data(), &realNaN, size);
+    ASSERT_EQ(
+        obelisk_rt_v1_reference_path_store(lane, path, bits.data(), nullptr),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_argument_ref_load(context, nullptr, nullptr, 0,
+                                              path, 0, 2, width, size, 0, 0,
+                                              loaded.data(), nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(std::memcmp(loaded.data(), bits.data(), size), 0);
+    EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+  }
+}
+
 TEST_F(ManagedValueTest, ReferencePathsResolveAgainAfterContainerMutation) {
   obelisk_rt_object_v1 *queue = nullptr;
   ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &wordElement, UINT64_MAX, &queue),

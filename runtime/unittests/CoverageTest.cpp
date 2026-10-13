@@ -2152,6 +2152,118 @@ TEST_F(CoverageRuntimeDesignTest, ConstructorInputsSnapshotAndRefsRemainLive) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST_F(CoverageRuntimeDesignTest, RealFormalsPreservePrecisionBitsAndLiveRefs) {
+  using namespace obelisk::coverage;
+  Database schema = makeFunctionalSchema();
+  for (auto [id, name, direction, kind, ordinal] :
+       {std::tuple{uint64_t{70}, "snapshot", FunctionalFormalDirection::Input,
+                   FunctionalExpressionResultKind::ShortReal, uint32_t{0}},
+        std::tuple{uint64_t{71}, "live", FunctionalFormalDirection::Ref,
+                   FunctionalExpressionResultKind::ShortReal, uint32_t{1}},
+        std::tuple{uint64_t{72}, "wide", FunctionalFormalDirection::Ref,
+                   FunctionalExpressionResultKind::Real, uint32_t{2}}})
+    schema.functionalFormals.push_back(
+        {id, 10, name, FunctionalFormalKind::Constructor, direction, kind, 0, 0,
+         CoverageSignedness::NotApplicable, ordinal, 0});
+  schema.functionalFormals.push_back(
+      {73, 10, "integer", FunctionalFormalKind::Constructor,
+       FunctionalFormalDirection::Input,
+       FunctionalExpressionResultKind::Integral, 0, 32,
+       CoverageSignedness::Unsigned, 3, 0});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  obelisk_rt_context *context = createContextForSchema(schema);
+  ASSERT_NE(context, nullptr);
+  uint32_t snapshot = UINT32_C(0x80000000);
+  uint32_t live = UINT32_C(0x3dcccccd);
+  uint64_t wide = UINT64_C(0x3ff8000000000000);
+  uint32_t integer = UINT32_C(0x3f800000);
+  uint64_t liveHandle = UINT64_MAX, wideHandle = UINT64_MAX;
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 32, reinterpret_cast<const uint8_t *>(&live), nullptr,
+                &liveHandle),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_alloc(
+                context, 64, reinterpret_cast<const uint8_t *>(&wide), nullptr,
+                &wideHandle),
+            OBELISK_RT_OK);
+  std::array<obelisk_rt_functional_value_v1, 4> formals{
+      obelisk_rt_functional_value_v1{70, 32, 4, &snapshot, nullptr, nullptr, 0,
+                                     OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL, 0},
+      {71, 32, 4, nullptr, nullptr, nullptr, liveHandle,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+      {72, 64, 8, nullptr, nullptr, nullptr, wideHandle,
+       OBELISK_RT_FUNCTIONAL_VALUE_ARGUMENT_REF, 0},
+      {73, 32, 4, &integer, nullptr, nullptr, 0,
+       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
+  obelisk_rt_covergroup_v1 handle = UINT64_MAX;
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+                                            formals.size(), nullptr, 0,
+                                            &handle),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(handle, UINT64_MAX);
+  formals[0].kind = OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_create(context, 10, formals.data(),
+                                            formals.size(), nullptr, 0,
+                                            &handle),
+            OBELISK_RT_OK);
+  uint32_t wrongReal = UINT32_MAX;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 73, OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL, 32,
+                4, nullptr, nullptr, 0, &wrongReal, nullptr),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(wrongReal, UINT32_MAX);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 73, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 32,
+                4, nullptr, nullptr, 0, &wrongReal, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(wrongReal, integer);
+  snapshot = 0;
+  live = UINT32_C(0x7fc12345);
+  uint8_t dummy = 0;
+  ASSERT_EQ(obelisk_rt_v1_argument_ref_store(
+                context, &dummy, &dummy, 8, nullptr, liveHandle, 0, 32, 4, 0,
+                OBELISK_RT_ARGUMENT_VALUE_BITS, &live, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, liveHandle, 0),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_release(context, wideHandle, 0),
+            OBELISK_RT_OK);
+  for (auto [id, expected] : {std::pair{uint64_t{70}, UINT32_C(0x80000000)},
+                              std::pair{uint64_t{71}, UINT32_C(0x7fc12345)}}) {
+    uint32_t actual = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL,
+                  32, 4, nullptr, nullptr, 0, &actual, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(actual, expected);
+    actual = UINT32_MAX;
+    EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                  context, handle, id, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 32,
+                  4, nullptr, nullptr, 0, &actual, nullptr),
+              OBELISK_RT_INVALID_DESIGN);
+    EXPECT_EQ(actual, UINT32_MAX);
+  }
+  uint64_t actual = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 72, OBELISK_RT_FUNCTIONAL_VALUE_REAL, 64, 8,
+                nullptr, nullptr, 0, &actual, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(actual, wide);
+  actual = UINT64_MAX;
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 72, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 64,
+                8, nullptr, nullptr, 0, &actual, nullptr),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(actual, UINT64_MAX);
+  EXPECT_EQ(obelisk_rt_v1_covergroup_formal_read(
+                context, handle, 71, OBELISK_RT_FUNCTIONAL_VALUE_REAL, 64, 8,
+                nullptr, nullptr, 0, &actual, nullptr),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(actual, UINT64_MAX);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST_F(CoverageRuntimeDesignTest, StringConstructorValuesAndRefPathsSurviveGc) {
   using namespace obelisk::coverage;
   Database schema = makeFunctionalSchema();

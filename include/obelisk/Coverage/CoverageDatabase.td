@@ -155,6 +155,7 @@ def ExpressionProcess : CoverageExpressionResultKind<"Process", 14>;
 def ExpressionVirtualInterface : CoverageExpressionResultKind<"VirtualInterface", 15>;
 def ExpressionSemaphore : CoverageExpressionResultKind<"Semaphore", 16>;
 def ExpressionMailbox : CoverageExpressionResultKind<"Mailbox", 17>;
+def ExpressionShortReal : CoverageExpressionResultKind<"ShortReal", 18>;
 
 class CoverageFunctionalContainerKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -402,7 +403,7 @@ def DomainFunctionalExpressionResultKind : CoverageFieldDomain<
      ExpressionContainer, ExpressionAggregate, ExpressionClassHandle,
      ExpressionChandle, ExpressionEvent, ExpressionCovergroup,
      ExpressionProcess, ExpressionVirtualInterface, ExpressionSemaphore,
-     ExpressionMailbox]>;
+     ExpressionMailbox, ExpressionShortReal]>;
 def DomainFunctionalContainerKind : CoverageFieldDomain<
     "FunctionalContainerKind", "Enum",
     [ContainerDynamicArray, ContainerQueue, ContainerAssociativeArray,

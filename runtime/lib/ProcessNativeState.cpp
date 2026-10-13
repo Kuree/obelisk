@@ -922,6 +922,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       if (canonicalPlane->size() != (globalBitCount + 63) / 64)
         return OBELISK_RT_INVALID_DESIGN;
     }
+    // A generated native schedule owns the current planes. Its unwatched
+    // writes need not update the canonical mirror before an event sampler
+    // reads another root. Use the owned plane, then apply the publication
+    // overlay below. An unrelated native buffer still uses canonical state.
+    const auto *plan = context->nativeSchedulePlan;
+    bool ownedGeneratedPlane =
+        plan && plan->state_bit_count == globalBitCount &&
+        globalPlane == (unknownPlane ? plan->state_unknown : plan->state_value);
+    // A native-only generic process has no imported canonical image. Its
+    // generated globals are authoritative even during synchronous observers.
+    bool nativeOnlyGeneric =
+        layoutMatches && context->activeNativeProcess &&
+        context->activeNativeProcess->tier == OBELISK_RT_TIER_NATIVE && !plan &&
+        !executionHasBytecodeState(context) &&
+        !hasBoundNativeStatePlanes(context, globalBitCount);
+    bool readGlobalPlane =
+        !canonical || ownedGeneratedPlane || nativeOnlyGeneric ||
+        (!context->observerForcesCanonicalPlane && isStaticControlAOT(context));
     // IEEE 1800-2023 7.4.1: packed arrays are contiguous vectors. Wide packed
     // roots use the same plane layout as scalars. Avoid a bit
     // loop for ordinary in-bounds reads (large RTL arrays exercise this on
@@ -933,14 +951,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         context->forceMask.empty() && context->assignMask.empty() &&
         !(context->observerForcesCanonicalPlane &&
           context->conditionPublication)) {
-      bool readGlobal = !canonical || (!context->observerForcesCanonicalPlane &&
-                                       isStaticControlAOT(context));
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
       for (uint64_t bit = 0; bit < bitWidth; bit += 64) {
         uint64_t width = std::min<uint64_t>(64, bitWidth - bit);
         uint64_t value =
-            readGlobal ? loadPackedBytes(globalPlane, source + bit, width)
-                       : loadPackedBits(*canonicalPlane, source + bit, width);
+            readGlobalPlane
+                ? loadPackedBytes(globalPlane, source + bit, width)
+                : loadPackedBits(*canonicalPlane, source + bit, width);
         storePackedBytes(outValue, bit, width, value);
       }
       maskPadding();
@@ -950,10 +967,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
         static_cast<uint64_t>(globalOffset) <= rootWidth &&
         bitWidth <= rootWidth - static_cast<uint64_t>(globalOffset)) {
       uint64_t source = rootOffset + static_cast<uint64_t>(globalOffset);
-      bool readGlobal =
-          !context->observerForcesCanonicalPlane && isStaticControlAOT(context);
       uint64_t value;
-      if (readGlobal) {
+      if (readGlobalPlane) {
         value = loadPackedBytes(globalPlane, source, bitWidth);
       } else {
         value = loadPackedBits(*canonicalPlane, source, bitWidth);
@@ -976,9 +991,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_native_state_load_plane(
       maskPadding();
       return OBELISK_RT_OK;
     }
-    bool readGlobalPlane =
-        !canonical ||
-        (!context->observerForcesCanonicalPlane && isStaticControlAOT(context));
     for (uint64_t bit = 0; bit != bitWidth; ++bit) {
       int64_t coordinate = 0;
       if (addHandleOffset(globalOffset, bit, coordinate) && coordinate >= 0 &&

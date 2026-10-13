@@ -14,6 +14,17 @@
 
 namespace obelisk::coverage {
 
+inline constexpr bool isRealResultKind(FunctionalExpressionResultKind kind) {
+  return kind == FunctionalExpressionResultKind::Real ||
+         kind == FunctionalExpressionResultKind::ShortReal;
+}
+inline constexpr uint32_t
+getRealResultBitWidth(FunctionalExpressionResultKind kind) {
+  return kind == FunctionalExpressionResultKind::Real        ? 64
+         : kind == FunctionalExpressionResultKind::ShortReal ? 32
+                                                             : 0;
+}
+
 using Digest = std::array<uint8_t, 32>;
 using UUID = std::array<uint8_t, 16>;
 

@@ -8521,7 +8521,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (mayPublish)
         return;
       if (call.getIsSystemCall()) {
-        mayPublish = true;
+        // Real conversion functions only reinterpret or convert their input.
+        // Nested calls are still visited, so an effectful actual is rejected.
+        mayPublish =
+            !llvm::StringSwitch<bool>(call.getCalleeName())
+                 .Cases({"$itor", "$rtoi", "$bitstoreal", "$realtobits",
+                         "$bitstoshortreal", "$shortrealtobits"},
+                        true)
+                 .Default(false);
         return;
       }
       Operation *target = resolveDirectCallee(call);

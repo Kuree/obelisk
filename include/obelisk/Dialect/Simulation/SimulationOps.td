@@ -1142,7 +1142,7 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
                                            SimVirtualInterfaceType,
                                            SimSemaphoreType,
                                            SimMailboxType,
-                                           F64]>>:$values,
+                                           F32, F64]>>:$values,
                        DenseI64ArrayAttr:$expression_ids);
   let assemblyFormat = [{
     $context `,` $handle

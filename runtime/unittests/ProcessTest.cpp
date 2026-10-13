@@ -11115,6 +11115,99 @@ TEST(Scheduler, AOTObserverPlaneAuthorityIsExplicitNotDepthDerived) {
 }
 
 TEST(RuntimeInternals,
+     AOTObserverReadsOwnedGeneratedPlanesWithPublicationOverlay) {
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.state_bit_count = 128;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 1, 0, 1),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 2, 32, 32),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_native_state_register_static(context, 3, 64, 64),
+            OBELISK_RT_OK);
+  std::array<uint8_t, 16> value{}, unknown{}, unrelated{};
+  const float shortReal = 0.5f;
+  const double real = 1.5;
+  std::memcpy(value.data() + 4, &shortReal, sizeof(shortReal));
+  std::memcpy(value.data() + 8, &real, sizeof(real));
+  context->stateValue.assign(2, 0);
+  context->stateUnknown.assign(2, 0);
+  obelisk_rt_native_schedule_plan plan{};
+  plan.flags = OBELISK_RT_NATIVE_SCHEDULE_STATIC_CONTROL;
+  plan.state_bit_count = 128;
+  plan.state_value = value.data();
+  plan.state_unknown = unknown.data();
+  context->nativeSchedulePlan = &plan;
+  context->observerForcesCanonicalPlane = true;
+  const uint64_t clock = obelisk_rt_v1_native_state_static_handle(1);
+  uint8_t published = 1, publishedUnknown = 0;
+  ClockConditionPublicationView publication{clock, 1, 0, &published,
+                                            &publishedUnknown};
+  context->conditionPublication = &publication;
+  {
+    NativeAOTContextScope scope(context);
+    float loadedShortReal = 0;
+    double loadedReal = 0;
+    const uint64_t shortRef = obelisk_rt_v1_native_state_static_handle(2);
+    ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, value.data(), 128, shortRef, 32, 0, 0,
+                  reinterpret_cast<uint8_t *>(&loadedShortReal)),
+              OBELISK_RT_OK);
+    EXPECT_FLOAT_EQ(loadedShortReal, shortReal);
+    // Ordinary native schedules own their planes too, without static control.
+    plan.flags = 0;
+    loadedShortReal = 0;
+    EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, value.data(), 128, shortRef, 32, 0, 0,
+                  reinterpret_cast<uint8_t *>(&loadedShortReal)),
+              OBELISK_RT_OK);
+    EXPECT_FLOAT_EQ(loadedShortReal, shortReal);
+    ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, value.data(), 128,
+                  obelisk_rt_v1_native_state_static_handle(3), 64, 0, 0,
+                  reinterpret_cast<uint8_t *>(&loadedReal)),
+              OBELISK_RT_OK);
+    EXPECT_DOUBLE_EQ(loadedReal, real);
+    uint8_t loadedClock = 0;
+    ASSERT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, value.data(), 128, clock, 1, 0, 0, &loadedClock),
+              OBELISK_RT_OK);
+    EXPECT_EQ(loadedClock, 1);
+    EXPECT_EQ(value[0], 0);
+    // A foreign buffer cannot replace the canonical observer view.
+    unrelated[4] = 0xff;
+    EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, unrelated.data(), 128, shortRef, 32, 0, 0,
+                  reinterpret_cast<uint8_t *>(&loadedShortReal)),
+              OBELISK_RT_OK);
+    EXPECT_FLOAT_EQ(loadedShortReal, 0);
+    // A native-only generic activation also reads its generated globals;
+    // there is no canonical import until planes or bytecode are installed.
+    obelisk_rt_process_instance_v1 process{};
+    process.tier = OBELISK_RT_TIER_NATIVE;
+    context->nativeSchedulePlan = nullptr;
+    context->activeNativeProcess = &process;
+    EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, value.data(), 128, shortRef, 32, 0, 0,
+                  reinterpret_cast<uint8_t *>(&loadedShortReal)),
+              OBELISK_RT_OK);
+    EXPECT_FLOAT_EQ(loadedShortReal, shortReal);
+    loadedClock = 0;
+    EXPECT_EQ(obelisk_rt_v1_native_state_load_plane(
+                  context, value.data(), 128, clock, 1, 0, 0, &loadedClock),
+              OBELISK_RT_OK);
+    EXPECT_EQ(loadedClock, 1);
+    context->activeNativeProcess = nullptr;
+  }
+  context->nativeSchedulePlan = nullptr;
+  context->conditionPublication = nullptr;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(RuntimeInternals,
      ObserverBookkeepingWritesUpdateCanonicalAndNativePlanes) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;

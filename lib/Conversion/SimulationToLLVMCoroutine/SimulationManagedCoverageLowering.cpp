@@ -98,6 +98,8 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
     std::optional<unsigned> packedWidth =
         sim::getPackedWidth(argumentRef.getElementType());
     Type element = argumentRef.getElementType();
+    if (element.isF32())
+      packedWidth = 32;
     if (element.isF64() ||
         isa<sim::StringType, sim::DynamicArrayType, sim::QueueType,
             sim::AssocArrayType, sim::ClassHandleType, sim::ChandleType,
@@ -179,12 +181,13 @@ LogicalResult emitCoverageValueDescriptor(ConversionPatternRewriter &rewriter,
       return failure();
     kind = OBELISK_RT_FUNCTIONAL_VALUE_STRING;
     payload = converted.front();
-  } else if (sourceType.isF64()) {
+  } else if (isa<Float32Type, Float64Type>(sourceType)) {
     if (converted.size() != 1)
       return failure();
-    width = 64;
-    size = sizeof(double);
-    kind = OBELISK_RT_FUNCTIONAL_VALUE_REAL;
+    width = cast<FloatType>(sourceType).getWidth();
+    size = width / 8;
+    kind = sourceType.isF32() ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
+                              : OBELISK_RT_FUNCTIONAL_VALUE_REAL;
     valuePointer =
         entryAlloca(rewriter, location, converted.front().getType(), 1, 8);
     LLVM::StoreOp::create(rewriter, location, converted.front(), valuePointer,
@@ -1198,7 +1201,8 @@ public:
         isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
             op.getResult().getType());
     bool reference = isa<sim::ArgumentRefType>(op.getResult().getType());
-    uint64_t bitWidth = reference ? 192
+    uint64_t bitWidth = reference                          ? 192
+                        : op.getResult().getType().isF32() ? 32
                         : op.getResult().getType().isF64() || string ||
                                 container || classHandle || chandle ||
                                 process || event || covergroup ||
@@ -1225,6 +1229,8 @@ public:
         : covergroup       ? OBELISK_RT_FUNCTIONAL_VALUE_COVERGROUP
         : string           ? OBELISK_RT_FUNCTIONAL_VALUE_STRING
         : container        ? OBELISK_RT_FUNCTIONAL_VALUE_MANAGED_CONTAINER
+        : op.getResult().getType().isF32()
+            ? OBELISK_RT_FUNCTIONAL_VALUE_SHORTREAL
         : op.getResult().getType().isF64() ? OBELISK_RT_FUNCTIONAL_VALUE_REAL
         : convertedTypes.size() == 2 ? OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE
                                      : OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL;

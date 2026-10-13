@@ -1526,7 +1526,7 @@ LogicalResult SimCovergroupFormalReadOp::verify() {
   Type result = getResult().getType();
   if (auto ref = dyn_cast<ArgumentRefType>(result))
     result = ref.getElementType();
-  if (!getPackedWidth(result) && !result.isF64() &&
+  if (!getPackedWidth(result) && !isa<Float32Type, Float64Type>(result) &&
       !(isa<ArgumentRefType>(getResult().getType()) &&
         isAggregateType(result)) &&
       !isa<StringType, DynamicArrayType, QueueType, AssocArrayType,
@@ -1573,14 +1573,14 @@ LogicalResult SimCovergroupSampleOp::verify() {
            isAggregateType(cast<ReferencePathType>(type).getElementType()) &&
            !getPackedScalarType(
                cast<ReferencePathType>(type).getElementType())) ||
-          type.isF64())
+          isa<Float32Type, Float64Type>(type))
         continue;
       return emitOpError() << "sample value " << index
                            << " must have signless integer, !simulation.logic, "
                               "!simulation.string, container, class handle, "
                               "chandle, event, covergroup, process, virtual "
                               "interface, semaphore, mailbox, or "
-                              "f64 type, but has "
+                              "f32 or f64 type, but has "
                            << type;
     }
   }
