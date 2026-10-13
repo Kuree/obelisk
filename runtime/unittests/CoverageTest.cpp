@@ -5073,6 +5073,274 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(context);
 }
 
+obelisk::coverage::Database
+makeGuardedTransitionSchema(uint32_t length, bool guardExclusions,
+                            bool partialOrdinary = false) {
+  using namespace obelisk::coverage;
+  Database schema;
+  schema.scopes.push_back({1, 0, "top", 0, "top"});
+  schema.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
+  schema.functionalItems.push_back({20, 10, "cp",
+                                    FunctionalItemKind::Coverpoint, 0, 100, 1,
+                                    0, "top.cg.cp"});
+  FunctionalExpression sample;
+  sample.id = 60;
+  sample.owner = 20;
+  sample.ownerKind = FunctionalExpressionOwnerKind::Item;
+  sample.role = FunctionalExpressionRole::CoverpointSample;
+  sample.resultKind = FunctionalExpressionResultKind::Integral;
+  sample.bitWidth = 2;
+  sample.signedness = CoverageSignedness::Unsigned;
+  sample.evaluationPhase = FunctionalExpressionEvaluationPhase::Sample;
+  schema.functionalExpressions.push_back(sample);
+  std::vector<FunctionalExpression> constructionExpressions;
+  constexpr uint32_t inclusive =
+      FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+  constexpr std::array<uint32_t, 3> flags{0, FunctionalBinIgnore,
+                                          FunctionalBinIllegal};
+  constexpr std::array<const char *, 3> names{"ordinary", "ignored", "illegal"};
+  for (uint32_t binOrdinal = 0; binOrdinal != names.size(); ++binOrdinal) {
+    uint64_t bin = 30 + binOrdinal;
+    uint32_t firstStep = schema.transitionSteps.size();
+    schema.functionalBins.push_back(
+        {bin, 20, names[binOrdinal], FunctionalBinKind::Transition,
+         flags[binOrdinal], 1, binOrdinal,
+         std::string("top.cg.cp.") + names[binOrdinal]});
+    FunctionalBinPlan plan;
+    plan.bin = bin;
+    if (!binOrdinal || guardExclusions) {
+      FunctionalExpression guard = sample;
+      guard.id = 61 + binOrdinal;
+      guard.owner = bin;
+      guard.ownerKind = FunctionalExpressionOwnerKind::Bin;
+      guard.role = FunctionalExpressionRole::BinIff;
+      guard.resultKind = FunctionalExpressionResultKind::Boolean;
+      guard.bitWidth = 0;
+      guard.signedness = CoverageSignedness::NotApplicable;
+      guard.resultOrdinal = 1 + binOrdinal;
+      schema.functionalExpressions.push_back(guard);
+      plan.iffExpression = guard.id;
+    }
+    schema.functionalBinPlans.push_back(plan);
+    schema.transitionPrograms.push_back({bin, 20, binOrdinal, 1, 0});
+    for (uint32_t ordinal = 0; ordinal != length; ++ordinal) {
+      uint32_t atom = schema.functionalValueAtoms.size();
+      uint64_t set = 100 + atom, expressionID = 10000 + atom;
+      bool range = partialOrdinary && !binOrdinal && !ordinal;
+      schema.functionalValueSets.push_back(
+          {set, 20, atom, 1, 2, FunctionalValueSetKind::Integral,
+           FunctionalValueSetNeedsResolution, CoverageSignedness::Unsigned, 0});
+      schema.functionalValueAtoms.push_back(
+          {set, 0, 0, 0, 0, 0,
+           range ? FunctionalValueAtomKind::IntegralRange
+                 : FunctionalValueAtomKind::IntegralValue,
+           inclusive, expressionID, range ? uint64_t{20000} : uint64_t{0}});
+      FunctionalExpression value = sample;
+      value.id = expressionID;
+      value.owner = set;
+      value.ownerKind = FunctionalExpressionOwnerKind::ValueSet;
+      value.role = range ? FunctionalExpressionRole::ValueAtomLower
+                         : FunctionalExpressionRole::ValueAtomSingleton;
+      value.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
+      value.resultOrdinal = atom;
+      constructionExpressions.push_back(value);
+      schema.transitionSteps.push_back({bin, set, 0, 0, 1, 1, 0, ordinal,
+                                        TransitionRepetitionKind::Once, 0});
+    }
+    schema.transitionAlternatives.push_back(
+        {bin, 100 + firstStep + length - 1, firstStep, length, 0, 0});
+  }
+  if (partialOrdinary) {
+    auto high = constructionExpressions.front();
+    high.id = 20000;
+    high.role = FunctionalExpressionRole::ValueAtomUpper;
+    high.resultOrdinal = constructionExpressions.size();
+    constructionExpressions.push_back(high);
+  }
+  schema.functionalExpressions.insert(schema.functionalExpressions.end(),
+                                      constructionExpressions.begin(),
+                                      constructionExpressions.end());
+  schema.functionalBins.push_back(
+      {33, 20, "fallback", FunctionalBinKind::Transition,
+       FunctionalBinDefaultSequence, 1, 3, "top.cg.cp.fallback"});
+  schema.functionalBinPlans.push_back({33, 0});
+  schema.transitionPrograms.push_back({33, 20, 3, 0, 0});
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  return schema;
+}
+
+obelisk_rt_status
+createGuardedTransitionFunctional(obelisk_rt_context *context, uint32_t length,
+                                  bool matchingExclusions, bool partialOrdinary,
+                                  obelisk_rt_covergroup_v1 *handle) {
+  size_t count = 3 * length;
+  std::vector<uint8_t> values(count + partialOrdinary);
+  std::vector<obelisk_rt_functional_value_v1> expressions(values.size());
+  for (size_t index = 0; index != count; ++index) {
+    values[index] = matchingExclusions || index < length
+                        ? 1 + index % length % 2
+                        : (index < 2 * length ? 3 : 0);
+    expressions[index] = {10000 + index,
+                          2,
+                          1,
+                          &values[index],
+                          nullptr,
+                          nullptr,
+                          0,
+                          OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+                          0};
+  }
+  if (partialOrdinary) {
+    values.back() = 3;
+    expressions.back() = {
+        20000,   2,       1, &values.back(),
+        nullptr, nullptr, 0, OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL,
+        0};
+  }
+  return obelisk_rt_v1_covergroup_create(
+      context, 10, nullptr, 0, expressions.data(), expressions.size(), handle);
+}
+
+struct GuardedTransitionSample {
+  obelisk_rt_context *context;
+  obelisk_rt_covergroup_v1 handle;
+  uint8_t enabled = 1, ignored = 0, illegal = 0;
+
+  obelisk_rt_status operator()(uint8_t value) {
+    std::array<obelisk_rt_functional_value_v1, 4> batch{
+        obelisk_rt_functional_value_v1{60, 2, 1, &value, nullptr, nullptr, 0,
+                                       OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+        {61, 1, 1, &enabled, nullptr, nullptr, 0,
+         OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+        {62, 1, 1, &ignored, nullptr, nullptr, 0,
+         OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0},
+        {63, 1, 1, &illegal, nullptr, nullptr, 0,
+         OBELISK_RT_FUNCTIONAL_VALUE_INTEGRAL, 0}};
+    return obelisk_rt_v1_covergroup_sample(context, handle, batch.data(),
+                                           batch.size());
+  }
+};
+
+TEST_F(CoverageRuntimeDesignTest,
+       TransitionBinIffGuardsCountersWithoutChangingDenominator) {
+  obelisk_rt_context *context =
+      createContextForSchema(makeGuardedTransitionSchema(2, true));
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(
+      createGuardedTransitionFunctional(context, 2, false, false, &handle),
+      OBELISK_RT_OK);
+  GuardedTransitionSample sample{context, handle};
+  sample.enabled = 0;
+  const auto &bins = context->coverage->instances.at(handle).bins;
+  ASSERT_EQ(sample(1), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  EXPECT_EQ(bins.front().count, 0u);
+  sample.enabled = 1;
+  ASSERT_EQ(sample(1), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  EXPECT_EQ(bins.front().count, 1u);
+  double percentage = 0;
+  int32_t covered = 0, total = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, handle, 20, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_EQ(total, 1);
+  EXPECT_EQ(covered, 1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       GuardedTransitionExclusionsRemainStaticAndGuardIllegalDiagnostics) {
+  using namespace obelisk::coverage;
+  obelisk_rt_context *context =
+      createContextForSchema(makeGuardedTransitionSchema(2, true));
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createGuardedTransitionFunctional(context, 2, true, false, &handle),
+            OBELISK_RT_OK);
+  GuardedTransitionSample sample{context, handle};
+  const auto &bins = context->coverage->instances.at(handle).bins;
+  EXPECT_TRUE(bins.front().flags & FunctionalBinEmpty);
+  ASSERT_EQ(sample(1), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  EXPECT_TRUE(
+      saveCoverage(context, "disabled-illegal").illegalBinDiagnostics.empty());
+  sample.illegal = 1;
+  ASSERT_EQ(sample(1), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  sample.illegal = 0;
+  ASSERT_EQ(sample(1), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  EXPECT_EQ(bins.front().count, 0u);
+  Database saved = saveCoverage(context, "guarded-transition-exclusions");
+  ASSERT_EQ(saved.illegalBinDiagnostics.size(), 1u);
+  EXPECT_EQ(saved.illegalBinDiagnostics.front().bin, bins[2].id);
+  EXPECT_EQ(saved.illegalBinDiagnostics.front().count, 1u);
+  double percentage = 0;
+  int32_t covered = 0, total = 0;
+  ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                context, handle, 20, &percentage, &covered, &total),
+            OBELISK_RT_OK);
+  EXPECT_EQ(total, 0);
+  EXPECT_EQ(covered, 0);
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       GuardedTransitionExclusionsRemoveDisabledMatchingSubsequences) {
+  using namespace obelisk::coverage;
+  obelisk_rt_context *context =
+      createContextForSchema(makeGuardedTransitionSchema(2, true, true));
+  ASSERT_NE(context, nullptr);
+  ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+  obelisk_rt_covergroup_v1 handle = 0;
+  ASSERT_EQ(createGuardedTransitionFunctional(context, 2, true, true, &handle),
+            OBELISK_RT_OK);
+  GuardedTransitionSample sample{context, handle};
+  const auto &bins = context->coverage->instances.at(handle).bins;
+  EXPECT_FALSE(bins.front().flags & FunctionalBinEmpty);
+  ASSERT_EQ(sample(1), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  EXPECT_EQ(bins.front().count, 0u);
+  ASSERT_EQ(sample(3), OBELISK_RT_OK);
+  ASSERT_EQ(sample(2), OBELISK_RT_OK);
+  EXPECT_EQ(bins.front().count, 1u);
+  EXPECT_TRUE(saveCoverage(context, "partial-exclusions")
+                  .illegalBinDiagnostics.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST_F(CoverageRuntimeDesignTest,
+       LongFixedTransitionExclusionsKeepGuardedOrdinaryBinsEmpty) {
+  using namespace obelisk::coverage;
+  for (bool guardExclusions : {false, true}) {
+    obelisk_rt_context *context = createContextForSchema(
+        makeGuardedTransitionSchema(64, guardExclusions));
+    ASSERT_NE(context, nullptr);
+    ASSERT_EQ(finalizeCoverage(context, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(
+        createGuardedTransitionFunctional(context, 64, true, false, &handle),
+        OBELISK_RT_OK);
+    const auto &instance = context->coverage->instances.at(handle);
+    EXPECT_TRUE(instance.bins.front().flags & FunctionalBinEmpty);
+    const auto &type =
+        context->coverage->types.at({10, instance.configuration});
+    EXPECT_EQ(type.suppressedTransitionAlternatives.size(), 1u);
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  context, handle, 20, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(total, 0);
+    EXPECT_EQ(covered, 0);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
 TEST_F(CoverageRuntimeDesignTest,
      FixedTransitionExclusionDerivationHasDeterministicWorkLimit) {
   using namespace obelisk::coverage;

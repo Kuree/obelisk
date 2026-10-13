@@ -648,10 +648,17 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
     coverageLanguageVersion =
         static_cast<uint32_t>(version.getValue().getZExtValue());
   llvm::DenseMap<uint64_t, Operation *> nodeIds;
+  llvm::DenseSet<Operation *> pointsWithTransitionExclusions;
   bool invalid = false;
   module.walk<WalkOrder::PreOrder>([&](Operation *op) {
     if (!isSemanticOp(op))
       return;
+    if (auto bin = dyn_cast<semantic::SVCoverageBinSymbolOp>(op))
+      if (bin.getTransitionSetCount() != 0 &&
+          (bin.getBinsKind() == semantic::SVCoverageBinKind::IgnoreBins ||
+           bin.getBinsKind() == semantic::SVCoverageBinKind::IllegalBins))
+        if (auto point = bin->getParentOfType<semantic::SVCoverpointSymbolOp>())
+          pointsWithTransitionExclusions.insert(point.getOperation());
     if (auto root = dyn_cast<semantic::SVRootSymbolOp>(op)) {
       if (result.root) {
         op->emitError("multiple elaborated semantic roots");
@@ -1343,17 +1350,9 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             }
             basicFinite &= set.ranges.size() >= 2 || hasSupportedRepetition;
           }
-        bool pointHasTransitionExclusion = false;
-        if (point)
-          for (Operation *pointChild : getChildren(point))
-            if (auto sibling =
-                    dyn_cast<semantic::SVCoverageBinSymbolOp>(pointChild))
-              pointHasTransitionExclusion |=
-                  sibling.getTransitionSetCount() != 0 &&
-                  (sibling.getBinsKind() ==
-                       semantic::SVCoverageBinKind::IgnoreBins ||
-                   sibling.getBinsKind() ==
-                       semantic::SVCoverageBinKind::IllegalBins);
+        bool pointHasTransitionExclusion =
+            point &&
+            pointsWithTransitionExclusions.contains(point.getOperation());
         if (multipleBinsHasVariableLengthTransition) {
           emitError(getSemanticLocation(op))
               << "multiple transition bins cannot contain goto or "
@@ -1365,11 +1364,10 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             !multipleBinsHasVariableLengthTransition) {
           // Transition subtraction is performed after distribution. The
           // runtime accepts fixed-length symbolic integral words for both
-          // ordinary and exclusion bins. This excludes repetitions, iff, and
+          // ordinary and exclusion bins. This excludes repetitions and
           // set expressions whose subtraction would require a more general
           // temporal language operation.
           if (basicFinite) {
-            basicFinite = !bin.getHasIff();
             for (const CoverageTransitionSetChildren &set :
                  transitionChildren->transitions)
               for (const CoverageTransitionRangeChildren &range : set.ranges) {
@@ -1383,7 +1381,7 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             emitError(getSemanticLocation(op))
                 << "transition ignore_bins and illegal_bins currently require "
                    "integral fixed-length transitions, scalar or unsized "
-                   "arrays, with no repetition, iff, or set expression";
+                   "arrays, with no repetition or set expression";
             invalid = true;
           }
         }

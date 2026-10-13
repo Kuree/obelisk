@@ -7350,6 +7350,7 @@ obelisk_rt_status createResolvedFunctionalType(
     if (alternative.type == typeID &&
         alternative.configuration == configuration)
       transitionBinsWithAlternatives.insert(alternative.bin);
+  size_t verifiedEmptyTransitionBins = 0;
   for (const auto &bin : schema.resolvedFunctionalBins) {
     if (bin.type != typeID || bin.configuration != configuration ||
         bin.kind != obelisk::coverage::FunctionalBinKind::Transition ||
@@ -7357,22 +7358,13 @@ obelisk_rt_status createResolvedFunctionalType(
                       obelisk::coverage::FunctionalBinIllegal)) ||
         !transitionBinsWithAlternatives.count(bin.id))
       continue;
-    if (bool(bin.flags & obelisk::coverage::FunctionalBinEmpty) !=
-        bool(emptyTransitionBins.count(bin.id)))
+    bool empty = emptyTransitionBins.count(bin.id);
+    if (bool(bin.flags & obelisk::coverage::FunctionalBinEmpty) != empty)
       return OBELISK_RT_INVALID_DESIGN;
+    verifiedEmptyTransitionBins += empty;
   }
-  for (uint64_t bin : emptyTransitionBins) {
-    auto foundBin = std::find_if(
-        schema.resolvedFunctionalBins.begin(),
-        schema.resolvedFunctionalBins.end(), [&](const auto &candidate) {
-          return candidate.type == typeID &&
-                 candidate.configuration == configuration &&
-                 candidate.id == bin;
-        });
-    if (foundBin == schema.resolvedFunctionalBins.end() ||
-        !(foundBin->flags & obelisk::coverage::FunctionalBinEmpty))
-      return OBELISK_RT_INVALID_DESIGN;
-  }
+  if (verifiedEmptyTransitionBins != emptyTransitionBins.size())
+    return OBELISK_RT_INVALID_DESIGN;
   for (const auto &option : groupOptions) {
     if (option.type != typeID || option.configuration != configuration ||
         option.owner != typeID ||
@@ -10600,8 +10592,8 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
   };
   suppressedAlternatives.clear();
   emptyBins.clear();
-  std::unordered_set<uint64_t> affectedItems;
-  std::unordered_map<uint64_t, const ResolvedFunctionalBin *> bins;
+  IndexSet<uint64_t> affectedItems;
+  IndexMap<uint64_t, const ResolvedFunctionalBin *> bins;
   for (const auto &bin : schema.resolvedFunctionalBins) {
     if (bin.type != typeID || bin.configuration != configuration)
       continue;
@@ -10615,7 +10607,11 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     return OBELISK_RT_OK;
 
   std::vector<ExactTransitionWord> words;
-  std::unordered_map<uint64_t, size_t> ordinaryAlternativeCounts;
+  IndexMap<uint64_t, const ResolvedFunctionalValueSet *> valueSets;
+  for (const auto &set : schema.resolvedFunctionalValueSets)
+    if (set.type == typeID && set.configuration == configuration)
+      valueSets.emplace(set.id, &set);
+  IndexMap<uint64_t, size_t> ordinaryAlternativeCounts;
   for (const auto &alternative : schema.resolvedTransitionAlternatives) {
     if (alternative.type != typeID ||
         alternative.configuration != configuration)
@@ -10640,13 +10636,13 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     for (uint32_t ordinal = 0; ordinal != alternative.stepCount; ++ordinal) {
       const auto &step =
           schema.resolvedTransitionSteps[alternative.firstStep + ordinal];
-      const auto *set =
-          findResolvedValueSet(schema, configuration, step.valueSet);
+      auto set = valueSets.find(step.valueSet);
       if (step.alternative != alternative.id || step.ordinal != ordinal ||
-          step.lowerBound != 1 || step.upperBound != 1 || !set ||
-          set->kind != FunctionalValueSetKind::Integral)
+          step.lowerBound != 1 || step.upperBound != 1 ||
+          set == valueSets.end() ||
+          set->second->kind != FunctionalValueSetKind::Integral)
         return OBELISK_RT_INVALID_DESIGN;
-      word.valueSets.push_back(set);
+      word.valueSets.push_back(set->second);
     }
     if (!(bin->second->flags & (FunctionalBinIgnore | FunctionalBinIllegal)))
       ++ordinaryAlternativeCounts[bin->second->id];
@@ -10730,6 +10726,7 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     return OBELISK_RT_OK;
   };
 
+  IndexMap<uint64_t, std::vector<IntegralCoverageShape>> cachedValueSetCubes;
   auto buildWordCubes = [&](const ExactTransitionWord &word,
                             uint32_t totalSteps, uint32_t stepOffset,
                             std::vector<IntegralCoverageShape> &result) {
@@ -10741,47 +10738,64 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     if (!stepWidth || uint64_t{stepWidth} * totalSteps > UINT32_MAX)
       return OBELISK_RT_OUT_OF_RESOURCES;
     const uint32_t totalWidth = stepWidth * totalSteps;
-    IntegralCoverageShape initial;
-    initial.value.assign((uint64_t{totalWidth} + 63) / 64, 0);
-    initial.wildcard = wildcardPlane(totalWidth);
-    result.push_back(std::move(initial));
-    for (uint32_t step = 0; step != word.valueSets.size(); ++step) {
-      const auto &set = *word.valueSets[step];
+    std::vector<const std::vector<IntegralCoverageShape> *> dimensions;
+    dimensions.reserve(word.valueSets.size());
+    for (const auto *valueSet : word.valueSets) {
+      const auto &set = *valueSet;
       if (set.bitWidth != stepWidth || set.signedness != signedness)
         return OBELISK_RT_INVALID_DESIGN;
-      std::vector<IntegralCoverageShape> stepCubes;
-      obelisk_rt_status status = valueSetCubes(set, stepCubes);
-      if (status != OBELISK_RT_OK)
-        return status;
+      auto cached = cachedValueSetCubes.emplace(set.id);
+      if (cached.second) {
+        obelisk_rt_status status = valueSetCubes(set, cached.first->second);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      const auto &stepCubes = cached.first->second;
       if (stepCubes.empty()) {
         result.clear();
         return OBELISK_RT_OK;
       }
-      if (result.size() > maxDerivationWork / stepCubes.size())
+      dimensions.push_back(&stepCubes);
+    }
+    uint64_t cubeCount = 1;
+    for (const auto *dimension : dimensions) {
+      if (cubeCount > maxDerivationWork / dimension->size())
         return OBELISK_RT_OUT_OF_RESOURCES;
-      std::vector<IntegralCoverageShape> expanded;
-      expanded.reserve(result.size() * stepCubes.size());
-      for (const auto &prefix : result) {
-        for (const auto &stepCube : stepCubes) {
-          if (!consumeWork())
-            return OBELISK_RT_OUT_OF_RESOURCES;
-          IntegralCoverageShape combined = prefix;
-          const uint32_t destination = (stepOffset + step) * stepWidth;
-          for (uint32_t bit = 0; bit != stepWidth; ++bit) {
-            setCubeBit(combined.value, destination + bit,
-                       cubeBit(stepCube.value, bit));
-            setCubeBit(combined.wildcard, destination + bit,
-                       cubeBit(stepCube.wildcard, bit));
-          }
-          expanded.push_back(std::move(combined));
+      cubeCount *= dimension->size();
+    }
+    if (!consumeWork(cubeCount))
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    result.reserve(cubeCount);
+    // Construct complete words directly. Copying a full-width prefix for each
+    // step was quadratic in sequence length even for singleton value sets.
+    for (uint64_t encodedCube = 0; encodedCube != cubeCount; ++encodedCube) {
+      IntegralCoverageShape combined;
+      combined.value.assign((uint64_t{totalWidth} + 63) / 64, 0);
+      combined.wildcard = wildcardPlane(totalWidth);
+      uint64_t remainder = encodedCube;
+      for (size_t reverse = dimensions.size(); reverse != 0; --reverse) {
+        size_t step = reverse - 1;
+        const auto &dimension = *dimensions[step];
+        const auto &stepCube = dimension[remainder % dimension.size()];
+        remainder /= dimension.size();
+        const uint32_t destination = (stepOffset + step) * stepWidth;
+        for (uint32_t bit = 0; bit != stepWidth; ++bit) {
+          setCubeBit(combined.value, destination + bit,
+                     cubeBit(stepCube.value, bit));
+          setCubeBit(combined.wildcard, destination + bit,
+                     cubeBit(stepCube.wildcard, bit));
         }
       }
-      result = std::move(expanded);
+      result.push_back(std::move(combined));
     }
     return OBELISK_RT_OK;
   };
 
-  std::unordered_map<uint64_t, size_t> suppressedPerBin;
+  IndexMap<uint64_t, std::vector<const ExactTransitionWord *>> exclusionsByItem;
+  for (const auto &word : words)
+    if (word.flags & (FunctionalBinIgnore | FunctionalBinIllegal))
+      exclusionsByItem[word.item].push_back(&word);
+  IndexMap<uint64_t, size_t> suppressedPerBin;
   for (const auto &word : words) {
     if (word.flags & (FunctionalBinIgnore | FunctionalBinIllegal))
       continue;
@@ -10791,10 +10805,12 @@ deriveTransitionExclusions(const obelisk::coverage::Database &schema,
     if (status != OBELISK_RT_OK)
       return status;
     std::vector<IntegralCoverageShape> exclusionCubes;
-    for (const auto &exclusion : words) {
-      if (exclusion.item != word.item ||
-          !(exclusion.flags & (FunctionalBinIgnore | FunctionalBinIllegal)) ||
-          exclusion.valueSets.size() > word.valueSets.size())
+    auto exclusions = exclusionsByItem.find(word.item);
+    if (exclusions == exclusionsByItem.end())
+      continue;
+    for (const auto *excludedWord : exclusions->second) {
+      const auto &exclusion = *excludedWord;
+      if (exclusion.valueSets.size() > word.valueSets.size())
         continue;
       for (uint32_t offset = 0;
            offset + exclusion.valueSets.size() <= word.valueSets.size();
@@ -13158,12 +13174,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           continue;
         bool binEnabled = binIsEnabled(binIndex);
         auto active = pendingTransitionActive.find(alternative.id);
-        if (!binEnabled) {
+        const bool exclusion =
+            bin->flags & (obelisk::coverage::FunctionalBinIgnore |
+                          obelisk::coverage::FunctionalBinIllegal);
+        if (!binEnabled && !exclusion) {
           if (active != pendingTransitionActive.end() &&
               !active->second.empty())
             previousPendingRemains = true;
           continue;
         }
+        // Exclusion membership is independent of iff (IEEE 1800-2023
+        // 19.5.1, 19.5.5-.6). Keep matching ignored and illegal sequences even
+        // when their diagnostic counter is disabled.
         const auto &templateAlternative = *binding.definition;
         auto matchesStep = [&](uint32_t ordinal) {
           const auto &step =
@@ -13328,6 +13350,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
       pendingTransitionSampledItems.insert(resolvedItem);
       for (size_t binIndex : transitionHits) {
         const auto &bin = instance.bins[binIndex];
+        if (!binIsEnabled(binIndex))
+          continue;
         if (bin.flags & obelisk::coverage::FunctionalBinIllegal) {
           uint64_t &increment = pendingIllegalIncrements[bin.id];
           increment = saturatingAdd(increment, 1);
