@@ -2004,6 +2004,78 @@ TEST_F(CoverageRuntimeDesignTest,
 }
 
 TEST_F(CoverageRuntimeDesignTest,
+       PreparedCandidateABIValidatesQueuesAndPreservesFailedOutputs) {
+  using namespace obelisk::coverage;
+  for (bool fourState : {false, true}) {
+    Database schema = makeSharedAndSelectorSchema();
+    if (fourState) {
+      schema.functionalValueLimbs[0].lowBval = 1;
+      schema.functionalValueLimbs[0].highBval = 1;
+      schema.functionalExpressions[0].flags =
+          FunctionalExpressionCoverpointFourState;
+      schema.crossTargets[0].tupleFlags =
+          CrossTargetDomainFourState | CrossTupleFieldFourState;
+      schema.crossPlans[0].tupleFlags = CrossTupleFourState;
+    }
+    obelisk_rt_context *local = createContextForSchema(schema);
+    ASSERT_NE(local, nullptr);
+    ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+    uint64_t token = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_prepare(local, 10, nullptr, 0, &token),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(local, &lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+    obelisk_rt_element_type_v1 element{};
+    element.version = OBELISK_RT_VERSION;
+    element.kind = OBELISK_RT_ELEMENT_AGGREGATE;
+    element.type_id = 220;
+    element.value_size = 1;
+    element.alignment = 1;
+    element.bit_width = 8;
+    element.flags = fourState ? OBELISK_RT_ELEMENT_FOUR_STATE : 0;
+    obelisk_rt_object_v1 *queue = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_queue_create(lane, &element, UINT64_MAX, &queue),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_root_v1 root{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &queue), OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 0),
+              OBELISK_RT_OUT_OF_RESOURCES);
+    EXPECT_EQ(obelisk_rt_v1_container_size(queue), 0u);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, nullptr, 1),
+              OBELISK_RT_INVALID_ARGUMENT);
+    obelisk_rt_element_type_v1 wrongElement = element;
+    wrongElement.type_id = 221;
+    obelisk_rt_object_v1 *wrong = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_queue_create(lane, &wrongElement, UINT64_MAX, &wrong),
+        OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, wrong, 1),
+              OBELISK_RT_INVALID_DESIGN);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
+              OBELISK_RT_OK);
+    CoverageTupleQueueSnapshot values;
+    ASSERT_EQ(obelisk_rt_coverage_tuple_queue_snapshot(local, queue, 220, 4,
+                                                       fourState, 1, values),
+              OBELISK_RT_OK);
+    EXPECT_EQ(values.count, 1u);
+    EXPECT_EQ(values.value, (std::vector<uint8_t>{8}));
+    EXPECT_EQ(values.unknown,
+              fourState ? std::vector<uint8_t>{1} : std::vector<uint8_t>{});
+    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
+              OBELISK_RT_INVALID_DESIGN);
+    ASSERT_EQ(obelisk_rt_v1_covergroup_release_preparation(local, token),
+              OBELISK_RT_OK);
+    EXPECT_EQ(obelisk_rt_v1_covergroup_candidates(local, token, 73, queue, 1),
+              OBELISK_RT_INVALID_HANDLE);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(local);
+  }
+}
+
+TEST_F(CoverageRuntimeDesignTest,
        PreparedCrossValuesApplyTupleSetMatchesToFrozenAssociatedValues) {
   using namespace obelisk::coverage;
   for (auto policy : {CrossMatchesPolicy::Count, CrossMatchesPolicy::All}) {

@@ -28,6 +28,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 using namespace mlir;
 
@@ -115,7 +116,8 @@ public:
 
 /// Module attributes select native scheduling modes and budgets. Tests that
 /// compare configurations of one input merge the variant's attributes here
-/// instead of duplicating the module.
+/// instead of duplicating the module. A binary file, such as a generated
+/// coverage schema, can also be embedded as an array<i8> module attribute.
 class SetModuleAttributesTestPass
     : public PassWrapper<SetModuleAttributesTestPass, OperationPass<ModuleOp>> {
 public:
@@ -137,9 +139,37 @@ public:
       llvm::cl::desc("dictionary attribute merged into the module, replacing "
                      "attributes of the same name; \\\" spells a quote "
                      "inside a quoted option value")};
+  Option<std::string> bytesAttribute{
+      *this, "bytes-attr",
+      llvm::cl::desc("module attribute set to the contents of `bytes-file` "
+                     "as an array<i8>")};
+  Option<std::string> bytesFile{
+      *this, "bytes-file", llvm::cl::desc("file read for `bytes-attr`")};
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
+    if (bytesAttribute.empty() != bytesFile.empty() ||
+        (attributes.empty() && bytesAttribute.empty())) {
+      module.emitError("give attrs, or bytes-attr with bytes-file");
+      return signalPassFailure();
+    }
+    if (!bytesAttribute.empty()) {
+      auto buffer = llvm::MemoryBuffer::getFile(bytesFile, /*IsText=*/false);
+      if (!buffer) {
+        module.emitError() << "cannot read " << bytesFile << ": "
+                           << buffer.getError().message();
+        return signalPassFailure();
+      }
+      StringRef bytes = (*buffer)->getBuffer();
+      module->setAttr(bytesAttribute,
+                      DenseI8ArrayAttr::get(
+                          &getContext(),
+                          ArrayRef<int8_t>(
+                              reinterpret_cast<const int8_t *>(bytes.data()),
+                              bytes.size())));
+    }
+    if (attributes.empty())
+      return;
     std::string source = attributes;
     for (size_t at = source.find("\\\""); at != std::string::npos;
          at = source.find("\\\"", at + 1))

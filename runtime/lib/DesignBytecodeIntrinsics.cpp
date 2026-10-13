@@ -1288,6 +1288,46 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
                                                                *enabled != 0)
                             : OBELISK_RT_INVALID_BYTECODE;
   }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE: {
+    auto type = scalar(0), count = scalar(1);
+    if (!type || !count || *count > UINT32_MAX ||
+        site.inputCount != 2 + 2 * *count)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::vector<obelisk_rt_functional_value_v1> expressions;
+    OBELISK_RT_TRY {
+      expressions.resize(static_cast<size_t>(*count));
+      for (uint32_t index = 0; index != *count; ++index) {
+        auto id = scalar(2 + index);
+        if (!id || !functionalValue(
+                       inputRegister(2 + static_cast<uint32_t>(*count) + index),
+                       *id, expressions[index]))
+          return OBELISK_RT_INVALID_BYTECODE;
+      }
+    }
+    OBELISK_RT_CATCH(const std::bad_alloc &) {
+      return OBELISK_RT_OUT_OF_MEMORY;
+    }
+    OBELISK_RT_CATCH(const std::length_error &) {
+      return OBELISK_RT_OUT_OF_RESOURCES;
+    }
+    uint64_t token = 0;
+    obelisk_rt_status status = obelisk_rt_v1_covergroup_prepare(
+        context, *type, expressions.data(), expressions.size(), &token);
+    return status == OBELISK_RT_OK ? sentinel(0, token) : status;
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES: {
+    auto token = scalar(0), selector = scalar(1), maximum = scalar(3);
+    if (!token || !selector || !maximum || *maximum > UINT32_MAX)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_covergroup_candidates(context, *token, *selector,
+                                               readManaged(inputRegister(2)),
+                                               static_cast<uint32_t>(*maximum));
+  }
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION: {
+    auto token = scalar(0);
+    return token ? obelisk_rt_v1_covergroup_release_preparation(context, *token)
+                 : OBELISK_RT_INVALID_BYTECODE;
+  }
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE: {
     auto type = scalar(0), formalCount = scalar(1), expressionCount = scalar(2);
     if (!type || !formalCount || !expressionCount ||

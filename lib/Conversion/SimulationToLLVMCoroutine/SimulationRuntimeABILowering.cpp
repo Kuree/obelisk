@@ -684,6 +684,15 @@ void declareNativeRuntimeABI(ModuleOp module) {
       module, "obelisk_rt_v1_covergroup_block_event_fire", managedI32,
       {managedPointer, managedI64, managedI32, managedPointer});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_prepare", managedI32,
+      {managedPointer, managedI64, managedPointer, managedI64, managedPointer});
+  getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_covergroup_candidates", managedI32,
+      {managedPointer, managedI64, managedI64, managedPointer, managedI32});
+  getOrDeclareLLVMFunction(module,
+                           "obelisk_rt_v1_covergroup_release_preparation",
+                           managedI32, {managedPointer, managedI64});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_covergroup_create", managedI32,
       {managedPointer, managedI64, managedPointer, managedI64, managedPointer,
        managedI64, managedPointer});

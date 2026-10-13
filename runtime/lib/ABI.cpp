@@ -1031,6 +1031,15 @@ ABI_OFFSET(obelisk_rt_functional_value_v1, argument_ref_kind, ABI_PTR(60, 52));
 #undef ABI_PTR
 #undef ABI_OFFSET
 #undef ABI_SIZE_ALIGN
+ABI_FUNCTION(obelisk_rt_v1_covergroup_prepare,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   const obelisk_rt_functional_value_v1 *,
+                                   uint64_t, uint64_t *));
+ABI_FUNCTION(obelisk_rt_v1_covergroup_candidates,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   obelisk_rt_object_v1 *, uint32_t));
+ABI_FUNCTION(obelisk_rt_v1_covergroup_release_preparation,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_covergroup_create,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
                                    const obelisk_rt_functional_value_v1 *,

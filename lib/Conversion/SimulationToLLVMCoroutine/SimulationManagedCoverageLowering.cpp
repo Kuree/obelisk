@@ -457,6 +457,112 @@ public:
   }
 };
 
+class CovergroupPrepareConversion final
+    : public OpConversionPattern<sim::SimCovergroupPrepareOp> {
+public:
+  CovergroupPrepareConversion(TypeConverter &converter, MLIRContext *context,
+                              FunctionalValueLayout layout)
+      : OpConversionPattern(converter, context), layout(layout) {}
+  LogicalResult
+  matchAndRewrite(sim::SimCovergroupPrepareOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+            op, op.getDeclarationAttr());
+    if (!declaration || adaptor.getPayloads().size() != op.getPayloads().size())
+      return failure();
+    uint64_t count = op.getExpressionIds().size();
+    Type i64 = rewriter.getI64Type();
+    Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value expressions =
+        count ? entryAlloca(rewriter, op.getLoc(), rewriter.getI8Type(),
+                            count * layout.size, 8)
+              : LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
+    for (uint64_t index = 0; index != count; ++index)
+      if (failed(emitCoverageValueDescriptor(
+              rewriter, op.getLoc(),
+              byteGEP(rewriter, op.getLoc(), expressions, index * layout.size),
+              op.getPayloads()[index].getType(), adaptor.getPayloads()[index],
+              static_cast<uint64_t>(op.getExpressionIds()[index]), layout)))
+        return failure();
+    Value output = entryAlloca(rewriter, op.getLoc(), i64, 1, 8);
+    LLVM::StoreOp::create(rewriter, op.getLoc(),
+                          LLVM::ZeroOp::create(rewriter, op.getLoc(), i64),
+                          output, 8);
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_covergroup_prepare"),
+            ValueRange{context,
+                       llvmConstant(rewriter, op.getLoc(), i64,
+                                    declaration.getSchemaType()),
+                       expressions,
+                       llvmConstant(rewriter, op.getLoc(), i64, count), output})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.replaceOp(
+        op, LLVM::LoadOp::create(rewriter, op.getLoc(), i64, output, 8));
+    return success();
+  }
+
+private:
+  FunctionalValueLayout layout;
+};
+
+class CovergroupCandidatesConversion final
+    : public OpConversionPattern<sim::SimCovergroupCandidatesOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimCovergroupCandidatesOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_covergroup_candidates"),
+            ValueRange{context, adaptor.getToken().front(),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI64Type(), op.getSelector()),
+                       managedObjectPointer(rewriter, op.getLoc(),
+                                            adaptor.getQueue().front()),
+                       llvmConstant(rewriter, op.getLoc(),
+                                    rewriter.getI32Type(), op.getMaximum())})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class CovergroupReleasePreparationConversion final
+    : public OpConversionPattern<sim::SimCovergroupReleasePreparationOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(sim::SimCovergroupReleasePreparationOp op,
+                  OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto [context, lane] = managedContextAndLane(rewriter, op.getLoc());
+    (void)lane;
+    Value status =
+        LLVM::CallOp::create(
+            rewriter, op.getLoc(), TypeRange{rewriter.getI32Type()},
+            SymbolRefAttr::get(rewriter.getContext(),
+                               "obelisk_rt_v1_covergroup_release_preparation"),
+            ValueRange{context, adaptor.getToken().front()})
+            .getResult();
+    reportManagedStatus(rewriter, op.getLoc(), context, status);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 class CovergroupCreateConversion final
     : public OpConversionPattern<sim::SimCovergroupCreateOp> {
 public:
@@ -1335,8 +1441,8 @@ void populateManagedCoverageToLLVMConversionPatterns(
     const llvm::DataLayout &dataLayout, uint64_t stateBitCount) {
   MLIRContext *context = patterns.getContext();
   FunctionalValueLayout layout = getFunctionalValueLayout(dataLayout);
-  patterns.add<CovergroupCreateConversion, CovergroupSampleConversion>(
-      converter, context, layout);
+  patterns.add<CovergroupCreateConversion, CovergroupSampleConversion,
+               CovergroupPrepareConversion>(converter, context, layout);
   patterns.add<CovergroupFormalReadConversion>(converter, context,
                                                stateBitCount);
   patterns.add<
@@ -1347,6 +1453,7 @@ void populateManagedCoverageToLLVMConversionPatterns(
       CoverageQueryConversion<sim::SimCoverageQueryInstanceOp>,
       CoverageDatabaseConversion<sim::SimCoverageSaveOp>,
       CoverageDatabaseConversion<sim::SimCoverageMergeOp>,
+      CovergroupCandidatesConversion, CovergroupReleasePreparationConversion,
       CovergroupNullConversion, CovergroupCastConversion,
       CovergroupEqualConversion, FunctionalCoverageGetConversion,
       FunctionalCoverageDatabaseConversion<

@@ -1,0 +1,34 @@
+// RUN: obelisk-opt %s -split-input-file -verify-diagnostics
+
+module {
+  func.func @f(%ctx: !simulation.context) {
+    // expected-error@+1 {{references an unknown covergroup declaration}}
+    %token = simulation.covergroup.prepare %ctx from @missing payloads []
+      expression_ids [] : () -> i64
+    return
+  }
+}
+
+// -----
+
+module {
+  simulation.covergroup.decl @cg schema 10
+  func.func @f(%ctx: !simulation.context, %value: i1) {
+    // expected-error@+1 {{requires unique positive FunctionalExpression IDs}}
+    %token = simulation.covergroup.prepare %ctx from @cg
+      payloads [%value, %value] expression_ids [100, 100]
+      : (i1, i1) -> i64
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @f(%ctx: !simulation.context, %token: i64, %queue: i64) {
+    // expected-error@+1 {{requires an unbounded CrossQueueType}}
+    simulation.covergroup.candidates %ctx, %token into %queue
+      selector 70 maximum 8 : i64
+    return
+  }
+}

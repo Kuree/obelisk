@@ -1410,6 +1410,31 @@ LogicalResult SimVirtualInterfaceEqualOp::verify() {
 }
 
 LogicalResult
+SimCovergroupPrepareOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (!symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
+          *this, getDeclarationAttr()))
+    return emitOpError("references an unknown covergroup declaration");
+  if (getExpressionIds().size() != getPayloads().size())
+    return emitOpError("requires one FunctionalExpression ID per payload");
+  llvm::DenseSet<int64_t> seen;
+  for (int64_t id : getExpressionIds())
+    if (id <= 0 || !seen.insert(id).second)
+      return emitOpError("requires unique positive FunctionalExpression IDs");
+  return success();
+}
+
+LogicalResult SimCovergroupCandidatesOp::verify() {
+  auto queue = dyn_cast<QueueType>(getQueue().getType());
+  if (!queue || queue.getBound() ||
+      !isa<UnpackedStructType>(queue.getElementType()))
+    return emitOpError("requires an unbounded CrossQueueType");
+  if (!getSelector() || getSelectorAttr().getValue().isNegative() ||
+      getMaximumAttr().getValue().isNegative() || getMaximum() > 4096)
+    return emitOpError("requires a positive selector and maximum in [0, 4096]");
+  return success();
+}
+
+LogicalResult
 SimCovergroupCreateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   SimCovergroupDeclOp declaration =
       symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(

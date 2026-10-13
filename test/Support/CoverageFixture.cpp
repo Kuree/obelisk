@@ -68,6 +68,85 @@ int main(int argc, char **argv) {
 
   Database db;
   db.producer = "coverage-fixture";
+  if (mode == "construction-preparation") {
+    db.scopes.push_back({1, 0, "top", 0, "top"});
+    db.functionalTypes.push_back({10, 1, "cg", 0, 2023, "top.cg"});
+    db.functionalItems = {{20, 10, "point", FunctionalItemKind::Coverpoint, 0,
+                           100, 1, 0, "top.cg.point"},
+                          {21, 10, "side", FunctionalItemKind::Coverpoint, 0,
+                           100, 1, 1, "top.cg.side"},
+                          {22, 10, "product", FunctionalItemKind::Cross, 0, 100,
+                           1, 2, "top.cg.product"}};
+    db.functionalBins = {
+        {30, 20, "range", FunctionalBinKind::State, 0, 1, 0,
+         "top.cg.point.range"},
+        {40, 21, "zero", FunctionalBinKind::State, 0, 1, 0, "top.cg.side.zero"},
+        {41, 22, "selected", FunctionalBinKind::Cross, 0, 1, 0,
+         "top.cg.product.selected"}};
+    db.functionalValueSets = {
+        {50, 20, 0, 1, 65, FunctionalValueSetKind::Integral,
+         FunctionalValueSetNeedsResolution, CoverageSignedness::Unsigned, 0},
+        {52, 21, 1, 1, 1, FunctionalValueSetKind::Integral, 0,
+         CoverageSignedness::Unsigned, 0}};
+    constexpr uint32_t inclusive =
+        FunctionalValueAtomLowerInclusive | FunctionalValueAtomUpperInclusive;
+    db.functionalValueAtoms = {
+        {50, 0, 0, 0, 0, 0, FunctionalValueAtomKind::IntegralRange, inclusive,
+         100, 101},
+        {52, 0, 0, 0, 1, 0, FunctionalValueAtomKind::IntegralValue, inclusive,
+         0, 0}};
+    db.functionalValueLimbs = {{52, 0, 0, 0, 0, 0, 0, 0}};
+    db.functionalBinPlans = {{30, 50}, {40, 52}};
+    for (uint32_t ordinal = 0; ordinal != 2; ++ordinal) {
+      FunctionalExpression sample;
+      sample.id = 60 + ordinal;
+      sample.owner = 20 + ordinal;
+      sample.ownerKind = FunctionalExpressionOwnerKind::Item;
+      sample.role = FunctionalExpressionRole::CoverpointSample;
+      sample.resultKind = FunctionalExpressionResultKind::Integral;
+      sample.bitWidth = ordinal ? 1 : 65;
+      sample.signedness = CoverageSignedness::Unsigned;
+      sample.evaluationPhase = FunctionalExpressionEvaluationPhase::Sample;
+      sample.resultOrdinal = ordinal;
+      db.functionalExpressions.push_back(sample);
+    }
+    for (uint32_t ordinal = 0; ordinal != 2; ++ordinal) {
+      FunctionalExpression bound;
+      bound.id = 100 + ordinal;
+      bound.owner = 50;
+      bound.ownerKind = FunctionalExpressionOwnerKind::ValueSet;
+      bound.role = ordinal ? FunctionalExpressionRole::ValueAtomUpper
+                           : FunctionalExpressionRole::ValueAtomLower;
+      bound.resultKind = FunctionalExpressionResultKind::Integral;
+      bound.bitWidth = 65;
+      bound.signedness = CoverageSignedness::Unsigned;
+      bound.evaluationPhase = FunctionalExpressionEvaluationPhase::Constructor;
+      bound.resultOrdinal = ordinal;
+      db.functionalExpressions.push_back(bound);
+    }
+    db.crossPlans.push_back(
+        {22, 0, 2, 0, 1, CrossRetainAutoPolicy::Discard, 0, 0, 220, 66, 0});
+    db.crossTargets = {
+        {22, 20, 0, 0, 65, FunctionalExpressionResultKind::Integral,
+         CoverageSignedness::Unsigned, 0},
+        {22, 21, 1, 65, 1, FunctionalExpressionResultKind::Integral,
+         CoverageSignedness::Unsigned, 0}};
+    db.crossBins.push_back({41, 22, 70, 0});
+    CrossSelectorNode selector;
+    selector.id = 70;
+    selector.cross = 22;
+    selector.target = 20;
+    selector.kind = CrossSelectorKind::Binsof;
+    db.crossSelectorNodes.push_back(selector);
+    db.schemaFingerprint = computeSchemaFingerprint(db);
+    Diagnostic diagnostic;
+    Status status = writeFileAtomically(argv[1], db, &diagnostic);
+    if (status != Status::Ok)
+      std::cerr << statusName(status)
+                << " field=" << (diagnostic.field ? diagnostic.field : "")
+                << '\n';
+    return status == Status::Ok ? 0 : 2;
+  }
   SourceFile file;
   file.id = 10;
   file.path = "dut.sv";

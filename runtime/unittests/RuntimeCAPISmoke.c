@@ -424,6 +424,9 @@ int obelisk_runtime_c_api_smoke(void) {
   (void)&obelisk_rt_v1_coverage_load;
   (void)&obelisk_rt_v1_coverage_save;
   (void)&obelisk_rt_v1_coverage_snapshot;
+  (void)&obelisk_rt_v1_covergroup_prepare;
+  (void)&obelisk_rt_v1_covergroup_candidates;
+  (void)&obelisk_rt_v1_covergroup_release_preparation;
   (void)&obelisk_rt_v1_covergroup_create;
   (void)&obelisk_rt_v1_covergroup_set_enabled;
   (void)&obelisk_rt_v1_covergroup_set_name;

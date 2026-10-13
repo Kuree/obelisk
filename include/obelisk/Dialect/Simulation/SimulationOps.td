@@ -775,6 +775,55 @@ def SimVirtualInterfaceScopeOp
   let assemblyFormat = "$input attr-dict `:` qualified(type($input))";
 }
 
+def SimCovergroupPrepareOp : SimOp<"covergroup.prepare", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>, MemRead<SimHeapResource>]>
+  ]> {
+  let summary = "resolve constructor bins into a private coverage preparation";
+  let description = [{
+    Resolves primitive constructor expressions without publishing a coverage
+    configuration or instance. The context owns the opaque token until
+    `covergroup.release_preparation`. Selector predicates are evaluated later
+    against candidate queues; they are absent from this payload batch.
+  }];
+  let arguments = (ins SimContextType:$context,
+                       FlatSymbolRefAttr:$declaration,
+                       Variadic<AnyType>:$payloads,
+                       DenseI64ArrayAttr:$expression_ids);
+  let results = (outs I64:$token);
+  let assemblyFormat = [{
+    $context `from` $declaration `payloads` `[` $payloads `]`
+    `expression_ids` $expression_ids attr-dict
+    `:` functional-type($payloads, results)
+  }];
+}
+
+def SimCovergroupCandidatesOp : SimOp<"covergroup.candidates", [
+    SimAllocatesManagedStorage,
+    MemoryEffects<[MemRead<SimCoverageResource>,
+                   MemWrite<SimCoverageResource>,
+                   MemRead<SimHeapResource>, MemWrite<SimHeapResource>]>
+  ]> {
+  let summary = "fill an empty CrossQueueType with distinct selected values";
+  let arguments = (ins SimContextType:$context, I64:$token,
+                       AnyType:$queue, I64Attr:$selector, I32Attr:$maximum);
+  let assemblyFormat = [{
+    $context `,` $token `into` $queue `selector` $selector `maximum` $maximum
+    attr-dict `:` type($queue)
+  }];
+  let hasVerifier = 1;
+}
+
+def SimCovergroupReleasePreparationOp
+    : SimOp<"covergroup.release_preparation", [
+        MemoryEffects<[MemWrite<SimCoverageResource>]>
+      ]> {
+  let summary = "release a private constructor preparation";
+  let arguments = (ins SimContextType:$context, I64:$token);
+  let assemblyFormat = "$context `,` $token attr-dict";
+}
+
 def SimCovergroupCreateOp : SimOp<"covergroup.create", [
     SimAllocatesManagedStorage,
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,

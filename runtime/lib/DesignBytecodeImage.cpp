@@ -1148,6 +1148,25 @@ bool validIntrinsic(const Image &image, const Function &function,
   case OBELISK_RT_INTRINSIC_V1_FUNCTIONAL_COVERAGE_LOAD_DB:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 0 && string(input(0));
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE:
+    if (signature.flags != 0 || site.inputCount < 2 || site.outputCount != 1 ||
+        !twoStateBits(output(0), 64) || !twoStateBits(input(0), 64) ||
+        !twoStateBits(input(1), 64))
+      return false;
+    for (uint32_t index = 2; index != site.inputCount; ++index)
+      if (!numeric(input(index)) && !floating(input(index)) &&
+          !string(input(index)) && !managed(input(index)) &&
+          !event(input(index)))
+        return false;
+    return true;
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES:
+    return signature.flags == 0 && site.inputCount == 4 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64) &&
+           twoStateBits(input(1), 64) && managed(input(2)) &&
+           twoStateBits(input(3), 64);
+  case OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION:
+    return signature.flags == 0 && site.inputCount == 1 &&
+           site.outputCount == 0 && twoStateBits(input(0), 64);
   case OBELISK_RT_INTRINSIC_V1_COVERGROUP_CREATE:
     if (signature.flags != 0 || site.inputCount < 3 || site.outputCount != 1 ||
         !twoStateBits(output(0), 64) || !twoStateBits(input(0), 64) ||

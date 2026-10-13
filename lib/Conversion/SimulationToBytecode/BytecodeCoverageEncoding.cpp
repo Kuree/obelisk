@@ -86,6 +86,31 @@ Encoder::encodeCoverageOperation(FunctionPlan &plan, Operation *operation) {
           reg(plan, op.getLhs()), reg(plan, op.getRhs())});
     return success();
   }
+  if (auto op = dyn_cast<sim::SimCovergroupPrepareOp>(operation)) {
+    auto declaration =
+        SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+            op, op.getDeclarationAttr());
+    if (!declaration)
+      return failure();
+    SmallVector<uint32_t> inputs{
+        emitU64Constant(plan, declaration.getSchemaType()),
+        emitU64Constant(plan, op.getExpressionIds().size())};
+    for (int64_t id : op.getExpressionIds())
+      inputs.push_back(emitU64Constant(plan, static_cast<uint64_t>(id)));
+    for (Value value : op.getPayloads())
+      inputs.push_back(reg(plan, value));
+    return emitIntrinsicRegisters(plan, kIntrinsicCovergroupPrepare, inputs,
+                                  {reg(plan, op.getToken())});
+  }
+  if (auto op = dyn_cast<sim::SimCovergroupCandidatesOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicCovergroupCandidates,
+        {reg(plan, op.getToken()), emitU64Constant(plan, op.getSelector()),
+         reg(plan, op.getQueue()), emitU64Constant(plan, op.getMaximum())},
+        {});
+  if (auto op = dyn_cast<sim::SimCovergroupReleasePreparationOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicCovergroupReleasePreparation,
+                         {op.getToken()}, {});
   if (auto op = dyn_cast<sim::SimCovergroupCreateOp>(operation)) {
     auto declaration =
         SymbolTable::lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(

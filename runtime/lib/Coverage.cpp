@@ -12897,6 +12897,84 @@ obelisk_rt_coverage_release_preparation(obelisk_rt_context *context,
   }
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_prepare(
+    obelisk_rt_context *context, uint64_t typeID,
+    const obelisk_rt_functional_value_v1 *expressions, uint64_t expressionCount,
+    uint64_t *outToken) {
+  return obelisk_rt_coverage_prepare_construction(context, typeID, expressions,
+                                                  expressionCount, outToken);
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_covergroup_release_preparation(obelisk_rt_context *context,
+                                             uint64_t token) {
+  return obelisk_rt_coverage_release_preparation(context, token);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_candidates(
+    obelisk_rt_context *context, uint64_t token, uint64_t selector,
+    obelisk_rt_object_v1 *queue, uint32_t maximumCandidates) {
+  if (!context || !token || !static_cast<uint32_t>(token) || !selector ||
+      !queue ||
+      maximumCandidates > obelisk::coverage::MaxFunctionalCrossWithCandidates)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *coverage = coverageState(context, false);
+    uint32_t slot = static_cast<uint32_t>(token) - 1;
+    if (!coverage || slot >= coverage->preparations.size() ||
+        !coverage->preparations[slot] ||
+        coverage->preparations[slot]->stamp != token >> 32)
+      return OBELISK_RT_INVALID_HANDLE;
+    auto &prepared = *coverage->preparations[slot]->state;
+    auto &queries = *prepared.queries;
+    const auto &schema = *prepared.schema;
+    const auto *root =
+        queries.lookup(queries.selectors, schema.crossSelectorNodes, selector);
+    const auto *plan = root ? queries.lookup(queries.crossPlans,
+                                             schema.crossPlans, root->cross)
+                            : nullptr;
+    if (!plan)
+      return OBELISK_RT_INVALID_DESIGN;
+    CoverageTupleQueueSnapshot empty;
+    obelisk_rt_status status = obelisk_rt_coverage_tuple_queue_snapshot(
+        context, queue, plan->tupleElementType, plan->tupleProvenanceSpan,
+        (plan->tupleFlags & obelisk::coverage::CrossTupleFourState) != 0, 0,
+        empty);
+    if (status != OBELISK_RT_OK)
+      return status;
+    CoverageTupleQueueSnapshot values;
+    status = obelisk_rt_coverage_prepared_candidates(context, token, selector,
+                                                     maximumCandidates, values);
+    if (status != OBELISK_RT_OK)
+      return status;
+    ManagedExecutionScope execution(context);
+    if (execution.getStatus() != OBELISK_RT_OK)
+      return execution.getStatus();
+    obelisk_rt_gc_root_v1 rootGuard{};
+    status =
+        obelisk_rt_v1_gc_root_push(execution.getLane(), &rootGuard, &queue);
+    if (status != OBELISK_RT_OK)
+      return status;
+    for (uint64_t ordinal = 0; ordinal != values.count; ++ordinal) {
+      status = obelisk_rt_v1_container_write(
+          execution.getLane(), queue, ordinal,
+          values.value.data() + ordinal * values.valueSize,
+          values.fourState ? values.unknown.data() + ordinal * values.valueSize
+                           : nullptr);
+      if (status != OBELISK_RT_OK)
+        break;
+    }
+    obelisk_rt_status pop =
+        obelisk_rt_v1_gc_root_pop(execution.getLane(), &rootGuard);
+    return status == OBELISK_RT_OK ? pop : status;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH(const std::length_error &) {
+    return OBELISK_RT_OUT_OF_RESOURCES;
+  }
+}
+
 bool obelisk_rt_coverage_tracks_static_state_unlocked(
     const obelisk_rt_context *context, uint32_t staticID) {
   if (!context || !context->coverage || !context->coverage->finalized)

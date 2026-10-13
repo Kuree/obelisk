@@ -30,9 +30,12 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   bool hasTypedFunctionalOperation = false;
   module.walk([&](Operation *op) {
     hasTypedFunctionalOperation |=
-        isa<sim::SimCovergroupCreateOp, sim::SimCovergroupFormalReadOp,
-            sim::SimCovergroupSampleOp, sim::SimCovergroupStartOp,
-            sim::SimCovergroupStopOp, sim::SimCovergroupSetIntegerOptionOp,
+        isa<sim::SimCovergroupCreateOp, sim::SimCovergroupPrepareOp,
+            sim::SimCovergroupCandidatesOp,
+            sim::SimCovergroupReleasePreparationOp,
+            sim::SimCovergroupFormalReadOp, sim::SimCovergroupSampleOp,
+            sim::SimCovergroupStartOp, sim::SimCovergroupStopOp,
+            sim::SimCovergroupSetIntegerOptionOp,
             sim::SimCovergroupGetIntegerOptionOp,
             sim::SimCovergroupSetStringOptionOp,
             sim::SimCovergroupOptionReferenceOp,
@@ -342,9 +345,10 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   sortExpressions(constructorExpressionsByType, true);
   sortExpressions(sampleExpressionsByType, false);
 
-  auto verifyExpressionBatch =
-      [&](Operation *operation, ArrayRef<int64_t> rawIDs, ValueRange values,
-          uint64_t type, Phase phase, StringRef label) -> LogicalResult {
+  auto verifyExpressionBatch = [&](Operation *operation,
+                                   ArrayRef<int64_t> rawIDs, ValueRange values,
+                                   uint64_t type, Phase phase, StringRef label,
+                                   bool primitive = false) -> LogicalResult {
     const auto &byType = phase == Phase::Constructor
                              ? constructorExpressionsByType
                              : sampleExpressionsByType;
@@ -356,6 +360,9 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
                   foundExpected->second);
     size_t supplied = 0;
     for (const coverage::FunctionalExpression *expression : expected) {
+      if (primitive &&
+          expression->role == coverage::FunctionalExpressionRole::SelectorWith)
+        continue;
       bool isDefault =
           expression->role == coverage::FunctionalExpressionRole::FormalDefault;
       bool present = supplied < rawIDs.size() && rawIDs[supplied] > 0 &&
@@ -456,6 +463,35 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
         declaration.emitError(
             "covergroup base disagrees with the embedded schema");
         invalid = true;
+      }
+    } else if (auto prepare =
+                   dyn_cast<sim::SimCovergroupPrepareOp>(operation)) {
+      auto declaration =
+          nominalSymbols.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+              prepare, prepare.getDeclarationAttr());
+      uint64_t type = declaration ? declaration.getSchemaType() : 0;
+      if (!types.contains(type) ||
+          failed(verifyExpressionBatch(
+              prepare, prepare.getExpressionIds(), prepare.getPayloads(), type,
+              Phase::Constructor, "primitive constructor", true)))
+        invalid = true;
+    } else if (auto candidates =
+                   dyn_cast<sim::SimCovergroupCandidatesOp>(operation)) {
+      auto selector = selectors.find(candidates.getSelector());
+      if (selector == selectors.end()) {
+        candidates.emitError("has a nonexistent cross selector ID");
+        invalid = true;
+      } else if (auto prepare =
+                     candidates.getToken()
+                         .getDefiningOp<sim::SimCovergroupPrepareOp>()) {
+        auto declaration =
+            nominalSymbols.lookupNearestSymbolFrom<sim::SimCovergroupDeclOp>(
+                prepare, prepare.getDeclarationAttr());
+        if (!declaration || items.lookup(selector->second->cross)->type !=
+                                declaration.getSchemaType()) {
+          candidates.emitError("has a wrong-owner cross selector ID");
+          invalid = true;
+        }
       }
     } else if (auto create = dyn_cast<sim::SimCovergroupCreateOp>(operation)) {
       uint64_t type = declarationType(create, create.getResult().getType());

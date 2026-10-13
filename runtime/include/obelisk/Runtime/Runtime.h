@@ -1358,6 +1358,9 @@ enum {
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_OPTION_REFERENCE = UINT32_C(0x0001047c),
   OBELISK_RT_INTRINSIC_V1_COVERGROUP_TYPE_OPTION_REFERENCE =
       UINT32_C(0x0001047d),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_PREPARE = UINT32_C(0x0001047e),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_CANDIDATES = UINT32_C(0x0001047f),
+  OBELISK_RT_INTRINSIC_V1_COVERGROUP_RELEASE_PREPARATION = UINT32_C(0x00010480),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -4897,6 +4900,19 @@ typedef struct obelisk_rt_functional_value_v1 {
   uint32_t argument_ref_kind;
 } obelisk_rt_functional_value_v1;
 
+// Private construction tokens do not create instances or consume instance IDs.
+// Candidate extraction fills an empty, non-null CrossQueueType, using its
+// registered element descriptor. Every token must be released in its context.
+obelisk_rt_status obelisk_rt_v1_covergroup_prepare(
+    obelisk_rt_context *context, uint64_t type_id,
+    const obelisk_rt_functional_value_v1 *expressions,
+    uint64_t expression_count, uint64_t *out_token);
+obelisk_rt_status obelisk_rt_v1_covergroup_candidates(
+    obelisk_rt_context *context, uint64_t token, uint64_t selector,
+    obelisk_rt_object_v1 *queue, uint32_t maximum_candidates);
+obelisk_rt_status
+obelisk_rt_v1_covergroup_release_preparation(obelisk_rt_context *context,
+                                             uint64_t token);
 obelisk_rt_status obelisk_rt_v1_covergroup_create(
     obelisk_rt_context *context, uint64_t type_id,
     const obelisk_rt_functional_value_v1 *formals, uint64_t formal_count,
