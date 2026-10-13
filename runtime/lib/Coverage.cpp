@@ -7137,6 +7137,9 @@ obelisk_rt_status resolveStaticFunctionalType(
         if (bval)
           b |= uint64_t{bval[offset]} << (byte * 8);
       }
+      // Simulation transports (aval ^ bval, bval); literal snapshots use
+      // IEEE A/B planes, including the distinction between X and Z.
+      a ^= b;
       if (limb + 1 == limbCount && descriptor.bitWidth % 64) {
         a &= lowBitsMask(descriptor.bitWidth % 64);
         b &= lowBitsMask(descriptor.bitWidth % 64);

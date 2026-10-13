@@ -2763,6 +2763,71 @@ TEST_F(CoverageRuntimeDesignTest,
   obelisk_rt_v1_context_destroy(local);
 }
 
+TEST_F(CoverageRuntimeDesignTest, SymbolicPredicateSnapshotsPreserveXAndZ) {
+  using namespace obelisk::coverage;
+  Database schema = makeSymbolicCrossWithSchema();
+  schema.crossPredicateNodes[1].flags = 0;
+  schema.crossPredicateNodes[2].kind = CrossPredicateKind::BitAnd;
+  schema.crossPredicateNodes[2].bitWidth = 2;
+  schema.crossPredicateNodes[2].flags = 0;
+  auto literal = schema.functionalExpressions.back();
+  literal.id = 101;
+  literal.ownerOrdinal = 3;
+  literal.resultOrdinal = 1;
+  schema.functionalExpressions.push_back(literal);
+  schema.crossPredicateNodes.push_back({203, 70, 0, 0, 101, 0,
+                                        CrossPredicateKind::Value, 2,
+                                        CoverageSignedness::Unsigned, 3, 0});
+  schema.crossPredicateNodes.push_back(
+      {204, 70, 202, 203, 0, 0, CrossPredicateKind::CaseEqual, 1,
+       CoverageSignedness::Unsigned, 4, CrossPredicateTwoState});
+  schema.crossSelectorNodes.back().predicateRoot = 204;
+  schema.schemaFingerprint = computeSchemaFingerprint(schema);
+  ASSERT_EQ(validate(schema), Status::Ok);
+  obelisk_rt_context *local = createContextForSchema(schema, false);
+  ASSERT_NE(local, nullptr);
+  ASSERT_EQ(finalizeCoverage(local, 0, 0, nullptr, nullptr), OBELISK_RT_OK);
+
+  uint8_t maskValue = 0, literalValue = 0, unknown = 2;
+  std::array<obelisk_rt_functional_value_v1, 2> values = {
+      obelisk_rt_functional_value_v1{100, 2, 1, &maskValue, &unknown, nullptr,
+                                     0, OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE,
+                                     0},
+      obelisk_rt_functional_value_v1{
+          101, 2, 1, &literalValue, &unknown, nullptr, 0,
+          OBELISK_RT_FUNCTIONAL_VALUE_FOUR_STATE, 0}};
+  for (uint8_t encoded : {uint8_t{0}, uint8_t{2}}) {
+    maskValue = encoded;
+    obelisk_rt_covergroup_v1 handle = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_create(
+                  local, 10, nullptr, 0, values.data(), values.size(), &handle),
+              OBELISK_RT_OK);
+    ASSERT_EQ(sampleFunctional(local, handle, 2, 0), OBELISK_RT_OK);
+    double percentage = 0;
+    int32_t covered = 0, total = 0;
+    ASSERT_EQ(obelisk_rt_v1_covergroup_instance_query(
+                  local, handle, 22, &percentage, &covered, &total),
+              OBELISK_RT_OK);
+    EXPECT_EQ(covered, 1);
+    EXPECT_EQ(total, 1);
+  }
+  Database saved = saveCoverage(local, "symbolic-four-state");
+  ASSERT_EQ(validate(saved), Status::Ok);
+  uint32_t x = 0, z = 0;
+  for (const auto &set : saved.resolvedFunctionalValueSets) {
+    if (set.role != ResolvedFunctionalValueSetRole::PredicateValue)
+      continue;
+    const auto &atom = saved.resolvedFunctionalValueAtoms[set.firstAtom];
+    const auto &limb = saved.resolvedFunctionalValueLimbs[atom.firstLimb];
+    EXPECT_EQ(limb.lowBval, 2u);
+    x += limb.lowAval == 2;
+    z += limb.lowAval == 0;
+  }
+  EXPECT_EQ(x, 3u);
+  EXPECT_EQ(z, 1u);
+  obelisk_rt_v1_context_destroy(local);
+}
+
 TEST_F(CoverageRuntimeDesignTest, CrossWithMatchesCountIsAppliedPerBinTuple) {
   using namespace obelisk::coverage;
   // The predicate is true for four value tuples globally, but only twice in
