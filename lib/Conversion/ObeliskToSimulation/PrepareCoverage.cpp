@@ -2549,8 +2549,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           signalPassFailure();
           return;
         }
-        // An embedded covergroup's anonymous type is named by its property
-        // (IEEE 1800-2023 19.4), the last component of its hierarchy.
+        // An embedded covergroup declares an anonymous type and an instance
+        // variable (IEEE 1800-2023 19.4); reports name the type after that
+        // variable, the last component of its hierarchy.
         schema.functionalTypes.push_back(
             {typeID, scope,
              reportName(declaration.getDebugName().value_or(""), typeHierarchy),
