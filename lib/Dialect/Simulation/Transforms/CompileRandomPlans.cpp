@@ -47,7 +47,7 @@ template <typename Op> LogicalResult compile(Op op, PlanCache &cache) {
   }
   auto plan = solver::compileRandomSamplerPlan(data, bytes.size(), captures);
   if (!plan)
-    return op.emitOpError("cannot compile an exact parameterized random plan");
+    return op->emitError("could not compile an exact random sampling plan");
   std::vector<uint8_t> program(data, data + bytes.size());
   flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN;
   for (unsigned byte = 0; byte != 4; ++byte)
@@ -72,7 +72,7 @@ public:
     // once. Repeated cyclic probes must not multiply Z3 construction work by
     // the number of operations that refer to the same lowered constraint.
     PlanCache cache;
-    WalkResult result = getOperation().walk([&](Operation *op) {
+    WalkResult result = getOperation()->walk([&](Operation *op) {
       LogicalResult compiled = success();
       if (auto narrow = dyn_cast<sim::SimRandomSolveOp>(op))
         compiled = compile(narrow, cache);

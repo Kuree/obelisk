@@ -8862,26 +8862,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     proposalCaptureDomains.clear();
   }
 
-#ifdef OBELISK_ENABLE_Z3
-  std::vector<uint32_t> samplerCaptureWidths;
-  for (Value capture : programCaptures)
-    samplerCaptureWidths.push_back(
-        cast<IntegerType>(capture.getType()).getWidth());
-  auto samplerPlan = solver::compileRandomSamplerPlan(
-      program.data(), program.size(), samplerCaptureWidths);
-  if (!samplerPlan) {
-    emitError(location) << "could not compile an exact random sampling plan";
-    return failure();
-  }
-  program.append(samplerPlan->begin(), samplerPlan->end());
-  programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN;
-  for (unsigned byte = 0; byte != 4; ++byte)
-    program[20 + byte] = static_cast<uint8_t>(programFlags >> (byte * 8));
-#endif
-
-  // All cyclic stages specialize the same compiled relation. Reuse its
-  // attribute rather than hashing and copying the serialized circuit for each
-  // candidate or field.
+  // obelisk-sim-compile-random-plans appends the compiled sampling plan to
+  // this residual program. All cyclic stages specialize the same relation;
+  // reuse its attribute rather than copying the program for each field.
   StringAttr samplerProgram;
   auto getSamplerProgram = [&]() {
     if (!samplerProgram)

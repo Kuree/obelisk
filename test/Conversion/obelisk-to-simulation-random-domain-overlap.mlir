@@ -1,5 +1,5 @@
 // RUN: %split-file %s %t
-// RUN: obelisk-opt %t/good.mlir --split-input-file --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' | FileCheck %s --check-prefix=GOOD
+// RUN: obelisk-opt %t/good.mlir --split-input-file --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit,obelisk-sim-compile-random-plans)))' | FileCheck %s --check-prefix=GOOD
 // RUN: obelisk-opt %t/bad.mlir --split-input-file --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' -verify-diagnostics -o /dev/null
 // RUN: %obelisk --std=1800-2023 -emit-obelisk %t/many.sv | obelisk-opt --lower-obelisk-to-sim=opt-level=0 | FileCheck %s --check-prefix=MANY
 // REQUIRES: compiled-sampler

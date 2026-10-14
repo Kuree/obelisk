@@ -395,6 +395,10 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
   {
     OpPassManager &functionManager = designManager.nest<sim::SimFuncOp>();
     functionManager.addPass(createObeliskSimLowerUnitPass());
+#ifdef OBELISK_ENABLE_Z3
+    // Exact random solves sample a plan compiled from their residual program.
+    functionManager.addPass(createObeliskSimCompileRandomPlansPass());
+#endif
     functionManager.addPass(createCanonicalizerPass());
     functionManager.addPass(createCSEPass());
     // Promote direct local cells. Keep aggregate field accesses addressable;
