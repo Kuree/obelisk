@@ -2445,19 +2445,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       SmallVector<Attribute> definitions;
       definitions.reserve(ids.size());
-      for (unsigned id : ids) {
-        NamedAttrList definition;
-        definition.set("path", builder.getStringAttr(leaves[id].path));
-        definition.set("indices",
-                       builder.getDenseI64ArrayAttr(leaves[id].indices));
-        definition.set("type", TypeAttr::get(leaves[id].candidate));
-        definition.set("vpi_type", leaves[id].candidateVPIType);
-        if (leaves[id].candidateNettype)
-          definition.set("nettype", leaves[id].candidateNettype);
-        if (leaves[id].candidateTypeIdentity)
-          definition.set("type_identity", leaves[id].candidateTypeIdentity);
-        definitions.push_back(builder.getDictionaryAttr(definition));
-      }
+      for (unsigned id : ids)
+        definitions.push_back(sim::InterconnectLeafAttr::get(
+            context, builder.getStringAttr(leaves[id].path),
+            builder.getDenseI64ArrayAttr(leaves[id].indices),
+            leaves[id].candidate, leaves[id].candidateVPIType,
+            leaves[id].candidateNettype, leaves[id].candidateTypeIdentity));
       sim::set<sim::metadata::InterconnectLeaves>(
           net, builder.getArrayAttr(definitions));
     }

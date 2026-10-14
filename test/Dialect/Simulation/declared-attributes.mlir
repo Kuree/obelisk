@@ -136,4 +136,13 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
       initValue = "1'b0",
       rows = [#simulation.udp_row<inputs = "1", state = "?", output = "1",
                                   edge = false>]>}
+
+  // CHECK-LABEL: func.func private @interconnect
+  // CHECK-SAME: simulation.interconnect_leaves = [#simulation.interconnect_leaf<path = "top.bus[0]", indices = [0], type = i32, vpiType = <kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = []>, nettype = @wire_t>]
+  func.func private @interconnect() attributes {
+    simulation.interconnect_leaves = [#simulation.interconnect_leaf<
+      path = "top.bus[0]", indices = [0], type = i32,
+      vpiType = #simulation.vpi_type<kind = int, isSigned = true,
+        isFourState = false, range = [31, 0], children = [], childNames = []>,
+      nettype = @wire_t>]}
 }

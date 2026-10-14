@@ -791,6 +791,9 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == InterconnectLeaves::getNameStr() &&
+      !allOf(llvm::IsaPred<InterconnectLeafAttr>))
+    return error() << "must contain #simulation.interconnect_leaf entries";
   if (name == TimingPathRules::getNameStr() &&
       !allOf(llvm::IsaPred<TimingPathRuleAttr>))
     return error() << "must contain #simulation.timing_path_rule entries";

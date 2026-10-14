@@ -2742,29 +2742,14 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           return anchor;
         };
         sim::SimVPIObjectAnchorOp root = makeArrayAnchor();
-        for (Attribute attribute : leafDefinitions) {
-          auto definition = dyn_cast<DictionaryAttr>(attribute);
-          auto leafPath =
-              definition ? definition.getAs<StringAttr>("path") : StringAttr{};
-          auto semanticType =
-              definition ? definition.getAs<TypeAttr>("type") : TypeAttr{};
-          auto semanticVPIType =
-              definition
-                  ? definition.getAs<sim::VPITypeSemanticsAttr>("vpi_type")
-                  : sim::VPITypeSemanticsAttr{};
-          auto sourceNettypeReference =
-              definition ? definition.getAs<SymbolRefAttr>("nettype")
-                         : SymbolRefAttr{};
-          auto sourceTypeIdentity =
-              definition ? definition.getAs<IntegerAttr>("type_identity")
-                         : IntegerAttr{};
-          auto indicesAttr =
-              definition ? definition.getAs<DenseI64ArrayAttr>("indices")
-                         : DenseI64ArrayAttr{};
-          ArrayRef<int64_t> indices =
-              indicesAttr ? indicesAttr.asArrayRef() : ArrayRef<int64_t>{};
-          if (!leafPath || !semanticType || !semanticVPIType ||
-              indices.size() * 2 != bounds.size()) {
+        for (auto definition :
+             leafDefinitions.getAsRange<sim::InterconnectLeafAttr>()) {
+          StringAttr leafPath = definition.getPath();
+          sim::VPITypeSemanticsAttr semanticVPIType = definition.getVpiType();
+          SymbolRefAttr sourceNettypeReference = definition.getNettype();
+          IntegerAttr sourceTypeIdentity = definition.getTypeIdentity();
+          ArrayRef<int64_t> indices = definition.getIndices().asArrayRef();
+          if (indices.size() * 2 != bounds.size()) {
             emitError(getSemanticLocation(op))
                 << "interconnect has malformed typed-leaf metadata";
             invalid = true;
@@ -2778,7 +2763,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           }
           semanticVPIType = *mappedVPIType;
           FailureOr<Type> type = normalizeSemanticType(
-              semanticType.getValue(), getSemanticLocation(op), op);
+              definition.getType(), getSemanticLocation(op), op);
           if (failed(type)) {
             invalid = true;
             continue;
@@ -2813,7 +2798,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               sim::StrengthAttr{}, UnitAttr{}, retainedVPIType, sourceNettype);
           cov::mark<cov::SourceAuthored>(declaration);
           if (retainCoverageSourceTypes)
-            cov::set<cov::SourceType>(declaration, semanticType);
+            cov::set<cov::SourceType>(declaration,
+                                      TypeAttr::get(definition.getType()));
           declaration->setAttr(
               "vpi_properties",
               netProperties(cast<semantic::SVNetSymbolOp>(op)));

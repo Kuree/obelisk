@@ -350,6 +350,7 @@ def ObeliskSimulationDialect : Dialect {
     // structural aggregates as independent typed descriptors and freezes the
     // selected descriptor path directly on each semantic leaf expression.
     "::mlir::StringAttr":$interconnect_leaf_path,
+    // `#simulation.interconnect_leaf` entries.
     "::mlir::ArrayAttr":$interconnect_leaves,
     "::mlir::SymbolRefAttr":$interconnect_nettype,
     "::obelisk::sim::VPITypeSemanticsAttr":$interconnect_vpi_type,

@@ -748,6 +748,23 @@ def SimUdpAttr : SimAttr<"Udp", "udp"> {
   let genVerifyDecl = 1;
 }
 
+def SimInterconnectLeafAttr
+    : SimAttr<"InterconnectLeaf", "interconnect_leaf"> {
+  let summary = "one typed leaf of a typeless interconnect array";
+  let description = [{
+    The leaf at element `indices` of a fixed unpacked `interconnect` array
+    acquires the data `type`, VPI type `vpiType` and `nettype` of the nets it
+    connects (IEEE 1800-2023 6.6.8); its descriptor has hierarchical `path`.
+    `typeIdentity` is the frontend identity of an anonymous enum type.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$path,
+      "::mlir::DenseI64ArrayAttr":$indices, "::mlir::Type":$type,
+      "::obelisk::sim::VPITypeSemanticsAttr":$vpiType,
+      OptionalParameter<"::mlir::SymbolRefAttr">:$nettype,
+      OptionalParameter<"::mlir::IntegerAttr">:$typeIdentity);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

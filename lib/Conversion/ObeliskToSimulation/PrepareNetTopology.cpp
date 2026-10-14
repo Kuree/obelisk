@@ -181,12 +181,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       }
       return !matches.empty();
     }
-    for (Attribute attribute : definitions) {
-      auto definition = dyn_cast<DictionaryAttr>(attribute);
-      auto path =
-          definition ? definition.getAs<StringAttr>("path") : StringAttr{};
-      auto descriptor =
-          path ? descriptors.find(path.getValue()) : descriptors.end();
+    for (auto definition :
+         definitions.getAsRange<sim::InterconnectLeafAttr>()) {
+      StringAttr path = definition.getPath();
+      auto descriptor = descriptors.find(path.getValue());
       if (descriptor == descriptors.end() ||
           descriptor->second.kind != DescriptorInfo::Kind::Net)
         return false;
