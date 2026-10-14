@@ -53,27 +53,27 @@ endmodule
 
 // QUERY: initial 50 1/2
 // QUERY: raised 0 0/2
-// QUERY: point 100 1/2
+// QUERY: point 50 1/2
 // QUERY: cross-before 0 0/4
-// QUERY: cross-after 100 1/4
+// QUERY: cross-after 25 1/4
 // QUERY: second-point 50 1/2
 // QUERY: second-point-type 50 1/2
-// QUERY: group 100.0 3/8
+// QUERY: group 50.0 3/8
 
-// REPORT: functional: 100.00% (3/8)
-// REPORT: instance mutated: 100.00% (3/8)
+// REPORT: functional: 50.00% (3/8)
+// REPORT: instance mutated: 50.00% (3/8)
 // REPORT: comment: "group"
-// Item order follows the item IDs, so each item is matched independently.
-// REPORT-DAG: coverpoint cp0: 1/2 (100.00%)
+// REPORT-DAG: coverpoint cp0: 1/2 (50.00%)
 // REPORT-DAG: comment: "point"
 // REPORT-DAG: bin zero: 3 [covered] {at_least 2}
 // REPORT-DAG: coverpoint cp1: 1/2 (50.00%)
 // REPORT-DAG: bin zero: 3 [covered] {at_least 3}
-// REPORT-DAG: cross cx: 1/4 (100.00%)
+// REPORT-DAG: cross cx: 1/4 (25.00%)
 // REPORT-DAG: comment: "cross"
 // REPORT-DAG: automatic: 1/4
 
 // IEEE 1800-2023 19.7.1: procedural option writes are recorded per instance.
+// Goals are recorded as targets and do not rescale coverage (19.11).
 // The group keeps the written name, comment, goal and weight; the point keeps
 // its comment, goal and weight with at_least raised on every bin; the cross
 // keeps its comment, goal, weight and the at_least applied to its automatic

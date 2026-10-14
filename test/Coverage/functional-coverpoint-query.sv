@@ -96,11 +96,13 @@ module top;
   end
 endmodule
 
+// IEEE 1800-2023 19.11: option.goal is a target and does not rescale
+// coverage, so `high` (goal 50, one of two bins) reports 50%.
 // CHECK: low 50.000000 1 2
-// CHECK-NEXT: high 100.000000 1 2
+// CHECK-NEXT: high 50.000000 1 2
 // CHECK-NEXT: weightless 0.000000 0 2
-// CHECK-NEXT: instance type 87.500000 7 8
-// CHECK-NEXT: static type 87.500000 7 8
+// CHECK-NEXT: instance type 50.000000 1 2
+// CHECK-NEXT: static type 50.000000 1 2
 // CHECK-NEXT: merged cumulative 66.666667 2 3
 // CHECK-NEXT: merged local 50.000000 1 2
 // CHECK-NEXT: merged type 66.666667 2 3

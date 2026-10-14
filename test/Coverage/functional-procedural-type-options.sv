@@ -6,7 +6,8 @@
 
 // IEEE 1800-2023 19.7.1 permits these type options to be changed at any
 // time. The pre-construction writes must affect configurations resolved by
-// new(), and the later goal / merge writes must affect live queries at once.
+// new(), and the later merge write must affect live queries at once. A type
+// goal is recorded as a target and does not rescale coverage (19.11).
 module top;
   int value;
   covergroup cg;
@@ -57,7 +58,7 @@ endmodule
 // QUERY: stored-initial 7 5 group type|point type
 // QUERY: group-average 50 2/4
 // QUERY: point-before 50 2/4
-// QUERY: point-after 100 1/1
+// QUERY: point-after 50 2/4
 // QUERY: stored-final 50 1
 // QUERY: group-merged 100 2/2
 

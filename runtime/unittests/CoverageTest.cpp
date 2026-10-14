@@ -5354,7 +5354,9 @@ TEST_F(CoverageRuntimeDesignTest,
   ASSERT_EQ(
       obelisk_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
       OBELISK_RT_OK);
-  query(0, 175.0 / 3.0);
+  // Goals are targets, not divisors (IEEE 1800-2023 19.11): the named
+  // instance's item goal 50 leaves its 1/2 coverpoint at 50%.
+  query(0, 50.0);
   ASSERT_EQ(writeFileAtomically(pathText, second), Status::Ok);
   ASSERT_EQ(
       obelisk_rt_v1_coverage_load(consumer, pathText.data(), pathText.size()),
@@ -5369,10 +5371,10 @@ TEST_F(CoverageRuntimeDesignTest,
   ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
                 consumer, 10, 0, OBELISK_RT_COVERGROUP_OPTION_GOAL, 50),
             OBELISK_RT_OK);
-  // With merge_instances off, type coverage depends on instance profiles,
-  // including their goals, rather than applying a second type goal (19.11.3).
+  // With merge_instances off, type coverage is the weighted average of the
+  // instances (19.11.3); a type goal does not rescale it.
   query(0, 81.25);
-  query(20, 62.5); // Cached instance profiles retain their own item goals.
+  query(20, 62.5);
   ASSERT_EQ(obelisk_rt_v1_covergroup_set_type_integer_option(
                 consumer, 10, 0, OBELISK_RT_COVERGROUP_OPTION_MERGE_INSTANCES, 1),
             OBELISK_RT_OK);

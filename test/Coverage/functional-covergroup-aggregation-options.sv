@@ -35,18 +35,18 @@ module top;
   end
 endmodule
 
-// The point remains at its own default goal of 100 (25%). The strong group
-// normalizes that result to its group goal of 50 (50%). Type coverage then
-// weights the three instances as (3*50 + 1*0 + 0*0) / 4.
-// QUERY: high 50.000000
+// Goals are targets and do not rescale coverage (IEEE 1800-2023 19.11), so
+// the strong group with goal 50 still reports 25%. Type coverage weights the
+// three instances as (3*25 + 1*0 + 0*0) / 4.
+// QUERY: high 25.000000
 // QUERY-NEXT: low 0.000000
 // QUERY-NEXT: zero 0.000000
-// QUERY-NEXT: type 37.500000
-// QUERY-NEXT: global 37.500000
-// REPORT: functional: 37.50% (1/12)
-// REPORT-DAG: type cg ({{[0-9]+}}): 37.50%
+// QUERY-NEXT: type 18.750000
+// QUERY-NEXT: global 18.750000
+// REPORT: functional: 18.75% (1/12)
+// REPORT-DAG: type cg ({{[0-9]+}}): 18.75%
 // REPORT-DAG: coverpoint cp: 1/4 (25.00%)
-// REPORT-DAG: instance $auto$1: 50.00% (1/4)
+// REPORT-DAG: instance $auto$1: 25.00% (1/4)
 // JSON: "goal":50,"weight":3
 // JSON: "goal":100,"weight":1
 // JSON: "goal":100,"weight":0

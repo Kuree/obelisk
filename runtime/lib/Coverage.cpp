@@ -11933,11 +11933,6 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
   const uint64_t item = type.items[itemIndex];
   if (instanceProfileIndex == SIZE_MAX)
     instanceProfileIndex = itemIndex;
-  const uint32_t goal =
-      typeProfile ? type.typeItemGoals[itemIndex]
-                  : instanceProfileIndex < instance.itemGoals.size()
-                        ? instance.itemGoals[instanceProfileIndex]
-                        : type.itemGoals[itemIndex];
   const uint32_t weight = typeProfile ? type.typeItemWeights[itemIndex]
                                       : instanceProfileIndex <
                                                 instance.itemWeights.size()
@@ -11988,9 +11983,7 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
     if (denominator != 0.0L) {
       const long double raw =
           100.0L * static_cast<long double>(result.covered) / denominator;
-      result.percentage =
-          goal ? std::min(100.0, static_cast<double>(raw) * 100.0 / goal)
-               : 100.0;
+      result.percentage = static_cast<double>(raw);
       result.contributes = true;
     } else {
       result.percentage = weight ? 0.0 : 100.0;
@@ -12018,7 +12011,7 @@ queryInstanceItem(const FunctionalCoverageInstanceState &instance,
   if (result.total) {
     double raw = 100.0 * static_cast<double>(result.covered) /
                  static_cast<double>(result.total);
-    result.percentage = goal ? std::min(100.0, raw * 100.0 / goal) : 100.0;
+    result.percentage = raw;
     result.contributes = true;
   } else {
     result.percentage = weight ? 0.0 : 100.0;
@@ -12056,11 +12049,7 @@ CoverageResult queryInstance(
     }
   }
   if (totalWeight) {
-    result.percentage =
-        instance.instanceGoal
-            ? std::min(100.0, weighted / static_cast<double>(totalWeight) *
-                                  100.0 / instance.instanceGoal)
-            : 100.0;
+    result.percentage = weighted / static_cast<double>(totalWeight);
     result.contributes = true;
   } else {
     result.percentage = instance.instanceWeight ? 0.0 : 100.0;
@@ -12598,18 +12587,12 @@ obelisk_rt_status queryMergedType(
         numerator += bin.count >= item.atLeast ? 1.0L : 0.0L;
       }
     double percentage = static_cast<double>(100.0L * numerator / denominator);
-    percentage =
-        item.goal ? std::min(100.0, percentage * 100.0 / item.goal) : 100.0;
     weighted += percentage * static_cast<double>(item.weight);
     totalWeight = saturatingAdd(totalWeight, item.weight);
   }
   const FunctionalCoverageTypeState &profile = *configurations.front();
   if (totalWeight) {
-    result.percentage =
-        profile.typeGoal
-            ? std::min(100.0, weighted / static_cast<double>(totalWeight) *
-                                  100.0 / profile.typeGoal)
-            : 100.0;
+    result.percentage = weighted / static_cast<double>(totalWeight);
     result.contributes = true;
   } else {
     result.percentage = profile.typeWeight ? 0.0 : 100.0;
@@ -13080,9 +13063,7 @@ obelisk_rt_status queryAllItemConfigurations(CoverageState &coverage,
       result.total = saturatingAdd(result.total, current.total);
     }
     if (totalWeight) {
-      double raw = weightedPercentage / static_cast<double>(totalWeight);
-      result.percentage =
-          typeGoal ? std::min(100.0, raw * 100.0 / typeGoal) : 100.0;
+      result.percentage = weightedPercentage / static_cast<double>(totalWeight);
       result.contributes = true;
     } else {
       result.percentage = typeWeight ? 0.0 : 100.0;

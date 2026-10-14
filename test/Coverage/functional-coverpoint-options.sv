@@ -47,12 +47,13 @@ module top;
   end
 endmodule
 
-// The tuned point has two of four bins with at least two hits, reaches its
-// 50% goal, and contributes with weight three. Baseline is fully covered and
-// no_hits is uncovered, so the weighted group result is (3*100+100+0)/5.
-// QUERY: coverage 80.000000
-// REPORT: functional: 80.00% (4/8)
-// REPORT-DAG: coverpoint tuned: 2/4 (100.00%)
+// The tuned point has two of four bins with at least two hits and contributes
+// its 50% with weight three; its goal is a target and does not rescale it
+// (IEEE 1800-2023 19.11). Baseline is fully covered and no_hits is uncovered,
+// so the weighted group result is (3*50+100+0)/5.
+// QUERY: coverage 50.000000
+// REPORT: functional: 50.00% (4/8)
+// REPORT-DAG: coverpoint tuned: 2/4 (50.00%)
 // REPORT-DAG: coverpoint baseline: 2/2 (100.00%)
 // REPORT-DAG: coverpoint no_hits: 0/2 (0.00%)
 // REPORT-DAG: bin auto[0:3]: 2 [covered]

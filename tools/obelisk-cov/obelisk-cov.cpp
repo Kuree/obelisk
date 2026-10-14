@@ -772,12 +772,6 @@ std::string configurationStringOption(
   return value ? value->stringValue : std::string{};
 }
 
-double applyGoal(double percentage, uint64_t goal) {
-  if (!goal)
-    return 100.0;
-  return std::min(100.0, percentage * 100.0 / static_cast<double>(goal));
-}
-
 bool functionalBinContributes(const ResolvedFunctionalBin &bin,
                               const IndexSet<uint64_t> &excludedTemplates) {
   constexpr uint32_t nonContributing =
@@ -1429,8 +1423,8 @@ ReportData analyze(const Database &database, const std::string &test) {
         instance.totalWide = addUnsigned(instance.totalWide, item.totalWide);
       }
       if (!item.totalWide.isZero()) {
-        double raw = 100.0 * unsignedRatio(item.coveredWide, item.totalWide);
-        item.percentage = applyGoal(raw, item.goal);
+        item.percentage =
+            100.0 * unsignedRatio(item.coveredWide, item.totalWide);
         item.contributes = item.aggregating && item.weight != 0;
         if (item.contributes) {
           weighted += item.percentage * item.weight;
@@ -1442,8 +1436,7 @@ ReportData analyze(const Database &database, const std::string &test) {
       instance.items.push_back(std::move(item));
     }
     if (totalWeight) {
-      instance.percentage =
-          applyGoal(weighted / static_cast<double>(totalWeight), instance.goal);
+      instance.percentage = weighted / static_cast<double>(totalWeight);
       instance.contributes = true;
     } else
       instance.percentage = instance.weight ? 0.0 : 100.0;
@@ -1552,15 +1545,14 @@ ReportData analyze(const Database &database, const std::string &test) {
                               [](const auto &bin) { return !bin.excluded; })));
           if (total.isZero())
             continue;
-          const double percentage =
-              applyGoal(100.0 * unsignedRatio(covered, total), item.goal);
+          const double percentage = 100.0 * unsignedRatio(covered, total);
           itemWeighted += percentage * static_cast<double>(item.weight);
           itemWeight = saturatingAdd(itemWeight, item.weight);
         }
         if (!itemWeight || !instance.weight)
           continue;
-        const double instancePercentage = applyGoal(
-            itemWeighted / static_cast<double>(itemWeight), instance.goal);
+        const double instancePercentage =
+            itemWeighted / static_cast<double>(itemWeight);
         weighted += instancePercentage * static_cast<double>(instance.weight);
         totalWeight = saturatingAdd(totalWeight, instance.weight);
       }
@@ -1658,15 +1650,13 @@ ReportData analyze(const Database &database, const std::string &test) {
                          std::to_string(key.first);
           return report;
         }
-        double percentage =
-            applyGoal(100.0 * unsignedRatio(covered, total), item.goal);
+        double percentage = 100.0 * unsignedRatio(covered, total);
         weighted += percentage * static_cast<double>(item.weight);
         totalWeight = saturatingAdd(totalWeight, item.weight);
       }
     }
     if (totalWeight) {
-      type.percentage =
-          applyGoal(weighted / static_cast<double>(totalWeight), type.goal);
+      type.percentage = weighted / static_cast<double>(totalWeight);
       type.contributes = true;
       if (type.weight) {
         global += type.percentage * static_cast<double>(type.weight);
