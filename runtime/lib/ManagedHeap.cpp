@@ -4144,8 +4144,9 @@ obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
   if (auto *context = obelisk_rt_managed_object_context(object)) {
     OBELISK_RT_TRY {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      auto cache = context->managedClassValidation;
-      if (cache)
+      // The lock keeps the cache alive; copying its owner would add two
+      // atomic updates to every check.
+      if (const auto *cache = context->managedClassValidation.get())
         if (const auto *inventory = cache->methods.lookup(descriptor)) {
           if (target->flags & OBELISK_RT_CLASS_INTERFACE)
             return inventory->interfaces.find(target->class_id) != nullptr;
@@ -4283,8 +4284,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
   const obelisk_rt_method_descriptor_v1 *method = nullptr;
   if (auto *context = obelisk_rt_managed_object_context(receiver)) {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
-    auto cache = context->managedClassValidation;
-    if (cache)
+    if (const auto *cache = context->managedClassValidation.get())
       if (const auto *inventory = cache->methods.lookup(descriptor)) {
         const auto *entry = slot == UINT32_MAX
                                 ? inventory->signatures.find(signatureID)
@@ -4334,7 +4334,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
     const obelisk_rt_interface_descriptor_v1 *interface = nullptr;
     if (auto *context = obelisk_rt_managed_object_context(receiver)) {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);
-      if (auto cache = context->managedClassValidation)
+      if (const auto *cache = context->managedClassValidation.get())
         if (const auto *inventory = cache->methods.lookup(descriptor)) {
           if (const auto *entry = inventory->interfaces.find(interfaceID))
             interface = *entry;
