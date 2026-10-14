@@ -69,9 +69,9 @@ public:
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    auto attr = module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image");
+    auto attr = module->getAttrOfType<DenseI8ArrayAttr>("bytecode.image");
     if (!attr) {
-      module.emitError("missing obelisk.bytecode.image attribute");
+      module.emitError("missing bytecode.image attribute");
       return signalPassFailure();
     }
     ArrayRef<int8_t> signedImage = attr.asArrayRef();

@@ -16,7 +16,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     simulation.storage.decl 0 in 0 : i8 design
     simulation.storage.decl 1 in 0 : i8 design
     simulation.storage.decl 2 in 0 : i8 design
-    simulation.storage.decl 3 in 0 : i8 static {obelisk.coverage.toggle_observable}
+    simulation.storage.decl 3 in 0 : i8 static {coverage.toggle_observable}
 
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 0 : i32, code_unit_id = 1 : i64} {

@@ -6,7 +6,7 @@
 // begin, its end, or both.  Preparation freezes that identity onto the event
 // expressions and target definitions before code units are lowered.
 
-module attributes {obelisk.coverage.metrics = ["functional"]} {
+module attributes {coverage.metrics = ["functional"]} {
   obelisk.sv.symbol.definition @definition attributes {
       definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
       node_id = 0 : i64} {

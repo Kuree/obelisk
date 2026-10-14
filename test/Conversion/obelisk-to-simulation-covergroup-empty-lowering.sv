@@ -14,7 +14,7 @@
 // SCHEMA-NOT: functional_item
 // SCHEMA-NOT: functional_bin
 
-// NATIVE-LABEL: llvm.func @unit_{{[0-9]+}}({{.*}}obelisk.entry_kind = 1 : i32
+// NATIVE-LABEL: llvm.func @unit_{{[0-9]+}}({{.*}}native.entry_kind = 1 : i32
 // NATIVE: %[[NULL:.*]] = llvm.mlir.zero : !llvm.ptr
 // NATIVE: %[[TYPE:.*]] = llvm.mlir.constant({{[1-9][0-9]*}} : i64)
 // NATIVE: %[[ZERO:.*]] = llvm.mlir.constant(0 : i64)

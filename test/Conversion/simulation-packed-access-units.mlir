@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -S | FileCheck %s --check-prefix=OPT
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{obelisk.native.optimization_level = 3 : i32}"' --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=COMPACT
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.optimization_level = 3 : i32}"' --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=COMPACT
 
 // Clang's packed bit-field access units: these fields share bytes all the
 // way across a 95-bit record, so each uses the same i96 unit. The untouched

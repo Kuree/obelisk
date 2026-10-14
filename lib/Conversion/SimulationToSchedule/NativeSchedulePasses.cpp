@@ -130,7 +130,7 @@ LogicalResult NativePipelineAnalysis::planActors() {
   // AOT analysis also records dynamic/duplicate actors, so the same proof is
   // safe for the generic scheduler.
   constexpr StringLiteral runtimePublicationCertificate =
-      "obelisk.runtime_publication_certified";
+      "native.runtime_publication_certified";
   module.walk([&](sim::SimFuncOp function) {
     function->removeAttr(runtimePublicationCertificate);
   });
@@ -148,9 +148,9 @@ LogicalResult NativePipelineAnalysis::planActors() {
         aotEligibility.getRuntimeObservedWriterActors().contains(function))
       function->setAttr(runtimePublicationCertificate, UnitAttr::get(context));
   }
-  if (module->hasAttr("obelisk.bytecode.image")) {
+  if (module->hasAttr("bytecode.image")) {
     auto missingBytecode = [](Operation *function) {
-      return !function->hasAttr("obelisk.bytecode.function");
+      return !function->hasAttr("bytecode.function");
     };
     for (const auto &[function, blocks] : aotEligibility.getBytecodeFragments())
       if (!blocks.empty() &&
@@ -568,7 +568,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       hasInactiveDelay |= !constant || constant.getValue() == 0;
     });
     auto execution =
-        module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+        module->getAttrOfType<IntegerAttr>("execution.flags");
     uint64_t flags = execution ? execution.getUInt() : 0;
     // IEEE 1800-2023 4.4, 4.6, 9.4.2: a runtime clock consumer prevents
     // exclusive calendar ownership, not execution of an independent closure.

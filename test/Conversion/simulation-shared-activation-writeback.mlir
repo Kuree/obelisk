@@ -369,7 +369,7 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 always_comb hierarchy "toggle_observed"
     simulation.storage.decl 0 in 0 : i8 design
-    simulation.storage.decl 1 in 0 : i8 design {obelisk.coverage.toggle_observable}
+    simulation.storage.decl 1 in 0 : i8 design {coverage.toggle_observable}
     simulation.func @root(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {entry_kind = 0 : i32} {
       %out = simulation.context.storage %ctx[1] : !simulation.ref<i8>
       %observed = simulation.ref.load %out : !simulation.ref<i8> -> i8

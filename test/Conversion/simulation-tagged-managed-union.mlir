@@ -97,9 +97,9 @@ module attributes {
 // The bytecode encoder accepts the same managed class field and materializes
 // aggregate root shadows around the safepoint. Exact instruction semantics are
 // validated by the serialized-image verifier during this pass.
-// BYTECODE: obelisk.bytecode.image = array<i8:
+// BYTECODE: bytecode.image = array<i8:
 // BYTECODE: simulation.class.field @Holder_value
-// BYTECODE: obelisk.bytecode.scratch_size = 312 : i64
+// BYTECODE: bytecode.scratch_size = 312 : i64
 
 // Managed insertion of arm 0 remains at offset zero. Arm 1 construction and
 // extraction are ordinary numeric INSERT/EXTRACT records at bit offset 64.

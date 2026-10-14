@@ -1375,18 +1375,18 @@ static int executeCompilation(
 
   if (pulseRejectPercent || pulseErrorPercent) {
     (*module)->setAttr(
-        "obelisk.pulse_reject_percent",
+        "pulse.reject_percent",
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseReject));
     (*module)->setAttr(
-        "obelisk.pulse_error_percent",
+        "pulse.error_percent",
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseError));
   }
   if (!globalPulseStyle.empty())
-    (*module)->setAttr("obelisk.pulse_on_detect",
+    (*module)->setAttr("pulse.on_detect",
                        BoolAttr::get(&context, globalPulseStyle == "ondetect"));
   if (!globalCancelledPulses.empty())
     (*module)->setAttr(
-        "obelisk.pulse_show_cancelled",
+        "pulse.show_cancelled",
         BoolAttr::get(&context, globalCancelledPulses == "show"));
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     SmallVector<Attribute> metrics;
@@ -1399,17 +1399,17 @@ static int executeCompilation(
       for (StringRef metric : selected)
         metrics.push_back(StringAttr::get(&context, metric));
     }
-    (*module)->setAttr("obelisk.coverage.metrics",
+    (*module)->setAttr("coverage.metrics",
                        ArrayAttr::get(&context, metrics));
   }
   if (!coverageConfigContents.empty())
-    (*module)->setAttr("obelisk.coverage.config",
+    (*module)->setAttr("coverage.config",
                        StringAttr::get(&context, coverageConfigContents));
   SmallVector<Attribute> prefixMaps;
   for (StringRef mapping : args.getAllArgValues(OPT_coverage_prefix_map_EQ))
     prefixMaps.push_back(StringAttr::get(&context, mapping));
   if (!prefixMaps.empty())
-    (*module)->setAttr("obelisk.coverage.prefix_maps",
+    (*module)->setAttr("coverage.prefix_maps",
                        ArrayAttr::get(&context, prefixMaps));
 
   if (native) {
@@ -1446,7 +1446,7 @@ static int executeCompilation(
       // marker. Body fusion is the one Tier-1 path that does not depend on
       // whole-design admission, so its planning decisions must be reportable
       // under the existing diagnostic flag rather than only its pass timing.
-      (*module)->setAttr("obelisk.debug.native_timing", UnitAttr::get(&context));
+      (*module)->setAttr("debug.native_timing", UnitAttr::get(&context));
     }
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)

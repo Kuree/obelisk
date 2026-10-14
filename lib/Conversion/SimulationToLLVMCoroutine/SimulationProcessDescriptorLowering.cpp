@@ -140,7 +140,7 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
   bool hasExecution = embeddedSymbols.lookup(executionName) != nullptr;
   bool hasDesignBytecode = embeddedSymbols.lookup(designBytecodeName) != nullptr;
   auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
       executionFlags && (executionFlags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;

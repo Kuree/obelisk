@@ -365,9 +365,9 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
   copyNativePartition(function, helper);
   // Retain the layout for root-spawn table materialization. Dynamic callers
   // use the typed marshalling body below.
-  helper->setAttr("obelisk.spawn_capture_offsets",
+  helper->setAttr("native.spawn_capture_offsets",
                   builder.getDenseI64ArrayAttr(offsets));
-  helper->setAttr("obelisk.spawn_capture_size",
+  helper->setAttr("native.spawn_capture_size",
                   builder.getI64IntegerAttr(captureSize));
   indexModuleSymbol(module, symbols, helper);
   if (materializeBody && failed(makeProcessSpawnBody(helper, analysis)))
@@ -386,7 +386,7 @@ makeProcessSpawnBody(LLVM::LLVMFuncOp helper,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i64 = builder.getI64Type();
   uint64_t captureSize =
-      helper->getAttrOfType<IntegerAttr>("obelisk.spawn_capture_size")
+      helper->getAttrOfType<IntegerAttr>("native.spawn_capture_size")
           .getUInt();
   std::string planName = (helper.getSymName() + "_plan").str();
   Block *entry = helper.addEntryBlock(builder);

@@ -846,7 +846,7 @@ struct ClockClasses {
 void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   ModuleOp module = design->getParentOfType<ModuleOp>();
-  bool report = module && module->hasAttr("obelisk.debug.native_timing");
+  bool report = module && module->hasAttr("debug.native_timing");
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off ||
       graph.getWorkers() != 1) {

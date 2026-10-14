@@ -267,14 +267,14 @@ bool isConstantInRangeSelection(Operation *op) {
 
 FailureOr<uint64_t> getNativeStateDomainFunctionLimit(Operation *module) {
   if (auto limit = module->getAttrOfType<IntegerAttr>(
-          "obelisk.native.max_state_domain_functions")) {
+          "native.max_state_domain_functions")) {
     if (limit.getInt() < 0)
       return module->emitError(
           "native state-domain function limit cannot be negative");
     return limit.getUInt();
   }
   auto level =
-      module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
+      module->getAttrOfType<IntegerAttr>("native.optimization_level");
   if (level && level.getInt() >= 3)
     return 4096;
   return std::numeric_limits<uint64_t>::max();

@@ -8,7 +8,7 @@
 // empty here, matching that state at the scheduler boundary.
 
 module attributes {
-  obelisk.coverage.metrics = [],
+  coverage.metrics = [],
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
@@ -44,7 +44,7 @@ module attributes {
   }
 }
 
-// CHECK: obelisk.execution.coverage_schema_blob
+// CHECK: execution.coverage_schema_blob
 // CHECK-LABEL: llvm.func @main
 // CHECK:      llvm.call @obelisk_rt_v1_native_state_initialize
 // CHECK:      %[[LINE_COUNT:.*]] = llvm.mlir.constant(0 : i64) : i64

@@ -10,8 +10,8 @@
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
 module attributes {
-  obelisk.coverage.metrics = ["line"],
-  obelisk.coverage.config = "{\22exclude\22:[{\22metrics\22:[\22line\22],\22file\22:\22excluded.sv\22,\22reason\22:\22generated wrapper\22}]}"
+  coverage.metrics = ["line"],
+  coverage.config = "{\22exclude\22:[{\22metrics\22:[\22line\22],\22file\22:\22excluded.sv\22,\22reason\22:\22generated wrapper\22}]}"
 } {
   simulation.design @coverage {
     simulation.scope.decl 0 hierarchy "top"
@@ -36,8 +36,8 @@ module attributes {
 
 // The excluded obligation remains in the schema denominator inventory but is
 // not executable and therefore cannot accumulate misleading hit counts.
-// INVENTORY: obelisk.coverage.line_point_count = 1 : i64
-// INVENTORY-NOT: obelisk.coverage.line_point_index
+// INVENTORY: coverage.line_point_count = 1 : i64
+// INVENTORY-NOT: coverage.line_point_index
 // INVENTORY-NOT: simulation.coverage.keepalive
 // SCHEMA: line_point id=[[POINT:[1-9][0-9]*]] file=excluded.sv end_file=excluded.sv scope={{[1-9][0-9]*}} macro= range=4:3-4:7 phase=0 flags=0
 // SCHEMA: exclusion entity=[[POINT]] metric=1 reason=generated wrapper

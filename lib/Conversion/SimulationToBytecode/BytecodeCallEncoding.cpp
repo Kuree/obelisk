@@ -113,7 +113,7 @@ LogicalResult Encoder::encodeTaskCall(FunctionPlan &plan,
 LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
                                      sim::SimDPICallOp call) {
   if (ModuleOp module = design->getParentOfType<ModuleOp>())
-    module->setAttr("obelisk.feature.dpi_import_bytecode",
+    module->setAttr("feature.dpi_import_bytecode",
                     UnitAttr::get(call.getContext()));
   uint32_t importID = call.getImportId();
   auto inserted =
@@ -156,7 +156,7 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
              (abi.getFourState() ? 1u : 0u) | (abi.getIsSigned() ? 2u : 0u));
   }
   ArrayAttr openLayouts =
-      call->getAttrOfType<ArrayAttr>("obelisk.dpi.open_array_layouts");
+      call->getAttrOfType<ArrayAttr>("dpi.open_array_layouts");
   if (!openLayouts) {
     SmallVector<Attribute> empty(call.getAbiSignature().size(),
                                  UnitAttr::get(call.getContext()));
@@ -208,7 +208,7 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
       append64(metadata, static_cast<uint64_t>(word));
   }
   ArrayAttr aggregateLayouts =
-      call->getAttrOfType<ArrayAttr>("obelisk.dpi.aggregate_layouts");
+      call->getAttrOfType<ArrayAttr>("dpi.aggregate_layouts");
   if (!aggregateLayouts) {
     SmallVector<Attribute> empty(call.getAbiSignature().size(),
                                  UnitAttr::get(call.getContext()));

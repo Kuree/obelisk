@@ -664,7 +664,7 @@ LogicalResult SimDPICallOp::verify() {
       !isa<runtime::StatusType>(getResults().back().getType()))
     return emitOpError("must return a trailing runtime status");
   auto physicalCount = getOperation()->getAttrOfType<IntegerAttr>(
-      "obelisk.dpi.logical_operand_count");
+      "dpi.logical_operand_count");
   uint64_t logicalInputs = physicalCount
                                ? physicalCount.getValue().getZExtValue()
                                : getArguments().size();
@@ -680,12 +680,12 @@ LogicalResult SimDPICallOp::verify() {
     signature.push_back(abi);
   }
   ArrayAttr openLayouts = getOperation()->getAttrOfType<ArrayAttr>(
-      "obelisk.dpi.open_array_layouts");
+      "dpi.open_array_layouts");
   if (openLayouts && openLayouts.size() != signature.size())
     return emitOpError(
         "DPI open-array layout inventory must match the ABI signature");
   ArrayAttr aggregateLayouts =
-      getOperation()->getAttrOfType<ArrayAttr>("obelisk.dpi.aggregate_layouts");
+      getOperation()->getAttrOfType<ArrayAttr>("dpi.aggregate_layouts");
   if (aggregateLayouts && aggregateLayouts.size() != signature.size())
     return emitOpError(
         "DPI aggregate layout inventory must match the ABI signature");

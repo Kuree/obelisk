@@ -1006,7 +1006,7 @@ private:
   void runOnOperation() override {
     uint64_t formed = 0;
     uint64_t predicationCandidates = 0, predicationSkipped = 0;
-    bool diagnostics = getOperation()->hasAttr("obelisk.debug.native_timing");
+    bool diagnostics = getOperation()->hasAttr("debug.native_timing");
     WalkResult status = getOperation().walk([&](sim::SimDesignOp design) {
       auto graph = design.getComputeGraphAttr();
       if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off ||

@@ -92,12 +92,12 @@ module attributes {
 // dispatch record stores interface ID 1 and ordinal 0.
 // The managed continuation is stored before dispatch, restored on resume, and
 // then removed from the canonical frame's precise root inventory.
-// CHECK: obelisk.bytecode.image = array<i8:
+// CHECK: bytecode.image = array<i8:
 // CHECK-SAME: 24, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 57, 0, 0, 0, 8, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 23, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 42, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 55, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 54, 0, 0, 0, 0, 0, 0, 0
-// CHECK: obelisk.bytecode.function = 1 : i32
-// CHECK: obelisk.bytecode.function = 0 : i32
+// CHECK: bytecode.function = 1 : i32
+// CHECK: bytecode.function = 0 : i32

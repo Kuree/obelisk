@@ -4,7 +4,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.feature.class_bitstream_source
+  feature.class_bitstream_source
 } {
   simulation.design @empty_dispatch {
     simulation.scope.decl 0 hierarchy "top"
@@ -30,6 +30,6 @@ module attributes {
 
 // The one static dispatch group has zero members and there are no concrete
 // schemas.  It remains a valid live site: only null can inhabit the handle.
-// CHECK: obelisk.execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
-// CHECK: obelisk.feature.class_bitstream
+// CHECK: execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
+// CHECK: feature.class_bitstream
 // CHECK: llvm.call @obelisk_rt_v2_recursive_export_bitstream

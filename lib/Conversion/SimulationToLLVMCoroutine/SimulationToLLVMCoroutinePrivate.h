@@ -72,36 +72,36 @@ mlir::WalkResult walkNativeFunctions(mlir::Operation *root,
 }
 
 inline constexpr llvm::StringLiteral nativeStringGlobalAttr =
-    "obelisk.native.string_global";
+    "native.string_global";
 inline constexpr llvm::StringLiteral nativeScanPrefixGlobalAttr =
-    "obelisk.native.scan_prefix_global";
+    "native.scan_prefix_global";
 inline constexpr llvm::StringLiteral nativeFileScanPrefixGlobalAttr =
-    "obelisk.native.file_scan_prefix_global";
+    "native.file_scan_prefix_global";
 inline constexpr llvm::StringLiteral nativeAggregateBitstreamPlanGlobalAttr =
-    "obelisk.native.aggregate_bitstream_plan_global";
+    "native.aggregate_bitstream_plan_global";
 inline constexpr llvm::StringLiteral nativeContainerPatternPlanGlobalAttr =
-    "obelisk.native.container_pattern_plan_global";
+    "native.container_pattern_plan_global";
 inline constexpr llvm::StringLiteral nativeContainerPatternPlanSizeAttr =
-    "obelisk.native.container_pattern_plan_size";
+    "native.container_pattern_plan_size";
 
 inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
-    "obelisk.native.two_state_block_unknowns";
+    "native.two_state_block_unknowns";
 inline constexpr llvm::StringLiteral nativeInBoundsHandleOffsetAttr =
-    "obelisk.native.in_bounds_handle_offset";
+    "native.in_bounds_handle_offset";
 inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
-    "obelisk.managed_root_range_record";
+    "native.managed_root_range_record";
 inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
-    "obelisk.managed_root_range_push_check";
+    "native.managed_root_range_push_check";
 /// Ends the prologue that reacquires an activation's root record at a resume
 /// target; coroutine lowering runs it only on scheduler resumption.
 inline constexpr llvm::StringLiteral managedRootActivationPrologueAttr =
-    "obelisk.managed_root_activation_prologue";
+    "native.managed_root_activation_prologue";
 inline constexpr llvm::StringLiteral nativeMethodArgumentSizesAttr =
-    "obelisk.native.method_argument_sizes";
+    "native.method_argument_sizes";
 inline constexpr llvm::StringLiteral nativeMethodArgumentRootsAttr =
-    "obelisk.native.method_argument_roots";
+    "native.method_argument_roots";
 inline constexpr llvm::StringLiteral nativeTransferredReferencesAttr =
-    "obelisk.native.transferred_references";
+    "native.transferred_references";
 inline constexpr auto assumeCleanSpecializationAttr =
     ::obelisk::schedule::Field::NativeAssumeCleanSpecialization;
 inline constexpr auto cleanEvalBodyAttr =

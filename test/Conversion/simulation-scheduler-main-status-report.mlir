@@ -9,7 +9,7 @@
 // $finish (status 0) and $fatal (which already printed its own message) quiet.
 
 module attributes {
-  obelisk.coverage.metrics = ["toggle"],
+  coverage.metrics = ["toggle"],
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
@@ -19,7 +19,7 @@ module attributes {
     simulation.code_unit.decl 832639515527371617 in 0 root_initializer hierarchy "__obelisk_root" debug "root initializer"
     simulation.code_unit.decl 5488801650660482716 in 1 initial hierarchy "scheduler_main.$code_unit_5" debug ""
     simulation.storage.decl 0 in 1 : i1 design hierarchy "scheduler_main.flag" {
-      obelisk.coverage.source_authored,
+      coverage.source_authored,
       source_range = !obelisk.source_range<"scheduler-main.sv", 1, 1, "scheduler-main.sv", 1, 4, "">
     }
     simulation.func @__obelisk_root(%arg0: !simulation.context {simulation.capture_kind = 0 : i32}) attributes {code_unit_id = 832639515527371617 : i64, domain = 0 : i32, effect_summary = [], entry_kind = 0 : i32, fragment_abi = #schedule.fragment_abi<version = 1, fragments = [0]>, home_region = 2 : i32} {

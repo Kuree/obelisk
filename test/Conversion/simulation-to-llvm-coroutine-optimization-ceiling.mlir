@@ -8,7 +8,7 @@
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.native.optimization_level = 3 : i32,
+  native.optimization_level = 3 : i32,
   schedule.native.max_inline_ops = 2 : i64
 } {
   func.func private @small() {
@@ -36,5 +36,5 @@ module attributes {
 // CHECK-NOT: optimize_none
 // CHECK: llvm.return
 
-// CHECK-NOT: obelisk.native.optimization_level
+// CHECK-NOT: native.optimization_level
 // CHECK-NOT: schedule.native.max_inline_ops

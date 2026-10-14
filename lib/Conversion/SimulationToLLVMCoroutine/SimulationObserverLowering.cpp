@@ -406,14 +406,14 @@ LogicalResult materializeNativeObserverThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> evaluators;
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
-        if (function->hasAttr("obelisk.observer_width"))
+        if (function->hasAttr("native.observer_width"))
           evaluators.push_back(function);
       });
   for (LLVM::LLVMFuncOp evaluator : evaluators) {
     auto width =
-        evaluator->getAttrOfType<IntegerAttr>("obelisk.observer_width");
+        evaluator->getAttrOfType<IntegerAttr>("native.observer_width");
     auto fourState =
-        evaluator->getAttrOfType<BoolAttr>("obelisk.observer_four_state");
+        evaluator->getAttrOfType<BoolAttr>("native.observer_four_state");
     if (!width || !fourState ||
         failed(makeNativeObserverThunk(
             module, evaluator,

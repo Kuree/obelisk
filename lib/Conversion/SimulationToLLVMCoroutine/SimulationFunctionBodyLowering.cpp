@@ -52,10 +52,10 @@ void materializeNativeSpawnBatches(Operation *root) {
                             (spawn.getCallee() + ".__obelisk_spawn").str()))
                   : LLVM::LLVMFuncOp{};
         auto offsets = helper ? helper->getAttrOfType<DenseI64ArrayAttr>(
-                                    "obelisk.spawn_capture_offsets")
+                                    "native.spawn_capture_offsets")
                               : DenseI64ArrayAttr{};
         auto size = helper ? helper->getAttrOfType<IntegerAttr>(
-                                 "obelisk.spawn_capture_size")
+                                 "native.spawn_capture_size")
                            : IntegerAttr{};
         if (!spawn || !spawn->use_empty() || !offsets || !size ||
             spawn->getNumOperands() != offsets.size() + 1 ||

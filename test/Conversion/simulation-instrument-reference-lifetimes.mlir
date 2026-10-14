@@ -115,13 +115,13 @@ module {
 
 // CHECK-LABEL: simulation.func @direct
 // CHECK: simulation.ref.alloc
-// CHECK-NOT: obelisk.owner_release_instrumented
+// CHECK-NOT: native.owner_release_instrumented
 // CHECK-NOT: simulation.ref.release_owner
 // CHECK-NEXT: simulation.return
 
 // CHECK-LABEL: simulation.func @loop
 // CHECK: simulation.ref.alloc
-// CHECK-SAME: obelisk.owner_release_instrumented
+// CHECK-SAME: native.owner_release_instrumented
 // CHECK: simulation.ref.release_owner
 // CHECK-NEXT: cf.cond_br
 
@@ -136,12 +136,12 @@ module {
 
 // CHECK-LABEL: simulation.func @branch
 // CHECK: simulation.ref.alloc
-// CHECK-SAME: obelisk.owner_release_instrumented
+// CHECK-SAME: native.owner_release_instrumented
 // CHECK-COUNT-2: simulation.ref.release_owner
 
 // CHECK-LABEL: simulation.func @argument_alias
 // CHECK: %[[LOCAL:.*]] = simulation.ref.alloc
-// CHECK-SAME: obelisk.owner_release_instrumented
+// CHECK-SAME: native.owner_release_instrumented
 // CHECK: simulation.argument_ref.from_ref %[[LOCAL]]
 // CHECK: simulation.call @observe_alias
 // CHECK-NOT: simulation.ref.release_owner

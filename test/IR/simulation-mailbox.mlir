@@ -83,4 +83,4 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_num
 // NATIVE: llvm.call @obelisk_rt_v1_mailbox_try_get
 // NATIVE: llvm.mlir.constant(11 : i32)
-// BYTECODE: obelisk.bytecode.image
+// BYTECODE: bytecode.image

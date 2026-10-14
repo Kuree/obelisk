@@ -69,8 +69,8 @@ module attributes {
 
     // A poll observes the handle live across it.
     // POLLED-LABEL: simulation.func @poll(
-    // POLLED: %[[RECORD:.*]] = llvm.alloca {{.*}}obelisk.managed_root_range_record
-    // POLLED: llvm.store %{{.*}}, %[[RECORD]] {{{.*}}obelisk.managed_root_activation_prologue}
+    // POLLED: %[[RECORD:.*]] = llvm.alloca {{.*}}native.managed_root_range_record
+    // POLLED: llvm.store %{{.*}}, %[[RECORD]] {{{.*}}native.managed_root_activation_prologue}
     // POLLED-NOT: gc.root_range
     // POLLED: simulation.class.root_bind
     // POLLED-NEXT: schedule.gc.root_range.push %[[RECORD]] slots %{{.*}} count %{{.*}} lazy

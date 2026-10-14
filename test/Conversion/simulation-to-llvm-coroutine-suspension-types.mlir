@@ -84,7 +84,7 @@ module attributes {
 // CHECK: llvm.store %[[RESULT]], %[[VALUE]]
 // CHECK: llvm.return
 // CHECK-LABEL: llvm.func @process.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6, 7, 8>
+// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6, 7, 8>
 // CHECK: llvm.mlir.constant(1 : i64)
 // CHECK: llvm.mlir.constant(64 : i32)
 // CHECK: llvm.mlir.constant(17 : i32)

@@ -32,5 +32,5 @@ module attributes {
 
 // Queue insert (0x00010445) and queue delete (0x00010444) are encoded in
 // program order in the bytecode image.
-// BYTECODE: obelisk.bytecode.image = array<i8: {{.*}}69, 4, 1, 0{{.*}}68, 4, 1, 0
-// BYTECODE: obelisk.bytecode.function = 0 : i32
+// BYTECODE: bytecode.image = array<i8: {{.*}}69, 4, 1, 0{{.*}}68, 4, 1, 0
+// BYTECODE: bytecode.function = 0 : i32

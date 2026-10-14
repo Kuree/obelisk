@@ -531,7 +531,7 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
           module.getContext(),
           targetMachine.createDataLayout().getStringRepresentation()));
   module->setAttr(
-      "obelisk.native.optimization_level",
+      "native.optimization_level",
       IntegerAttr::get(mlir::IntegerType::get(module.getContext(), 32),
                        optLevel));
   mlir::PassManager manager(module.getContext());
@@ -541,10 +541,10 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   if (timing)
     manager.enableTiming();
   if (timing)
-    module->setAttr("obelisk.debug.native_timing",
+    module->setAttr("debug.native_timing",
                     UnitAttr::get(module.getContext()));
   else
-    module->removeAttr("obelisk.debug.native_timing");
+    module->removeAttr("debug.native_timing");
   // Export bridges must be part of both executable representations. The
   // materializer is a no-op for ordinary designs, preserving their exact IR.
   if (module->hasAttr("simulation.has_dpi_exports") &&
@@ -654,9 +654,9 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
     if (failed(plan))
       return failure();
     OpBuilder builder(module.getContext());
-    module->setAttr("obelisk.execution.flags",
+    module->setAttr("execution.flags",
                     builder.getI32IntegerAttr(plan->executionFlags));
-    module->setAttr("obelisk.execution.state_bits",
+    module->setAttr("execution.state_bits",
                     builder.getI64IntegerAttr(plan->stateBitCount));
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(plan->ranges.size() * 2);
@@ -664,7 +664,7 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
       sampledRanges.push_back(static_cast<int64_t>(range.bitOffset));
       sampledRanges.push_back(static_cast<int64_t>(range.bitWidth));
     }
-    module->setAttr("obelisk.execution.sampled_ranges",
+    module->setAttr("execution.sampled_ranges",
                     builder.getDenseI64ArrayAttr(sampledRanges));
   }
   // Native region bodies may diverge from their already-frozen bytecode
@@ -1178,7 +1178,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   registerBuiltinDialectTranslation(*module.getContext());
   llvm::StringSet<> nativeExports;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
-    if (function->hasAttr("obelisk.dpi.export_id"))
+    if (function->hasAttr("dpi.export_id"))
       nativeExports.insert(function.getSymName());
   }
   if (pruneModel) {

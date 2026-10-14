@@ -629,14 +629,14 @@ public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
     auto level =
-        module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
+        module->getAttrOfType<IntegerAttr>("native.optimization_level");
     if (!level || level.getInt() < 1)
       return markAllAnalysesPreserved();
     // Run on the children, so this module's preserved native pipeline facts
     // are not discarded by the nested function pipeline.
     // Versioning needs the design's facts to predict which inputs are known
     // in steady state, so only functions inside a design are considered.
-    bool diagnostics = module->hasAttr("obelisk.debug.native_timing");
+    bool diagnostics = module->hasAttr("debug.native_timing");
     // Packed lowering proves the copies two-state only where it runs the
     // whole-design solve: within the function limit, or where a guarded
     // variant needs the solve anyway. Versioning keeps to the same designs.

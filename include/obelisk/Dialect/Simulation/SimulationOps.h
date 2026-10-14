@@ -48,7 +48,7 @@ enum class InlineLegality {
 };
 
 inline constexpr ::llvm::StringLiteral inlineLegalityCacheAttrName =
-    "obelisk.inline.callee_legality";
+    "inline.callee_legality";
 
 bool hasLateInlineMetadata(SimDesignOp design);
 InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,

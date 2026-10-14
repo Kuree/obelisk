@@ -475,7 +475,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   for (uint32_t root = 0; root != plan.roots.size(); ++root)
     plan.mergeSafeRoots[root] = plan.mergeSafeRoots[root] || unobservable[root];
 
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     for (uint32_t root = 0; root != plan.roots.size(); ++root)
       if (!plan.mergeSafeRoots[root])
         llvm::errs() << "obelisk NBA root keeps ordered commits: root=" << root
@@ -586,7 +586,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   unsigned explainedIncompleteWriters = 0;
   auto incompleteWriter = [&](sim::SimFuncOp function, StringRef reason) {
     completeWriters = false;
-    if (module->hasAttr("obelisk.debug.native_timing") &&
+    if (module->hasAttr("debug.native_timing") &&
         explainedIncompleteWriters++ < 3)
       llvm::errs() << "obelisk NBA writer proof: " << function.getSymName()
                    << " reason=" << reason << '\n';
@@ -656,7 +656,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
         plan.privateInfluenceRoots[index] && seen[index] &&
         immediateOnly[index] && !immediateWriters.contains(root.static_state);
   }
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk native unchanged NBA roots: "
                  << llvm::count(plan.unchangedSafeRoots, true) << "/"
                  << plan.roots.size() << " complete-writers=" << completeWriters

@@ -91,7 +91,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
   Type i64 = rewriter.getI64Type();
   Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
   auto logicalCountAttr = operation->getAttrOfType<IntegerAttr>(
-      "obelisk.dpi.logical_operand_count");
+      "dpi.logical_operand_count");
   uint64_t logicalInputs = logicalCountAttr
                                ? logicalCountAttr.getValue().getZExtValue()
                                : operation.getArguments().size();
@@ -109,7 +109,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     abi.push_back(*parsed);
   }
   ArrayAttr openLayouts =
-      operation->getAttrOfType<ArrayAttr>("obelisk.dpi.open_array_layouts");
+      operation->getAttrOfType<ArrayAttr>("dpi.open_array_layouts");
   if (!openLayouts) {
     SmallVector<Attribute> empty(signature.size(), rewriter.getUnitAttr());
     openLayouts = rewriter.getArrayAttr(empty);
@@ -117,7 +117,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
   if (openLayouts.size() != signature.size())
     return operation.emitOpError("has no complete DPI open-array inventory");
   ArrayAttr aggregateLayouts =
-      operation->getAttrOfType<ArrayAttr>("obelisk.dpi.aggregate_layouts");
+      operation->getAttrOfType<ArrayAttr>("dpi.aggregate_layouts");
   if (!aggregateLayouts) {
     SmallVector<Attribute> empty(signature.size(), rewriter.getUnitAttr());
     aggregateLayouts = rewriter.getArrayAttr(empty);

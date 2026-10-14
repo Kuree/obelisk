@@ -9,7 +9,7 @@
 
 namespace obelisk::detail {
 inline constexpr llvm::StringLiteral tableWaitIndexAttr =
-    "obelisk.native.table_wait";
+    "native.table_wait";
 struct NativeTableWait {
   uint32_t continuation, actionFlags;
   uint64_t frameOffset, frameSize;

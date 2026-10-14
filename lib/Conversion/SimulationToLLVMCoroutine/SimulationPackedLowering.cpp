@@ -54,7 +54,7 @@ constexpr auto inductiveTwoStateAttr =
 constexpr auto conditionalTwoStateAttr =
     ::obelisk::schedule::Field::EvalConditionallyTwoState;
 constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
-    "obelisk.native.bulk_copy_source_assume_clean";
+    "native.bulk_copy_source_assume_clean";
 
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
@@ -272,7 +272,7 @@ LogicalResult lowerPackedSimulationOperations(
           LLVM::ZeroOp::create(initializer, module.getLoc(), pointer));
     }
   }
-  bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+  bool detailedTiming = module->hasAttr("debug.native_timing");
   auto lastTiming = std::chrono::steady_clock::now();
   auto markTiming = [&](StringRef name) {
     if (!detailedTiming)
@@ -883,7 +883,7 @@ LogicalResult lowerPackedSimulationOperations(
            i64, i32, i32, pointer, pointer})))
     return failure();
   if (needsClassBitstreamABI) {
-    module->setAttr("obelisk.feature.class_bitstream", UnitAttr::get(context));
+    module->setAttr("feature.class_bitstream", UnitAttr::get(context));
   }
   markTiming("byte-global inventory and materialization");
 

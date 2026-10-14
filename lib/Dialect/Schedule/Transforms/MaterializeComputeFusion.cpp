@@ -1752,7 +1752,7 @@ public:
     inputSlots += before;
     remainingSlots += after;
     if (getOperation()->getParentOfType<ModuleOp>()->hasAttr(
-            "obelisk.debug.native_timing"))
+            "debug.native_timing"))
       llvm::errs() << "obelisk eval storage promotion: slots-before=" << before
                    << " slots-after=" << after << '\n';
     if (before)
@@ -4584,7 +4584,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   // A planned cohort that fails to materialize is Tier-1 work lost after
   // planning already accepted it, and the reason was previously discarded.
   if (design->getParentOfType<ModuleOp>()->hasAttr(
-          "obelisk.debug.native_timing")) {
+          "debug.native_timing")) {
     SmallVector<StringRef> ordered;
     for (const auto &entry : fusionRejections)
       ordered.push_back(entry.first());

@@ -2567,7 +2567,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     auto dpiCategoryAttr = formal.getAs<IntegerAttr>("dpi_category");
     uint32_t dpiCategory =
         dpiCategoryAttr ? static_cast<uint32_t>(dpiCategoryAttr.getInt()) : 0;
-    bool dpiImport = op->hasAttr("obelisk.dpi.import_id");
+    bool dpiImport = op->hasAttr("dpi.import_id");
     auto formalSemantic = formal.getAs<TypeAttr>("semantic_type");
     bool openFormal =
         dpiImport && formalSemantic &&
@@ -2836,7 +2836,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           recordSensitivity(capture);
         operands.push_back(capture);
       }
-  BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task");
+  BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("dpi.is_task");
   bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
   sim::SimFuncOp directCallee =
       lookupNearestSymbolFrom<sim::SimFuncOp>(op, callee);
@@ -2855,7 +2855,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     for (const CopyOut &copyOut : copyOuts)
       callResultTypes.push_back(copyOut.resultType);
   SmallVector<Value> callResults;
-  if (auto importID = op->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id")) {
+  if (auto importID = op->getAttrOfType<IntegerAttr>("dpi.import_id")) {
     if (operands.empty())
       return emitError(location) << "DPI call is missing its runtime context",
              failure();
@@ -2913,18 +2913,18 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         builder, location, dpiResultTypes,
         builder.getI32IntegerAttr(
             static_cast<uint32_t>(importID.getValue().getZExtValue())),
-        op->getAttrOfType<StringAttr>("obelisk.dpi.c_identifier"),
-        op->getAttrOfType<IntegerAttr>("obelisk.dpi.scope_id"),
+        op->getAttrOfType<StringAttr>("dpi.c_identifier"),
+        op->getAttrOfType<IntegerAttr>("dpi.scope_id"),
         builder.getArrayAttr(signature),
-        op->getAttrOfType<BoolAttr>("obelisk.dpi.is_pure"),
-        op->getAttrOfType<BoolAttr>("obelisk.dpi.is_context"),
-        op->getAttrOfType<BoolAttr>("obelisk.dpi.is_task"),
+        op->getAttrOfType<BoolAttr>("dpi.is_pure"),
+        op->getAttrOfType<BoolAttr>("dpi.is_context"),
+        op->getAttrOfType<BoolAttr>("dpi.is_task"),
         builder.getStringAttr(sourceFile),
         builder.getI32IntegerAttr(sourceLine),
         builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands);
-    call->setAttr("obelisk.dpi.open_array_layouts",
+    call->setAttr("dpi.open_array_layouts",
                   builder.getArrayAttr(dpiOpenArrayLayouts));
-    call->setAttr("obelisk.dpi.aggregate_layouts",
+    call->setAttr("dpi.aggregate_layouts",
                   builder.getArrayAttr(dpiAggregateLayouts));
     sim::SimStatusCheckOp::create(builder, location, call.getResults().back());
     llvm::append_range(callResults, call.getResults().drop_back());

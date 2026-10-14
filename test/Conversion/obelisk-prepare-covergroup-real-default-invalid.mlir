@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare --verify-diagnostics -o /dev/null
 
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.root @root attributes {name = "$root",
       node_id = 0 : i64} {
     obelisk.sv.symbol.coverpoint @s22.cp attributes {expression_roles = [0 : i32],

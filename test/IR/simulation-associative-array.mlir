@@ -241,4 +241,4 @@ module attributes {
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_reference_path_assoc_create
 // NATIVE-DAG: llvm.call @obelisk_rt_v1_assoc_delete
 // NATIVE-NOT: unrealized_conversion_cast
-// BYTECODE: obelisk.bytecode.image
+// BYTECODE: bytecode.image

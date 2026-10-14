@@ -166,12 +166,12 @@ preparePlainNativeProcess(sim::SimFuncOp function,
   auto body = func::FuncOp::create(
       builder, location, baseName,
       FunctionType::get(context, inputTypes, TypeRange{builder.getI32Type()}));
-  body->setAttr("obelisk.entry_kind",
+  body->setAttr("native.entry_kind",
                 builder.getI32IntegerAttr(
                     static_cast<uint32_t>(function.getEntryKind())));
-  body->setAttr("obelisk.native_scratch_size", builder.getI64IntegerAttr(0));
+  body->setAttr("native.scratch_size", builder.getI64IntegerAttr(0));
   copyNativePartition(function, body);
-  bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
+  bool unmanagedNative = function->hasAttr("native.unmanaged");
   body.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : body.getBody())
@@ -320,9 +320,9 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
                            StringAttr{}, ArrayAttr{}, ArrayAttr{}, UnitAttr{});
   if (privateSymbol)
     replacement.setPrivate();
-  replacement->setAttr("obelisk.entry_kind",
+  replacement->setAttr("native.entry_kind",
                        builder.getI32IntegerAttr(entryKind));
-  replacement->setAttr("obelisk.native_scratch_size",
+  replacement->setAttr("native.scratch_size",
                        builder.getI64IntegerAttr(0));
   copyNativePartition(function, replacement);
   if (outlinedPassthrough)
@@ -380,11 +380,11 @@ lowerPreparedOrdinaryFunction(PreparedOrdinaryNativeFunction &function) {
       return replacement.emitError(
           "observer entry is missing native descriptor metadata");
     OpBuilder builder(replacement.getContext());
-    replacement->setAttr("obelisk.observer_width",
+    replacement->setAttr("native.observer_width",
                          builder.getI32IntegerAttr(
                              function.observerWidth.getValue().getZExtValue()));
     replacement->setAttr(
-        "obelisk.observer_four_state",
+        "native.observer_four_state",
         builder.getBoolAttr(function.observerFourState.getValue()));
   }
   return success();

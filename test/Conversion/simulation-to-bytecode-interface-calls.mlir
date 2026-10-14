@@ -85,7 +85,7 @@ module attributes {
 // Class dispatch remains opcode 41 with dense slot 0. Interface dispatch uses
 // opcode 56 and indexes operand record 4 containing interface ID 3/ordinal 1;
 // neither instruction carries the transitional UINT32_MAX sentinel.
-// CHECK: obelisk.bytecode.image = array<i8:
+// CHECK: bytecode.image = array<i8:
 // CHECK-SAME: 41, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 56, 0, 1, 0, 4, 0, 0, 0, 2, 0, 0, 0, 5, 0, 0, 0, 2, 0, 0, 0, 7, 0, 0, 0, 17, 0, 0, 0, 0, 0, 0, 0
 // CHECK-SAME: 3, 0, 0, 0, 1, 0, 0, 0

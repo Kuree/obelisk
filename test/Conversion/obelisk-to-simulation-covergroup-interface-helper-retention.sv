@@ -7,7 +7,7 @@
 // The sample helper is outside the design body, so preparation must retain the
 // interface prototype and both implementations (Base, inherited by Inherited,
 // and Override) as roots and keep their class method entries bound to units.
-// RETAIN: obelisk.coverage.retained_symbols = [{{.*}}@[[IFACE:__obelisk_class_[A-Za-z0-9_]*Readable_method_0]]{{.*}}@[[BASE:__obelisk_class_[A-Za-z0-9_]*Base_method_0]]{{.*}}@[[OVERRIDE:__obelisk_class_[A-Za-z0-9_]*Override_method_0]]
+// RETAIN: coverage.retained_symbols = [{{.*}}@[[IFACE:__obelisk_class_[A-Za-z0-9_]*Readable_method_0]]{{.*}}@[[BASE:__obelisk_class_[A-Za-z0-9_]*Base_method_0]]{{.*}}@[[OVERRIDE:__obelisk_class_[A-Za-z0-9_]*Override_method_0]]
 // RETAIN-DAG: simulation.class.method @[[IFACE]] of @{{.*}}Readable slot {{[0-9]+}} signature_id {{[0-9]+}} interface_ordinal 0
 // RETAIN-DAG: simulation.class.method @[[BASE]] of @{{.*}}Base slot 0 signature_id {{[0-9]+}} implemented_by @unit_{{[0-9]+}}
 // RETAIN-DAG: simulation.class.method @[[OVERRIDE]] of @{{.*}}Override slot 0 signature_id {{[0-9]+}} implemented_by @unit_{{[0-9]+}}

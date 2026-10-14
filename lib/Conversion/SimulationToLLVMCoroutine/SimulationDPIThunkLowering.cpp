@@ -129,9 +129,9 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   std::string thunkName = ("__obelisk_dpi_thunk_" + Twine(spec.importID)).str();
   if (auto existing = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName)) {
     auto cIdentifier =
-        existing->getAttrOfType<StringAttr>("obelisk.dpi.c_identifier");
+        existing->getAttrOfType<StringAttr>("dpi.c_identifier");
     auto signature =
-        existing->getAttrOfType<ArrayAttr>("obelisk.dpi.abi_signature");
+        existing->getAttrOfType<ArrayAttr>("dpi.abi_signature");
     auto compatible = [](ArrayAttr lhs, ArrayAttr rhs) {
       if (!lhs || !rhs || lhs.size() != rhs.size())
         return false;
@@ -160,15 +160,15 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   auto thunk =
       LLVM::LLVMFuncOp::create(builder, location, thunkName, callbackType);
   thunk.setLinkage(LLVM::Linkage::Internal);
-  thunk->setAttr("obelisk.dpi.import_id",
+  thunk->setAttr("dpi.import_id",
                  builder.getI32IntegerAttr(spec.importID));
-  thunk->setAttr("obelisk.dpi.c_identifier", spec.cIdentifier);
-  thunk->setAttr("obelisk.dpi.abi_signature", spec.abiSignature);
+  thunk->setAttr("dpi.c_identifier", spec.cIdentifier);
+  thunk->setAttr("dpi.abi_signature", spec.abiSignature);
   bool openSignature = llvm::any_of(spec.abiSignature, [](Attribute attribute) {
     auto abi = dyn_cast<sim::DPIABIAttr>(attribute);
     return abi && abi.getKind() == sim::DPIABIKind::OpenArray;
   });
-  thunk->setAttr("obelisk.dpi.abi_hash",
+  thunk->setAttr("dpi.abi_hash",
                  builder.getI64IntegerAttr(
                      openSignature ? 0
                                    : sim::getDPISignatureHash(spec.abiSignature,
@@ -710,7 +710,7 @@ LogicalResult materializeDPIThunks(ModuleOp module) {
   module.walk([&](sim::SimDPICallOp site) { sites.push_back(site); });
   for (sim::SimDPICallOp site : sites) {
     auto logicalCountAttr =
-        site->getAttrOfType<IntegerAttr>("obelisk.dpi.logical_operand_count");
+        site->getAttrOfType<IntegerAttr>("dpi.logical_operand_count");
     DPIThunkSpec spec{
         site.getOperation(),
         site.getLoc(),

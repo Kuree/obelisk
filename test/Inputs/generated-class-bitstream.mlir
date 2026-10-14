@@ -1,7 +1,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.feature.class_bitstream_source
+  feature.class_bitstream_source
 } {
   simulation.design @generated_class_bitstream {
     simulation.code_unit.decl 9100001 in 0 root_initializer hierarchy "test.generated_class_bitstream.root"

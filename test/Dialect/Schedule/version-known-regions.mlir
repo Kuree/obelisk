@@ -7,7 +7,7 @@
 !logic8 = !simulation.logic<8>
 !memory = !simulation.unpacked_array<0 : 7 x !simulation.logic<8>>
 
-module attributes {obelisk.native.optimization_level = 3 : i32} {
+module attributes {native.optimization_level = 3 : i32} {
   simulation.design @version_known_regions {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 1 in 0 function hierarchy "top.handle_live_out"
@@ -248,8 +248,8 @@ module attributes {obelisk.native.optimization_level = 3 : i32} {
 // Packed lowering skips the optional whole-design solve above the function
 // limit unless a guarded variant needs it, and without that solve a copy is
 // no better than the original, so such a design is left unchanged.
-module attributes {obelisk.native.optimization_level = 3 : i32,
-                   obelisk.native.max_state_domain_functions = 0 : i64} {
+module attributes {native.optimization_level = 3 : i32,
+                   native.max_state_domain_functions = 0 : i64} {
   simulation.design @over_limit {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 1 in 0 function hierarchy "top.over_limit"

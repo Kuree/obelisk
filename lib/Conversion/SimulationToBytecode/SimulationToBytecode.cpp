@@ -895,67 +895,67 @@ public:
       return ArrayRef<int8_t>(reinterpret_cast<const int8_t *>(bytes.data()),
                               bytes.size());
     };
-    module->setAttr("obelisk.bytecode.image",
+    module->setAttr("bytecode.image",
                     builder.getDenseI8ArrayAttr(asI8(encoded->bytecode)));
-    module->setAttr("obelisk.execution.flags",
+    module->setAttr("execution.flags",
                     builder.getI32IntegerAttr(encoded->executionFlags));
-    module->setAttr("obelisk.execution.state_bits",
+    module->setAttr("execution.state_bits",
                     builder.getI64IntegerAttr(encoded->stateBitCount));
     if (encoded->requiresDynamicScanFeature)
-      module->setAttr("obelisk.feature.dynamic_scan", builder.getUnitAttr());
+      module->setAttr("feature.dynamic_scan", builder.getUnitAttr());
     else
-      module->removeAttr("obelisk.feature.dynamic_scan");
+      module->removeAttr("feature.dynamic_scan");
     if (encoded->requiresContainerBitstreamFeature)
-      module->setAttr("obelisk.feature.container_bitstream",
+      module->setAttr("feature.container_bitstream",
                       builder.getUnitAttr());
     else
-      module->removeAttr("obelisk.feature.container_bitstream");
+      module->removeAttr("feature.container_bitstream");
     if (encoded->requiresRecursiveBitstreamFeature)
-      module->setAttr("obelisk.feature.recursive_bitstream",
+      module->setAttr("feature.recursive_bitstream",
                       builder.getUnitAttr());
     else
-      module->removeAttr("obelisk.feature.recursive_bitstream");
+      module->removeAttr("feature.recursive_bitstream");
     if (module->hasAttr(sim::metadata::classBitstreamBlob))
-      module->setAttr("obelisk.feature.class_bitstream", builder.getUnitAttr());
+      module->setAttr("feature.class_bitstream", builder.getUnitAttr());
     else
-      module->removeAttr("obelisk.feature.class_bitstream");
+      module->removeAttr("feature.class_bitstream");
     if (requireBytecode && module->hasAttr(sim::metadata::classBitstreamBlob))
-      module->setAttr("obelisk.feature.class_bitstream_bytecode",
+      module->setAttr("feature.class_bitstream_bytecode",
                       builder.getUnitAttr());
     else
-      module->removeAttr("obelisk.feature.class_bitstream_bytecode");
+      module->removeAttr("feature.class_bitstream_bytecode");
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(encoded->sampledRanges.size() * 2);
     for (const SimulationSampledRange &range : encoded->sampledRanges) {
       sampledRanges.push_back(static_cast<int64_t>(range.bitOffset));
       sampledRanges.push_back(static_cast<int64_t>(range.bitWidth));
     }
-    module->setAttr("obelisk.execution.sampled_ranges",
+    module->setAttr("execution.sampled_ranges",
                     builder.getDenseI64ArrayAttr(sampledRanges));
     if (!encoded->designDatabase.empty())
       module->setAttr(
-          "obelisk.design.database",
+          "design.database",
           builder.getDenseI8ArrayAttr(asI8(encoded->designDatabase)));
     else
-      module->removeAttr("obelisk.design.database");
+      module->removeAttr("design.database");
     llvm::StringMap<sim::SimFuncOp> functions;
     designs.front().walk([&](sim::SimFuncOp function) {
       functions[function.getSymName()] = function;
-      function->removeAttr("obelisk.bytecode.function");
-      function->removeAttr("obelisk.bytecode.scratch_size");
-      function->removeAttr("obelisk.bytecode.scratch_alignment");
-      function->removeAttr("obelisk.bytecode.two_state_logic_registers");
+      function->removeAttr("bytecode.function");
+      function->removeAttr("bytecode.scratch_size");
+      function->removeAttr("bytecode.scratch_alignment");
+      function->removeAttr("bytecode.two_state_logic_registers");
     });
     for (const SimulationBytecodeFunction &function : encoded->functions) {
       sim::SimFuncOp source = functions.lookup(function.symbol);
-      source->setAttr("obelisk.bytecode.function",
+      source->setAttr("bytecode.function",
                       builder.getI32IntegerAttr(function.index));
-      source->setAttr("obelisk.bytecode.scratch_size",
+      source->setAttr("bytecode.scratch_size",
                       builder.getI64IntegerAttr(function.scratchSize));
-      source->setAttr("obelisk.bytecode.scratch_alignment",
+      source->setAttr("bytecode.scratch_alignment",
                       builder.getI64IntegerAttr(function.scratchAlignment));
       source->setAttr(
-          "obelisk.bytecode.two_state_logic_registers",
+          "bytecode.two_state_logic_registers",
           builder.getI32IntegerAttr(function.twoStateLogicRegisters));
     }
   }

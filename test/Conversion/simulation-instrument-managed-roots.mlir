@@ -134,7 +134,7 @@ module attributes {
 // CHECK-LABEL: simulation.func @root
 // CHECK: llvm.alloca
 // CHECK: llvm.alloca
-// CHECK-SAME: obelisk.managed_root_range_record
+// CHECK-SAME: native.managed_root_range_record
 // CHECK: schedule.gc.root_range.push
 // Candidate classification is refreshed immediately before every collection;
 // it is not cached once at the SSA definition.
@@ -163,7 +163,7 @@ module attributes {
 // at each poll, after the candidate refresh and the bulk clear that make every
 // slot valid. Allocation, including covergroup.create, is no collection point.
 // POLLED-LABEL: simulation.func @root
-// POLLED: llvm.store %{{.*}}, %[[RECORD:.*]] {{{.*}}obelisk.managed_root_activation_prologue}
+// POLLED: llvm.store %{{.*}}, %[[RECORD:.*]] {{{.*}}native.managed_root_activation_prologue}
 // POLLED-NOT: gc.root_range
 // POLLED: simulation.class.root_bind {{.*}} candidate kinds 3
 // POLLED-NEXT: schedule.gc.root_range.push %[[RECORD]] {{.*}} lazy

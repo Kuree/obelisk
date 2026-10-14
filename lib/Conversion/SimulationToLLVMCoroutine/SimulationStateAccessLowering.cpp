@@ -23,9 +23,9 @@ namespace {
 
 constexpr StringLiteral continuousStoreAttrName = "simulation.continuous_store";
 constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
-    "obelisk.native.bulk_copy_source_assume_clean";
+    "native.bulk_copy_source_assume_clean";
 constexpr StringLiteral guardedRefStoreAttr =
-    "obelisk.native.guarded_ref_store";
+    "native.guarded_ref_store";
 
 // Canonical padding is not a language value. Invalid aggregate reads also
 // need the per-member defaults from IEEE 1800-2023 Table 7-1.
@@ -457,7 +457,7 @@ public:
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
     bool runtimePublication =
-        function->hasAttr("obelisk.runtime_publication_certified");
+        function->hasAttr("native.runtime_publication_certified");
     bool continuous = !isa<sim::EventType>(valueType) &&
                       (op->hasAttr(continuousStoreAttrName) ||
                        entryKind == sim::EntryKind::Continuous ||
@@ -518,7 +518,7 @@ public:
     if (needsNotification && directRange &&
         (assumeClean || !directRange->guarded))
       if (auto roots = function->getAttrOfType<DenseI32ArrayAttr>(
-              "obelisk.native.no_transition_roots"))
+              "native.no_transition_roots"))
         needsNotification = !llvm::is_contained(
             roots.asArrayRef(), static_cast<int32_t>(directRange->staticID));
     if (isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())) {

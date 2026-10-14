@@ -10,15 +10,15 @@ class Value;
 } // namespace mlir
 namespace obelisk::analysis {
 inline constexpr llvm::StringLiteral integerRangeAttr =
-    "obelisk.analysis.integer_range";
+    "analysis.integer_range";
 inline constexpr llvm::StringLiteral integerResultRangesAttr =
-    "obelisk.analysis.result_ranges";
+    "analysis.result_ranges";
 inline constexpr llvm::StringLiteral integerResultExprsAttr =
-    "obelisk.analysis.result_exprs";
+    "analysis.result_exprs";
 /// Transient, global no-X/Z certificate for a single semantic logic result.
 /// Producers consume it before expanding that value into physical planes.
 inline constexpr llvm::StringLiteral knownLogicResultAttr =
-    "obelisk.analysis.known_logic_result";
+    "analysis.known_logic_result";
 /// Reject malformed, empty or mismatched-width certificates.
 std::optional<mlir::ConstantIntRanges>
 decodeIntegerRange(mlir::Attribute attr,

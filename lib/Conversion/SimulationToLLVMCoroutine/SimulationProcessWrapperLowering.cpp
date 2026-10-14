@@ -95,14 +95,14 @@ LogicalResult materializeSharedNativeWrappers(ModuleOp module,
     if (Operation *existing = module.lookupSymbol(name)) {
       auto function = dyn_cast<LLVM::LLVMFuncOp>(existing);
       if (!function || function.getFunctionType() != type ||
-          !function->hasAttr("obelisk.native.shared_callback"))
+          !function->hasAttr("native.shared_callback"))
         return existing->emitError("incompatible shared native callback");
       return success();
     }
     builder.setInsertionPointToStart(module.getBody());
     auto function = LLVM::LLVMFuncOp::create(builder, location, name, type,
                                              LLVM::Linkage::Internal);
-    function->setAttr("obelisk.native.shared_callback", builder.getUnitAttr());
+    function->setAttr("native.shared_callback", builder.getUnitAttr());
     Block *entry = function.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
     emit(function, entry);

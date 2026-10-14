@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' > %t.mlir
 // RUN: obelisk-opt %t.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s
 
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.root @root attributes {
       hierarchical_name = "\\$root ", name = "$root", node_id = 0 : i64
   } {

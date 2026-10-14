@@ -993,7 +993,7 @@ LogicalResult materializeEvalTwoStateVariants(
           bool trackKnownState = true) -> FailureOr<sim::SimFuncOp> {
     auto traceRejection = [&](StringRef reason,
                               Operation *operation = nullptr) {
-      if (!module->hasAttr("obelisk.debug.native_timing"))
+      if (!module->hasAttr("debug.native_timing"))
         return;
       llvm::errs() << "obelisk eval probe rejected: " << source.getSymName()
                    << ": " << reason;

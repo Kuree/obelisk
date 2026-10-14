@@ -39,13 +39,13 @@ Type getNativeProcessDescriptorType(MLIRContext *context) {
 }
 namespace {
 
-constexpr StringLiteral kMaterializedAttr = "obelisk.execution.materialized";
-constexpr StringLiteral kBytecodeAttr = "obelisk.bytecode.image";
-constexpr StringLiteral kDatabaseAttr = "obelisk.design.database";
-constexpr StringLiteral kFlagsAttr = "obelisk.execution.flags";
-constexpr StringLiteral kStateBitsAttr = "obelisk.execution.state_bits";
-constexpr StringLiteral kSampledRangesAttr = "obelisk.execution.sampled_ranges";
-constexpr StringLiteral kFunctionAttr = "obelisk.bytecode.function";
+constexpr StringLiteral kMaterializedAttr = "execution.materialized";
+constexpr StringLiteral kBytecodeAttr = "bytecode.image";
+constexpr StringLiteral kDatabaseAttr = "design.database";
+constexpr StringLiteral kFlagsAttr = "execution.flags";
+constexpr StringLiteral kStateBitsAttr = "execution.state_bits";
+constexpr StringLiteral kSampledRangesAttr = "execution.sampled_ranges";
+constexpr StringLiteral kFunctionAttr = "bytecode.function";
 constexpr StringLiteral kExecutionName = "__obelisk_execution_descriptor_v1";
 constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
 constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
@@ -293,7 +293,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
                                 << "' has no bytecode implementation";
   }
   if (bytecodeOnly && !exports.empty())
-    module->setAttr("obelisk.feature.dpi_export_bytecode",
+    module->setAttr("feature.dpi_export_bytecode",
                     UnitAttr::get(module.getContext()));
 
   for (const ExportInfo &info : exports) {
@@ -309,9 +309,9 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
         builder, module.getLoc(), thunkName,
         LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer, i32},
                                     false));
-    thunk->setAttr("obelisk.dpi.export_bridge",
+    thunk->setAttr("dpi.export_bridge",
                    builder.getStringAttr(info.symbol));
-    thunk->setAttr("obelisk.dpi.export_body",
+    thunk->setAttr("dpi.export_body",
                    builder.getStringAttr(info.bodySymbol));
     thunk->setAttr("simulation.dpi_c_identifier",
                    builder.getStringAttr(info.cIdentifier));
@@ -565,7 +565,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   Type i64 = IntegerType::get(context, 64);
 
   auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
       executionFlags && (executionFlags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;

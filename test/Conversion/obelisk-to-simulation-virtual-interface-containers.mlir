@@ -214,7 +214,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: simulation.task.call @unit_0
 // CHECK: simulation.argument_ref.store
 // CHECK-NOT: obelisk.sv.
-// BYTECODE: obelisk.bytecode.image = array<i8:
-// BYTECODE: obelisk.execution.state_bits = 384 : i64
+// BYTECODE: bytecode.image = array<i8:
+// BYTECODE: execution.state_bits = 384 : i64
 // NATIVE: llvm.func
 // NATIVE-NOT: simulation.virtual_interface

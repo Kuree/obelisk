@@ -5,9 +5,9 @@
 
 // Runtime behavior is checked in ../Runtime/simulation-dpi-export-lowering.test.
 
-// NATIVE: obelisk.execution.flags = 128 : i32
-// BYTECODE: obelisk.execution.flags = 145 : i32
-// AUTO: obelisk.execution.flags = 129 : i32
+// NATIVE: execution.flags = 128 : i32
+// BYTECODE: execution.flags = 145 : i32
+// AUTO: execution.flags = 129 : i32
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -324,9 +324,9 @@ module attributes {
 // COMMON-DAG: llvm.func @export_scoped
 // COMMON-DAG: llvm.call @obelisk_rt_v1_export_call
 // COMMON-DAG: llvm.mlir.global internal constant @__obelisk_dpi_exports_v1
-// NATIVE-NOT: obelisk.feature.dpi_export_bytecode
+// NATIVE-NOT: feature.dpi_export_bytecode
 // NATIVE-NOT: @obelisk_rt_v1_dpi_export_bytecode_link_anchor
-// BYTECODE-DAG: obelisk.feature.dpi_export_bytecode
+// BYTECODE-DAG: feature.dpi_export_bytecode
 // BYTECODE-DAG: llvm.call @obelisk_rt_v1_dpi_export_bytecode_link_anchor
-// AUTO-NOT: obelisk.feature.dpi_export_bytecode
+// AUTO-NOT: feature.dpi_export_bytecode
 // AUTO-NOT: @obelisk_rt_v1_dpi_export_bytecode_link_anchor

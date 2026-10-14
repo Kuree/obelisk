@@ -73,7 +73,7 @@ public:
         graph.getVpi() == schedule::ComputeVPIMode::Full)
       return;
     bool trace = design->getParentOfType<ModuleOp>()->hasAttr(
-        "obelisk.debug.native_timing");
+        "debug.native_timing");
     if (maxMembers == 1) {
       design.emitOpError(
           "statement fusion member limit must be 0 or at least 2");

@@ -4,7 +4,7 @@
 
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
-module attributes {obelisk.coverage.metrics = ["line"]} {
+module attributes {coverage.metrics = ["line"]} {
   simulation.design @coverage {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 7 in 0 function hierarchy "top.f"
@@ -31,4 +31,4 @@ module attributes {obelisk.coverage.metrics = ["line"]} {
 // CHECK: simulation.design @coverage
 // CHECK: simulation.coverage.keepalive @covered
 // CHECK: simulation.func private @covered
-// CHECK: obelisk.coverage.line_point_index
+// CHECK: coverage.line_point_index

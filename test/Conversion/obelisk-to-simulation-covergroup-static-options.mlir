@@ -9,9 +9,9 @@
 
 // IEEE 19.7.1 and 19.10: definitions are elaborated constants and the implicit
 // static structures are initialized once, before processes or constructors.
-// SOURCE: obelisk.coverage.type_option_constant = "75"
-// SOURCE: obelisk.coverage.type_option_constant = "init group"
-// SOURCE: obelisk.coverage.type_option_constant = "0.25"
+// SOURCE: coverage.type_option_constant = "75"
+// SOURCE: coverage.type_option_constant = "init group"
+// SOURCE: coverage.type_option_constant = "0.25"
 // SIM-LABEL: simulation.func @__obelisk_root(
 // SIM: simulation.call @[[GROUP:unit_[0-9]+]]
 // SIM-NEXT: simulation.call @[[POINT:unit_[0-9]+]]

@@ -220,15 +220,15 @@ module attributes {
 // CHECK: llvm.mlir.addressof @I.__obelisk_interface
 // CHECK-LABEL: llvm.func internal @Base_get.__obelisk_native_thunk
 // PARTITION: module attributes {
-// PARTITION-SAME: obelisk.native.physical_partition_manifest = [
+// PARTITION-SAME: native.physical_partition_manifest = [
 // PARTITION-SAME: id = "unit:2"
 // PARTITION-SAME: members = [@Base_get.__obelisk_native_thunk, @base_get]
 // PARTITION-SAME: id = "unit:3"
 // PARTITION-SAME: members = [@Base_tag.__obelisk_native_thunk, @base_tag]
 // PARTITION: llvm.func internal @Base_get.__obelisk_native_thunk
-// PARTITION-SAME: obelisk.native.partition = "unit:2"
+// PARTITION-SAME: native.partition = "unit:2"
 // PARTITION: llvm.func internal @Base_tag.__obelisk_native_thunk
-// PARTITION-SAME: obelisk.native.partition = "unit:3"
+// PARTITION-SAME: native.partition = "unit:3"
 // CHECK-LABEL: llvm.func @root(
 // CHECK: llvm.call @obelisk_rt_v1_object_allocate
 // CHECK: llvm.call @obelisk_rt_v1_object_shallow_copy

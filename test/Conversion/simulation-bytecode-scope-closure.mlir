@@ -1,13 +1,13 @@
 // RUN: obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(simulation.design(obelisk-sim-build-compute-graph),encode-obelisk-sim-to-bytecode{prune-native=true vpi=full})' | FileCheck %s
 
 // CHECK-LABEL: simulation.func @root
-// CHECK-NOT: obelisk.bytecode.function
+// CHECK-NOT: bytecode.function
 // CHECK-LABEL: simulation.func @process
-// CHECK-NOT: obelisk.bytecode.function
+// CHECK-NOT: bytecode.function
 // CHECK-LABEL: simulation.func @checkpoint
-// CHECK-SAME: obelisk.bytecode.function = 0
+// CHECK-SAME: bytecode.function = 0
 // CHECK-LABEL: simulation.func private @helper
-// CHECK-SAME: obelisk.bytecode.function = 1
+// CHECK-SAME: bytecode.function = 1
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -74,9 +74,9 @@ module attributes {
 // IEEE 1800-2023 4.5, 4.6: a checkpoint must retain its callable body.
 // CHECK-LABEL: // {{-----}}
 // CHECK-LABEL: simulation.func @root
-// CHECK-SAME: obelisk.bytecode.function = 0
+// CHECK-SAME: bytecode.function = 0
 // CHECK-LABEL: simulation.func @process
-// CHECK-SAME: obelisk.bytecode.function = 1
+// CHECK-SAME: bytecode.function = 1
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

@@ -110,33 +110,33 @@ inline constexpr llvm::StringLiteral classBitstreamBytecodeSite =
     "simulation.class_bitstream_bytecode_site";
 /// Module-level canonical pointer-free class schema/group/site blob.
 inline constexpr llvm::StringLiteral classBitstreamBlob =
-    "obelisk.execution.class_bitstream_blob";
+    "execution.class_bitstream_blob";
 /// Module-level schema-only native coverage database embedded in the v1
 /// execution extension. Runtime run data is never written back into this
 /// attribute.
 inline constexpr llvm::StringLiteral coverageSchemaBlob =
-    "obelisk.execution.coverage_schema_blob";
+    "execution.coverage_schema_blob";
 /// Frontend-selected IEEE 1800 revision used for revision-sensitive coverage
 /// computation and persisted with every functional type.
 inline constexpr llvm::StringLiteral coverageLanguageVersion =
-    "obelisk.coverage.language_version";
+    "coverage.language_version";
 /// Stable FunctionalExpression identity assigned while the schema and helper
 /// contract are built together. Unit lowering must copy this exact identity
 /// to covergroup.sample; it must never synthesize an execution-local ordinal.
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionId =
-    "obelisk.coverage.functional_expression_id";
+    "coverage.functional_expression_id";
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionOrdinal =
-    "obelisk.coverage.functional_expression_ordinal";
+    "coverage.functional_expression_ordinal";
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionKind =
-    "obelisk.coverage.functional_expression_kind";
+    "coverage.functional_expression_kind";
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionBitWidth =
-    "obelisk.coverage.functional_expression_bit_width";
+    "coverage.functional_expression_bit_width";
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionSignedness =
-    "obelisk.coverage.functional_expression_signedness";
+    "coverage.functional_expression_signedness";
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionPhase =
-    "obelisk.coverage.functional_expression_phase";
+    "coverage.functional_expression_phase";
 inline constexpr llvm::StringLiteral coverageFunctionalExpressionRole =
-    "obelisk.coverage.functional_expression_role";
+    "coverage.functional_expression_role";
 /// Constructor-time `with` predicates are evaluated once for every candidate
 /// occurrence. These transient arrays keep that one-to-many helper contract
 /// on the semantic predicate without introducing another runtime ABI shape.
@@ -159,18 +159,18 @@ inline constexpr llvm::StringLiteral coverageFunctionalCrossWithSelectorId =
 inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTargetPaths =
     "simulation.coverage.functional.cross_with_target_paths";
 inline constexpr llvm::StringLiteral coverageFunctionalFormalId =
-    "obelisk.coverage.functional_formal_id";
+    "coverage.functional_formal_id";
 /// Stable FunctionalItem identity assigned to its semantic declaration.
 inline constexpr llvm::StringLiteral coverageFunctionalItemId =
-    "obelisk.coverage.functional_item_id";
+    "coverage.functional_item_id";
 /// Transient dense counter index assigned by coverage preparation. Stable
 /// entity identity remains in the native schema and never depends on this
 /// physical index.
 inline constexpr llvm::StringLiteral coverageLinePointIndex =
-    "obelisk.coverage.line_point_index";
+    "coverage.line_point_index";
 /// Number of line counters expected by the embedded schema.
 inline constexpr llvm::StringLiteral coverageLinePointCount =
-    "obelisk.coverage.line_point_count";
+    "coverage.line_point_count";
 /// Symbol uses that keep symbols required by coverage instrumentation alive
 /// through the post-inventory devirtualization and SymbolDCE pipeline. This
 /// includes code units owning line obligations and callees referenced by
@@ -178,15 +178,15 @@ inline constexpr llvm::StringLiteral coverageLinePointCount =
 /// together with their class method descriptors. The
 /// references are physical compiler metadata, not schema or merge identities.
 inline constexpr llvm::StringLiteral coverageRetainedSymbols =
-    "obelisk.coverage.retained_symbols";
+    "coverage.retained_symbols";
 /// Ordered flat-toggle bindings attached to source-visible declarations.
 /// Each dictionary contains base, low, and width i64 fields; aliases may bind
 /// multiple coverage ranges to one canonical state range.
 inline constexpr llvm::StringLiteral coverageToggleBindings =
-    "obelisk.coverage.toggle_bindings";
+    "coverage.toggle_bindings";
 /// Marks canonical state whose committed transitions are coverage-observable.
 inline constexpr llvm::StringLiteral coverageToggleObservable =
-    "obelisk.coverage.toggle_observable";
+    "coverage.toggle_observable";
 /// Marks a process-lifetime `simulation.ref.alloc` copy of an exclusive root
 /// that is flushed back to that root at every suspension and return. Its
 /// contents at any resumption equal a fresh load of the root.
@@ -194,26 +194,26 @@ inline constexpr llvm::StringLiteral flushedPrivateSlot =
     "simulation.flushed_private_slot";
 /// Number of flattened toggle bits expected by the embedded schema.
 inline constexpr llvm::StringLiteral coverageToggleBitCount =
-    "obelisk.coverage.toggle_bit_count";
+    "coverage.toggle_bit_count";
 /// Marks a design-lifetime declaration that directly represents a
 /// source-authored SystemVerilog object. Coverage preparation deliberately
 /// requires this marker so compiler support state never becomes an obligation.
 inline constexpr llvm::StringLiteral coverageSourceAuthored =
-    "obelisk.coverage.source_authored";
+    "coverage.source_authored";
 /// Transient source type retained through coverage preparation when
 /// normalization intentionally erases reportable identity such as an enum
 /// name. This is not a runtime ABI attribute.
 inline constexpr llvm::StringLiteral coverageSourceType =
-    "obelisk.coverage.source_type";
+    "coverage.source_type";
 /// Exact flattened toggle shadow at the language-defined initial state.
 inline constexpr llvm::StringLiteral coverageToggleInitialValue =
-    "obelisk.coverage.toggle_initial_value";
+    "coverage.toggle_initial_value";
 inline constexpr llvm::StringLiteral coverageToggleInitialUnknown =
-    "obelisk.coverage.toggle_initial_unknown";
+    "coverage.toggle_initial_unknown";
 /// Preparation-time feature marker used to keep whole-design class planning
 /// off ordinary compilation paths.
 inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
-    "obelisk.feature.class_bitstream_source";
+    "feature.class_bitstream_source";
 inline constexpr llvm::StringLiteral thisArgument = "simulation.this_argument";
 inline constexpr llvm::StringLiteral lowered = "simulation.lowered";
 
@@ -227,25 +227,25 @@ inline constexpr llvm::StringLiteral dpiElidedInputs =
 /// independent of worker count and is retained on generated LLVM functions so
 /// object emission and incremental caches share one ownership boundary.
 inline constexpr llvm::StringLiteral nativePartition =
-    "obelisk.native.partition";
+    "native.partition";
 /// The driver is lowering a complete executable and may omit unreferenced
 /// implementation helpers. Object and IR emission keep their public helpers.
 inline constexpr llvm::StringLiteral nativeClosedExecutable =
-    "obelisk.native.closed_executable";
+    "native.closed_executable";
 /// Deterministic per-design inventory of native partitions, their members,
 /// imports, exports, and dependencies.
 inline constexpr llvm::StringLiteral nativePartitionManifest =
-    "obelisk.native.partition_manifest";
+    "native.partition_manifest";
 /// Module-level, design-keyed copies of native partition manifests.  Design
 /// operations are erased during LLVM lowering, so later object emission and
 /// cache planning consume this preserved inventory.
 inline constexpr llvm::StringLiteral nativePartitionManifests =
-    "obelisk.native.partition_manifests";
+    "native.partition_manifests";
 /// Link-complete post-lowering inventory of physical LLVM symbols and their
 /// cross-partition references. Object emission consumes this manifest rather
 /// than the pre-lowering semantic inventory.
 inline constexpr llvm::StringLiteral nativePhysicalPartitionManifest =
-    "obelisk.native.physical_partition_manifest";
+    "native.physical_partition_manifest";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   if (auto field = schedule::symbolizeField(name))

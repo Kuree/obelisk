@@ -107,14 +107,14 @@ module attributes {
 
 // A container whose element is logic remains one managed register. It must
 // not acquire a second unknown plane from recursive containsLogic analysis.
-// BYTECODE: obelisk.execution.state_bits = 320 : i64
+// BYTECODE: execution.state_bits = 320 : i64
 // BYTECODE: simulation.storage.decl 0
 // BYTECODE: simulation.storage.decl 1
 // BYTECODE: simulation.storage.decl 2
 // BYTECODE: simulation.storage.decl 3
 // BYTECODE: simulation.storage.decl 4
 // The live aggregate string across create_like needs one shadow-root slot.
-// BYTECODE: obelisk.bytecode.scratch_size = 400 : i64
+// BYTECODE: bytecode.scratch_size = 400 : i64
 
 // The bytecode constants retain complete flattened trace-slot records:
 // little-endian {offset = 0, candidate class kind = 0x80000001, reserved = 0}

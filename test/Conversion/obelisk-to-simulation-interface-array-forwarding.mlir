@@ -8,7 +8,7 @@
 // CHECK-NOT: simulation.vpi_object.anchor {{.*}} hierarchy "rif"
 // INVALID: instance-array dimension has 3 elements but its source range requires 4
 
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition @s0.adapter attributes {definition_kind = 0 : i32, hierarchical_name = "adapter", name = "adapter", node_id = 0 : i64} {
   }
   obelisk.sv.symbol.definition @s1.inner attributes {definition_kind = 0 : i32, hierarchical_name = "inner", name = "inner", node_id = 1 : i64} {

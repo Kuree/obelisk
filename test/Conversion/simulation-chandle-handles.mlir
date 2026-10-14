@@ -37,8 +37,8 @@ module attributes {
 // NATIVE: llvm.mlir.constant(true) : i1
 // NATIVE-NOT: simulation.chandle
 
-// BYTECODE: obelisk.bytecode.image = array<i8:
-// BYTECODE: obelisk.execution.state_bits = 64 : i64
+// BYTECODE: bytecode.image = array<i8:
+// BYTECODE: execution.state_bits = 64 : i64
 
 // INSTRUCTIONS: constants: 00000000000000000000000000000000
 // INSTRUCTIONS-NEXT: 0: opcode=1 flags=0 dst=1 {{.*}} imm=0

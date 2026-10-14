@@ -7,9 +7,9 @@ module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
-  // O0: obelisk.bytecode.image
-  // O1: obelisk.bytecode.image
-  // BOUNDARY: obelisk.bytecode.image
+  // O0: bytecode.image
+  // O1: bytecode.image
+  // BOUNDARY: bytecode.image
   // NATIVE: llvm.func @writer(%{{.*}}: !llvm.ptr, %{{.*}}: i64, %{{.*}}: i32) attributes
   // NATIVE: llvm.call @writer({{.*}}) : (!llvm.ptr, i64, i32) -> ()
   simulation.design @lowering {

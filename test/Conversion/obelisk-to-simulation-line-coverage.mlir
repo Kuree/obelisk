@@ -7,7 +7,7 @@
 !int = !obelisk.integral<32, true, false, 31 : 0, int>
 
 module attributes {
-  obelisk.coverage.metrics = ["line"]
+  coverage.metrics = ["line"]
 } {
   simulation.design @coverage {
     simulation.scope.decl 0 hierarchy "$root"
@@ -94,10 +94,10 @@ module attributes {
 }
 
 // INVENTORY: module attributes {
-// INVENTORY-SAME: obelisk.coverage.line_point_count = 4 : i64
-// INVENTORY-SAME: obelisk.execution.coverage_schema_blob = array<i8:
+// INVENTORY-SAME: coverage.line_point_count = 4 : i64
+// INVENTORY-SAME: execution.coverage_schema_blob = array<i8:
 // INVENTORY: simulation.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT" coverage_id {{-?[1-9][0-9]*}}
-// INVENTORY-COUNT-4: obelisk.coverage.line_point_index = {{[0-3]}} : i64
+// INVENTORY-COUNT-4: coverage.line_point_index = {{[0-3]}} : i64
 
 // SCHEMA: scope id={{[1-9][0-9]*}} parent={{[1-9][0-9]*}} name=top kind=0 definition=DUT
 

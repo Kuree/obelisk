@@ -264,7 +264,7 @@ buildNativeClockInferencePlan(ModuleOp module, const NativeStateLayout &layout,
   for (const auto &[bit, fact] : inference.getFacts())
     if (fact.hasTickBound())
       periodic.insert(bit);
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk periodic signal proof: clocks=" << clocks.size()
                  << " copies=" << inference.getCopyCount()
                  << " cadence-outputs=" << inference.getCadenceCount()
@@ -673,7 +673,7 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   }
   auto disableExactFanout = [&](StringRef reason,
                                 sim::SimFuncOp function = {}) {
-    if (module->hasAttr("obelisk.debug.native_timing")) {
+    if (module->hasAttr("debug.native_timing")) {
       llvm::errs() << "static fanout disabled: " << reason;
       if (function)
         llvm::errs() << " in " << function.getSymName();

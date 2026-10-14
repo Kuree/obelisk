@@ -68,9 +68,9 @@ module attributes {
 }
 
 // CHECK: IR Dump After {{.*}}PrepareNativeManagedRootsPass
-// CHECK: simulation.func @scalar_caller({{.*}}obelisk.native.unmanaged
-// CHECK: simulation.func @array_holder({{.*}}obelisk.native.unmanaged
+// CHECK: simulation.func @scalar_caller({{.*}}native.unmanaged
+// CHECK: simulation.func @array_holder({{.*}}native.unmanaged
 // The NOT range ends at the next line, so it covers only the header.
 // CHECK: simulation.func @recursive_caller(
-// CHECK-NOT: obelisk.native.unmanaged
+// CHECK-NOT: native.unmanaged
 // CHECK-NEXT: simulation.call @recursive(

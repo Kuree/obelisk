@@ -5,7 +5,7 @@
 // Unaligned array accesses use one native window, even at the plane tail.
 // Logical selectors and masks still bound the operation to its element.
 // Runtime byte-level preservation is checked in the paired Runtime test.
-module attributes {schedule.native_scheduler = 3 : i32, obelisk.native.closed_executable, llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "aarch64-unknown-linux-gnu"} {
+module attributes {schedule.native_scheduler = 3 : i32, native.closed_executable, llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "aarch64-unknown-linux-gnu"} {
   simulation.design @windows {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !simulation.unpacked_array<0 : 24 x !simulation.logic<3>> design

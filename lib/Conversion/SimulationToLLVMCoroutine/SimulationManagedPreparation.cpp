@@ -273,11 +273,11 @@ prepareManagedClassInventory(ModuleOp module,
     analysis::orderByUnsignedKey(layout.methods,
                                  [](auto method) { return *method.getSlot(); });
     declaration->setAttr(
-        "obelisk.native.instance_size",
+        "native.instance_size",
         IntegerAttr::get(IntegerType::get(module.getContext(), 64),
                          layout.size));
     declaration->setAttr(
-        "obelisk.native.instance_alignment",
+        "native.instance_alignment",
         IntegerAttr::get(IntegerType::get(module.getContext(), 32),
                          layout.alignment));
     layouts[declaration.getSymName()] = std::move(layout);
@@ -441,7 +441,7 @@ prepareManagedClassInventory(ModuleOp module,
       context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
                 pointer, i64, pointer, i64, pointer});
   auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
       executionFlags && (executionFlags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
@@ -462,7 +462,7 @@ prepareManagedClassInventory(ModuleOp module,
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
         if (auto index = function->getAttrOfType<IntegerAttr>(
-                "obelisk.bytecode.function"))
+                "bytecode.function"))
           bytecodeFunctions[function.getSymName()] =
               static_cast<uint32_t>(index.getValue().getZExtValue());
       });
@@ -971,7 +971,7 @@ LogicalResult prepareManagedLowering(ModuleOp module,
   if (failed(prepareManagedClassInventory(module, dataLayout, layouts)))
     return failure();
   auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
       executionFlags && (executionFlags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;

@@ -25,7 +25,7 @@ module attributes {
   // NATIVE-NEXT: llvm.insertvalue %[[FLAGS]], %{{.*}}[2]
   // The bytecode image preserves the same wait header: version, CHANGE kind,
   // flags, and watcher count.
-  // BYTECODE: obelisk.bytecode.image = array<i8: {{.*}}1, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0
+  // BYTECODE: bytecode.image = array<i8: {{.*}}1, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0
   simulation.design @startup_wildcard_wait {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 root_initializer

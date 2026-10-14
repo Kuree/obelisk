@@ -13,7 +13,7 @@
 ]>
 !records = !simulation.unpacked_array<0 : 7 x !record>
 
-module attributes {obelisk.native.optimization_level = 3 : i32} {
+module attributes {native.optimization_level = 3 : i32} {
   simulation.design @known_versioning {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 100 in 0 function hierarchy "top.carried_unknown"

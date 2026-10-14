@@ -136,7 +136,7 @@ void pruneNativeFunctions(sim::SimDesignOp design,
   while (!worklist.empty())
     for (Operation *callee : dependencies[worklist.pop_back_val()])
       retain(callee);
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk bytecode retention: " << retained.size() << "/"
                  << functions.size() << " functions\n";
   llvm::erase_if(functions, [&](sim::SimFuncOp function) {

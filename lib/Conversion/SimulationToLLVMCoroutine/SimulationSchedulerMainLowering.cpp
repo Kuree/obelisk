@@ -89,7 +89,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   // database system calls, which are the two opt-in persistence paths.
   uint32_t coveragePersistenceMask = 0;
   if (auto metrics =
-          module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics")) {
+          module->getAttrOfType<ArrayAttr>("coverage.metrics")) {
     for (Attribute attribute : metrics) {
       auto metric = dyn_cast<StringAttr>(attribute);
       if (!metric)
@@ -106,7 +106,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   bool hasDesignBytecode = false;
   uint64_t executionFlags = 0;
   if (auto flags =
-          module->getAttrOfType<IntegerAttr>("obelisk.execution.flags")) {
+          module->getAttrOfType<IntegerAttr>("execution.flags")) {
     executionFlags = flags.getValue().getZExtValue();
     hasDesignBytecode = (flags.getValue().getZExtValue() &
                          OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
@@ -221,19 +221,19 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         ValueRange{runtimeContext, status});
   }
   bool requiresDynamicScanFeature =
-      module->hasAttr("obelisk.feature.dynamic_scan");
+      module->hasAttr("feature.dynamic_scan");
   bool requiresContainerBitstreamFeature =
-      module->hasAttr("obelisk.feature.container_bitstream");
+      module->hasAttr("feature.container_bitstream");
   bool requiresRecursiveBitstreamFeature =
-      module->hasAttr("obelisk.feature.recursive_bitstream");
+      module->hasAttr("feature.recursive_bitstream");
   bool requiresClassBitstreamFeature =
-      module->hasAttr("obelisk.feature.class_bitstream");
+      module->hasAttr("feature.class_bitstream");
   bool requiresClassBitstreamBytecodeFeature =
-      module->hasAttr("obelisk.feature.class_bitstream_bytecode");
+      module->hasAttr("feature.class_bitstream_bytecode");
   bool requiresDPIExportBytecodeFeature =
-      module->hasAttr("obelisk.feature.dpi_export_bytecode");
+      module->hasAttr("feature.dpi_export_bytecode");
   bool requiresDPIImportBytecodeFeature =
-      module->hasAttr("obelisk.feature.dpi_import_bytecode");
+      module->hasAttr("feature.dpi_import_bytecode");
   if (requiresDynamicScanFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},
@@ -326,16 +326,16 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   SmallVector<LLVM::LLVMFuncOp> dpiThunks;
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
-        if (function->hasAttr("obelisk.dpi.import_id"))
+        if (function->hasAttr("dpi.import_id"))
           dpiThunks.push_back(function);
       });
   llvm::sort(dpiThunks, [](LLVM::LLVMFuncOp lhs, LLVM::LLVMFuncOp rhs) {
-    return lhs->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id").getInt() <
-           rhs->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id").getInt();
+    return lhs->getAttrOfType<IntegerAttr>("dpi.import_id").getInt() <
+           rhs->getAttrOfType<IntegerAttr>("dpi.import_id").getInt();
   });
   for (LLVM::LLVMFuncOp thunk : dpiThunks) {
-    auto importID = thunk->getAttrOfType<IntegerAttr>("obelisk.dpi.import_id");
-    auto abiHash = thunk->getAttrOfType<IntegerAttr>("obelisk.dpi.abi_hash");
+    auto importID = thunk->getAttrOfType<IntegerAttr>("dpi.import_id");
+    auto abiHash = thunk->getAttrOfType<IntegerAttr>("dpi.abi_hash");
     if (!abiHash)
       return thunk.emitError("DPI thunk is missing its ABI signature hash");
     Value callback = LLVM::AddressOfOp::create(builder, location, pointer,

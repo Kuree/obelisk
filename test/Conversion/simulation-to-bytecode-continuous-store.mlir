@@ -30,6 +30,6 @@ module attributes {
 
 // StoreState is opcode 28. Its serialized flags field is 2 for a retained
 // continuous publication; source0 and source1 are handle 2 and value 1.
-// CHECK: obelisk.bytecode.image = array<i8:
+// CHECK: bytecode.image = array<i8:
 // CHECK-SAME: {{.*}}28, 0, 2, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0
 // NATIVE-COUNT-2: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane

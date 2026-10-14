@@ -12,7 +12,7 @@ module {
     simulation.storage.decl 0 in 0 : i8 design
     simulation.storage.decl 1 in 0 : i8 design
     simulation.storage.decl 2 in 0 : i8 design
-    simulation.storage.decl 3 in 0 : i8 design {obelisk.coverage.toggle_observable}
+    simulation.storage.decl 3 in 0 : i8 design {coverage.toggle_observable}
     simulation.code_unit.decl 1 in 0 always_comb hierarchy "producer_and_consumer"
     simulation.code_unit.decl 2 in 0 always_comb hierarchy "transform"
     simulation.code_unit.decl 3 in 0 always hierarchy "observer"

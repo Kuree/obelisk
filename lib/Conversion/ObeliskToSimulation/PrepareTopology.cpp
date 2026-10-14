@@ -824,7 +824,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   SmallVector<Operation *> designObjects;
   bool retainCoverageSourceTypes = false;
   if (auto metrics = module->getAttrOfType<ArrayAttr>(
-          "obelisk.coverage.metrics"))
+          "coverage.metrics"))
     retainCoverageSourceTypes = llvm::any_of(metrics, [](Attribute metric) {
       auto name = dyn_cast<StringAttr>(metric);
       return name && name.getValue() == "toggle";

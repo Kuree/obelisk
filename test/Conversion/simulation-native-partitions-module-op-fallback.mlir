@@ -27,6 +27,6 @@ module attributes {
 }
 
 // CHECK: module attributes {
-// CHECK-SAME: obelisk.native.partition_manifests
-// CHECK-NOT: obelisk.native.physical_partition_manifest
+// CHECK-SAME: native.partition_manifests
+// CHECK-NOT: native.physical_partition_manifest
 // CHECK: llvm.mlir.global_ctors

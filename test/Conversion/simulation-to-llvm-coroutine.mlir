@@ -299,8 +299,8 @@ module attributes {
 // CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_frame_fields
 // CHECK-DAG: llvm.mlir.global external constant @plain_process.__obelisk_process_descriptor
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.alignment = 8 : i64
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2>
+// CHECK-SAME: frame.alignment = 8 : i64
+// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2>
 // CHECK-SAME: passthrough = ["presplitcoroutine"]
 // CHECK-DAG: llvm.intr.coro.id
 // CHECK-DAG: llvm.intr.coro.size
@@ -313,8 +313,8 @@ module attributes {
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_native_execute
 // CHECK: llvm.call tail @__obelisk_native_coro_execute_v1
 // CHECK-LABEL: llvm.func @all_waits.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6>
-// CHECK-SAME: obelisk.frame.size = 96 : i64
+// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6>
+// CHECK-SAME: frame.size = 96 : i64
 // CHECK-DAG: %[[ANY_WAIT:[0-9]+]] = llvm.getelementptr {{.*}}[32]
 // CHECK-DAG: %[[ANY_EDGE_CHANGE_ADDR:[0-9]+]] = llvm.getelementptr %[[ANY_WAIT]][40]
 // CHECK-DAG: llvm.store %{{[0-9]+}}, %[[ANY_EDGE_CHANGE_ADDR]]
@@ -322,19 +322,19 @@ module attributes {
 // CHECK-DAG: llvm.store %{{[0-9]+}}, %[[ANY_EDGE_POSEDGE_ADDR]]
 // CHECK-DAG: llvm.getelementptr {{.*}}[60]
 // CHECK-LABEL: llvm.func @loop_wait.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1>
+// CHECK-SAME: frame.continuations = array<i32: 0, 1>
 // CHECK-LABEL: llvm.func @shared_observer_binding.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1>
+// CHECK-SAME: frame.continuations = array<i32: 0, 1>
 // CHECK-LABEL: llvm.func @reuse_continuation_slots.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, 2>
-// CHECK-SAME: obelisk.frame.size = 64 : i64
+// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2>
+// CHECK-SAME: frame.size = 64 : i64
 // CHECK-LABEL: llvm.func @maximum_continuation_id.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1, -1>
+// CHECK-SAME: frame.continuations = array<i32: 0, 1, -1>
 // CHECK-LABEL: llvm.func @suspension_live_value.__obelisk_coro_ramp
-// CHECK-SAME: obelisk.frame.continuations = array<i32: 0, 1>
-// CHECK-SAME: obelisk.frame.size = 40 : i64
+// CHECK-SAME: frame.continuations = array<i32: 0, 1>
+// CHECK-SAME: frame.size = 40 : i64
 // CHECK-LABEL: llvm.func @plain_process
-// CHECK-SAME: obelisk.native_scratch_size = 0 : i64
+// CHECK-SAME: native.scratch_size = 0 : i64
 // CHECK: llvm.alloca
 // CHECK-NOT: llvm.call @obelisk_rt_v1_native_state_alloc
 // CHECK-NOT: llvm.intr.coro.
@@ -364,7 +364,7 @@ module attributes {
 // above additionally exercise the unknown-plane guard (constant-folded here).
 // CHECK-COUNT-8: llvm.icmp "eq"
 // CHECK-LABEL: llvm.func @ordinary
-// CHECK-SAME: obelisk.native_scratch_size = 0 : i64
+// CHECK-SAME: native.scratch_size = 0 : i64
 // CHECK-LABEL: llvm.func @union_extract
 // CHECK: llvm.trunc
 // CHECK-LABEL: llvm.func @aggregate_insert

@@ -484,7 +484,7 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
       return !overlaps(bit, writer) || writer.owner == owner;
     });
   };
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     for (const auto &seed : seeds)
       for (const auto &writer : writers[seed.bit.first])
         if (overlaps(seed.bit, writer) && writer.owner != seed.writer)

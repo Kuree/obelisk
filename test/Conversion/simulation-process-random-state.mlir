@@ -57,6 +57,6 @@ module attributes {
 // The append-only process RNG intrinsic IDs are 0x1022e and 0x1022f.
 // Their serialized signatures pin the typed two-state ABI:
 // get(process)->(state,increment) and set(process,state,increment).
-// BYTECODE: obelisk.bytecode.image = array<i8:
+// BYTECODE: bytecode.image = array<i8:
 // BYTECODE-SAME: 46, 2, 1, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0
 // BYTECODE-SAME: 47, 2, 1, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0

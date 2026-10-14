@@ -512,7 +512,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   // whole-design admission, so its planned membership is the figure that
   // decides whether a design is losing Tier-1 work to admission or to fusion.
   // Report the distribution, not just the pass timing.
-  if (module->hasAttr("obelisk.debug.native_timing")) {
+  if (module->hasAttr("debug.native_timing")) {
     uint64_t members = 0;
     size_t largest = 0;
     for (Attribute attribute : fusions) {

@@ -1954,7 +1954,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
     }
     if (!boundedBackedges.empty() &&
         design->getParentOfType<ModuleOp>()->hasAttr(
-            "obelisk.debug.native_timing"))
+            "debug.native_timing"))
       llvm::errs() << "obelisk bounded backedges in graph: "
                    << boundedBackedges.size() << '\n';
     SmallVector<Attribute> groupAttributes;

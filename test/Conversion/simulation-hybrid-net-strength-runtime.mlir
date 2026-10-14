@@ -14,7 +14,7 @@
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010215
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010217
 // BYTECODE: intrinsic {{[0-9]+}}: id=0x00010002 inputs=5 outputs=0
-// NATIVE: obelisk.execution.flags
+// NATIVE: execution.flags
 // NATIVE: llvm.mlir.global internal constant @report.__obelisk_bytecode_entry
 
 module attributes {

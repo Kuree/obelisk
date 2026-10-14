@@ -29,7 +29,7 @@ namespace detail {
 namespace {
 
 constexpr llvm::StringLiteral automaticOwnerReleaseInstrumentedAttr =
-    "obelisk.owner_release_instrumented";
+    "native.owner_release_instrumented";
 
 bool isReferenceView(Operation *operation) {
   return isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,

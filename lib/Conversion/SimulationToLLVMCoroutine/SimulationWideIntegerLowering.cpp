@@ -158,7 +158,7 @@ struct NativeFunctionFinalizationInputs {
     }
     dataLayout = std::move(*parsed);
     auto optimization =
-        module->getAttrOfType<IntegerAttr>("obelisk.native.optimization_level");
+        module->getAttrOfType<IntegerAttr>("native.optimization_level");
     if (optimization && optimization.getInt() >= 2) {
       auto limit = schedule::get<schedule::Field::MaxInlineOps>(module);
       inlineOperationLimit = limit ? limit.getUInt() : UINT64_C(5000);

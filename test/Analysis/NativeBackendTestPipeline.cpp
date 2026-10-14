@@ -71,13 +71,13 @@ void buildNativeBackendTestPipeline(
                              Twine(stopAfter) + "'");
   std::string backendAttributes =
       llvm::formatv("schedule.native_scheduler = {0} : i32, "
-                    "obelisk.native.optimization_level = {1} : i32",
+                    "native.optimization_level = {1} : i32",
                     *mode, options.optLevel)
           .str();
   if (options.closedExecutable)
-    backendAttributes += ", obelisk.native.closed_executable";
+    backendAttributes += ", native.closed_executable";
   if (options.timing)
-    backendAttributes += ", obelisk.debug.native_timing";
+    backendAttributes += ", debug.native_timing";
   // By default lowering keeps one actor per process (no fusion or clocked
   // kernels) under the generic scheduler; the backend then clones evaluators
   // itself, so the input stays independent of the simulation optimization

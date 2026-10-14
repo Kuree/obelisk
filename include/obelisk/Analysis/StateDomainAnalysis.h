@@ -137,7 +137,7 @@ getArraySelectionBounds(mlir::Type arrayType);
 
 /// The most defined functions a design may have for native compilation to
 /// run optional whole-design state-domain solves on it: 4096 at O3, unbounded
-/// below, or `obelisk.native.max_state_domain_functions` on `module`. Fails
+/// below, or `native.max_state_domain_functions` on `module`. Fails
 /// with an error for a negative limit.
 mlir::FailureOr<uint64_t>
 getNativeStateDomainFunctionLimit(mlir::Operation *module);

@@ -1112,7 +1112,7 @@ static bool matchCoverageGlob(StringRef pattern, StringRef value,
 static FailureOr<CoverageConfiguration>
 parseCoverageConfiguration(ModuleOp module) {
   CoverageConfiguration configuration;
-  auto text = module->getAttrOfType<StringAttr>("obelisk.coverage.config");
+  auto text = module->getAttrOfType<StringAttr>("coverage.config");
   if (!text)
     return configuration;
 
@@ -1555,7 +1555,7 @@ static void appendFunctionalSemantics(llvm::raw_ostream &stream,
     if (name == "node_id" || name == "sym_name" ||
         name == "referenced_symbol" || name == "source_range" ||
         name == "original_source_range" || name == "macro_expansion_stack" ||
-        name.starts_with("obelisk.coverage."))
+        name.starts_with("coverage."))
       continue;
     stream << name << '=';
     named.getValue().print(stream);
@@ -1614,7 +1614,7 @@ static uint64_t stableFunctionalExpressionID(
 }
 
 static bool isMetricEnabled(ModuleOp module, StringRef expected) {
-  auto metrics = module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics");
+  auto metrics = module->getAttrOfType<ArrayAttr>("coverage.metrics");
   if (!metrics)
     return false;
   return llvm::any_of(metrics, [&](Attribute metric) {
@@ -1701,7 +1701,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
   // Clause 40 queries must return SV_COV_NOCOV rather than fail the runtime
   // lifecycle, instance arguments still need stable scope identities, and
   // functional database calls request persistence of otherwise-unused types.
-  if (!module->hasAttr("obelisk.coverage.metrics") &&
+  if (!module->hasAttr("coverage.metrics") &&
       !hasExecutableCovergroups && !hasCoverageSystemCall)
     return;
 
@@ -1724,7 +1724,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
 
   bool invalidDirective = false;
   if (auto sourceFiles =
-          module->getAttrOfType<ArrayAttr>("obelisk.coverage.source_files")) {
+          module->getAttrOfType<ArrayAttr>("coverage.source_files")) {
     for (Attribute attribute : sourceFiles) {
       auto path = dyn_cast<StringAttr>(attribute);
       if (!path || failed(parseDirectiveFile(path.getValue()))) {
@@ -1780,7 +1780,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
 
   SmallVector<PrefixMap> prefixMaps;
   if (auto maps =
-          module->getAttrOfType<ArrayAttr>("obelisk.coverage.prefix_maps")) {
+          module->getAttrOfType<ArrayAttr>("coverage.prefix_maps")) {
     for (Attribute attribute : maps) {
       auto value = dyn_cast<StringAttr>(attribute);
       if (!value)
@@ -3261,10 +3261,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 reportName(simlowering::getDebugName(member),
                            simlowering::getHierarchyName(member));
             uint32_t itemFlags = 0;
-            if (member->hasAttr("obelisk.coverage.inherited_overridden")) {
+            if (member->hasAttr("coverage.inherited_overridden")) {
               itemFlags |= coverage::FunctionalItemNonAggregating;
               auto origin = member->getAttrOfType<IntegerAttr>(
-                  "obelisk.coverage.inherited_origin_type");
+                  "coverage.inherited_origin_type");
               name += (Twine("$inherited$") +
                        Twine(origin ? origin.getValue().getZExtValue() : 0))
                           .str();
@@ -3426,7 +3426,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 return;
               }
               ArrayAttr effectiveTargets = cross->getAttrOfType<ArrayAttr>(
-                  "obelisk.coverage.effective_target_symbols");
+                  "coverage.effective_target_symbols");
               auto getEffectiveTarget = [&](size_t ordinal,
                                             Attribute targetAttr) -> StringRef {
                 if (effectiveTargets && ordinal < effectiveTargets.size())
@@ -4046,7 +4046,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         dyn_cast_or_null<ir::SVConditionBinsSelectExprOp>(
                             selector)) {
                   auto effectiveTarget = condition->getAttrOfType<StringAttr>(
-                      "obelisk.coverage.effective_target_symbol");
+                      "coverage.effective_target_symbol");
                   StringRef targetSymbol =
                       effectiveTarget
                           ? effectiveTarget.getValue()

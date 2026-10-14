@@ -74,7 +74,7 @@ def ObeliskSimInsertGCPollsPass
     of every allocating DPI export, so garbage between two collection
     opportunities stays bounded. Every call into compiled code that cannot
     reach a poll is marked `simulation.gc_poll_free`, and the module is marked
-    `obelisk.gc.polled`; root instrumentation then registers managed values
+    `gc.polled`; root instrumentation then registers managed values
     only where a collection can observe them. Rerunning the pass adds nothing.
   }];
   let statistics = [

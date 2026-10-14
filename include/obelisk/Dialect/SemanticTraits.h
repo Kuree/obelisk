@@ -533,7 +533,7 @@ public:
     IntegerAttr languageVersion;
     if (module)
       languageVersion = dyn_cast_or_null<IntegerAttr>(
-          module->getDiscardableAttr("obelisk.coverage.language_version"));
+          module->getDiscardableAttr("coverage.language_version"));
 
     using SymbolIndex = llvm::DenseMap<StringAttr, SmallVector<Operation *, 1>>;
     SymbolIndex localSymbols;
@@ -662,7 +662,7 @@ public:
     auto getBaseGroup = [&](Operation *group) -> Operation * {
       Attribute base = group->getAttr("base_group");
       if (!base)
-        base = group->getAttr("obelisk.coverage.base_group");
+        base = group->getAttr("coverage.base_group");
       if (!base)
         return nullptr;
       SymbolRefAttr reference = findFirstReference(base);

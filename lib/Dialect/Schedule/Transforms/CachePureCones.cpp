@@ -287,7 +287,7 @@ void cacheNativePureCones(ModuleOp module, uint64_t minimumCost,
   }
   for (auto &[function, keys] : candidates)
     cacheFunction(module, function, keys);
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk pure cones: outlined=" << outlined
                  << " cached=" << candidates.size() << '\n';
 }

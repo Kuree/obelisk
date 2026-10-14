@@ -17,7 +17,7 @@ namespace obelisk::analysis {
 /// Marks a module whose compiled code roots managed values only at GC polls
 /// and at calls that may reach one.
 inline constexpr llvm::StringLiteral polledCollectionAttrName =
-    "obelisk.gc.polled";
+    "gc.polled";
 /// Marks a call into compiled code that cannot reach a GC poll.
 inline constexpr llvm::StringLiteral gcPollFreeAttrName =
     "simulation.gc_poll_free";

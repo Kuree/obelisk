@@ -511,7 +511,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (usesFunctionalCoverageDatabase) {
     SmallVector<Attribute> metrics;
     if (auto current =
-            module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics"))
+            module->getAttrOfType<ArrayAttr>("coverage.metrics"))
       llvm::append_range(metrics, current);
     bool hasFunctional = llvm::any_of(metrics, [](Attribute attribute) {
       auto metric = dyn_cast<StringAttr>(attribute);
@@ -519,14 +519,14 @@ void ObeliskSimPreparePass::runOnOperation() {
     });
     if (!hasFunctional) {
       metrics.push_back(StringAttr::get(context, "functional"));
-      module->setAttr("obelisk.coverage.metrics",
+      module->setAttr("coverage.metrics",
                       ArrayAttr::get(context, metrics));
     }
   }
 
   bool pruneCoverage = pruneUnusedCoverage;
   if (auto metrics =
-          module->getAttrOfType<ArrayAttr>("obelisk.coverage.metrics"))
+          module->getAttrOfType<ArrayAttr>("coverage.metrics"))
     pruneCoverage &= !llvm::any_of(metrics, [](Attribute attribute) {
       auto metric = dyn_cast<StringAttr>(attribute);
       return metric && metric.getValue() == "functional";
@@ -2896,9 +2896,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool full = connectionFull.getValue();
     SmallVector<int64_t, 12> normalizedDelays(delays.asArrayRef());
     auto globalReject =
-        module->getAttrOfType<IntegerAttr>("obelisk.pulse_reject_percent");
+        module->getAttrOfType<IntegerAttr>("pulse.reject_percent");
     auto globalError =
-        module->getAttrOfType<IntegerAttr>("obelisk.pulse_error_percent");
+        module->getAttrOfType<IntegerAttr>("pulse.error_percent");
     auto percentLimits = [&](IntegerAttr percent) {
       SmallVector<int64_t, 12> result;
       result.reserve(normalizedDelays.size());
@@ -2975,10 +2975,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       // specify-block declarations. Preserve that precedence after range
       // splitting so it cannot vary accidentally across packed output bits.
       if (auto global =
-              module->getAttrOfType<BoolAttr>("obelisk.pulse_on_detect"))
+              module->getAttrOfType<BoolAttr>("pulse.on_detect"))
         pulseOnDetect = global.getValue();
       if (auto global =
-              module->getAttrOfType<BoolAttr>("obelisk.pulse_show_cancelled"))
+              module->getAttrOfType<BoolAttr>("pulse.show_cancelled"))
         pulseShowCancelled = global.getValue();
       TimingTerminal segment = *outputTerminal;
       segment.low = segmentLow;
@@ -9422,18 +9422,18 @@ void ObeliskSimPreparePass::runOnOperation() {
       dpiTarget = true;
       StringAttr cIdentifier = subroutine.getDpiCIdentifierAttr();
       call->setAttr(
-          "obelisk.dpi.import_id",
+          "dpi.import_id",
           builder.getI32IntegerAttr(getStableDPIID(cIdentifier.getValue())));
-      call->setAttr("obelisk.dpi.c_identifier", cIdentifier);
-      call->setAttr("obelisk.dpi.scope_id",
+      call->setAttr("dpi.c_identifier", cIdentifier);
+      call->setAttr("dpi.scope_id",
                     builder.getI64IntegerAttr(getScopeId(targetSource)));
       call->setAttr(
-          "obelisk.dpi.is_pure",
+          "dpi.is_pure",
           builder.getBoolAttr(subroutine.getIsPure().value_or(false)));
       call->setAttr(
-          "obelisk.dpi.is_context",
+          "dpi.is_context",
           builder.getBoolAttr(subroutine.getIsDpiContext().value_or(false)));
-      call->setAttr("obelisk.dpi.is_task",
+      call->setAttr("dpi.is_task",
                     builder.getBoolAttr(subroutine.getSubroutineKind() ==
                                         semantic::SVSubroutineKind::Task));
     }

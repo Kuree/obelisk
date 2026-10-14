@@ -27,7 +27,7 @@ module {
             {simulation.capture_kind = 0 : i32})
         attributes {code_unit_id = 1 : i64, entry_kind = 1 : i32} {
       %true = arith.constant true
-      // expected-error@+1 {{requires the module line-point inventory attribute 'obelisk.coverage.line_point_count'}}
+      // expected-error@+1 {{requires the module line-point inventory attribute 'coverage.line_point_count'}}
       simulation.coverage.point_hit %ctx if %true[0] : !simulation.context
       simulation.return
     }
@@ -36,7 +36,7 @@ module {
 
 // -----
 
-module attributes {obelisk.coverage.line_point_count = 1 : i64} {
+module attributes {coverage.line_point_count = 1 : i64} {
   simulation.design @out_of_range {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"
@@ -54,7 +54,7 @@ module attributes {obelisk.coverage.line_point_count = 1 : i64} {
 
 // -----
 
-module attributes {obelisk.coverage.line_point_count = 1 : i128} {
+module attributes {coverage.line_point_count = 1 : i128} {
   simulation.design @wrong_inventory_width {
     simulation.scope.decl 0 hierarchy "top"
     simulation.code_unit.decl 1 in 0 initial hierarchy "top.initial"

@@ -20,7 +20,7 @@
 
 !word = !simulation.logic<13>
 !ref = !simulation.ref<!word>
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, obelisk.native.closed_executable, obelisk.debug.native_timing} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, native.closed_executable, debug.native_timing} {
   simulation.design @unchanged {
     simulation.scope.decl 0 hierarchy "unchanged"
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "unchanged.root"

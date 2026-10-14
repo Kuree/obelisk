@@ -441,7 +441,7 @@ struct ObeliskSimRefineContinuousSensitivityPass
     }
     numRefined += refined;
     if (design->getParentOfType<ModuleOp>()->hasAttr(
-            "obelisk.debug.native_timing"))
+            "debug.native_timing"))
       emitRemark(design.getLoc())
           << "obelisk continuous sensitivity: refined=" << uint64_t(refined);
   }

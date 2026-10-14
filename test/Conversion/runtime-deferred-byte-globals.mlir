@@ -5,7 +5,7 @@
 // RUN: obelisk-opt %t.live --materialize-runtime-byte-globals -o %t.again
 // RUN: diff %t.live %t.again
 
-module attributes {obelisk.native.closed_executable,
+module attributes {native.closed_executable,
                    llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8"} {
   // IEEE 1800-2023 5.9: embedded NUL bytes do not truncate the literal.
   func.func @live() -> !runtime.bytes {

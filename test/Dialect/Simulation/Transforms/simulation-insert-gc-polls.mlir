@@ -10,7 +10,7 @@
 // call in a loop, and the context imports that may reach it. Calls that cannot reach a poll are marked poll-free, so root
 // instrumentation can skip them. Rerunning the pass adds nothing.
 
-// CHECK: module attributes {obelisk.gc.polled}
+// CHECK: module attributes {gc.polled}
 module {
   simulation.design @polls {
     simulation.scope.decl 0 hierarchy "top"

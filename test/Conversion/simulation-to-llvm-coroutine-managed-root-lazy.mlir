@@ -1,13 +1,13 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 
-// Under polled collection (`obelisk.gc.polled`) an activation registers its
+// Under polled collection (`gc.polled`) an activation registers its
 // managed-root record lazily: each collection point pushes it only when its
 // runtime cookie is still zero, and each exit pops it only when it is
 // registered. Entry and the resume shim reset the record; an ordinary edge into
 // the resumed block keeps a registration made earlier in the activation.
 
 module attributes {
-  obelisk.gc.polled,
+  gc.polled,
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {
@@ -70,7 +70,7 @@ module attributes {
 }
 
 // CHECK-LABEL: llvm.func @root.__obelisk_coro_ramp(
-// CHECK: llvm.store %{{.*}}, %[[RECORD:[0-9]+]] {{{.*}}obelisk.managed_root_activation_prologue}
+// CHECK: llvm.store %{{.*}}, %[[RECORD:[0-9]+]] {{{.*}}native.managed_root_activation_prologue}
 // CHECK-NOT: llvm.call @obelisk_rt_v1_gc_managed_root_range_push
 // CHECK: %[[COOKIE_ADDRESS:.*]] = llvm.getelementptr inbounds %[[RECORD]][24]
 // CHECK-NEXT: %[[COOKIE:.*]] = llvm.load %[[COOKIE_ADDRESS]] {{.*}} -> i64
@@ -88,7 +88,7 @@ module attributes {
 // CHECK: ^[[SUSPEND]]:
 // CHECK: llvm.intr.coro.suspend
 // Only the resume shim resets the record before rejoining the continuation.
-// CHECK: llvm.store %{{.*}}, %[[RECORD]] {{{.*}}obelisk.managed_root_activation_prologue}
+// CHECK: llvm.store %{{.*}}, %[[RECORD]] {{{.*}}native.managed_root_activation_prologue}
 // CHECK-NEXT: llvm.br ^bb
 
 // A path that reaches no collection point never registers the record, and

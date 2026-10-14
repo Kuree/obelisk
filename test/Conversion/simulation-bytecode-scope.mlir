@@ -5,13 +5,13 @@
 
 // IEEE 1800-2023 4.5, 4.6, 6.8: state metadata survives omission of native
 // bodies, including a native bootstrap excluded from AOT by managed captures.
-// PRUNED: obelisk.bytecode.image
-// PRUNED-SAME: obelisk.design.database
-// PRUNED-NOT: obelisk.bytecode.function
+// PRUNED: bytecode.image
+// PRUNED-SAME: design.database
+// PRUNED-NOT: bytecode.function
 // ALL: simulation.func @root
-// ALL-SAME: obelisk.bytecode.function
+// ALL-SAME: bytecode.function
 // ALL: simulation.func @process
-// ALL-SAME: obelisk.bytecode.function
+// ALL-SAME: bytecode.function
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

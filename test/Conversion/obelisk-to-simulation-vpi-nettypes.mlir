@@ -64,7 +64,7 @@ module {
 
 // CHECK-DAG: simulation.vpi_nettype.decl @[[BASE:[^ ]+]] id 0 {{.*}} hierarchy "base_nt" debug "base_nt"
 // CHECK-DAG: simulation.vpi_nettype.decl @[[ALIAS:[^ ]+]] id 1 {{.*}} hierarchy "alias_nt" debug "alias_nt" {direct_alias = @[[BASE]]
-// CHECK: simulation.net.decl 0 {{.*}} hierarchy "top.n" debug "n" {nettype = @[[ALIAS]]
+// CHECK: simulation.net.decl 0 {{.*}} hierarchy "top.n" debug "n" {{[{].*}}nettype = @[[ALIAS]]
 // CHECK-SAME: simulation.user_defined_net
 // CHECK-SAME: #simulation.vpi_property<selector = 22 : i32, value = 14 : i32>
 // CHECK: simulation.vpi_net_identity.decl {{[0-9]+}} backed_by 0 {{.*}} hierarchy "top.alias_n" debug "alias_n"

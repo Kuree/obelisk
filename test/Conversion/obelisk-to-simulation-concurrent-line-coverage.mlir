@@ -4,7 +4,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  obelisk.coverage.line_point_count = 1 : i64
+  coverage.line_point_count = 1 : i64
 } {
   obelisk.sv.symbol.definition @s0.top attributes {
     definition_kind = 0 : i32,
@@ -48,7 +48,7 @@ module attributes {
             assertion_kind = 0 : i32, has_default_disable = false,
             has_fail_action = false, has_pass_action = false,
             node_id = 8 : i64,
-            obelisk.coverage.line_point_index = 0 : i64,
+            coverage.line_point_index = 0 : i64,
             simulation.assertion_control_target_id = 17 : i64,
             simulation.assertion_controlled
           } {

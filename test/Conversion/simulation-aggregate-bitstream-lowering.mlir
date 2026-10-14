@@ -67,7 +67,7 @@ module attributes {
 // NATIVE-COUNT-1: llvm.mlir.global internal constant @__obelisk_aggregate_bitstream_plan_
 // NATIVE-COUNT-3: llvm.call @obelisk_rt_v1_aggregate_export_bitstream
 // NATIVE-COUNT-1: llvm.call @obelisk_rt_v1_aggregate_import_bitstream
-// FEATURE: obelisk.feature.container_bitstream
+// FEATURE: feature.container_bitstream
 // BYTECODE: intrinsic 0: id=0x00010465 inputs=2 outputs=1 flags=0
 // BYTECODE: intrinsic 1: id=0x00010466 inputs=2 outputs=1 flags=0
 // BYTECODE-COUNT-3: site {{[0-9]+}}: signature=0 id=0x00010465 inputs=

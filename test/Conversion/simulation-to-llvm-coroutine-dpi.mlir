@@ -221,7 +221,7 @@ module attributes {
   }
 }
 
-// BYTECODE: obelisk.bytecode.image = array<i8:
+// BYTECODE: bytecode.image = array<i8:
 
 // IEEE 1800-2017 Annex H.8 passes scalar input values directly and output or
 // inout formals by pointer. real/realtime use C double; shortreal uses C float.

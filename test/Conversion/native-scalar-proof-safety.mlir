@@ -13,15 +13,15 @@ module {
     // nor certify an opaque logic result as excluding X/Z.
     simulation.code_unit.decl 1 in 0 function hierarchy "bad_expressions"
     simulation.func @bad_expressions(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}, %seed: i8 {simulation.capture_kind = 2 : i32}) -> (!simulation.logic<8>, !simulation.logic<8>, !simulation.logic<8>, !simulation.logic<8>, !simulation.logic<8>) attributes {entry_kind = 8 : i32, code_unit_id = 1 : i64} {
-      %missing = simulation.call @opaque(%ctx) {obelisk.analysis.result_exprs = [{}], obelisk.analysis.known_logic_result} : (!simulation.context) -> !simulation.logic<8>
-      %width = simulation.call @opaque(%ctx) {obelisk.analysis.result_exprs = [{kind = "constant", width = 8 : i32, value = 0 : i16}]} : (!simulation.context) -> !simulation.logic<8>
-      %index = simulation.call @opaque(%ctx) {obelisk.analysis.result_exprs = [{kind = "argument", width = 8 : i32, index = 99 : i32}]} : (!simulation.context) -> !simulation.logic<8>
-      %arity = simulation.call @opaque(%ctx) {obelisk.analysis.result_exprs = [{kind = "add", width = 8 : i32, operands = []}]} : (!simulation.context) -> !simulation.logic<8>
-      %mismatch = simulation.call @opaque(%ctx) {obelisk.analysis.result_exprs = [{kind = "constant", width = 16 : i32, value = 0 : i16}]} : (!simulation.context) -> !simulation.logic<8>
+      %missing = simulation.call @opaque(%ctx) {analysis.result_exprs = [{}], analysis.known_logic_result} : (!simulation.context) -> !simulation.logic<8>
+      %width = simulation.call @opaque(%ctx) {analysis.result_exprs = [{kind = "constant", width = 8 : i32, value = 0 : i16}]} : (!simulation.context) -> !simulation.logic<8>
+      %index = simulation.call @opaque(%ctx) {analysis.result_exprs = [{kind = "argument", width = 8 : i32, index = 99 : i32}]} : (!simulation.context) -> !simulation.logic<8>
+      %arity = simulation.call @opaque(%ctx) {analysis.result_exprs = [{kind = "add", width = 8 : i32, operands = []}]} : (!simulation.context) -> !simulation.logic<8>
+      %mismatch = simulation.call @opaque(%ctx) {analysis.result_exprs = [{kind = "constant", width = 16 : i32, value = 0 : i16}]} : (!simulation.context) -> !simulation.logic<8>
       simulation.return %missing, %width, %index, %arity, %mismatch : !simulation.logic<8>, !simulation.logic<8>, !simulation.logic<8>, !simulation.logic<8>, !simulation.logic<8>
     }
     // CHECK-LABEL: simulation.func @bad_expressions
-    // CHECK-NOT: obelisk.analysis.known_logic_result
+    // CHECK-NOT: analysis.known_logic_result
     // CHECK-NOT: simulation.logic.constant
     // CHECK: simulation.return
 
@@ -29,9 +29,9 @@ module {
     // before an integer-range certificate can drive constant replacement.
     simulation.code_unit.decl 2 in 0 function hierarchy "bad_ranges"
     simulation.func @bad_ranges(%ctx: !simulation.context {simulation.capture_kind = 0 : i32}) -> (i8, i8, i8) attributes {entry_kind = 8 : i32, code_unit_id = 2 : i64} {
-      %width = simulation.call @opaque_bits(%ctx) {obelisk.analysis.result_ranges = [{umin = 0 : i16, umax = 0 : i16, smin = 0 : i16, smax = 0 : i16}]} : (!simulation.context) -> i8
-      %inverted = simulation.call @opaque_bits(%ctx) {obelisk.analysis.result_ranges = [{umin = 5 : i8, umax = 3 : i8, smin = 0 : i8, smax = 127 : i8}]} : (!simulation.context) -> i8
-      %empty = simulation.call @opaque_bits(%ctx) {obelisk.analysis.result_ranges = [{umin = 0 : i8, umax = 0 : i8, smin = 1 : i8, smax = 1 : i8}]} : (!simulation.context) -> i8
+      %width = simulation.call @opaque_bits(%ctx) {analysis.result_ranges = [{umin = 0 : i16, umax = 0 : i16, smin = 0 : i16, smax = 0 : i16}]} : (!simulation.context) -> i8
+      %inverted = simulation.call @opaque_bits(%ctx) {analysis.result_ranges = [{umin = 5 : i8, umax = 3 : i8, smin = 0 : i8, smax = 127 : i8}]} : (!simulation.context) -> i8
+      %empty = simulation.call @opaque_bits(%ctx) {analysis.result_ranges = [{umin = 0 : i8, umax = 0 : i8, smin = 1 : i8, smax = 1 : i8}]} : (!simulation.context) -> i8
       simulation.return %width, %inverted, %empty : i8, i8, i8
     }
     // CHECK-LABEL: simulation.func @bad_ranges
@@ -63,7 +63,7 @@ module {
     }
     // CHECK-LABEL: simulation.func @division_unknown
     // CHECK: simulation.logic.binary udiv
-    // CHECK-NOT: obelisk.analysis.known_logic_result
+    // CHECK-NOT: analysis.known_logic_result
     // CHECK: %[[DIFF:.*]] = simulation.logic.binary sub
     // CHECK-NEXT: simulation.return %[[DIFF]]
   }

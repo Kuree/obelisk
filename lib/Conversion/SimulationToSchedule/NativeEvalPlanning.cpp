@@ -461,7 +461,7 @@ collectRankedNodes(ModuleOp module, const ResolvedNativeEvalPlan &plan,
     uint64_t low, high, prefixHigh;
     uint32_t owner;
   };
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     for (const auto &node : nodes)
       llvm::errs() << "obelisk ranked memory: body=" << node.plan.body
                    << " reads=" << node.reads.size()
@@ -1277,7 +1277,7 @@ resolveNativeEvalPlan(ModuleOp module,
       result.transaction.roots.push_back(std::move(planned));
     }
   }
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk eval transaction source roots: "
                  << result.transaction.roots.size() << "/"
                  << staticNBAPlan.roots.size()

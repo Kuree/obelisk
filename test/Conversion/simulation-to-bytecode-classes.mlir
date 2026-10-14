@@ -41,6 +41,6 @@ module attributes {
   }
 }
 
-// CHECK: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
+// CHECK: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
 // CHECK: simulation.class.field @Base_value of @Base at 0 offset 8 : i64
-// CHECK: obelisk.bytecode.function = 0 : i32
+// CHECK: bytecode.function = 0 : i32

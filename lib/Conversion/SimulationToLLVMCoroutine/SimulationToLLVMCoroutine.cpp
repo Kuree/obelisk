@@ -1186,7 +1186,7 @@ void NativePipelineAnalysis::markTiming(StringRef name) {
   lastTiming = now;
 }
 LogicalResult NativePipelineAnalysis::initialize() {
-  detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+  detailedTiming = module->hasAttr("debug.native_timing");
   lastTiming = std::chrono::steady_clock::now();
   if (failed(verifyFunctionalCoverageSchemaBeforeBackend(module)))
     return failure();
@@ -1220,13 +1220,13 @@ LogicalResult NativePipelineAnalysis::initialize() {
     return failure();
   uint64_t stateBits = embeddedStateLayout->bitCount;
   if (auto existing =
-          module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+          module->getAttrOfType<IntegerAttr>("execution.state_bits");
       existing && existing.getValue().getZExtValue() != stateBits) {
     module.emitError(
         "native state layout disagrees with embedded execution metadata");
     return failure();
   }
-  module->setAttr("obelisk.execution.state_bits",
+  module->setAttr("execution.state_bits",
                   IntegerAttr::get(IntegerType::get(context, 64), stateBits));
   if (failed(materializeEmbeddedSimulationDesign(module, *parsed)))
     return failure();
@@ -1264,7 +1264,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
   if (failed(stateLayout))
     return failure();
   auto embeddedStateBits =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+      module->getAttrOfType<IntegerAttr>("execution.state_bits");
   if (!embeddedStateBits ||
       embeddedStateBits.getValue().getZExtValue() != stateLayout->bitCount)
     return module.emitError(
@@ -1277,7 +1277,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
         ::obelisk::schedule::get<schedule::metadata::staticSuperstep>(design);
   });
   auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.flags");
+      module->getAttrOfType<IntegerAttr>("execution.flags");
   bytecodeOnly = executionFlags && (executionFlags.getValue().getZExtValue() &
                                     OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
   if (bytecodeOnly) {
@@ -1517,9 +1517,9 @@ LogicalResult NativePipelineAnalysis::prepareRoots(
   detail::UnmanagedNativeCache unmanaged;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
-        function->removeAttr("obelisk.native.unmanaged");
+        function->removeAttr("native.unmanaged");
         if (detail::isUnmanagedNativeProcess(function, unmanaged))
-          function->setAttr("obelisk.native.unmanaged", UnitAttr::get(context));
+          function->setAttr("native.unmanaged", UnitAttr::get(context));
       });
   // Root records are native implementation details, not canonical process
   // state. Insert them only after suspension-live semantic values have been
@@ -1630,7 +1630,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   // own suppressed wait, and its borrowed evaluator has that same owner.
   // Any external owner, runtime observer or toggle probe retains publication.
   constexpr StringLiteral noTransitionRoots =
-      "obelisk.native.no_transition_roots";
+      "native.no_transition_roots";
   module.walk([&](sim::SimFuncOp function) {
     function->removeAttr(noTransitionRoots);
   });
@@ -2855,7 +2855,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       // values (and the next activation repeats the same checkpoint forever).
       auto syncCheckpointState = [&] {
         auto stateBits =
-            module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+            module->getAttrOfType<IntegerAttr>("execution.state_bits");
         return LLVM::CallOp::create(
                    builder, route.fourState.getLoc(),
                    TypeRange{builder.getI32Type()},
@@ -3125,7 +3125,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       compact.push_back(std::move(record));
     }
     auto stateBits =
-        module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+        module->getAttrOfType<IntegerAttr>("execution.state_bits");
     if (!stateBits)
       return module.emitError(
           "route promotion requires the native state layout");
@@ -3466,7 +3466,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     for (LLVM::CallOp call : calls)
       call.setCallee(clone.getSymName());
   }
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk trusted executor wrappers: reused=" << reused
                  << " cloned=" << trustedWrapperCalls.size() - reused << '\n';
 
@@ -3961,7 +3961,7 @@ public:
       module.emitError("native LLVM finalization requires a target layout");
       return signalPassFailure();
     }
-    bool detailedTiming = module->hasAttr("obelisk.debug.native_timing");
+    bool detailedTiming = module->hasAttr("debug.native_timing");
     auto lastTiming = std::chrono::steady_clock::now();
     auto markTiming = [&](StringRef name) {
       if (!detailedTiming)
@@ -4088,7 +4088,7 @@ public:
     // must be finalized first: moving constants across a suspension earlier
     // would introduce live values missing from the canonical frame plan.
     if (auto optimization = module->getAttrOfType<IntegerAttr>(
-            "obelisk.native.optimization_level");
+            "native.optimization_level");
         optimization && optimization.getInt() > 0) {
       functions.addPass(createCanonicalizerPass());
       functions.addPass(createCSEPass());
@@ -4104,11 +4104,11 @@ public:
     if (*partitionInventory && failed(detail::publishNativePartitionManifest(
                                    module, **partitionInventory)))
       return signalPassFailure();
-    module->removeAttr("obelisk.native.optimization_level");
+    module->removeAttr("native.optimization_level");
     ::obelisk::schedule::remove<::obelisk::schedule::Field::MaxInlineOps>(
         module);
-    module->removeAttr("obelisk.native.max_state_domain_functions");
-    module->removeAttr("obelisk.debug.native_timing");
+    module->removeAttr("native.max_state_domain_functions");
+    module->removeAttr("debug.native_timing");
     markTiming("native function finalization");
     if (failed(verify(module)))
       signalPassFailure();

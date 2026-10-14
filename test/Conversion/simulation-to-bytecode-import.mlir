@@ -25,7 +25,7 @@ module attributes {
   }
 }
 
-// CHECK: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
-// CHECK: obelisk.bytecode.function = 0 : i32
-// CHECK: obelisk.bytecode.scratch_size = 176 : i64
+// CHECK: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
+// CHECK: bytecode.function = 0 : i32
+// CHECK: bytecode.scratch_size = 176 : i64
 // CHECK: simulation.call @external_logic

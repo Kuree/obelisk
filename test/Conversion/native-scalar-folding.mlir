@@ -5,7 +5,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=PLANE
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(fold-native-scalar-values,obelisk-sim-mark-bounded-loops)))' | FileCheck %s --check-prefix=LOOP
 
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", obelisk.native.max_state_domain_functions = 0 : i64} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", native.max_state_domain_functions = 0 : i64} {
   simulation.design @folding {
     simulation.scope.decl 0
     // Constant body data can fold without hiding the one-iteration recurrence
@@ -65,7 +65,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.return %sum : !simulation.logic<8>
     }
     // CHECK-LABEL: simulation.func @known_increment
-    // CHECK: simulation.logic.binary add {{.*}}obelisk.analysis.known_logic_result
+    // CHECK: simulation.logic.binary add {{.*}}analysis.known_logic_result
     // PLANE-LABEL: llvm.func @known_increment
     // PLANE-NOT: llvm.select
     // PLANE: llvm.add
@@ -91,9 +91,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.return %result : !simulation.logic<1>
     }
     // CHECK-LABEL: simulation.func @wide_unknown_compare
-    // CHECK-NOT: obelisk.analysis.known_logic_result
+    // CHECK-NOT: analysis.known_logic_result
     // CHECK: simulation.logic.compare eq
-    // CHECK-NOT: obelisk.analysis.known_logic_result
+    // CHECK-NOT: analysis.known_logic_result
     // CHECK: simulation.return
     // PLANE-LABEL: llvm.func @wide_unknown_compare
     // PLANE: llvm.or
@@ -105,9 +105,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
       simulation.return %result : !simulation.logic<8>
     }
     // CHECK-LABEL: simulation.func @wide_unknown_narrow
-    // CHECK-NOT: obelisk.analysis.known_logic_result
+    // CHECK-NOT: analysis.known_logic_result
     // CHECK: simulation.logic.resize
-    // CHECK-NOT: obelisk.analysis.known_logic_result
+    // CHECK-NOT: analysis.known_logic_result
     // CHECK: simulation.return
 
     simulation.code_unit.decl 7 in 0 function hierarchy "proven_handle"

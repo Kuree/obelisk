@@ -954,7 +954,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
   bool needsNotification = layout->transitionHandles.contains(range->staticID);
   if (auto function = rewriter.getInsertionBlock()->getParentOp())
     if (auto roots = function->getAttrOfType<DenseI32ArrayAttr>(
-            "obelisk.native.no_transition_roots"))
+            "native.no_transition_roots"))
       needsNotification &= !llvm::is_contained(
           roots.asArrayRef(), static_cast<int32_t>(range->staticID));
   if (!access || access->root != range->staticID || !range->wholeOrInvalid)

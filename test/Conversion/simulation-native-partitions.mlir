@@ -85,7 +85,7 @@ module attributes {
 }
 
 // CHECK: simulation.design @partitions attributes {
-// CHECK-SAME: obelisk.native.partition_manifest = [
+// CHECK-SAME: native.partition_manifest = [
 // CHECK-SAME: {dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"], exports = [], id = "primary", imports = [@a, @b, @class_first, @class_second, @leaf], members = [@root], owners = ["primary"]}
 // CHECK-SAME: {dependencies = [], exports = [@a, @b], id = "scc:6:unit:26:unit:3", imports = [], members = [@a, @b], owners = ["unit:2", "unit:3"]}
 // CHECK-SAME: {dependencies = ["unit:6"], exports = [@class_first], id = "unit:4", imports = [@leaf], members = [@class_first], owners = ["unit:4"]}
@@ -93,42 +93,42 @@ module attributes {
 // CHECK-SAME: {dependencies = [], exports = [@leaf], id = "unit:6", imports = [], members = [@leaf], owners = ["unit:6"]}
 // CHECK-SAME: ]}
 // CHECK: simulation.func private @leaf
-// CHECK-SAME: obelisk.native.partition = "unit:6"
+// CHECK-SAME: native.partition = "unit:6"
 // CHECK: simulation.func private @b
-// CHECK-SAME: obelisk.native.partition = "scc:6:unit:26:unit:3"
+// CHECK-SAME: native.partition = "scc:6:unit:26:unit:3"
 // CHECK: simulation.func private @class_second
-// CHECK-SAME: obelisk.native.partition = "unit:5"
+// CHECK-SAME: native.partition = "unit:5"
 // CHECK: simulation.func @root
-// CHECK-SAME: obelisk.native.partition = "primary"
+// CHECK-SAME: native.partition = "primary"
 // CHECK: simulation.func private @class_first
-// CHECK-SAME: obelisk.native.partition = "unit:4"
+// CHECK-SAME: native.partition = "unit:4"
 // CHECK: simulation.func private @a
-// CHECK-SAME: obelisk.native.partition = "scc:6:unit:26:unit:3"
+// CHECK-SAME: native.partition = "scc:6:unit:26:unit:3"
 
 // Partition identity survives function replacement and outlining. Generated
 // process helpers remain with their semantic owner rather than falling into a
 // worker-dependent catch-all partition.
 // LOWERED: module attributes {
-// LOWERED-SAME: obelisk.native.partition_manifests = [{design = "partitions", partitions = [
+// LOWERED-SAME: native.partition_manifests = [{design = "partitions", partitions = [
 // LOWERED-SAME: {dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"], exports = [], id = "primary", imports = [@a, @b, @class_first, @class_second, @leaf], members = [@root], owners = ["primary"]}
 // LOWERED-SAME: ]}
-// LOWERED-SAME: obelisk.native.physical_partition_manifest = [
+// LOWERED-SAME: native.physical_partition_manifest = [
 // LOWERED-SAME: {dependencies = ["primary", "unit:6"], exports = [@class_first], id = "unit:4", imports = [@__obelisk_current_context, @leaf], members = [@class_first]}
 // LOWERED-SAME: {dependencies = [], exports = [], id = "unit:5", imports = [], members = [@class_second]}
 // LOWERED-SAME: {dependencies = [], exports = [@leaf], id = "unit:6", imports = [], members = [@leaf]}
 // LOWERED: llvm.func @leaf
-// LOWERED-SAME: obelisk.native.partition = "unit:6"
+// LOWERED-SAME: native.partition = "unit:6"
 // LOWERED: llvm.func @b
-// LOWERED-SAME: obelisk.native.partition = "scc:6:unit:26:unit:3"
+// LOWERED-SAME: native.partition = "scc:6:unit:26:unit:3"
 // LOWERED: llvm.func @class_second
-// LOWERED-SAME: obelisk.native.partition = "unit:5"
+// LOWERED-SAME: native.partition = "unit:5"
 // LOWERED: llvm.func @root
-// LOWERED-SAME: obelisk.native.partition = "primary"
+// LOWERED-SAME: native.partition = "primary"
 // LOWERED: llvm.func @root.__obelisk_native_execute
-// LOWERED-SAME: obelisk.native.partition = "primary"
+// LOWERED-SAME: native.partition = "primary"
 // LOWERED: llvm.func @root.__obelisk_spawn
-// LOWERED-SAME: obelisk.native.partition = "primary"
+// LOWERED-SAME: native.partition = "primary"
 // LOWERED: llvm.func @class_first
-// LOWERED-SAME: obelisk.native.partition = "unit:4"
+// LOWERED-SAME: native.partition = "unit:4"
 // LOWERED: llvm.func @a
-// LOWERED-SAME: obelisk.native.partition = "scc:6:unit:26:unit:3"
+// LOWERED-SAME: native.partition = "scc:6:unit:26:unit:3"

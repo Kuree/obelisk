@@ -18,7 +18,7 @@
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
-  obelisk.feature.class_bitstream_source
+  feature.class_bitstream_source
 } {
   obelisk.sv.symbol.definition @top_def attributes {
     definition_kind = 0 : i32, hierarchical_name = "top", name = "top",
@@ -207,17 +207,17 @@ module attributes {
 // CHECK: simulation.container.create
 // CHECK-SAME: -> !simulation.dynamic_array<!simulation.logic<4>>
 
-// BYTECODE: obelisk.execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
-// BYTECODE: obelisk.feature.class_bitstream
+// BYTECODE: execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
+// BYTECODE: feature.class_bitstream
 // BYTECODE: simulation.recursive.export_bitstream
 // BYTECODE-SAME: class_site_id = 1 : i64
 // BYTECODE-SAME: simulation.class_bitstream_bytecode_function
 // BYTECODE-SAME: simulation.class_bitstream_bytecode_site
 
-// AUTO: obelisk.execution.class_bitstream_blob
-// AUTO-NOT: obelisk.feature.class_bitstream_bytecode
-// AUTO-NOT: obelisk.feature.container_bitstream
-// AUTO-NOT: obelisk.feature.recursive_bitstream
+// AUTO: execution.class_bitstream_blob
+// AUTO-NOT: feature.class_bitstream_bytecode
+// AUTO-NOT: feature.container_bitstream
+// AUTO-NOT: feature.recursive_bitstream
 // AUTO: simulation.recursive.export_bitstream
 // AUTO-SAME: class_site_id = 1 : i64
 // AUTO-NOT: simulation.class_bitstream_bytecode_function
@@ -226,11 +226,11 @@ module attributes {
 // The native lowering must preserve the bytecode bindings already patched into
 // the class plan by the preceding encoder.  The first site is bound to bytecode
 // function/site 3; rematerializing the plan here would replace both with -1.
-// HYBRID: obelisk.execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
+// HYBRID: execution.class_bitstream_blob = array<i8: 66, 83, 66, 67
 // HYBRID-SAME: {{.*}}1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0
-// HYBRID: obelisk.feature.class_bitstream_bytecode
-// HYBRID: obelisk.feature.container_bitstream
-// HYBRID-NOT: obelisk.feature.recursive_bitstream
+// HYBRID: feature.class_bitstream_bytecode
+// HYBRID: feature.container_bitstream
+// HYBRID-NOT: feature.recursive_bitstream
 // HYBRID: llvm.call @obelisk_rt_v1_container_bitstream_link_anchor
 // HYBRID: llvm.call @obelisk_rt_v1_class_bitstream_link_anchor
 // HYBRID: llvm.call @obelisk_rt_v1_class_bitstream_bytecode_link_anchor

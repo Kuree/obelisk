@@ -301,7 +301,7 @@ module {
 
 // -----
 
-module attributes {obelisk.coverage.language_version = 2017 : i32} {
+module attributes {coverage.language_version = 2017 : i32} {
   // expected-error @below {{option is not legal for this coverage owner and option scope}}
   obelisk.sv.coverage.option attributes {node_id = 0 : i64, option_kind = 8 : i32, owner_kind = 1 : i32,
       owner_symbol = @cp, scope_kind = 1 : i32} {
@@ -418,7 +418,7 @@ module {
 
 // -----
 
-module attributes {obelisk.coverage.language_version = 2017 : i32} {
+module attributes {coverage.language_version = 2017 : i32} {
   obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     obelisk.sv.type.covergroup_type @base attributes {constructor_argument_count = 0 : i64, constructor_formals = [],
         coverage_event_kind = 0 : i32, has_coverage_event = false,
@@ -439,7 +439,7 @@ module attributes {obelisk.coverage.language_version = 2017 : i32} {
 
 // -----
 
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     // expected-error @below {{base_group chain must be acyclic}}
     obelisk.sv.type.covergroup_type @self attributes {base_group = !obelisk.covergroup_handle<@root::@self>,
@@ -455,7 +455,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
 // -----
 
 // The same typed option is legal in the IEEE 1800-2023 semantic context.
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     obelisk.sv.type.covergroup_type @g attributes {constructor_argument_count = 0 : i64, constructor_formals = [],
         coverage_event_kind = 0 : i32, has_coverage_event = false,
@@ -474,7 +474,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
 
 // -----
 
-module attributes {obelisk.coverage.language_version = 2017 : i32} {
+module attributes {coverage.language_version = 2017 : i32} {
   obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     obelisk.sv.type.covergroup_type @g attributes {constructor_argument_count = 0 : i64, constructor_formals = [],
         coverage_event_kind = 0 : i32, has_coverage_event = false,

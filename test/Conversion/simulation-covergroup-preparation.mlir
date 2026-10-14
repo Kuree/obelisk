@@ -1,15 +1,15 @@
 // RUN: obelisk-opt %s | obelisk-opt | FileCheck %s --check-prefix=ROUNDTRIP
 // RUN: %coverage-fixture %t.obcov 1 preparation 0 construction-with
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=obelisk.execution.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=execution.coverage_schema_blob bytes-file=%t.obcov' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=obelisk.execution.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=execution.coverage_schema_blob bytes-file=%t.obcov' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' --test-obelisk-print-bytecode -o /dev/null 2>&1 | FileCheck %s --check-prefix=BYTECODE
 // RUN: not obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=MISSING
-// RUN: not obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=obelisk.execution.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN: not obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=execution.coverage_schema_blob bytes-file=%t.obcov' \
 // RUN:   '--test-obelisk-edit-attributes=op=simulation.covergroup.prepare set={expression_ids = array<i64: 101, 100>}' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines 2>&1 | FileCheck %s --check-prefix=BAD-BATCH
-// RUN: not obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=obelisk.execution.coverage_schema_blob bytes-file=%t.obcov' \
+// RUN: not obelisk-opt %s '--test-obelisk-set-module-attributes=bytes-attr=execution.coverage_schema_blob bytes-file=%t.obcov' \
 // RUN:   '--test-obelisk-edit-attributes=op=simulation.covergroup.candidates match={selector = 71 : i64} set={selector = 999 : i64}' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' 2>&1 | FileCheck %s --check-prefix=BAD-SELECTOR
 

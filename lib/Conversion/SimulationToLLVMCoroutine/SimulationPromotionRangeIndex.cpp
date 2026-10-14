@@ -24,7 +24,7 @@ LogicalResult materializeNativePromotionRangeIndex(ModuleOp module) {
   if (!hook.empty())
     return hook.emitError("range invalidator was materialized twice");
   auto stateBits =
-      module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+      module->getAttrOfType<IntegerAttr>("execution.state_bits");
   if (!stateBits)
     return hook.emitError("range invalidator has no canonical state layout");
 
@@ -332,7 +332,7 @@ struct NativeProofPublicationInputs {
       dependencies.emitError("missing verified proof coverage");
       valid = false;
     }
-    bits = module->getAttrOfType<IntegerAttr>("obelisk.execution.state_bits");
+    bits = module->getAttrOfType<IntegerAttr>("execution.state_bits");
   }
   DenseI64ArrayAttr coverage;
   IntegerAttr bits;

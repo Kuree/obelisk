@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
-module attributes {obelisk.coverage.metrics = ["line"]} {
+module attributes {coverage.metrics = ["line"]} {
   obelisk.sv.symbol.definition @dut_definition attributes {definition_kind = 0 : i32, hierarchical_name = "DUT", name = "DUT", node_id = 0 : i64} {}
   obelisk.sv.symbol.definition @nested_dut_definition attributes {definition_kind = 0 : i32, hierarchical_name = "outer.DUT", name = "DUT", node_id = 1 : i64} {}
   obelisk.sv.symbol.definition @interface_definition attributes {definition_kind = 1 : i32, hierarchical_name = "bus_if", name = "bus_if", node_id = 2 : i64} {}

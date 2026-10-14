@@ -1394,7 +1394,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
     result.nativeGraphCost += weight;
   }
-  if (module->hasAttr("obelisk.debug.native_timing")) {
+  if (module->hasAttr("debug.native_timing")) {
     llvm::StringMap<std::pair<uint64_t, uint32_t>> byFunction;
     for (Attribute attribute : nodes) {
       auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);

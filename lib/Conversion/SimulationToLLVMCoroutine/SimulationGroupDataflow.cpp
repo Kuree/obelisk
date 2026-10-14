@@ -55,7 +55,7 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   (void)runRegionDCE(rewriter, function->getRegions());
   auto reject = [&](StringRef reason, Operation *operation = nullptr) {
     if (function->getParentOfType<ModuleOp>()->hasAttr(
-            "obelisk.debug.native_timing")) {
+            "debug.native_timing")) {
       llvm::errs() << "obelisk group dataflow rejected: "
                    << function.getSymName() << " " << reason;
       if (operation)

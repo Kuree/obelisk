@@ -11,7 +11,7 @@
 // CHECK-NOT: simulation.suspend.any
 // CHECK: simulation.suspend.change %[[SOURCE]]
 
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.definition @s0.copy_sensitivity attributes {definition_kind = 0 : i32, hierarchical_name = "copy_sensitivity", name = "copy_sensitivity", node_id = 0 : i64} {
   }
   obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {

@@ -26,5 +26,5 @@ module attributes {
 
 // CHECK: module attributes {
 // CHECK-SAME: llvm.module_asm = ["nop"]
-// CHECK-SAME: obelisk.native.partition_manifests
-// CHECK-NOT: obelisk.native.physical_partition_manifest
+// CHECK-SAME: native.partition_manifests
+// CHECK-NOT: native.physical_partition_manifest

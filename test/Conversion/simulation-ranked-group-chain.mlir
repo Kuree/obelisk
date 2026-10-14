@@ -31,7 +31,7 @@
 // PLAN: llvm.call @__obelisk_eval_ranked_group_0
 !ref = !simulation.ref<i1>
 !vref = !simulation.ref<i8>
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, obelisk.debug.native_timing} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, debug.native_timing} {
   simulation.design @forward_chain {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : i1 design

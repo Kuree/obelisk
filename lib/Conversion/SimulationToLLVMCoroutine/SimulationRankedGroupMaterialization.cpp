@@ -382,7 +382,7 @@ materializeNativeRankedGroups(ModuleOp module,
   }
   emit();
   finishSegment();
-  if (module->hasAttr("obelisk.debug.native_timing")) {
+  if (module->hasAttr("debug.native_timing")) {
     llvm::errs()
         << "obelisk ranked groups: candidates="
         << llvm::count_if(plan.rankedNodes,

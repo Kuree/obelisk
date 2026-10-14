@@ -277,10 +277,10 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   if (auto found = functions.find(spec.cIdentifier.getValue());
       found != functions.end()) {
     LLVM::LLVMFuncOp existing = found->second;
-    auto marker = existing->getAttrOfType<IntegerAttr>("obelisk.dpi.export_id");
-    auto hash = existing->getAttrOfType<IntegerAttr>("obelisk.dpi.abi_hash");
+    auto marker = existing->getAttrOfType<IntegerAttr>("dpi.export_id");
+    auto hash = existing->getAttrOfType<IntegerAttr>("dpi.abi_hash");
     auto signature =
-        existing->getAttrOfType<ArrayAttr>("obelisk.dpi.abi_signature");
+        existing->getAttrOfType<ArrayAttr>("dpi.abi_signature");
     if (!marker || !hash ||
         static_cast<uint32_t>(marker.getValue().getZExtValue()) !=
             spec.exportID ||
@@ -296,11 +296,11 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   auto wrapper = LLVM::LLVMFuncOp::create(builder, location,
                                           spec.cIdentifier.getValue(), cType);
   functions.try_emplace(spec.cIdentifier.getValue(), wrapper);
-  wrapper->setAttr("obelisk.dpi.export_id",
+  wrapper->setAttr("dpi.export_id",
                    builder.getI32IntegerAttr(spec.exportID));
-  wrapper->setAttr("obelisk.dpi.abi_hash",
+  wrapper->setAttr("dpi.abi_hash",
                    builder.getI64IntegerAttr(spec.abiHash));
-  wrapper->setAttr("obelisk.dpi.abi_signature", spec.signature);
+  wrapper->setAttr("dpi.abi_signature", spec.signature);
   auto setNarrowExtension = [&](bool result, uint32_t index,
                                 const DPIOperandABI &abi) {
     Type type = cScalarType(context, abi);
@@ -1657,13 +1657,13 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
         functions.try_emplace(function.getSymName(), function);
-        if (function->hasAttr("obelisk.dpi.export_bridge"))
+        if (function->hasAttr("dpi.export_bridge"))
           thunks.push_back(function);
       });
   for (LLVM::LLVMFuncOp thunk : thunks) {
     auto bridgeName =
-        thunk->getAttrOfType<StringAttr>("obelisk.dpi.export_bridge");
-    auto bodyName = thunk->getAttrOfType<StringAttr>("obelisk.dpi.export_body");
+        thunk->getAttrOfType<StringAttr>("dpi.export_bridge");
+    auto bodyName = thunk->getAttrOfType<StringAttr>("dpi.export_body");
     if (!bridgeName)
       return thunk.emitError("native DPI export has no bridge symbol");
     FailureOr<ExportSpec> spec = getExportSpec(thunk, bridgeName.getValue());

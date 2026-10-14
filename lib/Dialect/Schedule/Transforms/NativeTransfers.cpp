@@ -224,7 +224,7 @@ class PrepareNativeTransferKernelsPass final
           builder, kernel.getLoc(), kernel.getSymName().str() + ".impl",
           signature, sim::EntryKind::PortInput,
           ArrayRef<NamedAttribute>{builder.getNamedAttr(
-              "obelisk.native.unmanaged", builder.getUnitAttr())},
+              "native.unmanaged", builder.getUnitAttr())},
           arguments);
       Block *entry = &function.getBody().front();
       Block *body = new Block;

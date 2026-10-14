@@ -66,16 +66,16 @@ uint32_t suspensionKind(Operation *operation) {
 void addFrameAttributes(LLVM::LLVMFuncOp ramp,
                         const SimulationProcessFrameAnalysis &analysis,
                         OpBuilder &builder) {
-  ramp->setAttr("obelisk.frame.size",
+  ramp->setAttr("frame.size",
                 builder.getI64IntegerAttr(analysis.getFrameSize()));
-  ramp->setAttr("obelisk.frame.alignment",
+  ramp->setAttr("frame.alignment",
                 builder.getI64IntegerAttr(analysis.getFrameAlignment()));
-  ramp->setAttr("obelisk.frame.checksum",
+  ramp->setAttr("frame.checksum",
                 builder.getI64IntegerAttr(analysis.getChecksum()));
   SmallVector<int32_t> continuationIDs;
   for (uint32_t continuation : analysis.getContinuations())
     continuationIDs.push_back(static_cast<int32_t>(continuation));
-  ramp->setAttr("obelisk.frame.continuations",
+  ramp->setAttr("frame.continuations",
                 builder.getDenseI32ArrayAttr(continuationIDs));
   SmallVector<Attribute> fields;
   for (const ProcessFrameField &field : analysis.getFields()) {
@@ -90,7 +90,7 @@ void addFrameAttributes(LLVM::LLVMFuncOp ramp,
     attributes.set("reserved", builder.getI32IntegerAttr(field.reserved));
     fields.push_back(attributes.getDictionary(builder.getContext()));
   }
-  ramp->setAttr("obelisk.frame.fields", builder.getArrayAttr(fields));
+  ramp->setAttr("frame.fields", builder.getArrayAttr(fields));
 }
 
 struct RampBlocks {
@@ -644,7 +644,7 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
   uint64_t stableID = function.getCodeUnitId().value_or(
       stableProcessID(baseName) &
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
-  bool unmanagedNative = function->hasAttr("obelisk.native.unmanaged");
+  bool unmanagedNative = function->hasAttr("native.unmanaged");
   if (tableProcess) {
     bool valid = unmanagedNative;
     SmallVector<bool> seen(tableProcess->waits.size(), false);

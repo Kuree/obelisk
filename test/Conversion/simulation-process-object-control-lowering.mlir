@@ -61,7 +61,7 @@ module attributes {
 // BITS64 shared process token; each immediate is a nonzero continuation ID.
 // CONTINUE stays in the interpreter and jumps directly to the continuation PC;
 // the explicit process continuation operands exercise frame store/reload.
-// BYTECODE: obelisk.bytecode.image = array<i8:
+// BYTECODE: bytecode.image = array<i8:
 // BYTECODE-SAME: 58, 0, 2, 0
 // BYTECODE-SAME: 58, 0, 1, 0
 // BYTECODE-SAME: 58, 0, 0, 0

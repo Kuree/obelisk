@@ -802,7 +802,7 @@ FailureOr<bool> makeNativeEvalPlan(
           });
         });
     if (unownedTransitionNeedsActiveSelfCheck) {
-      if (module->hasAttr("obelisk.debug.native_timing"))
+      if (module->hasAttr("debug.native_timing"))
         llvm::errs() << "eval LLVM rejection: unowned active-self transition\n";
       return false;
     }
@@ -970,7 +970,7 @@ FailureOr<bool> makeNativeEvalPlan(
           // the runtime scheduler until an interprocedural path/count proof
           // and a private Eval clone both exist.
           needsRuntimeFallback = true;
-          if (module->hasAttr("obelisk.debug.native_timing"))
+          if (module->hasAttr("debug.native_timing"))
             llvm::errs() << "eval LLVM rejection: NBA helper "
                          << function.getSymName() << '\n';
           return;
@@ -995,7 +995,7 @@ FailureOr<bool> makeNativeEvalPlan(
               << proof->periodicIngressTransitionConflicts
               << ", unique-semantic-root-site=" << proof->uniqueSemanticRootSite
               << ", site-once=" << proof->siteExecutesAtMostOnce << ")";
-          if (module->hasAttr("obelisk.debug.native_timing")) {
+          if (module->hasAttr("debug.native_timing")) {
             auto site = constantU64(call.getArgOperands()[1]);
             auto root = site ? staticNBAPlan.siteRoots.find(*site)
                              : staticNBAPlan.siteRoots.end();
@@ -1154,7 +1154,7 @@ FailureOr<bool> makeNativeEvalPlan(
   }
   uint64_t graphLayoutChecksum = 0;
   if (auto image =
-          module->getAttrOfType<DenseI8ArrayAttr>("obelisk.bytecode.image")) {
+          module->getAttrOfType<DenseI8ArrayAttr>("bytecode.image")) {
     ArrayRef<int8_t> bytes = image.asArrayRef();
     if (bytes.size() < 40)
       return module.emitError("embedded bytecode checksum is truncated");
@@ -2857,7 +2857,7 @@ FailureOr<bool> makeNativeEvalPlan(
       if (!hasOffset && !constantU64(handle)) {
         if (deferColdReference)
           continue;
-        if (module->hasAttr("obelisk.debug.native_timing")) {
+        if (module->hasAttr("debug.native_timing")) {
           llvm::errs() << "eval load rejection: function="
                        << (owner ? owner.getSymName() : StringRef("?"))
                        << " width=" << *width << '\n';
@@ -2937,7 +2937,7 @@ FailureOr<bool> makeNativeEvalPlan(
           continue;
         auto diagnostic = call.emitError(
             "dynamic state load root is not direct-state certified");
-        if (module->hasAttr("obelisk.debug.native_timing")) {
+        if (module->hasAttr("debug.native_timing")) {
           diagnostic.attachNote(call.getLoc())
               << "evaluator " << (owner ? owner.getSymName() : StringRef("?"))
               << ", width " << *width << ", root " << chainBase;
@@ -6750,7 +6750,7 @@ FailureOr<bool> makeNativeEvalPlan(
       if (!nonPrivateFanout.contains(root.static_state))
         privateRoots.push_back(index);
     }
-  if (module->hasAttr("obelisk.debug.native_timing"))
+  if (module->hasAttr("debug.native_timing"))
     llvm::errs() << "obelisk native NBA batch: candidates="
                  << privateRoots.size() << " roots=" << nbaRoots.size()
                  << " private-cone="

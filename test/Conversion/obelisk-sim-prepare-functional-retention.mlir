@@ -4,7 +4,7 @@
 // Functional persistence needs the static schema even when early symbol DCE
 // would otherwise remove an unused embedded covergroup. The supported option
 // and class field make retention observable at pass level.
-module attributes {obelisk.coverage.metrics = ["functional"]} {
+module attributes {coverage.metrics = ["functional"]} {
   obelisk.sv.symbol.definition @definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 0 : i64} {
   }
   obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {

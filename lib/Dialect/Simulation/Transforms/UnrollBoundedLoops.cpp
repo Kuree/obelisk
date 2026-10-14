@@ -447,7 +447,7 @@ class ObeliskSimMarkBoundedLoopsPass
           loop.condition, marker);
     }
     if (!loops.empty() && function->getParentOfType<ModuleOp>()->hasAttr(
-                              "obelisk.debug.native_timing")) {
+                              "debug.native_timing")) {
       // The diagnostic engine serializes output from concurrent function
       // passes.
       emitRemark(function.getLoc())

@@ -15,7 +15,7 @@
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {obelisk.debug.native_timing} {
+module attributes {debug.native_timing} {
   simulation.design @same_edge {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -122,7 +122,7 @@ module attributes {obelisk.debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {obelisk.debug.native_timing} {
+module attributes {debug.native_timing} {
   simulation.design @inactive {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -242,7 +242,7 @@ module attributes {obelisk.debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {obelisk.debug.native_timing} {
+module attributes {debug.native_timing} {
   simulation.design @inactive_input {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -347,7 +347,7 @@ module attributes {obelisk.debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {obelisk.debug.native_timing} {
+module attributes {debug.native_timing} {
   simulation.design @clock_after {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -429,7 +429,7 @@ module attributes {obelisk.debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {obelisk.debug.native_timing} {
+module attributes {debug.native_timing} {
   simulation.design @after_reader {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design

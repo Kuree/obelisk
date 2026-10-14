@@ -5,7 +5,7 @@
 // RUN:   FileCheck %s --check-prefix=AOT
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | \
 // RUN:   FileCheck %s --check-prefix=BYTECODE
-// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{obelisk.native.optimization_level = 3 : i32, obelisk.native.max_state_domain_functions = 0 : i64}"' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BUDGET
+// RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.optimization_level = 3 : i32, native.max_state_domain_functions = 0 : i64}"' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BUDGET
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
@@ -141,14 +141,14 @@ module attributes {
 // AOT: ret i1
 
 // BYTECODE-LABEL: simulation.func private @add_known
-// BYTECODE-SAME: obelisk.bytecode.two_state_logic_registers = 0 : i32
+// BYTECODE-SAME: bytecode.two_state_logic_registers = 0 : i32
 // BYTECODE-LABEL: simulation.func @root
-// BYTECODE-SAME: obelisk.bytecode.two_state_logic_registers = 3 : i32
+// BYTECODE-SAME: bytecode.two_state_logic_registers = 3 : i32
 
 // Function-owned IPO/SCEV facts remain available when the optional whole-
 // design state-domain analysis is skipped by its compile-time budget.
-// BUDGET-NOT: obelisk.native.max_state_domain_functions
-// BUDGET-NOT: obelisk.native.optimization_level
+// BUDGET-NOT: native.max_state_domain_functions
+// BUDGET-NOT: native.optimization_level
 // BUDGET-LABEL: llvm.func @add_known(
 // BUDGET-SAME: %[[VALUE:[a-zA-Z0-9_]+]]: i64, %[[UNKNOWN:[a-zA-Z0-9_]+]]: i64)
 // BUDGET-NOT: llvm.icmp "ne"

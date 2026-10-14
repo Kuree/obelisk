@@ -1317,7 +1317,7 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
     return construct.emitError(
         "block-event covergroup construction has no stable node identity");
   IntegerAttr samplerNode = node;
-  if (covergroup->hasAttr("obelisk.coverage.base_group")) {
+  if (covergroup->hasAttr("coverage.base_group")) {
     std::string key =
         (Twine(node.getValue().getZExtValue()) + ":" + covergroup.getSymName())
             .str();
@@ -1528,7 +1528,7 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
     return construct.emitError(
         "clocking covergroup construction has no stable node identity");
   IntegerAttr samplerNode = node;
-  if (covergroup->hasAttr("obelisk.coverage.base_group")) {
+  if (covergroup->hasAttr("coverage.base_group")) {
     std::string key =
         (Twine(node.getValue().getZExtValue()) + ":" + covergroup.getSymName())
             .str();

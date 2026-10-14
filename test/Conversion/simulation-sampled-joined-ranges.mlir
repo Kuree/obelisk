@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode | FileCheck %s
 // A CFG join preserves one descriptor with a union of possible static lanes.
 // Snapshot all of that union, rather than only the width of the read result.
-// CHECK: obelisk.execution.sampled_ranges = array<i64: 0, 12>
+// CHECK: execution.sampled_ranges = array<i64: 0, 12>
 !word = !simulation.logic<4>
 !array = !simulation.unpacked_array<0 : 3 x !word>
 !aref = !simulation.ref<!array>

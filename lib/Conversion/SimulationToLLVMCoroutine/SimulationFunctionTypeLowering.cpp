@@ -291,7 +291,7 @@ public:
     state.addTypes(results);
     state.addAttributes(operation->getAttrs());
     state.addAttribute(
-        "obelisk.dpi.logical_operand_count",
+        "dpi.logical_operand_count",
         rewriter.getI32IntegerAttr(operation.getArguments().size()));
     Operation *replacement = rewriter.create(state);
     SmallVector<SmallVector<Value>> replacements;

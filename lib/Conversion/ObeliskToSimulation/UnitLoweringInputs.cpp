@@ -122,7 +122,7 @@ UnitLoweringInputs::UnitLoweringInputs(Operation *module)
       if (!nameEntry.second)
         nameEntry.first->second = nullptr;
       if (auto base =
-              group->getAttrOfType<TypeAttr>("obelisk.coverage.base_group"))
+              group->getAttrOfType<TypeAttr>("coverage.base_group"))
         derivedCovergroups[base.getValue()].push_back(operation);
     }
     return WalkResult::advance();

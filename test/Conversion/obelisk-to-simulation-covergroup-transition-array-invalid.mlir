@@ -1,7 +1,7 @@
 // RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
 // RUN:   | FileCheck %s
 
-module attributes {obelisk.coverage.language_version = 2023 : i32} {
+module attributes {coverage.language_version = 2023 : i32} {
   obelisk.sv.symbol.root @root attributes {node_id = 0 : i64} {
     obelisk.sv.type.covergroup_type @cg attributes {
         constructor_argument_count = 0 : i64, constructor_formals = [],

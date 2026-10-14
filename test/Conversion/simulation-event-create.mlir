@@ -44,6 +44,6 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_object_write
 // NATIVE: llvm.call @obelisk_rt_v1_object_read
 
-// BYTECODE: obelisk.bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
+// BYTECODE: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
 // BYTECODE: simulation.class.field @Holder_event of @Holder at 0 offset 8 : !simulation.event
-// BYTECODE: obelisk.bytecode.function = 0 : i32
+// BYTECODE: bytecode.function = 0 : i32
