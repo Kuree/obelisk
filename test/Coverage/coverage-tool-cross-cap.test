@@ -1,0 +1,23 @@
+# RUN: %coverage-fixture %t.left.obcov 21 cap-left 1 cross-cap 1 1 0 shared 1 1 1 left
+# RUN: %coverage-fixture %t.right.obcov 22 cap-right 1 cross-cap 1 1 0 shared 1 1 1 right
+# RUN: %coverage-fixture %t.zero.obcov 31 cap-zero 1 cross-cap 1 1 0 shared 1 1 0 left
+# RUN: obelisk-cov report --format=json %t.zero.obcov | FileCheck %s --check-prefix=ZERO
+# RUN: obelisk-cov report --format=json --test=cap-left %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=FILTERED
+# RUN: not obelisk-cov report --format=json %t.left.obcov %t.right.obcov 2>&1 | FileCheck %s --check-prefix=APINT-CAP
+
+# A cross over 1023 coverpoints has a 1024-bit number of automatic bins. The
+# report carries it exactly: a run that covers all of them is 100% with a
+# finite percentage, and selecting one test keeps the plan with the same
+# count. Merging two runs whose automatic bins differ would need a union
+# larger than the traversal limit, which is an error rather than a wrong
+# count.
+
+# ZERO: "name":"cp_x_cp2","comment":"",{{[^]]*}}"covered":[[T:1[0-6]([0-9]{100}){3}[0-9]{7}]],"total":[[T]],
+# ZERO-SAME: "automatic_total":[[T]],
+# ZERO: "percent":100.000000,"targets"
+
+# FILTERED: "runs":[{"uuid":"{{[^"]*}}","name":"cap-left",{{[^}]*}}"tags":{"suite":"codec"}}],"files"
+# FILTERED: "functional_configurations":[{"type":50,"configuration":"{{[0-9a-f]+}}","flags":0,"options":[{{[^]]*}}]}],"resolved_functional_items"
+# FILTERED: "resolved_cross_plans":[{{[^]]*}}"automatic_bin_count":[[N:1[0-6]([0-9]{100}){3}[0-9]{7}]]}]
+
+# APINT-CAP: automatic cross union exceeds traversal limits

@@ -1,42 +1,23 @@
 // RUN: %split-file %s %t
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/basic.sv -o %t/basic.mlir
-// RUN: obelisk-opt %t/basic.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/basic.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=BASIC
-// RUN: obelisk-opt %t/basic.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/basic.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=TARGET
-// RUN: obelisk-opt %t/basic.mlir '--lower-obelisk-to-sim=opt-level=3' \
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/basic.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=3' \
 // RUN:   | FileCheck %s --check-prefix=TARGET
-// RUN: obelisk-opt %t/basic.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/basic.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/class.sv -o %t/class.mlir
-// RUN: obelisk-opt %t/class.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=CLASS
-// RUN: obelisk-opt %t/class.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=CLASS-FIRE
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/disable.sv -o %t/disable.mlir
-// RUN: obelisk-opt %t/disable.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=DISABLE
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/declaration.sv -o %t/declaration.mlir
-// RUN: obelisk-opt %t/declaration.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=DECL
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/function.sv -o %t/function.mlir
-// RUN: obelisk-opt %t/function.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=FUNCTION
-// RUN: %obelisk --std=1800-2017 -emit-obelisk %t/basic.sv -o %t/basic-2017.mlir
-// RUN: obelisk-opt %t/basic-2017.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: %obelisk --std=1800-2017 -emit-obelisk %t/basic.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=BASIC
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/fork.sv -o %t/fork.mlir
-// RUN: obelisk-opt %t/fork.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=FORK
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/static.sv -o %t/static.mlir
-// RUN: obelisk-opt %t/static.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=STATIC
-// RUN: obelisk-opt %t/static.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=STATIC-FIRE
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/task-output.sv -o %t/task-output.mlir
-// RUN: obelisk-opt %t/task-output.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=TASK-OUTPUT
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/others.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   | FileCheck %s --check-prefix=OTHERS
 
 // IEEE 1800-2017/2023 19.3 block events sample synchronously at a target's
 // begin/end boundary.  They neither park a process nor honor strobe.
@@ -70,73 +51,74 @@
 // An embedded covergroup captures its owning object.  Registration and the
 // instrumented method carry that same receiver, and the evaluator receives it
 // as argument 2 for member-valued coverpoints.
-// CLASS: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
-// CLASS-SAME: %{{[^:]+}}: !simulation.class_handle<
-// CLASS-SAME: simulation.covergroup_block_event_sample_evaluator
-// CLASS: simulation.observer.bind @{{[^ ]*}}covergroup_block_event_sample
-// CLASS-SAME: values(%{{[^,]+}}, %{{[^ ]+}} : !simulation.covergroup_handle<
-// CLASS-SAME: !simulation.class_handle<
-// CLASS-SAME: captures 2
-// CLASS: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
-// CLASS-FIRE-COUNT-2: simulation.covergroup.block_event.fire %{{[^,]+}}, %{{[^ ]+}}
+// OTHERS-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.hierarchical_name = "holder::target"
+// OTHERS-COUNT-2: simulation.covergroup.block_event.fire %{{[^,]+}}, %{{[^ ]+}}
+// OTHERS: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
+// OTHERS-SAME: %{{[^:]+}}: !simulation.class_handle<
+// OTHERS-SAME: simulation.covergroup_block_event_sample_evaluator
+// OTHERS: simulation.observer.bind @{{[^ ]*}}covergroup_block_event_sample
+// OTHERS-SAME: values(%{{[^,]+}}, %{{[^ ]+}} : !simulation.covergroup_handle<
+// OTHERS-SAME: !simulation.class_handle<
+// OTHERS-SAME: captures 2
+// OTHERS: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
 
-// `disable watched` branches directly to the named block's exit.  Therefore
-// only the begin fire remains reachable in this procedure.
-// DISABLE-COUNT-1: simulation.covergroup.block_event.fire
-// DISABLE-SAME: event_kind = #simulation.block_event_kind<begin>
-// DISABLE: simulation.control.disable
-// DISABLE-NEXT: cf.br
+// An embedded covergroup still captures its class owner for sampling a static
+// method target, but the event registration and firing have no receiver filter.
+// OTHERS-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.hierarchical_name = "static_holder::target"
+// OTHERS-COUNT-2: simulation.covergroup.block_event.fire %{{[^ ]+}} {
+// OTHERS: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
+// OTHERS-SAME: %{{[^:]+}}: !simulation.class_handle<
+// OTHERS: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
+// OTHERS-SAME: event_kinds = array<i32: 0, 1>
 
 // A subroutine initializes its leading block-item declarations before its
 // first statement. The begin sample must therefore follow a declaration
 // initializer call whose side effects can be observed by the covergroup.
-// DECL-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.coverage_block_event_target_id
-// DECL-SAME: simulation.hierarchical_name = "declaration_case.target"
-// DECL: simulation.call
-// DECL: simulation.covergroup.block_event.fire
-// DECL-SAME: event_kind = #simulation.block_event_kind<begin>
-// DECL: simulation.ref.store
-// DECL: simulation.covergroup.block_event.fire
-// DECL-SAME: event_kind = #simulation.block_event_kind<end>
+// OTHERS-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.hierarchical_name = "declaration_case.target"
+// OTHERS: simulation.call
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<begin>
+// OTHERS: simulation.ref.store
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<end>
 
-// Functions use the same exact boundaries, including an explicit return.
-// FUNCTION-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.coverage_block_event_target_id
-// FUNCTION-SAME: simulation.hierarchical_name = "function_case.target"
-// FUNCTION: simulation.covergroup.block_event.fire
-// FUNCTION-SAME: event_kind = #simulation.block_event_kind<begin>
-// FUNCTION: simulation.ref.store
-// FUNCTION: simulation.covergroup.block_event.fire
-// FUNCTION-SAME: event_kind = #simulation.block_event_kind<end>
-// FUNCTION-NEXT: simulation.return
+// `disable watched` branches directly to the named block's exit.  Therefore
+// only the begin fire remains reachable in this procedure.
+// OTHERS-LABEL: simulation.code_unit.decl {{.*}} hierarchy "disable_case.
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<begin>
+// OTHERS: simulation.control.disable
+// OTHERS-NEXT: cf.br
 
 // A named parallel block begins before its children spawn and ends only after
 // the requested join completes.
-// FORK: simulation.control.enter
-// FORK-NEXT: simulation.covergroup.block_event.fire
-// FORK-SAME: event_kind = #simulation.block_event_kind<begin>
-// FORK: simulation.suspend.join all
-// FORK: simulation.covergroup.block_event.fire
-// FORK-SAME: event_kind = #simulation.block_event_kind<end>
-// FORK-NEXT: simulation.control.leave
+// OTHERS-LABEL: simulation.code_unit.decl {{.*}} hierarchy "fork_case.
+// OTHERS: simulation.control.enter
+// OTHERS-NEXT: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<begin>
+// OTHERS: simulation.suspend.join all
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<end>
+// OTHERS-NEXT: simulation.control.leave
 
-// An embedded covergroup still captures its class owner for sampling a static
-// method target, but the event registration and firing have no receiver filter.
-// STATIC: simulation.func private @{{[^ (]*}}covergroup_block_event_sample
-// STATIC-SAME: %{{[^:]+}}: !simulation.class_handle<
-// STATIC: simulation.covergroup.block_event.register %{{[^,]+}}, %{{[^,]+}}, %{{[^ ]+}}
-// STATIC-SAME: event_kinds = array<i32: 0, 1>
-// STATIC-FIRE-COUNT-2: simulation.covergroup.block_event.fire %{{[^ ]+}} {
+// Functions use the same exact boundaries, including an explicit return.
+// OTHERS-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.hierarchical_name = "function_case.target"
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<begin>
+// OTHERS: simulation.ref.store
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<end>
+// OTHERS-NEXT: simulation.return
 
 // Task output copy-out happens after the end boundary. The assignment to the
 // task-local formal is a statement; publishing its value to the caller is not.
-// TASK-OUTPUT-LABEL: simulation.func private @{{[^ (]+}}(
-// TASK-OUTPUT-SAME: simulation.hierarchical_name = "task_output_case.target"
-// TASK-OUTPUT: simulation.ref.store
-// TASK-OUTPUT: simulation.covergroup.block_event.fire
-// TASK-OUTPUT-SAME: event_kind = #simulation.block_event_kind<end>
-// TASK-OUTPUT: simulation.ref.load
-// TASK-OUTPUT: simulation.ref.store
-// TASK-OUTPUT: simulation.return
+// OTHERS-LABEL: simulation.func private @{{[^ (]+}}({{.*}}simulation.hierarchical_name = "task_output_case.target"
+// OTHERS: simulation.ref.store
+// OTHERS: simulation.covergroup.block_event.fire
+// OTHERS-SAME: event_kind = #simulation.block_event_kind<end>
+// OTHERS: simulation.ref.load
+// OTHERS: simulation.ref.store
+// OTHERS: simulation.return
 
 //--- basic.sv
 module basic;
@@ -161,7 +143,8 @@ module basic;
   end
 endmodule
 
-//--- class.sv
+
+//--- others.sv
 class holder;
   int sampled;
 
@@ -189,26 +172,28 @@ module class_case;
   end
 endmodule
 
-//--- disable.sv
-module disable_case;
-  int sampled;
+class static_holder;
+  static task target;
+    $display("target");
+  endtask
 
-  covergroup cg @@(begin watched or end watched);
-    point: coverpoint sampled;
+  covergroup cg @@(begin target or end target);
+    point: coverpoint 1;
   endgroup
 
-  cg coverage;
+  function new;
+    cg = new;
+  endfunction
+endclass
+
+module static_case;
+  static_holder object;
   initial begin
-    coverage = new;
-    begin : watched
-      sampled = 1;
-      disable watched;
-      sampled = 2;
-    end
+    object = new;
+    static_holder::target();
   end
 endmodule
 
-//--- declaration.sv
 module declaration_case;
   int sampled;
 
@@ -233,7 +218,41 @@ module declaration_case;
   end
 endmodule
 
-//--- function.sv
+module disable_case;
+  int sampled;
+
+  covergroup cg @@(begin watched or end watched);
+    point: coverpoint sampled;
+  endgroup
+
+  cg coverage;
+  initial begin
+    coverage = new;
+    begin : watched
+      sampled = 1;
+      disable watched;
+      sampled = 2;
+    end
+  end
+endmodule
+
+module fork_case;
+  int sampled;
+
+  covergroup cg @@(begin watched or end watched);
+    point: coverpoint sampled;
+  endgroup
+
+  cg coverage;
+  initial begin
+    coverage = new;
+    fork : watched
+      sampled = 1;
+      sampled = 2;
+    join
+  end
+endmodule
+
 module function_case;
   int sampled;
 
@@ -253,48 +272,6 @@ module function_case;
   end
 endmodule
 
-//--- fork.sv
-module fork_case;
-  int sampled;
-
-  covergroup cg @@(begin watched or end watched);
-    point: coverpoint sampled;
-  endgroup
-
-  cg coverage;
-  initial begin
-    coverage = new;
-    fork : watched
-      sampled = 1;
-      sampled = 2;
-    join
-  end
-endmodule
-
-//--- static.sv
-class static_holder;
-  static task target;
-    $display("target");
-  endtask
-
-  covergroup cg @@(begin target or end target);
-    point: coverpoint 1;
-  endgroup
-
-  function new;
-    cg = new;
-  endfunction
-endclass
-
-module static_case;
-  static_holder object;
-  initial begin
-    object = new;
-    static_holder::target();
-  end
-endmodule
-
-//--- task-output.sv
 module task_output_case;
   int actual;
 

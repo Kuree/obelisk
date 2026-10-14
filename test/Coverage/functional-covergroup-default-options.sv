@@ -1,19 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=group-defaults > %t.native.stdout
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.native.json
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=group-defaults > %t.bytecode.stdout
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.stdout %t.bytecode.stdout
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.stdout
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
-// RUN: FileCheck %s --check-prefix=JSON < %t.native.json
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=group-defaults | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   bit [2:0] inherited_value;

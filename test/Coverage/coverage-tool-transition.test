@@ -1,0 +1,16 @@
+# RUN: %coverage-fixture %t.obcov 26 transition-report 1 transition
+# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s
+# RUN: obelisk-cov report --format=html -o %t.html %t.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html 'five_then_nine = 0x5 => 0x9' %}
+
+# A transition bin (IEEE 1800-2023 19.5.2) is reported as a bin of kind 2
+# with its program, one alternative and its ordered steps; each step points
+# at the value set holding the value it matches (5, then 9). The HTML page
+# renders the bin as its transition sequence.
+
+# CHECK: "transition_programs":[{"bin":71,"item":61,"alternative_count":1,"flags":0}],"transition_alternatives"
+# CHECK: "resolved_transition_alternatives":[{{[^]]*}}"id":190,{{[^]]*}}}],"resolved_transition_expansion_groups"
+# CHECK: "resolved_transition_steps":[{{[^]]*}}"value_set":181,{{[^}]*}}},{"type":50,"configuration":"{{[0-9a-f]+}}","bin":171,"alternative":190,"value_set":182,{{[^]]*}}}],"resolved_functional_value_sets"
+# CHECK: "id":181,{{[^]]*}}"low_aval":5,
+# CHECK: "id":182,{{[^]]*}}"low_aval":9,
+# CHECK: "name":"five_then_nine",{{[^]]*}}"kind":2,{{[^]]*}}"covered":true,"contributors":[{"uuid":"00000000-0000-0000-0000-00000000001a","name":"transition-report","count":1,"overflow":false}]}],"automatic_bins"

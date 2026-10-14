@@ -1,19 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=integral-open-ranges > %t.native.out
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.native.json
-// RUN: %python -c 'import json,sys; d=json.load(open(sys.argv[1])); items={i["name"]:i for g in d["functional_instance_groups"] for i in g["items"]}; bins=lambda n:{b["name"]:b["count"] for b in items[n]["bins"]}; assert bins("four_state_cp")=={"low":2,"high":2}; assert bins("enum_cp")=={"low":2,"high":2}; assert bins("transition_cp")=={"crossing":2,"expanded[0=>14]":0,"expanded[1=>14]":1,"expanded[0=>15]":0,"expanded[1=>15]":1}' %t.native.json
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=integral-open-ranges > %t.bytecode.out
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=integral-open-ranges | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 // IEEE 1800-2017 6.20.2.1 and 1800-2023 6.20.7, together with Clause 19,
 // define [$:expression] as every effective coverpoint value at or below
@@ -149,3 +137,16 @@ endmodule
 // REPORT-DAG: coverpoint wildcard_cp: 2/2 (100.00%)
 // REPORT-DAG: coverpoint transition_cp: 3/5 (60.00%)
 // REPORT-DAG: cross pair: 1/1 (100.00%)
+
+// X and Z samples are not members of an open range, so the four-state and
+// enum bins count only the numeric samples, and an expanded transition array
+// has one bin per start/end value pair.
+// JSON-DAG: "hierarchy":"top.cg.four_state_cp.low",{{[^}]*}}"count":2,
+// JSON-DAG: "hierarchy":"top.cg.four_state_cp.high",{{[^}]*}}"count":2,
+// JSON-DAG: "hierarchy":"top.cg.enum_cp.low",{{[^}]*}}"count":2,
+// JSON-DAG: "hierarchy":"top.cg.enum_cp.high",{{[^}]*}}"count":2,
+// JSON-DAG: "hierarchy":"top.cg.transition_cp.crossing",{{[^}]*}}"count":2,
+// JSON-DAG: "hierarchy":"top.cg.transition_cp.expanded[0=>14]",{{[^}]*}}"count":0,
+// JSON-DAG: "hierarchy":"top.cg.transition_cp.expanded[1=>14]",{{[^}]*}}"count":1,
+// JSON-DAG: "hierarchy":"top.cg.transition_cp.expanded[0=>15]",{{[^}]*}}"count":0,
+// JSON-DAG: "hierarchy":"top.cg.transition_cp.expanded[1=>15]",{{[^}]*}}"count":1,

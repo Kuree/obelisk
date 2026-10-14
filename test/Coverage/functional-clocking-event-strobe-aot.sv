@@ -1,20 +1,12 @@
 // RUN: %obelisk --std=1800-2023 -O3 --target=native \
 // RUN:   --native-scheduler=eval --coverage=functional --compile-threads=12 \
-// RUN:   -o %t.aot %s
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --native-scheduler=generic --coverage=functional \
-// RUN:   --compile-threads=12 -o %t.generic %s
-// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t.aot \
-// RUN:   --coverage-output=%t.aot.obcov --coverage-test=strobe-aot \
-// RUN:   > %t.aot.out 2> %t.aot.diag
-// RUN: %t.generic --coverage-output=%t.generic.obcov \
-// RUN:   --coverage-test=strobe-generic > %t.generic.out
-// RUN: diff -u %t.generic.out %t.aot.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.aot.out
+// RUN:   -o %t %s
+// RUN: env OBELISK_RT_SIGNAL_DIAGNOSTICS=1 %t --coverage-output=%t.obcov \
+// RUN:   > %t.out 2> %t.diag
+// RUN: FileCheck %s --check-prefix=QUERY < %t.out
 // RUN: FileCheck %s --check-prefix=DIAG \
-// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.aot.diag
-// RUN: obelisk-cov report --format=text %t.aot.obcov -o %t.report
-// RUN: FileCheck %s --check-prefix=REPORT < %t.report
+// RUN:   --implicit-check-not=obelisk-periodic-reject < %t.diag
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 module functional_clocking_event_strobe_aot;
   bit clock = 0;

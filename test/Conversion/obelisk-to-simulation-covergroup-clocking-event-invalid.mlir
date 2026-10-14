@@ -1,22 +1,13 @@
 // RUN: %split-file %s %t
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/block.sv -o %t/block.mlir
-// RUN: obelisk-opt %t/block.mlir '--lower-obelisk-to-sim=opt-level=0' \
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/block.sv \
+// RUN:   | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=BLOCK
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/reference-path.sv -o %t/reference-path.mlir
-// RUN: not obelisk-opt %t/reference-path.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/reference-path.sv \
+// RUN:   | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=REFERENCE-PATH
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/publishing-call.sv -o %t/publishing-call.mlir
-// RUN: not obelisk-opt %t/publishing-call.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=PUBLISHING-CALL
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/publishing-method.sv -o %t/publishing-method.mlir
-// RUN: not obelisk-opt %t/publishing-method.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=PUBLISHING-METHOD
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/publishing-ref-call.sv -o %t/publishing-ref-call.mlir
-// RUN: not obelisk-opt %t/publishing-ref-call.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=PUBLISHING-REF-CALL
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/method-read.sv -o %t/method-read.mlir
-// RUN: not obelisk-opt %t/method-read.mlir '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=METHOD-READ
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %t/errors.sv \
+// RUN:   | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
+// RUN:   | FileCheck %s --check-prefix=ERROR
 
 // Block events register one synchronous sample observer at construction and
 // instrument the target definition. They do not create a parked process, and
@@ -29,10 +20,13 @@
 // REFERENCE-PATH: clocking-event covergroup constructor ref formal
 // REFERENCE-PATH-SAME: is bound through a dynamic reference path
 
-// PUBLISHING-CALL: covergroup clocking-event primary and iff calls must be transitively read-only
-// PUBLISHING-METHOD: covergroup clocking-event primary and iff calls must be transitively read-only
-// PUBLISHING-REF-CALL: covergroup clocking-event primary and iff calls must be transitively read-only
-// METHOD-READ: covergroup clocking-event primary and iff calls must be transitively read-only with statically materializable dependencies
+// Every clocking-event primary or iff call must be transitively read-only:
+// a direct write, a write through a method receiver, a write through a ref
+// argument, and a method receiver read are each rejected at their covergroup.
+// ERROR-DAG: error: covergroup clocking-event primary and iff calls must be transitively read-only{{([^@]|[[:space:]])*}}@(posedge read_and_write_clock());
+// ERROR-DAG: error: covergroup clocking-event primary and iff calls must be transitively read-only{{([^@]|[[:space:]])*}}@(posedge object.read_and_write_clock());
+// ERROR-DAG: error: covergroup clocking-event primary and iff calls must be transitively read-only{{([^@]|[[:space:]])*}}@(posedge mutate_and_read_clock());
+// ERROR-DAG: error: covergroup clocking-event primary and iff calls must be transitively read-only with statically materializable dependencies; {{([^@]|[[:space:]])*}}@(posedge object.read_clock());
 
 //--- block.sv
 module block_event;
@@ -62,7 +56,7 @@ module reference_path_event;
 cg coverage = new(clocks[selected]);
 endmodule
 
-//--- publishing-call.sv
+//--- errors.sv
 module publishing_call;
   bit clock;
   bit side_effect;
@@ -79,7 +73,6 @@ module publishing_call;
 cg coverage = new;
 endmodule
 
-//--- publishing-method.sv
 module publishing_method;
   class holder;
     bit clock;
@@ -99,7 +92,6 @@ module publishing_method;
   cg coverage = new;
 endmodule
 
-//--- publishing-ref-call.sv
 module publishing_ref_call;
   bit clock;
   bit side_effect;
@@ -108,19 +100,18 @@ module publishing_ref_call;
     destination = !destination;
   endfunction
 
-  function bit read_and_write_clock;
+  function bit mutate_and_read_clock;
     mutate(side_effect);
     return clock;
   endfunction
 
-  covergroup cg @(posedge read_and_write_clock());
+  covergroup cg @(posedge mutate_and_read_clock());
     point: coverpoint side_effect;
   endgroup
 
   cg coverage = new;
 endmodule
 
-//--- method-read.sv
 module method_read;
   class holder;
     bit clock;

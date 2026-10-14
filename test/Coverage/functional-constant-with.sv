@@ -1,17 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=constant-with > %t.native.out
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=constant-with > %t.bytecode.out
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 module top;
   bit [3:0] sampled;

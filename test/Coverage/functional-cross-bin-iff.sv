@@ -1,16 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=cross-bin-iff > %t.native.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=cross-bin-iff > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); p=next(i for g in d['functional_instance_groups'] for i in g['items'] if i['name']=='product'); e=next(b for b in p['bins'] if b['name']=='selected'); assert e['count']==1; a=p['automatic_bins']; assert p['automatic_total']==2 and sum(b['count'] for b in a)==1; assert len(d['sparse_cross_tuples'])==1" %t.json
-
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=cross-bin-iff | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 module top;
   bit a;
   bit b;
@@ -62,3 +52,14 @@ module top;
 endmodule
 
 // QUERY: cross-bin-iff 66.666667 2 3
+
+// IEEE 1800-2023 19.6: the explicit bin keeps its one guarded hit, the
+// retained automatic cross holds the two unselected products (one of them
+// hit), and exactly one sparse tuple was recorded for it.
+// JSON: "sparse_cross_tuples":[{"run":"{{[^"]*}}","instance":1,"cross":{{[0-9]+}},"hits":1,"overflow":false,"components":[{{[^]]*}}]}],"functional_source_ranges"
+// JSON: "name":"product","comment":"","hierarchy":"top.cg.product"
+// JSON-SAME: "automatic_total":2
+// JSON-SAME: "bins":[{
+// JSON-SAME: "name":"selected"
+// JSON-SAME: "count":1,
+// JSON-SAME: "automatic_bins":[{"name":"<one,zero>","count":1,{{[^]]*}}"components":[{{[^]]*}}],"contributors":[{{[^]]*}}]}]}

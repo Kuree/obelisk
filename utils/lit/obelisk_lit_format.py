@@ -23,13 +23,7 @@ class ObeliskShTest(lit.formats.ShTest):
         r"(?:/bin/)?(?:ba)?sh\s+-c)(?=\s|$)"
     )
 
-    def __init__(self, exemptions=()):
-        super().__init__()
-        self.exemptions = frozenset(exemptions)
-
     def execute(self, test, litConfig):
-        if "/".join(test.path_in_suite) in self.exemptions:
-            return super().execute(test, litConfig)
         commands = []
         continued = False
         for _, _, line in lit.TestRunner.parseIntegratedTestScriptCommands(

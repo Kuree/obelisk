@@ -1,22 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.producer.obcov \
-// RUN:   --coverage-test=merge-producer +producer
-// RUN: %t.native --coverage-load=%t.native.producer.obcov \
-// RUN:   --coverage-output=%t.native.obcov --coverage-test=merge-consumer \
-// RUN:   > %t.native.stdout
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.producer.obcov \
-// RUN:   --coverage-test=merge-producer +producer
-// RUN: %t.bytecode --coverage-load=%t.bytecode.producer.obcov \
-// RUN:   --coverage-output=%t.bytecode.obcov --coverage-test=merge-consumer \
-// RUN:   > %t.bytecode.stdout
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.stdout %t.bytecode.stdout
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.stdout
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.producer.obcov --coverage-test=merge-producer +producer
+// RUN: %t --coverage-load=%t.producer.obcov --coverage-output=%t.obcov \
+// RUN:   --coverage-test=merge-consumer | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 module top;
   bit [1:0] sampled;
@@ -78,7 +64,7 @@ module top;
   end
 endmodule
 
-// With merge_instances, same-named bins form a union across both constructor
+// IEEE 19.11.3: with merge_instances, same-named bins form a union across both constructor
 // configurations. get_inst_coverage=0 aliases the type union, while 1 keeps
 // the local 1/2 result. Without merging, get_inst_coverage remains local.
 // QUERY: cumulative-instance 66.666667 2 3

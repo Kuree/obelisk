@@ -1,52 +1,21 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -emit-obelisk %t/input.sv -o %t/input.mlir
-// RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
-// RUN:   > %t/lowered.mlir
-// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: FileCheck %s --check-prefix=LOWER < %t/lowered.mlir
-// RUN: obelisk-opt %t/lowered.mlir \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
-// RUN: obelisk -emit-obelisk %t/explicit-bin.sv -o %t/explicit-bin.mlir
-// RUN: obelisk-opt %t/explicit-bin.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
-// RUN:   > %t/explicit-bin-lowered.mlir
-// RUN: obelisk-opt %t/explicit-bin-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=EXPLICIT-BIN
-// RUN: FileCheck %s --check-prefix=EXPLICIT-SIM \
-// RUN:   < %t/explicit-bin-lowered.mlir
-// RUN: obelisk-opt %t/explicit-bin-lowered.mlir \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
-// RUN: obelisk -emit-obelisk %t/and-selector.sv -o %t/and-selector.mlir
-// RUN: obelisk-opt %t/and-selector.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
-// RUN:   > %t/and-selector-lowered.mlir
-// RUN: obelisk-opt %t/and-selector-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=AND-SELECTOR
-// RUN: obelisk-opt %t/and-selector-lowered.mlir \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
-// RUN: obelisk -emit-obelisk %t/or-selector.sv -o %t/or-selector.mlir
-// RUN: obelisk-opt %t/or-selector.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
-// RUN:   > %t/or-selector-lowered.mlir
-// RUN: obelisk-opt %t/or-selector-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=OR-SELECTOR
-// RUN: obelisk-opt %t/or-selector-lowered.mlir \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
-// RUN: obelisk -emit-obelisk %t/transition-selector.sv \
-// RUN:   -o %t/transition-selector.mlir
-// RUN: obelisk-opt %t/transition-selector.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | %python %S/Inputs/mutate-functional-batch.py add-layout \
-// RUN:   > %t/transition-selector-lowered.mlir
-// RUN: obelisk-opt %t/transition-selector-lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=TRANSITION-SELECTOR
-// RUN: obelisk-opt %t/transition-selector-lowered.mlir \
-// RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' > /dev/null
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/input.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
+// RUN:   --test-obelisk-print-coverage-schema -o %t/input.lowered.mlir 2>&1 | FileCheck %s --check-prefix=SCHEMA
+// RUN: FileCheck %s --check-prefix=LOWER < %t/input.lowered.mlir
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/explicit-bin.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
+// RUN:   --test-obelisk-print-coverage-schema -o %t/explicit-bin.lowered.mlir 2>&1 | FileCheck %s --check-prefix=EXPLICIT-BIN
+// RUN: FileCheck %s --check-prefix=EXPLICIT-SIM < %t/explicit-bin.lowered.mlir
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/and-selector.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=AND-SELECTOR
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/or-selector.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=OR-SELECTOR
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/transition-selector.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' \
+// RUN:   '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' \
+// RUN:   --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=TRANSITION-SELECTOR
 
 // IEEE 1800-2017 19.6: a cross is a typed functional item whose target order
 // is the source order. Its iff is a sample-time Boolean expression. With no
@@ -177,6 +146,37 @@
 // LOWER: simulation.covergroup.start {{.*}} item [[CROSS_ITEM]]
 // LOWER: simulation.covergroup.instance_query {{.*}} item [[CROSS_ITEM]]
 
+module explicit_cross_bin;
+  bit a_value;
+  bit b_value;
+  bit enabled;
+  covergroup cg;
+    a: coverpoint a_value {
+      bins zero = {0};
+      bins one = {1};
+    }
+    b: coverpoint b_value {
+      bins zero = {0};
+      bins one = {1};
+    }
+    ab: cross a, b {
+      // obelisk coverage off functional reason="selector excluded for reporting"
+      bins selected = binsof(a) intersect {0} iff (enabled);
+      // obelisk coverage on functional
+      bins named = binsof(a.zero) intersect {0};
+      bins negated = !binsof(a.one);
+      ignore_bins ignored = binsof(b.zero);
+      illegal_bins illegal = binsof(b.one);
+    }
+  endgroup
+
+  cg cov;
+  initial begin
+    cov = new;
+    cov.sample();
+  end
+endmodule
+
 //--- input.sv
 module cross_schema;
   bit a_value;
@@ -261,38 +261,6 @@ module or_cross_selector;
   endgroup
 endmodule
 
-//--- explicit-bin.sv
-module explicit_cross_bin;
-  bit a_value;
-  bit b_value;
-  bit enabled;
-  covergroup cg;
-    a: coverpoint a_value {
-      bins zero = {0};
-      bins one = {1};
-    }
-    b: coverpoint b_value {
-      bins zero = {0};
-      bins one = {1};
-    }
-    ab: cross a, b {
-      // obelisk coverage off functional reason="selector excluded for reporting"
-      bins selected = binsof(a) intersect {0} iff (enabled);
-      // obelisk coverage on functional
-      bins named = binsof(a.zero) intersect {0};
-      bins negated = !binsof(a.one);
-      ignore_bins ignored = binsof(b.zero);
-      illegal_bins illegal = binsof(b.one);
-    }
-  endgroup
-
-  cg cov;
-  initial begin
-    cov = new;
-    cov.sample();
-  end
-endmodule
-
 //--- transition-selector.sv
 module transition_cross_selector;
   bit transition_value;
@@ -312,3 +280,4 @@ module transition_cross_selector;
     }
   endgroup
 endmodule
+

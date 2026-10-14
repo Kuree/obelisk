@@ -1,0 +1,12 @@
+# RUN: %coverage-fixture %t.obcov 20 '</ScRiPt><script id=pwned>' 1
+# RUN: obelisk-cov report --format=html --source-root=%S/Inputs -o %t.html %t.obcov
+# RUN: FileCheck %s < %t.html
+
+# A test name cannot close the payload script element: the embedded JSON
+# contains no less-than sign, and the name is carried with it escaped.
+
+# CHECK: <script id="coverage-data" type="application/json">
+# CHECK-NOT: <
+# CHECK: "runs":[{"uuid":"{{[^"]*}}","name":"\u003c/ScRiPt>\u003cscript id=pwned>",
+# CHECK-NOT: <
+# CHECK: </script>

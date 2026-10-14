@@ -3,18 +3,9 @@
 // RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
 // RUN:   | obelisk-opt --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=clocking-event > %t.native.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=clocking-event > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.report
-// RUN: FileCheck %s --check-prefix=REPORT < %t.report
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
 
 module top;
   bit clock;

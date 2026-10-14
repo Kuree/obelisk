@@ -1,0 +1,23 @@
+# RUN: %coverage-fixture %t.max.obcov 24 aggregate-max 1 aggregate-overflow
+# RUN: %coverage-fixture %t.one.obcov 25 aggregate-one 1 aggregate-overflow
+# RUN: obelisk-cov report --format=json %t.max.obcov %t.one.obcov | FileCheck %s --check-prefix=JSON
+# RUN: obelisk-cov report --format=html -o %t.html %t.max.obcov %t.one.obcov
+# RUN: FileCheck %s --check-prefix=HTML < %t.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html '18446744073709551615 (saturated)' %}
+
+# Merging a run whose counters are at the 64-bit maximum with another run
+# saturates the sum instead of wrapping: line, toggle and functional bin
+# counts all stay at 2^64-1 and carry the overflow flag. The HTML payload
+# carries the 64-bit counts as strings so JavaScript does not round them.
+
+# JSON: "line_points":[{"id":30,{{[^]]*}}"count":18446744073709551615,"overflow":true
+# JSON: "toggles":[{
+# JSON-SAME: "bits":[{"index":0,
+# JSON-SAME: "zero_to_one":{"count":18446744073709551615,"covered":true,"overflow":true,
+# JSON-SAME: "one_to_zero":{"count":18446744073709551615,"covered":true,"overflow":true,
+# JSON: "functional_instance_groups":[{
+# JSON-SAME: "bins":[{"id":170,{{[^]]*}}"count":18446744073709551615,"overflow":true,
+
+# HTML: "line_points":[{"id":"30",{{[^]]*}}"count":"18446744073709551615"
+# HTML: "functional_instance_groups":[{
+# HTML-SAME: "bins":[{"id":"170",{{[^]]*}}"count":"18446744073709551615"

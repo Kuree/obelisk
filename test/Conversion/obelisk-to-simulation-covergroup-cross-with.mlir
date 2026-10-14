@@ -1,31 +1,14 @@
 // RUN: %split-file %s %t
-// RUN: obelisk --std=1800-2023 -emit-obelisk %t/input.sv -o %t/input.mlir
-// RUN: obelisk-opt %t/input.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=PREPARE
-// RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   > %t/lowered.mlir
-// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SCHEMA
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/input.sv | obelisk-opt --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/input.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' -o %t/lowered.mlir
+// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEMA
 // RUN: FileCheck %s --check-prefix=SIM < %t/lowered.mlir
-// RUN: obelisk -emit-obelisk %t/too-many.sv -o %t/too-many.mlir
-// RUN: obelisk-opt %t/too-many.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=WIDE
-// RUN: obelisk -emit-obelisk %t/signed.sv -o %t/signed.mlir
-// RUN: obelisk-opt %t/signed.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=SIGNED
-// RUN: obelisk -emit-obelisk %t/four-state.sv -o %t/four-state.mlir
-// RUN: obelisk-opt %t/four-state.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=FOUR-STATE
-// RUN: obelisk -emit-obelisk %t/nested.sv -o %t/nested.mlir
-// RUN: obelisk-opt %t/nested.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=NESTED
+// RUN: obelisk --std=1800-2023 -emit-obelisk %t/variants.sv | obelisk-opt --obelisk-sim-prepare | FileCheck %s --check-prefix=VARIANTS
 
 // IEEE 1800-2023 19.6.1.2 selects associated values from subordinate bins.
 // Integral iterator operations, including bit selects, use a typed DAG. A
 // function predicate still uses one constructor queue of associated values.
 // PREPARE: simulation.coverage.functional.cross_with_target_paths = ["cross_with.cg.x.ca", "cross_with.cg.x.cb"]
-// SIGNED: simulation.coverage.functional.cross_with_target_paths = ["signed_cross_with.cg.x.ca", "signed_cross_with.cg.x.cb"]
-// FOUR-STATE: simulation.coverage.functional.cross_with_target_paths = ["four_state_cross_with.cg.x.ca", "four_state_cross_with.cg.x.cb"]
 
 // Omitted `matches` is Count 1, a folded positive count is retained directly,
 // `$` is All, and a constructor-dependent count has one typed expression.
@@ -58,8 +41,14 @@
 // SIM-SAME: argument_count 1
 // SIM-SAME: expression_ids [
 
-// WIDE: simulation.coverage.functional.cross_with_target_paths = ["too_many_cross_with.cg.x.ca", "too_many_cross_with.cg.x.cb"]
-// NESTED-COUNT-2: simulation.coverage.functional.cross_with_target_paths
+// Wide, signed, four-state and nested (`with` of a `with`) selectors all
+// record their cross target paths in declaration order; the nested form
+// records them once per level (two entries) (IEEE 1800-2023 19.6.1.2).
+// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["too_many_cross_with.cg.x.ca", "too_many_cross_with.cg.x.cb"]
+// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["signed_cross_with.cg.x.ca", "signed_cross_with.cg.x.cb"]
+// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["four_state_cross_with.cg.x.ca", "four_state_cross_with.cg.x.cb"]
+// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["nested_cross_with.cg.x.ca", "nested_cross_with.cg.x.cb"]
+// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["nested_cross_with.cg.x.ca", "nested_cross_with.cg.x.cb"]
 
 //--- input.sv
 module cross_with;
@@ -86,7 +75,8 @@ module cross_with;
   cg cov = new(2);
 endmodule
 
-//--- too-many.sv
+
+//--- variants.sv
 module too_many_cross_with;
   bit [6:0] a;
   bit [5:0] b;
@@ -99,7 +89,7 @@ module too_many_cross_with;
   endgroup
 endmodule
 
-//--- signed.sv
+
 module signed_cross_with;
   bit signed [1:0] a;
   bit b;
@@ -112,7 +102,7 @@ module signed_cross_with;
   endgroup
 endmodule
 
-//--- four-state.sv
+
 module four_state_cross_with;
   logic [1:0] a;
   bit b;
@@ -125,7 +115,7 @@ module four_state_cross_with;
   endgroup
 endmodule
 
-//--- nested.sv
+
 module nested_cross_with;
   bit a;
   bit b;

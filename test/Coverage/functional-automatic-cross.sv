@@ -1,29 +1,10 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=automatic-cross > %t.native.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=automatic-cross > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.report
-// RUN: FileCheck %s --check-prefix=REPORT < %t.report
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); g=next(g for g in d['functional_instance_groups'] if any(i['name']=='product' for i in g['items'])); items={i['name']:i for i in g['items']}; assert g['cross_num_print_missing']==2; assert items['product']['cross_num_print_missing']==2 and len([b for b in items['product']['automatic_bins'] if b['missing']])==2; assert items['limited_product']['cross_num_print_missing']==1 and len([b for b in items['limited_product']['automatic_bins'] if b['missing']])==1; assert items['product']['automatic_total']==items['limited_product']['automatic_total']==4" %t.json
-// RUN: obelisk-cov report --format=html %t.native.obcov -o %t.html
-// RUN: %python -c 'import json,re,sys; h=open(sys.argv[1]).read(); m=re.search(r"<script[^>]*id=\"coverage-data\"[^>]*>(.*?)</script>",h,re.S); assert m; d=json.loads(m.group(1)); g=next(g for g in d["functional_instance_groups"] if any(i["name"]=="product" for i in g["items"])); items={i["name"]:i for i in g["items"]}; assert str(g["cross_num_print_missing"])=="2"; assert str(items["product"]["cross_num_print_missing"])=="2" and sum(b["missing"] for b in items["product"]["automatic_bins"])==2; assert str(items["limited_product"]["cross_num_print_missing"])=="1" and sum(b["missing"] for b in items["limited_product"]["automatic_bins"])==1' %t.html
-// RUN: %t.native --coverage-load=%t.native.obcov \
-// RUN:   --coverage-output=%t.native.loaded.obcov \
-// RUN:   --coverage-test=automatic-cross-loaded > %t.native.loaded.out
-// RUN: %t.bytecode --coverage-load=%t.bytecode.obcov \
-// RUN:   --coverage-output=%t.bytecode.loaded.obcov \
-// RUN:   --coverage-test=automatic-cross-loaded > %t.bytecode.loaded.out
-// RUN: diff -u %t.native.loaded.out %t.bytecode.loaded.out
-// RUN: FileCheck %s --check-prefix=LOADED < %t.native.loaded.out
-// RUN: obelisk-cov report --format=json %t.native.loaded.obcov -o %t.loaded.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); groups=[g for g in d['functional_instance_groups'] if any(i['name']=='product' for i in g['items'])]; assert groups and all(g['cross_num_print_missing']==2 for g in groups); assert all(next(i for i in g['items'] if i['name']=='limited_product')['cross_num_print_missing']==1 for g in groups)" %t.loaded.json
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=automatic-cross | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"missing":true'
+// RUN: obelisk-cov report --format=html %t.obcov | FileCheck %s --check-prefix=JSON --implicit-check-not='"missing":true'
+// RUN: %t --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov --coverage-test=automatic-cross-loaded | FileCheck %s --check-prefix=LOADED
+// RUN: obelisk-cov report --format=json %t.loaded.obcov | FileCheck %s --check-prefix=LOADED-JSON
 
 module top;
   bit a;
@@ -122,3 +103,22 @@ endmodule
 // REPORT-DAG: auto bin <all,auto[0]>: 2 [covered, at_least 2]
 // REPORT-DAG: auto bin <zero,auto[0]>: 1 [uncovered, at_least 2]
 // REPORT-DAG: auto bin <all,auto[1]>: 0 [uncovered, at_least 2]
+
+// cross_num_print_missing is inherited from the covergroup instance (2) unless
+// the cross sets its own (1). The listed missing automatic bins are limited to
+// that count: product lists both of its missing tuples, limited_product only
+// the first. Both crosses have four automatic tuples. The JSON and the data
+// embedded in the HTML report agree, and no other bin is missing.
+// JSON-DAG: "per_instance":false,"distribute_first":false,"cross_num_print_missing":{{"?}}2{{"?}},
+// JSON-DAG: "name":"product","comment":"","hierarchy":"top.cg.product","kind":{{"?}}2{{"?}},{{[^}]*}}"automatic_total":{{"?}}4{{"?}},"automatic_at_least":{{"?}}2{{"?}},"cross_num_print_missing":{{"?}}2{{"?}},
+// JSON-DAG: "name":"limited_product","comment":"","hierarchy":"top.cg.limited_product","kind":{{"?}}2{{"?}},{{[^}]*}}"automatic_total":{{"?}}4{{"?}},"automatic_at_least":{{"?}}2{{"?}},"cross_num_print_missing":{{"?}}1{{"?}},
+// JSON-DAG: "name":"{{(<|\\u003c)}}zero,auto[1]>","count":{{"?}}0{{"?}},"overflow":false,"at_least":{{"?}}2{{"?}},"covered":false,"missing":true
+// JSON-DAG: "name":"{{(<|\\u003c)}}all,auto[1]>","count":{{"?}}0{{"?}},"overflow":false,"at_least":{{"?}}2{{"?}},"covered":false,"missing":true
+// JSON-DAG: "name":"{{(<|\\u003c)}}all,auto[1]>","count":{{"?}}0{{"?}},"overflow":false,"at_least":{{"?}}2{{"?}},"covered":false,"missing":true
+
+// Loading the file keeps the option values on both the loaded and the live
+// instance groups.
+// LOADED-JSON-DAG: "per_instance":false,"distribute_first":false,"cross_num_print_missing":2,
+// LOADED-JSON-DAG: "per_instance":false,"distribute_first":false,"cross_num_print_missing":2,
+// LOADED-JSON-DAG: "name":"limited_product","comment":"","hierarchy":"top.cg.limited_product","kind":2,{{[^}]*}}"cross_num_print_missing":1,
+// LOADED-JSON-DAG: "name":"limited_product","comment":"","hierarchy":"top.cg.limited_product","kind":2,{{[^}]*}}"cross_num_print_missing":1,

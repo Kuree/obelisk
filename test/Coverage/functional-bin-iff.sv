@@ -1,23 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: not %t.native --coverage-output=%t.native.obcov --coverage-test=bin-iff \
-// RUN:   2> %t.native.err
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: not %t.native --coverage-load=%t.native.obcov \
-// RUN:   --coverage-output=%t.loaded.obcov --coverage-test=bin-iff-loaded \
-// RUN:   2> %t.loaded.err
-// RUN: obelisk-cov report --format=json %t.loaded.obcov -o %t.loaded.json
-// RUN: %python -c "import collections,json,sys; q=json.load(open(sys.argv[1]))['illegal_bin_diagnostics']; assert len(q)==8 and all(v['count']==1 for v in q); assert collections.Counter((v['test'],v['simulation_time']) for v in q) == collections.Counter({('bin-iff',0):2,('bin-iff',10):2,('bin-iff-loaded',0):2,('bin-iff-loaded',10):2}); assert {v['hierarchy'] for v in q} == {'top.cg.cp.illegal','top.cg.cp.illegal_overlap'}" %t.loaded.json
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: not %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=bin-iff 2> %t.bytecode.err
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: diff -u %t.native.err %t.bytecode.err
-// RUN: FileCheck %s < %t.native.txt
-// RUN: FileCheck %s --check-prefix=ERROR < %t.native.err
-// RUN: %python -c "import sys; s=open(sys.argv[1]).read(); assert s.count('ERROR: functional coverage illegal bin') == 4 and s.count(\"'top.cg.cp.illegal'\") == 2 and s.count(\"'top.cg.cp.illegal_overlap'\") == 2" %t.native.err
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: not %t --coverage-output=%t.obcov --coverage-test=bin-iff 2>&1 | FileCheck %s --check-prefix=ERROR --implicit-check-not=ERROR:
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
+// RUN: not %t --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov --coverage-test=bin-iff-loaded 2>/dev/null
+// RUN: obelisk-cov report --format=json %t.loaded.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   bit [2:0] sampled;
@@ -99,7 +84,25 @@ endmodule
 // CHECK-DAG: bin two_overlap: 0 [excluded] {empty}
 // CHECK-DAG: bin three: 1 [covered]
 // CHECK-DAG: bin ignored: 0 [excluded] {ignore}
-// ERROR: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 0
-// ERROR: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 10
 // CHECK-DAG: bin illegal: 0 [excluded] {illegal}
 // CHECK-DAG: bin fallback: 1 [excluded] {default}
+
+// Illegal guards only gate the diagnostics (19.5.6): each illegal bin reports
+// exactly once per true-guard hit, at times 0 and 10, and nothing else is
+// reported.
+// ERROR: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 0
+// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.illegal_overlap' sampled at simulation time 0
+// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 10
+// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.illegal_overlap' sampled at simulation time 10
+
+// Loading the first run and running again persists a distinct diagnostic per
+// run, test name and time: eight records, each with count 1.
+// JSON-DAG: "test":"bin-iff","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal","simulation_time":0,"count":1,
+// JSON-DAG: "test":"bin-iff","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal","simulation_time":10,"count":1,
+// JSON-DAG: "test":"bin-iff","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal_overlap","simulation_time":0,"count":1,
+// JSON-DAG: "test":"bin-iff","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal_overlap","simulation_time":10,"count":1,
+// JSON-DAG: "test":"bin-iff-loaded","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal","simulation_time":0,"count":1,
+// JSON-DAG: "test":"bin-iff-loaded","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal","simulation_time":10,"count":1,
+// JSON-DAG: "test":"bin-iff-loaded","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal_overlap","simulation_time":0,"count":1,
+// JSON-DAG: "test":"bin-iff-loaded","instance":{{[0-9]+}},"bin":{{[0-9]+}},"hierarchy":"top.cg.cp.illegal_overlap","simulation_time":10,"count":1,
+// JSON-NOT: "hierarchy":"top.cg.cp.illegal

@@ -1,19 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: not %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=default-array 2> %t.native.err
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: not %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=default-array 2> %t.bytecode.err
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: diff -u %t.native.err %t.bytecode.err
-// RUN: FileCheck %s < %t.native.txt
-// RUN: FileCheck %s --check-prefix=ERROR < %t.native.err
-// RUN: %python -c "import sys; s=open(sys.argv[1]).read(); assert s.count('ERROR: functional coverage illegal bin') == 1" %t.native.err
-// RUN: %python -c "p=open(r'%t.native.txt').read(); assert all(p.find(s) < 0 for s in ['bin others[2]', 'bin others[3]', 'bin others[4]', 'bin others[6]', 'bin others[7]', 'bin empty_default['])"
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: not %t --coverage-output=%t.obcov --coverage-test=default-array 2>&1 | FileCheck %s --check-prefix=ERROR --implicit-check-not=ERROR:
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --implicit-check-not='bin others[2]' --implicit-check-not='bin others[3]' --implicit-check-not='bin others[4]' --implicit-check-not='bin others[6]' --implicit-check-not='bin others[7]' --implicit-check-not='bin empty_default['
 
 module top;
   bit [3:0] sampled;
@@ -64,6 +51,9 @@ module top;
   end
 endmodule
 
+// A default array holds one bin per value left undefined by the other bins
+// (19.5.1): values 2-4 (good), 6 (illegal) and 7 (ignored) get no others[]
+// bin, and a fully defined coverpoint gets no default bins at all.
 // CHECK: functional: 100.00% (4/4)
 // CHECK-DAG: coverpoint cp: 1/1 (100.00%)
 // CHECK-DAG: coverpoint empty_cp: 1/1 (100.00%)

@@ -1,0 +1,9 @@
+# RUN: %coverage-fixture %t.obcov 29 exclusion-report 1 exclusion
+# RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
+# RUN: obelisk-cov report --format=html -o %t.html %t.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html 'row:1|exclusion-report|1|2|0|3 unique' %}
+
+# A bin excluded by a waiver is listed with its reason in the text report,
+# and the HTML test table summarizes the run that carried it.
+
+# CHECK: bin one: 1 [excluded] {excluded: fixture waiver}

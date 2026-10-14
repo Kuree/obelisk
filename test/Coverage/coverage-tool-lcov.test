@@ -1,0 +1,27 @@
+# RUN: %coverage-fixture %t.a.obcov 1 alpha 1
+# RUN: %coverage-fixture %t.b.obcov 2 beta 0
+# RUN: obelisk-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
+# RUN: obelisk-cov report --format=text --test=missing --fail-under=functional=100 %t.merged.obcov | FileCheck %s --check-prefix=EMPTY
+# RUN: obelisk-cov report --format=lcov -o %t.lcov %t.merged.obcov
+# RUN: FileCheck %s --check-prefix=LCOV < %t.lcov
+# RUN: %if lcov %{ %lcov --summary %t.lcov 2>&1 | FileCheck %s --check-prefix=LCOV-TOOL %}
+
+# Selecting a test that does not exist leaves an empty functional metric,
+# which meets any threshold. The LCOV report has one record per test; only the
+# test that hit the line carries a source digest.
+
+# EMPTY: functional: 100.00% (0/0) [PASS >= 100.00%]
+
+# LCOV: TN:alpha
+# LCOV: SF:dut.sv
+# LCOV: VER:
+# LCOV: DA:1,1
+# LCOV: end_of_record
+# LCOV: TN:beta
+# LCOV: SF:dut.sv
+# LCOV-NOT: VER:
+# LCOV: DA:1,0
+# LCOV: end_of_record
+
+# LCOV-TOOL: Summary coverage rate:
+# LCOV-TOOL: lines......: 100.0% (1 of 1 line)

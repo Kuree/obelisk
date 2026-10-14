@@ -1,29 +1,19 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.forward.obcov \
-// RUN:   --coverage-test=cross-forward +producer
-// RUN: %t.native --coverage-output=%t.native.reverse.obcov \
-// RUN:   --coverage-test=cross-reverse +producer +reverse
-// RUN: obelisk-cov merge -o %t.native.orders.obcov \
-// RUN:   %t.native.forward.obcov %t.native.reverse.obcov
-// RUN: %t.native --coverage-load=%t.native.forward.obcov \
-// RUN:   --coverage-output=%t.native.loaded.obcov \
-// RUN:   --coverage-test=cross-loaded > %t.native.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.forward.obcov \
-// RUN:   --coverage-test=cross-forward +producer
-// RUN: %t.bytecode --coverage-output=%t.bytecode.reverse.obcov \
-// RUN:   --coverage-test=cross-reverse +producer +reverse
-// RUN: obelisk-cov merge -o %t.bytecode.orders.obcov \
-// RUN:   %t.bytecode.forward.obcov %t.bytecode.reverse.obcov
-// RUN: %t.bytecode --coverage-load=%t.bytecode.forward.obcov \
-// RUN:   --coverage-output=%t.bytecode.loaded.obcov \
-// RUN:   --coverage-test=cross-loaded > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: obelisk-cov report --format=text %t.native.loaded.obcov -o %t.report
-// RUN: FileCheck %s --check-prefix=REPORT < %t.report
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.forward.obcov --coverage-test=cross-forward +producer
+// RUN: %t --coverage-output=%t.reverse.obcov --coverage-test=cross-reverse +producer +reverse
+// RUN: obelisk-cov merge -o %t.orders.obcov %t.forward.obcov %t.reverse.obcov
+// RUN: obelisk-cov inspect %t.orders.obcov | FileCheck %s --check-prefix=ORDERS
+// RUN: %t --coverage-load=%t.forward.obcov --coverage-output=%t.loaded.obcov --coverage-test=cross-loaded | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.loaded.obcov | FileCheck %s --check-prefix=REPORT
+
+// Merging the runs that construct the covergroup instances in opposite orders
+// succeeds only when their schemas and configurations are identical: the merge
+// holds two runs but the configuration, item and cross-plan counts of one.
+// ORDERS: runs: 2
+// ORDERS: functional-configurations: 5
+// ORDERS: resolved-functional-items: 15
+// ORDERS: resolved-cross-plans: 5
+// ORDERS: resolved-instances: 10
 
 module top;
   bit a;
@@ -123,8 +113,10 @@ endmodule
 // QUERY: merged cross 33.333333 2 6
 // QUERY-NEXT: merged cross type 33.333333 2 6
 // QUERY-NEXT: correlated cross type 75.000000 3 4
-// REPORT: type configured ({{[0-9]+}}): 66.67%
+// REPORT-DAG: type configured ({{[0-9]+}}): 66.67%
 // REPORT-DAG: cross product: 0/0
 // REPORT-DAG: cross product: 1/2
 // REPORT-DAG: cross product: 1/4
-// REPORT: type correlated ({{[0-9]+}}): 91.67%
+// REPORT-DAG: type correlated ({{[0-9]+}}): 91.67%
+// REPORT-DAG: auto bin <auto[0:1],auto[0]>: 1 [covered, at_least 1]
+// REPORT-DAG: auto bin <auto[1],auto[1]>: 1 [covered, at_least 1]

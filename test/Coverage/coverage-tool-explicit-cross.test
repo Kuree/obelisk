@@ -1,0 +1,28 @@
+# RUN: %coverage-fixture %t.obcov 28 explicit-report 1 cross-explicit
+# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --implicit-check-not='"first_'
+# RUN: obelisk-cov report --format=html -o %t.html %t.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html 'top.dut.cg.cp_x_cp2 targets cp, cp2' 'selected = (intersect {<0x1,0x2>} matches all || intersect {<0x1,0xb>} matches all)' %}
+
+# An explicit cross bin (IEEE 1800-2023 19.6.1) is reported with its plan,
+# its two targets, its selector tree (two tuple-set leaves joined by one
+# operator), the resolved tuples and their components, and the automatic
+# bins that remain. Every automatic-bin edge refers to an automatic node of
+# the same type, configuration and cross, and the root node of the plan is one
+# of them. No table row carries a first_ key.
+
+# CHECK: "cross_plans":[{"item":62,{{[^]]*}}}],
+# CHECK: "cross_targets":[{"cross":62,"target":60,{{[^}]*}}},{"cross":62,"target":61,{{[^}]*}}}],"cross_bin_plans"
+# CHECK: "cross_selector_nodes":[{"id":{{[0-9]+}},{{[^}]*}}},{"id":{{[0-9]+}},{{[^}]*}}},{"id":{{[0-9]+}},{{[^}]*}}}],"cross_predicate_nodes"
+# CHECK: "resolved_cross_selector_bindings":[{"type":{{[^}]*}}},{"type":{{[^}]*}}}],
+# CHECK: "resolved_functional_tuple_sets":[{"type":{{[^}]*}}},{"type":{{[^}]*}}}],
+# CHECK: "resolved_functional_tuples":[{"tuple_set":{{[^}]*}}},{"tuple_set":{{[^}]*}}}],
+# CHECK: "resolved_functional_tuple_components":[{"tuple":{{[^}]*}}},{"tuple":{{[^}]*}}},{"tuple":{{[^}]*}}},{"tuple":{{[^}]*}}}],
+# CHECK: "resolved_cross_plans":[{"type":50,"configuration":"[[CFG:[0-9a-f]+]]","cross":[[X:[0-9]+]],{{[^}]*}}"root_node":[[ROOT:[0-9]+]],
+# CHECK: "resolved_cross_automatic_nodes":[{"type":50,"configuration":"[[CFG]]","cross":[[X]],"id":[[ROOT]],
+# CHECK-SAME: {"type":50,"configuration":"[[CFG]]","cross":[[X]],"id":[[CHILD:[0-9]+]],
+# CHECK: "resolved_cross_automatic_edges":[{"type":50,"configuration":"[[CFG]]","cross":[[X]],"node":[[ROOT]],"bin":{{[0-9]+}},"child":[[CHILD]],
+# CHECK-SAME: {"type":50,"configuration":"[[CFG]]","cross":[[X]],"node":[[CHILD]],"bin":{{[0-9]+}},"child":0,
+# CHECK-SAME: {"type":50,"configuration":"[[CFG]]","cross":[[X]],"node":[[CHILD]],"bin":{{[0-9]+}},"child":0,
+# CHECK: "name":"cp_x_cp2","comment":"","hierarchy":"top.dut.cg.cp_x_cp2","kind":2,
+# CHECK-SAME: "targets":[{"template_item":60,"id":160,"name":"cp","ordinal":0},{"template_item":61,"id":161,"name":"cp2","ordinal":1}],
+# CHECK-SAME: "bins":[{"id":172,{{[^]]*}}"cross_selector":92,

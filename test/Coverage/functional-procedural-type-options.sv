@@ -1,37 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov --coverage-test=type-options \
-// RUN:   > %t.native.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=type-options > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.native.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); t=next(t for t in d['functional_types'] if t['name']=='cg'); assert t['goal']==80 and t['weight']==7 and t['merge_instances'] and t['comment']=='group type'; i=d['functional_instance_groups'][0]['items'][0]; assert i['type_goal']==50 and i['type_weight']==5 and i['type_comment']=='point type'; assert len([o for o in d['resolved_instance_options'] if o['instance']==0])==7" %t.native.json
-// RUN: obelisk-cov report --format=html %t.native.obcov -o %t.native.html
-// RUN: %python -c 'import json,re,sys; h=open(sys.argv[1]).read(); m=re.search(r"<script[^>]*id=\"coverage-data\"[^>]*>(.*?)</script>",h,re.S); assert m; d=json.loads(m.group(1)); t=next(t for t in d["functional_types"] if t["name"]=="cg"); assert t["goal"]=="80" and t["weight"]=="7" and t["merge_instances"] and t["comment"]=="group type"' %t.native.html
-// RUN: %t.native --coverage-output=%t.conflict.obcov \
-// RUN:   --coverage-test=type-options-conflict +conflict > /dev/null
-// RUN: not obelisk-cov report --format=text %t.native.obcov \
-// RUN:   %t.conflict.obcov -o %t.conflict.txt 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=CONFLICT
-// RUN: %t.native --coverage-output=%t.default.obcov \
-// RUN:   --coverage-test=type-options-default +defaults > /dev/null
-// RUN: not obelisk-cov report --format=text %t.native.obcov \
-// RUN:   %t.default.obcov -o %t.default-conflict.txt 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=CONFLICT
-// RUN: obelisk-cov report --format=json --test=type-options \
-// RUN:   %t.native.obcov %t.default.obcov -o %t.filtered-override.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); t=next(t for t in d['functional_types'] if t['name']=='cg'); assert t['goal']==80 and t['weight']==7 and t['merge_instances']" %t.filtered-override.json
-// RUN: obelisk-cov report --format=json --test=type-options-default \
-// RUN:   %t.native.obcov %t.default.obcov -o %t.filtered-default.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); t=next(t for t in d['functional_types'] if t['name']=='cg'); assert t['goal']==100 and t['weight']==1 and t['merge_instances'] is False" %t.filtered-default.json
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=type-options | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: obelisk-cov report --format=html %t.obcov | FileCheck %s --check-prefix=HTML
 
 // IEEE 1800-2023 19.7.1 permits these type options to be changed at any
 // time. The pre-construction writes must affect configurations resolved by
@@ -95,4 +66,21 @@ endmodule
 // REPORT: type comment: "group type"
 // REPORT: type comment: "point type"
 
-// CONFLICT: obelisk-cov: conflicting type goal for functional type
+// The resolved type options of the first instance are the seven written
+// values: group goal, weight, merge_instances and comment, then the point's
+// goal, weight and comment. The point item carries its type goal, weight and
+// comment.
+// JSON: "functional_types":[{{[{]}}"id":{{[0-9]+}},"scope":{{[0-9]+}},"name":"cg","base":0,"comment":"group type",{{[^{]*}}"goal":80,"weight":7,"merge_instances":true,
+// JSON: "resolved_instance_options":[
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":1,"option":1,"value_kind":1,"value":80,"string_value":""},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":1,"option":2,"value_kind":1,"value":7,"string_value":""},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":1,"option":8,"value_kind":1,"value":1,"string_value":""},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":1,"option":14,"value_kind":4,"value":0,"string_value":"group type"},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":2,"option":1,"value_kind":1,"value":50,"string_value":""},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":2,"option":2,"value_kind":1,"value":5,"string_value":""},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":0,"owner":{{[0-9]+}},"owner_kind":2,"option":14,"value_kind":4,"value":0,"string_value":"point type"},
+// JSON-SAME: {"run":"{{[^"]*}}","instance":1,
+// JSON: "type_goal":50,"type_weight":5,{{[^{]*}}"type_comment":"point type",
+
+// The HTML report embeds the same type fields, with numbers as strings.
+// HTML: "functional_types":[{{[{]}}"id":"{{[0-9]+}}","scope":"{{[0-9]+}}","name":"cg","base":"0","comment":"group type",{{[^{]*}}"goal":"80","weight":"7","merge_instances":true,

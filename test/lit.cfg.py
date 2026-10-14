@@ -12,11 +12,7 @@ sys.path.insert(
 from obelisk_lit_format import ObeliskShTest
 
 config.name = "OBELISK"
-with open(os.path.join(os.path.dirname(__file__), "lit-policy-exemptions.txt")) as f:
-    policy_exemptions = [
-        line.strip() for line in f if line.strip() and not line.startswith("#")
-    ]
-config.test_format = ObeliskShTest(policy_exemptions)
+config.test_format = ObeliskShTest()
 config.suffixes = [".mlir", ".sv", ".test", ".sdf"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.obelisk_obj_root, "test")
@@ -30,7 +26,6 @@ config.excludes = [
 ]
 
 llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
-config.substitutions.append(("%python", '"{}"'.format(sys.executable)))
 config.substitutions.append(("%obelisk", config.obelisk_driver_executable))
 # The test driver lowers resource limits so tests can reach them with small
 # inputs (see test/Support/DriverTestMain.cpp).

@@ -1,56 +1,10 @@
 // RUN: %split-file %s %t
-// RUN: obelisk -emit-obelisk %t/input.sv -o %t/input.mlir
-// RUN: obelisk-opt %t/input.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=PREPARE
-// RUN: obelisk-opt %t/input.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   > %t/lowered.mlir
-// RUN: FileCheck %s --check-prefix=SIM < %t/lowered.mlir
-// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: obelisk --std=1800-2017 -emit-obelisk %t/input.sv \
-// RUN:   -o %t/input-2017.mlir
-// RUN: obelisk-opt %t/input-2017.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' > /dev/null
-// RUN: obelisk -emit-obelisk %t/item.sv -o %t/item.mlir
-// RUN: obelisk-opt %t/item.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=ITEM-PREPARE
-// RUN: obelisk-opt %t/item.mlir '--lower-obelisk-to-sim=opt-level=0' \
-// RUN:   | FileCheck %s --check-prefix=ITEM
-// RUN: obelisk -emit-obelisk %t/signed.sv -o %t/signed.mlir
-// RUN: obelisk-opt %t/signed.mlir --obelisk-sim-prepare \
-// RUN:   | FileCheck %s --check-prefix=SIGNED-PREPARE
-// RUN: obelisk -emit-obelisk %t/wildcard.sv -o %t/wildcard.mlir
-// RUN: not obelisk-opt %t/wildcard.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=WILDCARD
-// RUN: obelisk -emit-obelisk %t/all-domain.sv -o %t/all-domain.mlir
-// RUN: not obelisk-opt %t/all-domain.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=ALL-DOMAIN
-// RUN: obelisk -emit-obelisk %t/dynamic-endpoint.sv \
-// RUN:   -o %t/dynamic-endpoint.mlir
-// RUN: not obelisk-opt %t/dynamic-endpoint.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=DYNAMIC-ENDPOINT
-// RUN: obelisk -emit-obelisk %t/unknown-endpoint.sv \
-// RUN:   -o %t/unknown-endpoint.mlir
-// RUN: not obelisk-opt %t/unknown-endpoint.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=UNKNOWN-ENDPOINT
-// RUN: obelisk -emit-obelisk %t/clipped-endpoint.sv \
-// RUN:   -o %t/clipped-endpoint.mlir
-// RUN: not obelisk-opt %t/clipped-endpoint.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=CLIPPED-ENDPOINT
-// RUN: obelisk -emit-obelisk %t/unsigned-to-signed.sv \
-// RUN:   -o %t/unsigned-to-signed.mlir
-// RUN: not obelisk-opt %t/unsigned-to-signed.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=UNSIGNED-TO-SIGNED
-// RUN: obelisk -emit-obelisk %t/too-many.sv -o %t/too-many.mlir
-// RUN: not obelisk-opt %t/too-many.mlir \
-// RUN:   '--lower-obelisk-to-sim=opt-level=0' 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=TOO-MANY
+// RUN: obelisk -emit-obelisk %t/pos.sv | obelisk-opt --obelisk-sim-prepare | FileCheck %s --check-prefix=PREPARE --check-prefix=ITEM-PREPARE --check-prefix=SIGNED-PREPARE
+// RUN: obelisk -emit-obelisk %t/pos.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' -o %t/lowered.mlir
+// RUN: FileCheck %s --check-prefix=SIM --check-prefix=ITEM < %t/lowered.mlir
+// RUN: obelisk-opt %t/lowered.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEMA
+// RUN: obelisk --std=1800-2017 -emit-obelisk %t/pos.sv | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' -o /dev/null
+// RUN: obelisk -emit-obelisk %t/neg.sv | not obelisk-opt '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s --check-prefix=NEG
 
 // IEEE 1800-2023 19.5.1.1 evaluates `with` once per source candidate
 // occurrence and preserves duplicate values and source order. Constant and
@@ -87,22 +41,28 @@
 // SCHEMA-DAG: functional_expression id=[[DISTRIBUTE:[1-9][0-9]*]] owner=[[TYPE]] owner_kind=1 role=13 result_kind=1 width=0 signedness=3 owner_ordinal=10 owner_subordinal=2 phase=4
 // SCHEMA-DAG: functional_option_plan owner=[[TYPE]] expression=[[DISTRIBUTE]] owner_kind=1 scope=2 option=10 ordinal=10 flags=0
 // ITEM-PREPARE: simulation.coverage.functional.with_candidate_values = [0 : i4, 1 : i4, 2 : i4, 3 : i4, 4 : i4, 5 : i4, 6 : i4, 7 : i4]
-// ITEM-PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "item_with.cg.cp.item"
+// ITEM-PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "item_with.item_cg.cp.item"
+// A constructor-dependent predicate keeps all eight candidates and evaluates
+// parity per candidate in the create payload.
 // ITEM: %[[ITEM_FALSE:.+]] = arith.constant false
 // ITEM: %[[ITEM_TRUE:.+]] = arith.constant true
-// ITEM: simulation.covergroup.create
-// ITEM-SAME: payloads[%[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]],
+// ITEM: simulation.covergroup.create {{.*}}payloads[%[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]], %[[ITEM_FALSE]], %[[ITEM_TRUE]],
 // SIGNED-PREPARE: simulation.coverage.functional.with_candidate_values = [-3 : i4, -2 : i4, -1 : i4, 0 : i4, 1 : i4, 2 : i4]
-// SIGNED-PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "signed_with.cg.cp.item"
-// WILDCARD: coverage bin with expressions require a finite explicit non-wildcard integral state range list
-// ALL-DOMAIN: coverage bin with expressions require a finite explicit non-wildcard integral state range list
-// DYNAMIC-ENDPOINT: coverage bin with range endpoints must be compiler-folded constants
-// UNKNOWN-ENDPOINT: coverage bin with range endpoints must not contain X or Z bits
-// CLIPPED-ENDPOINT: coverage bin with range endpoint is not representable by the effective coverpoint type
-// UNSIGNED-TO-SIGNED: coverage bin with range endpoint is not representable by the effective coverpoint type
-// TOO-MANY: coverage bin with candidate count exceeds the v1 limit of 4096
+// SIGNED-PREPARE-SAME: simulation.coverage.functional.with_iterator_path = "signed_with.signed_cg.cp.item"
+// Wildcard bins, the whole-domain form, non-constant, X/Z or unrepresentable
+// range endpoints, and candidate counts above the v1 limit are rejected by
+// lowering (IEEE 1800-2023 19.5.1.1). Diagnostics are emitted in IR walk order,
+// so each is matched with CHECK-DAG; the two messages that repeat are told
+// apart by the operation printed after them.
+// NEG-DAG: error: coverage bin with expressions require a finite explicit non-wildcard integral state range list{{[[:space:]]+}}obelisk.sv.symbol.coverage_bin {{.*}}hierarchical_name = "wildcard_with.cg.cp.selected"
+// NEG-DAG: error: coverage bin with expressions require a finite explicit non-wildcard integral state range list{{[[:space:]]+}}obelisk.sv.symbol.coverage_bin {{.*}}hierarchical_name = "all_domain_with.cg.cp.selected"
+// NEG-DAG: error: coverage bin with range endpoints must be compiler-folded constants
+// NEG-DAG: error: coverage bin with range endpoints must not contain X or Z bits
+// NEG-DAG: error: coverage bin with range endpoint is not representable by the effective coverpoint type{{[[:space:]]+}}obelisk.sv.expression.conversion attributes {{[{]}}folded_constant = "4'b0"
+// NEG-DAG: error: coverage bin with range endpoint is not representable by the effective coverpoint type{{[[:space:]]+}}obelisk.sv.expression.conversion attributes {{[{]}}folded_constant = "-4'sd1"
+// NEG-DAG: error: coverage bin with candidate count exceeds the v1 limit of 4096
 
-//--- input.sv
+//--- pos.sv
 module constant_with;
   bit [3:0] sampled;
 
@@ -124,31 +84,32 @@ module constant_with;
   end
 endmodule
 
-//--- item.sv
+
 module item_with;
   bit [3:0] sampled;
 
-  covergroup cg(bit parity);
+  covergroup item_cg(bit parity);
     cp: coverpoint sampled {
       bins selected[] = {[0:7]} with (item[0] == parity);
     }
   endgroup
 
-  cg cov = new(1'b1);
+  item_cg cov = new(1'b1);
 endmodule
 
-//--- signed.sv
+
 module signed_with;
   logic signed [3:0] sampled;
-  covergroup cg;
+  covergroup signed_cg;
     cp: coverpoint sampled {
       bins negative[] = {[-3:2]} with (item < 0);
     }
   endgroup
-  cg cov = new;
+  signed_cg cov = new;
 endmodule
 
-//--- wildcard.sv
+
+//--- neg.sv
 module wildcard_with;
   logic [3:0] sampled;
   covergroup cg;
@@ -158,7 +119,7 @@ module wildcard_with;
   endgroup
 endmodule
 
-//--- all-domain.sv
+
 module all_domain_with;
   bit [3:0] sampled;
   covergroup cg;
@@ -168,7 +129,7 @@ module all_domain_with;
   endgroup
 endmodule
 
-//--- dynamic-endpoint.sv
+
 module dynamic_endpoint_with;
   bit [3:0] sampled;
   covergroup cg(int high);
@@ -178,7 +139,7 @@ module dynamic_endpoint_with;
   endgroup
 endmodule
 
-//--- unknown-endpoint.sv
+
 module unknown_endpoint_with;
   logic [3:0] sampled;
   covergroup cg;
@@ -188,7 +149,7 @@ module unknown_endpoint_with;
   endgroup
 endmodule
 
-//--- clipped-endpoint.sv
+
 module clipped_endpoint_with;
   bit [3:0] sampled;
   covergroup cg;
@@ -198,7 +159,7 @@ module clipped_endpoint_with;
   endgroup
 endmodule
 
-//--- unsigned-to-signed.sv
+
 module unsigned_to_signed_with;
   logic signed [3:0] sampled;
   covergroup cg;
@@ -208,7 +169,7 @@ module unsigned_to_signed_with;
   endgroup
 endmodule
 
-//--- too-many.sv
+
 module too_many_with;
   bit [12:0] sampled;
   covergroup cg;

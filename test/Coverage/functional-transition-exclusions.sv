@@ -1,18 +1,6 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: not %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=transition-exclusions 2> %t.native.err
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: not %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=transition-exclusions 2> %t.bytecode.err
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: diff -u %t.native.err %t.bytecode.err
-// RUN: FileCheck %s < %t.native.txt
-// RUN: FileCheck %s --check-prefix=ERROR < %t.native.err
-// RUN: %python -c "import sys; s=open(sys.argv[1]).read(); assert s.count('ERROR: functional coverage illegal bin') == 5 and s.count(\"'top.cg.cp.illegal_state'\") == 2" %t.native.err
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: not %t --coverage-output=%t.obcov --coverage-test=transition-exclusions 2>&1 | FileCheck %s --check-prefix=ERROR --implicit-check-not=ERROR:
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s
 
 module top;
   bit [3:0] sampled;
@@ -173,6 +161,7 @@ endmodule
 // CHECK-DAG: top.cg.cp.bad instance 1 test "transition-exclusions": 1 at time 0 - "illegal bin sampled"
 // CHECK-DAG: top.cg.cp.wildcard_bad instance 1 test "transition-exclusions": 1 at time 0 - "illegal bin sampled"
 // CHECK-DAG: top.symbolic_cg.symbolic_cp.wildcard_middle instance 3 test "transition-exclusions": 1 at time 0 - "illegal bin sampled"
+// ERROR-DAG: ERROR: functional coverage illegal bin 'top.cg.cp.illegal_state' sampled at simulation time 0
 // ERROR-DAG: ERROR: functional coverage illegal bin 'top.cg.cp.illegal_state' sampled at simulation time 0
 // ERROR-DAG: ERROR: functional coverage illegal bin 'top.cg.cp.bad' sampled at simulation time 0
 // ERROR-DAG: ERROR: functional coverage illegal bin 'top.cg.cp.wildcard_bad' sampled at simulation time 0

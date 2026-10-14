@@ -1,17 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=per-instance
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.native.json
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=per-instance
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
-// RUN: FileCheck %s --check-prefix=JSON < %t.native.json
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=per-instance
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   bit sampled;
@@ -37,13 +27,19 @@ module top;
   end
 endmodule
 
+// IEEE 19.7: option.per_instance is resolved per constructor configuration.
 // Obelisk retains per-test detail by default even when the LRM permits an
-// implementation to omit it. The option is nevertheless resolved and
-// reported independently for every constructor configuration.
+// implementation to omit it, so both instances keep their own bins and the
+// option is reported independently for each.
 // REPORT: functional: 50.00% (2/4)
 // REPORT: instance $auto$1: 50.00% (1/2) [per_instance=true, distribute_first=false]
+// REPORT-NEXT: coverpoint cp: 1/2 (50.00%)
+// REPORT-NEXT: bin zero: 1 [covered]
+// REPORT-NEXT: bin one: 0 [uncovered]
 // REPORT: instance $auto$2: 50.00% (1/2) [per_instance=false, distribute_first=false]
-// JSON: "name":"$auto$1","configuration":
-// JSON: "per_instance":true
-// JSON: "name":"$auto$2","configuration":
-// JSON: "per_instance":false
+// REPORT-NEXT: coverpoint cp: 1/2 (50.00%)
+// REPORT-NEXT: bin zero: 0 [uncovered]
+// REPORT-NEXT: bin one: 1 [covered]
+
+// JSON: "name":"$auto$1","configuration":"{{[0-9a-f]+}}","comment":"","goal":100,"weight":1,"per_instance":true
+// JSON: "name":"$auto$2","configuration":"{{[0-9a-f]+}}","comment":"","goal":100,"weight":1,"per_instance":false

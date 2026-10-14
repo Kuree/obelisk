@@ -1,0 +1,48 @@
+# RUN: %coverage-fixture %t.obcov 23 toggle-tree 1 toggle-tree
+# RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s
+
+# A toggle object keeps its type tree: every dimension has an index, a parent
+# and a kind, so roots, scalars, enums, packed and unpacked arrays, structs
+# and unions, fields and union tags are all reported. Bits that alias one
+# another through a union share one row listing every path in order, and the
+# unknown-transition counters keep their counts and saturation flags.
+
+# CHECK: "toggles":[{"id":40,
+# CHECK-SAME: "name":"data","width":4,
+# CHECK-SAME: "dimensions":[{"index":0,"parent":4294967295,"kind":"root",
+# CHECK-SAME: {"index":1,"parent":0,"kind":"unpacked_array",
+# CHECK-SAME: {"index":2,"parent":1,"kind":"packed_union",
+# CHECK-SAME: {"index":3,"parent":2,"kind":"field",
+# CHECK-SAME: {"index":4,"parent":3,"kind":"packed_array",
+# CHECK-SAME: {"index":5,"parent":4,"kind":"scalar",
+# CHECK-SAME: {"index":6,"parent":2,"kind":"field",
+# CHECK-SAME: {"index":7,"parent":6,"kind":"enum",
+# CHECK-SAME: {"index":8,"parent":7,"kind":"scalar",
+# CHECK-SAME: "bits":[{"index":0,"paths":["data[2].alias[0]","data[2].raw[0]"],
+# CHECK-SAME: "to_unknown":{"count":2,"overflow":true,
+# CHECK-SAME: "from_unknown":{"count":3,"overflow":false,
+# CHECK-SAME: {"index":1,"paths":["data[2].alias[1]","data[2].raw[1]"],
+# CHECK-SAME: {"index":2,"paths":["data[3].alias[0]","data[3].raw[0]"],
+# CHECK-SAME: {"index":3,"paths":["data[3].alias[1]","data[3].raw[1]"],
+# CHECK-SAME: "from_unknown":{"count":0,"overflow":false,"contributors":[]}}]},{"id":41,
+# CHECK-SAME: "name":"shape","width":6,
+# CHECK-SAME: "dimensions":[{"index":9,"parent":4294967295,"kind":"root",
+# CHECK-SAME: {"index":10,"parent":9,"kind":"unpacked_array",
+# CHECK-SAME: {"index":11,"parent":10,"kind":"unpacked_union",
+# CHECK-SAME: {"index":12,"parent":11,"kind":"field",
+# CHECK-SAME: {"index":13,"parent":12,"kind":"packed_struct",
+# CHECK-SAME: {"index":14,"parent":13,"kind":"field",
+# CHECK-SAME: {"index":15,"parent":14,"kind":"packed_array",
+# CHECK-SAME: {"index":16,"parent":15,"kind":"scalar",
+# CHECK-SAME: {"index":17,"parent":11,"kind":"field",
+# CHECK-SAME: {"index":18,"parent":17,"kind":"unpacked_struct",
+# CHECK-SAME: {"index":19,"parent":18,"kind":"field",
+# CHECK-SAME: {"index":20,"parent":19,"kind":"scalar",
+# CHECK-SAME: {"index":21,"parent":11,"kind":"tag",
+# CHECK-SAME: "bits":[{"index":0,"paths":["shape[3].structs.ascending[1]","shape[3].unpacked.value[0]"],
+# CHECK-SAME: {"index":1,"paths":["shape[3].structs.ascending[0]","shape[3].unpacked.value[1]"],
+# CHECK-SAME: {"index":2,"paths":["shape[3].$tag"],
+# CHECK-SAME: {"index":3,"paths":["shape[2].structs.ascending[1]","shape[2].unpacked.value[0]"],
+# CHECK-SAME: {"index":4,"paths":["shape[2].structs.ascending[0]","shape[2].unpacked.value[1]"],
+# CHECK-SAME: {"index":5,"paths":["shape[2].$tag"],
+# CHECK-SAME: "from_unknown":{"count":0,"overflow":false,"contributors":[]}}]}],

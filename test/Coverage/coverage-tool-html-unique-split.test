@@ -1,0 +1,13 @@
+# RUN: %coverage-fixture %t.split-a.obcov 32 split-a 1 100 1 1 1 shared 1 1 2 split
+# RUN: %coverage-fixture %t.split-b.obcov 33 split-b 1 100 1 1 1 shared 1 1 2 split
+# RUN: obelisk-cov report --format=html -o %t.split.html %t.split-a.obcov %t.split-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.split.html 'row:1|split-a|0|0|1|1 unique' 'row:2|split-b|0|0|1|1 unique' %}
+# RUN: %coverage-fixture %t.merge-split-a.obcov 36 merge-split-a 1 100 1 1 1 left 1 1 2 split
+# RUN: %coverage-fixture %t.merge-split-b.obcov 37 merge-split-b 1 100 1 1 1 right 1 1 2 split
+# RUN: obelisk-cov report --format=html -o %t.merge-split.html %t.merge-split-a.obcov %t.merge-split-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.merge-split.html 'row:1|merge-split-a|0|0|1|1 unique' 'row:2|merge-split-b|0|0|1|1 unique' %}
+
+# A bin that needs two hits (at_least 2, IEEE 1800-2023 19.7.1) is covered only
+# by the sum of two runs, so the unique-contributions table credits each run
+# with that one functional obligation: when both runs hit the same instance,
+# and when they hit differently named instances that merge_instances combines.

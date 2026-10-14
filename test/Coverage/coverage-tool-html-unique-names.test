@@ -1,0 +1,15 @@
+# RUN: %coverage-fixture %t.auto-low.obcov 38 auto-low 1 cross-unmaterialized 1 1 0 low 1 1 1 shared-bin
+# RUN: %coverage-fixture %t.auto-high.obcov 39 auto-high 0 cross-unmaterialized 1 1 0 high 1 1 2 shared-bin
+# RUN: obelisk-cov report --format=html -o %t.auto-threshold.html %t.auto-low.obcov %t.auto-high.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.auto-threshold.html 'row:1|auto-low|1|2|0|3 unique' 'row:2|auto-high|0|0|0|0 unique' %}
+# RUN: %coverage-fixture %t.same-name-a.obcov 34 same-name 1
+# RUN: %coverage-fixture %t.same-name-b.obcov 35 same-name 1
+# RUN: obelisk-cov report --format=html -o %t.same-name.html %t.same-name-a.obcov %t.same-name-b.obcov
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.same-name.html 'same-name (00000000-0000-0000-0000-000000000022)' 'same-name (00000000-0000-0000-0000-000000000023)' 'same-name (00000000-0000-0000-0000-000000000022), same-name (00000000-0000-0000-0000-000000000023)' %}
+
+# Same-named bins with different at_least thresholds (1 and 2) in two runs
+# whose automatic cross bins were never materialized: the run that met its
+# threshold is credited one line and two toggle obligations and no functional
+# one, and the other run nothing.
+# Two runs that share a test name are told apart by their UUIDs wherever the
+# page names them, including a list of both.

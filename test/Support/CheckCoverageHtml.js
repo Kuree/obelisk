@@ -2,13 +2,17 @@
 // every view it can route to, and verifies that requested text survives JSON
 // transport and rendering exactly.
 //
-// usage: CheckCoverageHtml.js REPORT.html [--script SOURCE.js] EXPECTED...
+// usage: CheckCoverageHtml.js REPORT.html [--script SOURCE.js]
+//            [--style SOURCE.css] EXPECTED...
 //
 // EXPECTED is text that must equal some rendered text node or table cell, or
-// "row:a|b|c" for a table row whose cells are exactly a, b and c.
+// "row:a|b|c" for a table row whose cells are exactly a, b and c. The page's
+// Content-Security-Policy must admit exactly its inline style and scripts by
+// hash; --script and --style also compare them with their source assets.
 //
 // Required as a module, it exports loadReport() for renderer unit tests.
 
+const crypto = require("crypto");
 const fs = require("fs");
 const vm = require("vm");
 
@@ -321,19 +325,22 @@ module.exports = { loadReport, extract, decode };
 if (require.main === module) {
   if (process.argv.length < 4) {
     console.error(
-      "usage: CheckCoverageHtml.js REPORT.html [--script SOURCE.js] EXPECTED...",
+      "usage: CheckCoverageHtml.js REPORT.html [--script SOURCE.js] " +
+        "[--style SOURCE.css] EXPECTED...",
     );
     process.exit(2);
   }
   const reportPath = process.argv[2];
   let expectedArguments = process.argv.slice(3);
   let scriptPath;
-  if (expectedArguments[0] === "--script") {
+  let stylePath;
+  while (expectedArguments[0] === "--script" || expectedArguments[0] === "--style") {
     if (expectedArguments.length < 3) {
-      console.error("--script requires a source path and an expectation");
+      console.error(`${expectedArguments[0]} requires a source path and an expectation`);
       process.exit(2);
     }
-    scriptPath = expectedArguments[1];
+    if (expectedArguments[0] === "--script") scriptPath = expectedArguments[1];
+    else stylePath = expectedArguments[1];
     expectedArguments = expectedArguments.slice(2);
   }
 
@@ -348,6 +355,26 @@ if (require.main === module) {
   }
   if (scriptPath && scripts[0][1] !== fs.readFileSync(scriptPath, "utf8")) {
     console.error("embedded report script differs from its source asset");
+    process.exit(1);
+  }
+  // The policy lists the style hash, then each script's hash in page order.
+  const style = html.match(/<style>([\s\S]*?)<\/style>/);
+  const policy = html.match(/<meta[^>]*Content-Security-Policy[^>]*content="([^"]*)"/);
+  const bodies = [style, ...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
+  const hashes = policy ? [...policy[1].matchAll(/'sha256-([^']+)'/g)].map((m) => m[1]) : [];
+  if (
+    !style ||
+    hashes.length !== bodies.length ||
+    bodies.some(
+      (body, i) =>
+        crypto.createHash("sha256").update(body[1], "utf8").digest("base64") !== hashes[i],
+    )
+  ) {
+    console.error("content security policy does not hash the inline style and scripts");
+    process.exit(1);
+  }
+  if (stylePath && style[1] !== fs.readFileSync(stylePath, "utf8")) {
+    console.error("embedded report style differs from its source asset");
     process.exit(1);
   }
 

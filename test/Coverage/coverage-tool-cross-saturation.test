@@ -1,0 +1,29 @@
+# RUN: %coverage-fixture %t.duplicate.obcov 30 duplicate-run 1 cross-duplicate-instance 1 1 0 shared
+# RUN: obelisk-cov report --format=json %t.duplicate.obcov | FileCheck %s --check-prefix=DUPLICATE
+# RUN: %coverage-fixture %t.wide.obcov 11 cross-wide 1 cross-wide
+# RUN: obelisk-cov report --format=json %t.wide.obcov | FileCheck %s --check-prefix=WIDE
+# RUN: %coverage-fixture %t.deep.obcov 17 cross-deep 1 cross-deep 1 1
+# RUN: obelisk-cov report --format=text %t.deep.obcov | FileCheck %s --check-prefix=DEEP
+
+# One run that appears as two instances of the same group adds its counters
+# per instance: a bin already at the 64-bit maximum saturates and carries the
+# overflow flag, while the automatic cross bin hit twice counts 2 without it.
+# A cross over 64 coverpoints has 2^64 automatic bins, which the report
+# carries as exact integers beyond 64 bits (the functional total is 2^64 plus
+# the 128 bins of the coverpoints) and lists the 64 components of a bin. A
+# cross over 4096 targets (IEEE 1800-2023 19.6) is reported without hitting a
+# traversal limit.
+
+# DUPLICATE: "functional_instance_groups":[{"type":50,{{[^]]*}}"sources":[{"run":"[[R:[0-9a-f-]+]]","id":1},{"run":"[[R]]","id":2}],"items":[{"id":160,
+# DUPLICATE-SAME: "bins":[{"id":170,{{[^]]*}}"count":18446744073709551615,"overflow":true,
+# DUPLICATE-SAME: "contributors":[{"uuid":"[[R]]","name":"duplicate-run","count":18446744073709551615,"overflow":true}]}]
+# DUPLICATE: "name":"cp_x_cp2","comment":"","hierarchy":"top.dut.cg.cp_x_cp2","kind":2,
+# DUPLICATE-SAME: "automatic_bins":[{"name":"<one,two>","count":2,"overflow":false,{{[^]]*}}],"contributors":[{"uuid":"[[R]]","name":"duplicate-run","count":2,"overflow":false}]}]}]}],"functional_counters"
+
+# WIDE: "functional":{"available":true,"covered":2,"total":18446744073709551744,
+# WIDE: "resolved_cross_plans":[{{[^]]*}}"root_node":50000,"automatic_bin_count":18446744073709551616}]
+# WIDE: "name":"cp_x_cp2","comment":"",{{[^]]*}}"total":18446744073709551616,"automatic_covered":1,"automatic_total":18446744073709551616,
+# WIDE: "automatic_bins":[{"name":"<one,two,{{[^>]*}}>","count":1,{{[^]]*}}"components":[{{(\{"id":[0-9]+,"name":"[^"]*"[}],){63}\{"id":[0-9]+,"name":"[^"]*"[}]}}],"contributors"
+
+# DEEP: functional: 0.04% (2/8193)
+# DEEP: cross cp_x_cp2: 1/1 (100.00%)

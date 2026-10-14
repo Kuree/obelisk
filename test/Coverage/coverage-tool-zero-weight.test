@@ -1,0 +1,17 @@
+# RUN: %coverage-fixture %t.type.obcov 6 type-zero 0 100 0 0 0 named
+# RUN: %coverage-fixture %t.group.obcov 7 group-zero 0 100 1 0 0 named 0
+# RUN: %coverage-fixture %t.item.obcov 8 item-zero 0 100 1 0 0 named 1 0
+# RUN: obelisk-cov report --format=json %t.type.obcov | FileCheck %s --check-prefix=TYPE
+# RUN: obelisk-cov report --format=json %t.group.obcov | FileCheck %s --check-prefix=GROUP
+# RUN: obelisk-cov report --format=json %t.item.obcov | FileCheck %s --check-prefix=ITEM
+
+# A covergroup type, an instance or an item with weight 0 (IEEE 1800-2023
+# 19.7.1, option.weight) still reports its own 0% coverage but does not count
+# toward the functional metric: with nothing else weighted the metric is 100%.
+
+# TYPE: "functional":{"available":true,"covered":0,"total":1,"partial":0,"percent":100.000000}
+# TYPE: "functional_types":[{"id":50,{{[^]]*}}"percent":0.000000,"goal":100,"weight":0,
+# GROUP: "functional":{"available":true,"covered":0,"total":1,"partial":0,"percent":100.000000}
+# GROUP: "functional_instance_groups":[{"type":50,"name":"named",{{[^]]*}}"weight":0,{{[^]]*}}"percent":0.000000,"sources"
+# ITEM: "functional":{"available":true,"covered":0,"total":1,"partial":0,"percent":100.000000}
+# ITEM: "items":[{"id":160,{{[^]]*}}"goal":100,"weight":0,

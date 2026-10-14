@@ -1,0 +1,32 @@
+# RUN: %coverage-fixture %t.left.obcov 9 cross-left 1 cross 1 1 0 shared 1 1 1 left
+# RUN: %coverage-fixture %t.right.obcov 10 cross-right 1 cross 1 1 0 shared 1 1 1 right
+# RUN: obelisk-cov report --format=text %t.left.obcov | FileCheck %s --check-prefix=TEXT
+# RUN: obelisk-cov report --format=json %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=UNION
+# RUN: obelisk-cov report --format=json --test=cross-left %t.left.obcov %t.right.obcov | FileCheck %s --check-prefix=FILTERED
+
+# Two runs that hit different bins of one cross (IEEE 1800-2023 19.6) keep
+# separate instance groups under merge_instances: each group has its own
+# automatic bin, covered by the run that hit it alone, and the type coverage
+# is the merge of both groups. Selecting one test keeps only the rows of its
+# configuration, and the automatic-bin graph stays closed: the plan's root
+# node and every edge's node and child are nodes of the same type,
+# configuration and cross.
+
+# TEXT: cross cp_x_cp2: 1/1
+# TEXT: automatic: 1/1
+# TEXT: auto bin <left,two>: 1 [covered, at_least 1]
+
+# UNION: "functional_types":[{"id":50,{{[^]]*}}"percent":66.666667,"goal":100,"weight":1,"merge_instances":true,
+# UNION: "functional_instance_groups":[{
+# UNION: "name":"cp_x_cp2","comment":"",{{[^]]*}}"automatic_covered":1,"automatic_total":1,
+# UNION: "automatic_bins":[{"name":"<left,two>",{{[^]]*}}],"contributors":[{"uuid":"00000000-0000-0000-0000-000000000009","name":"cross-left","count":1,"overflow":false}]}]}]},{"type":50,
+# UNION: "name":"cp_x_cp2","comment":"",{{[^]]*}}"automatic_covered":1,"automatic_total":1,
+# UNION: "automatic_bins":[{"name":"<right,two>",{{[^]]*}}],"contributors":[{"uuid":"00000000-0000-0000-0000-00000000000a","name":"cross-right","count":1,"overflow":false}]}]}]}],"functional_counters"
+
+# FILTERED: "functional_configurations":[{"type":50,"configuration":"[[CFG:[0-9a-f]+]]","flags":0,"options":[{{[^]]*}}]}],
+# FILTERED: "resolved_functional_items":[{"type":50,"configuration":"[[CFG]]",{{[^}]*}}},{"type":50,"configuration":"[[CFG]]",{{[^}]*}}},{"type":50,"configuration":"[[CFG]]",{{[^}]*}}}],
+# FILTERED: "resolved_functional_bins":[{"type":50,"configuration":"[[CFG]]",{{[^}]*}}},{"type":50,"configuration":"[[CFG]]",{{[^}]*}}}],
+# FILTERED: "resolved_functional_value_sets":[{"type":50,"configuration":"[[CFG]]",{{[^[]*}}"atoms":[{{[^]]*}}]}]},{"type":50,"configuration":"[[CFG]]",{{[^[]*}}"atoms":[{{[^]]*}}]}]}],
+# FILTERED: "resolved_cross_plans":[{"type":50,"configuration":"[[CFG]]","cross":[[X:[0-9]+]],{{[^}]*}}"root_node":[[ROOT:[0-9]+]],{{[^}]*}}}],
+# FILTERED: "resolved_cross_automatic_nodes":[{"type":50,"configuration":"[[CFG]]","cross":[[X]],"id":[[ROOT]],{{[^}]*}}},{"type":50,"configuration":"[[CFG]]","cross":[[X]],"id":[[CHILD:[0-9]+]],{{[^}]*}}}],
+# FILTERED: "resolved_cross_automatic_edges":[{"type":50,"configuration":"[[CFG]]","cross":[[X]],"node":[[ROOT]],"bin":{{[0-9]+}},"child":[[CHILD]],{{[^}]*}}},{"type":50,"configuration":"[[CFG]]","cross":[[X]],"node":[[CHILD]],"bin":{{[0-9]+}},"child":0,{{[^}]*}}}],

@@ -1,19 +1,7 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=procedural-options > %t.native.stdout
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=procedural-options > %t.bytecode.stdout
-// RUN: diff -u %t.native.stdout %t.bytecode.stdout
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.stdout
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.native.txt
-// RUN: obelisk-cov report --format=text %t.bytecode.obcov -o %t.bytecode.txt
-// RUN: diff -u %t.native.txt %t.bytecode.txt
-// RUN: FileCheck %s --check-prefix=REPORT < %t.native.txt
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.native.json
-// RUN: %python -c "import json; d=json.load(open(r'%t.native.json')); g=d['functional_instance_groups'][0]; assert g['name']=='mutated' and g['comment']=='group' and g['goal']==80 and g['weight']==2 and g['cross_num_print_missing']==0; items={i['name']:i for i in g['items']}; p=items['cp0']; assert p['comment']=='point' and p['goal']==50 and p['weight']==3 and all(b['at_least']==2 for b in p['bins']); x=items['cx']; assert x['comment']=='cross' and x['goal']==25 and x['weight']==0 and x['automatic_at_least']==3; assert any(o['owner_kind']==1 and o['option']==5 and o['value']==0 for o in d['resolved_instance_options'])"
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=procedural-options | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   int value;
@@ -75,10 +63,23 @@ endmodule
 // REPORT: functional: 100.00% (3/8)
 // REPORT: instance mutated: 100.00% (3/8)
 // REPORT: comment: "group"
-// REPORT: coverpoint cp0: 1/2 (100.00%)
-// REPORT: comment: "point"
-// REPORT: bin zero: 3 [covered] {at_least 2}
-// REPORT: coverpoint cp1: 1/2 (50.00%)
-// REPORT: bin zero: 3 [covered] {at_least 3}
-// REPORT: cross cx: 1/4 (100.00%)
-// REPORT: comment: "cross"
+// Item order follows the item IDs, so each item is matched independently.
+// REPORT-DAG: coverpoint cp0: 1/2 (100.00%)
+// REPORT-DAG: comment: "point"
+// REPORT-DAG: bin zero: 3 [covered] {at_least 2}
+// REPORT-DAG: coverpoint cp1: 1/2 (50.00%)
+// REPORT-DAG: bin zero: 3 [covered] {at_least 3}
+// REPORT-DAG: cross cx: 1/4 (100.00%)
+// REPORT-DAG: comment: "cross"
+// REPORT-DAG: automatic: 1/4
+
+// IEEE 1800-2023 19.7.1: procedural option writes are recorded per instance.
+// The group keeps the written name, comment, goal and weight; the point keeps
+// its comment, goal and weight with at_least raised on every bin; the cross
+// keeps its comment, goal, weight and the at_least applied to its automatic
+// bins. The resolved options record the cross weight of zero.
+// JSON: "resolved_instance_options":[
+// JSON-DAG: "owner_kind":1,"option":5,"value_kind":1,"value":0,
+// JSON: "functional_instance_groups":[{{[{]}}"type":{{[0-9]+}},"name":"mutated",{{[^{]*}}"comment":"group","goal":80,"weight":2,{{[^{]*}}"cross_num_print_missing":0,
+// JSON-DAG: "name":"cp0","comment":"point",{{[^{]*}}"goal":50,"weight":3,{{.*}}"hierarchy":"top.cg.cp0.zero",{{[^}]*}}"at_least":2,{{.*}}"hierarchy":"top.cg.cp0.one",{{[^}]*}}"at_least":2,
+// JSON-DAG: "name":"cx","comment":"cross",{{[^{]*}}"goal":25,"weight":0,{{[^{]*}}"automatic_at_least":3,

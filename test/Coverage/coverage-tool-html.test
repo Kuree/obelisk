@@ -1,0 +1,37 @@
+# RUN: %coverage-fixture %t.a.obcov 1 alpha 1
+# RUN: %coverage-fixture %t.b.obcov 2 beta 0
+# RUN: obelisk-cov merge -o %t.merged.obcov %t.a.obcov %t.b.obcov
+# RUN: obelisk-cov report --format=html --source-root=%S/Inputs --fail-under=line=90 -o %t.html %t.merged.obcov
+# RUN: FileCheck %s --check-prefix=HTML < %t.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.html --script %source_root/tools/obelisk-cov/CoverageReport.js --style %source_root/tools/obelisk-cov/CoverageReport.css 'PASS 90.00%' '4 unique' 'dut.sv' 'top.dut' 'row:1|alpha|1|2|1|4 unique' 'row:dut.sv:1:3|line|1|covered|alpha' 'row:dut.sv:1:9|line|0|excluded: generated|' 'row:dut.sv:2|excluded|0|excluded: entire generated line|' %}
+# RUN: not obelisk-cov report --format=json --test=beta --fail-under=line=1 %t.merged.obcov | FileCheck %s --check-prefix=THRESHOLD-FAIL
+
+# The HTML report is one self-contained page: a content security policy that
+# allows nothing but the page's own style and two scripts by hash, the report
+# shell, the JSON payload, and the report script. The payload carries the
+# line threshold and its verdict, and each source file's text with slang's
+# token listing, which the page uses to show and color the source. The
+# checker recomputes the policy's hashes, requires the style and script to
+# equal their assets, and runs the embedded script on the payload to render
+# every view.
+
+# HTML: <!doctype html>
+# HTML: Content-Security-Policy
+# HTML-NEXT: content="default-src 'none'; base-uri 'none'; style-src 'sha256-{{[A-Za-z0-9+/]+=*}}'; script-src 'sha256-{{[A-Za-z0-9+/]+=*}}' 'sha256-{{[A-Za-z0-9+/]+=*}}'">
+# HTML-NOT: unsafe-inline
+# HTML-NOT: nonce=
+# HTML: <title>Obelisk coverage</title>
+# HTML: <style>
+# HTML: </style>
+# HTML: <select id="test">
+# HTML: <nav id="side"
+# HTML: <main id="main"></main>
+# HTML: <script id="coverage-data" type="application/json">
+# HTML-SAME: "line":{"available":true,"covered":"1","total":"1","partial":"0","percent":100.000000,"threshold":90.000000,"threshold_pass":true}
+# HTML-SAME: "sources":[{"file":"10","path":"dut.sv","status":"ok","text":"line\nexcluded\n","tokens":"0 4 Identifier\n5 8 Identifier\n"}]
+# HTML: </script>
+# HTML: <script>
+# HTML: </script>
+# HTML-NOT: <script
+
+# THRESHOLD-FAIL: "line":{"available":true,"covered":0,"total":1,"partial":0,"percent":0.000000,"threshold":1.000000,"threshold_pass":false}

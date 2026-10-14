@@ -1,0 +1,33 @@
+# RUN: %coverage-fixture %t.c.obcov 3 gamma 1 100 1 1 1 named 1 1 1 shared
+# RUN: %coverage-fixture %t.d.obcov 4 delta 0 100 1 1 0 - 1 1 2 shared
+# RUN: %coverage-fixture %t.e.obcov 5 epsilon 1 100 1 1 0 other 1 1 1 other
+# RUN: obelisk-cov report --format=json %t.c.obcov %t.d.obcov %t.e.obcov | FileCheck %s --check-prefix=CONFIG
+# RUN: obelisk-cov report --format=json %t.e.obcov %t.d.obcov %t.c.obcov | FileCheck %s --check-prefix=CONFIG
+# RUN: obelisk-cov report --format=json --test=gamma %t.c.obcov %t.d.obcov %t.e.obcov | FileCheck %s --check-prefix=FILTERED
+
+# Three runs of one covergroup type that differ in per_instance, instance name
+# and bin threshold (IEEE 1800-2023 19.7.1) give three configurations and
+# three instance groups, whatever order the databases are merged in; the type
+# keeps its merge_instances option, its weight, and 0% coverage.
+# Selecting one test keeps one run and, with it, the one type, templates,
+# configuration and instance it contributed: every resolved row refers to
+# that configuration, and only that run contributes to the line and toggle
+# points.
+
+# CONFIG: "functional_types":[{"id":50,{{[^]]*}}"percent":0.000000,"goal":100,"weight":1,"merge_instances":true,
+# CONFIG: "functional_configurations":[{"type":50,"configuration":"{{[0-9a-f]+}}","flags":0,"options":[{{[^]]*}}]},{"type":50,"configuration":"{{[0-9a-f]+}}","flags":0,"options":[{{[^]]*}}]},{"type":50,"configuration":"{{[0-9a-f]+}}","flags":0,"options":[{{[^]]*}}]}],"resolved_functional_items"
+# CONFIG-DAG: {"type":50,"name":"","configuration":"{{[0-9a-f]+}}","comment":"","goal":100,"weight":1,"per_instance":false,
+# CONFIG-DAG: {"type":50,"name":"named","configuration":"{{[0-9a-f]+}}","comment":"","goal":100,"weight":1,"per_instance":true,
+# CONFIG-DAG: {"type":50,"name":"other","configuration":"{{[0-9a-f]+}}","comment":"","goal":100,"weight":1,"per_instance":false,
+# CONFIG: "functional_counters"
+
+# FILTERED: "runs":[{"uuid":"[[U:[0-9a-f-]+]]","name":"gamma",{{[^]]*}}}],"files"
+# FILTERED: "line_points":[{"id":30,{{[^]]*}}"contributors":[{"uuid":"[[U]]","name":"gamma","count":1}]},
+# FILTERED: "bits":[{"index":0,"paths":["data[0]"],"zero_to_one":{"count":1,"covered":true,"overflow":false,"contributors":[{"uuid":"[[U]]","name":"gamma","count":1}]}
+# FILTERED: "functional_types":[{"id":50,{{[^}]*}}}],"functional_formals"
+# FILTERED: "functional_item_templates":[{"id":60,{{[^}]*}}}],
+# FILTERED: "functional_bin_templates":[{"id":70,{{[^}]*}}}],"transition_programs"
+# FILTERED: "functional_configurations":[{"type":50,"configuration":"[[CFG:[0-9a-f]+]]","flags":0,"options":[{{[^]]*}}]}],"resolved_functional_items":[{"type":50,"configuration":"[[CFG]]",
+# FILTERED: "resolved_functional_bins":[{"type":50,"configuration":"[[CFG]]",
+# FILTERED: "resolved_functional_value_sets":[{"type":50,"configuration":"[[CFG]]",
+# FILTERED: "resolved_instances":[{"run":"[[U]]","id":1,"type":50,"name":"named",{{[^}]*}}}],"resolved_instance_options"

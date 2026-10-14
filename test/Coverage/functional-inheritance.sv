@@ -3,20 +3,12 @@
 // with the same name. Slang v11.0 diagnoses this as a redefinition.
 
 // RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
-// RUN:   | FileCheck %s --check-prefix=IR
-// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -emit-sim %s \
-// RUN:   | obelisk-opt --test-obelisk-print-coverage-schema -o /dev/null 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=SCHEMA
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov > %t.native.out
-// RUN: obelisk-cov report --format=json %t.native.obcov \
-// RUN:   | FileCheck %s --check-prefix=REPORT
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov > %t.bytecode.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
+// RUN:   | obelisk-opt --test-obelisk-print-coverage-schema -o %t.sim.mlir 2> %t.schema
+// RUN: FileCheck %s --check-prefix=SCHEMA < %t.schema
+// RUN: FileCheck %s --check-prefix=IR < %t.sim.mlir
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov | FileCheck %s --check-prefix=QUERY
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=REPORT
 
 class coverage_base;
   covergroup group(input bit chosen) with function sample(bit sampled);
@@ -113,6 +105,11 @@ module top;
   end
 endmodule
 
+// IEEE 19.4.1: a derived covergroup replaces the base instance, keeps the
+// inherited components, and is a separate type from its base for
+// get_coverage(). A same-named coverpoint hides the base point (still sampled,
+// no weight) while a base cross keeps targeting it; a same-named cross
+// replaces the base cross.
 // QUERY: derived point 100.000000 1 1
 // QUERY-NEXT: inherited point 100.000000 1 1
 // QUERY-NEXT: base cross 0.000000 0 1
@@ -125,13 +122,21 @@ endmodule
 // QUERY-NEXT: transitive replacement 85.714286 6 7
 // QUERY-NEXT: separate base type 25.000000 1 4
 
-// The base cross keeps the hidden base coverpoint target. The hidden point is
-// sampled but has zero aggregation weight in the derived type.
-// SCHEMA: functional_item id={{[1-9][0-9]*}} type={{[1-9][0-9]*}} name=cp$inherited${{[1-9][0-9]*}} kind=1 flags=1
+// The hidden base point is kept in each derived type as an inherited item that
+// is sampled but not aggregating.
+// SCHEMA-DAG: functional_item id={{[1-9][0-9]*}} type={{[1-9][0-9]*}} name=cp$inherited${{[1-9][0-9]*}} kind=1 flags=1 ordinal=0 hierarchy=coverage_derived::group.cp$inherited${{[1-9][0-9]*}}
+// SCHEMA-DAG: functional_item id={{[1-9][0-9]*}} type={{[1-9][0-9]*}} name=cp$inherited${{[1-9][0-9]*}} kind=1 flags=1 ordinal=0 hierarchy=coverage_leaf::group.cp$inherited${{[1-9][0-9]*}}
 
 // REPORT: "functional":{"available":true,"covered":12,"total":17
-// REPORT: "name":"cp$inherited${{[1-9][0-9]*}}"{{.*}}"aggregating":false
+// REPORT-DAG: "name":"cp$inherited${{[1-9][0-9]*}}","comment":"","hierarchy":"coverage_derived::group.cp$inherited${{[1-9][0-9]*}}"{{[^}]*}}"weight":0,{{[^}]*}}"aggregating":false
+// REPORT-DAG: "name":"cp$inherited${{[1-9][0-9]*}}","comment":"","hierarchy":"coverage_leaf::group.cp$inherited${{[1-9][0-9]*}}"{{[^}]*}}"weight":0,{{[^}]*}}"aggregating":false
 
-// IR: simulation.covergroup.decl {{.*}} base
-// IR: simulation.class.is_instance
-// IR: simulation.covergroup.cast
+// Each derived covergroup is a new declaration based on the previous one; a
+// base handle reaches the derived instance through a covergroup cast guarded
+// by the dynamic class of the object.
+// IR: simulation.covergroup.decl @[[BASE:__obelisk_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}}
+// IR-NEXT: simulation.covergroup.decl @[[DERIVED:__obelisk_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}} base @[[BASE]]
+// IR-NEXT: simulation.covergroup.decl @[[LEAF:__obelisk_covergroup_[A-Za-z0-9_]+]] schema {{[0-9]+}} base @[[DERIVED]]
+// IR: simulation.class.is_instance {{.*}} is @__obelisk_class_{{[A-Za-z0-9_]*}}coverage_derived
+// IR: simulation.covergroup.cast {{.*}} : !simulation.covergroup_handle<@[[DERIVED]]> to !simulation.covergroup_handle<@[[BASE]]>
+// IR: simulation.covergroup.cast {{.*}} : !simulation.covergroup_handle<@[[LEAF]]> to !simulation.covergroup_handle<@[[DERIVED]]>

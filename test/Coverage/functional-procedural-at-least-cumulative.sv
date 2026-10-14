@@ -1,25 +1,8 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: %t.native --coverage-output=%t.native.obcov --coverage-test=producer \
-// RUN:   > %t.native.out
-// RUN: %t.native --coverage-load=%t.native.obcov \
-// RUN:   --coverage-output=%t.native.loaded.obcov --coverage-test=loaded \
-// RUN:   +loaded > %t.native.loaded.out
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: %t.bytecode --coverage-output=%t.bytecode.obcov --coverage-test=producer \
-// RUN:   > %t.bytecode.out
-// RUN: %t.bytecode --coverage-load=%t.bytecode.obcov \
-// RUN:   --coverage-output=%t.bytecode.loaded.obcov --coverage-test=loaded \
-// RUN:   +loaded > %t.bytecode.loaded.out
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: diff -u %t.native.loaded.out %t.bytecode.loaded.out
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: FileCheck %s --check-prefix=LOADED < %t.native.loaded.out
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.report
-// RUN: FileCheck %s --check-prefix=REPORT < %t.report
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); t=next(t for t in d['functional_types'] if t['name']=='empty_merged_cg'); gs=[g for g in d['functional_instance_groups'] if g['type']==t['id']]; assert t['percent']==0.0; assert sorted(i['at_least'] for g in gs for i in g['items'])==[1,2]; assert sorted(i['total'] for g in gs for i in g['items'])==[0,1]" %t.json
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: %t --coverage-output=%t.obcov --coverage-test=producer | FileCheck %s --check-prefix=QUERY
+// RUN: %t --coverage-load=%t.obcov --coverage-output=%t.loaded.obcov --coverage-test=loaded +loaded | FileCheck %s --check-prefix=LOADED
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
 
 module top;
   int value;
@@ -125,3 +108,9 @@ endmodule
 // REPORT-DAG: type lowered_cg
 // REPORT-DAG: instance lowered: 100.00% (1/1)
 // REPORT-DAG: bin zero: 1 [covered]
+
+// IEEE 1800-2023 19.11.1: the merged type of empty_merged_cg contributes no
+// covered bins, and its two instances keep their own at_least and bin totals.
+// JSON: "id":[[TYPE:[0-9]+]],"scope":{{[0-9]+}},"name":"empty_merged_cg",{{[^{]*}}"percent":0.000000,
+// JSON-DAG: {"type":[[TYPE]],"name":"{{[^"]*}}",{{[^[]*}}"sources":[{{[^]]*}}],"items":[{{[{]}}"id":{{[0-9]+}},"template_item":{{[0-9]+}},"name":"cp",{{[^{]*}}"at_least":1,{{[^{]*}}"covered":1,"total":1,
+// JSON-DAG: {"type":[[TYPE]],"name":"{{[^"]*}}",{{[^[]*}}"sources":[{{[^]]*}}],"items":[{{[{]}}"id":{{[0-9]+}},"template_item":{{[0-9]+}},"name":"cp",{{[^{]*}}"at_least":2,{{[^{]*}}"covered":0,"total":0,

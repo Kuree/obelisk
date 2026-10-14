@@ -1,0 +1,18 @@
+# RUN: %coverage-fixture %t.obcov 1 alpha 1
+# RUN: cd %S/Inputs && obelisk-cov report --format=html --source-root=%S/Inputs/bad-source-root %t.obcov | FileCheck %s --check-prefix=FALLBACK
+# RUN: cd %S && obelisk-cov report --format=html --source-root=%S/Inputs/bad-source-root -o %t.mismatch.html %t.obcov
+# RUN: FileCheck %s --check-prefix=MISMATCH < %t.mismatch.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.mismatch.html 'dut.sv' 'Source digest mismatch' %}
+# RUN: cd %S && obelisk-cov report --format=html -o %t.missing.html %t.obcov
+# RUN: FileCheck %s --check-prefix=MISSING < %t.missing.html
+# RUN: %if node %{ %node %S/../Support/CheckCoverageHtml.js %t.missing.html 'dut.sv' 'Source unavailable' %}
+
+# The report embeds a source file only when its digest matches the one the
+# database recorded. A --source-root holding a different dut.sv is skipped
+# and the file found relative to the working directory is used instead; with
+# no match anywhere the page reports a digest mismatch when it found a
+# different file and unavailable when it found none.
+
+# FALLBACK: "sources":[{"file":"10","path":"dut.sv","status":"ok","text":"line\nexcluded\n"{{(,"tokens":"[^"]*")?}}}]
+# MISMATCH: "sources":[{"file":"10","path":"dut.sv","status":"mismatch"}]
+# MISSING: "sources":[{"file":"10","path":"dut.sv","status":"unavailable"}]
