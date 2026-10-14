@@ -242,6 +242,32 @@ private:
   std::vector<size_t> representatives;
 };
 
+/// The inputs, as ordered variable indices, that any of `roots` reads.
+std::vector<size_t> circuitSupport(const BooleanCircuit &circuit,
+                                   const std::vector<ID> &roots) {
+  std::vector<size_t> support;
+  std::vector<bool> seen(circuit.getNodes().size(), false);
+  std::vector<ID> pending;
+  for (ID root : roots)
+    pending.push_back(root / 2);
+  while (!pending.empty()) {
+    ID node = pending.back();
+    pending.pop_back();
+    if (seen[node])
+      continue;
+    seen[node] = true;
+    const auto &plan = circuit.getNodes()[node];
+    if (plan.opcode == PlanOpcode::RandomBit)
+      support.push_back(plan.b);
+    else if (plan.opcode == PlanOpcode::And) {
+      pending.push_back(plan.a / 2);
+      pending.push_back(plan.b / 2);
+    }
+  }
+  std::sort(support.begin(), support.end());
+  return support;
+}
+
 /// The runtime handles Boolean cofactors and exact ranks only. Arithmetic
 /// expressions and their validity predicates were lowered by compiler Z3.
 class Formula {
@@ -631,7 +657,7 @@ public:
     for (size_t word = 0; word != words; ++word)
       output[word] = start[word] & ~mutableMask[word];
     for (size_t bit = 0; bit != value.size(); ++bit)
-      if (value[bit])
+      if (value[bit] && physicalBits[bit] < width)
         output[physicalBits[bit] / 64] |= uint64_t{1}
                                           << (physicalBits[bit] % 64);
     if (width % 64)
@@ -669,10 +695,19 @@ public:
       std::vector<bool> keep(bits.size(), false);
       for (size_t bit = 0; bit != bits.size(); ++bit)
         keep[bit] =
-            !accepted[bit] &&
+            !accepted[bit] && physicalBits[bit] < width &&
             (!layerCount || ((masks[layer * words + physicalBits[bit] / 64] >>
                               (physicalBits[bit] % 64)) &
                              1));
+      // An auxiliary target bit is decided with the last of its inputs.
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        if (physicalBits[bit] >= width)
+          keep[bit] = !accepted[bit] &&
+                      std::all_of(auxiliarySupport[bit].begin(),
+                                  auxiliarySupport[bit].end(),
+                                  [&](size_t input) {
+                                    return accepted[input] || keep[input];
+                                  });
       std::vector<bool> targets(bits.size(), false);
       std::vector<std::vector<Choice>> choices;
       for (size_t groupIndex = 0; groupIndex != groups.size(); ++groupIndex) {
@@ -1073,6 +1108,9 @@ public:
   BooleanCircuit &circuit;
   const Bits &bits;
   std::vector<unsigned> physicalBits;
+  // Inputs that an auxiliary expression-target bit is defined over; empty for
+  // assignment bits.
+  std::vector<std::vector<size_t>> auxiliarySupport;
   std::vector<bool> fixed, fixedValues;
   std::vector<ID> requirements;
   std::vector<size_t> checkpoints;
@@ -1210,8 +1248,6 @@ SamplerResult sampleRandomPlan(
     const uint8_t *p = plan.roots + size_t(index) * random::samplerPlanRootSize;
     roots[read32(p)] = handle(read32(p + 4));
   }
-  Formula f(circuit, booleanBits);
-  f.physicalBits = physicalBits;
   std::array<ID, 64> soft;
   soft.fill(missing);
   std::vector<ID> priorityHard, priorityDomains;
@@ -1277,6 +1313,51 @@ SamplerResult sampleRandomPlan(
       return SamplerResult::Unavailable;
     domainsOffset += footerSize;
   }
+  // IEEE 1800-2023 18.5.3 distributes the value of any integral expression.
+  // An expression target gets one auxiliary variable per exported bit,
+  // constrained equal to that bit. Auxiliaries are numbered after the
+  // assignment, are never written back, and leave every model count unchanged.
+  std::vector<Bits> expressionTargets(weightedGroups.size());
+  for (unsigned index = 0; index != instructions; ++index) {
+    const uint8_t *p = program + header + size_t(index) * 16;
+    if (p[0] != OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1)
+      continue;
+    unsigned operand = read32(p + (wide ? 8 : 4));
+    uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
+    if (roots[index] == missing || operand >= weightedGroups.size() ||
+        !weightedGroups[operand].expressionTarget ||
+        auxiliary != expressionTargets[operand].size())
+      return SamplerResult::Invalid;
+    expressionTargets[operand].push_back(roots[index]);
+  }
+  std::vector<ID> auxiliaryEquivalences;
+  std::vector<std::vector<size_t>> auxiliarySupport(booleanBits.size());
+  for (size_t group = 0; group != weightedGroups.size(); ++group) {
+    WeightedGroup &distribution = weightedGroups[group];
+    if (expressionTargets[group].size() !=
+        (distribution.expressionTarget ? distribution.width : 0))
+      return SamplerResult::Invalid;
+    if (!distribution.expressionTarget)
+      continue;
+    std::vector<size_t> support = circuitSupport(circuit,
+                                                 expressionTargets[group]);
+    distribution.targetOffset = static_cast<uint32_t>(variable.size());
+    for (ID bit : expressionTargets[group]) {
+      ID input = circuit.input(PlanOpcode::RandomBit,
+                               static_cast<uint32_t>(variable.size()),
+                               static_cast<uint32_t>(booleanBits.size()));
+      physicalBits.push_back(static_cast<unsigned>(variable.size()));
+      variable.push_back(input);
+      booleanBits.push_back(input);
+      auxiliarySupport.push_back(support);
+      auxiliaryEquivalences.push_back(circuit.exclusiveOr(input, bit) ^ 1);
+    }
+  }
+  Formula f(circuit, booleanBits);
+  f.physicalBits = physicalBits;
+  f.auxiliarySupport = std::move(auxiliarySupport);
+  for (ID equivalence : auxiliaryEquivalences)
+    f.require(equivalence);
   std::vector<ID> distributionGuards(weightedGroups.size(), missing);
   std::vector<Bits> expressionWeights(captureCount);
   std::vector<const PriorityInput *> hardInputs;
@@ -1295,6 +1376,8 @@ SamplerResult sampleRandomPlan(
       expressionWeights[operand].push_back(roots[index]);
       continue;
     }
+    if (opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1)
+      continue;
     if (opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1) {
       if (!weighted || operand >= distributionGuards.size() ||
           distributionGuards[operand] != missing)

@@ -642,6 +642,11 @@
           "detail": "Constant and state-valued two-state integral endpoints, explicit weights, default ranges, and additive overlapping items have executable plans. Constant endpoints retain intermediate conversion widths and signedness."
         },
         {
+          "feature": "Expression on the left-hand side",
+          "status": "supported",
+          "detail": "Up to 64 bits, a rand property or a constant selection of one is weighted as its assignment field, and any other integral expression containing a rand variable is exported to the compiled plan and weighted by its values through auxiliary sampler variables. Expressions whose inputs a solve-before path splits are diagnosed, as are fields. Without compiler Z3 only properties and constant selections are executable."
+        },
+        {
           "feature": "Unsigned weight interpretation",
           "status": "supported",
           "detail": "Self-determined integral weights are zero-extended, including negative signed bit patterns. State weights and weights computed from the distributed target or its explicit solve-before predecessors retain arbitrary-width unsigned values."
@@ -649,12 +654,12 @@
         {
           "feature": "Per-range and per-value probability",
           "status": "partial",
-          "detail": "The compiled-plan sampler preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Integral weights computed from the distributed target or its explicit solve-before predecessors export one Boolean root per bit and use exact unsigned bit masses with the original item denominator. Captured := range cardinality scales the expression before sampling. Expression targets, unresolved companion weights, candidate-dependent endpoints and real ranges remain open."
+          "detail": "The compiled-plan sampler preserves each integral item's original mass after clipping and filtering. Exact target projections and arbitrary-precision normalization support state-valued endpoints, wide weights, overlapping items and noncontiguous defaults. Integral weights computed from the distributed target or its explicit solve-before predecessors export one Boolean root per bit and use exact unsigned bit masses with the original item denominator. Captured := range cardinality scales the expression before sampling. Unresolved companion weights, candidate-dependent endpoints and real ranges remain open."
         },
         {
           "feature": "Nonzero weights never make an otherwise legal solve fail",
           "status": "partial",
-          "detail": "The compiled-plan sampler's policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. Target- and explicitly ordered predecessor-dependent weights retain exact positive support, including zero exclusions, negative signed bit patterns, checker-only calls, mode changes and transactional failures. General expression targets, unresolved companion weights, unresolved activation and function-priority stage combinations remain diagnosed. Source cyclic projection also retains exact positive support of ordinary distributions, including candidate weights, 130-bit captured weights, live support changes and zero-total-weight transactional failures."
+          "detail": "The compiled-plan sampler's policy removes 64-bit mass overflow and bounded-domain traversal failures for admitted fixed integral distributions; full 2^64 ranges and arbitrary-width unsigned captures are covered. Target- and explicitly ordered predecessor-dependent weights retain exact positive support, including zero exclusions, negative signed bit patterns, checker-only calls, mode changes and transactional failures. Unresolved companion weights, unresolved activation and function-priority stage combinations remain diagnosed. Source cyclic projection also retains exact positive support of ordinary distributions, including candidate weights, 130-bit captured weights, live support changes and zero-total-weight transactional failures."
         },
         {
           "feature": "Soft dist and dist with solve before",
@@ -664,7 +669,7 @@
         {
           "feature": "Multiple active distributions on one target",
           "status": "partial",
-          "detail": "The compiled-plan sampler combines per-value masses from every enabled distribution on admitted direct integral targets, preserving legal intersections even for incompatible requested marginals. General expression targets and real distributions remain open."
+          "detail": "The compiled-plan sampler combines per-value masses from every enabled distribution on admitted integral targets, preserving legal intersections even for incompatible requested marginals. Real distributions remain open."
         },
         {
           "feature": "Dynamic endpoints, candidate weights, and real ranges",
@@ -689,6 +694,7 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-dist-randc.sv",
+          "test/Conversion/simulation-lower-random-dist-targets.mlir",
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
           "test/Runtime/obelisk-to-simulation-random-weighted-z3-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-weighted-diagnostics.mlir",

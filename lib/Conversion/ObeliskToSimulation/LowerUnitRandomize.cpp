@@ -3406,10 +3406,25 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value capturedLower;
     Value capturedUpper;
   };
+  // IEEE 1800-2023 18.5.3 distributes the value of any integral expression
+  // that contains a rand variable. A rand property or a constant selection of
+  // one is an assignment field; any other expression is exported to the
+  // sampling plan bit by bit.
+  struct DistTarget {
+    // The distributed expression without its context conversion.
+    Operation *value = nullptr;
+    // The planned property when the value is one complete rand property.
+    std::optional<unsigned> property;
+    // Exported bit by bit rather than read from the assignment field at
+    // `offset`.
+    bool exported = false;
+    uint32_t offset = 0;
+    unsigned width = 0;
+    bool isSigned = false;
+  };
   struct DistPlan {
     Operation *source;
-    unsigned propertyIndex;
-    uint32_t propertyOffset;
+    DistTarget target;
     uint32_t constraintBlock;
     SmallVector<DistRangePlan> ranges;
     Operation *softSource;
@@ -4050,24 +4065,57 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           break;
         target = converted.front();
       }
+      // A selection or expression target is described by a synthetic
+      // property: its value domain is the full range of its own type.
+      Property selection{};
+      DistTarget distTarget;
+      distTarget.value = target;
       auto variable =
           target->getAttrOfType<IntegerAttr>(randomVariableAttrName);
-      if (!variable || variable.getValue().isNegative() ||
-          variable.getValue().getActiveBits() > 64 ||
-          variable.getValue().getZExtValue() >= planned.size()) {
-        emitError(getSemanticLocation(expression))
-            << "dist currently requires a direct rand property on its left "
-               "hand side";
-        return failure();
+      bool wholeProperty = variable && !variable.getValue().isNegative() &&
+                           variable.getValue().getActiveBits() <= 64 &&
+                           variable.getValue().getZExtValue() < planned.size();
+      if (wholeProperty) {
+        distTarget.property =
+            static_cast<unsigned>(variable.getValue().getZExtValue());
+        distTarget.offset = propertyOffsets[*distTarget.property];
+      } else {
+        FailureOr<unsigned> width = expressionWidth(target);
+        if (failed(width))
+          return failure();
+        selection.width = *width;
+        selection.isSigned = isSignedNode(target);
+        if (auto offset = target->getAttrOfType<IntegerAttr>(
+                randomVariableBitOffsetAttrName)) {
+          distTarget.offset =
+              static_cast<uint32_t>(offset.getValue().getZExtValue());
+          APInt field = APInt::getBitsSet(assignmentWidth, distTarget.offset,
+                                          distTarget.offset + *width);
+          for (auto [index, property] : llvm::enumerate(planned))
+            selection.isRandC |=
+                property.isRandC && !(field & propertyMasks[index]).isZero();
+        } else if (!dependsOnCandidate(target)) {
+          emitError(getSemanticLocation(expression))
+              << "dist requires its expression to contain a rand variable";
+          return failure();
+        } else if (!rawDistWeights) {
+          emitError(getSemanticLocation(expression))
+              << "dist on an expression other than a rand property or a "
+                 "constant selection of one requires compiler Z3 sampling "
+                 "plans";
+          return failure();
+        } else {
+          distTarget.exported = true;
+        }
       }
-      unsigned propertyIndex =
-          static_cast<unsigned>(variable.getValue().getZExtValue());
-      const Property &property = planned[propertyIndex];
+      const Property &property =
+          distTarget.property ? planned[*distTarget.property] : selection;
+      distTarget.width = property.width;
+      distTarget.isSigned = property.isSigned;
       FailureOr<unsigned> comparisonWidth = expressionWidth(nested.front());
       if (property.width > 64) {
         emitError(getSemanticLocation(expression))
-            << "dist on a random property wider than 64 bits is not "
-               "executable yet";
+            << "dist on a value wider than 64 bits is not executable yet";
         return failure();
       }
       if (property.isRandC) {
@@ -4078,8 +4126,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       if (failed(comparisonWidth) || *comparisonWidth < property.width ||
           isSignedNode(nested.front()) != property.isSigned) {
         emitError(getSemanticLocation(expression))
-            << "dist requires a widening conversion that preserves the rand "
-               "property signedness";
+            << "dist requires a widening conversion that preserves the "
+               "signedness of its expression";
         return failure();
       }
 
@@ -4356,10 +4404,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           programCaptures.push_back(value);
           return index;
         };
-        DistPlan plan{expression, propertyIndex,
-                      0,          activeProgramConstraintBlock,
-                      {},         activeSoftDistSource};
-        plan.propertyOffset = propertyOffsets[propertyIndex];
+        DistPlan plan{expression, distTarget, activeProgramConstraintBlock, {},
+                      activeSoftDistSource};
         SmallVector<std::pair<uint32_t, Value>> rawWeights;
         for (auto [identity, item] : llvm::enumerate(rawItems)) {
           auto endpoints = isa<semantic::SVValueRangeExpressionOp>(item.value)
@@ -4758,10 +4804,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         normalization *= factor;
       }
 
-      DistPlan plan{expression, propertyIndex,
-                    0,          activeProgramConstraintBlock,
-                    {},         activeSoftDistSource};
-      plan.propertyOffset = propertyOffsets[propertyIndex];
+      DistPlan plan{expression, distTarget, activeProgramConstraintBlock, {},
+                    activeSoftDistSource};
       for (const PendingRange &range : pending) {
         bool weightSigned = false;
         FailureOr<std::pair<uint32_t, Value>> weight =
@@ -7186,10 +7230,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   for (auto [index, plan] : llvm::enumerate(distPlans))
     for (const DistPlan &other : ArrayRef(distPlans).drop_front(index + 1))
-      if (!rawDistWeights && plan.propertyIndex == other.propertyIndex) {
+      if (!rawDistWeights &&
+          plan.target.offset < other.target.offset + other.target.width &&
+          other.target.offset < plan.target.offset + plan.target.width) {
         emitError(getSemanticLocation(other.source))
-            << "multiple active dist constraints for one property are not "
-               "executable yet";
+            << "multiple active dist constraints over overlapping values are "
+               "not executable yet";
         return failure();
       }
   if (rawDistWeights && !distPlans.empty() && hasFunctionPriority) {
@@ -7199,20 +7245,62 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return failure();
   }
   if (rawDistWeights) {
+    // IEEE 1800-2023 18.5.9: overlapping ordering endpoints are solved
+    // together, and only classes containing a before endpoint are ranked
+    // ahead of others. Every other bit shares the final layer with unordered
+    // variables, for any subset of mode-enabled edges.
+    struct OrderClass {
+      APInt bits;
+      bool ranked;
+    };
+    SmallVector<OrderClass> orderClasses;
+    auto addOrderClass = [&](APInt bits, bool ranked) {
+      for (size_t index = 0; index != orderClasses.size();) {
+        if (!orderClasses[index].bits.intersects(bits)) {
+          ++index;
+          continue;
+        }
+        bits |= orderClasses[index].bits;
+        ranked |= orderClasses[index].ranked;
+        orderClasses.erase(orderClasses.begin() + index);
+      }
+      orderClasses.push_back({std::move(bits), ranked});
+    };
+    for (const SolveBeforeEdge &edge : solveBeforeEdges) {
+      addOrderClass(edge.beforeMask, true);
+      addOrderClass(edge.afterMask, false);
+    }
+    APInt rankedBits = APInt::getZero(assignmentWidth);
+    for (const OrderClass &orderClass : orderClasses)
+      if (orderClass.ranked)
+        rankedBits |= orderClass.bits;
     for (auto [group, plan] : llvm::enumerate(distPlans)) {
-      const APInt &target = propertyMasks[plan.propertyIndex];
-      // Removing a mode-controlled edge must not split the distributed field
-      // into independently normalized pieces.
-      for (const SolveBeforeEdge &edge : solveBeforeEdges)
-        for (const APInt *endpoint : {&edge.beforeMask, &edge.afterMask}) {
-          APInt overlap = *endpoint & target;
-          if (!overlap.isZero() && overlap != target) {
+      APInt target = plan.target.exported
+                         ? priorityInputs(plan.target.value)
+                         : APInt::getBitsSet(assignmentWidth, plan.target.offset,
+                                             plan.target.offset +
+                                                 plan.target.width);
+      if (plan.target.exported)
+        for (auto [index, property] : llvm::enumerate(planned))
+          if (property.isRandC && !(target & propertyMasks[index]).isZero()) {
             emitError(getSemanticLocation(plan.source))
-                << "dist target split by selected solve before paths requires "
-                   "a conditional weight measure across those paths";
+                << "dist cannot weight a randc property";
             return failure();
           }
-        }
+      // Removing a mode-controlled edge must not split the distributed field
+      // into independently normalized pieces.
+      if (target.intersects(rankedBits))
+        for (const SolveBeforeEdge &edge : solveBeforeEdges)
+          for (const APInt *endpoint : {&edge.beforeMask, &edge.afterMask}) {
+            APInt overlap = *endpoint & target;
+            if (!overlap.isZero() && overlap != target) {
+              emitError(getSemanticLocation(plan.source))
+                  << "dist target split by selected solve before paths "
+                     "requires a conditional weight measure across those "
+                     "paths";
+              return failure();
+            }
+          }
       APInt predecessors = target;
       for (;;) {
         APInt previous = predecessors;
@@ -7282,6 +7370,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           instruction(OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1);
         }
       instruction(OBELISK_RT_RANDOM_END_DIST_GUARD_V1, 1, false, group);
+      if (plan.target.exported) {
+        if (failed(emitProgramExpression(plan.target.value)))
+          return failure();
+        instruction(OBELISK_RT_RANDOM_CAST_V1, plan.target.width,
+                    plan.target.isSigned);
+        for (unsigned bit = 0; bit != plan.target.width; ++bit)
+          instruction(OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1,
+                      plan.target.width, false, group, bit);
+      }
     }
     for (auto [capture, source] : llvm::enumerate(expressionWeightSources)) {
       if (!source)
@@ -7367,7 +7464,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         auxiliary = static_cast<uint32_t>(literalWords.size());
         literalWords.append(literal.getRawData(), literal.getRawData() + words);
       } else if (encoded.opcode == OBELISK_RT_RANDOM_END_SOFT_V1 ||
-                 encoded.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+                 encoded.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
+                 encoded.opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
         if (encoded.immediate > UINT32_MAX) {
           emitError(location) << "random soft priority exceeds 32 bits";
           return failure();
@@ -7459,8 +7557,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       for (const DistRangePlan &range : plan.ranges) {
         append32(static_cast<uint32_t>(group));
         append32(plan.constraintBlock);
-        append32(plan.propertyOffset);
-        append16(static_cast<uint16_t>(planned[plan.propertyIndex].width));
+        append32(plan.target.exported ? 0 : plan.target.offset);
+        append16(static_cast<uint16_t>(plan.target.width));
         append16(rawDistWeights && plan.softSource
                      ? softPriorities.lookup(plan.softSource) + 1
                      : 0);
@@ -7479,8 +7577,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               expressionWeightSources[range.weightCapture])
             flags |= OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT;
         }
-        if (planned[plan.propertyIndex].isSigned)
+        if (plan.target.isSigned)
           flags |= OBELISK_RT_RANDOM_DIST_TARGET_SIGNED;
+        if (plan.target.exported)
+          flags |= OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET;
         append32(flags);
       }
     }
@@ -7757,8 +7857,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   }
   llvm::erase_if(proposalDomains, [&](const ProposalDomain &domain) {
     return llvm::any_of(distPlans, [&](const DistPlan &plan) {
-      return plan.propertyOffset == domain.offset &&
-             planned[plan.propertyIndex].width == domain.width;
+      return !plan.target.exported && plan.target.offset == domain.offset &&
+             plan.target.width == domain.width;
     });
   });
   size_t materializedDomains = proposalDomains.size();
@@ -7774,8 +7874,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   for (const solver::RandomVariableCaptureBound &bound :
        analysis.captureBounds) {
     bool targetsDist = llvm::any_of(distPlans, [&](const DistPlan &plan) {
-      return plan.propertyOffset == bound.offset &&
-             planned[plan.propertyIndex].width == bound.width;
+      return !plan.target.exported && plan.target.offset == bound.offset &&
+             plan.target.width == bound.width;
     });
     if (targetsDist)
       continue;
@@ -9154,26 +9254,25 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value field = arith::AddIOp::create(
           builder, location, selectedLower,
           sampleDynamicBoundedIndex(selectedCardinality, next64(state), state));
-      const Property &property = planned[materialized.plan->propertyIndex];
-      if (property.isSigned)
+      const DistTarget &target = materialized.plan->target;
+      if (target.isSigned)
         field = arith::XOrIOp::create(
             builder, location, field,
-            constant64(uint64_t{1} << (property.width - 1)));
-      uint64_t localFieldMask = property.width == 64
+            constant64(uint64_t{1} << (target.width - 1)));
+      uint64_t localFieldMask = target.width == 64
                                     ? UINT64_MAX
-                                    : (uint64_t{1} << property.width) - 1;
+                                    : (uint64_t{1} << target.width) - 1;
       field = arith::AndIOp::create(builder, location, field,
                                     constant64(localFieldMask));
       if (field.getType() != assignmentType)
         field =
             arith::ExtUIOp::create(builder, location, assignmentType, field);
-      if (materialized.plan->propertyOffset != 0) {
-        field = arith::ShLIOp::create(
-            builder, location, field,
-            constantAssignment64(materialized.plan->propertyOffset));
+      if (target.offset != 0) {
+        field = arith::ShLIOp::create(builder, location, field,
+                                      constantAssignment64(target.offset));
       }
-      APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, property.width)
-                            .shl(materialized.plan->propertyOffset);
+      APInt fieldMask = APInt::getLowBitsSet(assignmentWidth, target.width)
+                            .shl(target.offset);
       sampledDistAssignment =
           arith::OrIOp::create(builder, location, sampledDistAssignment, field);
       sampledDistMask |= fieldMask;
@@ -9542,15 +9641,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             return candidate.source == nested.front();
           });
           if (plan == distPlans.end() ||
-              plan->propertyIndex >= randomizeCandidateValues.size()) {
+              (plan->target.property &&
+               *plan->target.property >= randomizeCandidateValues.size())) {
             emitError(getSemanticLocation(nested.front()))
                 << "dist constraint has no frozen weighted plan";
             return failure();
           }
-          const Property &property = planned[plan->propertyIndex];
+          const DistTarget &property = plan->target;
+          FailureOr<Value> candidate;
+          if (property.property) {
+            candidate = randomizeCandidateValues[*property.property];
+          } else {
+            FailureOr<SafeConstraintValue> value =
+                safeConstraintValue(property.value);
+            candidate = succeeded(value) ? FailureOr<Value>(value->value)
+                                         : FailureOr<Value>(failure());
+          }
           FailureOr<Value> scalar =
-              toPackedScalar(randomizeCandidateValues[plan->propertyIndex],
-                             getSemanticLocation(nested.front()));
+              succeeded(candidate)
+                  ? toPackedScalar(*candidate,
+                                   getSemanticLocation(nested.front()))
+                  : FailureOr<Value>(failure());
           FailureOr<Value> extended =
               succeeded(scalar)
                   ? convert(*scalar, i64, false,

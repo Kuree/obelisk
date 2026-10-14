@@ -656,7 +656,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   bool sawSoft = false;
   uint64_t softPriorities = 0;
   std::vector<bool> guardSeen(distGroupCount, false);
-  random::WeightBitSequence weightBits(captureCount, weighted);
+  random::DistBitSequence distBits(captureCount, distGroupCount, weighted);
   for (uint32_t index = 0; index != instructionCount; ++index) {
     std::optional<DecodedInstruction> decoded = decodeInstruction(index);
     if (!decoded)
@@ -666,14 +666,15 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
     uint8_t flags = decoded->flags;
     uint32_t operand = decoded->operand;
     uint64_t immediate = decoded->auxiliary;
-    if (!weightBits.visit(opcode, width, flags, operand, immediate))
+    if (!distBits.visit(opcode, width, flags, operand, immediate))
       return std::nullopt;
     if (width == 0 || (version1 && width > 64) ||
         (flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
       return std::nullopt;
     if (version2 && opcode != OBELISK_RT_RANDOM_PUSH_LITERAL_V1 &&
         opcode != OBELISK_RT_RANDOM_END_SOFT_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 && immediate != 0)
+        opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
+        opcode != OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1 && immediate != 0)
       return std::nullopt;
     bool signedOperation = (flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     if (opcode == OBELISK_RT_RANDOM_STORE_VALUE_V1) {
@@ -735,9 +736,13 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
       stack.clear();
       continue;
     }
-    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
-      if (!weighted || flags || operand >= captureCount || stack.size() != 1 ||
-          stack.back().width != width || immediate >= width)
+    if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
+        opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
+      if (!weighted || flags ||
+          operand >= (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1
+                          ? captureCount
+                          : guardSeen.size()) ||
+          stack.size() != 1 || stack.back().width != width || immediate >= width)
         return std::nullopt;
       if (immediate + 1 == width)
         stack.clear();

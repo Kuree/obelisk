@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace obelisk::random {
@@ -307,26 +309,40 @@ struct SamplerPlanView {
   size_t coreSize = 0;
 };
 
-/// Weight roots are one contiguous, ascending bit sequence per capture.
-/// Keep validation linear without accepting partial or repeated definitions.
-class WeightBitSequence {
+inline bool isDistExportInstruction(unsigned opcode) {
+  return opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
+         opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1;
+}
+
+/// Weight and target roots are one contiguous, ascending bit sequence per
+/// weight capture or distribution group. Keep validation linear without
+/// accepting partial or repeated definitions. A reader that has not parsed
+/// the distribution footer passes no group count.
+class DistBitSequence {
 public:
-  WeightBitSequence(uint32_t captures, bool weighted)
-      : seen(captures, false), weighted(weighted) {}
+  DistBitSequence(uint32_t captures, std::optional<uint32_t> groups,
+                  bool weighted)
+      : weightSeen(captures, false), groups(groups), weighted(weighted) {}
   bool visit(unsigned opcode, unsigned width, unsigned flags, unsigned operand,
              uint64_t bit) {
-    if (opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
+    if (!isDistExportInstruction(opcode))
       return next == 0;
-    if (!weighted || !width || flags || operand >= seen.size())
+    bool weight = opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1;
+    if (!weighted || !width || flags ||
+        operand >= (weight ? weightSeen.size() : groups.value_or(UINT32_MAX)))
       return false;
     if (next == 0) {
-      if (bit || seen[operand])
+      bool repeated = weight ? weightSeen[operand]
+                             : !targetSeen.insert(operand).second;
+      if (bit || repeated)
         return false;
-      seen[operand] = true;
-      capture = operand;
+      if (weight)
+        weightSeen[operand] = true;
+      active = opcode;
+      owner = operand;
       bits = width;
     }
-    if (capture != operand || bits != width || bit != next)
+    if (active != opcode || owner != operand || bits != width || bit != next)
       return false;
     if (++next == bits)
       next = 0;
@@ -335,9 +351,11 @@ public:
   bool complete() const { return next == 0; }
 
 private:
-  std::vector<bool> seen;
+  std::vector<bool> weightSeen;
+  std::unordered_set<uint32_t> targetSeen;
+  std::optional<uint32_t> groups;
   bool weighted;
-  unsigned capture = 0, bits = 0, next = 0;
+  unsigned active = 0, owner = 0, bits = 0, next = 0;
 };
 
 /// Validate the bundle independently of the residual interpreter. All handles
@@ -434,16 +452,16 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
     return false;
   const uint8_t *rootBytes = nodeBytes + size_t(nodes) * samplerPlanNodeSize;
   uint32_t previous = 0, expected = 0;
-  WeightBitSequence weightBits(captures,
-                               planRead32(program + 20) &
-                                   OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
+  DistBitSequence distBits(captures, std::nullopt,
+                           planRead32(program + 20) &
+                               OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
   for (uint32_t index = 0; index != instructions; ++index) {
     const uint8_t *p = program + instructionHeader + size_t(index) * 16;
     uint8_t opcode = p[0];
     unsigned bits = wide ? planRead32(p + 4) : p[1];
     unsigned operand = planRead32(p + (wide ? 8 : 4));
-    if (!weightBits.visit(opcode, bits, wide ? p[1] : p[2], operand,
-                          wide ? planRead32(p + 12) : planRead64(p + 8)))
+    if (!distBits.visit(opcode, bits, wide ? p[1] : p[2], operand,
+                        wide ? planRead32(p + 12) : planRead64(p + 8)))
       return false;
     if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
         bits != (captureWidths ? captureWidths[operand] : 64))
@@ -452,10 +470,10 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
     if (opcode == OBELISK_RT_RANDOM_END_HARD_V1 ||
         opcode == OBELISK_RT_RANDOM_END_SOFT_V1 ||
         opcode == OBELISK_RT_RANDOM_END_DIST_GUARD_V1 ||
-        opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
+        isDistExportInstruction(opcode))
       ++expected;
   }
-  if (roots != expected || !weightBits.complete())
+  if (roots != expected || !distBits.complete())
     return false;
   for (uint32_t index = 0; index != roots; ++index) {
     const uint8_t *p = rootBytes + size_t(index) * samplerPlanRootSize;
@@ -467,7 +485,7 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
     if (opcode != OBELISK_RT_RANDOM_END_HARD_V1 &&
         opcode != OBELISK_RT_RANDOM_END_SOFT_V1 &&
         opcode != OBELISK_RT_RANDOM_END_DIST_GUARD_V1 &&
-        opcode != OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1)
+        !isDistExportInstruction(opcode))
       return false;
     previous = instruction;
   }

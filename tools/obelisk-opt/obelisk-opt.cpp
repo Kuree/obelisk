@@ -50,6 +50,7 @@ int main(int argc, char **argv) {
   obelisk::registerLocalStorageAnalysisTestPass();
   obelisk::registerNativeAOTAnalysisTestPass();
   obelisk::registerNativeStateLayoutAnalysisTestPass();
+  obelisk::registerRandomProgramTestPass();
   obelisk::registerSimulationProcessFrameAnalysisTestPass();
   obelisk::registerSimulationScheduleAnalysisTestPass();
   obelisk::registerSimulationVPIAnalysisTestPass();

@@ -31,12 +31,15 @@ struct WeightedItem {
 };
 
 struct WeightedGroup {
+  // An expression target has no assignment field; its value is exported by
+  // END_DIST_TARGET_BIT and targetOffset is zero on the wire.
   uint32_t targetOffset;
   unsigned width;
   uint32_t constraintBlock;
   // UINT32_MAX denotes a hard distribution.
   uint32_t softPriority;
   bool isSigned;
+  bool expressionTarget;
   std::vector<WeightedItem> items;
 };
 
@@ -86,8 +89,12 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
     uint64_t identity = read64(record + 32);
     uint32_t capture = read32(record + 40);
     uint32_t flags = read32(record + 44);
+    bool expressionTarget =
+        (flags & OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET) != 0;
     if (groupIndex >= count || width == 0 || width > 64 ||
-        offset > aggregateWidth || width > aggregateWidth - offset ||
+        (expressionTarget ? offset != 0
+                          : offset > aggregateWidth ||
+                                width > aggregateWidth - offset) ||
         (block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 && block >= 64) ||
         capture >= captureCount || soft > 64 ||
         !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
@@ -96,7 +103,8 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
                    OBELISK_RT_RANDOM_DIST_TARGET_SIGNED |
                    OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL |
                    OBELISK_RT_RANDOM_DIST_DEFAULT_COMPLEMENT |
-                   OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT)))
+                   OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT |
+                   OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET)))
       return false;
     uint64_t mask = width == 64 ? UINT64_MAX : (uint64_t{1} << width) - 1;
     bool captured = (flags & OBELISK_RT_RANDOM_DIST_CAPTURED_INTERVAL) != 0;
@@ -122,10 +130,12 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
       group.constraintBlock = block;
       group.softPriority = softPriority;
       group.isSigned = signedTarget;
+      group.expressionTarget = expressionTarget;
     } else if (group.targetOffset != offset || group.width != width ||
                group.constraintBlock != block ||
                group.softPriority != softPriority ||
-               group.isSigned != signedTarget) {
+               group.isSigned != signedTarget ||
+               group.expressionTarget != expressionTarget) {
       return false;
     }
     auto [found, inserted] =

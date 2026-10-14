@@ -1371,8 +1371,8 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   std::vector<Bits> stack;
   std::vector<Bits> temporaries;
   std::vector<std::pair<unsigned, ID>> roots;
-  random::WeightBitSequence weightBits(
-      captureWidths.size(),
+  random::DistBitSequence distBits(
+      captureWidths.size(), std::nullopt,
       read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
@@ -1381,7 +1381,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
     bool sign = (instructionFlags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
     unsigned operand = read32(p + (wide ? 8 : 4));
     uint64_t auxiliary = wide ? read32(p + 12) : read64(p + 8);
-    if (!weightBits.visit(opcode, bits, instructionFlags, operand, auxiliary))
+    if (!distBits.visit(opcode, bits, instructionFlags, operand, auxiliary))
       return std::nullopt;
     if (random::isRealInstruction(opcode)) {
       if (!(read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) ||
@@ -1437,9 +1437,11 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
                          builder.input(PlanOpcode::ConstraintEnabled, operand))
                 .first;
       stack.push_back(f.boolean(found->second, bits));
-    } else if (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+    } else if (random::isDistExportInstruction(opcode)) {
       if (stack.size() != 1 || stack.back().real ||
-          stack.back().width != bits || bits != captureWidths[operand])
+          stack.back().width != bits ||
+          (opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
+           bits != captureWidths[operand]))
         return std::nullopt;
       Bits selected{
           Z3_mk_extract(f.context, auxiliary, auxiliary, stack.back().value),

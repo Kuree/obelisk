@@ -11,6 +11,7 @@ add_mlir_library(ObeliskAnalysisTestPasses
   LocalStorageAnalysisTestPass.cpp
   NativeAOTAnalysisTestPass.cpp
   NativeStateLayoutAnalysisTestPass.cpp
+  RandomProgramTestPass.cpp
   SimulationProcessFrameAnalysisTestPass.cpp
   SimulationScheduleAnalysisTestPass.cpp
   SimulationVPIAnalysisTestPass.cpp

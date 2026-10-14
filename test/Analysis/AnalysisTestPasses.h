@@ -17,6 +17,7 @@ void registerManagedClassLayoutAnalysisTestPass();
 void registerLocalStorageAnalysisTestPass();
 void registerNativeAOTAnalysisTestPass();
 void registerNativeStateLayoutAnalysisTestPass();
+void registerRandomProgramTestPass();
 void registerSimulationProcessFrameAnalysisTestPass();
 void registerSimulationScheduleAnalysisTestPass();
 void registerSimulationVPIAnalysisTestPass();

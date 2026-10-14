@@ -1056,6 +1056,64 @@ TEST_F(RandSolveWideTest, WeightedFull64BitRangeAndLargeMassNeverOverflow) {
   }
 }
 
+TEST_F(RandSolveWideTest, WeightedExpressionTargetWeighsEachValue) {
+  // IEEE 1800-2023 18.5.3: (a + b) dist {0 := 1, [1:6] :/ 1} over two 2-bit
+  // fields weighs values of the expression, not (a, b) pairs: the value 3
+  // has four witnesses and 6 has one, yet both get 1/12 of the draws.
+  std::vector<Instruction> sum = {
+      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {3}},
+      {OBELISK_RT_RANDOM_BIT_AND_V1, 4},
+      {OBELISK_RT_RANDOM_CAST_V1, 3},
+      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 4},
+      {OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 4, 0, 0, 0, {2}},
+      {OBELISK_RT_RANDOM_SHIFT_RIGHT_V1, 4},
+      {OBELISK_RT_RANDOM_CAST_V1, 3},
+      {OBELISK_RT_RANDOM_ADD_V1, 3}};
+  std::vector<Instruction> instructions = sum;
+  instructions.push_back({OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 3, 0, 0, 0, {6}});
+  instructions.push_back({OBELISK_RT_RANDOM_LE_V1, 1});
+  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX});
+  instructions.push_back({OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 64});
+  instructions.push_back({OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 64, 0, 0, 0, {0}});
+  instructions.push_back({OBELISK_RT_RANDOM_GT_V1, 1});
+  instructions.push_back({OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX});
+  instructions.insert(instructions.end(), sum.begin(), sum.end());
+  for (uint32_t bit = 0; bit != 3; ++bit)
+    instructions.push_back(
+        {OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1, 3, 0, 0, bit});
+  uint32_t target = OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
+                    OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET;
+  auto bytes = program(
+      4, 1, instructions,
+      OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
+          OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+      {}, {},
+      {{0, UINT32_MAX, 0, 3, 0, 1, 0, 0, target},
+       {0, UINT32_MAX, 0, 3, 1, 6, 1, 0,
+        target | OBELISK_RT_RANDOM_DIST_PER_RANGE}});
+  uint64_t start = 0, mask = 15, weight = 1, assignment = 0, state = 713;
+  uint32_t width = 64, success = 0;
+  unsigned values[8] = {};
+  for (unsigned draw = 0; draw != 1200; ++draw) {
+    ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                  context, bytes.data(), bytes.size(), &start, &mask, 1, 0, 1,
+                  state, 15, &weight, 1, &width, 1, &assignment, &success,
+                  &state),
+              OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+    ASSERT_LT(assignment, 16u);
+    ++values[(assignment & 3) + (assignment >> 2)];
+  }
+  EXPECT_EQ(values[7], 0u);
+  EXPECT_GT(values[0], 530u);
+  EXPECT_LT(values[0], 670u);
+  for (unsigned value : {3u, 6u}) {
+    EXPECT_GT(values[value], 65u);
+    EXPECT_LT(values[value], 140u);
+  }
+}
+
 TEST_F(RandSolveWideTest, WeightedProjectionNormalizesHugeLegalCardinalities) {
   // The full-range item has 2^64-1 legal values after excluding zero, yet
   // retains the same :/ mass as singleton 1. This exercises a large exact

@@ -271,9 +271,11 @@ bool validateInstruction(const Instruction &instruction,
     depth = 0;
     break;
   case OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1:
+  case OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1:
     if (instruction.flags || depth != 1 ||
         stackWidths.back() != instruction.width ||
-        instruction.operand >= captureCount ||
+        (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 &&
+         instruction.operand >= captureCount) ||
         instruction.immediate >= instruction.width)
       return false;
     if (instruction.immediate + 1 == instruction.width)
@@ -388,7 +390,8 @@ bool evaluate(const std::vector<Instruction> &instructions,
       stack.pop_back();
       continue;
     }
-    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1) {
+    if (instruction.opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
+        instruction.opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1) {
       if (instruction.immediate + 1 == instruction.width)
         stack.pop_back();
       continue;
@@ -718,14 +721,15 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     bool sawHard = false, sawSoft = false;
     uint64_t softPriorities = 0;
     const uint8_t *cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
-    obelisk::random::WeightBitSequence weightBits(encodedCaptures, weighted);
+    obelisk::random::DistBitSequence distBits(encodedCaptures, std::nullopt,
+                                              weighted);
     for (uint32_t index = 0; index != instructionCount; ++index) {
       Instruction instruction{cursor[0], cursor[1], cursor[2],
                               read32(cursor + 4), read64(cursor + 8)};
       if (cursor[3] != 0 ||
-          !weightBits.visit(instruction.opcode, instruction.width,
-                            instruction.flags, instruction.operand,
-                            instruction.immediate) ||
+          !distBits.visit(instruction.opcode, instruction.width,
+                          instruction.flags, instruction.operand,
+                          instruction.immediate) ||
           !validateInstruction(instruction, aggregateWidth, encodedCaptures,
                                stackWidths, temporaryWidths, maxDepth, sawHard,
                                sawSoft, softPriorities, real))

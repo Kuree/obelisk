@@ -4774,6 +4774,10 @@ struct obelisk_rt_random_state_v1 {
 // The weight capture names a compiler-generated expression rather than live
 // capture data. Consecutive END_DIST_WEIGHT_BIT instructions export its bits.
 #define OBELISK_RT_RANDOM_DIST_EXPRESSION_WEIGHT UINT32_C(64)
+// The distributed value is an expression rather than an assignment field
+// (IEEE 1800-2023 18.5.3). Its bits are exported by END_DIST_TARGET_BIT, the
+// record's target offset is zero, and its width is the expression width.
+#define OBELISK_RT_RANDOM_DIST_EXPRESSION_TARGET UINT32_C(128)
 #define OBELISK_RT_RANDOM_DOMAIN_HEADER_SIZE UINT16_C(8)
 #define OBELISK_RT_RANDOM_DOMAIN_RECORD_SIZE UINT16_C(32)
 // V2 domain record: width is u32; mask/value are u64 literal-pool word indices.
@@ -4864,7 +4868,12 @@ typedef enum obelisk_rt_random_opcode_v1 {
   // identifies the weight capture; auxiliary is the ascending bit index.
   // Width is the complete expression width. Only the final bit pops the value.
   // Valid only under SMT_WEIGHTED; flags are zero.
-  OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 = 57
+  OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 = 57,
+  // Export one bit of a distributed expression to the compiled sampling plan.
+  // Operand is the distribution group; auxiliary is the ascending bit index.
+  // Width is the group's target width. Only the final bit pops the value.
+  // Valid only under SMT_WEIGHTED; flags are zero.
+  OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1 = 58
 } obelisk_rt_random_opcode_v1;
 
 // Context and error handling. Operations on one live context may be called
