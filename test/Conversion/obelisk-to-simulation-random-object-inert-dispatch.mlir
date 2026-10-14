@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-prepare \
 // RUN:   | FileCheck %s --check-prefix=PREPARED \
-// RUN:       --implicit-check-not='randomize_nested_plans = [{class = @__obelisk_class_s5_Inert'
+// RUN:       --implicit-check-not='target = @__obelisk_class_s5_Inert>'
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   | FileCheck %s --check-prefix=LOWERED \
 // RUN:       --implicit-check-not='class.is_instance {{.*}} is @__obelisk_class_s5_Inert'
@@ -78,10 +78,10 @@ module {
 // A dynamic object with no rand state, constraints, or lifecycle hooks adds
 // neither a variable nor a predicate nor an observable call. It shares the
 // null/default branch instead of receiving a separate frozen plan.
-// PREPARED-DAG: simulation.randomize_nested_plans = [{class = @__obelisk_class_s7_Active, field = @__obelisk_class_s22_Parent_field_1}]
-// PREPARED-DAG: simulation.randomize_nested_plans = [{class = @__obelisk_class_s10_Constrained, field = @__obelisk_class_s22_Parent_field_1}]
-// PREPARED-DAG: simulation.randomize_nested_plans = [{class = @__obelisk_class_s17_Hooked, field = @__obelisk_class_s22_Parent_field_1}]
-// PREPARED: simulation.randomize_nested_plans = [{field = @__obelisk_class_s22_Parent_field_1, null}]
+// PREPARED-DAG: simulation.randomize_nested_plans = [#simulation.random_nested_selection<field = @__obelisk_class_s22_Parent_field_1, target = @__obelisk_class_s7_Active>]
+// PREPARED-DAG: simulation.randomize_nested_plans = [#simulation.random_nested_selection<field = @__obelisk_class_s22_Parent_field_1, target = @__obelisk_class_s10_Constrained>]
+// PREPARED-DAG: simulation.randomize_nested_plans = [#simulation.random_nested_selection<field = @__obelisk_class_s22_Parent_field_1, target = @__obelisk_class_s17_Hooked>]
+// PREPARED: simulation.randomize_nested_plans = [#simulation.random_nested_selection<field = @__obelisk_class_s22_Parent_field_1>]
 
 // LOWERED-LABEL: simulation.func private @{{unit_[0-9]+}}{{.*}}simulation.hierarchical_name = "top"
 // LOWERED-DAG: simulation.class.is_instance {{.*}} is @__obelisk_class_s7_Active

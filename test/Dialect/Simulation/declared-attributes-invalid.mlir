@@ -53,3 +53,36 @@ func.func private @wrong_payload() attributes {
 
 // expected-error @+1 {{has undeclared attribute 'simulation.future_semantics'}}
 func.func private @undeclared() attributes {simulation.future_semantics}
+
+// -----
+
+func.func private @step_mode() attributes {
+  // expected-error @+1 {{random object step mode index is out of range}}
+  steps = [#simulation.random_object_step<field = @f,
+    storage = !simulation.class_handle<@C>, modeIndex = 64>]}
+
+// -----
+
+func.func private @untyped_path() attributes {
+  // expected-error @+1 {{nested random object path must contain #simulation.random_object_step entries with a concrete class and mode index}}
+  object = #simulation.random_nested_object<field = @f,
+    concrete = !simulation.class_handle<@C>,
+    storage = !simulation.class_handle<@C>, outerModeIndex = 0,
+    path = [#simulation.random_object_step<field = @g,
+      storage = !simulation.class_handle<@C>>]>}
+
+// -----
+
+func.func private @guard_depth() attributes {
+  // expected-error @+1 {{random alias guard depth must index its path}}
+  guard = #simulation.random_alias_guard<
+    object = #simulation.random_nested_object<field = @f,
+      concrete = !simulation.class_handle<@C>,
+      storage = !simulation.class_handle<@C>, outerModeIndex = 0>,
+    aliasDepth = 0>}
+
+// -----
+
+// expected-error @+1 {{attribute 'simulation.random_nested_hooks' must contain #simulation.random_nested_hooks entries}}
+func.func private @untyped_hooks() attributes {
+  simulation.random_nested_hooks = [{pre_callee = @f}]}

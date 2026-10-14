@@ -144,17 +144,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto getSelectedPlan = [&](semantic::SVCallExpressionOp alternative) {
       if (auto selectedPlans =
               sim::get<sim::metadata::RandomizeNestedPlans>(alternative))
-        for (Attribute selectedAttr : selectedPlans)
-          if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr)) {
-            if (dispatchSelectionPath) {
-              if (selected.getAs<ArrayAttr>("path") == dispatchSelectionPath)
-                return selected;
-            } else if (!selected.get("path") &&
-                       selected.getAs<FlatSymbolRefAttr>("field") == field) {
+        for (auto selected :
+             selectedPlans.getAsRange<sim::RandomNestedSelectionAttr>()) {
+          if (dispatchSelectionPath) {
+            if (selected.getPath() == dispatchSelectionPath)
               return selected;
-            }
+          } else if (!selected.getPath() && selected.getField() == field) {
+            return selected;
           }
-      return DictionaryAttr{};
+        }
+      return sim::RandomNestedSelectionAttr{};
     };
     for (Operation *child : children) {
       auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
@@ -162,10 +161,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           (!sim::has<sim::metadata::Randomize>(alternative) &&
            !sim::has<sim::metadata::RandomizeNestedDispatch>(alternative)))
         continue;
-      DictionaryAttr selectedPlan = getSelectedPlan(alternative);
+      sim::RandomNestedSelectionAttr selectedPlan =
+          getSelectedPlan(alternative);
       if (!selectedPlan)
         continue;
-      if (selectedPlan.get("null"))
+      if (!selectedPlan.getTarget())
         nullAlternative = alternative;
       else
         alternatives.push_back(alternative);
@@ -183,30 +183,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (dispatchPath) {
       Value owner = *loweredReceiver;
       auto ownerType = receiverType;
-      for (auto [index, elementAttr] : llvm::enumerate(dispatchPath)) {
-        auto element = dyn_cast<DictionaryAttr>(elementAttr);
-        auto pathField = element ? element.getAs<FlatSymbolRefAttr>("field")
-                                 : FlatSymbolRefAttr{};
-        auto pathStorageType =
-            element ? element.getAs<TypeAttr>("storage_type") : TypeAttr{};
-        auto pathConcreteType =
-            element ? element.getAs<TypeAttr>("concrete_type") : TypeAttr{};
+      for (auto [index, step] : llvm::enumerate(
+               dispatchPath.getAsRange<sim::RandomObjectStepAttr>())) {
+        FlatSymbolRefAttr pathField = step.getField();
+        sim::ClassHandleType pathConcreteType = step.getConcrete();
         bool isTarget = index + 1 == dispatchPath.size();
-        if (!pathField || !pathStorageType ||
-            !isa<sim::ClassHandleType>(pathStorageType.getValue()) ||
-            (!isTarget &&
-             (!pathConcreteType ||
-              !isa<sim::ClassHandleType>(pathConcreteType.getValue()))) ||
-            (isTarget && pathConcreteType) ||
-            (index == 0 &&
-             (pathField != field ||
-              pathStorageType.getValue() != storageTypeAttr.getValue()))) {
+        if (static_cast<bool>(pathConcreteType) == isTarget ||
+            (index == 0 && (pathField != field ||
+                            step.getStorage() != storageTypeAttr.getValue()))) {
           emitError(location) << "nested randomize dispatch path is malformed";
           return failure();
         }
         Type referenceType = sim::ManagedRefType::get(
-            function.getContext(), pathStorageType.getValue(),
-            ownerType.getClassName());
+            function.getContext(), step.getStorage(), ownerType.getClassName());
         Value reference = sim::SimClassFieldRefOp::create(
             builder, location, referenceType, owner, pathField);
         FailureOr<Value> loaded = loadReference(reference, location);
@@ -223,10 +212,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                  ValueRange{}, pathBlock, ValueRange{});
         setCurrent(pathBlock);
         owner = *loaded;
-        if (owner.getType() != pathConcreteType.getValue())
-          owner = sim::SimClassCastOp::create(
-              builder, location, pathConcreteType.getValue(), owner);
-        ownerType = cast<sim::ClassHandleType>(pathConcreteType.getValue());
+        if (owner.getType() != pathConcreteType)
+          owner = sim::SimClassCastOp::create(builder, location,
+                                              pathConcreteType, owner);
+        ownerType = pathConcreteType;
       }
     } else {
       Type referenceType = sim::ManagedRefType::get(
@@ -257,10 +246,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::BranchOp::create(builder, location, done, ValueRange{*nullResult});
     setCurrent(nonNullBlock);
     for (semantic::SVCallExpressionOp alternative : alternatives) {
-      DictionaryAttr selectedPlan = getSelectedPlan(alternative);
+      sim::RandomNestedSelectionAttr selectedPlan =
+          getSelectedPlan(alternative);
       FlatSymbolRefAttr planClass =
-          selectedPlan ? selectedPlan.getAs<FlatSymbolRefAttr>("class")
-                       : FlatSymbolRefAttr{};
+          selectedPlan ? selectedPlan.getTarget() : FlatSymbolRefAttr{};
       if (!planClass) {
         emitError(location)
             << "nested randomize alternative has no target class";
@@ -498,26 +487,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
   }
 
-  auto callLifecycleHook = [&](StringRef calleeAttr, StringRef ownerAttr,
-                               StringRef capturesAttr,
-                               StringRef readsAttr) -> LogicalResult {
-    auto callee = op->getAttrOfType<FlatSymbolRefAttr>(calleeAttr);
-    auto owner = op->getAttrOfType<FlatSymbolRefAttr>(ownerAttr);
-    if (static_cast<bool>(callee) != static_cast<bool>(owner)) {
-      emitError(location) << "randomize lifecycle hook metadata is incomplete";
-      return failure();
-    }
-    if (!callee)
+  // Calls a pre_randomize() or post_randomize() method of `object`.
+  auto callHook = [&](sim::RandomizeHookAttr hook,
+                      Value object) -> LogicalResult {
+    if (!hook)
       return success();
-    Type ownerType = sim::ClassHandleType::get(function.getContext(), owner);
-    Value hookReceiver = receiver;
+    Type ownerType =
+        sim::ClassHandleType::get(function.getContext(), hook.getOwner());
+    Value hookReceiver = object;
     if (hookReceiver.getType() != ownerType)
       hookReceiver = sim::SimClassCastOp::create(builder, location, ownerType,
                                                  hookReceiver);
     llvm::StringSet<> readCaptures;
-    if (auto reads = op->getAttrOfType<ArrayAttr>(readsAttr))
-      for (Attribute read : reads)
-        readCaptures.insert(cast<StringAttr>(read).getValue());
+    if (ArrayAttr reads = hook.getReads())
+      for (auto read : reads.getAsRange<StringAttr>())
+        readCaptures.insert(read.getValue());
     for (const auto &read : readCaptures) {
       Value capture = values.lookup(read.getKey());
       if (!capture)
@@ -526,26 +510,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         recordSensitivity(capture);
     }
     SmallVector<Value> arguments;
-    if (auto captures = op->getAttrOfType<ArrayAttr>(capturesAttr))
-      for (Attribute captureAttr : captures) {
-        StringRef path = cast<StringAttr>(captureAttr).getValue();
-        Value capture = values.lookup(path);
+    if (ArrayAttr captures = hook.getCaptures())
+      for (auto path : captures.getAsRange<StringAttr>()) {
+        Value capture = values.lookup(path.getValue());
         if (!capture) {
           emitError(location)
-              << "randomization hook capture has no local binding: " << path;
+              << "randomization hook capture has no local binding: "
+              << path.getValue();
           return failure();
         }
         arguments.push_back(capture);
       }
-    sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
-                                      hookReceiver, arguments);
+    sim::SimClassDirectCallOp::create(builder, location, TypeRange{},
+                                      hook.getCallee(), hookReceiver,
+                                      arguments);
     return emitTerminationPoll(location);
   };
-  if (failed(callLifecycleHook(
-          sim::metadata::RandomPreHook::getNameStr(),
-          sim::metadata::RandomPreHookOwner::getNameStr(),
-          sim::metadata::RandomPreHookCaptures::getNameStr(),
-          sim::metadata::RandomPreHookReadCaptures::getNameStr())))
+  if (failed(callHook(sim::get<sim::metadata::RandomPreHook>(op), receiver)))
     return failure();
 
   struct DomainPattern {
@@ -640,28 +621,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           SmallVectorImpl<ObjectPathElement> &path) -> LogicalResult {
     if (!pathAttr)
       return success();
-    for (Attribute elementAttr : pathAttr) {
-      auto element = dyn_cast<DictionaryAttr>(elementAttr);
-      auto field = element ? element.getAs<FlatSymbolRefAttr>("field")
-                           : FlatSymbolRefAttr{};
-      auto concreteTypeAttr =
-          element ? element.getAs<TypeAttr>("concrete_type") : TypeAttr{};
-      auto storageTypeAttr =
-          element ? element.getAs<TypeAttr>("storage_type") : TypeAttr{};
-      auto modeIndexAttr = element
-                               ? element.getAs<IntegerAttr>("rand_mode_index")
-                               : IntegerAttr{};
-      if (!field || !concreteTypeAttr || !storageTypeAttr || !modeIndexAttr ||
-          !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
-          !isa<sim::ClassHandleType>(storageTypeAttr.getValue()) ||
-          modeIndexAttr.getValue().isNegative() ||
-          modeIndexAttr.getValue().getActiveBits() > 32 ||
-          modeIndexAttr.getValue().getZExtValue() >= 64) {
+    for (auto step : pathAttr.getAsRange<sim::RandomObjectStepAttr>()) {
+      sim::ClassHandleType concreteType = step.getConcrete();
+      std::optional<uint32_t> modeIndex = step.getModeIndex();
+      if (!concreteType || !modeIndex) {
         emitError(location) << "nested random-object path is malformed";
         return failure();
       }
-      auto concreteType =
-          cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
       auto declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, concreteType.getClassName());
       while (declaration &&
@@ -679,10 +645,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             << "nested random-object path has no rand_mode field";
         return failure();
       }
-      path.push_back(
-          {field, concreteTypeAttr.getValue(), storageTypeAttr.getValue(),
-           static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
-           modeField});
+      path.push_back({step.getField(), concreteType, step.getStorage(),
+                      *modeIndex, modeField});
     }
     return success();
   };
@@ -1398,37 +1362,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         builder, location, type,
         builder.getIntegerAttr(type, APInt(type.getWidth(), value)));
   };
-  for (Attribute guardAttr : recursiveAliasGuards) {
-    auto guard = dyn_cast<DictionaryAttr>(guardAttr);
-    auto field =
-        guard ? guard.getAs<FlatSymbolRefAttr>("field") : FlatSymbolRefAttr{};
-    auto concreteTypeAttr =
-        guard ? guard.getAs<TypeAttr>("concrete_type") : TypeAttr{};
-    auto storageTypeAttr =
-        guard ? guard.getAs<TypeAttr>("storage_type") : TypeAttr{};
-    auto outerModeIndexAttr =
-        guard ? guard.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
-    auto pathAttr = guard ? guard.getAs<ArrayAttr>("path") : ArrayAttr{};
-    auto aliasDepthAttr =
-        guard ? guard.getAs<IntegerAttr>("alias_depth") : IntegerAttr{};
+  for (auto guard :
+       recursiveAliasGuards.getAsRange<sim::RandomAliasGuardAttr>()) {
+    sim::RandomNestedObjectAttr nested = guard.getObject();
+    FlatSymbolRefAttr field = nested.getField();
+    sim::ClassHandleType rootConcreteType = nested.getConcrete();
     SmallVector<ObjectPathElement> path;
-    if (!field || !concreteTypeAttr || !storageTypeAttr ||
-        !outerModeIndexAttr || !pathAttr || pathAttr.empty() ||
-        !aliasDepthAttr ||
-        !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
-        !isa<sim::ClassHandleType>(storageTypeAttr.getValue()) ||
-        outerModeIndexAttr.getValue().isNegative() ||
-        outerModeIndexAttr.getValue().getActiveBits() > 32 ||
-        outerModeIndexAttr.getValue().getZExtValue() >= 64 ||
-        aliasDepthAttr.getValue().isNegative() ||
-        aliasDepthAttr.getValue().getActiveBits() > 32 ||
-        aliasDepthAttr.getValue().getZExtValue() >= pathAttr.size() ||
-        failed(parseNestedObjectPath(pathAttr, path))) {
-      emitError(location) << "recursive random-object alias guard is malformed";
+    if (failed(parseNestedObjectPath(nested.getPath(), path)))
       return failure();
-    }
-    auto rootConcreteType =
-        cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
     auto rootDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
         function, rootConcreteType.getClassName());
     while (rootDeclaration &&
@@ -1449,8 +1390,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
 
     Type rootReferenceType = sim::ManagedRefType::get(
-        function.getContext(), storageTypeAttr.getValue(),
-        objectType.getClassName());
+        function.getContext(), nested.getStorage(), objectType.getClassName());
     Value rootReference = sim::SimClassFieldRefOp::create(
         builder, location, rootReferenceType, receiver, field);
     FailureOr<Value> loadedRoot = loadReference(rootReference, location);
@@ -1458,7 +1398,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     Value rootNull = sim::SimManagedIsNullOp::create(
         builder, location, builder.getI1Type(), *loadedRoot);
-    uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
+    uint64_t outerModeIndex = nested.getOuterModeIndex();
     Value outerModeBit = arith::AndIOp::create(
         builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
     Value outerEnabled =
@@ -1477,9 +1417,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     setCurrent(rootPresentBlock);
 
     Value currentObject = *loadedRoot;
-    if (currentObject.getType() != concreteTypeAttr.getValue())
+    if (currentObject.getType() != rootConcreteType)
       currentObject = sim::SimClassCastOp::create(
-          builder, location, concreteTypeAttr.getValue(), currentObject);
+          builder, location, rootConcreteType, currentObject);
     auto currentType = rootConcreteType;
     FlatSymbolRefAttr currentModeField = rootModeField;
     SmallVector<Value> activeObjects{currentObject};
@@ -1526,8 +1466,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       currentModeField = element.modeField;
     }
 
-    unsigned aliasDepth =
-        static_cast<unsigned>(aliasDepthAttr.getValue().getZExtValue());
+    unsigned aliasDepth = guard.getAliasDepth();
     Value targetID =
         sim::SimClassIdOp::create(builder, location, activeObjects.back());
     Value ancestorID =
@@ -1546,81 +1485,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     setCurrent(continueBlock);
   }
   struct NestedHookRuntime {
-    DictionaryAttr plan;
+    sim::RandomNestedHooksAttr hooks;
     Value object;
     Value enabled;
     Value objectID;
   };
   SmallVector<NestedHookRuntime> nestedHookRuntimes;
-  auto callNestedHook = [&](DictionaryAttr plan, StringRef prefix,
-                            Value object) -> LogicalResult {
-    auto callee = plan.getAs<FlatSymbolRefAttr>((prefix + "_callee").str());
-    if (!callee)
-      return success();
-    auto owner = plan.getAs<FlatSymbolRefAttr>((prefix + "_owner").str());
-    auto captures = plan.getAs<ArrayAttr>((prefix + "_captures").str());
-    auto reads = plan.getAs<ArrayAttr>((prefix + "_reads").str());
-    if (!owner || !captures || !reads) {
-      emitError(location) << "nested randomization hook plan is malformed";
-      return failure();
-    }
-    Type ownerType = sim::ClassHandleType::get(function.getContext(), owner);
-    Value hookReceiver = object;
-    if (hookReceiver.getType() != ownerType)
-      hookReceiver = sim::SimClassCastOp::create(builder, location, ownerType,
-                                                 hookReceiver);
-    llvm::StringSet<> readCaptures;
-    for (Attribute read : reads)
-      readCaptures.insert(cast<StringAttr>(read).getValue());
-    for (const auto &read : readCaptures) {
-      Value capture = values.lookup(read.getKey());
-      if (!capture)
-        capture = lvalues.lookup(read.getKey());
-      if (capture)
-        recordSensitivity(capture);
-    }
-    SmallVector<Value> arguments;
-    for (Attribute captureAttr : captures) {
-      StringRef path = cast<StringAttr>(captureAttr).getValue();
-      Value capture = values.lookup(path);
-      if (!capture) {
-        emitError(location)
-            << "nested randomization hook capture has no local binding: "
-            << path;
-        return failure();
-      }
-      arguments.push_back(capture);
-    }
-    sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
-                                      hookReceiver, arguments);
-    return emitTerminationPoll(location);
-  };
-  for (Attribute hookAttr : nestedHooks) {
-    auto hook = dyn_cast<DictionaryAttr>(hookAttr);
-    auto field =
-        hook ? hook.getAs<FlatSymbolRefAttr>("field") : FlatSymbolRefAttr{};
-    auto concreteTypeAttr =
-        hook ? hook.getAs<TypeAttr>("concrete_type") : TypeAttr{};
-    auto storageTypeAttr =
-        hook ? hook.getAs<TypeAttr>("storage_type") : TypeAttr{};
-    auto outerModeIndexAttr =
-        hook ? hook.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
-    auto pathAttr = hook ? hook.getAs<ArrayAttr>("path") : ArrayAttr{};
-    if (!hook || !field || !concreteTypeAttr || !storageTypeAttr ||
-        !outerModeIndexAttr || outerModeIndexAttr.getValue().isNegative() ||
-        outerModeIndexAttr.getValue().getActiveBits() > 32 ||
-        outerModeIndexAttr.getValue().getZExtValue() >= 64 ||
-        !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
-        !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
-      emitError(location) << "nested randomization hook plan is malformed";
-      return failure();
-    }
+  for (auto hooks : nestedHooks.getAsRange<sim::RandomNestedHooksAttr>()) {
+    sim::RandomNestedObjectAttr nested = hooks.getObject();
+    FlatSymbolRefAttr field = nested.getField();
+    ArrayAttr pathAttr = nested.getPath();
     SmallVector<ObjectPathElement> path;
     if (failed(parseNestedObjectPath(pathAttr, path)))
       return failure();
     Type objectReferenceType = sim::ManagedRefType::get(
-        function.getContext(), storageTypeAttr.getValue(),
-        objectType.getClassName());
+        function.getContext(), nested.getStorage(), objectType.getClassName());
     Value objectReference = sim::SimClassFieldRefOp::create(
         builder, location, objectReferenceType, receiver, field);
     FailureOr<Value> loadedObject = loadReference(objectReference, location);
@@ -1629,7 +1508,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value object = *loadedObject;
     Value isNull = sim::SimManagedIsNullOp::create(builder, location,
                                                    builder.getI1Type(), object);
-    uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
+    uint64_t outerModeIndex = nested.getOuterModeIndex();
     Value outerModeBit = arith::AndIOp::create(
         builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
     Value outerEnabled =
@@ -1641,9 +1520,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                   builder.getBoolAttr(true)));
     Value enabled =
         arith::AndIOp::create(builder, location, outerEnabled, nonNull);
-    if (object.getType() != concreteTypeAttr.getValue())
+    if (object.getType() != nested.getConcrete())
       object = sim::SimClassCastOp::create(builder, location,
-                                           concreteTypeAttr.getValue(), object);
+                                           nested.getConcrete(), object);
     if (!path.empty()) {
       Type targetType = path.back().concreteType;
       Block *missingBlock = addBlock();
@@ -1664,8 +1543,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                            ValueRange{missingObject, falseValue});
 
       setCurrent(rootPresentBlock);
-      auto currentType =
-          cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+      auto currentType = nested.getConcrete();
       for (const ObjectPathElement &element : path) {
         sim::SimClassDeclOp currentDeclaration =
             lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1755,34 +1633,20 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     cf::CondBranchOp::create(builder, location, callEnabled, callBlock,
                              ValueRange{}, mergeBlock, ValueRange{});
     setCurrent(callBlock);
-    if (failed(callNestedHook(hook, "pre", object)))
+    if (failed(callHook(hooks.getPre(), object)))
       return failure();
     cf::BranchOp::create(builder, location, mergeBlock);
     setCurrent(mergeBlock);
-    nestedHookRuntimes.push_back({hook, object, callEnabled, objectID});
+    nestedHookRuntimes.push_back({hooks, object, callEnabled, objectID});
   }
   Value nullNestedConstraintMask = constant64(0);
-  for (Attribute nestedAttr : nestedConstraintModes) {
-    auto nested = dyn_cast<DictionaryAttr>(nestedAttr);
-    auto field =
-        nested ? nested.getAs<FlatSymbolRefAttr>("field") : FlatSymbolRefAttr{};
-    auto concreteTypeAttr =
-        nested ? nested.getAs<TypeAttr>("concrete_type") : TypeAttr{};
-    auto storageTypeAttr =
-        nested ? nested.getAs<TypeAttr>("storage_type") : TypeAttr{};
-    auto globalIndices = nested
-                             ? nested.getAs<DenseI64ArrayAttr>("global_indices")
-                             : DenseI64ArrayAttr{};
-    auto outerModeIndexAttr =
-        nested ? nested.getAs<IntegerAttr>("outer_mode_index") : IntegerAttr{};
-    auto pathAttr = nested ? nested.getAs<ArrayAttr>("path") : ArrayAttr{};
-    if (!field || !concreteTypeAttr || !storageTypeAttr || !globalIndices ||
-        !outerModeIndexAttr || outerModeIndexAttr.getValue().isNegative() ||
-        outerModeIndexAttr.getValue().getActiveBits() > 32 ||
-        outerModeIndexAttr.getValue().getZExtValue() >= 64 ||
-        globalIndices.empty() || globalIndices.size() > 64 ||
-        !isa<sim::ClassHandleType>(concreteTypeAttr.getValue()) ||
-        !isa<sim::ClassHandleType>(storageTypeAttr.getValue())) {
+  for (auto constraints :
+       nestedConstraintModes.getAsRange<sim::RandomNestedConstraintsAttr>()) {
+    sim::RandomNestedObjectAttr nested = constraints.getObject();
+    FlatSymbolRefAttr field = nested.getField();
+    DenseI64ArrayAttr globalIndices = constraints.getGlobalIndices();
+    ArrayAttr pathAttr = nested.getPath();
+    if (globalIndices.empty() || globalIndices.size() > 64) {
       emitError(location) << "nested constraint-mode plan is malformed";
       return failure();
     }
@@ -1799,8 +1663,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(parseNestedObjectPath(pathAttr, path)))
       return failure();
     Type objectReferenceType = sim::ManagedRefType::get(
-        function.getContext(), storageTypeAttr.getValue(),
-        objectType.getClassName());
+        function.getContext(), nested.getStorage(), objectType.getClassName());
     Value objectReference = sim::SimClassFieldRefOp::create(
         builder, location, objectReferenceType, receiver, field);
     FailureOr<Value> loadedObject = loadReference(objectReference, location);
@@ -1808,7 +1671,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     Value isNull = sim::SimManagedIsNullOp::create(
         builder, location, builder.getI1Type(), *loadedObject);
-    uint64_t outerModeIndex = outerModeIndexAttr.getValue().getZExtValue();
+    uint64_t outerModeIndex = nested.getOuterModeIndex();
     Value outerModeBit = arith::AndIOp::create(
         builder, location, mode, constant64(uint64_t{1} << outerModeIndex));
     Value outerDisabled =
@@ -1834,10 +1697,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
     setCurrent(objectBlock);
     Value object = *loadedObject;
-    if (object.getType() != concreteTypeAttr.getValue())
+    if (object.getType() != nested.getConcrete())
       object = sim::SimClassCastOp::create(builder, location,
-                                           concreteTypeAttr.getValue(), object);
-    auto concreteType = cast<sim::ClassHandleType>(concreteTypeAttr.getValue());
+                                           nested.getConcrete(), object);
+    auto concreteType = nested.getConcrete();
     for (const ObjectPathElement &element : path) {
       sim::SimClassDeclOp currentDeclaration =
           lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -11227,21 +11090,17 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   cf::BranchOp::create(builder, location, postBlock);
 
   setCurrent(postBlock);
-  if (failed(callLifecycleHook(
-          sim::metadata::RandomPostHook::getNameStr(),
-          sim::metadata::RandomPostHookOwner::getNameStr(),
-          sim::metadata::RandomPostHookCaptures::getNameStr(),
-          sim::metadata::RandomPostHookReadCaptures::getNameStr())))
+  if (failed(callHook(sim::get<sim::metadata::RandomPostHook>(op), receiver)))
     return failure();
   for (const NestedHookRuntime &runtime : nestedHookRuntimes) {
-    if (!runtime.plan.getAs<FlatSymbolRefAttr>("post_callee"))
+    if (!runtime.hooks.getPost())
       continue;
     Block *callBlock = addBlock();
     Block *mergeBlock = addBlock();
     cf::CondBranchOp::create(builder, location, runtime.enabled, callBlock,
                              ValueRange{}, mergeBlock, ValueRange{});
     setCurrent(callBlock);
-    if (failed(callNestedHook(runtime.plan, "post", runtime.object)))
+    if (failed(callHook(runtime.hooks.getPost(), runtime.object)))
       return failure();
     cf::BranchOp::create(builder, location, mergeBlock);
     setCurrent(mergeBlock);

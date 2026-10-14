@@ -102,29 +102,25 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::FlatSymbolRefAttr":$random_mode_field,
     // Stable base-to-derived index of an effective rand/randc class property.
     "::mlir::IntegerAttr":$random_mode_index,
+    // `#simulation.random_nested_constraints` entries.
     "::mlir::ArrayAttr":$random_nested_constraint_modes,
+    // `#simulation.random_nested_hooks` entries.
     "::mlir::ArrayAttr":$random_nested_hooks,
     "::mlir::TypeAttr":$random_nested_state_concrete_type,
     "::mlir::FlatSymbolRefAttr":$random_nested_state_field,
+    // `#simulation.random_object_step` entries without mode indices.
     "::mlir::ArrayAttr":$random_nested_state_path,
     "::mlir::TypeAttr":$random_nested_state_storage_type,
     // Marks a non-static rand class-handle field as a recursive object edge.
     "::mlir::UnitAttr":$random_object_edge,
-    "::mlir::FlatSymbolRefAttr":$random_post_hook,
-    "::mlir::ArrayAttr":$random_post_hook_captures,
-    "::mlir::FlatSymbolRefAttr":$random_post_hook_owner,
-    "::mlir::ArrayAttr":$random_post_hook_read_captures,
-    "::mlir::FlatSymbolRefAttr":$random_post_hook_source,
-    "::mlir::FlatSymbolRefAttr":$random_pre_hook,
-    "::mlir::ArrayAttr":$random_pre_hook_captures,
-    "::mlir::FlatSymbolRefAttr":$random_pre_hook_owner,
-    "::mlir::ArrayAttr":$random_pre_hook_read_captures,
-    "::mlir::FlatSymbolRefAttr":$random_pre_hook_source,
+    "::obelisk::sim::RandomizeHookAttr":$random_post_hook,
+    "::obelisk::sim::RandomizeHookAttr":$random_pre_hook,
     "::mlir::IntegerAttr":$random_priority_arguments,
     "::mlir::IntegerAttr":$random_priority_inputs,
     "::mlir::ArrayAttr":$random_properties,
     "::mlir::UnitAttr":$random_real_finite,
     "::mlir::IntegerAttr":$random_receiver_index,
+    // `#simulation.random_alias_guard` entries.
     "::mlir::ArrayAttr":$random_recursive_alias_guards,
     "::mlir::FlatSymbolRefAttr":$random_state_field,
     "::mlir::ArrayAttr":$random_struct_members,
@@ -146,9 +142,12 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::UnitAttr":$randomize_helper_receiver,
     "::mlir::UnitAttr":$randomize_nested_dispatch,
     "::mlir::FlatSymbolRefAttr":$randomize_nested_dispatch_field,
+    // `#simulation.random_object_step` entries from the receiver to the
+    // dispatched object, and the field symbols along them.
     "::mlir::ArrayAttr":$randomize_nested_dispatch_path,
     "::mlir::ArrayAttr":$randomize_nested_dispatch_selection_path,
     "::mlir::TypeAttr":$randomize_nested_dispatch_storage_type,
+    // `#simulation.random_nested_selection` entries.
     "::mlir::ArrayAttr":$randomize_nested_plans,
     "::mlir::FlatSymbolRefAttr":$randomize_plan_class,
     "::mlir::UnitAttr":$randomize_scope,

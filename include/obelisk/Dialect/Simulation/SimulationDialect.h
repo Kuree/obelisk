@@ -113,23 +113,7 @@ using RandomNestedStateStorageType =
     ObeliskSimulationDialect::RandomNestedStateStorageTypeAttrHelper;
 using RandomObjectEdge = ObeliskSimulationDialect::RandomObjectEdgeAttrHelper;
 using RandomPostHook = ObeliskSimulationDialect::RandomPostHookAttrHelper;
-using RandomPostHookCaptures =
-    ObeliskSimulationDialect::RandomPostHookCapturesAttrHelper;
-using RandomPostHookOwner =
-    ObeliskSimulationDialect::RandomPostHookOwnerAttrHelper;
-using RandomPostHookReadCaptures =
-    ObeliskSimulationDialect::RandomPostHookReadCapturesAttrHelper;
-using RandomPostHookSource =
-    ObeliskSimulationDialect::RandomPostHookSourceAttrHelper;
 using RandomPreHook = ObeliskSimulationDialect::RandomPreHookAttrHelper;
-using RandomPreHookCaptures =
-    ObeliskSimulationDialect::RandomPreHookCapturesAttrHelper;
-using RandomPreHookOwner =
-    ObeliskSimulationDialect::RandomPreHookOwnerAttrHelper;
-using RandomPreHookReadCaptures =
-    ObeliskSimulationDialect::RandomPreHookReadCapturesAttrHelper;
-using RandomPreHookSource =
-    ObeliskSimulationDialect::RandomPreHookSourceAttrHelper;
 using RandomPriorityArguments =
     ObeliskSimulationDialect::RandomPriorityArgumentsAttrHelper;
 using RandomPriorityInputs =

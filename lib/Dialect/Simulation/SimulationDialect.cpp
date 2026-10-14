@@ -553,11 +553,7 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::RandomNestedStateConcreteType, metadata::RandomNestedStateField,
       metadata::RandomNestedStatePath, metadata::RandomNestedStateStorageType,
       metadata::RandomObjectEdge, metadata::RandomPostHook,
-      metadata::RandomPostHookCaptures, metadata::RandomPostHookOwner,
-      metadata::RandomPostHookReadCaptures, metadata::RandomPostHookSource,
-      metadata::RandomPreHook, metadata::RandomPreHookCaptures,
-      metadata::RandomPreHookOwner, metadata::RandomPreHookReadCaptures,
-      metadata::RandomPreHookSource, metadata::RandomPriorityArguments,
+      metadata::RandomPreHook, metadata::RandomPriorityArguments,
       metadata::RandomPriorityInputs, metadata::RandomProperties,
       metadata::RandomRealFinite, metadata::RandomReceiverIndex,
       metadata::RandomRecursiveAliasGuards, metadata::RandomStateField,
@@ -795,6 +791,27 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == RandomNestedHooks::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomNestedHooksAttr>))
+    return error() << "must contain #simulation.random_nested_hooks entries";
+  if (name == RandomNestedConstraintModes::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomNestedConstraintsAttr>))
+    return error()
+           << "must contain #simulation.random_nested_constraints entries";
+  if (name == RandomRecursiveAliasGuards::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomAliasGuardAttr>))
+    return error() << "must contain #simulation.random_alias_guard entries";
+  if (name == RandomizeNestedPlans::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomNestedSelectionAttr>))
+    return error()
+           << "must contain #simulation.random_nested_selection entries";
+  if ((name == RandomizeNestedDispatchPath::getNameStr() ||
+       name == RandomNestedStatePath::getNameStr()) &&
+      !allOf(llvm::IsaPred<RandomObjectStepAttr>))
+    return error() << "must contain #simulation.random_object_step entries";
+  if (name == RandomizeNestedDispatchSelectionPath::getNameStr() &&
+      !allOf(llvm::IsaPred<FlatSymbolRefAttr>))
+    return error() << "must contain field symbols";
   if ((name == GCPolled::getNameStr() ||
        name == PulseRejectPercent::getNameStr() ||
        name == PulseErrorPercent::getNameStr() ||

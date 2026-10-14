@@ -791,30 +791,22 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
            analysisUnits.resolveVirtualInterfaceCallees(call))
         if (targets.insert(candidate->source).second)
           callEdges[unit.source].push_back(candidate->source);
-      auto addRandomizeHook = [&](StringRef attrName) {
-        auto reference = call->getAttrOfType<FlatSymbolRefAttr>(attrName);
-        auto hook = reference
-                        ? semanticSymbols.find(reference.getLeafReference())
-                        : semanticSymbols.end();
-        if (hook != semanticSymbols.end() &&
-            targets.insert(hook->second).second)
-          callEdges[unit.source].push_back(hook->second);
+      auto addRandomizeHook = [&](sim::RandomizeHookAttr hook) {
+        auto source =
+            hook ? semanticSymbols.find(hook.getSource().getLeafReference())
+                 : semanticSymbols.end();
+        if (source != semanticSymbols.end() &&
+            targets.insert(source->second).second)
+          callEdges[unit.source].push_back(source->second);
       };
-      addRandomizeHook(sim::metadata::RandomPreHookSource::getNameStr());
-      addRandomizeHook(sim::metadata::RandomPostHookSource::getNameStr());
+      addRandomizeHook(sim::get<sim::metadata::RandomPreHook>(call));
+      addRandomizeHook(sim::get<sim::metadata::RandomPostHook>(call));
       if (auto nestedHooks = sim::get<sim::metadata::RandomNestedHooks>(call))
-        for (Attribute nestedAttr : nestedHooks)
-          if (auto nested = dyn_cast<DictionaryAttr>(nestedAttr))
-            for (StringRef name :
-                 {StringRef("pre_source"), StringRef("post_source")}) {
-              auto reference = nested.getAs<FlatSymbolRefAttr>(name);
-              auto hook =
-                  reference ? semanticSymbols.find(reference.getLeafReference())
-                            : semanticSymbols.end();
-              if (hook != semanticSymbols.end() &&
-                  targets.insert(hook->second).second)
-                callEdges[unit.source].push_back(hook->second);
-            }
+        for (auto nested :
+             nestedHooks.getAsRange<sim::RandomNestedHooksAttr>()) {
+          addRandomizeHook(nested.getPre());
+          addRandomizeHook(nested.getPost());
+        }
     });
   }
   // An extern fork/join stub is a compile-time-generated task whose body calls

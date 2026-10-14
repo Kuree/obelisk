@@ -468,26 +468,11 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
       object =
           sim::SimClassCastOp::create(builder, location, concreteType, object);
     if (pathAttr) {
-      for (Attribute pathElementAttr : pathAttr) {
-        auto pathElement = dyn_cast<DictionaryAttr>(pathElementAttr);
-        auto pathField = pathElement
-                             ? pathElement.getAs<FlatSymbolRefAttr>("field")
-                             : FlatSymbolRefAttr{};
-        auto pathConcreteTypeAttr =
-            pathElement ? pathElement.getAs<TypeAttr>("concrete_type")
-                        : TypeAttr{};
-        auto pathStorageTypeAttr =
-            pathElement ? pathElement.getAs<TypeAttr>("storage_type")
-                        : TypeAttr{};
-        auto pathConcreteType = pathConcreteTypeAttr
-                                    ? dyn_cast<sim::ClassHandleType>(
-                                          pathConcreteTypeAttr.getValue())
-                                    : sim::ClassHandleType{};
-        auto pathStorageType =
-            pathStorageTypeAttr
-                ? dyn_cast<sim::ClassHandleType>(pathStorageTypeAttr.getValue())
-                : sim::ClassHandleType{};
-        if (!pathField || !pathConcreteType || !pathStorageType) {
+      for (auto step : pathAttr.getAsRange<sim::RandomObjectStepAttr>()) {
+        FlatSymbolRefAttr pathField = step.getField();
+        sim::ClassHandleType pathConcreteType = step.getConcrete();
+        sim::ClassHandleType pathStorageType = step.getStorage();
+        if (!pathConcreteType) {
           emitError(location) << "nested randomization state path is malformed";
           return failure();
         }

@@ -579,6 +579,50 @@ IntegerExpressionAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+/// rand_mode() controls at most 64 effective properties of one class.
+static constexpr uint32_t kRandomModeBits = 64;
+
+LogicalResult RandomObjectStepAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr,
+    ClassHandleType, ClassHandleType, std::optional<uint32_t> modeIndex) {
+  if (modeIndex && *modeIndex >= kRandomModeBits)
+    return emitError() << "random object step mode index is out of range";
+  return success();
+}
+
+LogicalResult RandomNestedObjectAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr,
+    ClassHandleType, ClassHandleType, uint32_t outerModeIndex, ArrayAttr path) {
+  if (outerModeIndex >= kRandomModeBits)
+    return emitError() << "nested random object mode index is out of range";
+  if (path && (path.empty() || !llvm::all_of(path, [](Attribute step) {
+                 auto typed = dyn_cast<RandomObjectStepAttr>(step);
+                 return typed && typed.getConcrete() && typed.getModeIndex();
+               })))
+    return emitError() << "nested random object path must contain "
+                          "#simulation.random_object_step entries with a "
+                          "concrete class and mode index";
+  return success();
+}
+
+LogicalResult RandomizeHookAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr,
+    FlatSymbolRefAttr, FlatSymbolRefAttr, ArrayAttr captures, ArrayAttr reads) {
+  for (ArrayAttr paths : {captures, reads})
+    if (paths && !llvm::all_of(paths, llvm::IsaPred<StringAttr>))
+      return emitError() << "randomize hook captures must be string paths";
+  return success();
+}
+
+LogicalResult
+RandomAliasGuardAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                             RandomNestedObjectAttr object,
+                             uint32_t aliasDepth) {
+  if (!object.getPath() || aliasDepth >= object.getPath().size())
+    return emitError() << "random alias guard depth must index its path";
+  return success();
+}
+
 LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {

@@ -310,6 +310,106 @@ def SimBooleanMinimizationAttr
   }];
 }
 
+// Randomization plans frozen onto `randomize()` calls (IEEE 1800-2023 18.5.9,
+// 18.6.2, 18.8). They are compile-time hand-offs from preparation to unit
+// lowering and vanish with the semantic call.
+
+def SimRandomObjectStepAttr
+    : SimAttr<"RandomObjectStep", "random_object_step"> {
+  let summary = "one class-handle field on a path to a nested random object";
+  let description = [{
+    Loads `field`, declared with class-handle type `storage`, from the
+    previous object on the path. An intermediate step casts the loaded
+    handle to its `concrete` class; a step that controls rand_mode() also
+    names the field's effective `modeIndex` in its owner.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$field,
+      "::obelisk::sim::ClassHandleType":$storage,
+      OptionalParameter<"::obelisk::sim::ClassHandleType">:$concrete,
+      OptionalParameter<"std::optional<uint32_t>">:$modeIndex);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomNestedObjectAttr
+    : SimAttr<"RandomNestedObject", "random_nested_object"> {
+  let summary = "a random object reached through rand class-handle fields";
+  let description = [{
+    The receiver's `field`, with class-handle type `storage` and constant
+    `concrete` class, followed by the `#simulation.random_object_step`s of
+    `path`. `outerModeIndex` is the receiver's rand_mode() index of `field`.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$field,
+      "::obelisk::sim::ClassHandleType":$concrete,
+      "::obelisk::sim::ClassHandleType":$storage, "uint32_t":$outerModeIndex,
+      OptionalParameter<"::mlir::ArrayAttr">:$path);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomizeHookAttr : SimAttr<"RandomizeHook", "randomize_hook"> {
+  let summary = "a pre_randomize() or post_randomize() call";
+  let description = [{
+    Calls method `callee` of class `owner`, lowered from semantic subroutine
+    `source`. Once captures are frozen, `captures` lists the unit-local paths
+    passed as arguments and `reads` the paths the hook reads.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$callee,
+      "::mlir::FlatSymbolRefAttr":$owner, "::mlir::FlatSymbolRefAttr":$source,
+      OptionalParameter<"::mlir::ArrayAttr">:$captures,
+      OptionalParameter<"::mlir::ArrayAttr">:$reads);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomNestedHooksAttr
+    : SimAttr<"RandomNestedHooks", "random_nested_hooks"> {
+  let summary = "randomization hooks of a nested random object";
+  let parameters = (ins "::obelisk::sim::RandomNestedObjectAttr":$object,
+      OptionalParameter<"::obelisk::sim::RandomizeHookAttr">:$pre,
+      OptionalParameter<"::obelisk::sim::RandomizeHookAttr">:$post);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def SimRandomNestedConstraintsAttr
+    : SimAttr<"RandomNestedConstraints", "random_nested_constraints"> {
+  let summary = "constraint blocks contributed by a nested random object";
+  let description = [{
+    `globalIndices` are the positions of the nested object's constraint
+    blocks in the randomize() call's constraint set.
+  }];
+  let parameters = (ins "::obelisk::sim::RandomNestedObjectAttr":$object,
+      "::mlir::DenseI64ArrayAttr":$globalIndices);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def SimRandomAliasGuardAttr
+    : SimAttr<"RandomAliasGuard", "random_alias_guard"> {
+  let summary = "a recursive random-object path that may alias an ancestor";
+  let description = [{
+    Randomization fails at run time when the object at the end of `object`'s
+    path is the object `aliasDepth` steps along it.
+  }];
+  let parameters = (ins "::obelisk::sim::RandomNestedObjectAttr":$object,
+      "uint32_t":$aliasDepth);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomNestedSelectionAttr
+    : SimAttr<"RandomNestedSelection", "random_nested_selection"> {
+  let summary = "the dynamic class a nested randomize() alternative handles";
+  let description = [{
+    Selects the alternative of a nested randomize() dispatch whose target,
+    reached through `field` or the field symbols of `path`, is an instance of
+    class `target`; without `target` the alternative handles a null object.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$field,
+      OptionalParameter<"::mlir::ArrayAttr">:$path,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$target);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {
