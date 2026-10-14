@@ -1,11 +1,9 @@
 // RUN: %obelisk --std=1800-2023 -O0 -o %t %s
 // RUN: not %t +ntb_random_seed=13 2>&1 | FileCheck %s --implicit-check-not="unknown weight selected"
-// XFAIL: *
 
-// A four-state weight vector with X or Z bits must be diagnosed like a
-// four-state scalar weight (IEEE 1800-2023 18.17.1 requires a nonnegative
-// integral value). The vector weight is currently used as if its unknown bits
-// were zero.
+// A four-state weight vector with X or Z bits is diagnosed like a four-state
+// scalar weight (IEEE 1800-2023 18.17.1 requires a nonnegative integral
+// value) rather than used as if its unknown bits were zero.
 // CHECK: randsequence weight contains X or Z bits
 
 module top;

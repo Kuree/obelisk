@@ -2326,13 +2326,17 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     FailureOr<Value> lowered = lowerExpression(node);
     if (failed(lowered))
       return failure();
-    if (isa<sim::LogicType>(lowered->getType())) {
+    // Packed four-state vectors are checked as one logic scalar.
+    FailureOr<Value> scalar = toPackedScalar(*lowered, weightLocation);
+    if (failed(scalar))
+      return failure();
+    if (isa<sim::LogicType>(scalar->getType())) {
       // An X/Z value is not a nonnegative integral weight. Check before
       // four-state-to-two-state conversion can turn unknown bits into zero.
       Value selfEqual = sim::SimLogicCompareOp::create(
           builder, weightLocation,
           sim::LogicType::get(function.getContext(), 1), sim::CompareKind::Eq,
-          *lowered, *lowered);
+          *scalar, *scalar);
       Value known = sim::SimLogicIsTrueOp::create(
           builder, weightLocation, builder.getI1Type(), selfEqual);
       Block *valid = addBlock();
