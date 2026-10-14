@@ -3681,6 +3681,17 @@ private:
                   builder.getI64IntegerAttr(node.arguments().size()));
       SET_OP_ATTR(HasThisClass,
                   builder.getBoolAttr(node.thisClass() != nullptr));
+      // Inside a class method, randomize() without a receiver binds to the
+      // class's randomize method rather than std::randomize (IEEE 1800-2023
+      // 18.6.1), and slang omits the implicit `this` from its arguments.
+      if (const auto *system =
+              std::get_if<slang::ast::CallExpression::SystemCallInfo>(
+                  &node.subroutine);
+          system && node.arguments().empty() &&
+          system->subroutine.get() ==
+              compilation.getSystemMethod(slang::ast::SymbolKind::ClassType,
+                                          "randomize"))
+        attrs.set("obelisk.implicit_this_randomize", builder.getUnitAttr());
       if (sdfAnnotations.isAppliedCall(node))
         attrs.set("obelisk.sdf_compile_time_applied", builder.getUnitAttr());
       bool isSuperClass = false;

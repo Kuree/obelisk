@@ -5341,6 +5341,46 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Operation *> callChildren = getChildren(call);
     uint64_t argumentCount = call.getArgumentCount();
     bool hasInlineConstraints = call.getHasInlineConstraints();
+    if (argumentCount == 0 &&
+        call->hasAttr("obelisk.implicit_this_randomize")) {
+      // randomize() inside a class method is this.randomize(). Make the
+      // receiver explicit, as slang does for a written `this`.
+      auto method = call->getParentOfType<semantic::SVSubroutineSymbolOp>();
+      std::optional<SymbolRefAttr> thisReference =
+          method ? method.getThisVariableSymbol() : std::nullopt;
+      auto thisSymbol =
+          thisReference
+              ? semanticSymbols.find(thisReference->getLeafReference())
+              : semanticSymbols.end();
+      if (thisSymbol == semanticSymbols.end()) {
+        emitError(getSemanticLocation(call))
+            << "randomize() without a receiver requires an enclosing class "
+               "method";
+        invalid = true;
+        return true;
+      }
+      OperationState state(
+          call.getLoc(),
+          semantic::SVNamedValueExpressionOp::getOperationName());
+      for (StringRef name :
+           {"node_id", "original_source_range", "source_range", "source_file",
+            "source_end_line", "source_end_column"})
+        if (Attribute value = call->getAttr(name))
+          state.addAttribute(name, value);
+      state.addAttribute("is_signed", builder.getBoolAttr(false));
+      state.addAttribute("referenced_symbol", *thisReference);
+      if (Attribute path = thisSymbol->second->getAttr("hierarchical_name"))
+        state.addAttribute("referenced_path", path);
+      state.addAttribute("semantic_type",
+                         thisSymbol->second->getAttr("semantic_type"));
+      state.addRegion()->push_back(new Block());
+      call->getRegion(0).front().push_back(Operation::create(state));
+      call->removeAttr("obelisk.implicit_this_randomize");
+      call->setAttr("argument_count", builder.getI64IntegerAttr(1));
+      call->setAttr("defaulted_arguments", builder.getDenseI64ArrayAttr({0}));
+      callChildren = getChildren(call);
+      argumentCount = 1;
+    }
     if (argumentCount == 0)
       return freezeScopeRandomizeContract(call, std::move(callChildren));
     if (argumentCount > callChildren.size()) {
