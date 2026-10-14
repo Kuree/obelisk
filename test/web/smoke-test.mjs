@@ -252,12 +252,13 @@ endmodule
   // the shared periodic ABI too: LRM 4.4-4.6, 9.4.1 and 10.4.2 require exact
   // delayed-initial timing and pre-/post-NBA observations on wasm32 as well.
   for (const [fixture, expected] of [
-    ['native-periodic-initial-delays', 'periodic delays 5000 5007 at 50007'],
-    ['native-nba-batch', 'NBA batch complete 5000 5000'],
-    ['native-nba-batch-wide', 'NBA wide batch complete 5000'],
-    ['native-nba-unread', 'unread NBA complete 5000 5000'],
-    ['native-nba-region-slices', 'slice NBA PASS'],
-    ['native-structured-activation', [
+    ['../Driver/native-periodic-initial-delays.sv',
+      'periodic delays 5000 5007 at 50007'],
+    ['Inputs/nba-batch.sv', 'NBA batch complete 5000 5000'],
+    ['Inputs/nba-batch-wide.sv', 'NBA wide batch complete 5000'],
+    ['../Driver/native-nba-unread.sv', 'unread NBA complete 5000 5000'],
+    ['../Driver/native-nba-region-slices.sv', 'slice NBA PASS'],
+    ['../Driver/native-structured-activation.sv', [
       'result 0x sample 0x',
       'result 08 sample 08',
       'result 0x sample 0x',
@@ -268,7 +269,7 @@ endmodule
     ].join('\n')],
   ]) {
     const periodicSource = await readFile(
-      new URL(`../Driver/${fixture}.sv`, import.meta.url), 'utf8',
+      new URL(fixture, import.meta.url), 'utf8',
     );
     for (const optimization of ['-O0', '-O3']) {
       let referenceOutput;
