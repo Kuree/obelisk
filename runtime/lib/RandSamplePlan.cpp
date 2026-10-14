@@ -13,6 +13,7 @@
 #include <array>
 #include <cstring>
 #include <memory>
+#include <numeric>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -31,6 +32,70 @@ uint16_t read16(const uint8_t *p) {
 uint32_t read32(const uint8_t *p) { return random::planRead32(p); }
 uint64_t read64(const uint8_t *p) { return random::planRead64(p); }
 
+/// Exact weights enumerate the item combinations of coupled distributions.
+/// Beyond this many combinations a solve reports exhausted resources.
+constexpr size_t maxDistributionTerms = size_t{1} << 16;
+
+/// Union-find over relation inputs. A circuit node's representative is one
+/// input of its support; computing it unites that whole support.
+class InputPartition {
+public:
+  static constexpr size_t none = SIZE_MAX;
+
+  InputPartition(const BooleanCircuit &circuit, size_t inputs)
+      : circuit(circuit), parent(inputs),
+        representatives(circuit.getNodes().size(), unknown) {
+    std::iota(parent.begin(), parent.end(), size_t{0});
+  }
+
+  size_t find(size_t input) {
+    while (parent[input] != input)
+      input = parent[input] = parent[parent[input]];
+    return input;
+  }
+
+  size_t unite(size_t a, size_t b) {
+    if (a == none || b == none)
+      return a == none ? b : a;
+    a = find(a);
+    b = find(b);
+    parent[std::max(a, b)] = std::min(a, b);
+    return std::min(a, b);
+  }
+
+  /// Unite the inputs `id` reads; returns one of them, or none for a
+  /// constant.
+  size_t join(ID id) {
+    std::vector<size_t> pending{id / 2};
+    while (!pending.empty()) {
+      size_t node = pending.back();
+      if (representatives[node] != unknown) {
+        pending.pop_back();
+        continue;
+      }
+      const auto &plan = circuit.getNodes()[node];
+      if (plan.opcode == PlanOpcode::RandomBit)
+        representatives[node] = plan.b;
+      else if (plan.opcode != PlanOpcode::And)
+        representatives[node] = none;
+      else if (representatives[plan.a / 2] == unknown)
+        pending.push_back(plan.a / 2);
+      else if (representatives[plan.b / 2] == unknown)
+        pending.push_back(plan.b / 2);
+      else
+        representatives[node] =
+            unite(representatives[plan.a / 2], representatives[plan.b / 2]);
+    }
+    return representatives[id / 2];
+  }
+
+private:
+  static constexpr size_t unknown = SIZE_MAX - 1;
+  const BooleanCircuit &circuit;
+  std::vector<size_t> parent;
+  std::vector<size_t> representatives;
+};
+
 /// The runtime handles Boolean cofactors and exact ranks only. Arithmetic
 /// expressions and their validity predicates were lowered by compiler Z3.
 class Formula {
@@ -45,6 +110,25 @@ public:
       result = circuit.conjunction(result, requirement);
     if (std::find(fixed.begin(), fixed.end(), true) != fixed.end())
       result = circuit.restrict(result, fixedValues, fixed);
+    return result;
+  }
+
+  /// The relation's top-level conjuncts: requirements split at positive ANDs.
+  std::vector<ID> conjuncts() const {
+    std::vector<ID> result;
+    std::vector<ID> pending(requirements.rbegin(), requirements.rend());
+    while (!pending.empty()) {
+      ID id = pending.back();
+      pending.pop_back();
+      const auto &node = circuit.getNodes()[id / 2];
+      if (id == 1)
+        continue;
+      if (!(id & 1) && node.opcode == PlanOpcode::And) {
+        pending.push_back(node.b);
+        pending.push_back(node.a);
+      } else
+        result.push_back(id);
+    }
     return result;
   }
 
@@ -212,22 +296,139 @@ public:
     return SamplerResult::Satisfiable;
   }
 
-  bool weighted(unsigned width, const Bits &variable,
-                const std::vector<ID> &bits,
-                const std::vector<unsigned> &physicalBits,
-                const std::vector<WeightedGroup> &groups,
-                const std::vector<ID> &guards,
-                const std::vector<Bits> &expressionWeights,
-                uint64_t retainedSoft, uint64_t constraintMask,
-                const uint64_t *captures, const uint32_t *captureWidths,
-                const std::vector<size_t> &captureOffsets,
-                const uint64_t *start, const uint64_t *mutableMask,
-                obelisk_rt_random_state_v1 &state, const uint64_t *masks,
-                size_t layerCount, uint64_t *output) {
-    ModelCounter counter(circuit, bits);
-    if (!counter.build(predicate()))
-      return false;
+  SamplerResult
+  weighted(unsigned width, const Bits &variable, const std::vector<ID> &bits,
+           const std::vector<unsigned> &physicalBits,
+           const std::vector<WeightedGroup> &groups,
+           const std::vector<ID> &guards,
+           const std::vector<Bits> &expressionWeights, uint64_t retainedSoft,
+           uint64_t constraintMask, const uint64_t *captures,
+           const uint32_t *captureWidths,
+           const std::vector<size_t> &captureOffsets, const uint64_t *start,
+           const uint64_t *mutableMask, obelisk_rt_random_state_v1 &state,
+           const uint64_t *masks, size_t layerCount, uint64_t *output) {
+    std::vector<bool> active(groups.size(), false);
+    for (size_t index = 0; index != groups.size(); ++index)
+      active[index] =
+          (groups[index].constraintBlock ==
+               OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+           !((constraintMask >> groups[index].constraintBlock) & 1)) &&
+          (groups[index].softPriority == UINT32_MAX ||
+           ((retainedSoft >> groups[index].softPriority) & 1));
+
+    // Distributions over independent inputs factor: their joint measure is
+    // the product of per-component measures. Sampling each component alone
+    // combines items only across distributions that share a component, not
+    // across every distribution in the relation.
+    InputPartition partition(circuit, bits.size());
+    std::vector<ID> parts = conjuncts();
+    std::vector<size_t> partInputs;
+    partInputs.reserve(parts.size());
+    for (ID part : parts)
+      partInputs.push_back(partition.join(part));
+    std::vector<size_t> groupInputs(groups.size(), InputPartition::none);
+    for (size_t index = 0; index != groups.size(); ++index) {
+      if (!active[index])
+        continue;
+      const WeightedGroup &group = groups[index];
+      size_t input = InputPartition::none;
+      for (size_t bit = 0; bit != bits.size(); ++bit)
+        if (physicalBits[bit] >= group.targetOffset &&
+            physicalBits[bit] - group.targetOffset < group.width)
+          input = partition.unite(input, bit);
+      if (input == InputPartition::none)
+        continue;
+      if (index < guards.size() && guards[index] != missing)
+        input = partition.unite(input, partition.join(guards[index]));
+      for (const WeightedItem &item : group.items)
+        if (item.expressionWeight)
+          for (ID weightBit : expressionWeights[item.weightCapture])
+            input = partition.unite(input, partition.join(weightBit));
+      groupInputs[index] = input;
+    }
+    std::vector<size_t> components;
+    for (size_t input : groupInputs)
+      if (input != InputPartition::none)
+        components.push_back(partition.find(input));
+    std::sort(components.begin(), components.end());
+    components.erase(std::unique(components.begin(), components.end()),
+                     components.end());
+
     obelisk_rt_random_state_v1 nextState = state;
+    std::vector<bool> value;
+    // Conjuncts are split before restriction; prioritized stages that fix
+    // inputs never reach weighted sampling.
+    if (components.size() <= 1 ||
+        std::find(fixed.begin(), fixed.end(), true) != fixed.end()) {
+      SamplerResult result = weightedComponent(
+          predicate(), active, width, variable, bits, physicalBits, groups,
+          guards, expressionWeights, captures, captureWidths, captureOffsets,
+          masks, layerCount, nextState, value);
+      if (result != SamplerResult::Satisfiable)
+        return result;
+    } else {
+      // Components holding a distribution are sampled in input order, then
+      // every remaining input together.
+      value.assign(bits.size(), false);
+      auto owner = [&](size_t input) {
+        if (input == InputPartition::none)
+          return components.size();
+        size_t root = partition.find(input);
+        auto found =
+            std::lower_bound(components.begin(), components.end(), root);
+        return found != components.end() && *found == root
+                   ? size_t(found - components.begin())
+                   : components.size();
+      };
+      for (size_t component = 0; component <= components.size(); ++component) {
+        ID relation = 1;
+        for (size_t index = 0; index != parts.size(); ++index)
+          if (owner(partInputs[index]) == component)
+            relation = circuit.conjunction(relation, parts[index]);
+        std::vector<bool> included(groups.size(), false);
+        for (size_t index = 0; index != groups.size(); ++index)
+          included[index] = groupInputs[index] != InputPartition::none &&
+                            owner(groupInputs[index]) == component;
+        std::vector<bool> sampled;
+        SamplerResult result = weightedComponent(
+            relation, included, width, variable, bits, physicalBits, groups,
+            guards, expressionWeights, captures, captureWidths, captureOffsets,
+            masks, layerCount, nextState, sampled);
+        if (result != SamplerResult::Satisfiable)
+          return result;
+        for (size_t bit = 0; bit != bits.size(); ++bit)
+          if (owner(bit) == component)
+            value[bit] = sampled[bit];
+      }
+    }
+    size_t words = (uint64_t(width) + 63) / 64;
+    for (size_t word = 0; word != words; ++word)
+      output[word] = start[word] & ~mutableMask[word];
+    for (size_t bit = 0; bit != value.size(); ++bit)
+      if (value[bit])
+        output[physicalBits[bit] / 64] |= uint64_t{1}
+                                          << (physicalBits[bit] % 64);
+    if (width % 64)
+      output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
+    state = nextState;
+    return SamplerResult::Satisfiable;
+  }
+
+  /// Sample the inputs of one relation under the included distributions.
+  /// Inputs the relation does not read are sampled uniformly; a caller that
+  /// partitions the relation keeps only its component's values.
+  SamplerResult weightedComponent(
+      ID predicate, const std::vector<bool> &included, unsigned width,
+      const Bits &variable, const std::vector<ID> &bits,
+      const std::vector<unsigned> &physicalBits,
+      const std::vector<WeightedGroup> &groups, const std::vector<ID> &guards,
+      const std::vector<Bits> &expressionWeights, const uint64_t *captures,
+      const uint32_t *captureWidths, const std::vector<size_t> &captureOffsets,
+      const uint64_t *masks, size_t layerCount,
+      obelisk_rt_random_state_v1 &nextState, std::vector<bool> &value) {
+    ModelCounter counter(circuit, bits);
+    if (!counter.build(predicate))
+      return SamplerResult::Invalid;
     size_t words = (uint64_t(width) + 63) / 64;
     std::vector<bool> accepted(bits.size(), false);
     struct Choice {
@@ -249,13 +450,9 @@ public:
       std::vector<bool> targets(bits.size(), false);
       std::vector<std::vector<Choice>> choices;
       for (size_t groupIndex = 0; groupIndex != groups.size(); ++groupIndex) {
-        const WeightedGroup &group = groups[groupIndex];
-        if ((group.constraintBlock !=
-                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
-             ((constraintMask >> group.constraintBlock) & 1)) ||
-            (group.softPriority != UINT32_MAX &&
-             !((retainedSoft >> group.softPriority) & 1)))
+        if (!included[groupIndex])
           continue;
+        const WeightedGroup &group = groups[groupIndex];
         std::vector<bool> target(bits.size(), false);
         bool current = false, later = false;
         for (size_t bit = 0; bit != bits.size(); ++bit) {
@@ -271,20 +468,20 @@ public:
         // solve layer. Partially ordered target paths need a posterior measure
         // carried across their layers rather than fresh range normalization.
         if (later)
-          return false;
+          return SamplerResult::Invalid;
         ID guard = groupIndex < guards.size() && guards[groupIndex] != missing
                        ? guards[groupIndex]
                        : 1;
         ModelCounter active = counter;
         ModelCounter inactive = counter;
         if (!active.constrain(guard) || !inactive.constrain(guard ^ 1))
-          return false;
+          return SamplerResult::Invalid;
         if (active.count().zero())
           continue;
         // Activation is state or an already accepted ordering layer. A guard
         // that still varies needs a conditional, scale-invariant measure.
         if (!inactive.count().zero())
-          return false;
+          return SamplerResult::Invalid;
         std::vector<Choice> eligible;
         ModelCount denominator(1);
         Bits field(variable.begin() + group.targetOffset,
@@ -318,7 +515,7 @@ public:
           }
           ModelCounter range = counter;
           if (!range.constrain(region))
-            return false;
+            return SamplerResult::Invalid;
           range.project(target);
           ModelCount count = range.count();
           if (count.zero())
@@ -336,7 +533,7 @@ public:
           if (item.expressionWeight) {
             const Bits &weight = expressionWeights[item.weightCapture];
             if (weight.size() != weightWidth)
-              return false;
+              return SamplerResult::Invalid;
             // An unsigned expression is the sum of its set-bit masses.
             // Every bit uses the original item's legal-value denominator,
             // including values where that particular bit is zero.
@@ -346,7 +543,7 @@ public:
               ModelCounter weightedRange = counter;
               if (!weightedRange.constrain(
                       circuit.conjunction(region, weight[bit])))
-                return false;
+                return SamplerResult::Invalid;
               weightedRange.project(target);
               if (weightedRange.count().zero())
                 continue;
@@ -356,14 +553,14 @@ public:
               ModelCounter zeroRange = counter;
               if (!zeroRange.constrain(
                       circuit.conjunction(region, weight[bit] ^ 1)))
-                return false;
+                return SamplerResult::Invalid;
               zeroRange.project(target);
               ModelCount covered = weightedRange.count();
               covered.add(zeroRange.count());
               // Both projections cover the original range. Their counts add
               // to its count exactly when their target values are disjoint.
               if (covered.compare(count) != 0)
-                return false;
+                return SamplerResult::Invalid;
               eligible.push_back({std::move(weightedRange),
                                   originalMass(ModelCount::powerOfTwo(bit)),
                                   count, ModelCount()});
@@ -373,7 +570,7 @@ public:
                                 count, ModelCount()});
         }
         if (eligible.empty())
-          return false;
+          return SamplerResult::Invalid;
         // Each source item's original mass is shared by its legal target
         // values. A common denominator keeps the resulting ratios integral
         // without a fixed-width normalization or rounding step.
@@ -385,6 +582,15 @@ public:
           targets[bit] = targets[bit] || target[bit];
       }
       if (!choices.empty()) {
+        // Coupled distributions combine their items. Exact weights need every
+        // combination's legal count, so bound that work and report it rather
+        // than spinning inside randomize().
+        size_t combinations = 1;
+        for (const std::vector<Choice> &group : choices) {
+          if (combinations > maxDistributionTerms / group.size())
+            return SamplerResult::Exhausted;
+          combinations *= group.size();
+        }
         std::vector<size_t> indices(choices.size(), 0);
         std::vector<Term> terms;
         ModelCount total;
@@ -394,7 +600,7 @@ public:
           for (size_t group = 0; group != choices.size(); ++group) {
             const Choice &choice = choices[group][indices[group]];
             if (!branch.intersect(choice.region))
-              return false;
+              return SamplerResult::Invalid;
             coefficient = coefficient.multiplied(choice.coefficient);
           }
           branch.project(targets);
@@ -414,7 +620,7 @@ public:
             break;
         }
         if (total.zero())
-          return false;
+          return SamplerResult::Invalid;
         ModelCount rank = ModelCount::randomBelow(total, nextState);
         const Term *selected = nullptr;
         for (const Term &term : terms) {
@@ -425,42 +631,33 @@ public:
           rank.subtract(term.mass);
         }
         if (!selected)
-          return false;
+          return SamplerResult::Invalid;
         ModelCounter branch = counter;
         for (size_t group = 0; group != choices.size(); ++group)
           if (!branch.intersect(
                   choices[group][selected->choices[group]].region))
-            return false;
+            return SamplerResult::Invalid;
         branch.project(targets);
-        auto value = branch.assignment(
+        auto selection = branch.assignment(
             ModelCount::randomBelow(branch.count(), nextState));
-        counter.restrict(value, targets);
+        counter.restrict(selection, targets);
       }
       counter.project(keep);
       ModelCount count = counter.count();
       if (count.zero())
-        return false;
-      auto value =
+        return SamplerResult::Invalid;
+      auto chosen =
           counter.assignment(ModelCount::randomBelow(count, nextState));
-      counter.restrict(value, keep);
+      counter.restrict(chosen, keep);
       for (size_t bit = 0; bit != bits.size(); ++bit)
         accepted[bit] = accepted[bit] || keep[bit];
     }
     counter.project(std::vector<bool>(bits.size(), true));
     ModelCount count = counter.count();
     if (count.zero())
-      return false;
-    auto value = counter.assignment(ModelCount::randomBelow(count, nextState));
-    for (size_t word = 0; word != words; ++word)
-      output[word] = start[word] & ~mutableMask[word];
-    for (size_t bit = 0; bit != value.size(); ++bit)
-      if (value[bit])
-        output[physicalBits[bit] / 64] |= uint64_t{1}
-                                          << (physicalBits[bit] % 64);
-    if (width % 64)
-      output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
-    state = nextState;
-    return true;
+      return SamplerResult::Invalid;
+    value = counter.assignment(ModelCount::randomBelow(count, nextState));
+    return SamplerResult::Satisfiable;
   }
 
   bool ordered(unsigned width, const std::vector<ID> &bits,
@@ -1064,9 +1261,7 @@ SamplerResult sampleRandomPlan(
                       weightedGroups, distributionGuards, expressionWeights,
                       retainedSoft, constraintMask, captures, captureWidths,
                       captureOffsets, start, mutableMask, *randomState,
-                      orderedMasks, orderedLayerCount, assignment)
-               ? SamplerResult::Satisfiable
-               : SamplerResult::Invalid;
+                      orderedMasks, orderedLayerCount, assignment);
   if (uniform)
     return f.ordered(width, booleanBits, physicalBits, start, mutableMask,
                      *randomState, orderedMasks, orderedLayerCount, assignment)

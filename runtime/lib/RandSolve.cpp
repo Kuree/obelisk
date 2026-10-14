@@ -979,6 +979,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
           program, bundleSize, &start, &mutableMask, 1, constraintMask,
           captures, nullptr, captureCount, outAssignment, randomState,
           solveLayers.data(), solveLayers.size());
+      if (result == obelisk::runtime::SamplerResult::Exhausted)
+        return OBELISK_RT_OUT_OF_RESOURCES;
       if (result == obelisk::runtime::SamplerResult::Satisfiable)
         *outSuccess = 1;
       return OBELISK_RT_OK;

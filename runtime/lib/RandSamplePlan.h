@@ -10,7 +10,14 @@
 struct obelisk_rt_random_state_v1;
 
 namespace obelisk::runtime {
-enum class SamplerResult { Unavailable, Satisfiable, Unsatisfiable, Invalid };
+/// Exhausted: an exact sample needs more work than the runtime's budget.
+enum class SamplerResult {
+  Unavailable,
+  Satisfiable,
+  Unsatisfiable,
+  Invalid,
+  Exhausted
+};
 
 /// Tentative history for one cyclic stage. The caller owns persistence and
 /// publishes the next history only after every randomization stage succeeds.

@@ -1230,6 +1230,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_cycle_sample(
         captureCount, assignment.data(), &state, nullptr, 0, &request);
     if (result == obelisk::runtime::SamplerResult::Unsatisfiable)
       return OBELISK_RT_OK;
+    if (result == obelisk::runtime::SamplerResult::Exhausted)
+      return OBELISK_RT_OUT_OF_RESOURCES;
     if (result != obelisk::runtime::SamplerResult::Satisfiable)
       return OBELISK_RT_INVALID_ARGUMENT;
     obelisk_rt_string_v1 nextDomain = domain;
@@ -1339,6 +1341,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
           mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
           captureWidths, captureCount, outAssignmentWords, &randomState,
           orderedMasks.data(), solveLayers.size());
+      if (result == obelisk::runtime::SamplerResult::Exhausted)
+        return OBELISK_RT_OUT_OF_RESOURCES;
       if (result == obelisk::runtime::SamplerResult::Satisfiable)
         *outSuccess = 1;
       else
