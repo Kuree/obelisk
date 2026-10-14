@@ -357,6 +357,31 @@ def SimExecutionDomain
   let cppNamespace = "::obelisk::sim";
 }
 
+// Node kinds of a symbolic integer return summary.
+def SimIntegerExpressionConstant : I32EnumAttrCase<"Constant", 0, "constant">;
+def SimIntegerExpressionArgument : I32EnumAttrCase<"Argument", 1, "argument">;
+def SimIntegerExpressionIdentity : I32EnumAttrCase<"Identity", 2, "identity">;
+def SimIntegerExpressionSExt : I32EnumAttrCase<"SExt", 3, "sext">;
+def SimIntegerExpressionZExt : I32EnumAttrCase<"ZExt", 4, "zext">;
+def SimIntegerExpressionTrunc : I32EnumAttrCase<"Trunc", 5, "trunc">;
+def SimIntegerExpressionAdd : I32EnumAttrCase<"Add", 6, "add">;
+def SimIntegerExpressionSub : I32EnumAttrCase<"Sub", 7, "sub">;
+def SimIntegerExpressionMul : I32EnumAttrCase<"Mul", 8, "mul">;
+def SimIntegerExpressionAnd : I32EnumAttrCase<"And", 9, "and">;
+def SimIntegerExpressionOr : I32EnumAttrCase<"Or", 10, "or">;
+def SimIntegerExpressionXor : I32EnumAttrCase<"Xor", 11, "xor">;
+def SimIntegerExpressionKind
+    : I32EnumAttr<"IntegerExpressionKind", "integer return summary node", [
+        SimIntegerExpressionConstant, SimIntegerExpressionArgument,
+        SimIntegerExpressionIdentity, SimIntegerExpressionSExt,
+        SimIntegerExpressionZExt, SimIntegerExpressionTrunc,
+        SimIntegerExpressionAdd, SimIntegerExpressionSub,
+        SimIntegerExpressionMul, SimIntegerExpressionAnd,
+        SimIntegerExpressionOr, SimIntegerExpressionXor
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimNetWire : I32EnumAttrCase<"Wire", 0, "wire">;
 def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
 def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;

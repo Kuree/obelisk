@@ -4322,8 +4322,7 @@ public:
       return signalPassFailure();
     }
     ObeliskSimInstrumentManagedRootsPassOptions rootOptions;
-    rootOptions.polled =
-        getOperation()->hasAttr(analysis::polledCollectionAttrName);
+    rootOptions.polled = sim::has<sim::GCPolled>(getOperation());
     auto instrumentFunctions = [&]() -> LogicalResult {
       OpPassManager pipeline(sim::SimDesignOp::getOperationName());
       pipeline.nest<sim::SimFuncOp>().addPass(

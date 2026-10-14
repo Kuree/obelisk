@@ -1378,20 +1378,19 @@ static int executeCompilation(
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
   if (pulseRejectPercent || pulseErrorPercent) {
-    (*module)->setAttr(
-        "pulse.reject_percent",
+    obelisk::sim::set<obelisk::sim::PulseRejectPercent>(
+        (*module),
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseReject));
-    (*module)->setAttr(
-        "pulse.error_percent",
+    obelisk::sim::set<obelisk::sim::PulseErrorPercent>(
+        (*module),
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseError));
   }
   if (!globalPulseStyle.empty())
-    (*module)->setAttr("pulse.on_detect",
-                       BoolAttr::get(&context, globalPulseStyle == "ondetect"));
+    obelisk::sim::set<obelisk::sim::PulseOnDetect>(
+        (*module), BoolAttr::get(&context, globalPulseStyle == "ondetect"));
   if (!globalCancelledPulses.empty())
-    (*module)->setAttr(
-        "pulse.show_cancelled",
-        BoolAttr::get(&context, globalCancelledPulses == "show"));
+    obelisk::sim::set<obelisk::sim::PulseShowCancelled>(
+        (*module), BoolAttr::get(&context, globalCancelledPulses == "show"));
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     SmallVector<Attribute> metrics;
     if (coverage->getOption().matches(OPT_coverage)) {

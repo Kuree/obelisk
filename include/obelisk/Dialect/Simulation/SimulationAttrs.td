@@ -265,6 +265,31 @@ def SimRandomConstraintBlockReferenceArrayAttr
 }
 
 
+def SimIntegerRangeAttr : SimAttr<"IntegerRange", "integer_range"> {
+  let summary = "unsigned and signed bounds an integer value never leaves";
+  let parameters = (ins "::mlir::IntegerAttr":$umin,
+      "::mlir::IntegerAttr":$umax, "::mlir::IntegerAttr":$smin,
+      "::mlir::IntegerAttr":$smax);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimIntegerExpressionAttr
+    : SimAttr<"IntegerExpression", "integer_expression"> {
+  let summary = "symbolic integer function of a call's arguments";
+  let description = [{
+    A `constant` holds its `value`; an `argument` names the call operand
+    `index`; every other kind applies to its `operands`. All nodes have a
+    nonzero `width` of at most 128 bits.
+  }];
+  let parameters = (ins EnumParameter<SimIntegerExpressionKind>:$kind,
+      "uint32_t":$width, OptionalParameter<"::mlir::IntegerAttr">:$value,
+      OptionalParameter<"std::optional<uint32_t>">:$index,
+      OptionalParameter<"::mlir::ArrayAttr">:$operands);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

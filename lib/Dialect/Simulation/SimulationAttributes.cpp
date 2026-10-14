@@ -536,6 +536,50 @@ LogicalResult RandomConstraintBlockReferenceAttr::verify(
 }
 
 LogicalResult
+IntegerRangeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                         IntegerAttr umin, IntegerAttr umax, IntegerAttr smin,
+                         IntegerAttr smax) {
+  Type type = umin.getType();
+  if (!isa<IntegerType>(type) || umax.getType() != type ||
+      smin.getType() != type || smax.getType() != type)
+    return emitError() << "integer range bounds must share one integer type";
+  if (umin.getValue().ugt(umax.getValue()) ||
+      smin.getValue().sgt(smax.getValue()))
+    return emitError() << "integer range is empty";
+  return success();
+}
+
+LogicalResult
+IntegerExpressionAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                              IntegerExpressionKind kind, uint32_t width,
+                              IntegerAttr value, std::optional<uint32_t> index,
+                              ArrayAttr operands) {
+  if (width == 0 || width > 128)
+    return emitError() << "integer expression width must be 1 to 128 bits";
+  switch (kind) {
+  case IntegerExpressionKind::Constant:
+    if (!value || value.getValue().getBitWidth() != width || index || operands)
+      return emitError() << "constant integer expression needs only a "
+                            "value of its width";
+    return success();
+  case IntegerExpressionKind::Argument:
+    if (!index || value || operands)
+      return emitError() << "argument integer expression needs only an index";
+    return success();
+  default:
+    break;
+  }
+  bool unary = kind == IntegerExpressionKind::Identity ||
+               kind == IntegerExpressionKind::SExt ||
+               kind == IntegerExpressionKind::ZExt ||
+               kind == IntegerExpressionKind::Trunc;
+  if (value || index || !operands || operands.size() != (unary ? 1u : 2u) ||
+      !llvm::all_of(operands, llvm::IsaPred<IntegerExpressionAttr>))
+    return emitError() << "integer expression has malformed operands";
+  return success();
+}
+
+LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {
   auto rangeWidth = [](DenseI64ArrayAttr range) -> std::optional<uint64_t> {

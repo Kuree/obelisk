@@ -192,7 +192,8 @@ ScopedIntegerRangeAnalysis::getRange(Value value,
             dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
         function && argument.getOwner()->isEntryBlock())
       result = decodeIntegerRange(
-          function.getArgAttr(argument.getArgNumber(), integerRangeAttr),
+          function.getArgAttr(argument.getArgNumber(),
+                              sim::IntegerRange::getNameStr()),
           width);
   if (auto range = getIntegerResultRange(value))
     result = result ? result->intersection(*range) : *range;

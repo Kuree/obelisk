@@ -1,13 +1,13 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 
-// Under polled collection (`gc.polled`) an activation registers its
+// Under polled collection (`simulation.gc_polled`) an activation registers its
 // managed-root record lazily: each collection point pushes it only when its
 // runtime cookie is still zero, and each exit pops it only when it is
 // registered. Entry and the resume shim reset the record; an ordinary edge into
 // the resumed block keeps a registration made earlier in the activation.
 
 module attributes {
-  gc.polled,
+  simulation.gc_polled,
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
   llvm.target_triple = "x86_64-unknown-linux-gnu"
 } {

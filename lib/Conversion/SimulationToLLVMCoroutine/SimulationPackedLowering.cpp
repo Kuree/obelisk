@@ -294,7 +294,7 @@ LogicalResult lowerPackedSimulationOperations(
   DenseSet<Value> nativeTwoStateValues;
   DenseSet<Operation *> nativeTwoStateOperations;
   module.walk([&](Operation *operation) {
-    if (operation->hasAttr(analysis::knownLogicResultAttr) &&
+    if (sim::has<sim::KnownLogicResult>(operation) &&
         operation->getNumResults() == 1 &&
         isa<sim::LogicType>(operation->getResult(0).getType()))
       nativeTwoStateValues.insert(operation->getResult(0));
@@ -1412,12 +1412,12 @@ LogicalResult lowerPackedSimulationOperations(
   // conversion has changed their ABI and indices; no later pass may reuse
   // them as facts about the physical planes.
   module.walk([&](Operation *operation) {
-    operation->removeAttr(analysis::integerResultRangesAttr);
-    operation->removeAttr(analysis::integerResultExprsAttr);
-    operation->removeAttr(analysis::knownLogicResultAttr);
+    sim::remove<sim::ResultRanges>(operation);
+    sim::remove<sim::ResultExprs>(operation);
+    sim::remove<sim::KnownLogicResult>(operation);
     if (auto function = dyn_cast<sim::SimFuncOp>(operation))
       for (unsigned index = 0; index < function.getNumArguments(); ++index)
-        function.removeArgAttr(index, analysis::integerRangeAttr);
+        function.removeArgAttr(index, sim::IntegerRange::getNameStr());
   });
   markTiming("two-state block specialization");
   SmallVector<runtime::RTScratchOp> scratchBuffers;

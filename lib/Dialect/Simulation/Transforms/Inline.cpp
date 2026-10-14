@@ -348,10 +348,9 @@ void ObeliskSimInlinePass::runOnOperation() {
     sim::InlineLegality legality = sim::getInlineCalleeLegality(
         function, recursiveFunctions.contains(function), designHasLateMetadata);
     calleeLegalities[function] = legality;
-    function->setDiscardableAttr(
-        sim::inlineLegalityCacheAttrName,
-        IntegerAttr::get(IntegerType::get(function.getContext(), 32),
-                         static_cast<uint32_t>(legality)));
+    sim::set<sim::InlineLegalityCache>(
+        function, IntegerAttr::get(IntegerType::get(function.getContext(), 32),
+                                   static_cast<uint32_t>(legality)));
   }
   struct SymbolUseSummary {
     uint64_t count = 0;
@@ -589,7 +588,7 @@ void ObeliskSimInlinePass::runOnOperation() {
   LogicalResult result = inliner.doInlining();
   for (sim::SimFuncOp function :
        design.getBody().front().getOps<sim::SimFuncOp>())
-    function->removeAttr(sim::inlineLegalityCacheAttrName);
+    sim::remove<sim::InlineLegalityCache>(function);
   llvm::DenseSet<uint64_t> remainingSelections;
   design.walk([&](sim::SimCallOp call) {
     if (auto selection = call->getAttrOfType<IntegerAttr>(selectedInlineAttr)) {

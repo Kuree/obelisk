@@ -12,6 +12,7 @@
 #include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstdint>
@@ -119,9 +120,9 @@ inline bool isKnownBoundary(llvm::StringRef name) {
   if (auto field = schedule::symbolizeField(name))
     return !schedule::metadata::requiresOperationScope(*field);
   return name == captureKind || name == descriptorId ||
-         name == descriptorRootType || name == descriptorLow ||
-         name == descriptorIndices || name == descriptorAggregateType ||
-         name == descriptorPackedLow;
+         name == IntegerRange::getNameStr() || name == descriptorRootType ||
+         name == descriptorLow || name == descriptorIndices ||
+         name == descriptorAggregateType || name == descriptorPackedLow;
 }
 
 inline bool isKnownOperation(llvm::StringRef name) {
@@ -145,7 +146,11 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == schedule::metadata::topLevelWildcardWait ||
          name == schedule::metadata::proceduralEventWait ||
          name == schedule::metadata::repeatingAlwaysWait ||
-         name == dpi::ElidedInputs::getNameStr();
+         name == dpi::ElidedInputs::getNameStr() ||
+         name == ResultRanges::getNameStr() ||
+         name == ResultExprs::getNameStr() ||
+         name == KnownLogicResult::getNameStr() ||
+         name == InlineLegalityCache::getNameStr();
 }
 
 /// Namespaces whose attributes are compiler-owned facts. A transformation

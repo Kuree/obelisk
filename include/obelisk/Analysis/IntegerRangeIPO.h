@@ -9,16 +9,6 @@ class Attribute;
 class Value;
 } // namespace mlir
 namespace obelisk::analysis {
-inline constexpr llvm::StringLiteral integerRangeAttr =
-    "analysis.integer_range";
-inline constexpr llvm::StringLiteral integerResultRangesAttr =
-    "analysis.result_ranges";
-inline constexpr llvm::StringLiteral integerResultExprsAttr =
-    "analysis.result_exprs";
-/// Transient, global no-X/Z certificate for a single semantic logic result.
-/// Producers consume it before expanding that value into physical planes.
-inline constexpr llvm::StringLiteral knownLogicResultAttr =
-    "analysis.known_logic_result";
 /// Reject malformed, empty or mismatched-width certificates.
 std::optional<mlir::ConstantIntRanges>
 decodeIntegerRange(mlir::Attribute attr,

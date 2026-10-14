@@ -145,7 +145,8 @@ struct ScalarEvolutionAnalysis::Impl {
                 : sim::SimFuncOp{};
         if (!function ||
             !decodeIntegerRange(
-                function.getArgAttr(argument.getArgNumber(), integerRangeAttr),
+                function.getArgAttr(argument.getArgNumber(),
+                                    sim::IntegerRange::getNameStr()),
                 integerWidth(value)))
           unknownLogic.insert(value);
       }
@@ -185,51 +186,57 @@ struct ScalarEvolutionAnalysis::Impl {
       auto found = values.find(value);
       return found == values.end() ? nullptr : resolve(found->second);
     };
-    if (auto expression = dyn_cast_or_null<DictionaryAttr>(
+    if (auto expression = dyn_cast_or_null<sim::IntegerExpressionAttr>(
             getIntegerResultExpression(result))) {
-      std::function<llvm::Value *(DictionaryAttr)> evaluate =
-          [&](DictionaryAttr node) -> llvm::Value * {
+      using Kind = sim::IntegerExpressionKind;
+      std::function<llvm::Value *(sim::IntegerExpressionAttr)> evaluate =
+          [&](sim::IntegerExpressionAttr node) -> llvm::Value * {
         if (!node)
           return nullptr;
-        auto kind = node.getAs<StringAttr>("kind").getValue();
-        auto *type = llvm::IntegerType::get(
-            context, node.getAs<IntegerAttr>("width").getInt());
-        if (kind == "constant")
-          return llvm::ConstantInt::get(
-              context, node.getAs<IntegerAttr>("value").getValue());
-        if (kind == "argument") {
-          unsigned index = node.getAs<IntegerAttr>("index").getInt();
+        auto *type = llvm::IntegerType::get(context, node.getWidth());
+        if (node.getKind() == Kind::Constant)
+          return llvm::ConstantInt::get(context, node.getValue().getValue());
+        if (node.getKind() == Kind::Argument) {
+          unsigned index = *node.getIndex();
           if (index >= op->getNumOperands() ||
               !known.contains(op->getOperand(index)))
             return nullptr;
           return get(op->getOperand(index));
         }
-        auto operands = node.getAs<ArrayAttr>("operands");
-        auto *lhs = evaluate(cast<DictionaryAttr>(operands[0]));
+        ArrayAttr operands = node.getOperands();
+        auto *lhs = evaluate(cast<sim::IntegerExpressionAttr>(operands[0]));
         if (!lhs)
           return nullptr;
-        if (kind == "identity")
+        switch (node.getKind()) {
+        case Kind::Identity:
           return lhs;
-        if (kind == "sext")
+        case Kind::SExt:
           return builder.CreateSExtOrTrunc(lhs, type);
-        if (kind == "zext" || kind == "trunc")
+        case Kind::ZExt:
+        case Kind::Trunc:
           return builder.CreateZExtOrTrunc(lhs, type);
-        auto *rhs = evaluate(cast<DictionaryAttr>(operands[1]));
+        default:
+          break;
+        }
+        auto *rhs = evaluate(cast<sim::IntegerExpressionAttr>(operands[1]));
         if (!rhs)
           return nullptr;
-        if (kind == "add")
+        switch (node.getKind()) {
+        case Kind::Add:
           return builder.CreateAdd(lhs, rhs);
-        if (kind == "sub")
+        case Kind::Sub:
           return builder.CreateSub(lhs, rhs);
-        if (kind == "mul")
+        case Kind::Mul:
           return builder.CreateMul(lhs, rhs);
-        if (kind == "and")
+        case Kind::And:
           return builder.CreateAnd(lhs, rhs);
-        if (kind == "or")
+        case Kind::Or:
           return builder.CreateOr(lhs, rhs);
-        if (kind == "xor")
+        case Kind::Xor:
           return builder.CreateXor(lhs, rhs);
-        return nullptr;
+        default:
+          return nullptr;
+        }
       };
       return evaluate(expression);
     }
@@ -450,11 +457,13 @@ struct ScalarEvolutionAnalysis::Impl {
           auto *input = function->getArg(parameter++);
           values[arg] = input;
           auto source = dyn_cast<sim::SimFuncOp>(region.getParentOp());
-          if (auto cap = source ? decodeIntegerRange(
-                                      source.getArgAttr(arg.getArgNumber(),
-                                                        integerRangeAttr),
-                                      integerWidth(arg))
-                                : std::nullopt) {
+          if (auto cap =
+                  source
+                      ? decodeIntegerRange(
+                            source.getArgAttr(arg.getArgNumber(),
+                                              sim::IntegerRange::getNameStr()),
+                            integerWidth(arg))
+                      : std::nullopt) {
             unsigned width = *integerWidth(arg);
             auto unsignedRange =
                 cap->umin().isZero() && cap->umax().isMaxValue()

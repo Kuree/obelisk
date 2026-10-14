@@ -36,6 +36,30 @@ def ObeliskSimulationDialect : Dialect {
   let useDefaultTypePrinterParser = 1;
   let usePropertiesForAttributes = 0;
   let hasConstantMaterializer = 1;
+  let hasOperationAttrVerify = 1;
+  let hasRegionArgAttrVerify = 1;
+  // Most `simulation.*` metadata predates declared attributes; these are
+  // declared and verified.
+  let discardableAttrs = (ins
+    // Integer range certificates: per function argument, per call or
+    // function result (a `#simulation.integer_range` or unit), and symbolic
+    // return summaries (a `#simulation.integer_expression` or unit).
+    "::mlir::Attribute":$integer_range,
+    "::mlir::ArrayAttr":$result_ranges,
+    "::mlir::ArrayAttr":$result_exprs,
+    // Transient no-X/Z certificate for one semantic logic result.
+    "::mlir::UnitAttr":$known_logic_result,
+    // Module: compiled code roots managed values only at GC polls and at
+    // calls that may reach one.
+    "::mlir::UnitAttr":$gc_polled,
+    // Function: the inliner's cached callee-invariant `InlineLegality`.
+    "::mlir::IntegerAttr":$inline_legality,
+    // Module: driver pulse controls for path delays (IEEE 1800-2023 30.7).
+    "::mlir::IntegerAttr":$pulse_reject_percent,
+    "::mlir::IntegerAttr":$pulse_error_percent,
+    "::mlir::BoolAttr":$pulse_on_detect,
+    "::mlir::BoolAttr":$pulse_show_cancelled
+  );
 }
 
 #endif // OBELISK_DIALECT_SIMULATION_SIMULATIONDIALECT_TD

@@ -51,7 +51,7 @@ public:
         ++numPollFreeCalls;
       });
     });
-    module->setAttr(analysis::polledCollectionAttrName, builder.getUnitAttr());
+    sim::mark<sim::GCPolled>(module);
   }
 };
 

@@ -2890,10 +2890,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     bool full = connectionFull.getValue();
     SmallVector<int64_t, 12> normalizedDelays(delays.asArrayRef());
-    auto globalReject =
-        module->getAttrOfType<IntegerAttr>("pulse.reject_percent");
-    auto globalError =
-        module->getAttrOfType<IntegerAttr>("pulse.error_percent");
+    auto globalReject = sim::get<sim::PulseRejectPercent>(module);
+    auto globalError = sim::get<sim::PulseErrorPercent>(module);
     auto percentLimits = [&](IntegerAttr percent) {
       SmallVector<int64_t, 12> result;
       result.reserve(normalizedDelays.size());
@@ -2969,11 +2967,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       // IEEE 1800-2017 30.7.4.1-.2 gives invocation controls precedence over
       // specify-block declarations. Preserve that precedence after range
       // splitting so it cannot vary accidentally across packed output bits.
-      if (auto global =
-              module->getAttrOfType<BoolAttr>("pulse.on_detect"))
+      if (auto global = sim::get<sim::PulseOnDetect>(module))
         pulseOnDetect = global.getValue();
-      if (auto global =
-              module->getAttrOfType<BoolAttr>("pulse.show_cancelled"))
+      if (auto global = sim::get<sim::PulseShowCancelled>(module))
         pulseShowCancelled = global.getValue();
       TimingTerminal segment = *outputTerminal;
       segment.low = segmentLow;

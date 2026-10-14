@@ -50,9 +50,6 @@ enum class InlineLegality {
   UnknownBoundaryMetadata,
 };
 
-inline constexpr ::llvm::StringLiteral inlineLegalityCacheAttrName =
-    "inline.callee_legality";
-
 bool hasLateInlineMetadata(SimDesignOp design);
 InlineLegality getInlineCalleeLegality(SimFuncOp callee, bool calleeIsRecursive,
                                        bool designHasLateMetadata);

@@ -14,89 +14,78 @@ using namespace mlir;
 namespace obelisk::analysis {
 std::optional<ConstantIntRanges>
 decodeIntegerRange(Attribute attr, std::optional<unsigned> expectedWidth) {
-  auto dictionary = dyn_cast_or_null<DictionaryAttr>(attr);
-  if (!dictionary)
+  auto range = dyn_cast_or_null<sim::IntegerRangeAttr>(attr);
+  if (!range)
     return std::nullopt;
-  auto umin = dictionary.getAs<IntegerAttr>("umin");
-  auto umax = dictionary.getAs<IntegerAttr>("umax");
-  auto smin = dictionary.getAs<IntegerAttr>("smin");
-  auto smax = dictionary.getAs<IntegerAttr>("smax");
-  if (!umin || !umax || !smin || !smax || umin.getType() != umax.getType() ||
-      umin.getType() != smin.getType() || umin.getType() != smax.getType())
+  const APInt &umin = range.getUmin().getValue();
+  const APInt &umax = range.getUmax().getValue();
+  const APInt &smin = range.getSmin().getValue();
+  const APInt &smax = range.getSmax().getValue();
+  unsigned width = umin.getBitWidth();
+  if (!width || (expectedWidth && width != *expectedWidth) ||
+      umax.getBitWidth() != width || smin.getBitWidth() != width ||
+      smax.getBitWidth() != width || umin.ugt(umax) || smin.sgt(smax))
     return std::nullopt;
-  auto type = dyn_cast<IntegerType>(umin.getType());
-  if (!type || !type.getWidth() ||
-      (expectedWidth && type.getWidth() != *expectedWidth) ||
-      umin.getValue().ugt(umax.getValue()) ||
-      smin.getValue().sgt(smax.getValue()))
-    return std::nullopt;
-  auto unsignedRange =
-      umin.getValue().isZero() && umax.getValue().isMaxValue()
-          ? llvm::ConstantRange(type.getWidth(), true)
-          : llvm::ConstantRange(umin.getValue(), umax.getValue() + 1);
-  auto signedRange =
-      smin.getValue().isMinSignedValue() && smax.getValue().isMaxSignedValue()
-          ? llvm::ConstantRange(type.getWidth(), true)
-          : llvm::ConstantRange(smin.getValue(), smax.getValue() + 1);
+  auto unsignedRange = umin.isZero() && umax.isMaxValue()
+                           ? llvm::ConstantRange(width, true)
+                           : llvm::ConstantRange(umin, umax + 1);
+  auto signedRange = smin.isMinSignedValue() && smax.isMaxSignedValue()
+                         ? llvm::ConstantRange(width, true)
+                         : llvm::ConstantRange(smin, smax + 1);
   if (unsignedRange.intersectWith(signedRange).isEmptySet())
     return std::nullopt;
-  return ConstantIntRanges(umin.getValue(), umax.getValue(), smin.getValue(),
-                           smax.getValue());
+  return ConstantIntRanges(umin, umax, smin, smax);
 }
 std::optional<ConstantIntRanges> getIntegerResultRange(Value value) {
   auto result = dyn_cast<OpResult>(value);
   if (!result || !isa<IntegerType, sim::LogicType>(value.getType()))
     return std::nullopt;
-  auto summaries =
-      result.getOwner()->getAttrOfType<ArrayAttr>(integerResultRangesAttr);
+  auto summaries = sim::get<sim::ResultRanges>(result.getOwner());
   return summaries && result.getResultNumber() < summaries.size()
              ? decodeIntegerRange(summaries[result.getResultNumber()],
                                   sim::getPackedWidth(value.getType()))
              : std::nullopt;
 }
 namespace {
-bool validateExpression(DictionaryAttr expression, Operation *op,
+bool validateExpression(sim::IntegerExpressionAttr expression, Operation *op,
                         unsigned &budget, unsigned depth = 0) {
   if (!expression || !budget || depth > 32)
     return false;
   --budget;
-  auto kind = expression.getAs<StringAttr>("kind");
-  auto widthAttr = expression.getAs<IntegerAttr>("width");
-  if (!kind || !widthAttr || widthAttr.getValue().isNegative() ||
-      widthAttr.getValue().getActiveBits() > 8)
-    return false;
-  unsigned width = widthAttr.getInt();
+  unsigned width = expression.getWidth();
   if (!width || width > 128)
     return false;
-  if (kind.getValue() == "constant") {
-    auto bits = expression.getAs<IntegerAttr>("value");
+  switch (expression.getKind()) {
+  case sim::IntegerExpressionKind::Constant: {
+    IntegerAttr bits = expression.getValue();
     return bits && isa<IntegerType>(bits.getType()) &&
            bits.getValue().getBitWidth() == width;
   }
-  if (kind.getValue() == "argument") {
-    auto index = expression.getAs<IntegerAttr>("index");
-    if (!index || index.getValue().isNegative() ||
-        index.getValue().getActiveBits() > 32 ||
-        index.getInt() >= op->getNumOperands())
+  case sim::IntegerExpressionKind::Argument: {
+    std::optional<uint32_t> index = expression.getIndex();
+    if (!index || *index >= op->getNumOperands())
       return false;
-    Type type = op->getOperand(index.getInt()).getType();
+    Type type = op->getOperand(*index).getType();
     return isa<IntegerType, sim::LogicType>(type) &&
            sim::getPackedWidth(type) == width;
   }
-  bool unary = kind.getValue() == "identity" || kind.getValue() == "sext" ||
-               kind.getValue() == "zext" || kind.getValue() == "trunc";
-  bool binary = kind.getValue() == "add" || kind.getValue() == "sub" ||
-                kind.getValue() == "mul" || kind.getValue() == "and" ||
-                kind.getValue() == "or" || kind.getValue() == "xor";
-  auto operands = expression.getAs<ArrayAttr>("operands");
-  if ((!unary && !binary) || !operands || operands.size() != (unary ? 1u : 2u))
+  default:
+    break;
+  }
+  bool unary = expression.getKind() == sim::IntegerExpressionKind::Identity ||
+               expression.getKind() == sim::IntegerExpressionKind::SExt ||
+               expression.getKind() == sim::IntegerExpressionKind::ZExt ||
+               expression.getKind() == sim::IntegerExpressionKind::Trunc;
+  ArrayAttr operands = expression.getOperands();
+  if (!operands || operands.size() != (unary ? 1u : 2u))
     return false;
   for (Attribute operand : operands) {
-    auto child = dyn_cast<DictionaryAttr>(operand);
+    auto child = dyn_cast<sim::IntegerExpressionAttr>(operand);
     if (!validateExpression(child, op, budget, depth + 1))
       return false;
-    if ((binary || kind.getValue() == "identity") &&
-        child.getAs<IntegerAttr>("width").getInt() != width)
+    if ((!unary ||
+         expression.getKind() == sim::IntegerExpressionKind::Identity) &&
+        child.getWidth() != width)
       return false;
   }
   return true;
@@ -106,17 +95,15 @@ Attribute getIntegerResultExpression(Value value) {
   auto result = dyn_cast<OpResult>(value);
   if (!result)
     return {};
-  auto expressions =
-      result.getOwner()->getAttrOfType<ArrayAttr>(integerResultExprsAttr);
+  ArrayAttr expressions = sim::get<sim::ResultExprs>(result.getOwner());
   if (!expressions || result.getResultNumber() >= expressions.size())
     return {};
-  auto expression =
-      dyn_cast<DictionaryAttr>(expressions[result.getResultNumber()]);
+  auto expression = dyn_cast<sim::IntegerExpressionAttr>(
+      expressions[result.getResultNumber()]);
   unsigned budget = 64;
   if (!validateExpression(expression, result.getOwner(), budget) ||
       !isa<IntegerType, sim::LogicType>(value.getType()) ||
-      sim::getPackedWidth(value.getType()) !=
-          expression.getAs<IntegerAttr>("width").getInt())
+      sim::getPackedWidth(value.getType()) != expression.getWidth())
     return {};
   return expression;
 }
@@ -126,15 +113,11 @@ Attribute encodeRange(MLIRContext *context,
   if (!range)
     return UnitAttr::get(context);
   auto type = IntegerType::get(context, range->umin().getBitWidth());
-  return DictionaryAttr::get(context,
-                             {{StringAttr::get(context, "umin"),
-                               IntegerAttr::get(type, range->umin())},
-                              {StringAttr::get(context, "umax"),
-                               IntegerAttr::get(type, range->umax())},
-                              {StringAttr::get(context, "smin"),
-                               IntegerAttr::get(type, range->smin())},
-                              {StringAttr::get(context, "smax"),
-                               IntegerAttr::get(type, range->smax())}});
+  return sim::IntegerRangeAttr::get(context,
+                                    IntegerAttr::get(type, range->umin()),
+                                    IntegerAttr::get(type, range->umax()),
+                                    IntegerAttr::get(type, range->smin()),
+                                    IntegerAttr::get(type, range->smax()));
 }
 // Symbolic return summaries keep parameter relationships that a range hull
 // would lose. Their algebra is used only when the actual logic inputs are
@@ -150,82 +133,84 @@ Attribute summarizeExpression(Value value, sim::SimFuncOp function,
     return {};
   auto *context = function.getContext();
   Builder builder(context);
-  NamedAttrList fields;
-  fields.set("width", builder.getI32IntegerAttr(*width));
+  auto node = [&](sim::IntegerExpressionKind kind, IntegerAttr value,
+                  std::optional<uint32_t> index, ArrayAttr operands) {
+    return sim::IntegerExpressionAttr::get(context, kind, *width, value, index,
+                                           operands);
+  };
   APInt bits;
-  if (matchPattern(value, m_ConstantInt(&bits))) {
-    fields.set("kind", builder.getStringAttr("constant"));
-    fields.set("value",
-               builder.getIntegerAttr(builder.getIntegerType(*width), bits));
-    return fields.getDictionary(context);
-  }
+  if (matchPattern(value, m_ConstantInt(&bits)))
+    return node(sim::IntegerExpressionKind::Constant,
+                builder.getIntegerAttr(builder.getIntegerType(*width), bits),
+                std::nullopt, ArrayAttr{});
   if (auto constant = value.getDefiningOp<sim::SimLogicConstantOp>()) {
     if (!constant.getUnknown().isZero())
       return {};
-    fields.set("kind", builder.getStringAttr("constant"));
-    fields.set("value", builder.getIntegerAttr(builder.getIntegerType(*width),
-                                               constant.getValue()));
-    return fields.getDictionary(context);
+    return node(sim::IntegerExpressionKind::Constant,
+                builder.getIntegerAttr(builder.getIntegerType(*width),
+                                       constant.getValue()),
+                std::nullopt, ArrayAttr{});
   }
   if (auto argument = dyn_cast<BlockArgument>(value)) {
     if (argument.getOwner() != &function.getBody().front())
       return {};
-    fields.set("kind", builder.getStringAttr("argument"));
-    fields.set("index", builder.getI32IntegerAttr(argument.getArgNumber()));
-    return fields.getDictionary(context);
+    return node(sim::IntegerExpressionKind::Argument, IntegerAttr{},
+                argument.getArgNumber(), ArrayAttr{});
   }
   auto *op = value.getDefiningOp();
-  StringRef kind;
+  std::optional<sim::IntegerExpressionKind> kind;
   if (isa<arith::AddIOp>(op))
-    kind = "add";
+    kind = sim::IntegerExpressionKind::Add;
   else if (isa<arith::SubIOp>(op))
-    kind = "sub";
+    kind = sim::IntegerExpressionKind::Sub;
   else if (isa<arith::MulIOp>(op))
-    kind = "mul";
+    kind = sim::IntegerExpressionKind::Mul;
   else if (isa<arith::AndIOp>(op))
-    kind = "and";
+    kind = sim::IntegerExpressionKind::And;
   else if (isa<arith::OrIOp>(op))
-    kind = "or";
+    kind = sim::IntegerExpressionKind::Or;
   else if (isa<arith::XOrIOp>(op))
-    kind = "xor";
+    kind = sim::IntegerExpressionKind::Xor;
   else if (isa<arith::ExtSIOp>(op))
-    kind = "sext";
+    kind = sim::IntegerExpressionKind::SExt;
   else if (isa<arith::ExtUIOp>(op))
-    kind = "zext";
+    kind = sim::IntegerExpressionKind::ZExt;
   else if (isa<arith::TruncIOp>(op))
-    kind = "trunc";
+    kind = sim::IntegerExpressionKind::Trunc;
   else if (isa<sim::SimLogicFromBitsOp, sim::SimLogicToBitsOp>(op))
-    kind = "identity";
+    kind = sim::IntegerExpressionKind::Identity;
   else if (auto resize = dyn_cast<sim::SimLogicResizeOp>(op))
-    kind = resize.getIsSigned() ? "sext" : "zext";
+    kind = resize.getIsSigned() ? sim::IntegerExpressionKind::SExt
+                                : sim::IntegerExpressionKind::ZExt;
   else if (auto extract = dyn_cast<sim::SimLogicExtractOp>(op);
            extract && extract.getLowBit() == 0)
-    kind = "trunc"; // A truncation is canonically the low slice.
+    // A truncation is canonically the low slice.
+    kind = sim::IntegerExpressionKind::Trunc;
   else if (auto binary = dyn_cast<sim::SimLogicBinaryOp>(op)) {
     switch (binary.getKind()) {
     case sim::BinaryKind::Add:
-      kind = "add";
+      kind = sim::IntegerExpressionKind::Add;
       break;
     case sim::BinaryKind::Sub:
-      kind = "sub";
+      kind = sim::IntegerExpressionKind::Sub;
       break;
     case sim::BinaryKind::Mul:
-      kind = "mul";
+      kind = sim::IntegerExpressionKind::Mul;
       break;
     case sim::BinaryKind::And:
-      kind = "and";
+      kind = sim::IntegerExpressionKind::And;
       break;
     case sim::BinaryKind::Or:
-      kind = "or";
+      kind = sim::IntegerExpressionKind::Or;
       break;
     case sim::BinaryKind::Xor:
-      kind = "xor";
+      kind = sim::IntegerExpressionKind::Xor;
       break;
     default:
       return {};
     }
   }
-  if (kind.empty())
+  if (!kind)
     return {};
   SmallVector<Attribute> operands;
   for (Value operand : op->getOperands()) {
@@ -234,9 +219,8 @@ Attribute summarizeExpression(Value value, sim::SimFuncOp function,
       return {};
     operands.push_back(expression);
   }
-  fields.set("kind", builder.getStringAttr(kind));
-  fields.set("operands", builder.getArrayAttr(operands));
-  return fields.getDictionary(context);
+  return node(*kind, IntegerAttr{}, std::nullopt,
+              builder.getArrayAttr(operands));
 }
 struct FunctionFacts {
   bool valid = true;
@@ -254,11 +238,11 @@ void prepareIntegerRangeIPO(Operation *scope) {
   // Recompute from unconstrained entries even if a rewrite removed every
   // call. Certificates from the previous graph must never survive that case.
   scope->walk([&](Operation *op) {
-    op->removeAttr(integerResultRangesAttr);
-    op->removeAttr(integerResultExprsAttr);
+    sim::remove<sim::ResultRanges>(op);
+    sim::remove<sim::ResultExprs>(op);
     if (auto function = dyn_cast<sim::SimFuncOp>(op))
       for (unsigned i = 0; i < function.getNumArguments(); ++i)
-        function.removeArgAttr(i, integerRangeAttr);
+        function.removeArgAttr(i, sim::IntegerRange::getNameStr());
   });
   if (calls.empty())
     return;
@@ -269,8 +253,8 @@ void prepareIntegerRangeIPO(Operation *scope) {
     indices[function] = functions.size();
     functions.push_back(function);
     for (unsigned i = 0; i < function.getNumArguments(); ++i)
-      function.removeArgAttr(i, integerRangeAttr);
-    function->removeAttr(integerResultRangesAttr);
+      function.removeArgAttr(i, sim::IntegerRange::getNameStr());
+    sim::remove<sim::ResultRanges>(function);
     SmallVector<Attribute> expressions(function.getNumResults(),
                                        UnitAttr::get(scope->getContext()));
     bool first = true;
@@ -286,8 +270,8 @@ void prepareIntegerRangeIPO(Operation *scope) {
       }
       first = false;
     });
-    function->setAttr(integerResultExprsAttr,
-                      ArrayAttr::get(scope->getContext(), expressions));
+    sim::set<sim::ResultExprs>(
+        function, ArrayAttr::get(scope->getContext(), expressions));
   });
   SymbolTableCollection symbols;
   llvm::DenseMap<Operation *, unsigned> targets;
@@ -335,8 +319,8 @@ void prepareIntegerRangeIPO(Operation *scope) {
     }
   }
   for (auto call : calls) {
-    call->removeAttr(integerResultRangesAttr);
-    call->removeAttr(integerResultExprsAttr);
+    sim::remove<sim::ResultRanges>(call);
+    sim::remove<sim::ResultExprs>(call);
     auto target = symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
         call, call.getCalleeAttr());
     auto found = target ? indices.find(target) : indices.end();
@@ -353,8 +337,7 @@ void prepareIntegerRangeIPO(Operation *scope) {
     if (!scalarReturns && !scalarArguments)
       continue;
     targets[call] = found->second;
-    call->setAttr(integerResultExprsAttr,
-                  target->getAttr(integerResultExprsAttr));
+    sim::set<sim::ResultExprs>(call, sim::get<sim::ResultExprs>(target));
   }
   // Every round starts from sound may facts. Refinement is bounded rather
   // than waiting for a potentially enormous recursive range chain to settle.
@@ -435,20 +418,23 @@ void prepareIntegerRangeIPO(Operation *scope) {
       for (auto range : facts[i].returns)
         returns.push_back(encodeRange(scope->getContext(), range));
       auto attribute = ArrayAttr::get(scope->getContext(), returns);
-      changed |= function->getAttr(integerResultRangesAttr) != attribute;
-      function->setAttr(integerResultRangesAttr, attribute);
+      changed |= sim::get<sim::ResultRanges>(function) != attribute;
+      sim::set<sim::ResultRanges>(function, attribute);
       if (closed.contains(function) && visited[i])
         for (unsigned j = 0; j < arguments[i].size(); ++j) {
-          auto range = encodeRange(scope->getContext(), arguments[i][j]);
-          changed |= function.getArgAttr(j, integerRangeAttr) != range;
-          function.setArgAttr(j, integerRangeAttr, range);
+          // An argument without a range carries no certificate.
+          Attribute range = encodeRange(scope->getContext(), arguments[i][j]);
+          if (isa<UnitAttr>(range))
+            range = {};
+          changed |=
+              function.getArgAttr(j, sim::IntegerRange::getNameStr()) != range;
+          function.setArgAttr(j, sim::IntegerRange::getNameStr(), range);
         }
     }
     for (auto call : calls)
       if (auto found = targets.find(call); found != targets.end())
-        call->setAttr(
-            integerResultRangesAttr,
-            functions[found->second]->getAttr(integerResultRangesAttr));
+        sim::set<sim::ResultRanges>(
+            call, sim::get<sim::ResultRanges>(functions[found->second]));
     if (!changed)
       break;
   }

@@ -450,8 +450,7 @@ struct ObeliskSimulationInlinerInterface final
     auto function = dyn_cast<SimFuncOp>(callable);
     if (!callOp || !function)
       return false;
-    if (auto cached =
-            function->getAttrOfType<IntegerAttr>(inlineLegalityCacheAttrName))
+    if (auto cached = sim::get<sim::InlineLegalityCache>(function))
       return getInlineLegality(callOp, function,
                                static_cast<InlineLegality>(cached.getInt())) ==
              InlineLegality::Legal;
@@ -521,6 +520,68 @@ struct ObeliskSimulationInlinerInterface final
       });
   }
 };
+
+/// Check a declared simulation attribute; names not yet declared pass.
+static LogicalResult verifyDeclaredAttribute(Operation *operation,
+                                             NamedAttribute attribute) {
+  StringRef name = attribute.getName().strref();
+  Attribute value = attribute.getValue();
+  auto error = [&]() {
+    return operation->emitOpError("attribute '") << name << "' ";
+  };
+  auto allOf = [&](auto pred) {
+    return llvm::all_of(cast<ArrayAttr>(value), pred);
+  };
+  if (name == IntegerRange::getNameStr()) {
+    if (!isa<IntegerRangeAttr>(value))
+      return error() << "must be a #simulation.integer_range";
+    return success();
+  }
+  if (name != ResultRanges::getNameStr() && name != ResultExprs::getNameStr() &&
+      name != KnownLogicResult::getNameStr() &&
+      name != GCPolled::getNameStr() &&
+      name != InlineLegalityCache::getNameStr() &&
+      name != PulseRejectPercent::getNameStr() &&
+      name != PulseErrorPercent::getNameStr() &&
+      name != PulseOnDetect::getNameStr() &&
+      name != PulseShowCancelled::getNameStr())
+    return success();
+  if (failed(
+          discardable::verify<ResultRanges, ResultExprs, KnownLogicResult,
+                              GCPolled, InlineLegalityCache, PulseRejectPercent,
+                              PulseErrorPercent, PulseOnDetect,
+                              PulseShowCancelled>(operation, attribute)))
+    return failure();
+  if (name == ResultRanges::getNameStr() &&
+      !allOf(llvm::IsaPred<IntegerRangeAttr, UnitAttr>))
+    return error() << "must contain #simulation.integer_range or unit entries";
+  if (name == ResultExprs::getNameStr() &&
+      !allOf(llvm::IsaPred<IntegerExpressionAttr, UnitAttr>))
+    return error()
+           << "must contain #simulation.integer_expression or unit entries";
+  if ((name == GCPolled::getNameStr() ||
+       name == PulseRejectPercent::getNameStr() ||
+       name == PulseErrorPercent::getNameStr() ||
+       name == PulseOnDetect::getNameStr() ||
+       name == PulseShowCancelled::getNameStr()) &&
+      !isa<ModuleOp>(operation))
+    return error() << "belongs on a module";
+  return success();
+}
+
+LogicalResult
+ObeliskSimulationDialect::verifyOperationAttribute(Operation *operation,
+                                                   NamedAttribute attribute) {
+  if (attribute.getName().strref() == IntegerRange::getNameStr())
+    return operation->emitOpError("attribute '")
+           << attribute.getName().strref() << "' belongs on an argument";
+  return verifyDeclaredAttribute(operation, attribute);
+}
+
+LogicalResult ObeliskSimulationDialect::verifyRegionArgAttribute(
+    Operation *operation, unsigned, unsigned, NamedAttribute attribute) {
+  return verifyDeclaredAttribute(operation, attribute);
+}
 
 void ObeliskSimulationDialect::initialize() {
   addInterfaces<ObeliskSimulationInlinerInterface>();
