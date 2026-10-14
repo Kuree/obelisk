@@ -6,6 +6,8 @@ add_mlir_library(ObeliskIR
   ObeliskASTOpDefs3.cpp
 
   DEPENDS
+  ObeliskCoverageAttrsIncGen
+  ObeliskCoverageDialectIncGen
   ObeliskDialectIncGen
   ObeliskASTOpsIncGen
   ObeliskEnumsIncGen

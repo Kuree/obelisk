@@ -111,100 +111,11 @@ inline constexpr llvm::StringLiteral classBitstreamBlob =
 /// attribute.
 inline constexpr llvm::StringLiteral coverageSchemaBlob =
     "execution.coverage_schema_blob";
-/// Frontend-selected IEEE 1800 revision used for revision-sensitive coverage
-/// computation and persisted with every functional type.
-inline constexpr llvm::StringLiteral coverageLanguageVersion =
-    "coverage.language_version";
-/// Stable FunctionalExpression identity assigned while the schema and helper
-/// contract are built together. Unit lowering must copy this exact identity
-/// to covergroup.sample; it must never synthesize an execution-local ordinal.
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionId =
-    "coverage.functional_expression_id";
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionOrdinal =
-    "coverage.functional_expression_ordinal";
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionKind =
-    "coverage.functional_expression_kind";
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionBitWidth =
-    "coverage.functional_expression_bit_width";
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionSignedness =
-    "coverage.functional_expression_signedness";
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionPhase =
-    "coverage.functional_expression_phase";
-inline constexpr llvm::StringLiteral coverageFunctionalExpressionRole =
-    "coverage.functional_expression_role";
-/// Constructor-time `with` predicates are evaluated once for every candidate
-/// occurrence. These transient arrays keep that one-to-many helper contract
-/// on the semantic predicate without introducing another runtime ABI shape.
-inline constexpr llvm::StringLiteral coverageFunctionalWithExpressionIds =
-    "simulation.coverage.functional.with_expression_ids";
-inline constexpr llvm::StringLiteral coverageFunctionalWithExpressionOrdinals =
-    "simulation.coverage.functional.with_expression_ordinals";
-inline constexpr llvm::StringLiteral coverageFunctionalWithCandidateValues =
-    "simulation.coverage.functional.with_candidate_values";
-inline constexpr llvm::StringLiteral coverageFunctionalWithIteratorPath =
-    "simulation.coverage.functional.with_iterator_path";
-/// Cross selectors produce one queue of satisfying associated-value tuples.
-/// Target paths identify the semantic iterator bindings in the predicate loop.
-inline constexpr llvm::StringLiteral coverageFunctionalCrossWithScalar =
-    "simulation.coverage.functional.cross_with_scalar";
-inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTupleType =
-    "simulation.coverage.functional.cross_with_tuple_type";
-inline constexpr llvm::StringLiteral coverageFunctionalCrossWithSelectorId =
-    "simulation.coverage.functional.cross_with_selector_id";
-inline constexpr llvm::StringLiteral coverageFunctionalCrossWithTargetPaths =
-    "simulation.coverage.functional.cross_with_target_paths";
-inline constexpr llvm::StringLiteral coverageFunctionalFormalId =
-    "coverage.functional_formal_id";
-/// Stable FunctionalItem identity assigned to its semantic declaration.
-inline constexpr llvm::StringLiteral coverageFunctionalItemId =
-    "coverage.functional_item_id";
-/// Transient dense counter index assigned by coverage preparation. Stable
-/// entity identity remains in the native schema and never depends on this
-/// physical index.
-inline constexpr llvm::StringLiteral coverageLinePointIndex =
-    "coverage.line_point_index";
-/// Number of line counters expected by the embedded schema.
-inline constexpr llvm::StringLiteral coverageLinePointCount =
-    "coverage.line_point_count";
-/// Symbol uses that keep symbols required by coverage instrumentation alive
-/// through the post-inventory devirtualization and SymbolDCE pipeline. This
-/// includes code units owning line obligations and callees referenced by
-/// functional constructor/sample expressions before their helpers exist,
-/// together with their class method descriptors. The
-/// references are physical compiler metadata, not schema or merge identities.
-inline constexpr llvm::StringLiteral coverageRetainedSymbols =
-    "coverage.retained_symbols";
-/// Ordered flat-toggle bindings attached to source-visible declarations.
-/// Each dictionary contains base, low, and width i64 fields; aliases may bind
-/// multiple coverage ranges to one canonical state range.
-inline constexpr llvm::StringLiteral coverageToggleBindings =
-    "coverage.toggle_bindings";
-/// Marks canonical state whose committed transitions are coverage-observable.
-inline constexpr llvm::StringLiteral coverageToggleObservable =
-    "coverage.toggle_observable";
 /// Marks a process-lifetime `simulation.ref.alloc` copy of an exclusive root
 /// that is flushed back to that root at every suspension and return. Its
 /// contents at any resumption equal a fresh load of the root.
 inline constexpr llvm::StringLiteral flushedPrivateSlot =
     "simulation.flushed_private_slot";
-/// Number of flattened toggle bits expected by the embedded schema.
-inline constexpr llvm::StringLiteral coverageToggleBitCount =
-    "coverage.toggle_bit_count";
-/// Marks a design-lifetime declaration that directly represents a
-/// source-authored SystemVerilog object. Coverage preparation deliberately
-/// requires this marker so compiler support state never becomes an obligation.
-inline constexpr llvm::StringLiteral coverageSourceAuthored =
-    "coverage.source_authored";
-/// Transient source type retained through coverage preparation when
-/// normalization intentionally erases reportable identity such as an enum
-/// name. This is not a runtime ABI attribute.
-inline constexpr llvm::StringLiteral coverageSourceType =
-    "coverage.source_type";
-/// Exact flattened toggle shadow at the language-defined initial state.
-inline constexpr llvm::StringLiteral coverageToggleInitialValue =
-    "coverage.toggle_initial_value";
-inline constexpr llvm::StringLiteral coverageToggleInitialUnknown =
-    "coverage.toggle_initial_unknown";
 /// Preparation-time feature marker used to keep whole-design class planning
 /// off ordinary compilation paths.
 inline constexpr llvm::StringLiteral classBitstreamSourceFeature =

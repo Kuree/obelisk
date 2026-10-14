@@ -1505,11 +1505,10 @@ LogicalResult SimCoveragePointHitOp::verify() {
   if (!module)
     return emitOpError(
         "must be nested in a module with a line-point inventory");
-  auto count =
-      module->getAttrOfType<IntegerAttr>(metadata::coverageLinePointCount);
+  auto count = cov::get<cov::LinePointCount>(module);
   if (!count)
     return emitOpError("requires the module line-point inventory attribute '")
-           << metadata::coverageLinePointCount << "'";
+           << cov::LinePointCount::getNameStr() << "'";
   if (!count.getType().isSignlessInteger(64))
     return emitOpError("requires a 64-bit module line-point inventory");
   if (count.getValue().isNegative() ||

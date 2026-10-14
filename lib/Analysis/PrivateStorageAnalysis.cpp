@@ -12,7 +12,7 @@ PrivateStorageAnalysis::PrivateStorageAnalysis(sim::SimDesignOp design) {
     if ((decl.getLifetime() == sim::Lifetime::Static ||
          decl.getLifetime() == sim::Lifetime::Design) &&
         sim::getProvenanceSpan(decl.getType()) &&
-        !decl->hasAttr(sim::metadata::coverageToggleObservable))
+        !cov::has<cov::ToggleObservable>(decl))
       roots.try_emplace(decl.getId(), Accesses{decl, {}, {}, {}, {}});
   HandleDataflowAnalysis handles(design);
   DenseMap<Operation *, HandleDataflowResult> snapshots;

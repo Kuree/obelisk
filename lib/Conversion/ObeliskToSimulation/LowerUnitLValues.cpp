@@ -176,8 +176,7 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
   FailureOr<Type> destinationType = getNormalizedSemanticType(destination);
   if (failed(destinationType))
     return failure();
-  if (auto storage = destination->getAttrOfType<TypeAttr>(
-          "simulation.covergroup_field_storage_type"))
+  if (auto storage = cov::get<cov::FieldStorageType>(destination))
     destinationType = storage.getValue();
   captured.type = *destinationType;
 

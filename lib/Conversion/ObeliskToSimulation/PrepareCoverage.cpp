@@ -1112,7 +1112,7 @@ static bool matchCoverageGlob(StringRef pattern, StringRef value,
 static FailureOr<CoverageConfiguration>
 parseCoverageConfiguration(ModuleOp module) {
   CoverageConfiguration configuration;
-  auto text = module->getAttrOfType<StringAttr>("coverage.config");
+  auto text = cov::get<cov::Config>(module);
   if (!text)
     return configuration;
 
@@ -1552,6 +1552,8 @@ static void appendFunctionalSemantics(llvm::raw_ostream &stream,
   stream << operation->getName() << '{';
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
+    // Coverage metadata is derived by preparation; an identity must not
+    // change when that metadata or its attribute names do.
     if (name == "node_id" || name == "sym_name" ||
         name == "referenced_symbol" || name == "source_range" ||
         name == "original_source_range" || name == "macro_expansion_stack" ||
@@ -1614,7 +1616,7 @@ static uint64_t stableFunctionalExpressionID(
 }
 
 static bool isMetricEnabled(ModuleOp module, StringRef expected) {
-  auto metrics = module->getAttrOfType<ArrayAttr>("coverage.metrics");
+  auto metrics = cov::get<cov::Metrics>(module);
   if (!metrics)
     return false;
   return llvm::any_of(metrics, [&](Attribute metric) {
@@ -1701,8 +1703,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
   // Clause 40 queries must return SV_COV_NOCOV rather than fail the runtime
   // lifecycle, instance arguments still need stable scope identities, and
   // functional database calls request persistence of otherwise-unused types.
-  if (!module->hasAttr("coverage.metrics") &&
-      !hasExecutableCovergroups && !hasCoverageSystemCall)
+  if (!cov::has<cov::Metrics>(module) && !hasExecutableCovergroups &&
+      !hasCoverageSystemCall)
     return;
 
   llvm::StringMap<CoverageDirectiveFile> directiveFiles;
@@ -1723,8 +1725,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
   };
 
   bool invalidDirective = false;
-  if (auto sourceFiles =
-          module->getAttrOfType<ArrayAttr>("coverage.source_files")) {
+  if (auto sourceFiles = cov::get<cov::SourceFiles>(module)) {
     for (Attribute attribute : sourceFiles) {
       auto path = dyn_cast<StringAttr>(attribute);
       if (!path || failed(parseDirectiveFile(path.getValue()))) {
@@ -1779,8 +1780,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
   }
 
   SmallVector<PrefixMap> prefixMaps;
-  if (auto maps =
-          module->getAttrOfType<ArrayAttr>("coverage.prefix_maps")) {
+  if (auto maps = cov::get<cov::PrefixMaps>(module)) {
     for (Attribute attribute : maps) {
       auto value = dyn_cast<StringAttr>(attribute);
       if (!value)
@@ -2057,8 +2057,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                               ? candidate.function.getOperation()
                               : candidate.operation;
       if (!candidate.excluded) {
-        target->setAttr(sim::metadata::coverageLinePointIndex,
-                        builder.getI64IntegerAttr(index));
+        cov::set<cov::LinePointIndex>(target, builder.getI64IntegerAttr(index));
         sim::SimDesignOp design =
             candidate.function->getParentOfType<sim::SimDesignOp>();
         if (!design) {
@@ -2083,8 +2082,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
         sim::SimCoverageKeepaliveOp::create(keepaliveBuilder, design.getLoc(),
                                             reference);
     }
-    module->setAttr(sim::metadata::coverageLinePointCount,
-                    builder.getI64IntegerAttr(candidates.size()));
+    cov::set<cov::LinePointCount>(module,
+                                  builder.getI64IntegerAttr(candidates.size()));
   }
 
   if (isMetricEnabled(module, "toggle")) {
@@ -2100,8 +2099,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                               StringRef debugName) {
         auto scope = scopeInventory.ids.find(scopeSourceID);
         Type sourceType = type;
-        if (auto sourceTypeAttr = operation->getAttrOfType<TypeAttr>(
-                sim::metadata::coverageSourceType))
+        if (auto sourceTypeAttr = cov::get<cov::SourceType>(operation))
           sourceType = sourceTypeAttr.getValue();
         FailureOr<ToggleTypePlan> plan = buildToggleTypePlan(type, sourceType);
         if (scope == scopeInventory.ids.end() || failed(plan) ||
@@ -2148,7 +2146,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
         storages[declaration.getId()] = declaration;
         if (declaration.getLifetime() != sim::Lifetime::Design ||
             declaration->hasAttr(sim::metadata::subroutineStorage) ||
-            !declaration->hasAttr(sim::metadata::coverageSourceAuthored))
+            !cov::has<cov::SourceAuthored>(declaration))
           continue;
         addCandidate(declaration, declaration, declaration.getScopeId(), 0,
                      declaration.getType(),
@@ -2160,7 +2158,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
         nets[declaration.getId()] = declaration;
         if (declaration.getLifetime() != sim::Lifetime::Design ||
             declaration->hasAttr("internal") ||
-            !declaration->hasAttr(sim::metadata::coverageSourceAuthored))
+            !cov::has<cov::SourceAuthored>(declaration))
           continue;
         addCandidate(declaration, declaration, declaration.getScopeId(), 0,
                      declaration.getType(),
@@ -2169,7 +2167,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       }
       for (sim::SimPortDeclOp declaration :
            design.getBody().front().getOps<sim::SimPortDeclOp>()) {
-        if (!declaration->hasAttr(sim::metadata::coverageSourceAuthored))
+        if (!cov::has<cov::SourceAuthored>(declaration))
           continue;
         Operation *canonical = declaration.getSourceIsNet()
                                    ? nets.lookup(declaration.getSourceId())
@@ -2302,17 +2300,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             signalPassFailure();
             return;
           }
-          NamedAttrList binding;
-          binding.set("base",
-                      builder.getI64IntegerAttr(base + segment.objectLow));
-          binding.set("low", builder.getI64IntegerAttr(candidate.sourceLow +
-                                                       segment.stateLow));
-          binding.set("width", builder.getI64IntegerAttr(segment.width));
-          bindings[candidate.canonical].push_back(
-              DictionaryAttr::get(&getContext(), binding));
+          bindings[candidate.canonical].push_back(cov::ToggleBindingAttr::get(
+              &getContext(), base + segment.objectLow,
+              candidate.sourceLow + segment.stateLow, segment.width));
         }
-        candidate.canonical->setAttr(sim::metadata::coverageToggleObservable,
-                                     builder.getUnitAttr());
+        cov::mark<cov::ToggleObservable>(candidate.canonical);
       }
       base += candidate.width;
     }
@@ -2363,18 +2355,16 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
       initialBase += candidate.width;
     }
     for (auto &[operation, values] : bindings)
-      operation->setAttr(sim::metadata::coverageToggleBindings,
-                         builder.getArrayAttr(values));
-    module->setAttr(sim::metadata::coverageToggleBitCount,
-                    builder.getI64IntegerAttr(base));
-    module->setAttr(
-        sim::metadata::coverageToggleInitialValue,
+      cov::set<cov::ToggleBindings>(operation, builder.getArrayAttr(values));
+    cov::set<cov::ToggleBitCount>(module, builder.getI64IntegerAttr(base));
+    cov::set<cov::ToggleInitialValue>(
+        module,
         DenseI8ArrayAttr::get(&getContext(),
                               ArrayRef<int8_t>(reinterpret_cast<const int8_t *>(
                                                    initialValue.data()),
                                                initialValue.size())));
-    module->setAttr(
-        sim::metadata::coverageToggleInitialUnknown,
+    cov::set<cov::ToggleInitialUnknown>(
+        module,
         DenseI8ArrayAttr::get(&getContext(),
                               ArrayRef<int8_t>(reinterpret_cast<const int8_t *>(
                                                    initialUnknown.data()),
@@ -2387,8 +2377,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
   // additionally controls persistence/unused-schema retention elsewhere.
   if (isMetricEnabled(module, "functional") || hasExecutableCovergroups) {
     uint32_t languageVersion = 2017;
-    if (auto version = module->getAttrOfType<IntegerAttr>(
-            sim::metadata::coverageLanguageVersion)) {
+    if (auto version = cov::get<cov::LanguageVersion>(module)) {
       uint64_t value = version.getValue().getZExtValue();
       if (value != 2017 && value != 2023) {
         module.emitError("functional coverage requires IEEE language version "
@@ -2743,33 +2732,29 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   coverage::FunctionalExpressionCoverpointFourState;
           }
           schema.functionalExpressions.push_back(descriptor);
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionId,
-              IntegerAttr::get(IntegerType::get(&getContext(), 64),
-                               expressionID));
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionOrdinal,
-              IntegerAttr::get(IntegerType::get(&getContext(), 32),
-                               descriptor.resultOrdinal));
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionKind,
+          cov::set<cov::FunctionalExpressionId>(
+              expression, IntegerAttr::get(IntegerType::get(&getContext(), 64),
+                                           expressionID));
+          cov::set<cov::FunctionalExpressionOrdinal>(
+              expression, IntegerAttr::get(IntegerType::get(&getContext(), 32),
+                                           descriptor.resultOrdinal));
+          cov::set<cov::FunctionalExpressionKind>(
+              expression,
               IntegerAttr::get(IntegerType::get(&getContext(), 32),
                                static_cast<uint32_t>(descriptor.resultKind)));
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionBitWidth,
-              IntegerAttr::get(IntegerType::get(&getContext(), 32),
-                               descriptor.bitWidth));
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionSignedness,
+          cov::set<cov::FunctionalExpressionBitWidth>(
+              expression, IntegerAttr::get(IntegerType::get(&getContext(), 32),
+                                           descriptor.bitWidth));
+          cov::set<cov::FunctionalExpressionSignedness>(
+              expression,
               IntegerAttr::get(IntegerType::get(&getContext(), 32),
                                static_cast<uint32_t>(descriptor.signedness)));
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionPhase,
-              IntegerAttr::get(
-                  IntegerType::get(&getContext(), 32),
-                  static_cast<uint32_t>(descriptor.evaluationPhase)));
-          expression->setAttr(
-              sim::metadata::coverageFunctionalExpressionRole,
+          cov::set<cov::FunctionalExpressionPhase>(
+              expression, IntegerAttr::get(IntegerType::get(&getContext(), 32),
+                                           static_cast<uint32_t>(
+                                               descriptor.evaluationPhase)));
+          cov::set<cov::FunctionalExpressionRole>(
+              expression,
               IntegerAttr::get(IntegerType::get(&getContext(), 32),
                                static_cast<uint32_t>(descriptor.role)));
           return success();
@@ -2955,9 +2940,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 "cannot build the typed functional option plan");
 
           const uint64_t expressionID =
-              children.front()
-                  ->getAttrOfType<IntegerAttr>(
-                      sim::metadata::coverageFunctionalExpressionId)
+              cov::get<cov::FunctionalExpressionId>(children.front())
                   .getValue()
                   .getZExtValue();
           schema.functionalOptionPlans.push_back({owner, expressionID,
@@ -3233,15 +3216,13 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
             }
             descriptor.flags |= coverage::FunctionalFormalHasDefault;
             descriptor.defaultExpression =
-                defaultExpression
-                    ->getAttrOfType<IntegerAttr>(
-                        sim::metadata::coverageFunctionalExpressionId)
+                cov::get<cov::FunctionalExpressionId>(defaultExpression)
                     .getValue()
                     .getZExtValue();
           }
           schema.functionalFormals.push_back(std::move(descriptor));
-          formal->setAttr(
-              sim::metadata::coverageFunctionalFormalId,
+          cov::set<cov::FunctionalFormalId>(
+              formal,
               IntegerAttr::get(IntegerType::get(&getContext(), 64), formalID));
         }
         // Inventory item identities in source declaration order before
@@ -3261,10 +3242,9 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 reportName(simlowering::getDebugName(member),
                            simlowering::getHierarchyName(member));
             uint32_t itemFlags = 0;
-            if (member->hasAttr("coverage.inherited_overridden")) {
+            if (cov::has<cov::InheritedOverridden>(member)) {
               itemFlags |= coverage::FunctionalItemNonAggregating;
-              auto origin = member->getAttrOfType<IntegerAttr>(
-                  "coverage.inherited_origin_type");
+              auto origin = cov::get<cov::InheritedOriginType>(member);
               name += (Twine("$inherited$") +
                        Twine(origin ? origin.getValue().getZExtValue() : 0))
                           .str();
@@ -3309,8 +3289,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                  isPoint ? coverage::FunctionalItemKind::Coverpoint
                          : coverage::FunctionalItemKind::Cross,
                  itemFlags, 100, 1, itemOrdinal++, hierarchy});
-            member->setAttr(
-                sim::metadata::coverageFunctionalItemId,
+            cov::set<cov::FunctionalItemId>(
+                member,
                 IntegerAttr::get(IntegerType::get(&getContext(), 64), itemID));
           }
         }
@@ -3425,8 +3405,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 signalPassFailure();
                 return;
               }
-              ArrayAttr effectiveTargets = cross->getAttrOfType<ArrayAttr>(
-                  "coverage.effective_target_symbols");
+              ArrayAttr effectiveTargets =
+                  cov::get<cov::EffectiveTargetSymbols>(cross);
               auto getEffectiveTarget = [&](size_t ordinal,
                                             Attribute targetAttr) -> StringRef {
                 if (effectiveTargets && ordinal < effectiveTargets.size())
@@ -3455,9 +3435,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   return;
                 }
                 iffExpression =
-                    crossChildren.front()
-                        ->getAttrOfType<IntegerAttr>(
-                            sim::metadata::coverageFunctionalExpressionId)
+                    cov::get<cov::FunctionalExpressionId>(crossChildren.front())
                         .getValue()
                         .getZExtValue();
               }
@@ -3677,12 +3655,11 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                   }
 
                   Operation *predicate = operands[1];
-                  auto scalarAttr = predicate->getAttrOfType<BoolAttr>(
-                      sim::metadata::coverageFunctionalCrossWithScalar);
+                  auto scalarAttr = cov::get<cov::CrossWithScalar>(predicate);
                   const bool scalarPredicate =
                       scalarAttr && scalarAttr.getValue();
-                  auto targetPaths = predicate->getAttrOfType<ArrayAttr>(
-                      sim::metadata::coverageFunctionalCrossWithTargetPaths);
+                  auto targetPaths =
+                      cov::get<cov::CrossWithTargetPaths>(predicate);
                   if (!targetPaths ||
                       targetPaths.size() != pending.targets.size())
                     return predicate->emitError(
@@ -3736,13 +3713,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                     Constructor,
                                 node.ordinal, 0)))
                           return failure();
-                        node.expression =
-                            entry.expression
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
-                                .getValue()
-                                .getZExtValue();
+                        node.expression = cov::get<cov::FunctionalExpressionId>(
+                                              entry.expression)
+                                              .getValue()
+                                              .getZExtValue();
                       }
                       ids.try_emplace(entry.key, id);
                       pending.predicates.push_back(node);
@@ -3763,18 +3737,14 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                       TupleQueue)))
                       return failure();
                     withExpression =
-                        predicate
-                            ->getAttrOfType<IntegerAttr>(
-                                sim::metadata::coverageFunctionalExpressionId)
+                        cov::get<cov::FunctionalExpressionId>(predicate)
                             .getValue()
                             .getZExtValue();
                     if (!scalarPredicate) {
-                      predicate->setAttr(
-                          sim::metadata::coverageFunctionalCrossWithTupleType,
-                          TypeAttr::get(tupleType));
-                      predicate->setAttr(
-                          sim::metadata::coverageFunctionalCrossWithSelectorId,
-                          builder.getI64IntegerAttr(selectorID));
+                      cov::set<cov::CrossWithTupleType>(
+                          predicate, TypeAttr::get(tupleType));
+                      cov::set<cov::CrossWithSelectorId>(
+                          predicate, builder.getI64IntegerAttr(selectorID));
                     }
                   }
                   coverage::CrossMatchesPolicy matchesPolicy =
@@ -3829,10 +3799,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                 0, 0)))
                           return failure();
                         matchesExpression =
-                            matches
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(matches)
                                 .getValue()
                                 .getZExtValue();
                       } else
@@ -3852,9 +3819,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         return failure();
                       }
                       matchesExpression =
-                          matches
-                              ->getAttrOfType<IntegerAttr>(
-                                  sim::metadata::coverageFunctionalExpressionId)
+                          cov::get<cov::FunctionalExpressionId>(matches)
                               .getValue()
                               .getZExtValue();
                     }
@@ -3910,9 +3875,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     return failure();
                   }
                   const uint64_t constructionExpression =
-                      construction
-                          ->getAttrOfType<IntegerAttr>(
-                              sim::metadata::coverageFunctionalExpressionId)
+                      cov::get<cov::FunctionalExpressionId>(construction)
                           .getValue()
                           .getZExtValue();
 
@@ -3969,10 +3932,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                 0, 0)))
                           return failure();
                         matchesExpression =
-                            matches
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(matches)
                                 .getValue()
                                 .getZExtValue();
                       } else
@@ -3992,9 +3952,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         return failure();
                       }
                       matchesExpression =
-                          matches
-                              ->getAttrOfType<IntegerAttr>(
-                                  sim::metadata::coverageFunctionalExpressionId)
+                          cov::get<cov::FunctionalExpressionId>(matches)
                               .getValue()
                               .getZExtValue();
                     }
@@ -4045,8 +4003,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 if (auto condition =
                         dyn_cast_or_null<ir::SVConditionBinsSelectExprOp>(
                             selector)) {
-                  auto effectiveTarget = condition->getAttrOfType<StringAttr>(
-                      "coverage.effective_target_symbol");
+                  auto effectiveTarget =
+                      cov::get<cov::EffectiveTargetSymbol>(condition);
                   StringRef targetSymbol =
                       effectiveTarget
                           ? effectiveTarget.getValue()
@@ -4214,10 +4172,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           return failure();
                         }
                         atom.lowerExpression =
-                            lower
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(lower)
                                 .getValue()
                                 .getZExtValue();
                       }
@@ -4236,10 +4191,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           return failure();
                         }
                         atom.upperExpression =
-                            upper
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(upper)
                                 .getValue()
                                 .getZExtValue();
                       }
@@ -4858,10 +4810,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           return;
                         }
                         atom.lowerExpression =
-                            lower
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(lower)
                                 .getValue()
                                 .getZExtValue();
                       }
@@ -4881,10 +4830,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           return;
                         }
                         atom.upperExpression =
-                            upper
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(upper)
                                 .getValue()
                                 .getZExtValue();
                       }
@@ -4925,9 +4871,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         return;
                       }
                       step.lowerExpression =
-                          transitionRange.repeatFrom
-                              ->getAttrOfType<IntegerAttr>(
-                                  sim::metadata::coverageFunctionalExpressionId)
+                          cov::get<cov::FunctionalExpressionId>(
+                              transitionRange.repeatFrom)
                               .getValue()
                               .getZExtValue();
                       if (transitionRange.repeatTo) {
@@ -4944,10 +4889,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                           return;
                         }
                         step.upperExpression =
-                            transitionRange.repeatTo
-                                ->getAttrOfType<IntegerAttr>(
-                                    sim::metadata::
-                                        coverageFunctionalExpressionId)
+                            cov::get<cov::FunctionalExpressionId>(
+                                transitionRange.repeatTo)
                                 .getValue()
                                 .getZExtValue();
                       }
@@ -4997,11 +4940,10 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                                     : coverage::CoverageSignedness::Unsigned;
                 pending.set.flags = coverage::FunctionalValueSetNeedsResolution;
                 if (binChildren->with) {
-                  auto candidates = binChildren->with->getAttrOfType<ArrayAttr>(
-                      sim::metadata::coverageFunctionalWithCandidateValues);
+                  auto candidates =
+                      cov::get<cov::WithCandidateValues>(binChildren->with);
                   auto iteratorPath =
-                      binChildren->with->getAttrOfType<StringAttr>(
-                          sim::metadata::coverageFunctionalWithIteratorPath);
+                      cov::get<cov::WithIteratorPath>(binChildren->with);
                   if (!candidates || !iteratorPath || candidates.empty() ||
                       candidates.size() >
                           coverage::MaxFunctionalWithCandidates) {
@@ -5068,30 +5010,27 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     expressionIDs.push_back(static_cast<int64_t>(expressionID));
                     resultOrdinals.push_back(descriptor.resultOrdinal);
                   }
-                  binChildren->with->setAttr(
-                      sim::metadata::coverageFunctionalWithExpressionIds,
+                  cov::set<cov::WithExpressionIds>(
+                      binChildren->with,
                       DenseI64ArrayAttr::get(&getContext(), expressionIDs));
-                  binChildren->with->setAttr(
-                      sim::metadata::coverageFunctionalWithExpressionOrdinals,
+                  cov::set<cov::WithExpressionOrdinals>(
+                      binChildren->with,
                       DenseI64ArrayAttr::get(&getContext(), resultOrdinals));
 
                   // A BinWith root represents a candidate batch in the sole
                   // v1 contract. Never leave a misleading singular
                   // FunctionalExpression descriptor on that operation.
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionId);
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionOrdinal);
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionKind);
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionBitWidth);
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionSignedness);
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionPhase);
-                  binChildren->with->removeAttr(
-                      sim::metadata::coverageFunctionalExpressionRole);
+                  cov::remove<cov::FunctionalExpressionId>(binChildren->with);
+                  cov::remove<cov::FunctionalExpressionOrdinal>(
+                      binChildren->with);
+                  cov::remove<cov::FunctionalExpressionKind>(binChildren->with);
+                  cov::remove<cov::FunctionalExpressionBitWidth>(
+                      binChildren->with);
+                  cov::remove<cov::FunctionalExpressionSignedness>(
+                      binChildren->with);
+                  cov::remove<cov::FunctionalExpressionPhase>(
+                      binChildren->with);
+                  cov::remove<cov::FunctionalExpressionRole>(binChildren->with);
                 }
                 if (binChildren->setCoverage) {
                   if (failed(addFunctionalExpression(
@@ -5107,9 +5046,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     return;
                   }
                   pending.set.setExpression =
-                      binChildren->setCoverage
-                          ->getAttrOfType<IntegerAttr>(
-                              sim::metadata::coverageFunctionalExpressionId)
+                      cov::get<cov::FunctionalExpressionId>(
+                          binChildren->setCoverage)
                           .getValue()
                           .getZExtValue();
                 } else {
@@ -5187,9 +5125,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         return;
                       }
                       atom.lowerExpression =
-                          lower
-                              ->getAttrOfType<IntegerAttr>(
-                                  sim::metadata::coverageFunctionalExpressionId)
+                          cov::get<cov::FunctionalExpressionId>(lower)
                               .getValue()
                               .getZExtValue();
                     }
@@ -5208,9 +5144,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                         return;
                       }
                       atom.upperExpression =
-                          upper
-                              ->getAttrOfType<IntegerAttr>(
-                                  sim::metadata::coverageFunctionalExpressionId)
+                          cov::get<cov::FunctionalExpressionId>(upper)
                               .getValue()
                               .getZExtValue();
                     }
@@ -5222,9 +5156,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
               uint64_t iffExpressionID = 0;
               if (binChildren->iff)
                 iffExpressionID =
-                    binChildren->iff
-                        ->getAttrOfType<IntegerAttr>(
-                            sim::metadata::coverageFunctionalExpressionId)
+                    cov::get<cov::FunctionalExpressionId>(binChildren->iff)
                         .getValue()
                         .getZExtValue();
               coverage::FunctionalBinPlan plan;
@@ -5246,9 +5178,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                     return;
                   }
                   plan.cardinalityExpression =
-                      binChildren->numberOfBins
-                          ->getAttrOfType<IntegerAttr>(
-                              sim::metadata::coverageFunctionalExpressionId)
+                      cov::get<cov::FunctionalExpressionId>(
+                          binChildren->numberOfBins)
                           .getValue()
                           .getZExtValue();
                   plan.arrayMode = coverage::FunctionalBinArrayMode::Fixed;
@@ -5439,9 +5370,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     return coverageOrderKey(entry.metric, entry.entity);
   });
 
-  module.walk([](Operation *operation) {
-    operation->removeAttr(sim::metadata::coverageSourceType);
-  });
+  module.walk(
+      [](Operation *operation) { cov::remove<cov::SourceType>(operation); });
 
   std::vector<uint8_t> encoded;
   coverage::Diagnostic diagnostic;

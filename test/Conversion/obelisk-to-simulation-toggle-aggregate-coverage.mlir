@@ -38,9 +38,9 @@ module attributes {coverage.metrics = ["toggle"]} {
 // CHECK-SAME: coverage.toggle_bit_count = 31 : i64
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: -1, -1, -1, 124>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0, 0, 0, 0>
-// CHECK-DAG: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}width = 24 : i64{{.*}}]{{.*}}coverage.toggle_observable
-// CHECK-DAG: simulation.storage.decl 1 {{.*}}coverage.toggle_bindings = [{{.*}}width = 2 : i64{{.*}}, {{.*}}width = 3 : i64{{.*}}]{{.*}}coverage.toggle_observable
-// CHECK-DAG: simulation.storage.decl 2 {{.*}}coverage.toggle_bindings = [{{.*}}width = 2 : i64{{.*}}]{{.*}}coverage.toggle_observable
+// CHECK-DAG: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}width = 24{{.*}}]{{.*}}coverage.toggle_observable
+// CHECK-DAG: simulation.storage.decl 1 {{.*}}coverage.toggle_bindings = [{{.*}}width = 2{{.*}}, {{.*}}width = 3{{.*}}]{{.*}}coverage.toggle_observable
+// CHECK-DAG: simulation.storage.decl 2 {{.*}}coverage.toggle_bindings = [{{.*}}width = 2{{.*}}]{{.*}}coverage.toggle_observable
 // CHECK-NOT: coverage.source_type
 // Enum typedef identity must survive below fixed arrays and aggregate fields,
 // as well as at the object root.

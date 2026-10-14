@@ -819,14 +819,14 @@ bool CombinationalFusionAnalysis::canInterleave(
                        found->second->getMemory().getRepeatedWrites());
   }
   for (auto storage : design.getOps<sim::SimStorageDeclOp>())
-    if (storage->hasAttr(sim::metadata::coverageToggleObservable) &&
+    if (cov::has<cov::ToggleObservable>(storage) &&
         llvm::any_of(repeated, [&](const auto &r) {
           return r.root == static_cast<uint64_t>(storage.getId());
         }))
       return reject(
           {Reason::ToggleCoverage, {}, static_cast<uint64_t>(storage.getId())});
   for (auto net : design.getOps<sim::SimNetDeclOp>())
-    if (net->hasAttr(sim::metadata::coverageToggleObservable))
+    if (cov::has<cov::ToggleObservable>(net))
       if (auto root = analysis::ActivationMemoryAnalysis::getRoot(
               schedule::ComputeResourceKind::Net, net.getId());
           root && llvm::any_of(repeated,
@@ -933,14 +933,14 @@ CombinationalFusionAnalysis::getGlitchInsensitiveStorage() const {
     auto observability = storage.getObservability();
     if ((!observability ||
          *observability == schedule::ComputeObservabilityKind::Invisible) &&
-        !storage->hasAttr(sim::metadata::coverageToggleObservable))
+        !cov::has<cov::ToggleObservable>(storage))
       result.insert(static_cast<uint64_t>(storage.getId()));
   }
   for (auto net : design.getOps<sim::SimNetDeclOp>()) {
     auto observability = net.getObservability();
     if ((!observability ||
          *observability == schedule::ComputeObservabilityKind::Invisible) &&
-        !net->hasAttr(sim::metadata::coverageToggleObservable))
+        !cov::has<cov::ToggleObservable>(net))
       if (auto root = analysis::ActivationMemoryAnalysis::getRoot(
               schedule::ComputeResourceKind::Net, net.getId()))
         result.insert(*root);
@@ -1439,7 +1439,7 @@ computeNBATransientObservers(sim::SimDesignOp design, bool guardedVPI) {
   }
   llvm::DenseSet<uint64_t> &observable = result.observable;
   design.walk([&](sim::SimStorageDeclOp storage) {
-    if (storage->hasAttr(sim::metadata::coverageToggleObservable))
+    if (cov::has<cov::ToggleObservable>(storage))
       observable.insert(storage.getId());
   });
   for (sim::SimFuncOp function : functions) {

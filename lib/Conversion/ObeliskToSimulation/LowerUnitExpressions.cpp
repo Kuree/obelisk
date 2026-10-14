@@ -555,8 +555,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     if (failed(elementType) || !objectType)
       return failure();
     Type storageType = *elementType;
-    if (auto storage = op->getAttrOfType<TypeAttr>(
-            "simulation.covergroup_field_storage_type"))
+    if (auto storage = cov::get<cov::FieldStorageType>(op))
       storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
         function.getContext(), storageType, objectType.getClassName());
@@ -3629,8 +3628,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     if (failed(resultType) || failed(object) || !objectType)
       return failure();
     Type storageType = *resultType;
-    if (auto storage = op->getAttrOfType<TypeAttr>(
-            "simulation.covergroup_field_storage_type"))
+    if (auto storage = cov::get<cov::FieldStorageType>(op))
       storageType = storage.getValue();
     Type referenceType = sim::ManagedRefType::get(
         function.getContext(), storageType, objectType.getClassName());

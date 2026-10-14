@@ -15,6 +15,8 @@ add_mlir_library(ObeliskSimulationIR
   SimulationOpDefs3.cpp
 
   DEPENDS
+  ObeliskCoverageAttrsIncGen
+  ObeliskCoverageDialectIncGen
   ObeliskDPIAttrsIncGen
   ObeliskDPIDialectIncGen
   ObeliskDPIEnumsIncGen
@@ -31,6 +33,7 @@ add_mlir_library(ObeliskSimulationIR
   ObeliskVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskCoverageIR
   ObeliskDPIIR
   ObeliskNativeIR
   ObeliskRuntimeIR

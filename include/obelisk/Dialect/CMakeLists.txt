@@ -1,5 +1,6 @@
 add_subdirectory(Slang)
 add_subdirectory(Obelisk)
+add_subdirectory(Coverage)
 add_subdirectory(DPI)
 add_subdirectory(Native)
 add_subdirectory(Runtime)

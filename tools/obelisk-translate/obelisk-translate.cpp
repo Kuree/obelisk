@@ -4,6 +4,7 @@
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
+#include "obelisk/Dialect/Coverage/CoverageDialect.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/SDF/SDFDialect.h"
@@ -39,9 +40,10 @@ int main(int argc, char **argv) {
         return success();
       },
       [](DialectRegistry &registry) {
-        registry.insert<LLVM::LLVMDialect, obelisk::dpi::DPIDialect,
-                        obelisk::native::NativeDialect,
-                        obelisk::schedule::ScheduleDialect>();
+        registry
+            .insert<LLVM::LLVMDialect, obelisk::cov::CoverageDialect,
+                    obelisk::dpi::DPIDialect, obelisk::native::NativeDialect,
+                    obelisk::schedule::ScheduleDialect>();
         registerBuiltinDialectTranslation(registry);
         registerLLVMDialectTranslation(registry);
       });

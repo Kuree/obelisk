@@ -511,8 +511,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   });
   if (usesFunctionalCoverageDatabase) {
     SmallVector<Attribute> metrics;
-    if (auto current =
-            module->getAttrOfType<ArrayAttr>("coverage.metrics"))
+    if (auto current = cov::get<cov::Metrics>(module))
       llvm::append_range(metrics, current);
     bool hasFunctional = llvm::any_of(metrics, [](Attribute attribute) {
       auto metric = dyn_cast<StringAttr>(attribute);
@@ -520,14 +519,12 @@ void ObeliskSimPreparePass::runOnOperation() {
     });
     if (!hasFunctional) {
       metrics.push_back(StringAttr::get(context, "functional"));
-      module->setAttr("coverage.metrics",
-                      ArrayAttr::get(context, metrics));
+      cov::set<cov::Metrics>(module, ArrayAttr::get(context, metrics));
     }
   }
 
   bool pruneCoverage = pruneUnusedCoverage;
-  if (auto metrics =
-          module->getAttrOfType<ArrayAttr>("coverage.metrics"))
+  if (auto metrics = cov::get<cov::Metrics>(module))
     pruneCoverage &= !llvm::any_of(metrics, [](Attribute attribute) {
       auto metric = dyn_cast<StringAttr>(attribute);
       return metric && metric.getValue() == "functional";
@@ -1269,15 +1266,14 @@ void ObeliskSimPreparePass::runOnOperation() {
       StringRef hierarchy = getHierarchyName(target->definition);
       IntegerAttr id =
           IntegerAttr::get(IntegerType::get(context, 64), target->id);
-      expression->setAttr(coverageBlockEventTargetIdAttrName, id);
-      referencedDefinition->setAttr(coverageBlockEventTargetIdAttrName, id);
-      target->definition->setAttr(coverageBlockEventTargetIdAttrName, id);
+      cov::set<cov::BlockEventTargetId>(expression, id);
+      cov::set<cov::BlockEventTargetId>(referencedDefinition, id);
+      cov::set<cov::BlockEventTargetId>(target->definition, id);
       if (auto subroutine =
               dyn_cast<semantic::SVSubroutineSymbolOp>(target->definition);
           subroutine && getOwningClass(subroutine) &&
           !subroutine.getIsStatic().value_or(false))
-        expression->setAttr(coverageBlockEventInstanceMethodAttrName,
-                            UnitAttr::get(context));
+        cov::mark<cov::BlockEventInstanceMethod>(expression);
       if (isa<semantic::SVStatementBlockSymbolOp>(target->definition)) {
         auto [it, inserted] =
             coverageBlockEventBlockIDs.try_emplace(hierarchy, target->id);
@@ -1300,9 +1296,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto target = coverageBlockEventBlockIDs.find(path.getValue());
     if (target == coverageBlockEventBlockIDs.end())
       return;
-    block->setAttr(
-        coverageBlockEventTargetIdAttrName,
-        IntegerAttr::get(IntegerType::get(context, 64), target->second));
+    cov::set<cov::BlockEventTargetId>(
+        block, IntegerAttr::get(IntegerType::get(context, 64), target->second));
     if (!materializedCoverageBlockEvents.insert(path.getValue()).second) {
       emitError(getSemanticLocation(block))
           << "named block event target has more than one executable "
@@ -1967,8 +1962,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         nested->setAttr("simulation.class_field", field);
         if (Type storageType =
                 classes->covergroupFieldStorageTypes.lookup(property))
-          nested->setAttr("simulation.covergroup_field_storage_type",
-                          TypeAttr::get(storageType));
+          cov::set<cov::FieldStorageType>(nested, TypeAttr::get(storageType));
       }
     });
   });
@@ -8024,8 +8018,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             nested->setAttr("simulation.class_field", field->second);
             if (Type storageType =
                     classes->covergroupFieldStorageTypes.lookup(symbol->second))
-              nested->setAttr("simulation.covergroup_field_storage_type",
-                              TypeAttr::get(storageType));
+              cov::set<cov::FieldStorageType>(nested,
+                                              TypeAttr::get(storageType));
           }
         std::optional<unsigned> index =
             isa<semantic::SVMemberAccessExpressionOp>(nested)
@@ -10609,10 +10603,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               "simulation.control_target_id"))
         functionAttrs.push_back(
             builder.getNamedAttr("simulation.control_target_id", targetID));
-    if (auto targetID = unit.source->getAttrOfType<IntegerAttr>(
-            coverageBlockEventTargetIdAttrName))
-      functionAttrs.push_back(builder.getNamedAttr(
-          coverageBlockEventTargetIdAttrName, targetID));
+    if (auto targetID = cov::get<cov::BlockEventTargetId>(unit.source))
+      functionAttrs.push_back(cov::named<cov::BlockEventTargetId>(targetID));
     // Clocking inputs must be sampled before program-domain Reactive work.
     // Keep the shared event-list monitor in the design domain even when the
     // clocking block is declared lexically inside a program.
@@ -11095,8 +11087,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           named->setAttr("simulation.class_field", field->second);
           if (Type storageType =
                   classes->covergroupFieldStorageTypes.lookup(symbol->second))
-            named->setAttr("simulation.covergroup_field_storage_type",
-                           TypeAttr::get(storageType));
+            cov::set<cov::FieldStorageType>(named, TypeAttr::get(storageType));
         }
         return;
       }
@@ -11140,8 +11131,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           member->setAttr("simulation.class_field", field->second);
           if (Type storageType =
                   classes->covergroupFieldStorageTypes.lookup(symbol->second))
-            member->setAttr("simulation.covergroup_field_storage_type",
-                            TypeAttr::get(storageType));
+            cov::set<cov::FieldStorageType>(member, TypeAttr::get(storageType));
         }
         return;
       }
@@ -13817,8 +13807,8 @@ void ObeliskSimPreparePass::runOnOperation() {
   }
 
   if (!retainedCoverageSymbols.empty())
-    rootInitializer->setAttr(
-        sim::metadata::coverageRetainedSymbols,
+    cov::set<cov::RetainedSymbols>(
+        rootInitializer,
         builder.getArrayAttr(retainedCoverageSymbols.getArrayRef()));
   sim::SimReturnOp::create(rootBuilder, module.getLoc(), ValueRange{});
 }

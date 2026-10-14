@@ -88,8 +88,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   // metrics attribute for explicit --coverage selection and for coverage
   // database system calls, which are the two opt-in persistence paths.
   uint32_t coveragePersistenceMask = 0;
-  if (auto metrics =
-          module->getAttrOfType<ArrayAttr>("coverage.metrics")) {
+  if (auto metrics = cov::get<cov::Metrics>(module)) {
     for (Attribute attribute : metrics) {
       auto metric = dyn_cast<StringAttr>(attribute);
       if (!metric)
@@ -124,11 +123,9 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   uint64_t linePointCount = 0;
   uint64_t toggleBitCount = 0;
   if (hasCoverage) {
-    if (auto count = module->getAttrOfType<IntegerAttr>(
-            sim::metadata::coverageLinePointCount))
+    if (auto count = cov::get<cov::LinePointCount>(module))
       linePointCount = count.getValue().getZExtValue();
-    if (auto count = module->getAttrOfType<IntegerAttr>(
-            sim::metadata::coverageToggleBitCount))
+    if (auto count = cov::get<cov::ToggleBitCount>(module))
       toggleBitCount = count.getValue().getZExtValue();
   }
   bool requiresNativeStateSync =
@@ -509,8 +506,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     SmallVector<ToggleBinding> toggleBindings;
     auto collectToggleBindings = [&](Operation *operation, uint64_t id,
                                      const auto &handles) -> LogicalResult {
-      auto values = operation->getAttrOfType<ArrayAttr>(
-          sim::metadata::coverageToggleBindings);
+      auto values = cov::get<cov::ToggleBindings>(operation);
       if (!values)
         return success();
       auto handle = handles.find(id);
@@ -518,23 +514,16 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         return operation->emitError(
             "covered declaration has no native state handle");
       for (Attribute value : values) {
-        auto binding = dyn_cast<DictionaryAttr>(value);
-        auto first = binding ? binding.getAs<IntegerAttr>("base") : nullptr;
-        auto low = binding ? binding.getAs<IntegerAttr>("low") : nullptr;
-        auto width = binding ? binding.getAs<IntegerAttr>("width") : nullptr;
-        if (!first || !low || !width || first.getValue().isNegative() ||
-            low.getValue().isNegative() || width.getValue().isNegative() ||
-            first.getValue().getActiveBits() > 64 ||
-            low.getValue().getActiveBits() > 63 ||
-            width.getValue().getActiveBits() > 64 || width.getValue().isZero())
+        auto binding = dyn_cast<cov::ToggleBindingAttr>(value);
+        if (!binding || binding.getLow() < 0 || binding.getWidth() == 0)
           return operation->emitError("has invalid toggle coverage binding");
-        uint64_t firstBit = first.getValue().getZExtValue();
-        uint64_t bitCount = width.getValue().getZExtValue();
+        uint64_t firstBit = binding.getBase();
+        uint64_t bitCount = binding.getWidth();
         if (firstBit > toggleBitCount || bitCount > toggleBitCount - firstBit)
           return operation->emitError(
               "toggle coverage binding exceeds the prepared inventory");
-        uint64_t stateHandle = obelisk_rt_stable_handle_offset(
-            handle->second, low.getValue().getSExtValue());
+        uint64_t stateHandle =
+            obelisk_rt_stable_handle_offset(handle->second, binding.getLow());
         if (stateHandle == UINT64_MAX)
           return operation->emitError(
               "toggle coverage binding cannot be represented by a stable "
@@ -564,10 +553,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
     Value initialValue = null;
     Value initialUnknown = null;
     if (toggleBitCount) {
-      auto valueBytes = module->getAttrOfType<DenseI8ArrayAttr>(
-          sim::metadata::coverageToggleInitialValue);
-      auto unknownBytes = module->getAttrOfType<DenseI8ArrayAttr>(
-          sim::metadata::coverageToggleInitialUnknown);
+      auto valueBytes = cov::get<cov::ToggleInitialValue>(module);
+      auto unknownBytes = cov::get<cov::ToggleInitialUnknown>(module);
       const uint64_t expectedBytes = (toggleBitCount + 7) / 8;
       if (!valueBytes || !unknownBytes ||
           static_cast<uint64_t>(valueBytes.size()) != expectedBytes ||

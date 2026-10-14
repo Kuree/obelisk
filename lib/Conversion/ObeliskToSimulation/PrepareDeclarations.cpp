@@ -243,16 +243,13 @@ materializeInheritedCovergroupPlans(semantic::SVRootSymbolOp semanticRoot,
       Operation *clone = builder.clone(*member);
       auto clonedPoint = cast<semantic::SVCoverpointSymbolOp>(clone);
       if (directPoints.contains(getDebugName(point))) {
-        clone->setAttr("coverage.inherited_overridden",
-                       builder.getUnitAttr());
-        if (!clone->hasAttr("coverage.inherited_origin_type"))
-          clone->setAttr(
-              "coverage.inherited_origin_type",
-              builder.getI64IntegerAttr(stableFunctionalTypeID(base)));
+        cov::mark<cov::InheritedOverridden>(clone);
+        if (!cov::has<cov::InheritedOriginType>(clone))
+          cov::set<cov::InheritedOriginType>(
+              clone, builder.getI64IntegerAttr(stableFunctionalTypeID(base)));
       }
       if (directPointSymbols.contains(point.getSymName())) {
-        auto origin = clone->getAttrOfType<IntegerAttr>(
-            "coverage.inherited_origin_type");
+        auto origin = cov::get<cov::InheritedOriginType>(clone);
         std::string uniqueName =
             (Twine(point.getSymName()) + "$inherited$" +
              Twine(origin ? origin.getValue().getZExtValue()
@@ -281,8 +278,8 @@ materializeInheritedCovergroupPlans(semantic::SVRootSymbolOp semanticRoot,
       });
       SmallVector<Attribute> effectiveTargets;
       effectiveTargets.reserve(cross.getTargetSymbols().size());
-      ArrayAttr baseEffectiveTargets = cross->getAttrOfType<ArrayAttr>(
-          "coverage.effective_target_symbols");
+      ArrayAttr baseEffectiveTargets =
+          cov::get<cov::EffectiveTargetSymbols>(cross);
       for (auto [ordinal, targetAttr] :
            llvm::enumerate(cross.getTargetSymbols())) {
         auto target = dyn_cast<SymbolRefAttr>(targetAttr);
@@ -297,25 +294,23 @@ materializeInheritedCovergroupPlans(semantic::SVRootSymbolOp semanticRoot,
                                        ? builder.getStringAttr(sourceTarget)
                                        : Attribute(effective->second));
       }
-      clone->setAttr("coverage.effective_target_symbols",
-                     builder.getArrayAttr(effectiveTargets));
+      cov::set<cov::EffectiveTargetSymbols>(
+          clone, builder.getArrayAttr(effectiveTargets));
       clone->walk([&](Operation *nested) {
         auto target = nested->getAttrOfType<SymbolRefAttr>("target_symbol");
         StringRef sourceTarget =
             target ? target.getLeafReference() : StringRef{};
-        if (auto inherited = nested->getAttrOfType<StringAttr>(
-                "coverage.effective_target_symbol"))
+        if (auto inherited = cov::get<cov::EffectiveTargetSymbol>(nested))
           sourceTarget = inherited.getValue();
         auto effective = inheritedPointSymbols.find(sourceTarget);
         if (effective != inheritedPointSymbols.end())
-          nested->setAttr("coverage.effective_target_symbol",
-                          effective->second);
+          cov::set<cov::EffectiveTargetSymbol>(nested, effective->second);
       });
     }
     derivedBody->setAttr("option_count",
                          builder.getI64IntegerAttr(
                              derivedBody.getOptionCount() + inheritedOptions));
-    derived->setAttr("coverage.base_group", derived.getBaseGroupAttr());
+    cov::set<cov::BaseGroup>(derived, derived.getBaseGroupAttr());
     derived->removeAttr("base_group");
     derived->setAttr("coverage_event_kind",
                      builder.getI32IntegerAttr(
@@ -447,8 +442,7 @@ LogicalResult materializeCovergroupTypeOptionInitializers(
               key == "macro_expansion_stack" || key == "macro_name")
             attrs.append(attr);
         }
-        spelling = definition->getAttrOfType<StringAttr>(
-            "coverage.type_option_constant");
+        spelling = cov::get<cov::TypeOptionConstant>(definition);
         if (!spelling)
           if (auto constant = getConstantSpelling(expression))
             spelling = builder.getStringAttr(*constant);
@@ -590,8 +584,7 @@ LogicalResult materializeCovergroupDeclarations(
     StringAttr symbol =
         getSimulationCovergroupSymbol(handle.getCovergroupName());
     FlatSymbolRefAttr base;
-    TypeAttr baseAttr =
-        covergroup->getAttrOfType<TypeAttr>("coverage.base_group");
+    TypeAttr baseAttr = cov::get<cov::BaseGroup>(covergroup);
     if (baseAttr) {
       auto baseHandle =
           dyn_cast<semantic::CovergroupHandleType>(baseAttr.getValue());
@@ -813,8 +806,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
   };
   for (const auto &entry : covergroupsBySymbol) {
     semantic::SVCovergroupTypeOp derived = entry.second;
-    TypeAttr baseAttr =
-        derived->getAttrOfType<TypeAttr>("coverage.base_group");
+    TypeAttr baseAttr = cov::get<cov::BaseGroup>(derived);
     if (!baseAttr)
       continue;
     auto baseHandle =

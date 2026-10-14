@@ -605,8 +605,7 @@ FailureOr<ValidatedSemanticDesign>
 validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
   ValidatedSemanticDesign result;
   uint32_t coverageLanguageVersion = 2017;
-  if (auto version = module->getAttrOfType<IntegerAttr>(
-          sim::metadata::coverageLanguageVersion))
+  if (auto version = cov::get<cov::LanguageVersion>(module))
     coverageLanguageVersion =
         static_cast<uint32_t>(version.getValue().getZExtValue());
   llvm::DenseMap<uint64_t, Operation *> nodeIds;
@@ -1158,12 +1157,10 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
             paths.reserve(plan->targetPaths.size());
             for (StringRef path : plan->targetPaths)
               paths.push_back(builder.getStringAttr(path));
-            operands[1]->setAttr(
-                sim::metadata::coverageFunctionalCrossWithScalar,
-                builder.getBoolAttr(plan->scalar));
-            operands[1]->setAttr(
-                sim::metadata::coverageFunctionalCrossWithTargetPaths,
-                builder.getArrayAttr(paths));
+            cov::set<cov::CrossWithScalar>(operands[1],
+                                           builder.getBoolAttr(plan->scalar));
+            cov::set<cov::CrossWithTargetPaths>(operands[1],
+                                                builder.getArrayAttr(paths));
             return true;
           }
           if (auto set =
@@ -1383,12 +1380,10 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
           for (const llvm::APInt &candidate : plan->values)
             candidates.push_back(
                 builder.getIntegerAttr(candidateType, candidate));
-          children->with->setAttr(
-              sim::metadata::coverageFunctionalWithCandidateValues,
-              builder.getArrayAttr(candidates));
-          children->with->setAttr(
-              sim::metadata::coverageFunctionalWithIteratorPath,
-              builder.getStringAttr(plan->iteratorPath));
+          cov::set<cov::WithCandidateValues>(children->with,
+                                             builder.getArrayAttr(candidates));
+          cov::set<cov::WithIteratorPath>(
+              children->with, builder.getStringAttr(plan->iteratorPath));
         }
       }
     } else if (auto cross = dyn_cast<semantic::SVCoverCrossSymbolOp>(op)) {

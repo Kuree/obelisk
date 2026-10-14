@@ -11,6 +11,7 @@ def ObeliskSimulationDialect : Dialect {
   let dependentDialects = ["::obelisk::schedule::ScheduleDialect", "::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",
                            "::obelisk::runtime::ObeliskRuntimeDialect",
+                           "::obelisk::cov::CoverageDialect",
                            "::obelisk::dpi::DPIDialect",
                            "::obelisk::native::NativeDialect"];
   let summary = "Target-independent executable SystemVerilog simulation IR";

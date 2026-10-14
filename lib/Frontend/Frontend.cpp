@@ -5306,7 +5306,7 @@ private:
     // expression, or reevaluating a constant function at each new().
     if (setter.isTypeOption())
       if (const auto *constant = assignment->right().getConstant())
-        attrs.set("coverage.type_option_constant",
+        attrs.set(cov::TypeOptionConstant::getNameStr(),
                   builder.getStringAttr(constant->isReal()
                                             ? formatReal(constant->real())
                                             : formatConstant(*constant)));
@@ -6301,8 +6301,8 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     return failure();
 
   OwningOpRef<ModuleOp> module(ModuleOp::create(UnknownLoc::get(&context)));
-  (*module)->setAttr(
-      "coverage.language_version",
+  cov::set<cov::LanguageVersion>(
+      (*module),
       IntegerAttr::get(IntegerType::get(&context, 32),
                        options.languageVersion == LanguageVersion::IEEE1800_2017
                            ? 2017
@@ -6328,8 +6328,7 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
     attributes.reserve(paths.size());
     for (const std::string &path : paths)
       attributes.push_back(StringAttr::get(&context, path));
-    (*module)->setAttr("coverage.source_files",
-                       ArrayAttr::get(&context, attributes));
+    cov::set<cov::SourceFiles>((*module), ArrayAttr::get(&context, attributes));
   }
   SlangASTImporter importer(*module, driver.sourceManager, *compilation,
                             *analysisManager, *sdfAnnotations);

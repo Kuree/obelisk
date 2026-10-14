@@ -121,8 +121,7 @@ UnitLoweringInputs::UnitLoweringInputs(Operation *module)
           covergroupsByName.try_emplace(group.getSymName(), operation);
       if (!nameEntry.second)
         nameEntry.first->second = nullptr;
-      if (auto base =
-              group->getAttrOfType<TypeAttr>("coverage.base_group"))
+      if (auto base = cov::get<cov::BaseGroup>(group))
         derivedCovergroups[base.getValue()].push_back(operation);
     }
     return WalkResult::advance();

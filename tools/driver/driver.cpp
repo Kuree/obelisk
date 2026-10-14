@@ -21,6 +21,7 @@
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
+#include "obelisk/Dialect/Coverage/CoverageDialect.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
@@ -1316,11 +1317,11 @@ static int executeCompilation(
   }
 
   DialectRegistry registry;
-  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-                  obelisk::dpi::DPIDialect, obelisk::native::NativeDialect,
-                  obelisk::runtime::ObeliskRuntimeDialect,
-                  obelisk::sim::ObeliskSimulationDialect,
-                  mlir::LLVM::LLVMDialect>();
+  registry.insert<
+      obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+      obelisk::cov::CoverageDialect, obelisk::dpi::DPIDialect,
+      obelisk::native::NativeDialect, obelisk::runtime::ObeliskRuntimeDialect,
+      obelisk::sim::ObeliskSimulationDialect, mlir::LLVM::LLVMDialect>();
   // One explicitly sized pool is shared by all MLIR parallel pass adaptors.
   // Its lifetime encloses the context as required by MLIRContext.
   std::unique_ptr<llvm::DefaultThreadPool> compilerPool;
@@ -1402,18 +1403,18 @@ static int executeCompilation(
       for (StringRef metric : selected)
         metrics.push_back(StringAttr::get(&context, metric));
     }
-    (*module)->setAttr("coverage.metrics",
-                       ArrayAttr::get(&context, metrics));
+    obelisk::cov::set<obelisk::cov::Metrics>((*module),
+                                             ArrayAttr::get(&context, metrics));
   }
   if (!coverageConfigContents.empty())
-    (*module)->setAttr("coverage.config",
-                       StringAttr::get(&context, coverageConfigContents));
+    obelisk::cov::set<obelisk::cov::Config>(
+        (*module), StringAttr::get(&context, coverageConfigContents));
   SmallVector<Attribute> prefixMaps;
   for (StringRef mapping : args.getAllArgValues(OPT_coverage_prefix_map_EQ))
     prefixMaps.push_back(StringAttr::get(&context, mapping));
   if (!prefixMaps.empty())
-    (*module)->setAttr("coverage.prefix_maps",
-                       ArrayAttr::get(&context, prefixMaps));
+    obelisk::cov::set<obelisk::cov::PrefixMaps>(
+        (*module), ArrayAttr::get(&context, prefixMaps));
 
   if (native) {
     if (failed(obelisk::driver::configureTargetLayout(

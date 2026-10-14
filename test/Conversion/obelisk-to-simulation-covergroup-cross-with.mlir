@@ -8,7 +8,7 @@
 // IEEE 1800-2023 19.6.1.2 selects associated values from subordinate bins.
 // Integral iterator operations, including bit selects, use a typed DAG. A
 // function predicate still uses one constructor queue of associated values.
-// PREPARE: simulation.coverage.functional.cross_with_target_paths = ["cross_with.cg.x.ca", "cross_with.cg.x.cb"]
+// PREPARE: coverage.cross_with_target_paths = ["cross_with.cg.x.ca", "cross_with.cg.x.cb"]
 
 // Omitted `matches` is Count 1, a folded positive count is retained directly,
 // `$` is All, and a constructor-dependent count has one typed expression.
@@ -44,11 +44,11 @@
 // Wide, signed, four-state and nested (`with` of a `with`) selectors all
 // record their cross target paths in declaration order; the nested form
 // records them once per level (two entries) (IEEE 1800-2023 19.6.1.2).
-// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["too_many_cross_with.cg.x.ca", "too_many_cross_with.cg.x.cb"]
-// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["signed_cross_with.cg.x.ca", "signed_cross_with.cg.x.cb"]
-// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["four_state_cross_with.cg.x.ca", "four_state_cross_with.cg.x.cb"]
-// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["nested_cross_with.cg.x.ca", "nested_cross_with.cg.x.cb"]
-// VARIANTS-DAG: simulation.coverage.functional.cross_with_target_paths = ["nested_cross_with.cg.x.ca", "nested_cross_with.cg.x.cb"]
+// VARIANTS-DAG: coverage.cross_with_target_paths = ["too_many_cross_with.cg.x.ca", "too_many_cross_with.cg.x.cb"]
+// VARIANTS-DAG: coverage.cross_with_target_paths = ["signed_cross_with.cg.x.ca", "signed_cross_with.cg.x.cb"]
+// VARIANTS-DAG: coverage.cross_with_target_paths = ["four_state_cross_with.cg.x.ca", "four_state_cross_with.cg.x.cb"]
+// VARIANTS-DAG: coverage.cross_with_target_paths = ["nested_cross_with.cg.x.ca", "nested_cross_with.cg.x.cb"]
+// VARIANTS-DAG: coverage.cross_with_target_paths = ["nested_cross_with.cg.x.ca", "nested_cross_with.cg.x.cb"]
 
 //--- input.sv
 module cross_with;

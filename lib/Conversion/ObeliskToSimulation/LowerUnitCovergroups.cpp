@@ -112,8 +112,7 @@ LogicalResult UnitLowering::publishCovergroupTypeOption(
     Location location) {
   uint64_t itemID = 0;
   if (item) {
-    auto stableID = item->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalItemId);
+    auto stableID = cov::get<cov::FunctionalItemId>(item);
     if (!stableID || stableID.getValue().isZero())
       return emitError(location)
              << "functional coverage item type option has no typed v1 identity";
@@ -205,8 +204,7 @@ UnitLowering::resolveCovergroupOptionOwner(Operation *owner,
           lookupNearestSymbolFrom<semantic::SVCoverCrossSymbolOp>(body, leaf);
   }
   auto stableID = result.item && group->isAncestor(result.item)
-                      ? result.item->getAttrOfType<IntegerAttr>(
-                            sim::metadata::coverageFunctionalItemId)
+                      ? cov::get<cov::FunctionalItemId>(result.item)
                       : IntegerAttr{};
   if (!stableID || stableID.getValue().isZero()) {
     emitError(location)
@@ -397,8 +395,7 @@ LogicalResult UnitLowering::enqueueCapturedCovergroupOption(
              << "type option has no typed coverage declaration";
     uint64_t itemID = 0;
     if (destination.coverageItem) {
-      auto id = destination.coverageItem->getAttrOfType<IntegerAttr>(
-          sim::metadata::coverageFunctionalItemId);
+      auto id = cov::get<cov::FunctionalItemId>(destination.coverageItem);
       if (!id || id.getValue().isZero())
         return emitError(location) << "type option has no stable item identity";
       itemID = id.getValue().getZExtValue();
@@ -684,8 +681,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
         }
       };
   for (auto [index, formal, actual] : llvm::enumerate(formals, actuals)) {
-    auto id = formal->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalFormalId);
+    auto id = cov::get<cov::FunctionalFormalId>(formal);
     FailureOr<Type> type = getNormalizedSemanticType(formal);
     if (!id || id.getValue().isNegative() || id.getValue().isZero() ||
         failed(type)) {
@@ -754,8 +750,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       SmallVector<Operation *> defaultChildren = getChildren(formal);
       auto defaultID =
           defaultChildren.size() == 1
-              ? defaultChildren.front()->getAttrOfType<IntegerAttr>(
-                    sim::metadata::coverageFunctionalExpressionId)
+              ? cov::get<cov::FunctionalExpressionId>(defaultChildren.front())
               : IntegerAttr{};
       if (!defaultID || defaultID.getValue().isNegative() ||
           defaultID.getValue().isZero()) {
@@ -816,14 +811,10 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
   SmallVector<ConstructorExpression> constructorExpressions;
   WalkResult inventoryResult = covergroup->walk<
       WalkOrder::PreOrder>([&](Operation *expression) -> WalkResult {
-    if (auto ids = expression->getAttrOfType<DenseI64ArrayAttr>(
-            sim::metadata::coverageFunctionalWithExpressionIds)) {
-      auto ordinals = expression->getAttrOfType<DenseI64ArrayAttr>(
-          sim::metadata::coverageFunctionalWithExpressionOrdinals);
-      auto candidates = expression->getAttrOfType<ArrayAttr>(
-          sim::metadata::coverageFunctionalWithCandidateValues);
-      auto iteratorPath = expression->getAttrOfType<StringAttr>(
-          sim::metadata::coverageFunctionalWithIteratorPath);
+    if (auto ids = cov::get<cov::WithExpressionIds>(expression)) {
+      auto ordinals = cov::get<cov::WithExpressionOrdinals>(expression);
+      auto candidates = cov::get<cov::WithCandidateValues>(expression);
+      auto iteratorPath = cov::get<cov::WithIteratorPath>(expression);
       ArrayRef<int64_t> idValues = ids.asArrayRef();
       ArrayRef<int64_t> ordinalValues =
           ordinals ? ordinals.asArrayRef() : ArrayRef<int64_t>{};
@@ -857,10 +848,8 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       return WalkResult::skip();
     }
 
-    auto phase = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionPhase);
-    auto role = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionRole);
+    auto phase = cov::get<cov::FunctionalExpressionPhase>(expression);
+    auto role = cov::get<cov::FunctionalExpressionRole>(expression);
     const uint64_t phaseValue =
         phase ? phase.getValue().getZExtValue() : uint64_t{0};
     if ((phaseValue !=
@@ -873,10 +862,8 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
                      static_cast<uint32_t>(
                          coverage::FunctionalExpressionRole::FormalDefault)))
       return WalkResult::advance();
-    auto id = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionId);
-    auto ordinal = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionOrdinal);
+    auto id = cov::get<cov::FunctionalExpressionId>(expression);
+    auto ordinal = cov::get<cov::FunctionalExpressionOrdinal>(expression);
     if (!phase || !id || !ordinal || id.getValue().isZero() ||
         phase.getValue().ugt(UINT32_MAX) ||
         ordinal.getValue().ugt(UINT32_MAX)) {
@@ -892,18 +879,14 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
          static_cast<uint32_t>(ordinal.getValue().getZExtValue()),
          {},
          {}});
-    auto scalarWith = expression->getAttrOfType<BoolAttr>(
-        sim::metadata::coverageFunctionalCrossWithScalar);
+    auto scalarWith = cov::get<cov::CrossWithScalar>(expression);
     if ((!scalarWith || !scalarWith.getValue()) && role &&
         role.getValue().getZExtValue() ==
             static_cast<uint32_t>(
                 coverage::FunctionalExpressionRole::SelectorWith)) {
-      auto tuple = expression->getAttrOfType<TypeAttr>(
-          sim::metadata::coverageFunctionalCrossWithTupleType);
-      auto selector = expression->getAttrOfType<IntegerAttr>(
-          sim::metadata::coverageFunctionalCrossWithSelectorId);
-      auto paths = expression->getAttrOfType<ArrayAttr>(
-          sim::metadata::coverageFunctionalCrossWithTargetPaths);
+      auto tuple = cov::get<cov::CrossWithTupleType>(expression);
+      auto selector = cov::get<cov::CrossWithSelectorId>(expression);
+      auto paths = cov::get<cov::CrossWithTargetPaths>(expression);
       auto &entry = constructorExpressions.back();
       entry.crossTuple =
           tuple ? dyn_cast<sim::UnpackedStructType>(tuple.getValue())
@@ -1064,12 +1047,9 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
       continue;
     }
 
-    auto kind = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionKind);
-    auto bitWidth = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionBitWidth);
-    auto signedness = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionSignedness);
+    auto kind = cov::get<cov::FunctionalExpressionKind>(expression);
+    auto bitWidth = cov::get<cov::FunctionalExpressionBitWidth>(expression);
+    auto signedness = cov::get<cov::FunctionalExpressionSignedness>(expression);
     if (!kind || !bitWidth || !signedness) {
       expression->emitError(
           "constructor expression has no typed result descriptor");
@@ -1317,7 +1297,7 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
     return construct.emitError(
         "block-event covergroup construction has no stable node identity");
   IntegerAttr samplerNode = node;
-  if (covergroup->hasAttr("coverage.base_group")) {
+  if (cov::has<cov::BaseGroup>(covergroup)) {
     std::string key =
         (Twine(node.getValue().getZExtValue()) + ":" + covergroup.getSymName())
             .str();
@@ -1343,13 +1323,12 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
   SmallVector<BlockEventGroup> eventGroups;
   for (auto [target, kindAttr] :
        llvm::zip_equal(targets, control.getEventKinds())) {
-    auto targetID =
-        target->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName);
+    auto targetID = cov::get<cov::BlockEventTargetId>(target);
     if (!targetID || !targetID.getValue().isStrictlyPositive())
       return target->emitError(
           "block-event target has no stable coverage identity");
     Value receiver;
-    if (target->hasAttr(coverageBlockEventInstanceMethodAttrName)) {
+    if (cov::has<cov::BlockEventInstanceMethod>(target)) {
       SmallVector<Operation *> receiverExpressions = getChildren(target);
       if (receiverExpressions.empty()) {
         if (!thisObject)
@@ -1528,7 +1507,7 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
     return construct.emitError(
         "clocking covergroup construction has no stable node identity");
   IntegerAttr samplerNode = node;
-  if (covergroup->hasAttr("coverage.base_group")) {
+  if (cov::has<cov::BaseGroup>(covergroup)) {
     std::string key =
         (Twine(node.getValue().getZExtValue()) + ":" + covergroup.getSymName())
             .str();
@@ -2413,8 +2392,7 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
       SmallVector<Operation *> defaultChildren = getChildren(formal);
       auto defaultID =
           defaultChildren.size() == 1
-              ? defaultChildren.front()->getAttrOfType<IntegerAttr>(
-                    sim::metadata::coverageFunctionalExpressionId)
+              ? cov::get<cov::FunctionalExpressionId>(defaultChildren.front())
               : IntegerAttr{};
       if (!defaultID || defaultID.getValue().isNegative() ||
           defaultID.getValue().isZero()) {
@@ -2445,8 +2423,8 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
       defaultValues.push_back(defaultValue);
       defaultExpressionIDs.push_back(
           static_cast<int64_t>(defaultID.getValue().getZExtValue()));
-      auto ordinal = defaultChildren.front()->getAttrOfType<IntegerAttr>(
-          sim::metadata::coverageFunctionalExpressionOrdinal);
+      auto ordinal =
+          cov::get<cov::FunctionalExpressionOrdinal>(defaultChildren.front());
       if (!ordinal || ordinal.getValue().isNegative()) {
         formal.emitError("defaulted sample formal has no typed v1 result "
                          "ordinal");
@@ -2546,8 +2524,7 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
     auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(child);
     if (!formal || formal.getIsCoverageSampleFormal().value_or(false))
       continue;
-    auto id = formal->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalFormalId);
+    auto id = cov::get<cov::FunctionalFormalId>(formal);
     FailureOr<Type> type = getNormalizedSemanticType(formal);
     if (!id || id.getValue().isNegative() || id.getValue().isZero() ||
         failed(type)) {
@@ -2592,10 +2569,8 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
 
   auto appendSampleExpression = [&](Operation *expression,
                                     bool predicate) -> LogicalResult {
-    auto id = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionId);
-    auto ordinal = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionOrdinal);
+    auto id = cov::get<cov::FunctionalExpressionId>(expression);
+    auto ordinal = cov::get<cov::FunctionalExpressionOrdinal>(expression);
     if (!id || !ordinal || id.getValue().isNegative() ||
         ordinal.getValue().isNegative()) {
       expression->emitError(
@@ -2621,12 +2596,9 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
     if (failed(lowered))
       return failure();
     Value value = *lowered;
-    auto kind = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionKind);
-    auto bitWidth = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionBitWidth);
-    auto signedness = expression->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalExpressionSignedness);
+    auto kind = cov::get<cov::FunctionalExpressionKind>(expression);
+    auto bitWidth = cov::get<cov::FunctionalExpressionBitWidth>(expression);
+    auto signedness = cov::get<cov::FunctionalExpressionSignedness>(expression);
     if (!kind || !bitWidth || !signedness) {
       expression->emitError(
           "sample-phase expression has no typed result descriptor");
@@ -2716,8 +2688,7 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
               if (failed(decoded))
                 return WalkResult::interrupt();
               if (decoded->iff &&
-                  decoded->iff->hasAttr(
-                      sim::metadata::coverageFunctionalExpressionId) &&
+                  cov::has<cov::FunctionalExpressionId>(decoded->iff) &&
                   failed(appendSampleExpression(decoded->iff, true)))
                 return WalkResult::interrupt();
               return WalkResult::advance();
@@ -2751,8 +2722,7 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
         if (failed(decoded))
           return failure();
         if (decoded->iff &&
-            decoded->iff->hasAttr(
-                sim::metadata::coverageFunctionalExpressionId)) {
+            cov::has<cov::FunctionalExpressionId>(decoded->iff)) {
           if (failed(appendSampleExpression(decoded->iff, true)))
             return failure();
         }
@@ -2807,8 +2777,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
 
   uint64_t itemID = 0;
   if (functionalItemMethodOwner) {
-    auto item = functionalItemMethodOwner->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageFunctionalItemId);
+    auto item = cov::get<cov::FunctionalItemId>(functionalItemMethodOwner);
     if (!item || item.getValue().isZero()) {
       functionalItemMethodOwner->emitError(
           "functional coverage item method has no typed FunctionalItem "
@@ -2861,8 +2830,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
           return failure();
         }
         Type storageType = *handleType;
-        if (auto storage = member->getAttrOfType<TypeAttr>(
-                "simulation.covergroup_field_storage_type"))
+        if (auto storage = cov::get<cov::FieldStorageType>(member))
           storageType = storage.getValue();
         Type referenceType = sim::ManagedRefType::get(
             function.getContext(), storageType, ownerType.getClassName());

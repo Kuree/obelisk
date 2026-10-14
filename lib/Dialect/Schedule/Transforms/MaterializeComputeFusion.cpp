@@ -1273,7 +1273,7 @@ uint64_t localizeActivationStorage(
          declaration.getLifetime() != sim::Lifetime::Design) ||
         declaration.getObservability() !=
             schedule::ComputeObservabilityKind::Invisible ||
-        declaration->hasAttr(sim::metadata::coverageToggleObservable))
+        cov::has<cov::ToggleObservable>(declaration))
       return false;
     if (!accessIndex.isPrivateTo(root, function, canonical, true)) {
       // The native evaluator executes synchronously. Coalescing publications
@@ -1830,7 +1830,7 @@ promotePrivateStaticTemporaries(sim::SimFuncOp function,
     auto declaration = accessIndex.declarations.lookup(descriptor);
     auto rootLoads = loads.find(descriptor);
     if (!declaration || !accessIndex.isPrivateTo(descriptor, function) ||
-        declaration->hasAttr(sim::metadata::coverageToggleObservable))
+        cov::has<cov::ToggleObservable>(declaration))
       continue;
     std::optional<schedule::ComputeObservabilityKind> observability =
         declaration.getObservability();

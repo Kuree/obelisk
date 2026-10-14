@@ -823,8 +823,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   bool invalid = false;
   SmallVector<Operation *> designObjects;
   bool retainCoverageSourceTypes = false;
-  if (auto metrics = module->getAttrOfType<ArrayAttr>(
-          "coverage.metrics"))
+  if (auto metrics = cov::get<cov::Metrics>(module))
     retainCoverageSourceTypes = llvm::any_of(metrics, [](Attribute metric) {
       auto name = dyn_cast<StringAttr>(metric);
       return name && name.getValue() == "toggle";
@@ -2815,11 +2814,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               schedule::ComputeObservabilityKindAttr{},
               sim::NetResolutionKind::Wire, DenseI64ArrayAttr{},
               sim::StrengthAttr{}, UnitAttr{}, retainedVPIType, sourceNettype);
-          declaration->setAttr(sim::metadata::coverageSourceAuthored,
-                               builder.getUnitAttr());
+          cov::mark<cov::SourceAuthored>(declaration);
           if (retainCoverageSourceTypes)
-            declaration->setAttr(sim::metadata::coverageSourceType,
-                                 semanticType);
+            cov::set<cov::SourceType>(declaration, semanticType);
           declaration->setAttr(
               "vpi_properties",
               netProperties(cast<semantic::SVNetSymbolOp>(op)));
@@ -2897,11 +2894,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder, getSemanticLocation(op), id, scopeId, *type, lifetime,
           hierarchy, debug, schedule::ComputeObservabilityKindAttr{},
           retainedVPIType);
-      declaration->setAttr(sim::metadata::coverageSourceAuthored,
-                           builder.getUnitAttr());
+      cov::mark<cov::SourceAuthored>(declaration);
       if (retainCoverageSourceTypes)
-        declaration->setAttr(sim::metadata::coverageSourceType,
-                             op->getAttr("semantic_type"));
+        cov::set<cov::SourceType>(declaration,
+                                  op->getAttrOfType<TypeAttr>("semantic_type"));
       retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
       if (namedEventArrayRanges.count(op))
         declaration->setAttr(sim::metadata::vpiIdentityDelegated,
@@ -3058,11 +3054,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                       : sim::Strength::Medium)
             : sim::StrengthAttr{},
         UnitAttr{}, retainedVPIType, sourceNettype);
-    declaration->setAttr(sim::metadata::coverageSourceAuthored,
-                         builder.getUnitAttr());
+    cov::mark<cov::SourceAuthored>(declaration);
     if (retainCoverageSourceTypes)
-      declaration->setAttr(sim::metadata::coverageSourceType,
-                           op->getAttr("semantic_type"));
+      cov::set<cov::SourceType>(declaration,
+                                op->getAttrOfType<TypeAttr>("semantic_type"));
     declaration->setAttr("vpi_properties", netProperties(net));
     retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
     if (net.getNetKind() == semantic::SVNetKind::Interconnect) {
@@ -3609,11 +3604,10 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         *formalVPIType);
     if (source->second.kind == DescriptorInfo::Kind::Net)
       declaredNetPorts.emplace_back(declaration, connection);
-    declaration->setAttr(sim::metadata::coverageSourceAuthored,
-                         builder.getUnitAttr());
+    cov::mark<cov::SourceAuthored>(declaration);
     if (retainCoverageSourceTypes)
-      declaration->setAttr(sim::metadata::coverageSourceType,
-                           TypeAttr::get(connection.getFormalType()));
+      cov::set<cov::SourceType>(declaration,
+                                TypeAttr::get(connection.getFormalType()));
     retainVPISourceTypeIdentity(connection, declaration, *formalVPIType);
 
     if (auto own = refMembersByFormalSymbol.find(

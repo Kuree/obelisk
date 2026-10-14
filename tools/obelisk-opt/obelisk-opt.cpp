@@ -5,6 +5,7 @@
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Conversion/SimulationToSchedule.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
+#include "obelisk/Dialect/Coverage/CoverageDialect.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
@@ -65,12 +66,12 @@ int main(int argc, char **argv) {
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
-  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-                  obelisk::dpi::DPIDialect, obelisk::native::NativeDialect,
-                  obelisk::runtime::ObeliskRuntimeDialect,
-                  obelisk::sdf::ObeliskSDFDialect,
-                  obelisk::schedule::ScheduleDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+  registry.insert<
+      obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+      obelisk::cov::CoverageDialect, obelisk::dpi::DPIDialect,
+      obelisk::native::NativeDialect, obelisk::runtime::ObeliskRuntimeDialect,
+      obelisk::sdf::ObeliskSDFDialect, obelisk::schedule::ScheduleDialect,
+      obelisk::sim::ObeliskSimulationDialect>();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "Obelisk IR optimizer\n", registry));

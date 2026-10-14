@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 
+#include "obelisk/Dialect/Coverage/CoverageDialect.h"
 #include "obelisk/Dialect/DPI/DPIAttrs.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"

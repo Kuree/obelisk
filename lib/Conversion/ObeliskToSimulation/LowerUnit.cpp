@@ -2398,8 +2398,7 @@ LogicalResult
 UnitLowering::emitFunctionReturn(Location location,
                                  std::optional<Value> explicitResult,
                                  bool resultSigned, bool emitBlockEventEnd) {
-  auto blockEventTarget =
-      function->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName);
+  auto blockEventTarget = cov::get<cov::BlockEventTargetId>(function);
   if (function.getEntryKind() == sim::EntryKind::Task) {
     if (explicitResult) {
       emitError(location) << "task return cannot carry a value";
@@ -4398,8 +4397,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   Location location = getSemanticLocation(op);
   builder.setInsertionPointToEnd(current);
 
-  if (auto point =
-          op->getAttrOfType<IntegerAttr>(sim::metadata::coverageLinePointIndex);
+  if (auto point = cov::get<cov::LinePointIndex>(op);
       point && !isa<semantic::SVConcurrentAssertionStatementOp>(op)) {
     Value context = function.getBody().front().getArgument(0);
     Value enabled = arith::ConstantOp::create(
@@ -5270,8 +5268,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
       }) &&
       failed(emitTerminationPoll(function.getLoc())))
     return failure();
-  auto functionCoveragePoint = function->getAttrOfType<IntegerAttr>(
-      sim::metadata::coverageLinePointIndex);
+  auto functionCoveragePoint = cov::get<cov::LinePointIndex>(function);
   if (function->hasAttr("simulation.timing_check_coordinator"))
     return lowerSystemTimingCheck(roots);
   if (function->hasAttr(sequenceEndpointMonitorAttrName))
@@ -5279,8 +5276,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (function->hasAttr(clockingEventMonitorAttrName))
     return lowerClockingEventMonitor(roots);
   sim::EntryKind entryKind = function.getEntryKind();
-  auto blockEventTargetID =
-      function->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName);
+  auto blockEventTargetID = cov::get<cov::BlockEventTargetId>(function);
   if (blockEventTargetID) {
     if ((entryKind != sim::EntryKind::Task &&
          entryKind != sim::EntryKind::Function) ||

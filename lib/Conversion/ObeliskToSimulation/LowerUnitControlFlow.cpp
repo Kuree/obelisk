@@ -1591,8 +1591,7 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
   }
 
   std::optional<uint64_t> blockEventTargetID;
-  if (auto targetID =
-          op->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName)) {
+  if (auto targetID = cov::get<cov::BlockEventTargetId>(op)) {
     if (!targetID.getValue().isStrictlyPositive())
       return op.emitError("coverage block-event target ID must be positive");
     if (!branches.empty()) {
@@ -1711,8 +1710,7 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   }
   uint64_t targetID = targetIDAttr.getValue().getZExtValue();
   std::optional<uint64_t> blockEventTargetID;
-  if (auto eventTarget =
-          op->getAttrOfType<IntegerAttr>(coverageBlockEventTargetIdAttrName)) {
+  if (auto eventTarget = cov::get<cov::BlockEventTargetId>(op)) {
     if (!eventTarget.getValue().isStrictlyPositive())
       return op.emitError("coverage block-event target ID must be positive");
     SmallVector<Operation *> statements = sequentialContents;

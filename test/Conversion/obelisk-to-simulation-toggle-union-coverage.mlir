@@ -24,7 +24,7 @@ module attributes {coverage.metrics = ["toggle"]} {
 // CHECK-SAME: coverage.toggle_bit_count = 2 : i64
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: 3>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0>
-// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 2 : i64{{.*}}]
+// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0, width = 2{{.*}}]
 // DIMS-LABEL: schema 0
 // DIMS: dimension kind=PackedStruct offset=0 width=2
 
@@ -52,7 +52,7 @@ module attributes {coverage.metrics = ["toggle"]} {
 // CHECK-SAME: coverage.toggle_bit_count = 9 : i64
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: -1, 1>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0, 0>
-// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 9 : i64{{.*}}]
+// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0, width = 9{{.*}}]
 // DIMS-LABEL: schema 0
 // DIMS: dimension kind=PackedUnion offset=0 width=9
 // DIMS: dimension kind=Tag offset=8 width=1
@@ -80,7 +80,7 @@ module attributes {coverage.metrics = ["toggle"]} {
 // CHECK-SAME: coverage.toggle_bit_count = 11 : i64
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: 1, 6>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0, 0>
-// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 11 : i64{{.*}}]
+// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0, width = 11{{.*}}]
 // DIMS-LABEL: schema 0
 // DIMS: dimension kind=UnpackedUnion offset=0 width=11
 // DIMS: dimension kind=Field offset=0 width=1
@@ -115,7 +115,7 @@ module attributes {coverage.metrics = ["toggle"]} {
 // CHECK-SAME: coverage.toggle_bit_count = 2 : i64
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: 0>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0>
-// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0 : i64, width = 1 : i64{{.*}}, {{.*}}low = 64 : i64, width = 1 : i64{{.*}}]
+// CHECK: simulation.storage.decl 0 {{.*}}coverage.toggle_bindings = [{{.*}}low = 0, width = 1{{.*}}, {{.*}}low = 64, width = 1{{.*}}]
 // DIMS-LABEL: schema 0
 // DIMS: dimension kind=UnpackedUnion offset=0 width=2
 // DIMS: dimension kind=Field offset=1 width=1

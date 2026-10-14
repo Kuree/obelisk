@@ -6,6 +6,8 @@ add_mlir_library(ObeliskSlangIR
   SlangOpDefs3.cpp
 
   DEPENDS
+  ObeliskCoverageAttrsIncGen
+  ObeliskCoverageDialectIncGen
   SlangDialectIncGen
   SlangEnumsIncGen
   SlangTypesIncGen

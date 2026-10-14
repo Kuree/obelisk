@@ -3267,8 +3267,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (op->hasAttr("simulation.global_future_resolver"))
     return lowerGlobalFutureAssertionResolver(op);
   auto emitEvaluationCoverageHit = [&](Value enabled = {}) {
-    auto point = op->getAttrOfType<IntegerAttr>(
-        sim::metadata::coverageLinePointIndex);
+    auto point = cov::get<cov::LinePointIndex>(op);
     if (!point)
       return;
     Value context = function.getBody().front().getArgument(0);
@@ -3712,7 +3711,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return enabled;
   };
   auto queryAttemptEnabledForCoverage = [&]() -> Value {
-    if (!op->hasAttr(sim::metadata::coverageLinePointIndex))
+    if (!cov::has<cov::LinePointIndex>(op))
       return {};
     return queryAttemptEnabled();
   };

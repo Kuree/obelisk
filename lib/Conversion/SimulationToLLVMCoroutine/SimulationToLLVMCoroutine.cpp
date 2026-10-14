@@ -1626,7 +1626,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   if (stateLayout->transitionHandlesExact && staticFanoutPlan.exact) {
     DenseSet<uint32_t> observedRoots = staticFanoutPlan.runtimeTransitionStates;
     module.walk([&](sim::SimStorageDeclOp storage) {
-      if (!storage->hasAttr(sim::metadata::coverageToggleObservable))
+      if (!cov::has<cov::ToggleObservable>(storage))
         return;
       auto handle = stateLayout->storage.find(storage.getId());
       obelisk_rt_stable_handle_v1 decoded{};

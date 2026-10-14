@@ -6,6 +6,7 @@ llvm_update_compile_flags(obelisk-translate)
 
 target_link_libraries(obelisk-translate
   PRIVATE
+    ObeliskCoverageIR
     ObeliskDPIIR
     ObeliskFrontend
     ObeliskNativeIR

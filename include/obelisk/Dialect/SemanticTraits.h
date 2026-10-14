@@ -4,6 +4,8 @@
 #ifndef OBELISK_DIALECT_SEMANTICTRAITS_H
 #define OBELISK_DIALECT_SEMANTICTRAITS_H
 
+#include "obelisk/Dialect/Coverage/CoverageDialect.h"
+
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/SymbolTable.h"
@@ -532,8 +534,8 @@ public:
     ModuleOp module = root->getParentOfType<ModuleOp>();
     IntegerAttr languageVersion;
     if (module)
-      languageVersion = dyn_cast_or_null<IntegerAttr>(
-          module->getDiscardableAttr("coverage.language_version"));
+      languageVersion =
+          ::obelisk::cov::get<::obelisk::cov::LanguageVersion>(module);
 
     using SymbolIndex = llvm::DenseMap<StringAttr, SmallVector<Operation *, 1>>;
     SymbolIndex localSymbols;
@@ -662,7 +664,7 @@ public:
     auto getBaseGroup = [&](Operation *group) -> Operation * {
       Attribute base = group->getAttr("base_group");
       if (!base)
-        base = group->getAttr("coverage.base_group");
+        base = ::obelisk::cov::get<::obelisk::cov::BaseGroup>(group);
       if (!base)
         return nullptr;
       SymbolRefAttr reference = findFirstReference(base);

@@ -425,15 +425,6 @@ inline constexpr ::mlir::StringLiteral clockingEventRawSymbolAttrName =
 /// expression).
 inline constexpr ::mlir::StringLiteral clockingEventListAttrName =
     "clocking_event_list";
-/// Stable v1 identity of a named block, task, function, or class method used
-/// by a covergroup @@ sampling event.  Preparation attaches this to the event
-/// target expression and to every semantic operation that defines the target;
-/// later per-unit lowering only consumes the frozen numeric identity.
-inline constexpr ::mlir::StringLiteral coverageBlockEventTargetIdAttrName =
-    "simulation.coverage_block_event_target_id";
-inline constexpr ::mlir::StringLiteral
-    coverageBlockEventInstanceMethodAttrName =
-        "simulation.coverage_block_event_instance_method";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorRequiredAttrName =
     "clocking_event_monitor";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorAttrName =

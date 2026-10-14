@@ -59,9 +59,9 @@ module attributes {
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: -64, 1>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0, 1>
 // CHECK-SAME: execution.coverage_schema_blob = array<i8:
-// CHECK-DAG: simulation.storage.decl 0 {{.*}}hierarchy "top.data"{{.*}}coverage.toggle_bindings = [{base = 0 : i64, low = 0 : i64, width = 4 : i64}, {base = 4 : i64, low = 1 : i64, width = 2 : i64}]{{.*}}coverage.toggle_observable
-// CHECK-DAG: simulation.storage.decl 1 {{.*}}hierarchy "top.logic"{{.*}}coverage.toggle_bindings = [{base = 6 : i64, low = 0 : i64, width = 2 : i64}]{{.*}}coverage.toggle_observable
-// CHECK-DAG: simulation.net.decl 0 {{.*}}hierarchy "top.net"{{.*}}coverage.toggle_bindings = [{base = 8 : i64, low = 0 : i64, width = 1 : i64}]{{.*}}coverage.toggle_observable
+// CHECK-DAG: simulation.storage.decl 0 {{.*}}hierarchy "top.data"{{.*}}coverage.toggle_bindings = [#coverage.toggle_binding<base = 0, low = 0, width = 4>, #coverage.toggle_binding<base = 4, low = 1, width = 2>]{{.*}}coverage.toggle_observable
+// CHECK-DAG: simulation.storage.decl 1 {{.*}}hierarchy "top.logic"{{.*}}coverage.toggle_bindings = [#coverage.toggle_binding<base = 6, low = 0, width = 2>]{{.*}}coverage.toggle_observable
+// CHECK-DAG: simulation.net.decl 0 {{.*}}hierarchy "top.net"{{.*}}coverage.toggle_bindings = [#coverage.toggle_binding<base = 8, low = 0, width = 1>]{{.*}}coverage.toggle_observable
 // CHECK-DAG: simulation.storage.decl 2 in 1 : i1 design hierarchy "top.excluded" {{.*}}source_range
 // CHECK-DAG: simulation.storage.decl 3 in 1 : i3 automatic hierarchy "top.automatic" {{.*}}source_range
 // CHECK-DAG: simulation.storage.decl 4 in 1 : f64 design hierarchy "top.real" {{.*}}source_range
