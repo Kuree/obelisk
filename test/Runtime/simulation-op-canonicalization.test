@@ -1,5 +1,5 @@
-// RUN: obelisk-opt %S/Inputs/op-canonicalization.mlir --canonicalize --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | mlir-translate --mlir-to-llvmir > %t.canonical.ll
-// RUN: obelisk-opt %S/Inputs/op-canonicalization.mlir --test-obelisk-prefix-symbols=prefix=reference_ --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | mlir-translate --mlir-to-llvmir > %t.reference.ll
+// RUN: obelisk-opt %S/Inputs/op-canonicalization.mlir --canonicalize --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | obelisk-translate --mlir-to-llvmir > %t.canonical.ll
+// RUN: obelisk-opt %S/Inputs/op-canonicalization.mlir --test-obelisk-prefix-symbols=prefix=reference_ --convert-obelisk-sim-values-to-standard --canonicalize | %llvm_dist/bin/mlir-opt --convert-math-to-llvm --convert-arith-to-llvm --convert-func-to-llvm --reconcile-unrealized-casts | obelisk-translate --mlir-to-llvmir > %t.reference.ll
 // RUN: %llvm_dist/bin/clang++ -O0 %t.canonical.ll %t.reference.ll %S/Inputs/op-canonicalization.cpp -o %t.exe
 // RUN: %t.exe | FileCheck %s
 

@@ -26,5 +26,7 @@ def RTBytecodeServiceAttr : RTEnumAttr<RTBytecodeService, "bytecode_service">;
 def RTStatusCodeAttr : RTEnumAttr<RTStatusCode, "status_code">;
 def RTArgumentKindAttr : RTEnumAttr<RTArgumentKind, "argument_kind">;
 def RTArgumentFlagsAttr : RTEnumAttr<RTArgumentFlags, "argument_flags">;
+def RTExecutionFlagsAttr : RTEnumAttr<RTExecutionFlags, "execution_flags">;
+def RTFeaturesAttr : RTEnumAttr<RTFeatures, "features">;
 
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEATTRS_TD

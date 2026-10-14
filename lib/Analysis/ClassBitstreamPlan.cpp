@@ -148,7 +148,7 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
              operation.getInput().getDefiningOp<sim::SimClassNullOp>())});
   });
   if (sites.empty()) {
-    module->removeAttr(sim::metadata::classBitstreamBlob);
+    runtime::remove<runtime::ClassBitstreamBlob>(module);
     return success();
   }
 
@@ -312,7 +312,7 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
   }
   sites = std::move(retainedSites);
   if (sites.empty()) {
-    module->removeAttr(sim::metadata::classBitstreamBlob);
+    runtime::remove<runtime::ClassBitstreamBlob>(module);
     return success();
   }
 
@@ -475,17 +475,15 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
   write64(blob, 88, fieldCount);
   write64(blob, 96, *planOffset);
   write64(blob, 104, planBytes.size());
-  module->setAttr(
-      sim::metadata::classBitstreamBlob,
-      builder.getDenseI8ArrayAttr(ArrayRef<int8_t>(
-          reinterpret_cast<const int8_t *>(blob.data()), blob.size())));
+  runtime::set<runtime::ClassBitstreamBlob>(
+      module, builder.getDenseI8ArrayAttr(ArrayRef<int8_t>(
+                  reinterpret_cast<const int8_t *>(blob.data()), blob.size())));
   return success();
 }
 
 LogicalResult bindClassBitstreamBytecodeSites(sim::SimDesignOp design) {
   ModuleOp module = design->getParentOfType<ModuleOp>();
-  auto attribute = module ? module->getAttrOfType<DenseI8ArrayAttr>(
-                                sim::metadata::classBitstreamBlob)
+  auto attribute = module ? runtime::get<runtime::ClassBitstreamBlob>(module)
                           : DenseI8ArrayAttr{};
   if (!module || !attribute ||
       static_cast<uint64_t>(attribute.size()) < kHeaderSize)
@@ -541,8 +539,8 @@ LogicalResult bindClassBitstreamBytecodeSites(sim::SimDesignOp design) {
   if (invalid || llvm::is_contained(seen, uint8_t{0}))
     return failure();
   OpBuilder builder(module.getContext());
-  module->setAttr(
-      sim::metadata::classBitstreamBlob,
+  runtime::set<runtime::ClassBitstreamBlob>(
+      module,
       builder.getDenseI8ArrayAttr(ArrayRef<int8_t>(
           reinterpret_cast<const int8_t *>(bytes.data()), bytes.size())));
   return success();

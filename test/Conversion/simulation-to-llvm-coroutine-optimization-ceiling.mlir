@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | \
-// RUN:   mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN:   obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.threaded
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
 // RUN: diff %t.threaded %t.serial

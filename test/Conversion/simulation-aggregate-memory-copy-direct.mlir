@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --implicit-check-not=i426 --implicit-check-not='llvm.call @obelisk_rt_v1_native_state'
-// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -disable-output
+// RUN: obelisk-opt %s --obelisk-sim-build-compute-graph='vpi=off' --obelisk-sim-specialize-static-state-nba --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes='default<O3>,verify' -disable-output
 
 // Direct state/private and state/state copies stay in memory. A 426-bit store
 // copies 53 bytes and masks the last two bits, preserving neighboring state.

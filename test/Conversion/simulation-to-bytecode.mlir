@@ -1,4 +1,4 @@
-// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=ENCODE --implicit-check-not=design.database
+// RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=ENCODE --implicit-check-not=runtime.design_database
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' | FileCheck %s --check-prefix=DATABASE
 // RUN: obelisk-opt %s --mlir-print-debuginfo --pass-pipeline='builtin.module(simulation.design(obelisk-sim-inline{opt-level=3 caller-growth-percent=10000 caller-growth-constant=10000 design-growth-percent=10000 design-growth-constant=10000}),encode-obelisk-sim-to-bytecode{vpi=full})' | FileCheck %s --check-prefix=INLINED-DATABASE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=full' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=LOWER --implicit-check-not=add.__obelisk_bytecode_entry --implicit-check-not=observe.__obelisk_bytecode_entry
@@ -117,13 +117,13 @@ module attributes {
 // task activation transfers in addition to
 // per-continuation schedule ranks, the canonical connectivity table, and
 // disjoint per-bit uwire driver ranges.
-// ENCODE: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
-// ENCODE: execution.flags = 1 : i32
-// ENCODE: execution.state_bits = 104 : i64
-// ENCODE: bytecode.function = 0 : i32
-// ENCODE: bytecode.scratch_alignment = 8 : i64
-// ENCODE: bytecode.function = 1 : i32
-// ENCODE: bytecode.function = 2 : i32
+// ENCODE: runtime.bytecode_image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
+// ENCODE: runtime.execution_flags = #runtime.execution_flags<has_bytecode>
+// ENCODE: runtime.state_bits = 104 : i64
+// ENCODE: runtime.bytecode_function = 0 : i32
+// ENCODE: runtime.bytecode_scratch_alignment = 8 : i64
+// ENCODE: runtime.bytecode_function = 1 : i32
+// ENCODE: runtime.bytecode_function = 2 : i32
 
 // Dynamic INSERT carries its low-bit register in source2; static INSERT leaves
 // source2 zero and uses only the immediate field.
@@ -135,11 +135,11 @@ module attributes {
 
 // Unified runtime artifact version 1 follows the database magic. The extension
 // directory offset that follows is intentionally image-layout dependent.
-// DATABASE: design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
+// DATABASE: runtime.design_database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
 
 // The last executable copy of @add is erased, but version-1 reflection still
 // originates from its immutable record, including parent, name, and source.
-// INLINED-DATABASE: design.database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
+// INLINED-DATABASE: runtime.design_database = array<i8: 79, 66, 68, 83, 71, 78, 49, 0, 1, 0, 0, 0
 // INLINED-DATABASE: simulation.code_unit.decl 70 in 0 function hierarchy "top.add" debug "add"
 // INLINED-DATABASE-SAME: loc(#loc[[ADD:[0-9]+]])
 // INLINED-DATABASE-NOT: simulation.func private @add

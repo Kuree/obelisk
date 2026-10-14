@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir \
+// RUN:   | obelisk-translate --mlir-to-llvmir \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a \
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \
@@ -11,7 +11,7 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=3' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir \
+// RUN:   | obelisk-translate --mlir-to-llvmir \
 // RUN:   | %llc -filetype=obj -relocation-model=pic -o %t.opt.o
 // RUN: %llvm_dist/bin/clang++ %t.opt.o %native_support/libobelisk_rt.a \
 // RUN:   %native_support/libc++.a %native_support/libc++abi.a \

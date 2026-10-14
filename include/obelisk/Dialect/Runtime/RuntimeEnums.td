@@ -337,4 +337,61 @@ def RTArgumentFlags : I32BitEnumAttr<"ArgumentFlags", "runtime argument flags", 
   let genSpecializedAttr = 0;
 }
 
+// OBELISK_RT_EXECUTION_* bits of the execution descriptor.
+def RTExecutionNone : I32BitEnumAttrCaseNone<"None", "none">;
+def RTExecutionHasBytecode : I32BitEnumAttrCaseBit<"HasBytecode", 0, "has_bytecode">;
+def RTExecutionHasDesignDatabase :
+    I32BitEnumAttrCaseBit<"HasDesignDatabase", 1, "has_design_database">;
+def RTExecutionVPIRead : I32BitEnumAttrCaseBit<"VPIRead", 2, "vpi_read">;
+def RTExecutionVPIWrite : I32BitEnumAttrCaseBit<"VPIWrite", 3, "vpi_write">;
+def RTExecutionRequireBytecode :
+    I32BitEnumAttrCaseBit<"RequireBytecode", 4, "require_bytecode">;
+def RTExecutionPreponedSnapshot :
+    I32BitEnumAttrCaseBit<"PreponedSnapshot", 5, "preponed_snapshot">;
+def RTExecutionWaveformMetadata :
+    I32BitEnumAttrCaseBit<"WaveformMetadata", 6, "waveform_metadata">;
+def RTExecutionDPIExports : I32BitEnumAttrCaseBit<"DPIExports", 7, "dpi_exports">;
+def RTExecutionClassBitstream :
+    I32BitEnumAttrCaseBit<"ClassBitstream", 8, "class_bitstream">;
+def RTExecutionCoverageSchema :
+    I32BitEnumAttrCaseBit<"CoverageSchema", 9, "coverage_schema">;
+def RTExecutionPolledCollection :
+    I32BitEnumAttrCaseBit<"PolledCollection", 10, "polled_collection">;
+def RTExecutionFlags : I32BitEnumAttr<"ExecutionFlags",
+    "execution descriptor capabilities", [
+  RTExecutionNone, RTExecutionHasBytecode, RTExecutionHasDesignDatabase,
+  RTExecutionVPIRead, RTExecutionVPIWrite, RTExecutionRequireBytecode,
+  RTExecutionPreponedSnapshot, RTExecutionWaveformMetadata,
+  RTExecutionDPIExports, RTExecutionClassBitstream, RTExecutionCoverageSchema,
+  RTExecutionPolledCollection
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
+
+// Optional runtime libraries an executable links through their anchors.
+def RTFeatureNone : I32BitEnumAttrCaseNone<"None", "none">;
+def RTFeatureDynamicScan : I32BitEnumAttrCaseBit<"DynamicScan", 0, "dynamic_scan">;
+def RTFeatureContainerBitstream :
+    I32BitEnumAttrCaseBit<"ContainerBitstream", 1, "container_bitstream">;
+def RTFeatureRecursiveBitstream :
+    I32BitEnumAttrCaseBit<"RecursiveBitstream", 2, "recursive_bitstream">;
+def RTFeatureClassBitstream :
+    I32BitEnumAttrCaseBit<"ClassBitstream", 3, "class_bitstream">;
+def RTFeatureClassBitstreamBytecode :
+    I32BitEnumAttrCaseBit<"ClassBitstreamBytecode", 4, "class_bitstream_bytecode">;
+def RTFeatureDPIExportBytecode :
+    I32BitEnumAttrCaseBit<"DPIExportBytecode", 5, "dpi_export_bytecode">;
+def RTFeatureDPIImportBytecode :
+    I32BitEnumAttrCaseBit<"DPIImportBytecode", 6, "dpi_import_bytecode">;
+def RTFeatures : I32BitEnumAttr<"Features", "optional runtime libraries", [
+  RTFeatureNone, RTFeatureDynamicScan, RTFeatureContainerBitstream,
+  RTFeatureRecursiveBitstream, RTFeatureClassBitstream,
+  RTFeatureClassBitstreamBytecode, RTFeatureDPIExportBytecode,
+  RTFeatureDPIImportBytecode
+]> {
+  let cppNamespace = "::obelisk::runtime";
+  let genSpecializedAttr = 0;
+}
+
 #endif // OBELISK_DIALECT_RUNTIME_RUNTIMEENUMS_TD

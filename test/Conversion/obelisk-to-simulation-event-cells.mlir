@@ -45,7 +45,7 @@
 
 // NATIVE: llvm.func @obelisk_rt_v1_scheduler_event_create
 // NATIVE: llvm.func @obelisk_rt_v1_scheduler_event(
-// BYTECODE: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
+// BYTECODE: runtime.bytecode_image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

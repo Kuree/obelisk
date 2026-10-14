@@ -1154,8 +1154,7 @@ FailureOr<bool> makeNativeEvalPlan(
     }
   }
   uint64_t graphLayoutChecksum = 0;
-  if (auto image =
-          module->getAttrOfType<DenseI8ArrayAttr>("bytecode.image")) {
+  if (auto image = runtime::get<runtime::BytecodeImage>(module)) {
     ArrayRef<int8_t> bytes = image.asArrayRef();
     if (bytes.size() < 40)
       return module.emitError("embedded bytecode checksum is truncated");

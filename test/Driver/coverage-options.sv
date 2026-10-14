@@ -14,6 +14,6 @@ endmodule
 // CHECK-SAME: coverage.prefix_maps
 // SIM: module attributes
 // SIM-SAME: coverage.metrics = ["line"]
-// SIM-SAME: execution.coverage_schema_blob = array<i8:
+// SIM-SAME: runtime.coverage_schema_blob = array<i8:
 // DUPLICATE: invalid --coverage metric list 'line,line'
 // MAP: invalid --coverage-prefix-map 'missing-equals'

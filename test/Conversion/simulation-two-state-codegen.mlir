@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | \
-// RUN:   mlir-translate --mlir-to-llvmir > %t.aot.ll
+// RUN:   obelisk-translate --mlir-to-llvmir > %t.aot.ll
 // RUN: opt -S -passes=verify %t.aot.ll | FileCheck %s --check-prefix=AOT-O0
 // RUN: opt -S -passes='default<O3>,verify' %t.aot.ll | \
 // RUN:   FileCheck %s --check-prefix=AOT
@@ -141,9 +141,9 @@ module attributes {
 // AOT: ret i1
 
 // BYTECODE-LABEL: simulation.func private @add_known
-// BYTECODE-SAME: bytecode.two_state_logic_registers = 0 : i32
+// BYTECODE-SAME: runtime.bytecode_two_state_logic_registers = 0 : i32
 // BYTECODE-LABEL: simulation.func @root
-// BYTECODE-SAME: bytecode.two_state_logic_registers = 3 : i32
+// BYTECODE-SAME: runtime.bytecode_two_state_logic_registers = 3 : i32
 
 // Function-owned IPO/SCEV facts remain available when the optional whole-
 // design state-domain analysis is skipped by its compile-time budget.

@@ -168,12 +168,12 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
     return failure();
   ModuleOp module = design->getParentOfType<ModuleOp>();
   bool hasClassBitstreamSource =
-      module && module->hasAttr(sim::metadata::classBitstreamSourceFeature);
+      module && module->hasAttr(sim::metadata::classBitstreamSource);
   if (hasClassBitstreamSource &&
       failed(analysis::materializeClassBitstreamPlan(design, dataLayout)))
     return failure();
   bool hasClassBitstream =
-      module && module->hasAttr(sim::metadata::classBitstreamBlob);
+      module && runtime::has<runtime::ClassBitstreamBlob>(module);
   if (failed(prepareClassLayouts()))
     return failure();
   if (failed(prepareStaticSpecializationSites()))
@@ -895,68 +895,54 @@ public:
       return ArrayRef<int8_t>(reinterpret_cast<const int8_t *>(bytes.data()),
                               bytes.size());
     };
-    module->setAttr("bytecode.image",
-                    builder.getDenseI8ArrayAttr(asI8(encoded->bytecode)));
-    module->setAttr("execution.flags",
-                    builder.getI32IntegerAttr(encoded->executionFlags));
-    module->setAttr("execution.state_bits",
-                    builder.getI64IntegerAttr(encoded->stateBitCount));
-    if (encoded->requiresDynamicScanFeature)
-      module->setAttr("feature.dynamic_scan", builder.getUnitAttr());
-    else
-      module->removeAttr("feature.dynamic_scan");
-    if (encoded->requiresContainerBitstreamFeature)
-      module->setAttr("feature.container_bitstream",
-                      builder.getUnitAttr());
-    else
-      module->removeAttr("feature.container_bitstream");
-    if (encoded->requiresRecursiveBitstreamFeature)
-      module->setAttr("feature.recursive_bitstream",
-                      builder.getUnitAttr());
-    else
-      module->removeAttr("feature.recursive_bitstream");
-    if (module->hasAttr(sim::metadata::classBitstreamBlob))
-      module->setAttr("feature.class_bitstream", builder.getUnitAttr());
-    else
-      module->removeAttr("feature.class_bitstream");
-    if (requireBytecode && module->hasAttr(sim::metadata::classBitstreamBlob))
-      module->setAttr("feature.class_bitstream_bytecode",
-                      builder.getUnitAttr());
-    else
-      module->removeAttr("feature.class_bitstream_bytecode");
+    runtime::set<runtime::BytecodeImage>(
+        module, builder.getDenseI8ArrayAttr(asI8(encoded->bytecode)));
+    runtime::setExecutionFlags(
+        module, static_cast<runtime::ExecutionFlags>(encoded->executionFlags));
+    runtime::set<runtime::StateBits>(
+        module, builder.getI64IntegerAttr(encoded->stateBitCount));
+    bool classBitstream = runtime::has<runtime::ClassBitstreamBlob>(module);
+    runtime::setFeatures(module, runtime::Features::DynamicScan,
+                         encoded->requiresDynamicScanFeature);
+    runtime::setFeatures(module, runtime::Features::ContainerBitstream,
+                         encoded->requiresContainerBitstreamFeature);
+    runtime::setFeatures(module, runtime::Features::RecursiveBitstream,
+                         encoded->requiresRecursiveBitstreamFeature);
+    runtime::setFeatures(module, runtime::Features::ClassBitstream,
+                         classBitstream);
+    runtime::setFeatures(module, runtime::Features::ClassBitstreamBytecode,
+                         requireBytecode && classBitstream);
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(encoded->sampledRanges.size() * 2);
     for (const SimulationSampledRange &range : encoded->sampledRanges) {
       sampledRanges.push_back(static_cast<int64_t>(range.bitOffset));
       sampledRanges.push_back(static_cast<int64_t>(range.bitWidth));
     }
-    module->setAttr("execution.sampled_ranges",
-                    builder.getDenseI64ArrayAttr(sampledRanges));
+    runtime::set<runtime::SampledRanges>(
+        module, builder.getDenseI64ArrayAttr(sampledRanges));
     if (!encoded->designDatabase.empty())
-      module->setAttr(
-          "design.database",
-          builder.getDenseI8ArrayAttr(asI8(encoded->designDatabase)));
+      runtime::set<runtime::DesignDatabase>(
+          module, builder.getDenseI8ArrayAttr(asI8(encoded->designDatabase)));
     else
-      module->removeAttr("design.database");
+      runtime::remove<runtime::DesignDatabase>(module);
     llvm::StringMap<sim::SimFuncOp> functions;
     designs.front().walk([&](sim::SimFuncOp function) {
       functions[function.getSymName()] = function;
-      function->removeAttr("bytecode.function");
-      function->removeAttr("bytecode.scratch_size");
-      function->removeAttr("bytecode.scratch_alignment");
-      function->removeAttr("bytecode.two_state_logic_registers");
+      runtime::remove<runtime::BytecodeFunction>(function);
+      runtime::remove<runtime::BytecodeScratchSize>(function);
+      runtime::remove<runtime::BytecodeScratchAlignment>(function);
+      runtime::remove<runtime::BytecodeTwoStateLogicRegisters>(function);
     });
     for (const SimulationBytecodeFunction &function : encoded->functions) {
       sim::SimFuncOp source = functions.lookup(function.symbol);
-      source->setAttr("bytecode.function",
-                      builder.getI32IntegerAttr(function.index));
-      source->setAttr("bytecode.scratch_size",
-                      builder.getI64IntegerAttr(function.scratchSize));
-      source->setAttr("bytecode.scratch_alignment",
-                      builder.getI64IntegerAttr(function.scratchAlignment));
-      source->setAttr(
-          "bytecode.two_state_logic_registers",
-          builder.getI32IntegerAttr(function.twoStateLogicRegisters));
+      runtime::set<runtime::BytecodeFunction>(
+          source, builder.getI32IntegerAttr(function.index));
+      runtime::set<runtime::BytecodeScratchSize>(
+          source, builder.getI64IntegerAttr(function.scratchSize));
+      runtime::set<runtime::BytecodeScratchAlignment>(
+          source, builder.getI64IntegerAttr(function.scratchAlignment));
+      runtime::set<runtime::BytecodeTwoStateLogicRegisters>(
+          source, builder.getI32IntegerAttr(function.twoStateLogicRegisters));
     }
   }
 };

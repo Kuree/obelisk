@@ -46,8 +46,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
   if (!hasTypedFunctionalOperation)
     return success();
 
-  auto blob = module->getAttrOfType<DenseI8ArrayAttr>(
-      sim::metadata::coverageSchemaBlob);
+  auto blob = runtime::get<runtime::CoverageSchemaBlob>(module);
   if (!blob)
     return module.emitError(
         "typed functional coverage requires an embedded coverage "

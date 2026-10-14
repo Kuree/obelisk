@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --convert-native-schedule-actions-to-llvm -o %t.lowered
 // RUN: FileCheck %s --implicit-check-not="llvm.mlir.addressof @constant_offset" --implicit-check-not=llvm.intr.cttz --implicit-check-not=llvm.switch < %t.lowered
-// RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | mlir-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/mlir-opt %t.lowered --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang -O2 %t.o %S/Inputs/native-nba-batch.c -o %t.exe
 // RUN: %t.exe
 

@@ -688,7 +688,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
     return WalkResult::advance();
   });
   if (needsClassBitstreamMetadata)
-    module->setAttr(sim::metadata::classBitstreamSourceFeature,
+    module->setAttr(sim::metadata::classBitstreamSource,
                     UnitAttr::get(context));
   if (needsClassBitstreamMetadata) {
     llvm::DenseMap<Type, uint64_t> fixedClassWidths;

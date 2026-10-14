@@ -24,7 +24,7 @@ module attributes {
   // NATIVE-NEXT: llvm.insertvalue %[[STARTUP]], {{.*}}[6]
   // The bytecode SPAWN signature stores the same classification in bit 31 of
   // its flags word. The target is function index 2 and has two captures.
-  // BYTECODE: bytecode.image = array<i8: {{.*}}0, 2, 1, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, -128
+  // BYTECODE: runtime.bytecode_image = array<i8: {{.*}}0, 2, 1, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, -128
   simulation.design @procedural_observer_order {
     simulation.scope.decl 0
     simulation.code_unit.decl 9800000 in 0 root_initializer

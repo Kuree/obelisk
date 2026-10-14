@@ -8,8 +8,8 @@
 
 // A complete elaborated design serializes through the unified runtime
 // artifact version 1.
-// CHECK: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
-// CHECK: execution.state_bits = {{[1-9][0-9]*}} : i64
+// CHECK: runtime.bytecode_image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0, 1, 0, 0, 0, 0, 0, 0, 0
+// CHECK: runtime.state_bits = {{[1-9][0-9]*}} : i64
 
 // Port connection lowering owns the semantic inventory independently of the
 // driver: static net topology remains declarative, empty defaulted inputs get

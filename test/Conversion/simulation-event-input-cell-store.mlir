@@ -27,7 +27,7 @@ module attributes {
 
 // StoreState is opcode 28. Event-handle publication uses flags 0, not the
 // packed continuous-driver flag 2.
-// CHECK: bytecode.image = array<i8:
+// CHECK: runtime.bytecode_image = array<i8:
 // CHECK-SAME: {{.*}}28, 0, 0, 0, 0, 0, 0, 0
 // NATIVE: llvm.call @obelisk_rt_v1_native_state_store_plane
 // NATIVE-NOT: llvm.call @obelisk_rt_v1_native_state_store_continuous_plane

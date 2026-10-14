@@ -432,11 +432,9 @@ prepareManagedClassInventory(ModuleOp module,
   Type classType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
                 pointer, i64, pointer, i64, pointer});
-  auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
-      executionFlags && (executionFlags.getValue().getZExtValue() &
-                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+      runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
+                                  runtime::ExecutionFlags::RequireBytecode);
   if (!bytecodeOnly) {
     OpBuilder builder(context);
     builder.setInsertionPointToStart(module.getBody());
@@ -453,8 +451,7 @@ prepareManagedClassInventory(ModuleOp module,
   llvm::StringMap<uint32_t> bytecodeFunctions;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
-        if (auto index = function->getAttrOfType<IntegerAttr>(
-                "bytecode.function"))
+        if (auto index = runtime::get<runtime::BytecodeFunction>(function))
           bytecodeFunctions[function.getSymName()] =
               static_cast<uint32_t>(index.getValue().getZExtValue());
       });
@@ -962,11 +959,9 @@ LogicalResult prepareManagedLowering(ModuleOp module,
   llvm::StringMap<ManagedClassLayout> layouts;
   if (failed(prepareManagedClassInventory(module, dataLayout, layouts)))
     return failure();
-  auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
-      executionFlags && (executionFlags.getValue().getZExtValue() &
-                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+      runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
+                                  runtime::ExecutionFlags::RequireBytecode);
   if (bytecodeOnly)
     return success();
   if (failed(sim::normalizeClassDirectCalls(module)))

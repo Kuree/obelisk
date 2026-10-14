@@ -123,4 +123,4 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_argument_ref_store
 // NATIVE-SAME: %[[STORE_KIND]]
 // NATIVE-NOT: simulation.argument_ref.retype
-// BYTECODE: bytecode.image
+// BYTECODE: runtime.bytecode_image

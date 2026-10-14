@@ -103,23 +103,15 @@ inline constexpr llvm::StringLiteral classBitstreamBytecodeFunction =
     "simulation.class_bitstream_bytecode_function";
 inline constexpr llvm::StringLiteral classBitstreamBytecodeSite =
     "simulation.class_bitstream_bytecode_site";
-/// Module-level canonical pointer-free class schema/group/site blob.
-inline constexpr llvm::StringLiteral classBitstreamBlob =
-    "execution.class_bitstream_blob";
-/// Module-level schema-only native coverage database embedded in the v1
-/// execution extension. Runtime run data is never written back into this
-/// attribute.
-inline constexpr llvm::StringLiteral coverageSchemaBlob =
-    "execution.coverage_schema_blob";
 /// Marks a process-lifetime `simulation.ref.alloc` copy of an exclusive root
 /// that is flushed back to that root at every suspension and return. Its
 /// contents at any resumption equal a fresh load of the root.
 inline constexpr llvm::StringLiteral flushedPrivateSlot =
     "simulation.flushed_private_slot";
-/// Preparation-time feature marker used to keep whole-design class planning
-/// off ordinary compilation paths.
-inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
-    "feature.class_bitstream_source";
+/// Module marker set by preparation when source classes may be bitstreamed;
+/// it keeps whole-design class planning off ordinary compilation paths.
+inline constexpr llvm::StringLiteral classBitstreamSource =
+    "simulation.class_bitstream_source";
 inline constexpr llvm::StringLiteral thisArgument = "simulation.this_argument";
 inline constexpr llvm::StringLiteral lowered = "simulation.lowered";
 

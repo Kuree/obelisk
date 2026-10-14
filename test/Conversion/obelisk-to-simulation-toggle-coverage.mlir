@@ -58,7 +58,7 @@ module attributes {
 // CHECK-SAME: coverage.toggle_bit_count = 10 : i64
 // CHECK-SAME: coverage.toggle_initial_unknown = array<i8: -64, 1>
 // CHECK-SAME: coverage.toggle_initial_value = array<i8: 0, 1>
-// CHECK-SAME: execution.coverage_schema_blob = array<i8:
+// CHECK-SAME: runtime.coverage_schema_blob = array<i8:
 // CHECK-DAG: simulation.storage.decl 0 {{.*}}hierarchy "top.data"{{.*}}coverage.toggle_bindings = [#coverage.toggle_binding<base = 0, low = 0, width = 4>, #coverage.toggle_binding<base = 4, low = 1, width = 2>]{{.*}}coverage.toggle_observable
 // CHECK-DAG: simulation.storage.decl 1 {{.*}}hierarchy "top.logic"{{.*}}coverage.toggle_bindings = [#coverage.toggle_binding<base = 6, low = 0, width = 2>]{{.*}}coverage.toggle_observable
 // CHECK-DAG: simulation.net.decl 0 {{.*}}hierarchy "top.net"{{.*}}coverage.toggle_bindings = [#coverage.toggle_binding<base = 8, low = 0, width = 1>]{{.*}}coverage.toggle_observable

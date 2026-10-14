@@ -10,6 +10,7 @@ target_link_libraries(obelisk-translate
     ObeliskDPIIR
     ObeliskFrontend
     ObeliskNativeIR
+    ObeliskRuntimeIR
     ObeliskSDFIR
     ObeliskScheduleIR
     MLIRBuiltinToLLVMIRTranslation

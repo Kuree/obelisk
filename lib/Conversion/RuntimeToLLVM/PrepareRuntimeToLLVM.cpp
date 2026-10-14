@@ -45,7 +45,7 @@ public:
         failed(materializeEmbeddedSimulationDesign(module, *parsed)) ||
         failed(prepareRuntimeToLLVMByteGlobals(module)))
       return signalPassFailure();
-    module->setAttr(preparedRuntimeLLVMAttr, UnitAttr::get(&getContext()));
+    runtime::mark<runtime::LLVMPrepared>(module);
   }
 };
 class MaterializeRuntimeByteGlobalsPass
@@ -90,8 +90,8 @@ LogicalResult prepareRuntimeToLLVMByteGlobals(ModuleOp module) {
     for (StringRef value : values)
       names.push_back(value.empty() ? StringAttr::get(context, "")
                                     : allocateName());
-    operation->setAttr(preparedRuntimeByteGlobalsAttr,
-                       ArrayAttr::get(context, names));
+    runtime::set<runtime::LLVMByteGlobals>(operation,
+                                           ArrayAttr::get(context, names));
   });
   return success();
 }

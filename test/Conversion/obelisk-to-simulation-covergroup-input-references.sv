@@ -6,7 +6,7 @@
 // RUN: obelisk-opt %t.lowered.mlir --canonicalize --cse | FileCheck %s --check-prefix=INPUT
 // RUN: obelisk-opt %t.lowered.mlir --canonicalize --cse | FileCheck %s --check-prefix=SHARED
 // RUN: obelisk-opt %t.lowered.mlir --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %t.lowered.mlir --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
 
 // IEEE 19.3 and 19.8.1: an input is a variable holding a copied value. Allocate

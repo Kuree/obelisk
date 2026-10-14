@@ -24,12 +24,6 @@ class DataLayout;
 
 namespace obelisk {
 
-inline constexpr llvm::StringLiteral preparedRuntimeByteGlobalsAttr =
-    "runtime.llvm_byte_globals";
-
-inline constexpr llvm::StringLiteral preparedRuntimeLLVMAttr =
-    "runtime.llvm_prepared";
-
 /// Compose independently runnable preparation and conversion passes.
 void buildRuntimeToLLVMPipeline(mlir::OpPassManager &manager);
 void registerRuntimeToLLVMPipeline();

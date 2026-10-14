@@ -649,18 +649,18 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
     if (failed(plan))
       return failure();
     OpBuilder builder(module.getContext());
-    module->setAttr("execution.flags",
-                    builder.getI32IntegerAttr(plan->executionFlags));
-    module->setAttr("execution.state_bits",
-                    builder.getI64IntegerAttr(plan->stateBitCount));
+    runtime::setExecutionFlags(
+        module, static_cast<runtime::ExecutionFlags>(plan->executionFlags));
+    runtime::set<runtime::StateBits>(
+        module, builder.getI64IntegerAttr(plan->stateBitCount));
     SmallVector<int64_t> sampledRanges;
     sampledRanges.reserve(plan->ranges.size() * 2);
     for (const SimulationSampledRange &range : plan->ranges) {
       sampledRanges.push_back(static_cast<int64_t>(range.bitOffset));
       sampledRanges.push_back(static_cast<int64_t>(range.bitWidth));
     }
-    module->setAttr("execution.sampled_ranges",
-                    builder.getDenseI64ArrayAttr(sampledRanges));
+    runtime::set<runtime::SampledRanges>(
+        module, builder.getDenseI64ArrayAttr(sampledRanges));
   }
   // Native region bodies may diverge from their already-frozen bytecode
   // fallback after this point. Keep the generic scheduler as an untouched

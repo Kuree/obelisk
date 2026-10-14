@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
@@ -56,8 +56,8 @@ module attributes {
 // NATIVE-DAG: llvm.mlir.constant(false) : i1
 // NATIVE-NOT: simulation.virtual_interface
 
-// BYTECODE-DAG: bytecode.image = array<i8:
-// BYTECODE-DAG: execution.state_bits = 64 : i64
+// BYTECODE-DAG: runtime.bytecode_image = array<i8:
+// BYTECODE-DAG: runtime.state_bits = 64 : i64
 
 // Null, two scope identities, a zero-cost view cast, and three comparisons.
 // INSTRUCTIONS: constants: 00000000000000000100000000000000020000000000000000

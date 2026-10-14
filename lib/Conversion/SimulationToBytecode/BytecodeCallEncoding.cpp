@@ -113,8 +113,8 @@ LogicalResult Encoder::encodeTaskCall(FunctionPlan &plan,
 LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
                                      sim::SimDPICallOp call) {
   if (ModuleOp module = design->getParentOfType<ModuleOp>())
-    module->setAttr("feature.dpi_import_bytecode",
-                    UnitAttr::get(call.getContext()));
+    runtime::setFeatures(module, runtime::Features::DPIImportBytecode,
+                         /*required=*/true);
   uint32_t importID = call.getImportId();
   auto inserted =
       importSymbols.try_emplace(importID, call.getCIdentifier().str());

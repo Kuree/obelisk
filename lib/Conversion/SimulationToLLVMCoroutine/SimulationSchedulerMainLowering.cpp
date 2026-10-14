@@ -81,7 +81,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                         outContext, 8);
   constexpr StringLiteral executionName = "__obelisk_execution_descriptor_v1";
   bool hasExecution = module.lookupSymbol(executionName) != nullptr;
-  bool hasCoverage = module->hasAttr(sim::metadata::coverageSchemaBlob);
+  bool hasCoverage = runtime::has<runtime::CoverageSchemaBlob>(module);
   // A functional schema is also required for covergroup methods used directly
   // by the language.  Its presence therefore does not imply that the user
   // requested persistent coverage output.  The preparation pipeline adds the
@@ -104,11 +104,11 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   bool shouldDumpCoverage = hasCoverage && coveragePersistenceMask != 0;
   bool hasDesignBytecode = false;
   uint64_t executionFlags = 0;
-  if (auto flags =
-          module->getAttrOfType<IntegerAttr>("execution.flags")) {
-    executionFlags = flags.getValue().getZExtValue();
-    hasDesignBytecode = (flags.getValue().getZExtValue() &
-                         OBELISK_RT_EXECUTION_HAS_BYTECODE) != 0;
+  if (runtime::has<runtime::ExecutionFlagSet>(module)) {
+    runtime::ExecutionFlags flags = runtime::getExecutionFlags(module);
+    executionFlags = static_cast<uint32_t>(flags);
+    hasDesignBytecode = runtime::bitEnumContainsAll(
+        flags, runtime::ExecutionFlags::HasBytecode);
   }
   // Observer capability is a source-level scheduling fact retained by the
   // plan even after evaluator functions acquire their native signatures.
@@ -217,20 +217,22 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
-  bool requiresDynamicScanFeature =
-      module->hasAttr("feature.dynamic_scan");
+  runtime::Features features = runtime::getFeatures(module);
+  auto needs = [&](runtime::Features feature) {
+    return runtime::bitEnumContainsAll(features, feature);
+  };
+  bool requiresDynamicScanFeature = needs(runtime::Features::DynamicScan);
   bool requiresContainerBitstreamFeature =
-      module->hasAttr("feature.container_bitstream");
+      needs(runtime::Features::ContainerBitstream);
   bool requiresRecursiveBitstreamFeature =
-      module->hasAttr("feature.recursive_bitstream");
-  bool requiresClassBitstreamFeature =
-      module->hasAttr("feature.class_bitstream");
+      needs(runtime::Features::RecursiveBitstream);
+  bool requiresClassBitstreamFeature = needs(runtime::Features::ClassBitstream);
   bool requiresClassBitstreamBytecodeFeature =
-      module->hasAttr("feature.class_bitstream_bytecode");
+      needs(runtime::Features::ClassBitstreamBytecode);
   bool requiresDPIExportBytecodeFeature =
-      module->hasAttr("feature.dpi_export_bytecode");
+      needs(runtime::Features::DPIExportBytecode);
   bool requiresDPIImportBytecodeFeature =
-      module->hasAttr("feature.dpi_import_bytecode");
+      needs(runtime::Features::DPIImportBytecode);
   if (requiresDynamicScanFeature)
     LLVM::CallOp::create(
         builder, location, TypeRange{},

@@ -1220,15 +1220,14 @@ LogicalResult NativePipelineAnalysis::initialize() {
   if (failed(embeddedStateLayout))
     return failure();
   uint64_t stateBits = embeddedStateLayout->bitCount;
-  if (auto existing =
-          module->getAttrOfType<IntegerAttr>("execution.state_bits");
+  if (auto existing = runtime::get<runtime::StateBits>(module);
       existing && existing.getValue().getZExtValue() != stateBits) {
     module.emitError(
         "native state layout disagrees with embedded execution metadata");
     return failure();
   }
-  module->setAttr("execution.state_bits",
-                  IntegerAttr::get(IntegerType::get(context, 64), stateBits));
+  runtime::set<runtime::StateBits>(
+      module, IntegerAttr::get(IntegerType::get(context, 64), stateBits));
   if (failed(materializeEmbeddedSimulationDesign(module, *parsed)))
     return failure();
   // SimDesignOp is intentionally eliminated by this lowering. Preserve the
@@ -1260,8 +1259,7 @@ LogicalResult NativePipelineAnalysis::initialize() {
   stateLayout = buildNativeStateLayout(module, dataLayout);
   if (failed(stateLayout))
     return failure();
-  auto embeddedStateBits =
-      module->getAttrOfType<IntegerAttr>("execution.state_bits");
+  auto embeddedStateBits = runtime::get<runtime::StateBits>(module);
   if (!embeddedStateBits ||
       embeddedStateBits.getValue().getZExtValue() != stateLayout->bitCount)
     return module.emitError(
@@ -1273,10 +1271,9 @@ LogicalResult NativePipelineAnalysis::initialize() {
     staticSuperstep =
         ::obelisk::schedule::get<schedule::metadata::staticSuperstep>(design);
   });
-  auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("execution.flags");
-  bytecodeOnly = executionFlags && (executionFlags.getValue().getZExtValue() &
-                                    OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+  bytecodeOnly =
+      runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
+                                  runtime::ExecutionFlags::RequireBytecode);
   if (bytecodeOnly) {
     materializeNativeStatePlanes(module, *stateLayout);
     materializeNativeSchedulerGlobals(module);
@@ -2842,8 +2839,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       // its canonical image, otherwise that export restores pre-checkpoint
       // values (and the next activation repeats the same checkpoint forever).
       auto syncCheckpointState = [&] {
-        auto stateBits =
-            module->getAttrOfType<IntegerAttr>("execution.state_bits");
+        auto stateBits = runtime::get<runtime::StateBits>(module);
         return LLVM::CallOp::create(
                    builder, route.fourState.getLoc(),
                    TypeRange{builder.getI32Type()},
@@ -3112,8 +3108,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
       }
       compact.push_back(std::move(record));
     }
-    auto stateBits =
-        module->getAttrOfType<IntegerAttr>("execution.state_bits");
+    auto stateBits = runtime::get<runtime::StateBits>(module);
     if (!stateBits)
       return module.emitError(
           "route promotion requires the native state layout");

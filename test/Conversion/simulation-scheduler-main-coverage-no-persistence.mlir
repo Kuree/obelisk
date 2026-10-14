@@ -44,7 +44,7 @@ module attributes {
   }
 }
 
-// CHECK: execution.coverage_schema_blob
+// CHECK: runtime.coverage_schema_blob
 // CHECK-LABEL: llvm.func @main
 // CHECK:      llvm.call @obelisk_rt_v1_native_state_initialize
 // CHECK:      %[[LINE_COUNT:.*]] = llvm.mlir.constant(0 : i64) : i64

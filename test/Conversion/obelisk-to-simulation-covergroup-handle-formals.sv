@@ -2,7 +2,7 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s
 // RUN: obelisk-opt %t.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEMA
-// RUN: obelisk-opt %t.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: obelisk-opt %t.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %t.mlir --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
 // RUN: not obelisk-opt %t.mlir '--test-obelisk-edit-attributes=op=simulation.covergroup.formal_read clone=true replace-from=!simulation.covergroup_handle<@__obelisk_covergroup_source_cg_4D2E260D7266D24C> replace-to=i64' '--test-obelisk-edit-attributes=op=simulation.covergroup.create match={argument_count = 2 : i32} operand=1 constant={0 : i64}' --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 | FileCheck %s --check-prefix=NUMERIC
 // RUN: not obelisk-opt %t.mlir '--test-obelisk-edit-attributes=op=simulation.covergroup.formal_read clone=true replace-from=!simulation.covergroup_handle<@__obelisk_covergroup_source_cg_4D2E260D7266D24C> replace-to=!simulation.covergroup_handle<@__obelisk_covergroup_cg_514F275A060A638E>' '--test-obelisk-edit-attributes=op=simulation.covergroup.create match={argument_count = 2 : i32} operand=1 poison=!simulation.covergroup_handle<@__obelisk_covergroup_cg_514F275A060A638E>' --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 | FileCheck %s --check-prefix=NOMINAL

@@ -2,7 +2,7 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=VIRTUAL < %t.mlir
 // RUN: FileCheck %s --check-prefix=INTERFACE < %t.mlir
-// RUN: mlir-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: obelisk-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %s --test-obelisk-replicate --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=BYTECODE
 
 // IEEE 8.20 and 8.26: class field offsets and virtual and interface dispatch

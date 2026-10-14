@@ -7,6 +7,7 @@
 #include "obelisk/Dialect/Coverage/CoverageDialect.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Native/NativeDialect.h"
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/SDF/SDFDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Frontend/SDF.h"
@@ -43,6 +44,7 @@ int main(int argc, char **argv) {
         registry
             .insert<LLVM::LLVMDialect, obelisk::cov::CoverageDialect,
                     obelisk::dpi::DPIDialect, obelisk::native::NativeDialect,
+                    obelisk::runtime::ObeliskRuntimeDialect,
                     obelisk::schedule::ScheduleDialect>();
         registerBuiltinDialectTranslation(registry);
         registerLLVMDialectTranslation(registry);

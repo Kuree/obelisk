@@ -1,5 +1,5 @@
 // Execute the self-checking program of ../Conversion/simulation-native-eval-pending-sparse.mlir.
 
-// RUN: obelisk-opt %S/../Conversion/simulation-native-eval-pending-sparse.mlir --finalize-native-llvm | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: obelisk-opt %S/../Conversion/simulation-native-eval-pending-sparse.mlir --finalize-native-llvm | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='default<O0>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o %S/Inputs/native-eval-pending-sparse.c -o %t.exe
 // RUN: %t.exe

@@ -3,7 +3,7 @@
 // RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s
 // RUN: obelisk-opt %t.mlir --test-obelisk-print-coverage-schema -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEMA
 // RUN: obelisk-opt %t.mlir --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %t.mlir --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
 // RUN: not obelisk-opt %t.mlir '--test-obelisk-edit-attributes=replace-from="\"number\"" replace-to="\"wrong\""' --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: not obelisk-opt %t.mlir '--test-obelisk-edit-attributes=replace-from="\"number\"" replace-to="\"wrong\""' --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null 2>&1 | FileCheck %s --check-prefix=INVALID

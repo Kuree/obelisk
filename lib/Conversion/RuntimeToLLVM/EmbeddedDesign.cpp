@@ -39,13 +39,6 @@ Type getNativeProcessDescriptorType(MLIRContext *context) {
 }
 namespace {
 
-constexpr StringLiteral kMaterializedAttr = "execution.materialized";
-constexpr StringLiteral kBytecodeAttr = "bytecode.image";
-constexpr StringLiteral kDatabaseAttr = "design.database";
-constexpr StringLiteral kFlagsAttr = "execution.flags";
-constexpr StringLiteral kStateBitsAttr = "execution.state_bits";
-constexpr StringLiteral kSampledRangesAttr = "execution.sampled_ranges";
-constexpr StringLiteral kFunctionAttr = "bytecode.function";
 constexpr StringLiteral kExecutionName = "__obelisk_execution_descriptor_v1";
 constexpr StringLiteral kBytecodeName = "__obelisk_bytecode_image_v1";
 constexpr StringLiteral kDatabaseName = "__obelisk_design_database_v1";
@@ -228,7 +221,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       invalid = true;
       return;
     }
-    auto bytecodeFunction = function->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    auto bytecodeFunction = runtime::get<runtime::BytecodeFunction>(function);
     if (bytecodeFunction && bytecodeFunction.getValue().getActiveBits() > 32) {
       function.emitOpError("has an invalid DPI export bytecode function");
       invalid = true;
@@ -284,8 +277,8 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
                                 << "' has no bytecode implementation";
   }
   if (bytecodeOnly && !exports.empty())
-    module->setAttr("feature.dpi_export_bytecode",
-                    UnitAttr::get(module.getContext()));
+    runtime::setFeatures(module, runtime::Features::DPIExportBytecode,
+                         /*required=*/true);
 
   for (const ExportInfo &info : exports) {
     if (bytecodeOnly && !info.isTask)
@@ -496,19 +489,17 @@ LogicalResult appendRetentionEntry(ModuleOp module, LLVM::GlobalOp global,
 LogicalResult
 materializeEmbeddedSimulationDesign(ModuleOp module,
                                     const llvm::DataLayout &dataLayout) {
-  if (module->hasAttr(kMaterializedAttr))
+  if (runtime::has<runtime::Materialized>(module))
     return success();
   if (module.lookupSymbol(kExecutionName))
     return module.emitError()
            << "symbol collision for reserved execution descriptor '"
            << kExecutionName << "'";
 
-  auto bytecode = module->getAttrOfType<DenseI8ArrayAttr>(kBytecodeAttr);
-  auto database = module->getAttrOfType<DenseI8ArrayAttr>(kDatabaseAttr);
-  auto classBitstream = module->getAttrOfType<DenseI8ArrayAttr>(
-      sim::metadata::classBitstreamBlob);
-  auto coverageSchema = module->getAttrOfType<DenseI8ArrayAttr>(
-      sim::metadata::coverageSchemaBlob);
+  auto bytecode = runtime::get<runtime::BytecodeImage>(module);
+  auto database = runtime::get<runtime::DesignDatabase>(module);
+  auto classBitstream = runtime::get<runtime::ClassBitstreamBlob>(module);
+  auto coverageSchema = runtime::get<runtime::CoverageSchemaBlob>(module);
   if (bytecode && failed(checkMagic(module, bytecode, StringRef("OBBCDS1\0", 8),
                                     "embedded bytecode")))
     return failure();
@@ -553,11 +544,9 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   Type i32 = IntegerType::get(context, 32);
   Type i64 = IntegerType::get(context, 64);
 
-  auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("execution.flags");
   bool bytecodeOnly =
-      executionFlags && (executionFlags.getValue().getZExtValue() &
-                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+      runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
+                                  runtime::ExecutionFlags::RequireBytecode);
 
   struct ActivationInfo {
     uint64_t codeUnitID;
@@ -572,7 +561,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!codeUnitID || *codeUnitID <= 0)
       return;
-    auto bytecodeFunction = function->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    auto bytecodeFunction = runtime::get<runtime::BytecodeFunction>(function);
     activations.push_back(
         {static_cast<uint64_t>(*codeUnitID), function.getSymName().str(),
          bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
@@ -627,7 +616,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
                       {},
                       {}};
     if (auto bytecodeFunction =
-            function->getAttrOfType<IntegerAttr>(kFunctionAttr))
+            runtime::get<runtime::BytecodeFunction>(function))
       info.bytecodeFunction =
           static_cast<uint32_t>(bytecodeFunction.getValue().getZExtValue());
     for (unsigned index = 1; index < function.getNumArguments(); ++index) {
@@ -971,23 +960,22 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
                                              pointer, i32, i64, scopes.size())))
     return failure();
 
-  uint32_t flags = 0;
+  runtime::ExecutionFlags executionFlags = runtime::getExecutionFlags(module);
   uint64_t stateBits = 0;
-  if (auto attr = module->getAttrOfType<IntegerAttr>(kFlagsAttr))
-    flags = static_cast<uint32_t>(attr.getValue().getZExtValue());
   if (!exports.empty())
-    flags |= OBELISK_RT_EXECUTION_DPI_EXPORTS;
+    executionFlags = executionFlags | runtime::ExecutionFlags::DPIExports;
   if (classBitstream)
-    flags |= OBELISK_RT_EXECUTION_CLASS_BITSTREAM;
+    executionFlags = executionFlags | runtime::ExecutionFlags::ClassBitstream;
   if (coverageSchema)
-    flags |= OBELISK_RT_EXECUTION_COVERAGE_SCHEMA;
+    executionFlags = executionFlags | runtime::ExecutionFlags::CoverageSchema;
   if (module->hasAttr(analysis::polledCollectionAttrName))
-    flags |= OBELISK_RT_EXECUTION_POLLED_COLLECTION;
+    executionFlags = executionFlags | runtime::ExecutionFlags::PolledCollection;
   // IEEE 1800-2023 35.7: exporting a function preserves its SV semantics.
   // Native scheduling must see the same capabilities as the runtime descriptor
   // before choosing a state-publication strategy.
-  module->setAttr(kFlagsAttr, IntegerAttr::get(i32, flags));
-  if (auto attr = module->getAttrOfType<IntegerAttr>(kStateBitsAttr))
+  runtime::setExecutionFlags(module, executionFlags);
+  uint32_t flags = static_cast<uint32_t>(executionFlags);
+  if (auto attr = runtime::get<runtime::StateBits>(module))
     stateBits = attr.getValue().getZExtValue();
   struct SampledRangeInfo {
     uint64_t sourceBitOffset;
@@ -996,8 +984,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   };
   SmallVector<SampledRangeInfo> sampledRanges;
   uint64_t snapshotBytes = 0;
-  if (auto attr =
-          module->getAttrOfType<DenseI64ArrayAttr>(kSampledRangesAttr)) {
+  if (auto attr = runtime::get<runtime::SampledRanges>(module)) {
     ArrayRef<int64_t> values = attr.asArrayRef();
     if (values.size() % 2 != 0)
       return module.emitError("sampled range metadata must contain pairs");
@@ -1247,7 +1234,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
       if (function.getEntryKind() == sim::EntryKind::Function ||
           function.getEntryKind() == sim::EntryKind::Observer)
         return;
-    auto index = operation->getAttrOfType<IntegerAttr>(kFunctionAttr);
+    auto index = runtime::get<runtime::BytecodeFunction>(operation);
     auto symbol =
         operation->getAttrOfType<StringAttr>(SymbolTable::getSymbolAttrName());
     if (index && symbol)
@@ -1310,7 +1297,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     }
   }
 
-  module->setAttr(kMaterializedAttr, UnitAttr::get(context));
+  runtime::mark<runtime::Materialized>(module);
   return success();
 }
 

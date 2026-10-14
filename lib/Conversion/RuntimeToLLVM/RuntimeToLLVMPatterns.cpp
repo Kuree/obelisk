@@ -293,7 +293,7 @@ materializeGlobalBytes(Operation *anchor, StringRef bytes,
   ModuleOp module = anchor->getParentOfType<ModuleOp>();
   if (!module)
     return anchor->emitOpError() << "requires a containing module";
-  auto names = anchor->getAttrOfType<ArrayAttr>(preparedRuntimeByteGlobalsAttr);
+  ArrayAttr names = runtime::get<runtime::LLVMByteGlobals>(anchor);
   if (!names || preparedIndex >= names.size())
     return anchor->emitOpError(
         "runtime byte global names were not prepared before conversion");

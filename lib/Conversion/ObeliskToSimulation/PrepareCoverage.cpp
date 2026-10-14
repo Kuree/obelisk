@@ -5387,8 +5387,8 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     return;
   }
 
-  module->setAttr(
-      sim::metadata::coverageSchemaBlob,
+  runtime::set<runtime::CoverageSchemaBlob>(
+      module,
       DenseI8ArrayAttr::get(
           &getContext(),
           ArrayRef<int8_t>(reinterpret_cast<const int8_t *>(encoded.data()),

@@ -2,7 +2,7 @@
 // RUN: obelisk-opt %s --mlir-disable-threading --test-obelisk-replicate --convert-obelisk-sim-processes-to-llvm-coroutines | diff -u - %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=CLOSED --implicit-check-not='llvm.func @child.__obelisk_spawn(' --implicit-check-not='llvm.func @parent_{{[0-9]+}}.__obelisk_spawn(' < %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
+// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
 
 // Thirty-two parents (parent_0 ... parent_31, from parent_#) each spawn the
 // child twice. In a closed executable the parents spawn through process

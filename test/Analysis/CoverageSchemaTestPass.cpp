@@ -87,7 +87,7 @@ public:
   void runOnOperation() final {
     SmallVector<ModuleOp> modules;
     getOperation()->walk([&](ModuleOp module) {
-      if (module->hasAttr(obelisk::sim::metadata::coverageSchemaBlob))
+      if (obelisk::runtime::has<obelisk::runtime::CoverageSchemaBlob>(module))
         modules.push_back(module);
     });
     if (modules.empty()) {
@@ -97,8 +97,8 @@ public:
     llvm::DenseMap<uint64_t, coverage::FunctionalExpression> expressions;
     raw_ostream &os = llvm::errs();
     for (auto [index, module] : llvm::enumerate(modules)) {
-      auto blob = module->getAttrOfType<DenseI8ArrayAttr>(
-          obelisk::sim::metadata::coverageSchemaBlob);
+      DenseI8ArrayAttr blob =
+          obelisk::runtime::get<obelisk::runtime::CoverageSchemaBlob>(module);
       if (!blob) {
         module.emitError("coverage schema blob must be an i8 array");
         return signalPassFailure();

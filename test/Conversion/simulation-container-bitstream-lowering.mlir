@@ -36,6 +36,6 @@ module attributes {
 }
 
 // NATIVE-COUNT-4: llvm.call @obelisk_rt_v1_container_export_bitstream
-// FEATURE: feature.container_bitstream
+// FEATURE: runtime.features = #runtime.features<container_bitstream>
 // BYTECODE: intrinsic {{.*}}id=0x00010464 inputs=8 outputs=1 flags=0
 // BYTECODE-COUNT-4: site {{.*}}id=0x00010464 inputs=

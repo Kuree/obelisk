@@ -5,6 +5,7 @@
 
 #include "obelisk/Runtime/Runtime.h"
 
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/StringExtras.h"
@@ -117,6 +118,80 @@ static_assert(static_cast<uint32_t>(SuspensionKind::Frontier) ==
               OBELISK_RT_SUSPEND_FRONTIER);
 static_assert(static_cast<uint32_t>(SuspensionKind::EventOrder) ==
               OBELISK_RT_SUSPEND_EVENT_ORDER);
+
+static_assert(static_cast<uint32_t>(ExecutionFlags::HasBytecode) ==
+              OBELISK_RT_EXECUTION_HAS_BYTECODE);
+static_assert(static_cast<uint32_t>(ExecutionFlags::HasDesignDatabase) ==
+              OBELISK_RT_EXECUTION_HAS_DESIGN_DATABASE);
+static_assert(static_cast<uint32_t>(ExecutionFlags::VPIRead) ==
+              OBELISK_RT_EXECUTION_VPI_READ);
+static_assert(static_cast<uint32_t>(ExecutionFlags::VPIWrite) ==
+              OBELISK_RT_EXECUTION_VPI_WRITE);
+static_assert(static_cast<uint32_t>(ExecutionFlags::RequireBytecode) ==
+              OBELISK_RT_EXECUTION_REQUIRE_BYTECODE);
+static_assert(static_cast<uint32_t>(ExecutionFlags::PreponedSnapshot) ==
+              OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT);
+static_assert(static_cast<uint32_t>(ExecutionFlags::WaveformMetadata) ==
+              OBELISK_RT_EXECUTION_WAVEFORM_METADATA);
+static_assert(static_cast<uint32_t>(ExecutionFlags::DPIExports) ==
+              OBELISK_RT_EXECUTION_DPI_EXPORTS);
+static_assert(static_cast<uint32_t>(ExecutionFlags::ClassBitstream) ==
+              OBELISK_RT_EXECUTION_CLASS_BITSTREAM);
+static_assert(static_cast<uint32_t>(ExecutionFlags::CoverageSchema) ==
+              OBELISK_RT_EXECUTION_COVERAGE_SCHEMA);
+static_assert(static_cast<uint32_t>(ExecutionFlags::PolledCollection) ==
+              OBELISK_RT_EXECUTION_POLLED_COLLECTION);
+
+ExecutionFlags getExecutionFlags(Operation *module) {
+  ExecutionFlagsAttr flags = get<ExecutionFlagSet>(module);
+  return flags ? flags.getValue() : ExecutionFlags::None;
+}
+
+void setExecutionFlags(Operation *module, ExecutionFlags flags) {
+  set<ExecutionFlagSet>(module,
+                        ExecutionFlagsAttr::get(module->getContext(), flags));
+}
+
+Features getFeatures(Operation *module) {
+  FeaturesAttr features = get<FeatureSet>(module);
+  return features ? features.getValue() : Features::None;
+}
+
+void setFeatures(Operation *module, Features features, bool required) {
+  Features current = getFeatures(module);
+  current = required ? current | features : current & ~features;
+  if (current == Features::None)
+    remove<FeatureSet>(module);
+  else
+    set<FeatureSet>(module, FeaturesAttr::get(module->getContext(), current));
+}
+
+LogicalResult
+ObeliskRuntimeDialect::verifyOperationAttribute(Operation *operation,
+                                                NamedAttribute attribute) {
+  if (failed(discardable::verify<
+             BytecodeImage, DesignDatabase, ExecutionFlagSet, StateBits,
+             SampledRanges, Materialized, ClassBitstreamBlob,
+             CoverageSchemaBlob, FeatureSet, BytecodeFunction,
+             BytecodeScratchSize, BytecodeScratchAlignment,
+             BytecodeTwoStateLogicRegisters, LLVMPrepared, LLVMByteGlobals>(
+          operation, attribute)))
+    return failure();
+  StringRef name = attribute.getName().strref();
+  bool function = name == BytecodeFunction::getNameStr() ||
+                  name == BytecodeScratchSize::getNameStr() ||
+                  name == BytecodeScratchAlignment::getNameStr() ||
+                  name == BytecodeTwoStateLogicRegisters::getNameStr();
+  if (!function && name != LLVMByteGlobals::getNameStr() &&
+      !isa<ModuleOp>(operation))
+    return operation->emitOpError("attribute '")
+           << name << "' belongs on a module";
+  if (name == SampledRanges::getNameStr() &&
+      cast<DenseI64ArrayAttr>(attribute.getValue()).size() % 2 != 0)
+    return operation->emitOpError("attribute '")
+           << name << "' must hold offset/width pairs";
+  return success();
+}
 
 static_assert(static_cast<uint32_t>(Radix::Binary) == OBELISK_RT_RADIX_BINARY);
 static_assert(static_cast<uint32_t>(Radix::Octal) == OBELISK_RT_RADIX_OCTAL);

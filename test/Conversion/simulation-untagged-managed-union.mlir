@@ -99,7 +99,7 @@ module attributes {
 
 // The encoded image retains the class field and the candidate static root.
 // Automatic state uses the append-only typed allocation intrinsic.
-// BYTECODE: bytecode.image = array<i8:
+// BYTECODE: runtime.bytecode_image = array<i8:
 // BYTECODE: simulation.class.field @Holder_value
 
 // Candidate SSA rooting uses MANAGED_CANDIDATE_ROOT. Automatic state receives

@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %S/../Conversion/simulation-native-activation-state-observer.mlir --obelisk-materialize-native-eval-groups -o %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | %llvm_dist/bin/opt -passes='default<O3>' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %S/Inputs/native-activation-state.c %t.o -o %t.exe
 // RUN: %t.exe | FileCheck %s
 // CHECK: observed=2 final=100 unrelated=42

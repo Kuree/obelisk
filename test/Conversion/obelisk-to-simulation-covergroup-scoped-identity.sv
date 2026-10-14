@@ -5,7 +5,7 @@
 // RUN: obelisk-opt %t.scoped.mlir --mlir-disable-threading '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %t.lowered.mlir --canonicalize --cse | FileCheck %s
 // RUN: obelisk-opt %t.lowered.mlir --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %t.lowered.mlir --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
 
 // IEEE 19.4: distinct classes may embed different covergroups with the same

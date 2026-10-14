@@ -4,7 +4,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  feature.class_bitstream_source
+  simulation.class_bitstream_source
 } {
   simulation.design @null_class_bitstream {
     simulation.scope.decl 0 hierarchy "top"
@@ -28,6 +28,6 @@ module attributes {
   }
 }
 
-// CHECK-NOT: execution.class_bitstream_blob
+// CHECK-NOT: runtime.class_bitstream_blob
 // CHECK-NOT: obelisk_rt_v1_class_bitstream
 // CHECK-NOT: obelisk_rt_v2_recursive_export_bitstream

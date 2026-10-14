@@ -225,7 +225,7 @@ public:
     }
     if (failed(validateRuntimeToLLVMPreconditions(module, *parsed)))
       return signalPassFailure();
-    if (!module->hasAttrOfType<UnitAttr>(preparedRuntimeLLVMAttr)) {
+    if (!runtime::has<runtime::LLVMPrepared>(module)) {
       module.emitError("requires prepare-runtime-to-llvm before conversion");
       return signalPassFailure();
     }
@@ -273,7 +273,7 @@ public:
       return signalPassFailure();
     if (failed(verifyNoRuntimeTypes(module)))
       return signalPassFailure();
-    module->removeAttr(preparedRuntimeLLVMAttr);
+    runtime::remove<runtime::LLVMPrepared>(module);
   }
 };
 

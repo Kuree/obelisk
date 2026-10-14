@@ -147,9 +147,9 @@ LogicalResult NativePipelineAnalysis::planActors() {
         aotEligibility.getRuntimeObservedWriterActors().contains(function))
       native::mark<native::RuntimePublicationCertified>(function);
   }
-  if (module->hasAttr("bytecode.image")) {
+  if (runtime::has<runtime::BytecodeImage>(module)) {
     auto missingBytecode = [](Operation *function) {
-      return !function->hasAttr("bytecode.function");
+      return !runtime::has<runtime::BytecodeFunction>(function);
     };
     for (const auto &[function, blocks] : aotEligibility.getBytecodeFragments())
       if (!blocks.empty() &&
@@ -566,9 +566,7 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
       auto constant = delay.getDelay().getDefiningOp<sim::SimTimeConstantOp>();
       hasInactiveDelay |= !constant || constant.getValue() == 0;
     });
-    auto execution =
-        module->getAttrOfType<IntegerAttr>("execution.flags");
-    uint64_t flags = execution ? execution.getUInt() : 0;
+    runtime::ExecutionFlags flags = runtime::getExecutionFlags(module);
     // IEEE 1800-2023 4.4, 4.6, 9.4.2: a runtime clock consumer prevents
     // exclusive calendar ownership, not execution of an independent closure.
     // The writer checkpoints above retain every required runtime publication;
@@ -578,8 +576,9 @@ LogicalResult NativePipelineAnalysis::planSchedule() {
     // retain the original runtime path for those designs (LRM 4.4-4.5).
     if (staticEvalIsland && staticFanoutPlan.exact && !hasObserver &&
         !hasInactiveDelay &&
-        !(flags & (OBELISK_RT_EXECUTION_DPI_EXPORTS |
-                   OBELISK_RT_EXECUTION_COVERAGE_SCHEMA)))
+        !runtime::bitEnumContainsAny(
+            flags, runtime::ExecutionFlags::DPIExports |
+                       runtime::ExecutionFlags::CoverageSchema))
       ::obelisk::schedule::set<::obelisk::schedule::Field::EvalRuntimeCalendar>(
           module, UnitAttr::get(module.getContext()));
   }

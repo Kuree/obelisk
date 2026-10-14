@@ -7,6 +7,7 @@
 
 #include "AnalysisTestPasses.h"
 
+#include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "mlir/IR/BuiltinOps.h"
@@ -69,9 +70,11 @@ public:
 
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    auto attr = module->getAttrOfType<DenseI8ArrayAttr>("bytecode.image");
+    DenseI8ArrayAttr attr =
+        obelisk::runtime::get<obelisk::runtime::BytecodeImage>(module);
     if (!attr) {
-      module.emitError("missing bytecode.image attribute");
+      module.emitError("missing ")
+          << obelisk::runtime::BytecodeImage::getNameStr() << " attribute";
       return signalPassFailure();
     }
     ArrayRef<int8_t> signedImage = attr.asArrayRef();

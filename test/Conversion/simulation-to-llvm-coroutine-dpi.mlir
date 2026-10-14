@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --allow-unregistered-dialect --mlir-to-llvmir \
+// RUN:   | obelisk-translate --allow-unregistered-dialect --mlir-to-llvmir \
 // RUN:   | opt -passes=verify -disable-output
 
 module attributes {
@@ -221,7 +221,7 @@ module attributes {
   }
 }
 
-// BYTECODE: bytecode.image = array<i8:
+// BYTECODE: runtime.bytecode_image = array<i8:
 
 // IEEE 1800-2017 Annex H.8 passes scalar input values directly and output or
 // inout formals by pointer. real/realtime use C double; shortreal uses C float.

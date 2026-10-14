@@ -41,6 +41,6 @@ module attributes {
   }
 }
 
-// CHECK: bytecode.image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
+// CHECK: runtime.bytecode_image = array<i8: 79, 66, 66, 67, 68, 83, 49, 0
 // CHECK: simulation.class.field @Base_value of @Base at 0 offset 8 : i64
-// CHECK: bytecode.function = 0 : i32
+// CHECK: runtime.bytecode_function = 0 : i32

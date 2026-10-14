@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
 // RUN:   | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' \
@@ -37,8 +37,8 @@ module attributes {
 // NATIVE: llvm.mlir.constant(true) : i1
 // NATIVE-NOT: simulation.chandle
 
-// BYTECODE: bytecode.image = array<i8:
-// BYTECODE: execution.state_bits = 64 : i64
+// BYTECODE: runtime.bytecode_image = array<i8:
+// BYTECODE: runtime.state_bits = 64 : i64
 
 // INSTRUCTIONS: constants: 00000000000000000000000000000000
 // INSTRUCTIONS-NEXT: 0: opcode=1 flags=0 dst=1 {{.*}} imm=0

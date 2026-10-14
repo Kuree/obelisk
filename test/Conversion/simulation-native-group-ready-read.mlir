@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-materialize-native-eval-groups --convert-native-schedule-actions-to-llvm -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: %llvm_dist/bin/mlir-opt %t.mlir --convert-arith-to-llvm --convert-cf-to-llvm | mlir-translate --mlir-to-llvmir > %t.ll
+// RUN: %llvm_dist/bin/mlir-opt %t.mlir --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir > %t.ll
 // RUN: %llvm_dist/bin/clang -O0 %t.ll -o %t.o0
 // RUN: %t.o0
 // RUN: %llvm_dist/bin/clang -O3 %t.ll -o %t.o3

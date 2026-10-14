@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=20' -o %t.cache
 // RUN: obelisk-opt %t.cache --schedule-cache-pure-cones='minimum-cost=2 maximum-cost=20' | FileCheck %s
-// RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | mlir-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: %llvm_dist/bin/mlir-opt %t.cache --convert-arith-to-llvm --convert-cf-to-llvm | obelisk-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang %t.o -o %t.exe
 // RUN: %t.exe
 module {

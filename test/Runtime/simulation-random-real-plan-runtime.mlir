@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --obelisk-sim-compile-random-plans | FileCheck %s --check-prefix=PLAN
 // RUN: obelisk-opt %s --obelisk-sim-compile-random-plans --obelisk-sim-compile-random-plans --mlir-print-ir-after=obelisk-sim-compile-random-plans --mlir-print-ir-after-change -o /dev/null 2>&1 | FileCheck %s --check-prefix=ONCE --implicit-check-not='IR Dump After'
-// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans '--encode-obelisk-sim-to-bytecode=vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,cgscc(coro-split<reuse-storage>),coro-cleanup' | %llc -filetype=obj -relocation-model=pic -o %t.o
+// RUN: obelisk-opt %s --obelisk-sim-compile-random-plans '--encode-obelisk-sim-to-bytecode=vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | %llvm_dist/bin/opt -passes='coro-early,cgscc(coro-split<reuse-storage>),coro-cleanup' | %llc -filetype=obj -relocation-model=pic -o %t.o
 // RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
 // RUN: %t.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // REQUIRES: compiled-sampler

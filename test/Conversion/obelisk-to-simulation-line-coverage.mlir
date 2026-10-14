@@ -95,7 +95,7 @@ module attributes {
 
 // INVENTORY: module attributes {
 // INVENTORY-SAME: coverage.line_point_count = 4 : i64
-// INVENTORY-SAME: execution.coverage_schema_blob = array<i8:
+// INVENTORY-SAME: runtime.coverage_schema_blob = array<i8:
 // INVENTORY: simulation.scope.decl 1 parent 0 hierarchy "top" source_definition "DUT" coverage_id {{-?[1-9][0-9]*}}
 // INVENTORY-COUNT-4: coverage.line_point_index = {{[0-3]}} : i64
 

@@ -68,7 +68,7 @@ module attributes {
 // records pin child spawn, null/current/equality, the await token, a generic
 // process continuation StoreFrame/LoadFrame pair, and status. Frame transfers
 // have flags 0 and size 8; descriptor-process transfers used flags 6.
-// BYTECODE: bytecode.image = array<i8:
+// BYTECODE: runtime.bytecode_image = array<i8:
 // Spawn child (intrinsic site 1), null token, current (site 2), and equality.
 // BYTECODE-SAME: 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0
 // BYTECODE-SAME: 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0
@@ -88,6 +88,6 @@ module attributes {
 // Sites map current output to register 3, and status register 3 to output 5.
 // BYTECODE-SAME: 2, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0
 // BYTECODE-SAME: 3, 0, 0, 0, 6, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0
-// BYTECODE: bytecode.function = 1 : i32
-// BYTECODE: bytecode.scratch_size = 136 : i64
-// BYTECODE: bytecode.function = 2 : i32
+// BYTECODE: runtime.bytecode_function = 1 : i32
+// BYTECODE: runtime.bytecode_scratch_size = 136 : i64
+// BYTECODE: runtime.bytecode_function = 2 : i32

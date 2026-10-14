@@ -57,4 +57,4 @@ module attributes {
 // NATIVE: llvm.call @obelisk_rt_v1_semaphore_try_get
 // NATIVE: llvm.store {{.*}} : i32, !llvm.ptr
 
-// BYTECODE: bytecode.image = array<i8:
+// BYTECODE: runtime.bytecode_image = array<i8:

@@ -800,12 +800,12 @@ LogicalResult lowerPackedSimulationOperations(
   if (globalInventory.wasInterrupted())
     return failure();
   if (needsClassBitstreamABI &&
-      !module->hasAttr(sim::metadata::classBitstreamBlob) &&
+      !runtime::has<runtime::ClassBitstreamBlob>(module) &&
       (!classBitstreamDesign || failed(analysis::materializeClassBitstreamPlan(
                                     classBitstreamDesign, dataLayout))))
     return failure();
   if (needsClassBitstreamABI)
-    needsClassBitstreamABI = module->hasAttr(sim::metadata::classBitstreamBlob);
+    needsClassBitstreamABI = runtime::has<runtime::ClassBitstreamBlob>(module);
   for (const ByteGlobal &global : byteGlobals) {
     auto existingIt = existingSymbols.find(global.name);
     if (existingIt != existingSymbols.end()) {
@@ -882,7 +882,8 @@ LogicalResult lowerPackedSimulationOperations(
            i64, i32, i32, pointer, pointer})))
     return failure();
   if (needsClassBitstreamABI) {
-    module->setAttr("feature.class_bitstream", UnitAttr::get(context));
+    runtime::setFeatures(module, runtime::Features::ClassBitstream,
+                         /*required=*/true);
   }
   markTiming("byte-global inventory and materialization");
 

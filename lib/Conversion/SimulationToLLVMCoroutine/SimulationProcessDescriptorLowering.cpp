@@ -138,12 +138,11 @@ makeProcessDescriptor(ModuleOp module, SymbolTable &embeddedSymbols,
   // These embedded-image symbols are frozen before process finalization.
   // Generated wrappers and frame globals do not change their presence.
   bool hasExecution = embeddedSymbols.lookup(executionName) != nullptr;
-  bool hasDesignBytecode = embeddedSymbols.lookup(designBytecodeName) != nullptr;
-  auto executionFlags =
-      module->getAttrOfType<IntegerAttr>("execution.flags");
+  bool hasDesignBytecode =
+      embeddedSymbols.lookup(designBytecodeName) != nullptr;
   bool bytecodeOnly =
-      executionFlags && (executionFlags.getValue().getZExtValue() &
-                         OBELISK_RT_EXECUTION_REQUIRE_BYTECODE) != 0;
+      runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
+                                  runtime::ExecutionFlags::RequireBytecode);
   if (bytecodeOnly && !hasDesignBytecode)
     return module.emitError(
         "bytecode-only process descriptor has no encoded entry");

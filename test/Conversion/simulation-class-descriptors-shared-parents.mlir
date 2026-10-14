@@ -1,6 +1,6 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: mlir-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN: obelisk-translate %t.mlir --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: not obelisk-opt %s '--test-obelisk-edit-attributes=op=simulation.class.method match={sym_name = "C0_1"} erase=true' --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
 
