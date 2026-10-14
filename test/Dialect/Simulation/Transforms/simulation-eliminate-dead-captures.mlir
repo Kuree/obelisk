@@ -162,7 +162,7 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %unused: i32 {simulation.capture_kind = 1 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 50 : i64,
-                    simulation.future_boundary = true} {
+                    simulation.timing_check_coordinator} {
       simulation.return
     }
 

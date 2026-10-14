@@ -53,7 +53,7 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         -> (i8 {test.result = "metadata"})
         attributes {entry_kind = 8 : i32, code_unit_id = 4 : i64,
-                    simulation.future_boundary = true} {
+                    simulation.timing_check_coordinator} {
       %storage = simulation.context.storage %ctx[0] : !simulation.ref<i8>
       %value = arith.constant 4 : i8
       simulation.ref.store %value to %storage : i8, !simulation.ref<i8>

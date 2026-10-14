@@ -771,13 +771,11 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::EnumMethodValues>();
 }
 
-/// Check a declared simulation attribute; names not yet declared pass.
+/// Check that a simulation attribute is declared and has its payload kind.
 static LogicalResult verifyDeclaredAttribute(Operation *operation,
                                              NamedAttribute attribute) {
   using namespace metadata;
   StringRef name = attribute.getName().strref();
-  if (!declarations().contains(name))
-    return success();
   if (failed(discardable::verify(declarations(), operation, attribute)))
     return failure();
   Attribute value = attribute.getValue();

@@ -77,7 +77,7 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %value: i32 {simulation.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 14 : i64, entry_kind = 8 : i32,
-                    simulation.future_semantics = true} {
+                    simulation.timing_check_coordinator} {
       simulation.return %value : i32
     }
 
@@ -103,7 +103,7 @@ module {
         %value: i32 {simulation.capture_kind = 1 : i32}) -> i32
         attributes {code_unit_id = 29 : i64, entry_kind = 8 : i32} {
       %one = arith.constant 1 : i32
-      %result = arith.addi %value, %one {simulation.future_body = true} : i32
+      %result = arith.addi %value, %one {simulation.placeholder} : i32
       simulation.return %result : i32
     }
 
@@ -213,7 +213,7 @@ module {
       %recursive = simulation.call @recursive(%ctx, %external)
           : (!simulation.context, i32) -> i32
       %boundary = simulation.call @boundary_target(%ctx, %recursive)
-          {arg_attrs = [{}, {simulation.future_boundary = true}]}
+          {arg_attrs = [{}, {simulation.automatic_reference_capture}]}
           : (!simulation.context, i32) -> i32
       %body = simulation.call @unknown_body(%ctx, %boundary)
           : (!simulation.context, i32) -> i32

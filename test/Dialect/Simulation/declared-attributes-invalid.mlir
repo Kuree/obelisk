@@ -48,3 +48,8 @@ func.func private @untyped_minimizations() attributes {
 // expected-error @+1 {{attribute 'simulation.random_mode_index' has the wrong payload kind}}
 func.func private @wrong_payload() attributes {
   simulation.random_mode_index = "first"}
+
+// -----
+
+// expected-error @+1 {{has undeclared attribute 'simulation.future_semantics'}}
+func.func private @undeclared() attributes {simulation.future_semantics}

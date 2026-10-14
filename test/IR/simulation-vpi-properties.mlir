@@ -1,13 +1,13 @@
 // RUN: obelisk-opt %s | FileCheck %s
 
 module attributes {
-  simulation.test_bool_property = #simulation.vpi_property<
+  test.bool_property = #simulation.vpi_property<
     selector = 74 : i32, value = true>,
-  simulation.test_i32_property = #simulation.vpi_property<
+  test.i32_property = #simulation.vpi_property<
     selector = 4 : i32, value = 8 : i32>,
-  simulation.test_i64_property = #simulation.vpi_property<
+  test.i64_property = #simulation.vpi_property<
     selector = 660 : i32, value = 42 : i64>,
-  simulation.test_string_property = #simulation.vpi_property<
+  test.string_property = #simulation.vpi_property<
     selector = 2 : i32, value = "top">
 } {
   simulation.design @property_inventory {
@@ -28,10 +28,10 @@ module attributes {
 }
 
 // CHECK: #loc = loc("definition.sv":3:1)
-// CHECK: simulation.test_bool_property = #simulation.vpi_property<selector = 74 : i32, value = true>
-// CHECK: simulation.test_i32_property = #simulation.vpi_property<selector = 4 : i32, value = 8 : i32>
-// CHECK: simulation.test_i64_property = #simulation.vpi_property<selector = 660 : i32, value = 42 : i64>
-// CHECK: simulation.test_string_property = #simulation.vpi_property<selector = 2 : i32, value = "top">
+// CHECK: test.bool_property = #simulation.vpi_property<selector = 74 : i32, value = true>
+// CHECK: test.i32_property = #simulation.vpi_property<selector = 4 : i32, value = 8 : i32>
+// CHECK: test.i64_property = #simulation.vpi_property<selector = 660 : i32, value = 42 : i64>
+// CHECK: test.string_property = #simulation.vpi_property<selector = 2 : i32, value = "top">
 // CHECK: simulation.scope.decl 0 hierarchy "top" vpi_kind 32 {
 // CHECK-SAME: definition_loc = #loc
 // CHECK-SAME: vpi_properties = #simulation.vpi_properties<[
