@@ -8160,6 +8160,28 @@ obelisk_rt_status resolveStaticFunctionalType(
     std::vector<SelectorRectangle> selectorRectangles;
     selectorRectangles.reserve(staticPlan->binCount);
     uint64_t selectorRectangleBinEntryCount = 0;
+    // Each nonempty bin's selection, so ordinary bins can be checked against
+    // the ignored and illegal products once every bin is known.
+    struct BinSelection {
+      uint64_t templateBin = 0;
+      bool excluding = false;
+      size_t firstRectangle = 0;
+      size_t endRectangle = 0;
+      PreparedCrossValueIndex::Root selected = 0;
+    };
+    std::vector<BinSelection> binSelections;
+    auto markEmpty = [&](uint64_t templateBin) {
+      auto mirror = resolvedBinTemplates.find({cross->id, templateBin});
+      if (mirror == resolvedBinTemplates.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      auto &row = resolvedBinRows[mirror->second];
+      row.flags |= FunctionalBinEmpty;
+      fingerprintInput.resolvedFunctionalBins[binBase + mirror->second].flags =
+          row.flags;
+      if (setQueries.bins.find(row.id) == setQueries.bins.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      return OBELISK_RT_OK;
+    };
 
     // IEEE 1800-2023 19.6.1: AND intersects selected products and OR unions
     // them. Convert the Boolean selector to a bounded union of Cartesian
@@ -8178,6 +8200,9 @@ obelisk_rt_status resolveStaticFunctionalType(
         return OBELISK_RT_INVALID_DESIGN;
 
       bool hasSignificantAlternative = false;
+      BinSelection selection;
+      selection.templateBin = crossBin.bin;
+      selection.firstRectangle = selectorRectangles.size();
       if (symbolic) {
         auto selected = symbolic->select(*node, cross->id, 0);
         selected = symbolic->relation->intersect(
@@ -8186,6 +8211,7 @@ obelisk_rt_status resolveStaticFunctionalType(
         if (!symbolic->check())
           return symbolic->status;
         hasSignificantAlternative = selected != 0;
+        selection.selected = selected;
       } else {
         const bool usesSet = crossSelectorUsesSet(schema, *node, setQueries);
         obelisk_rt_status selectorStatus = decodeCrossSelectorDNF(
@@ -8318,17 +8344,111 @@ obelisk_rt_status resolveStaticFunctionalType(
         }
       }
       if (!hasSignificantAlternative) {
-        auto mirror = resolvedBinTemplates.find({cross->id, crossBin.bin});
-        if (mirror == resolvedBinTemplates.end())
-          return OBELISK_RT_INVALID_DESIGN;
-        auto &row = resolvedBinRows[mirror->second];
-        row.flags |= FunctionalBinEmpty;
-        fingerprintInput.resolvedFunctionalBins[binBase + mirror->second]
-            .flags = row.flags;
-        auto queryBin = setQueries.bins.find(row.id);
-        if (queryBin == setQueries.bins.end())
-          return OBELISK_RT_INVALID_DESIGN;
+        if (obelisk_rt_status status = markEmpty(crossBin.bin);
+            status != OBELISK_RT_OK)
+          return status;
+        continue;
       }
+      auto mirror = resolvedBinTemplates.find({cross->id, crossBin.bin});
+      if (mirror == resolvedBinTemplates.end())
+        return OBELISK_RT_INVALID_DESIGN;
+      selection.excluding = resolvedBinRows[mirror->second].flags &
+                            (FunctionalBinIgnore | FunctionalBinIllegal);
+      selection.endRectangle = selectorRectangles.size();
+      binSelections.push_back(selection);
+    }
+
+    // IEEE 1800-2023 19.6.2-19.6.3 and 19.11.2: ignored and illegal products
+    // are excluded even from other user-defined bins, so an ordinary bin is
+    // significant only if one of its products escapes every exclusion.
+    if (symbolic) {
+      auto &graph = *symbolic->relation;
+      PreparedCrossValueIndex::Root excluded = 0;
+      for (const BinSelection &selection : binSelections)
+        if (selection.excluding)
+          excluded = graph.unite(excluded, selection.selected);
+      for (const BinSelection &selection : binSelections)
+        if (excluded && !selection.excluding &&
+            !graph.subtract(selection.selected, excluded))
+          if (obelisk_rt_status status = markEmpty(selection.templateBin);
+              status != OBELISK_RT_OK)
+            return status;
+      if (!symbolic->check())
+        return symbolic->status;
+    } else {
+      std::vector<const SelectorRectangle *> exclusions;
+      for (const BinSelection &selection : binSelections)
+        if (selection.excluding)
+          for (size_t index = selection.firstRectangle;
+               index != selection.endRectangle; ++index)
+            exclusions.push_back(&selectorRectangles[index]);
+      // Splitting a rectangle against each exclusion it meets keeps the
+      // pieces disjoint; the work is bounded like the rectangles themselves.
+      uint64_t splitWork = 0;
+      auto escapes = [&](const SelectorRectangle &start,
+                         bool &escaped) -> obelisk_rt_status {
+        std::vector<std::pair<SelectorRectangle, size_t>> pending{{start, 0}};
+        escaped = false;
+        while (!pending.empty()) {
+          auto [piece, next] = std::move(pending.back());
+          pending.pop_back();
+          for (; next != exclusions.size(); ++next) {
+            const auto &excluded = exclusions[next]->allowedBins;
+            bool meets = true;
+            for (size_t axis = 0; meets && axis != piece.allowedBins.size();
+                 ++axis) {
+              const auto &bins = piece.allowedBins[axis];
+              const auto &other = excluded[axis];
+              std::vector<uint64_t> common;
+              std::set_intersection(bins.begin(), bins.end(), other.begin(),
+                                    other.end(), std::back_inserter(common));
+              meets = !common.empty();
+            }
+            if (meets)
+              break;
+          }
+          if (next == exclusions.size()) {
+            escaped = true;
+            return OBELISK_RT_OK;
+          }
+          const auto &excluded = exclusions[next]->allowedBins;
+          SelectorRectangle prefix = piece;
+          for (size_t axis = 0; axis != piece.allowedBins.size(); ++axis) {
+            const auto &bins = piece.allowedBins[axis];
+            const auto &other = excluded[axis];
+            std::vector<uint64_t> outside, inside;
+            std::set_difference(bins.begin(), bins.end(), other.begin(),
+                                other.end(), std::back_inserter(outside));
+            std::set_intersection(bins.begin(), bins.end(), other.begin(),
+                                  other.end(), std::back_inserter(inside));
+            if (!outside.empty()) {
+              if (++splitWork > recordLimit)
+                return OBELISK_RT_OUT_OF_RESOURCES;
+              SelectorRectangle split = prefix;
+              split.allowedBins[axis] = std::move(outside);
+              pending.emplace_back(std::move(split), next + 1);
+            }
+            prefix.allowedBins[axis] = std::move(inside);
+          }
+        }
+        return OBELISK_RT_OK;
+      };
+      if (!exclusions.empty())
+        for (const BinSelection &selection : binSelections) {
+          if (selection.excluding)
+            continue;
+          bool escaped = false;
+          for (size_t index = selection.firstRectangle;
+               !escaped && index != selection.endRectangle; ++index)
+            if (obelisk_rt_status status =
+                    escapes(selectorRectangles[index], escaped);
+                status != OBELISK_RT_OK)
+              return status;
+          if (!escaped)
+            if (obelisk_rt_status status = markEmpty(selection.templateBin);
+                status != OBELISK_RT_OK)
+              return status;
+        }
     }
     std::sort(
         selectorRectangles.begin(), selectorRectangles.end(),
