@@ -4,6 +4,7 @@
 #include "obelisk/Runtime/DescriptorMap.h"
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstring>
 #include <functional>
@@ -4133,11 +4134,90 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
   return status;
 }
 
+namespace {
+
+// Dispatch answers depend only on the immutable class descriptor graph, so a
+// small per-thread memo serves repeated calls without the context lock.
+// Destroying a context retires every memo, as its descriptors may be freed.
+std::atomic<uint64_t> dispatchMemoEpoch{1};
+
+enum class DispatchQuery : uint32_t { Instance, Method, InterfaceMethod };
+
+struct DispatchMemoEntry {
+  uint64_t epoch = 0;
+  const void *descriptor = nullptr;
+  const void *target = nullptr;
+  DispatchQuery query = DispatchQuery::Instance;
+  uint64_t first = 0;
+  uint64_t second = 0;
+  uint64_t third = 0;
+  obelisk_rt_status status = OBELISK_RT_OK;
+  const obelisk_rt_method_descriptor_v1 *method = nullptr;
+  uint32_t instance = 0;
+};
+
+constexpr size_t DispatchMemoSize = 256;
+thread_local std::array<DispatchMemoEntry, DispatchMemoSize> dispatchMemo;
+
+DispatchMemoEntry *findDispatchMemo(DispatchQuery query, const void *descriptor,
+                                    const void *target, uint64_t first,
+                                    uint64_t second, uint64_t third,
+                                    bool &hit) {
+  uint64_t hash =
+      reinterpret_cast<uintptr_t>(descriptor) ^
+      reinterpret_cast<uintptr_t>(target) * 0x9e3779b97f4a7c15ull ^
+      (first + static_cast<uint64_t>(query)) * 0xc2b2ae3d27d4eb4full ^
+      second * 0x165667b19e3779f9ull ^ third;
+  hash ^= hash >> 29;
+  DispatchMemoEntry &entry = dispatchMemo[hash % DispatchMemoSize];
+  const uint64_t epoch = dispatchMemoEpoch.load(std::memory_order_acquire);
+  hit = entry.epoch == epoch && entry.query == query &&
+        entry.descriptor == descriptor && entry.target == target &&
+        entry.first == first && entry.second == second && entry.third == third;
+  if (!hit)
+    entry = {epoch, descriptor, target, query, first, second, third};
+  return &entry;
+}
+
+uint32_t objectIsInstanceUncached(const obelisk_rt_object_v1 *object,
+                                  const obelisk_rt_class_descriptor_v1 *target);
+obelisk_rt_status
+resolveMethodUncached(obelisk_rt_object_v1 *receiver, uint64_t slot,
+                      uint64_t signatureID,
+                      const obelisk_rt_method_descriptor_v1 **outMethod);
+obelisk_rt_status resolveInterfaceMethodUncached(
+    obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
+    uint64_t interfaceOrdinal, uint64_t signatureID,
+    const obelisk_rt_method_descriptor_v1 **outMethod);
+
+} // namespace
+
+void obelisk_rt_retire_dispatch_memos() noexcept {
+  dispatchMemoEpoch.fetch_add(1, std::memory_order_acq_rel);
+}
+
 extern "C" uint32_t
 obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
                                  const obelisk_rt_class_descriptor_v1 *target) {
   if (!object || !target)
     return 0;
+  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
+  if (!descriptor || !obelisk_rt_managed_object_context(object))
+    return objectIsInstanceUncached(object, target);
+  // The answer depends on the target's identity, not on its address.
+  bool hit = false;
+  DispatchMemoEntry *memo = findDispatchMemo(
+      DispatchQuery::Instance, descriptor, nullptr, target->class_id,
+      target->flags & OBELISK_RT_CLASS_INTERFACE, 0, hit);
+  if (!hit)
+    memo->instance = objectIsInstanceUncached(object, target);
+  return memo->instance;
+}
+
+namespace {
+uint32_t
+objectIsInstanceUncached(const obelisk_rt_object_v1 *object,
+                         const obelisk_rt_class_descriptor_v1 *target) {
   const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(object);
   if (!descriptor)
     return 0;
@@ -4181,6 +4261,7 @@ obelisk_rt_v1_object_is_instance(const obelisk_rt_object_v1 *object,
   OBELISK_RT_CATCH_ALL {}
   return 0;
 }
+} // namespace
 
 extern "C" obelisk_rt_status
 obelisk_rt_v1_object_cast(obelisk_rt_object_v1 *object,
@@ -4279,6 +4360,46 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
     obelisk_rt_object_v1 *receiver, uint64_t slot, uint64_t signatureID,
     const obelisk_rt_method_descriptor_v1 **outMethod) {
   const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+  if (!descriptor || !outMethod || !obelisk_rt_managed_object_context(receiver))
+    return resolveMethodUncached(receiver, slot, signatureID, outMethod);
+  bool hit = false;
+  DispatchMemoEntry *memo = findDispatchMemo(
+      DispatchQuery::Method, descriptor, nullptr, slot, signatureID, 0, hit);
+  if (!hit)
+    memo->status =
+        resolveMethodUncached(receiver, slot, signatureID, &memo->method);
+  if (memo->status == OBELISK_RT_OK)
+    *outMethod = memo->method;
+  return memo->status;
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
+    obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
+    uint64_t interfaceOrdinal, uint64_t signatureID,
+    const obelisk_rt_method_descriptor_v1 **outMethod) {
+  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
+  if (!descriptor || !outMethod || interfaceID == 0 ||
+      !obelisk_rt_managed_object_context(receiver))
+    return resolveInterfaceMethodUncached(
+        receiver, interfaceID, interfaceOrdinal, signatureID, outMethod);
+  bool hit = false;
+  DispatchMemoEntry *memo =
+      findDispatchMemo(DispatchQuery::InterfaceMethod, descriptor, nullptr,
+                       interfaceID, interfaceOrdinal, signatureID, hit);
+  if (!hit)
+    memo->status = resolveInterfaceMethodUncached(
+        receiver, interfaceID, interfaceOrdinal, signatureID, &memo->method);
+  if (memo->status == OBELISK_RT_OK)
+    *outMethod = memo->method;
+  return memo->status;
+}
+
+namespace {
+obelisk_rt_status
+resolveMethodUncached(obelisk_rt_object_v1 *receiver, uint64_t slot,
+                      uint64_t signatureID,
+                      const obelisk_rt_method_descriptor_v1 **outMethod) {
+  const obelisk_rt_class_descriptor_v1 *descriptor = descriptorFor(receiver);
   if (!descriptor || !outMethod)
     return OBELISK_RT_INVALID_HANDLE;
   const obelisk_rt_method_descriptor_v1 *method = nullptr;
@@ -4323,7 +4444,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_method_resolve(
   return OBELISK_RT_OK;
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
+obelisk_rt_status resolveInterfaceMethodUncached(
     obelisk_rt_object_v1 *receiver, uint64_t interfaceID,
     uint64_t interfaceOrdinal, uint64_t signatureID,
     const obelisk_rt_method_descriptor_v1 **outMethod) {
@@ -4365,10 +4486,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_interface_method_resolve(
       return OBELISK_RT_INVALID_HANDLE;
     if (interface->method_signatures[interfaceOrdinal] != signatureID)
       return OBELISK_RT_LAYOUT_MISMATCH;
-    return obelisk_rt_v1_method_resolve(receiver, UINT32_MAX, signatureID,
-                                        outMethod);
+    return resolveMethodUncached(receiver, UINT32_MAX, signatureID, outMethod);
   });
 }
+} // namespace
 
 static obelisk_rt_status validateMethodInvocation(
     obelisk_rt_gc_lane_v1 *lane, obelisk_rt_object_v1 *receiver,

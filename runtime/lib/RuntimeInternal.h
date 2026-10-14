@@ -2977,6 +2977,9 @@ uint64_t
 obelisk_rt_managed_object_extent(const obelisk_rt_object_v1 *object) noexcept;
 obelisk_rt_context *
 obelisk_rt_managed_object_context(const obelisk_rt_object_v1 *object) noexcept;
+/// Invalidates every thread's class dispatch memo. A destroyed context's
+/// descriptors may be freed and their addresses reused.
+void obelisk_rt_retire_dispatch_memos() noexcept;
 const obelisk_rt_class_descriptor_v1 *
 obelisk_rt_managed_object_class_descriptor(
     const obelisk_rt_object_v1 *object) noexcept;

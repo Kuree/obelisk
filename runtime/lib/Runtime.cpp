@@ -384,6 +384,7 @@ obelisk_rt_context::~obelisk_rt_context() {
 namespace {
 
 void destroyContextNow(obelisk_rt_context *context) noexcept {
+  obelisk_rt_retire_dispatch_memos();
   std::vector<ScheduledProcess> processes;
   OBELISK_RT_TRY {
     // Settle the final time slot before the state planes go away.
