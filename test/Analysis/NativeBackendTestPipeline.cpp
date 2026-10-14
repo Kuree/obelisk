@@ -36,6 +36,11 @@ struct NativeBackendTestPipelineOptions
       llvm::cl::desc("lower as a linked executable, which the driver does "
                      "above -O0"),
       llvm::cl::init(true)};
+  Option<int> simOptLevel{
+      *this, "sim-opt-level",
+      llvm::cl::desc("lower as the driver does at this optimization level "
+                     "instead of one actor per process (-1)"),
+      llvm::cl::init(-1)};
   Option<bool> timing{
       *this, "timing",
       llvm::cl::desc("print native planning traces, as --mlir-timing does"),
@@ -73,19 +78,38 @@ void buildNativeBackendTestPipeline(
     backendAttributes += ", obelisk.native.closed_executable";
   if (options.timing)
     backendAttributes += ", obelisk.debug.native_timing";
-  // Lowering keeps one actor per process (no fusion or clocked kernels) under
-  // the generic scheduler; the backend then clones evaluators itself, so the
-  // input stays independent of the simulation optimization pipeline.
+  // By default lowering keeps one actor per process (no fusion or clocked
+  // kernels) under the generic scheduler; the backend then clones evaluators
+  // itself, so the input stays independent of the simulation optimization
+  // pipeline. With sim-opt-level, lowering instead matches a native driver
+  // build at that level, which represents Auto as Eval plus auto_requested
+  // until the backend resolves it.
+  std::string loweringAttributes = "schedule.native_scheduler = 1 : i32";
+  std::string lowering = "lower-obelisk-to-sim{opt-level=0 vpi=off "
+                         "static-specialization=off clocked-kernels=off "
+                         "early-symbol-dce=true}";
+  if (options.simOptLevel >= 0) {
+    loweringAttributes =
+        *mode == 0 ? "schedule.native_scheduler = 3 : i32, "
+                     "schedule.native_scheduler.auto_requested"
+                   : llvm::formatv("schedule.native_scheduler = {0} : i32",
+                                   *mode)
+                         .str();
+    lowering = "lower-obelisk-to-sim{opt-level=" +
+               std::to_string(options.simOptLevel) +
+               " vpi=off static-specialization=" +
+               std::string(*mode == 3 ? "on" : "auto") +
+               " clocked-kernels=deferred early-symbol-dce=true}";
+  }
   std::string pipeline =
       "convert-slang-to-obelisk,"
-      "test-obelisk-set-module-attributes{attrs=\"{"
-      "schedule.native_scheduler = 1 : i32, "
-      "llvm.data_layout = \\\"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\\\", "
-      "llvm.target_triple = \\\"x86_64-unknown-linux-gnu\\\"}\"},"
-      "lower-obelisk-to-sim{opt-level=0 vpi=off static-specialization=off "
-      "clocked-kernels=off early-symbol-dce=true},"
       "test-obelisk-set-module-attributes{attrs=\"{" +
-      backendAttributes + "}\"}";
+      loweringAttributes +
+      ", llvm.data_layout = \\\"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\\\", "
+      "llvm.target_triple = \\\"x86_64-unknown-linux-gnu\\\"}\"}," +
+      lowering +
+      ",test-obelisk-set-module-attributes{attrs=\"{" + backendAttributes +
+      "}\"}";
   if (stopAfter == "graph") {
     pipeline += ",simulation.design(simulation.func("
                 "obelisk-sim-thread-process-cfg),"
