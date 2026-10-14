@@ -483,7 +483,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           << "randomize constraint template has a different block inventory";
       return failure();
     }
-    unsigned softCount = 0;
     for (auto [index, blockAttr] : llvm::enumerate(blocks)) {
       auto block = cast<sim::RandomConstraintBlockReferenceAttr>(blockAttr);
       int64_t expectedStorage = staticConstraintStorages[index];
@@ -506,13 +505,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         break;
       }
-    }
-    constraintTemplate.getBody().walk(
-        [&](sim::SimRandomSoftConstraintOp) { ++softCount; });
-    if (softCount > 64) {
-      emitError(location)
-          << "random constraint template exceeds 64 soft priorities";
-      return failure();
     }
   }
 
@@ -5890,11 +5882,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   // priority than the class constraints it augments.
   assignSoftPriorities(/*inlineConstraints=*/false);
   assignSoftPriorities(/*inlineConstraints=*/true);
-  if (nextSoftPriority > 64) {
-    emitError(location)
-        << "random fallback supports at most 64 soft constraint priorities";
-    return failure();
-  }
 
   // Only references inside the soft expression count. An enclosing
   // implication/if guard does not make its variables targets of disable soft
@@ -7238,6 +7225,14 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                "not executable yet";
         return failure();
       }
+  // A distribution record names its soft priority in a 16-bit field.
+  for (const DistPlan &plan : distPlans)
+    if (rawDistWeights && plan.softSource &&
+        softPriorities.lookup(plan.softSource) >= UINT16_MAX) {
+      emitError(getSemanticLocation(plan.source))
+          << "soft dist priority exceeds the 16-bit distribution record field";
+      return failure();
+    }
   if (rawDistWeights && !distPlans.empty() && hasFunctionPriority) {
     emitError(location)
         << "dist across independent constraint function priority stages is "
@@ -7560,7 +7555,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         append32(plan.target.exported ? 0 : plan.target.offset);
         append16(static_cast<uint16_t>(plan.target.width));
         append16(rawDistWeights && plan.softSource
-                     ? softPriorities.lookup(plan.softSource) + 1
+                     ? static_cast<uint16_t>(
+                           softPriorities.lookup(plan.softSource) + 1)
                      : 0);
         append64(range.lower);
         append64(range.cardinality);

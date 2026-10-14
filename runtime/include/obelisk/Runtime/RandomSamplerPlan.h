@@ -309,6 +309,31 @@ struct SamplerPlanView {
   size_t coreSize = 0;
 };
 
+/// END_SOFT priorities are dense from zero and larger values win. Each one
+/// has its own instruction, so the instruction count bounds the priorities
+/// that one program can name.
+class SoftPrioritySet {
+public:
+  bool insert(uint64_t priority, uint64_t instructions) {
+    if (priority >= instructions)
+      return false;
+    if (priority >= seen.size())
+      seen.resize(priority + 1, false);
+    seen[priority] = true;
+    return true;
+  }
+  bool contains(uint64_t priority) const {
+    return priority < seen.size() && seen[priority];
+  }
+  bool dense() const {
+    return std::find(seen.begin(), seen.end(), false) == seen.end();
+  }
+  size_t size() const { return seen.size(); }
+
+private:
+  std::vector<bool> seen;
+};
+
 inline bool isDistExportInstruction(unsigned opcode) {
   return opcode == OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 ||
          opcode == OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1;

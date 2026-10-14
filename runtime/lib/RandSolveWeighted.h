@@ -96,7 +96,7 @@ inline bool parseWeightedGroups(const uint8_t *bytes, size_t size,
                           : offset > aggregateWidth ||
                                 width > aggregateWidth - offset) ||
         (block != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 && block >= 64) ||
-        capture >= captureCount || soft > 64 ||
+        capture >= captureCount ||
         !(flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT) ||
         (flags & ~(OBELISK_RT_RANDOM_DIST_RAW_WEIGHT |
                    OBELISK_RT_RANDOM_DIST_PER_RANGE |

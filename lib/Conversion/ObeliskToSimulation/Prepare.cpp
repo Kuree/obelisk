@@ -5139,7 +5139,6 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
 
-    unsigned softConstraintCount = 0;
     for (Operation *root : constraintRoots) {
       if (!isa<semantic::SVConstraintListOp>(root)) {
         emitError(getSemanticLocation(root))
@@ -5157,12 +5156,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return;
         }
-        if (auto expression =
-                dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
-          if (expression.getIsSoft())
-            ++softConstraintCount;
+        if (isa<semantic::SVExpressionConstraintOp>(nested))
           return;
-        }
         if (auto solve =
                 dyn_cast<semantic::SVSolveBeforeConstraintOp>(nested)) {
           auto solveCount = solve->getAttrOfType<IntegerAttr>("solve_count");
@@ -5208,11 +5203,6 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
         }
       });
-    }
-    if (softConstraintCount > 64) {
-      emitError(location)
-          << "the executable soft-constraint priority boundary is 64";
-      invalid = true;
     }
     if (invalid)
       return true;
@@ -7570,16 +7560,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       totalWidth += property.width;
     }
 
-    unsigned softConstraintCount = 0;
     for (Operation *root : constraintRoots) {
       root->walk([&](Operation *nested) {
-        if (auto expression =
-                dyn_cast<semantic::SVExpressionConstraintOp>(nested)) {
-          if (expression.getIsSoft()) {
-            ++softConstraintCount;
-          }
+        if (isa<semantic::SVExpressionConstraintOp>(nested))
           return;
-        }
         if (auto solve =
                 dyn_cast<semantic::SVSolveBeforeConstraintOp>(nested)) {
           auto solveCount = solve->getAttrOfType<IntegerAttr>("solve_count");
@@ -7639,11 +7623,6 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
         }
       });
-    }
-    if (softConstraintCount > 64) {
-      emitError(getSemanticLocation(call))
-          << "the executable soft-constraint priority boundary is 64";
-      invalid = true;
     }
 
     SmallVector<Attribute> propertyAttrs;

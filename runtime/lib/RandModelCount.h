@@ -304,6 +304,23 @@ public:
     return true;
   }
 
+  /// Conjoin `predicate` unless that empties the relation. A greedy pass over
+  /// many preferences tests each against the relation retained so far
+  /// without rebuilding it; it defers counting, so project before counting.
+  bool conjoinIfSatisfiable(random::BooleanCircuit::ID predicate,
+                            bool &retained) {
+    if (std::find(fixed.begin(), fixed.end(), true) != fixed.end())
+      predicate = circuit->restrict(predicate, fixedValues, fixed);
+    ID relation = 0;
+    if (!convert(predicate, relation))
+      return false;
+    ID conjoined = conjunction(root, relation);
+    retained = conjoined != 0;
+    if (retained)
+      root = conjoined;
+    return true;
+  }
+
   /// Reuse a relation from the same compiled sampling plan. Weighted item
   /// combinations share the same input inventory and accepted prefix; importing
   /// their diagrams avoids constructing them again for every Cartesian term.

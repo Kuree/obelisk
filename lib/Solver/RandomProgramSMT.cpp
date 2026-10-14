@@ -654,7 +654,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   mlir::Value hard = mlir::smt::BoolConstantOp::create(builder, location, true);
   bool sawHard = false;
   bool sawSoft = false;
-  uint64_t softPriorities = 0;
+  random::SoftPrioritySet softPriorities;
   std::vector<bool> guardSeen(distGroupCount, false);
   random::DistBitSequence distBits(captureCount, distGroupCount, weighted);
   for (uint32_t index = 0; index != instructionCount; ++index) {
@@ -754,7 +754,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
           (operand != OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 &&
            operand >= 64) ||
           (opcode == OBELISK_RT_RANDOM_END_HARD_V1 && immediate != 0) ||
-          (opcode == OBELISK_RT_RANDOM_END_SOFT_V1 && immediate >= 64))
+          (opcode == OBELISK_RT_RANDOM_END_SOFT_V1 &&
+           !softPriorities.insert(immediate, instructionCount)))
         return std::nullopt;
       if (opcode == OBELISK_RT_RANDOM_END_HARD_V1) {
         mlir::Value constraint = truth(builder, location, stack.back());
@@ -777,7 +778,6 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
              stack.back().directEquality,
              stack.back().directDefinition,
              stack.back().directCaptureBound});
-        softPriorities |= uint64_t{1} << immediate;
       }
       sawHard |= opcode == OBELISK_RT_RANDOM_END_HARD_V1;
       sawSoft |= opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
@@ -1217,12 +1217,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
   }
 
   bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
-  unsigned softCount =
-      softPriorities == 0 ? 0 : 64 - llvm::countl_zero(softPriorities);
-  uint64_t expectedSoftPriorities =
-      softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
   if (!stack.empty() || !sawHard || sawSoft != encodedSoft ||
-      softPriorities != expectedSoftPriorities)
+      !softPriorities.dense())
     return std::nullopt;
   for (const DomainGroup &group : domainGroups) {
     mlir::Value field = registerVariable(group.targetOffset, group.width).bits;

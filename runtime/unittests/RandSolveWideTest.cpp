@@ -1056,6 +1056,35 @@ TEST_F(RandSolveWideTest, WeightedFull64BitRangeAndLargeMassNeverOverflow) {
   }
 }
 
+TEST_F(RandSolveWideTest, RetainsMoreThanSixtyFourSoftPriorities) {
+  // IEEE 1800-2023 18.5.13.1 places no bound on the number of soft
+  // constraints: 70 preferences that each set one bit are all retained except
+  // the one a hard constraint contradicts.
+  std::vector<Instruction> instructions = {
+      {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, 5},
+      {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
+      {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}};
+  for (uint32_t priority = 0; priority != 70; ++priority) {
+    instructions.push_back({OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 1, 0, priority});
+    instructions.push_back(
+        {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, UINT32_MAX, priority});
+  }
+  auto bytes = program(70, 0, instructions,
+                       OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
+                           OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM);
+  uint64_t start[] = {0, 0}, mask[] = {UINT64_MAX, 63}, assignment[2] = {};
+  uint64_t state = 713;
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mask, 2, 0, 1,
+                state, 15, nullptr, 0, nullptr, 0, assignment, &success,
+                &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(assignment[0], ~(uint64_t{1} << 5));
+  EXPECT_EQ(assignment[1], 63u);
+}
+
 TEST_F(RandSolveWideTest, WeightedExpressionTargetWeighsEachValue) {
   // IEEE 1800-2023 18.5.3: (a + b) dist {0 := 1, [1:6] :/ 1} over two 2-bit
   // fields weighs values of the expression, not (a, b) pairs: the value 3

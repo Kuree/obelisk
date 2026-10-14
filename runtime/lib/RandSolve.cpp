@@ -202,7 +202,8 @@ bool validateInstruction(const Instruction &instruction,
                          std::vector<unsigned> &stackWidths,
                          std::vector<unsigned> &temporaryWidths,
                          size_t &maxDepth, bool &sawHard, bool &sawSoft,
-                         uint64_t &softPriorities, bool real) {
+                         obelisk::random::SoftPrioritySet &softPriorities,
+                         uint32_t instructionCount, bool real) {
   size_t depth = stackWidths.size();
   if (instruction.width == 0 || instruction.width > 64 ||
       (instruction.flags & ~OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0)
@@ -256,10 +257,8 @@ bool validateInstruction(const Instruction &instruction,
         (instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1 &&
          instruction.immediate != 0) ||
         (instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1 &&
-         instruction.immediate >= 64))
+         !softPriorities.insert(instruction.immediate, instructionCount)))
       return false;
-    if (instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1)
-      softPriorities |= uint64_t{1} << instruction.immediate;
     depth = 0;
     sawHard |= instruction.opcode == OBELISK_RT_RANDOM_END_HARD_V1;
     sawSoft |= instruction.opcode == OBELISK_RT_RANDOM_END_SOFT_V1;
@@ -719,7 +718,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     std::vector<unsigned> stackWidths, temporaryWidths;
     size_t maxDepth = 0;
     bool sawHard = false, sawSoft = false;
-    uint64_t softPriorities = 0;
+    obelisk::random::SoftPrioritySet softPriorities;
     const uint8_t *cursor = program + OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
     obelisk::random::DistBitSequence distBits(encodedCaptures, std::nullopt,
                                               weighted);
@@ -732,22 +731,16 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                           instruction.immediate) ||
           !validateInstruction(instruction, aggregateWidth, encodedCaptures,
                                stackWidths, temporaryWidths, maxDepth, sawHard,
-                               sawSoft, softPriorities, real))
+                               sawSoft, softPriorities, instructionCount,
+                               real))
         return OBELISK_RT_INVALID_ARGUMENT;
       instructions.push_back(instruction);
       cursor += OBELISK_RT_RANDOM_INSTRUCTION_SIZE;
     }
     bool encodedSoft = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT) != 0;
-    unsigned softCount = 0;
-    if (softPriorities != 0) {
-      softCount = 64;
-      while (((softPriorities >> (softCount - 1)) & 1) == 0)
-        --softCount;
-    }
-    uint64_t expectedSoftPriorities =
-        softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
+    size_t softCount = softPriorities.size();
     if (!stackWidths.empty() || !sawHard || sawSoft != encodedSoft ||
-        softPriorities != expectedSoftPriorities)
+        !softPriorities.dense())
       return OBELISK_RT_INVALID_ARGUMENT;
 
     std::vector<SolveBeforeEdge> solveEdges;
@@ -798,7 +791,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
         return OBELISK_RT_INVALID_ARGUMENT;
       for (const auto &group : weightedGroups)
         if (group.softPriority != UINT32_MAX &&
-            !(softPriorities & (uint64_t{1} << group.softPriority)))
+            !softPriorities.contains(group.softPriority))
           return OBELISK_RT_INVALID_ARGUMENT;
     } else if (encodedDist) {
       if (distGroupCount == 0 || distRecordCount == 0)
@@ -1115,7 +1108,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     temporaries.reserve(temporaryWidths.size());
     auto compareSoft = [&](const std::vector<uint8_t> &lhs,
                            const std::vector<uint8_t> &rhs) {
-      for (unsigned priority = softCount; priority != 0; --priority) {
+      for (size_t priority = softCount; priority != 0; --priority) {
         if (lhs[priority - 1] == rhs[priority - 1])
           continue;
         return lhs[priority - 1] > rhs[priority - 1] ? 1 : -1;

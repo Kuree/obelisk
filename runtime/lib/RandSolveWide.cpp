@@ -64,6 +64,7 @@ struct WideProgram {
   uint32_t maxDepth = 0;
   uint32_t temporaryCount = 0;
   bool hasSoft = false;
+  size_t softCount = 0;
   std::vector<uint32_t> captureWidths;
   std::vector<uint64_t> captureOffsets;
   std::vector<WideInstruction> instructions;
@@ -554,7 +555,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   std::vector<uint32_t> stackWidths, temporaryWidths;
   bool sawHard = false;
   bool sawSoft = false;
-  uint64_t softPriorities = 0;
+  obelisk::random::SoftPrioritySet softPriorities;
   std::vector<bool> guardSeen(weightedGroups.size(), false);
   obelisk::random::DistBitSequence distBits(
       encodedCaptureCount, static_cast<uint32_t>(weightedGroups.size()),
@@ -650,9 +651,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
           return false;
         sawHard = true;
       } else {
-        if (instruction.auxiliary >= 64)
+        if (!softPriorities.insert(instruction.auxiliary, instructionCount))
           return false;
-        softPriorities |= uint64_t{1} << instruction.auxiliary;
         sawSoft = true;
       }
       depth = 0;
@@ -711,23 +711,16 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     maxDepth = std::max(maxDepth, depth);
     result.instructions.push_back(std::move(instruction));
   }
-  unsigned softCount = 0;
-  if (softPriorities != 0) {
-    softCount = 64;
-    while (((softPriorities >> (softCount - 1)) & 1) == 0)
-      --softCount;
-  }
-  uint64_t expectedSoftPriorities =
-      softCount == 64 ? UINT64_MAX : (uint64_t{1} << softCount) - 1;
+  result.softCount = softPriorities.size();
   if (depth != 0 || !sawHard || sawSoft != result.hasSoft ||
-      softPriorities != expectedSoftPriorities ||
+      !softPriorities.dense() ||
       std::any_of(result.captureWidths.begin(), result.captureWidths.end(),
                   [](uint32_t width) { return width == 0; }))
     return false;
 
   for (const auto &group : weightedGroups)
     if (group.softPriority != UINT32_MAX &&
-        !(softPriorities & (uint64_t{1} << group.softPriority)))
+        !softPriorities.contains(group.softPriority))
       return false;
 
   if (encodedOrder) {
@@ -882,11 +875,11 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
               const uint64_t *captureWords, uint64_t constraintMask,
               std::vector<WideValue> &stack,
               std::vector<WideValue> &temporaries, bool &hard,
-              std::array<uint8_t, 64> &soft) {
+              std::vector<uint8_t> &soft) {
   stack.clear();
   temporaries.clear();
   hard = true;
-  soft.fill(1);
+  soft.assign(program.softCount, 1);
   for (const WideInstruction &instruction : program.instructions) {
     bool signedOperation =
         (instruction.flags & OBELISK_RT_RANDOM_INSTRUCTION_SIGNED) != 0;
@@ -1129,13 +1122,13 @@ bool evaluate(const WideProgram &program, const WideValue &assignment,
   return stack.empty();
 }
 
-bool allSoft(const std::array<uint8_t, 64> &soft) {
+bool allSoft(const std::vector<uint8_t> &soft) {
   return std::all_of(soft.begin(), soft.end(),
                      [](uint8_t value) { return value != 0; });
 }
 
-int compareSoft(const std::array<uint8_t, 64> &lhs,
-                const std::array<uint8_t, 64> &rhs) {
+int compareSoft(const std::vector<uint8_t> &lhs,
+                const std::vector<uint8_t> &rhs) {
   for (size_t index = lhs.size(); index != 0; --index) {
     if (lhs[index - 1] == rhs[index - 1])
       continue;
@@ -1444,8 +1437,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     WideValue candidate = start;
     WideValue best(program.aggregateWidth);
     bool hasBest = false;
-    std::array<uint8_t, 64> bestSoft{};
-    std::array<uint8_t, 64> soft{};
+    std::vector<uint8_t> bestSoft(program.softCount, 0);
+    std::vector<uint8_t> soft(program.softCount, 1);
     std::vector<WideValue> stack;
     stack.reserve(program.maxDepth);
     std::vector<WideValue> temporaries;

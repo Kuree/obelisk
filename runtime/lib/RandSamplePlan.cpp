@@ -553,7 +553,8 @@ public:
            const std::vector<unsigned> &physicalBits,
            const std::vector<WeightedGroup> &groups,
            const std::vector<ID> &guards,
-           const std::vector<Bits> &expressionWeights, uint64_t retainedSoft,
+           const std::vector<Bits> &expressionWeights,
+           const std::vector<bool> &retainedSoft,
            uint64_t constraintMask, const uint64_t *captures,
            const uint32_t *captureWidths,
            const std::vector<size_t> &captureOffsets, const uint64_t *start,
@@ -566,7 +567,8 @@ public:
                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
            !((constraintMask >> groups[index].constraintBlock) & 1)) &&
           (groups[index].softPriority == UINT32_MAX ||
-           ((retainedSoft >> groups[index].softPriority) & 1));
+           (groups[index].softPriority < retainedSoft.size() &&
+            retainedSoft[groups[index].softPriority]));
 
     // Distributions over independent inputs factor: their joint measure is
     // the product of per-component measures. Sampling each component alone
@@ -992,9 +994,9 @@ public:
 
   SamplerResult
   prioritized(const Bits &bits, const std::vector<unsigned> &physicalBits,
-              const std::vector<ID> &hard, const std::array<ID, 64> &soft,
+              const std::vector<ID> &hard, const std::vector<ID> &soft,
               const std::vector<const PriorityInput *> &hardInputs,
-              const std::array<const PriorityInput *, 64> &softInputs,
+              const std::vector<const PriorityInput *> &softInputs,
               const std::vector<ID> &domains,
               const std::vector<SolveOrderEdge> &edges, const uint64_t *start,
               const uint64_t *mutableMask, size_t wordCount,
@@ -1248,8 +1250,7 @@ SamplerResult sampleRandomPlan(
     const uint8_t *p = plan.roots + size_t(index) * random::samplerPlanRootSize;
     roots[read32(p)] = handle(read32(p + 4));
   }
-  std::array<ID, 64> soft;
-  soft.fill(missing);
+  std::vector<ID> soft;
   std::vector<ID> priorityHard, priorityDomains;
   size_t literals = header + size_t(instructions) * 16;
   size_t domainsOffset =
@@ -1361,7 +1362,7 @@ SamplerResult sampleRandomPlan(
   std::vector<ID> distributionGuards(weightedGroups.size(), missing);
   std::vector<Bits> expressionWeights(captureCount);
   std::vector<const PriorityInput *> hardInputs;
-  std::array<const PriorityInput *, 64> softInputs{};
+  std::vector<const PriorityInput *> softInputs;
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     unsigned opcode = p[0];
@@ -1398,6 +1399,12 @@ SamplerResult sampleRandomPlan(
       } else
         f.require(predicate);
     } else {
+      if (auxiliary >= instructions)
+        return SamplerResult::Invalid;
+      if (auxiliary >= soft.size()) {
+        soft.resize(auxiliary + 1, missing);
+        softInputs.resize(auxiliary + 1, nullptr);
+      }
       soft[auxiliary] = predicate;
       softInputs[auxiliary] = input;
     }
@@ -1553,19 +1560,51 @@ SamplerResult sampleRandomPlan(
   auto result = f.check();
   if (result != SamplerResult::Satisfiable)
     return result;
-  uint64_t retainedSoft = 0;
-  for (size_t priority = soft.size(); priority-- != 0;) {
-    if (soft[priority] == missing)
-      continue;
-    f.push();
-    f.require(soft[priority]);
-    result = f.check();
-    if (result == SamplerResult::Invalid)
-      return result;
-    if (result == SamplerResult::Unsatisfiable)
-      f.pop();
-    else
-      retainedSoft |= uint64_t{1} << priority;
+  // IEEE 1800-2023 18.5.13.1: retain each preference, highest priority
+  // first, that stays satisfiable with the hard constraints and every
+  // preference retained before it. Preferences over independent inputs are
+  // decided in independent relations, one per input component.
+  std::vector<bool> retainedSoft(soft.size(), false);
+  if (std::any_of(soft.begin(), soft.end(),
+                  [](ID predicate) { return predicate != missing; })) {
+    InputPartition partition(circuit, booleanBits.size());
+    std::vector<ID> parts = f.conjuncts();
+    std::vector<size_t> partInputs, softComponents(soft.size());
+    for (ID part : parts)
+      partInputs.push_back(partition.join(part));
+    for (size_t priority = 0; priority != soft.size(); ++priority)
+      softComponents[priority] = soft[priority] == missing
+                                     ? InputPartition::none
+                                     : partition.join(soft[priority]);
+    std::unordered_map<size_t, ID> componentHard;
+    for (size_t index = 0; index != parts.size(); ++index)
+      if (partInputs[index] != InputPartition::none) {
+        ID &hard = componentHard.try_emplace(partition.find(partInputs[index]),
+                                             1)
+                       .first->second;
+        hard = circuit.conjunction(hard, parts[index]);
+      }
+    std::unordered_map<size_t, ModelCounter> relations;
+    for (size_t priority = soft.size(); priority-- != 0;) {
+      if (soft[priority] == missing)
+        continue;
+      bool retained = soft[priority] != 0;
+      if (softComponents[priority] != InputPartition::none) {
+        size_t component = partition.find(softComponents[priority]);
+        auto [relation, created] =
+            relations.try_emplace(component, circuit, booleanBits);
+        auto hard = componentHard.find(component);
+        if ((created &&
+             !relation->second.build(
+                 hard == componentHard.end() ? 1 : hard->second)) ||
+            !relation->second.conjoinIfSatisfiable(soft[priority], retained))
+          return SamplerResult::Invalid;
+      }
+      if (retained) {
+        f.require(soft[priority]);
+        retainedSoft[priority] = true;
+      }
+    }
   }
   if (weighted)
     return f.weighted(width, variable, booleanBits, physicalBits,
