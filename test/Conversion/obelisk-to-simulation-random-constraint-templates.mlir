@@ -269,13 +269,13 @@ module {
 // CHECK: %[[TEN:.*]] = arith.constant 10 : i32
 // CHECK: %[[BASE_STATIC:.*]] = arith.cmpi slt, %[[BASE_X]], %[[TEN]] : i32
 // CHECK: simulation.random.soft_constraint %[[BASE_STATIC]] block 1 priority 0
-// CHECK: %[[OVERRIDE_X:.*]] = simulation.random.constraint_value 0 : i32
+// Every read of x shares one template value.
+// CHECK-NOT: simulation.random.constraint_value 0
 // CHECK: %[[NINE:.*]] = arith.constant 9 : i32
-// CHECK: %[[DERIVED_OVERRIDE:.*]] = arith.cmpi slt, %[[OVERRIDE_X]], %[[NINE]] : i32
+// CHECK: %[[DERIVED_OVERRIDE:.*]] = arith.cmpi slt, %[[BASE_X]], %[[NINE]] : i32
 // CHECK: simulation.random.soft_constraint %[[DERIVED_OVERRIDE]] block 0 priority 1
 // CHECK: %[[Y:.*]] = simulation.random.constraint_value 1 : i32
-// CHECK: %[[X:.*]] = simulation.random.constraint_value 0 : i32
-// CHECK: %[[DERIVED_LOCAL:.*]] = arith.cmpi sgt, %[[Y]], %[[X]] : i32
+// CHECK: %[[DERIVED_LOCAL:.*]] = arith.cmpi sgt, %[[Y]], %[[BASE_X]] : i32
 // CHECK: simulation.random.soft_constraint %[[DERIVED_LOCAL]] block 2 priority 2
 // CHECK-NOT: simulation.random.soft_constraint {{.*}} priority 3
 // CHECK: simulation.random.constraint_template @[[MIXED_TEMPLATE]] of @[[MIXED]]

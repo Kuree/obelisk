@@ -1,20 +1,17 @@
-// RUN: %obelisk --std=1800-2023 -emit-obelisk %s | obelisk-opt '--test-obelisk-set-module-attributes=attrs="{llvm.data_layout = \"e-m:e-p:64:64-i64:64-n8:16:32:64-S128\", llvm.target_triple = \"x86_64-unknown-linux-gnu\"}"' | obelisk-opt --pass-pipeline='builtin.module(obelisk-sim-prepare{prune-unused-coverage=true},simulation.design(symbol-dce),obelisk-sim-prepare-coverage,simulation.design(obelisk-sim-devirtualize-class-calls),obelisk-sim-prepare-unit-lowering,simulation.design(cse),simulation.design(simulation.func(obelisk-sim-lower-unit,obelisk-sim-compile-random-plans,canonicalize,cse,mem2reg,canonicalize,cse,obelisk-sim-mark-bounded-loops,obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph),obelisk-sim-finalize)' -o %t.sim.mlir
-// RUN: FileCheck %s --check-prefix=PLAN < %t.sim.mlir
-// RUN: obelisk-opt %t.sim.mlir '--encode-obelisk-sim-to-bytecode=vpi=off' --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | %llc -filetype=obj -relocation-model=pic -o %t.o
-// RUN: %llvm_dist/bin/clang++ %t.o %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.exe
-// RUN: %t.exe --seed=13 | FileCheck %s --check-prefix=RUNTIME
+// RUN: %obelisk --std=1800-2023 -emit-obelisk %s | obelisk-opt '--lower-obelisk-to-sim=opt-level=0' | obelisk-opt --test-obelisk-print-random-programs -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
+// RUN: %obelisk --std=1800-2023 -O0 -o %t %s
+// RUN: %t --seed=13 | FileCheck %s --check-prefix=RUNTIME
 // REQUIRES: compiled-sampler
 
 // IEEE 1800-2023 18.3, 18.5 and 18.8: pure shared arithmetic keeps the
 // complete relation, soft preferences, live captures and frozen properties.
 // Each of six diamonds computes (e + e) - e modulo 256 and uses its operand
-// three times; common subexpression elimination before constraint lowering
+// three times; common subexpression elimination of the constraint template
 // leaves one shared graph. Expanding it as a tree would need 3^6 leaf
 // occurrences, but the encoded program contains 46 instructions because each
 // shared value is stored once and reloaded at its other uses. The duplicate
 // hard predicate and its soft copy reuse one value across roots.
-// PLAN: simulation.random.solve
-// PLAN-SAME: "ODR1\01\00\18\00\10\00\00\00.\00\00\00
+// PLAN: simulation.random.solve: version 1 width 16 instructions 46 captures 1 flags [HAS_SOFT, EXACT_UNIFORM, HAS_SAMPLER_PLAN]
 // RUNTIME: shared template valid 1
 
 // One diamond computes (e + e) - e modulo 256, which is e again, using the

@@ -133,8 +133,10 @@ LogicalResult printProgram(Operation *op, StringRef bytes, raw_ostream &os) {
            captures = reader.read(16, 4), flags = reader.read(20, 4);
   uint64_t literals = wide ? reader.read(24, 4) : 0;
   os << op->getName() << ": version " << version << " width " << width
-     << " instructions " << instructions << " captures " << captures
-     << " flags ";
+     << " instructions " << instructions << " captures " << captures;
+  if (wide)
+    os << " literals " << literals;
+  os << " flags ";
   printFlags(
       os, flags,
       {{OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT, "HAS_SOFT"},

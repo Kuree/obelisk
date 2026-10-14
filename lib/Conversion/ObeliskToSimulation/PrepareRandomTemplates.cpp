@@ -5,7 +5,10 @@
 #include "Detail.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Transforms/CSE.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -749,6 +752,13 @@ LogicalResult materializeRandomConstraintTemplates(
       templateOp.erase();
       continue;
     }
+    // Source constraints are expression trees, so an operand repeated by a
+    // macro or a constraint function is built once per occurrence. Merging
+    // equal pure values leaves a graph whose shared values the residual
+    // program evaluates once.
+    IRRewriter rewriter(builder);
+    DominanceInfo dominance(templateOp);
+    eliminateCommonSubExpressions(rewriter, dominance, templateOp);
     sim::SimClassDeclOp declaration = classes.declarations.lookup(exactClass);
     if (!declaration) {
       templateOp.erase();
