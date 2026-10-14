@@ -14745,15 +14745,18 @@ extern "C" obelisk_rt_status obelisk_rt_v1_covergroup_sample(
           bool binEnabled = binIsEnabled(binIndex);
           // The iff guards this bin's counter, not its tuple selection. A
           // selected tuple therefore remains owned by the explicit bin and
-          // cannot fall through to an automatic bin when the guard is false
-          // (IEEE 1800-2023 19.6).
-          if (!binEnabled)
-            continue;
+          // cannot fall through to an automatic bin when the guard is false,
+          // and a guarded ignore or illegal bin still excludes it; a disabled
+          // illegal bin only skips its run-time error (IEEE 1800-2023 19.5,
+          // 19.6.2-19.6.3).
           if (bin->flags & obelisk::coverage::FunctionalBinIllegal) {
-            illegalBins.insert(bin->id);
+            if (binEnabled)
+              illegalBins.insert(bin->id);
+            else
+              ignored = true;
           } else if (bin->flags & obelisk::coverage::FunctionalBinIgnore) {
             ignored = true;
-          } else {
+          } else if (binEnabled) {
             ordinaryBins.insert(binIndex);
           }
         }

@@ -30,7 +30,6 @@ Coverage/functional-coverpoint-options.sv
 Coverage/functional-cross-all-tuples.sv
 Coverage/functional-cross-bin-iff.sv
 Coverage/functional-cross-configuration-union.sv
-Coverage/functional-cross-exclusions.sv
 Coverage/functional-cross-set.sv
 Coverage/functional-cross-transition-selector.sv
 Coverage/functional-default-bin-array.sv

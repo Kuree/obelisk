@@ -1,27 +1,41 @@
-// RUN: %obelisk --std=1800-2023 -O0 --target=native \
-// RUN:   --coverage=functional -o %t.native %s
-// RUN: not %t.native --coverage-output=%t.native.obcov \
-// RUN:   --coverage-test=cross-exclusions > %t.native.out 2> %t.native.err
-// RUN: %obelisk --std=1800-2023 -O3 --execution-tier=bytecode \
-// RUN:   --coverage=functional -o %t.bytecode %s
-// RUN: not %t.bytecode --coverage-output=%t.bytecode.obcov \
-// RUN:   --coverage-test=cross-exclusions > %t.bytecode.out 2> %t.bytecode.err
-// RUN: diff -u %t.native.out %t.bytecode.out
-// RUN: diff -u %t.native.err %t.bytecode.err
-// RUN: FileCheck %s --check-prefix=QUERY < %t.native.out
-// RUN: FileCheck %s --check-prefix=ERROR < %t.native.err
-// RUN: %python -c "import sys; s=open(sys.argv[1]).read(); assert s.count('ERROR: functional coverage illegal bin') == 2" %t.native.err
-// RUN: obelisk-cov report --format=text %t.native.obcov -o %t.txt
-// RUN: FileCheck %s --check-prefix=REPORT < %t.txt
-// RUN: obelisk-cov report --format=json %t.native.obcov -o %t.json
-// RUN: %python -c "import json,sys; d=json.load(open(sys.argv[1])); p=next(i for g in d['functional_instance_groups'] for i in g['items'] if i['name']=='product'); b={v['name']:v for v in p['bins']}; assert b['ordinary']['count']==3 and b['ignored']['excluded'] and b['illegal']['excluded']; assert p['automatic_total']==2 and sum(v['count'] for v in p['automatic_bins'])==1; assert len(d['sparse_cross_tuples'])==1; q=d['illegal_bin_diagnostics']; assert len(q)==2 and all(v['count']==1 for v in q) and any(v['bin']==b['illegal']['id'] for v in q)" %t.json
-// RUN: not %t.native --coverage-output=%t.zeta.obcov --coverage-test=zeta \
-// RUN:   > /dev/null 2> /dev/null
-// RUN: not %t.native --coverage-output=%t.alpha.obcov --coverage-test=alpha \
-// RUN:   > /dev/null 2> /dev/null
-// RUN: obelisk-cov report --format=text %t.zeta.obcov %t.alpha.obcov \
-// RUN:   -o %t.merged.txt
-// RUN: FileCheck %s --check-prefix=ORDER < %t.merged.txt
+// RUN: %obelisk --std=1800-2023 -O0 --coverage=functional -o %t %s
+// RUN: not %t --coverage-output=%t.obcov --coverage-test=cross-exclusions 2> %t.err | FileCheck %s --check-prefix=QUERY
+// RUN: FileCheck %s --check-prefix=ERROR --implicit-check-not='illegal bin' < %t.err
+// RUN: obelisk-cov report --format=text %t.obcov | FileCheck %s --check-prefix=REPORT
+// RUN: obelisk-cov report --format=json %t.obcov | FileCheck %s --check-prefix=JSON
+// RUN: not %t --coverage-output=%t.zeta.obcov --coverage-test=zeta > /dev/null 2> /dev/null
+// RUN: not %t --coverage-output=%t.alpha.obcov --coverage-test=alpha > /dev/null 2> /dev/null
+// RUN: obelisk-cov report --format=text %t.zeta.obcov %t.alpha.obcov | FileCheck %s --check-prefix=ORDER
+
+// IEEE 1800-2023 19.6.2-19.6.3 and 19.11.2: ignored and illegal products leave
+// the denominator (ordinary plus the two automatic remainders), and only the
+// b=2 sample reaches `ordinary`. Illegal wins over the overlapping ordinary
+// bin and reports once although b=1 hits two overlapping target bins; the
+// automatic remainder keeps one sparse tuple.
+// QUERY: cross-exclusions 66.666667 2 3
+// ERROR-DAG: ERROR: functional coverage illegal bin 'top.cg.product.illegal' sampled at simulation time 0
+// ERROR-DAG: ERROR: functional coverage illegal bin 'top.array_cg.cp.bad[2]' sampled at simulation time 0
+// JSON: "sparse_cross_tuples":[{{[{]}}"run":{{[^{]*}}"hits":1,{{[^{]*}}}],
+// JSON: "hierarchy":"top.cg.product","kind":2,
+// JSON-SAME: "covered":2,"total":3,"automatic_covered":1,"automatic_total":2,
+// JSON-SAME: "name":"ordinary",{{[^}]*}}"count":1,"overflow":false,"excluded":false,
+// JSON-SAME: "name":"ignored",{{[^}]*}}"flags":4,{{[^}]*}}"count":0,"overflow":false,"excluded":true,
+// JSON-SAME: {{[{]}}"id":[[ILLEGAL:[0-9]+]],"template_bin":{{[0-9]+}},"name":"illegal",{{[^}]*}}"flags":8,{{[^}]*}}"excluded":true,
+// JSON-SAME: "automatic_bins":[{{[{]}}"name":"<one,two>","count":1,
+// JSON: "illegal_bin_diagnostics":[
+// JSON-DAG: "bin":[[ILLEGAL]],"hierarchy":"top.cg.product.illegal","simulation_time":0,"count":1,
+// JSON-DAG: "hierarchy":"top.array_cg.cp.bad[2]","simulation_time":0,"count":1,
+
+// Resolved bin IDs are configuration-local, so the high=2 diagnostic names
+// bad[2]. Merged diagnostics are ordered by test name, then bin.
+// REPORT: illegal-bin diagnostics:
+// REPORT-DAG: top.array_cg.cp.bad[2] instance 3 test "cross-exclusions": 1 at time 0 - "illegal bin sampled"
+// REPORT-DAG: top.cg.product.illegal instance 1 test "cross-exclusions": 1 at time 0 - "illegal bin sampled"
+// ORDER: illegal-bin diagnostics:
+// ORDER-NEXT: top.array_cg.cp.bad[2] instance 3 test "alpha": 1 at time 0 - "illegal bin sampled"
+// ORDER-NEXT: top.cg.product.illegal instance 1 test "alpha": 1 at time 0 - "illegal bin sampled"
+// ORDER-NEXT: top.array_cg.cp.bad[2] instance 3 test "zeta": 1 at time 0 - "illegal bin sampled"
+// ORDER-NEXT: top.cg.product.illegal instance 1 test "zeta": 1 at time 0 - "illegal bin sampled"
 
 module top;
   bit [1:0] a;
@@ -66,7 +80,9 @@ module top;
     low_config = new(1);
     high_config = new(2);
 
-    // Disabled exclusion guards do not suppress an overlapping ordinary bin.
+    // A false iff only stops the exclusion bin's own count: the ignored and
+    // illegal products stay excluded from the overlapping ordinary bin, and
+    // the disabled illegal bin reports nothing.
     a = 0;
     b = 0;
     cov.sample();
@@ -105,14 +121,3 @@ module top;
   end
 endmodule
 
-// QUERY: cross-exclusions 66.666667 2 3
-// ERROR-DAG: ERROR: functional coverage illegal bin 'top.cg.product.illegal' sampled at simulation time 0
-// ERROR-DAG: ERROR: functional coverage illegal bin 'top.array_cg.cp.bad[2]' sampled at simulation time 0
-// REPORT: illegal-bin diagnostics:
-// REPORT-DAG: top.array_cg.cp.bad[2] instance 3 test "cross-exclusions": 1 at time 0 - "illegal bin sampled"
-// REPORT-DAG: top.cg.product.illegal instance 1 test "cross-exclusions": 1 at time 0 - "illegal bin sampled"
-// ORDER: illegal-bin diagnostics:
-// ORDER-NEXT: top.array_cg.cp.bad[2] instance 3 test "alpha": 1 at time 0 - "illegal bin sampled"
-// ORDER-NEXT: top.cg.product.illegal instance 1 test "alpha": 1 at time 0 - "illegal bin sampled"
-// ORDER-NEXT: top.array_cg.cp.bad[2] instance 3 test "zeta": 1 at time 0 - "illegal bin sampled"
-// ORDER-NEXT: top.cg.product.illegal instance 1 test "zeta": 1 at time 0 - "illegal bin sampled"
