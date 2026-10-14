@@ -14,7 +14,7 @@
 // SIM-NEXT: simulation.class.field_ref %[[FIRST]][@__obelisk_class_s5_node_field_0]
 // SIM: %[[SECOND:.*]] = simulation.weak.get
 // SIM-NEXT: %[[SECOND_ID:.*]] = simulation.class.id %[[SECOND]]
-// SIM-NEXT: %[[NULL_ID:.*]] = simulation.class.id %{{.*}}
+// SIM: %[[NULL_ID:.*]] = simulation.class.id %{{.*}}
 // SIM-NEXT: arith.cmpi eq, %[[SECOND_ID]], %[[NULL_ID]] : i64
 // SIM: simulation.weak.clear %{{.*}} : !simulation.class_handle<@__obelisk_class_s25_weak_reference>
 // LLVM: llvm.call @obelisk_rt_v1_weak_create(

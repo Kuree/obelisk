@@ -5410,7 +5410,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
     currentFrameReleased =
         status == OBELISK_RT_OK && action.kind == OBELISK_RT_FRAGMENT_TERMINATE;
     bool terminationRequested =
-        obelisk_rt_v1_scheduler_termination_requested(context) != 0;
+        context->schedulerFinishRequested.load(std::memory_order_relaxed) != 0;
     bool killRequested = false;
     {
       std::lock_guard<std::recursive_mutex> lock(context->mutex);

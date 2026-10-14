@@ -2210,6 +2210,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                             callee, *receiver, arguments)
               .getResults();
     }
+    if (failed(emitTerminationPoll(location)))
+      return failure();
     if (!classTask)
       for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
         Value result = results[index + (hasFunctionResult ? 1 : 0)];
@@ -3046,33 +3048,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
     setCurrent(continuation);
   }
-  if (!directTask) {
-    Value requested = sim::SimTerminationRequestedOp::create(
-        builder, location, builder.getI1Type(),
-        function.getBody().front().getArgument(0));
-    Block *terminate = addBlock();
-    Block *resume = addBlock();
-    cf::CondBranchOp::create(builder, location, requested, terminate,
-                             ValueRange{}, resume, ValueRange{});
-    setCurrent(terminate);
-    if (function.getEntryKind() == sim::EntryKind::Observer) {
-      SmallVector<Value> results;
-      for (Type type : function.getFunctionType().getResults()) {
-        Value result = createDefaultValue(builder, location, type);
-        if (!result) {
-          function.emitError(
-              "cannot materialize a termination result for observer");
-          return failure();
-        }
-        results.push_back(result);
-      }
-      sim::SimReturnOp::create(builder, location, results);
-    } else if (failed(emitFunctionReturn(location, std::nullopt, false,
-                                         /*emitBlockEventEnd=*/false))) {
-      return failure();
-    }
-    setCurrent(resume);
-  }
+  if (!directTask && failed(emitTerminationPoll(location)))
+    return failure();
   if (!directTask) {
     for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
       Type destinationType = getReferenceElementType(copyOut.destination);
@@ -3190,6 +3167,8 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       }
     sim::SimClassDirectCallOp::create(builder, location, TypeRange{},
                                       constructor, receiver, arguments);
+    if (failed(emitTerminationPoll(location)))
+      return failure();
     if (!op.getIsSuperClass())
       return receiver;
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -3454,6 +3433,8 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   }
   auto invocation = sim::SimClassDirectCallOp::create(
       builder, location, resultTypes, callee, *adjustedReceiver, arguments);
+  if (failed(emitTerminationPoll(location)))
+    return failure();
   for (auto [result, copyOut] :
        llvm::zip_equal(invocation.getResults(), copyOuts)) {
     Type destinationType = getReferenceElementType(copyOut.destination);

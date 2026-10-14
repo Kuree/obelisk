@@ -297,11 +297,14 @@ module attributes {
 // CHECK: %[[TARGET:.*]] = simulation.managed.load %[[TARGET_REF]]{{.*}} -> !simulation.class_handle<@[[CALLEE]]>
 // CHECK-NOT: simulation.class.cast
 // CHECK: %[[DEFAULT_VALUE:.*]] = simulation.class.direct_call @[[DEFAULT]] %[[TARGET]]()
-// CHECK-NEXT: %[[RESULT:.*]] = simulation.class.direct_call @[[READ]] %[[TARGET]](%[[DEFAULT_VALUE]])
-// CHECK-NEXT: simulation.return %[[RESULT]] : i32
+// CHECK-NEXT: simulation.termination.requested
+// CHECK: %[[RESULT:.*]] = simulation.class.direct_call @[[READ]] %[[TARGET]](%[[DEFAULT_VALUE]])
+// CHECK-NEXT: simulation.termination.requested
+// CHECK: simulation.return %[[RESULT]] : i32
 // CHECK: simulation.func private @{{unit_[0-9]+}}(%[[CONTEXT:arg[0-9]+]]: !simulation.context{{.*}}) -> !simulation.class_handle<@[[CALLEE]]>
 // CHECK-SAME: simulation.hierarchical_name = "caller::make"
 // CHECK: %[[OBJECT:.*]] = simulation.class.alloc %[[CONTEXT]] : !simulation.context -> !simulation.class_handle<@[[CALLEE]]>
 // CHECK: %[[CONSTRUCTOR_DEFAULT:.*]] = simulation.class.direct_call @[[DEFAULT]] %[[OBJECT]]()
-// CHECK-NEXT: simulation.class.direct_call @[[NEW]] %[[OBJECT]](%[[CONSTRUCTOR_DEFAULT]])
+// CHECK-NEXT: simulation.termination.requested
+// CHECK: simulation.class.direct_call @[[NEW]] %[[OBJECT]](%[[CONSTRUCTOR_DEFAULT]])
 // CHECK: simulation.return %[[OBJECT]] : !simulation.class_handle<@[[CALLEE]]>

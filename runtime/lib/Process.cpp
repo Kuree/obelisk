@@ -2631,6 +2631,13 @@ void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept {
   context->schedulerFinishStatus = OBELISK_RT_FATAL;
 }
 
+void enterFinalPhaseUnlocked(obelisk_rt_context *context) noexcept {
+  context->schedulerRunningFinals = true;
+  uint32_t pending = 1;
+  context->schedulerFinishRequested.compare_exchange_strong(
+      pending, kSchedulerFinishConsumedByFinals, std::memory_order_relaxed);
+}
+
 static void requestExplicitFinishUnlocked(obelisk_rt_context *context,
                                           uint32_t verbosity,
                                           obelisk_rt_status status) {
@@ -2742,9 +2749,12 @@ obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context) {
   // IEEE 1800-2023 20.2/20.10/24.7: observe the finish/stop/fatal/program
   // completion latch without changing when callers test it. This query does
   // not access finish status or any other mutex-protected context state.
+  // Final procedures run after the latch was consumed and observe only a
+  // request they make themselves (9.2.3).
   if (!context)
     return 0;
-  return context->schedulerFinishRequested.load(std::memory_order_relaxed);
+  return context->schedulerFinishRequested.load(std::memory_order_relaxed) &
+         1;
 }
 
 extern "C" uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context) {
@@ -3332,7 +3342,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             context->schedulerDeadProcessCount != 0;
       }
       if (context->schedulerFinishRequested.load(std::memory_order_relaxed)) {
-        context->schedulerRunningFinals = true;
+        enterFinalPhaseUnlocked(context);
         setSchedulerDrainingReactive(context, false);
         if (context->schedulerFinalsAborted)
           return context->schedulerFinishStatus;
@@ -5357,7 +5367,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
              context->scheduledDesignTasks)
           hasFinal |= !candidate.terminated && candidate.phase == 1;
         if (hasFinal) {
-          context->schedulerRunningFinals = true;
+          enterFinalPhaseUnlocked(context);
           if (context->nativeScheduleSingleStep)
             return OBELISK_RT_OK;
           continue;

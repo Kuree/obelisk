@@ -95,7 +95,8 @@ module {
 // CHECK: cf.cond_br %[[HOOK_ENABLED]], ^[[PRE:bb[0-9]+]], ^[[AFTER_PRE:bb[0-9]+]]
 // CHECK: ^[[PRE]]:
 // CHECK-NEXT: simulation.class.direct_call @[[LEAF_PRE]] %[[HOOK_LEAF]]({{.*}})
-// CHECK-NEXT: cf.br ^[[AFTER_PRE]]
+// CHECK-NEXT: %[[PRE_STOP:.*]] = simulation.termination.requested
+// CHECK-NEXT: cf.cond_br %[[PRE_STOP]], ^{{bb[0-9]+}}, ^[[AFTER_PRE]]
 // CHECK: ^[[AFTER_PRE]]:
 // CHECK: %[[MODE_LEAF:.*]] = simulation.managed.load %[[LEAF_REF]] : {{.*}} -> !simulation.class_handle<@__obelisk_class_s3_Leaf>
 // CHECK: %[[MODE_NULL:.*]] = simulation.managed.is_null %[[MODE_LEAF]]
@@ -162,5 +163,6 @@ module {
 // CHECK-NEXT: cf.br ^[[POST_DISPATCH]]
 // CHECK: ^[[POST]]:
 // CHECK-NEXT: simulation.class.direct_call @[[LEAF_POST]] %[[HOOK_LEAF]]()
-// CHECK-NEXT: cf.br ^[[AFTER_POST]]
+// CHECK-NEXT: %[[POST_STOP:.*]] = simulation.termination.requested
+// CHECK-NEXT: cf.cond_br %[[POST_STOP]], ^{{bb[0-9]+}}, ^[[AFTER_POST]]
 // CHECK-NOT: simulation.managed.store {{.*}} to %[[LEAF_REF]]

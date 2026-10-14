@@ -2513,6 +2513,37 @@ UnitLowering::emitFunctionReturn(Location location,
   return success();
 }
 
+// $finish, $stop and $fatal latch design-wide termination (IEEE 1800-2023
+// 20.2, 20.10); statements after a call that latched it must not execute.
+LogicalResult UnitLowering::emitTerminationPoll(Location location) {
+  Value requested = sim::SimTerminationRequestedOp::create(
+      builder, location, builder.getI1Type(),
+      function.getBody().front().getArgument(0));
+  Block *terminate = addBlock();
+  Block *resume = addBlock();
+  cf::CondBranchOp::create(builder, location, requested, terminate,
+                           ValueRange{}, resume, ValueRange{});
+  setCurrent(terminate);
+  if (function.getEntryKind() == sim::EntryKind::Observer) {
+    SmallVector<Value> results;
+    for (Type type : function.getFunctionType().getResults()) {
+      Value result = createDefaultValue(builder, location, type);
+      if (!result) {
+        function.emitError(
+            "cannot materialize a termination result for observer");
+        return failure();
+      }
+      results.push_back(result);
+    }
+    sim::SimReturnOp::create(builder, location, results);
+  } else if (failed(emitFunctionReturn(location, std::nullopt, false,
+                                       /*emitBlockEventEnd=*/false))) {
+    return failure();
+  }
+  setCurrent(resume);
+  return success();
+}
+
 LogicalResult UnitLowering::emitRuntimeFatal(Location location,
                                              StringRef detail) {
   std::string file = "<unknown>";
@@ -4390,8 +4421,11 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
                           << op->getName();
       return failure();
     }
+    // Prepared operands live in the entry block, which dominates the
+    // fragment even after a termination poll split it from `current`.
     for (Value operand : op->getOperands()) {
       if (operand.getParentBlock() == current ||
+          operand.getParentBlock() == &function.getBody().front() ||
           preparedInitializerMapping.contains(operand))
         continue;
       emitError(location)
@@ -5228,6 +5262,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             targetID.getValue().getZExtValue();
     });
   setCurrent(&function.getBody().front());
+  // Preparation materializes an implicit base-constructor call ahead of the
+  // derived constructor's roots. Like any call it may latch termination.
+  if (function->hasAttr("simulation.constructor") &&
+      llvm::any_of(function.getBody().front(), [](Operation &op) {
+        return isa<sim::SimCallOp, sim::SimClassDirectCallOp>(op);
+      }) &&
+      failed(emitTerminationPoll(function.getLoc())))
+    return failure();
   auto functionCoveragePoint = function->getAttrOfType<IntegerAttr>(
       sim::metadata::coverageLinePointIndex);
   if (function->hasAttr("simulation.timing_check_coordinator"))

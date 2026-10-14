@@ -90,6 +90,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                              receiver);
     auto invocation = sim::SimClassDirectCallOp::create(
         builder, location, TypeRange{resultType}, helper, receiver, arguments);
+    if (failed(emitTerminationPoll(location)))
+      return failure();
     return invocation.getResult(0);
   };
   if (op->hasAttr(randomizeNestedDispatchAttrName)) {
@@ -555,7 +557,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
                                       hookReceiver, arguments);
-    return success();
+    return emitTerminationPoll(location);
   };
   if (failed(callLifecycleHook(
           randomPreHookAttrName, randomPreHookOwnerAttrName,
@@ -1613,7 +1615,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     sim::SimClassDirectCallOp::create(builder, location, TypeRange{}, callee,
                                       hookReceiver, arguments);
-    return success();
+    return emitTerminationPoll(location);
   };
   for (Attribute hookAttr : nestedHooks) {
     auto hook = dyn_cast<DictionaryAttr>(hookAttr);

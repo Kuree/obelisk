@@ -2120,6 +2120,9 @@ struct NativeScopedWriteState {
   bool unscopedWritePending = false;
 };
 
+// schedulerFinishRequested after the Final phase consumed a pending request.
+inline constexpr uint32_t kSchedulerFinishConsumedByFinals = 2;
+
 struct obelisk_rt_context {
   // Mutable state is guarded separately from logical execution. Evaluator
   // callbacks release `mutex` while arbitrary user code runs, but retain the
@@ -2434,8 +2437,10 @@ struct obelisk_rt_context {
   // or consume other context state. Keep it atomic so polling needs neither
   // a context transaction nor the scheduler mutex. Associated finish status
   // and final-process state remain protected by the existing transaction.
-  // A 0/1 word also matches the query's ABI result without normalizing a
-  // byte-sized atomic bool at every generated function-call boundary.
+  // Nonzero once termination was requested. Entering the Final phase
+  // replaces a pending request (1) with kSchedulerFinishConsumedByFinals, so
+  // generated polls inside final procedures only observe a $finish executed
+  // there (IEEE 1800-2023 9.2.3); the scheduler still sees a nonzero latch.
   std::atomic<uint32_t> schedulerFinishRequested{0};
   // An explicit termination request made while a final procedure is active
   // suppresses every remaining final procedure (IEEE 1800-2017 9.2.3).
@@ -3098,6 +3103,10 @@ void setLastErrorUnlocked(obelisk_rt_context *context, std::string message);
 /// Latch a nonterminating simulation error while the context mutex is held.
 /// The scheduler continues running, but orderly shutdown reports failure.
 void latchSchedulerErrorUnlocked(obelisk_rt_context *context) noexcept;
+/// Begin the Final phase (IEEE 1800-2023 9.2.3). A pending termination
+/// request is consumed so final procedures run to completion unless they
+/// execute $finish themselves.
+void enterFinalPhaseUnlocked(obelisk_rt_context *context) noexcept;
 void setLastError(obelisk_rt_context *context, std::string message);
 void obelisk_rt_report_signal_diagnostics_unlocked(obelisk_rt_context *context);
 void obelisk_rt_release_native_schedule_plan(

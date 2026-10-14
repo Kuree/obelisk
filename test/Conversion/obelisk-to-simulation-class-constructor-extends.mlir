@@ -100,27 +100,34 @@ module {
 // CHECK: %[[FIVE:.*]] = arith.constant 5 : i32
 // CHECK: %[[BASE_THIS:.*]] = simulation.class.cast %[[DERIVED_THIS]] : !simulation.class_handle<@[[DERIVED]]> to !simulation.class_handle<@[[BASE]]>
 // CHECK-NEXT: simulation.class.direct_call @[[BASE_NEW]] %[[BASE_THIS]](%[[FIVE]])
+// CHECK-NEXT: simulation.termination.requested
 // CHECK: %[[FIELD:.*]] = simulation.class.field_ref %[[DERIVED_THIS]]
+// CHECK-NEXT: {{.*}} = arith.constant {{.*}}11 : i32
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[FIELD]]
 // CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%[[DEFAULT_THIS:arg[0-9]+]]: !simulation.class_handle<@[[DEFAULT_DERIVED:__obelisk_class_[^>]+]]>
 // CHECK-SAME: simulation.hierarchical_name = "DefaultDerived::new"
 // CHECK: %[[THREE:.*]] = arith.constant 3 : i32
 // CHECK: %[[DEFAULT_BASE_THIS:.*]] = simulation.class.cast %[[DEFAULT_THIS]] : !simulation.class_handle<@[[DEFAULT_DERIVED]]> to !simulation.class_handle<@[[BASE]]>
 // CHECK-NEXT: simulation.class.direct_call @[[BASE_NEW]] %[[DEFAULT_BASE_THIS]](%[[THREE]])
+// CHECK-NEXT: simulation.termination.requested
 // CHECK: %[[DEFAULT_FIELD:.*]] = simulation.class.field_ref %[[DEFAULT_THIS]]
+// CHECK-NEXT: {{.*}} = arith.constant {{.*}}13 : i32
 // CHECK-NEXT: simulation.managed.store {{.*}} to %[[DEFAULT_FIELD]]
 // CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%[[EXPLICIT_THIS:arg[0-9]+]]: !simulation.class_handle<@[[EXPLICIT_DERIVED:__obelisk_class_[^>]+]]>
 // CHECK-SAME: simulation.hierarchical_name = "ExplicitSuperDerived::new"
-// CHECK-DAG: %[[SEVEN:.*]] = arith.constant 7 : i32
-// CHECK-DAG: %[[SEVENTEEN:.*]] = arith.constant 17 : i32
-// CHECK-DAG: %[[NINETEEN:.*]] = arith.constant 19 : i32
+// CHECK: %[[SEVEN:.*]] = arith.constant 7 : i32
 // CHECK: %[[EXPLICIT_BASE_THIS:.*]] = simulation.class.cast %[[EXPLICIT_THIS]] : !simulation.class_handle<@[[EXPLICIT_DERIVED]]> to !simulation.class_handle<@[[BASE]]>
 // CHECK-NEXT: simulation.class.direct_call @[[BASE_NEW]] %[[EXPLICIT_BASE_THIS]](%[[SEVEN]])
+// CHECK-NEXT: %[[EXPLICIT_STOP:.*]] = simulation.termination.requested
+// CHECK-NEXT: cf.cond_br %[[EXPLICIT_STOP]], ^{{bb[0-9]+}}, ^[[EXPLICIT_GO:bb[0-9]+]]
+// CHECK: ^[[EXPLICIT_GO]]:
 // CHECK-NEXT: %[[EXPLICIT_FIELD:.*]] = simulation.class.field_ref %[[EXPLICIT_THIS]]
+// CHECK-NEXT: %[[SEVENTEEN:.*]] = arith.constant {{.*}}17 : i32
 // CHECK-NEXT: simulation.managed.store %[[SEVENTEEN]] to %[[EXPLICIT_FIELD]]
 // CHECK-NEXT: %[[READY:.*]] = simulation.event.create
 // CHECK-NEXT: %[[READY_REF:.*]] = simulation.class.field_ref %[[EXPLICIT_THIS]][{{.*}}] : !simulation.class_handle<@[[EXPLICIT_DERIVED]]> -> !simulation.managed_ref<!simulation.event, @[[EXPLICIT_DERIVED]]>
 // CHECK-NEXT: simulation.managed.store %[[READY]] to %[[READY_REF]] : !simulation.event, !simulation.managed_ref<!simulation.event, @[[EXPLICIT_DERIVED]]>
+// CHECK-NEXT: %[[NINETEEN:.*]] = arith.constant {{.*}}19 : i32
 // CHECK-NEXT: simulation.managed.store %[[NINETEEN]] to %[[EXPLICIT_FIELD]]
 // CHECK-LABEL: simulation.func private @unit_4
 // CHECK-SAME: ({{.*}}%[[OUT_OF_BLOCK_THIS:arg[0-9]+]]: !simulation.class_handle<@[[OUT_OF_BLOCK:__obelisk_class_[^>]+]]>

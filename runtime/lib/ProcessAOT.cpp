@@ -1060,7 +1060,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     terminationRequested =
         context->schedulerFinishRequested.load(std::memory_order_relaxed);
     if (terminationRequested)
-      context->schedulerRunningFinals = true;
+      enterFinalPhaseUnlocked(context);
     if (!terminationRequested && status == OBELISK_RT_OK && generatedActions &&
         action.kind == OBELISK_RT_FRAGMENT_SUSPEND &&
         (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ||

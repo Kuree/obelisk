@@ -677,6 +677,9 @@ private:
   emitFunctionReturn(::mlir::Location location,
                      std::optional<::mlir::Value> explicitResult,
                      bool resultSigned = false, bool emitBlockEventEnd = true);
+  // Return from the current function when a preceding call requested
+  // termination, and continue lowering on the path where it did not.
+  ::mlir::LogicalResult emitTerminationPoll(::mlir::Location location);
   void emitCovergroupBlockEvent(uint64_t targetID, uint32_t eventKind,
                                 ::mlir::Location location);
   ::mlir::Block *addBlock();

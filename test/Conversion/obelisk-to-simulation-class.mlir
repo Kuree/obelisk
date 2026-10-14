@@ -219,11 +219,11 @@ module attributes {
 // CHECK-NEXT: %[[SELECTED:.*]] = simulation.aggregate.extract %[[BITS]][4]
 // CHECK: %[[RANGE_BASE:.*]] = simulation.managed.load %[[BITS_REF]]
 // CHECK-NEXT: %[[FLAT_BITS:.*]] = simulation.packed.flatten %[[RANGE_BASE]]
-// CHECK-NEXT: %[[SHIFTED_BITS:.*]] = arith.shrui %[[FLAT_BITS]], {{.*}}
+// CHECK: %[[SHIFTED_BITS:.*]] = arith.shrui %[[FLAT_BITS]], {{.*}}
 // CHECK-NEXT: {{.*}} = arith.trunci %[[SHIFTED_BITS]] : i8 to i4
 // CHECK: %[[WRITE_BASE:.*]] = simulation.managed.load %[[BITS_REF]]
 // CHECK-NEXT: %[[WRITE_FLAT:.*]] = simulation.packed.flatten %[[WRITE_BASE]]
-// CHECK-NEXT: %[[WRITE_UPDATED:.*]] = simulation.bits.dyn_insert {{.*}} into %[[WRITE_FLAT]] at {{.*}} : (i8, i4, i66) -> i8
+// CHECK: %[[WRITE_UPDATED:.*]] = simulation.bits.dyn_insert {{.*}} into %[[WRITE_FLAT]] at {{.*}} : (i8, i4, i66) -> i8
 // CHECK-NEXT: %[[WRITE_REBUILT:.*]] = simulation.packed.unflatten %[[WRITE_UPDATED]]
 // CHECK-NEXT: simulation.managed.store %[[WRITE_REBUILT]] to %[[BITS_REF]]
 // CHECK: simulation.ref.store

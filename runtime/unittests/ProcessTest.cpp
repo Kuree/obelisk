@@ -3870,6 +3870,56 @@ TEST(Scheduler, DynamicNativeChildrenInheritPhaseThroughIndexedParent) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+std::vector<std::pair<uint64_t, uint32_t>> finalPollObservations;
+
+// Poll the termination latch, request $finish, and poll again.
+obelisk_rt_status finalPollExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint64_t id = instance->descriptor->handle.id;
+  finalPollObservations.push_back(
+      {id, obelisk_rt_v1_scheduler_termination_requested(instance->context)});
+  EXPECT_EQ(obelisk_rt_v1_scheduler_finish(instance->context, 0),
+            OBELISK_RT_OK);
+  finalPollObservations.push_back(
+      {id, obelisk_rt_v1_scheduler_termination_requested(instance->context)});
+  *instance->action = {
+      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+TEST(Scheduler, FinalProceduresPollOnlyTheirOwnTerminationRequests) {
+  // IEEE 1800-2023 9.2.3: final procedures run after $finish, so the request
+  // that started the Final phase must not stop them at their first poll. A
+  // $finish executed inside one still ends the simulation immediately, and
+  // no other final procedure runs.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  SchedulerFixture initial(1), first(2), second(3);
+  for (SchedulerFixture *fixture : {&initial, &first, &second})
+    fixture->descriptor.native_execute = finalPollExecute;
+  finalPollObservations.clear();
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(initial), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(first),
+                                        OBELISK_RT_SCHEDULE_FINAL),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(second),
+                                        OBELISK_RT_SCHEDULE_FINAL),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(finalPollObservations.size(), 4u);
+  EXPECT_EQ(finalPollObservations[0], std::make_pair(uint64_t{1}, 0u));
+  EXPECT_EQ(finalPollObservations[1], std::make_pair(uint64_t{1}, 1u));
+  uint64_t final = finalPollObservations[2].first;
+  EXPECT_TRUE(final == 2 || final == 3);
+  EXPECT_EQ(finalPollObservations[2], std::make_pair(final, 0u));
+  EXPECT_EQ(finalPollObservations[3], std::make_pair(final, 1u));
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, UnstartedPostponedActorsDoNotPreemptActiveResumes) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
