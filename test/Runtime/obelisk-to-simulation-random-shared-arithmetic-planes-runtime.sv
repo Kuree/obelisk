@@ -6,9 +6,9 @@
 // IEEE 1800-2023 11.4.13, 18.3 and 18.8: a 96-entry set of four-state values
 // expands without copying the shared value/X/Z planes into an expression tree.
 // The ODR1 header of the compiled program has 5 random bits (x and answer) and
-// 2794 = 29 * 96 + 10 instructions (0x0AEA), linear in the number of entries.
+// 2792 = 29 * 96 + 8 instructions (0x0AE8), linear in the number of entries.
 // PLAN: simulation.random.solve
-// PLAN-SAME: "ODR1\01\00\18\00\05\00\00\00\EA\0A\00\00
+// PLAN-SAME: "ODR1\01\00\18\00\05\00\00\00\E8\0A\00\00
 // PLAN-SAME: SAMP
 // PLAN-SAME: PLAN
 

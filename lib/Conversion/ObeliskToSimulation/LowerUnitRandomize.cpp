@@ -6547,12 +6547,34 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           left = constant64(layout ? layout->left : *width - 1);
           right = constant64(layout ? layout->right : 0);
         }
-        if (left && right) {
-          auto sourceType = inputs[1]->getAttrOfType<TypeAttr>("semantic_type");
-          FailureOr<Value> index = toArrayIndex(
-              values[1].value,
-              sourceType && isSignedSemanticType(sourceType.getValue()),
-              location);
+        auto sourceType =
+            inputs[1] ? inputs[1]->getAttrOfType<TypeAttr>("semantic_type")
+                      : TypeAttr{};
+        bool signedIndex =
+            sourceType && isSignedSemanticType(sourceType.getValue());
+        APInt constantIndex, leftBound, rightBound;
+        if (left && right && matchPattern(left, m_ConstantInt(&leftBound)) &&
+            matchPattern(right, m_ConstantInt(&rightBound)) &&
+            matchPattern(values[1].value, m_ConstantInt(&constantIndex))) {
+          // A known constant address against static bounds is decided here,
+          // so the guard algebra sees an error-free read as such (11.5.1).
+          int64_t low = std::min(leftBound.getSExtValue(),
+                                 rightBound.getSExtValue());
+          int64_t high = std::max(leftBound.getSExtValue(),
+                                  rightBound.getSExtValue());
+          std::optional<int64_t> address =
+              signedIndex ? (constantIndex.getSignificantBits() <= 64
+                                 ? std::optional(constantIndex.getSExtValue())
+                                 : std::nullopt)
+                          : (constantIndex.getActiveBits() <= 63
+                                 ? std::optional(static_cast<int64_t>(
+                                       constantIndex.getZExtValue()))
+                                 : std::nullopt);
+          requireSafeRead(
+              guardConstant(address && *address >= low && *address <= high));
+        } else if (left && right) {
+          FailureOr<Value> index =
+              toArrayIndex(values[1].value, signedIndex, location);
           if (failed(index))
             return failure();
           Value known = guardConstant(true);
