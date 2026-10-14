@@ -34,6 +34,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "obelisk/Analysis/KnownVersioningAnalysis.h"
 #include "obelisk/Analysis/StateDomainAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -628,15 +629,14 @@ class VersionKnownRegionsPass final
 public:
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    auto level =
-        module->getAttrOfType<IntegerAttr>("native.optimization_level");
+    auto level = native::get<native::OptimizationLevel>(module);
     if (!level || level.getInt() < 1)
       return markAllAnalysesPreserved();
     // Run on the children, so this module's preserved native pipeline facts
     // are not discarded by the nested function pipeline.
     // Versioning needs the design's facts to predict which inputs are known
     // in steady state, so only functions inside a design are considered.
-    bool diagnostics = module->hasAttr("debug.native_timing");
+    bool diagnostics = native::has<native::DebugTiming>(module);
     // Packed lowering proves the copies two-state only where it runs the
     // whole-design solve: within the function limit, or where a guarded
     // variant needs the solve anyway. Versioning keeps to the same designs.

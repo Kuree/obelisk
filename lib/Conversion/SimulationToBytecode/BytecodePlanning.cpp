@@ -9,9 +9,9 @@
 #include "obelisk/Analysis/SimulationEffectAnalysis.h"
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Runtime/Runtime.h"
-
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -136,7 +136,7 @@ void pruneNativeFunctions(sim::SimDesignOp design,
   while (!worklist.empty())
     for (Operation *callee : dependencies[worklist.pop_back_val()])
       retain(callee);
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk bytecode retention: " << retained.size() << "/"
                  << functions.size() << " functions\n";
   llvm::erase_if(functions, [&](sim::SimFuncOp function) {

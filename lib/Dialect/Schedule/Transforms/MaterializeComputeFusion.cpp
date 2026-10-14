@@ -13,6 +13,7 @@
 #include "obelisk/Analysis/SSAValueAnalysis.h"
 #include "obelisk/Analysis/SourceMemoryAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -1751,8 +1752,8 @@ public:
     uint64_t before = counters.before, after = counters.after;
     inputSlots += before;
     remainingSlots += after;
-    if (getOperation()->getParentOfType<ModuleOp>()->hasAttr(
-            "debug.native_timing"))
+    if (native::has<native::DebugTiming>(
+            getOperation()->getParentOfType<ModuleOp>()))
       llvm::errs() << "obelisk eval storage promotion: slots-before=" << before
                    << " slots-after=" << after << '\n';
     if (before)
@@ -4583,8 +4584,7 @@ void ObeliskSimMaterializeComputeFusionPass::runOnOperation() {
   }
   // A planned cohort that fails to materialize is Tier-1 work lost after
   // planning already accepted it, and the reason was previously discarded.
-  if (design->getParentOfType<ModuleOp>()->hasAttr(
-          "debug.native_timing")) {
+  if (native::has<native::DebugTiming>(design->getParentOfType<ModuleOp>())) {
     SmallVector<StringRef> ordered;
     for (const auto &entry : fusionRejections)
       ordered.push_back(entry.first());

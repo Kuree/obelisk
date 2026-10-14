@@ -3,7 +3,7 @@
 // RUN:   -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
 // RUN: FileCheck %s --check-prefix=OUTLINE < %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S | FileCheck %s --check-prefix=LLVM
+// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S | FileCheck %s --check-prefix=LLVM
 
 // A checkpoint-capable owner stays in the generated Tier-1/Tier-2 closure on
 // its known path.  The unsupported display leaf is fractured into a cold

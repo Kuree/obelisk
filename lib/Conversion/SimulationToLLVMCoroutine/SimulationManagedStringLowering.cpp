@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -36,7 +37,7 @@ public:
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Value data = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!bytes.empty()) {
-      auto name = op->getAttrOfType<StringAttr>(nativeStringGlobalAttr);
+      auto name = native::get<native::StringGlobal>(op);
       if (!name)
         return op.emitOpError("has no prepared native string global"),
                failure();
@@ -472,7 +473,7 @@ public:
     StringRef prefix = op.getPrefix();
     Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!prefix.empty()) {
-      auto name = op->getAttrOfType<StringAttr>(nativeScanPrefixGlobalAttr);
+      auto name = native::get<native::ScanPrefixGlobal>(op);
       if (!name)
         return op.emitOpError("has no prepared native scan-prefix global"),
                failure();
@@ -529,8 +530,8 @@ public:
     StringRef prefix = op.getPrefix();
     Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!prefix.empty()) {
-      auto name = op->template getAttrOfType<StringAttr>(
-          IsFile ? nativeFileScanPrefixGlobalAttr : nativeScanPrefixGlobalAttr);
+      StringAttr name = IsFile ? native::get<native::FileScanPrefixGlobal>(op)
+                               : native::get<native::ScanPrefixGlobal>(op);
       if (!name)
         return op.emitOpError("has no prepared native raw-scan prefix global"),
                failure();
@@ -647,7 +648,7 @@ public:
     StringRef prefix = op.getPrefix();
     Value prefixData = LLVM::ZeroOp::create(rewriter, op.getLoc(), pointer);
     if (!prefix.empty()) {
-      auto name = op->getAttrOfType<StringAttr>(nativeFileScanPrefixGlobalAttr);
+      auto name = native::get<native::FileScanPrefixGlobal>(op);
       if (!name)
         return op.emitOpError("has no prepared native file-scan-prefix global"),
                failure();

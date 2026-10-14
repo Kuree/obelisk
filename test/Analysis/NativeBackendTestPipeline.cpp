@@ -77,7 +77,7 @@ void buildNativeBackendTestPipeline(
   if (options.closedExecutable)
     backendAttributes += ", native.closed_executable";
   if (options.timing)
-    backendAttributes += ", debug.native_timing";
+    backendAttributes += ", native.debug_timing";
   // By default lowering keeps one actor per process (no fusion or clocked
   // kernels) under the generic scheduler; the backend then clones evaluators
   // itself, so the input stays independent of the simulation optimization

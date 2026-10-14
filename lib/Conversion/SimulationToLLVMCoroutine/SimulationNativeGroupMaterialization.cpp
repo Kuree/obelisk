@@ -4,6 +4,7 @@
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -1482,7 +1483,7 @@ LogicalResult materializeNativeEvalValueCalls(
       ++valueCalls;
     }
   }
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk eval value interfaces: cores=" << interfaces.size()
                  << " calls=" << valueCalls << '\n';
   return success();
@@ -1497,7 +1498,7 @@ struct NativeGroupPromotionInputs {
         metadataOnly.insert(function.getSymName());
     callFootprints = buildNativeStateFootprints(cast<ModuleOp>(operation),
                                                 globalTypes, metadataOnly);
-    debugTiming = operation->hasAttr("debug.native_timing");
+    debugTiming = native::has<native::DebugTiming>(operation);
   }
   llvm::StringMap<Type> globalTypes;
   llvm::StringSet<> metadataOnly;
@@ -1835,7 +1836,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
   DenseMap<Operation *, InlinedGroupBody> preInlined;
   for (auto [i, function] : llvm::enumerate(independent))
     preInlined.try_emplace(function, inlinedBodies[i]);
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk native group inlining: independent="
                  << independent.size()
                  << " ordered=" << groups.size() - independent.size() << '\n';
@@ -1904,7 +1905,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
               identities.insert(owner).second;
       bool accepted = identitiesValid && materializeNativeGroupDataflow(
                                              function, symbols, operationLimit);
-      if (module->hasAttr("debug.native_timing"))
+      if (native::has<native::DebugTiming>(module))
         llvm::errs() << "obelisk group dataflow: " << function.getSymName()
                      << " accepted=" << accepted << '\n';
       if (!accepted) {
@@ -2139,7 +2140,7 @@ materializeNativeEvalGroupBodies(ModuleOp module, AnalysisManager manager) {
     LLVM::ReturnOp::create(builder, parent.getLoc(), ValueRange{});
     ::obelisk::schedule::set<::obelisk::schedule::Field::EvalGroupChildren>(
         parent, builder.getArrayAttr(references));
-    if (module->hasAttr("debug.native_timing"))
+    if (native::has<native::DebugTiming>(module))
       llvm::errs() << "obelisk group hierarchy: " << parent.getSymName()
                    << " children=" << refinement.children.size() << '\n';
   }

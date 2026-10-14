@@ -11,6 +11,7 @@
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -129,10 +130,8 @@ LogicalResult NativePipelineAnalysis::planActors() {
   // lookup exposes a constant stable handle to direct-state lowering.  The
   // AOT analysis also records dynamic/duplicate actors, so the same proof is
   // safe for the generic scheduler.
-  constexpr StringLiteral runtimePublicationCertificate =
-      "native.runtime_publication_certified";
   module.walk([&](sim::SimFuncOp function) {
-    function->removeAttr(runtimePublicationCertificate);
+    native::remove<native::RuntimePublicationCertified>(function);
   });
   aotEligibility = analysis::NativeAOTAnalysis::compute(module);
   for (const auto &entry : analyses) {
@@ -146,7 +145,7 @@ LogicalResult NativePipelineAnalysis::planActors() {
     // is cleared above and recreated only after the exact commit audit.
     if (analysis::isNegativeTimingDelayCommit(function) ||
         aotEligibility.getRuntimeObservedWriterActors().contains(function))
-      function->setAttr(runtimePublicationCertificate, UnitAttr::get(context));
+      native::mark<native::RuntimePublicationCertified>(function);
   }
   if (module->hasAttr("bytecode.image")) {
     auto missingBytecode = [](Operation *function) {
@@ -1705,7 +1704,7 @@ LogicalResult NativePipelineAnalysis::resolveEval() {
       // continuation before a foreign cut (LRM 38.15/38.34, 4.9.4). The
       // writable service and Tier-2/3 routing are absent from off/read code.
       if (hasLanguageObserver || hasLanguageOverride ||
-          !module->hasAttr(sim::metadata::nativeClosedExecutable))
+          !native::has<native::ClosedExecutable>(module))
         resolvedEval->transaction.roots.clear();
     }
   }
@@ -1841,7 +1840,7 @@ class PlanNativeActorsPass final
     using Analysis = detail::NativePipelineAnalysis;
     auto cached = getCachedAnalysis<Analysis>();
     if (!cached) {
-      if (!getOperation()->hasAttr(sim::metadata::nativeFrameCheckpoint)) {
+      if (!native::has<native::FrameCheckpoint>(getOperation())) {
         getOperation().emitError(
             "schedule-plan-native-actors requires the "
             "native preparation pipeline analysis or frame checkpoint");
@@ -1860,9 +1859,9 @@ class PlanNativeActorsPass final
     if (failed(state.planActors()))
       return signalPassFailure();
     // The replay certificate describes the pre-specialization boundary.
-    getOperation()->removeAttr(sim::metadata::nativeFrameCheckpoint);
+    native::remove<native::FrameCheckpoint>(getOperation());
     for (const auto &[function, frame] : state.analyses)
-      function->removeAttr(sim::metadata::nativeFrameInputs);
+      native::remove<native::FrameInputs>(function);
     state.stage = Analysis::Stage::Actors;
     markAnalysesPreserved<Analysis>();
   }

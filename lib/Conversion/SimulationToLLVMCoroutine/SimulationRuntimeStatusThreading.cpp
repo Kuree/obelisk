@@ -1,6 +1,7 @@
 //===- SimulationRuntimeStatusThreading.cpp - Thread runtime statuses ---===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
@@ -128,7 +129,7 @@ static LogicalResult threadFunctionRuntimeStatuses(sim::SimFuncOp function) {
     cf::CondBranchOp::create(localRewriter, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
-    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
+    bool pushFailure = native::has<native::ManagedRootRangePushCheck>(check);
     localRewriter.eraseOp(check);
 
     localRewriter.setInsertionPointToStart(failure);

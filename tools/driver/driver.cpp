@@ -22,6 +22,7 @@
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
@@ -1315,10 +1316,11 @@ static int executeCompilation(
   }
 
   DialectRegistry registry;
-  registry.insert<
-      obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-      obelisk::dpi::DPIDialect, obelisk::runtime::ObeliskRuntimeDialect,
-      obelisk::sim::ObeliskSimulationDialect, mlir::LLVM::LLVMDialect>();
+  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+                  obelisk::dpi::DPIDialect, obelisk::native::NativeDialect,
+                  obelisk::runtime::ObeliskRuntimeDialect,
+                  obelisk::sim::ObeliskSimulationDialect,
+                  mlir::LLVM::LLVMDialect>();
   // One explicitly sized pool is shared by all MLIR parallel pass adaptors.
   // Its lifetime encloses the context as required by MLIRContext.
   std::unique_ptr<llvm::DefaultThreadPool> compilerPool;
@@ -1447,7 +1449,7 @@ static int executeCompilation(
       // marker. Body fusion is the one Tier-1 path that does not depend on
       // whole-design admission, so its planning decisions must be reportable
       // under the existing diagnostic flag rather than only its pass timing.
-      (*module)->setAttr("debug.native_timing", UnitAttr::get(&context));
+      obelisk::native::mark<obelisk::native::DebugTiming>(*module);
     }
     passManager.addPass(obelisk::createConvertSlangToObeliskPass());
     if (emitSim || emitSchedule || native)

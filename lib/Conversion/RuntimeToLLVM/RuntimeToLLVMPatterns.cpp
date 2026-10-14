@@ -1,6 +1,7 @@
 //===- RuntimeToLLVMPatterns.cpp - Typed runtime rewrite patterns --------===//
 
 #include "RuntimeToLLVMPatterns.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -299,7 +300,7 @@ materializeGlobalBytes(Operation *anchor, StringRef bytes,
   auto name = dyn_cast<StringAttr>(names[preparedIndex]);
   if (!name || name.getValue().empty())
     return anchor->emitOpError("prepared runtime byte global name is invalid");
-  if (module->hasAttr(sim::metadata::nativeClosedExecutable)) {
+  if (native::has<native::ClosedExecutable>(module)) {
     Value address = schedule::NativeByteAddressOp::create(
         rewriter, location, abi.pointer, name, rewriter.getStringAttr(bytes),
         rewriter.getI64IntegerAttr(abi.alignments.i8));

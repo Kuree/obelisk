@@ -2,6 +2,7 @@
 
 #include "../SimulationToLLVMCoroutine/SimulationNBALowering.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "obelisk/Analysis/GraphAlgorithms.h"
@@ -388,7 +389,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   // to batch it alongside other source sites. Require one semantic site in
   // the entire design as well as the per-window execution bound below.
   auto guardedPrivate =
-      module->hasAttr(sim::metadata::nativeClosedExecutable)
+      native::has<native::ClosedExecutable>(module)
           ? schedule::get<schedule::Field::NbaGuardedPrivateInfluence>(design)
           : DenseI64ArrayAttr{};
   if (guardedPrivate) {
@@ -422,7 +423,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
     plan.privateInfluenceRoots[index] =
         plan.privateInfluenceRoots[index] || plan.guardedMergeRoots[index];
     plan.unreadRoots[index] =
-        module->hasAttr(sim::metadata::nativeClosedExecutable) &&
+        native::has<native::ClosedExecutable>(module) &&
         plan.privateInfluenceRoots[index] &&
         readerProof.isNeverRead({schedule::ComputeResourceKind::Storage,
                                  commitStorage.lookup(root.commit_node)});
@@ -475,7 +476,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   for (uint32_t root = 0; root != plan.roots.size(); ++root)
     plan.mergeSafeRoots[root] = plan.mergeSafeRoots[root] || unobservable[root];
 
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     for (uint32_t root = 0; root != plan.roots.size(); ++root)
       if (!plan.mergeSafeRoots[root])
         llvm::errs() << "obelisk NBA root keeps ordered commits: root=" << root
@@ -586,7 +587,7 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   unsigned explainedIncompleteWriters = 0;
   auto incompleteWriter = [&](sim::SimFuncOp function, StringRef reason) {
     completeWriters = false;
-    if (module->hasAttr("debug.native_timing") &&
+    if (native::has<native::DebugTiming>(module) &&
         explainedIncompleteWriters++ < 3)
       llvm::errs() << "obelisk NBA writer proof: " << function.getSymName()
                    << " reason=" << reason << '\n';
@@ -651,20 +652,18 @@ FailureOr<NativeStaticNBAPlan> buildNativeStaticNBAPlan(
   plan.completeSourceWriters = completeWriters;
   for (auto [index, root] : llvm::enumerate(plan.roots)) {
     plan.unchangedSafeRoots[index] =
-        completeWriters &&
-        module->hasAttr(sim::metadata::nativeClosedExecutable) &&
+        completeWriters && native::has<native::ClosedExecutable>(module) &&
         plan.privateInfluenceRoots[index] && seen[index] &&
         immediateOnly[index] && !immediateWriters.contains(root.static_state);
   }
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk native unchanged NBA roots: "
                  << llvm::count(plan.unchangedSafeRoots, true) << "/"
                  << plan.roots.size() << " complete-writers=" << completeWriters
                  << " immediate-only=" << llvm::count(immediateOnly, true)
                  << " immediate-writers=" << immediateWriters.size()
                  << " closed-executable="
-                 << module->hasAttr(sim::metadata::nativeClosedExecutable)
-                 << '\n';
+                 << native::has<native::ClosedExecutable>(module) << '\n';
   return plan;
 }
 

@@ -3,6 +3,7 @@
 #include "SimulationPackedLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -157,8 +158,7 @@ struct NativeFunctionFinalizationInputs {
       return;
     }
     dataLayout = std::move(*parsed);
-    auto optimization =
-        module->getAttrOfType<IntegerAttr>("native.optimization_level");
+    auto optimization = native::get<native::OptimizationLevel>(module);
     if (optimization && optimization.getInt() >= 2) {
       auto limit = schedule::get<schedule::Field::MaxInlineOps>(module);
       inlineOperationLimit = limit ? limit.getUInt() : UINT64_C(5000);
@@ -294,7 +294,7 @@ struct NativeFunctionFinalizationPass
     changed |= shareScopedTemporaries(function);
     SmallVector<LLVM::CallOp> provenOffsets;
     function.walk([&](LLVM::CallOp call) {
-      if (call->hasAttr(nativeInBoundsHandleOffsetAttr) && call.getCallee() &&
+      if (native::has<native::InBoundsHandleOffset>(call) && call.getCallee() &&
           *call.getCallee() == "obelisk_rt_v1_native_handle_offset" &&
           call.getArgOperands().size() == 2)
         provenOffsets.push_back(call);

@@ -2,7 +2,7 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines --mlir-disable-threading -o %t.serial
 // RUN: diff %t.mlir %t.serial
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
+// RUN: obelisk-translate --mlir-to-llvmir %t.mlir | opt -passes=verify -disable-output
 
 // IEEE 1800-2023 9.4.2: the executed event control selects its wait and edge.
 module attributes {

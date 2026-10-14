@@ -3,6 +3,7 @@
 #ifndef OBELISK_ANALYSIS_SIMULATIONPROCESSFRAMEANALYSIS_H
 #define OBELISK_ANALYSIS_SIMULATIONPROCESSFRAMEANALYSIS_H
 
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationTypes.h"
 
 #include "mlir/Support/LLVM.h"
@@ -90,7 +91,7 @@ public:
   /// Compact immutable inputs and canonical ABI digest for replay at the
   /// frame-planning boundary. Recomputing a frame must reproduce this entire
   /// certificate, including capture types and exact continuation identities.
-  mlir::DictionaryAttr getReplayInputs(sim::SimFuncOp function) const;
+  native::FrameInputsAttr getReplayInputs(sim::SimFuncOp function) const;
 
   uint64_t getFrameSize() const { return frameSize; }
   uint64_t getFrameAlignment() const { return frameAlignment; }

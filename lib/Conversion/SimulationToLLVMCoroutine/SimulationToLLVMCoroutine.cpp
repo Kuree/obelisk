@@ -2,6 +2,7 @@
 
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "../SimulationToSchedule/NativePipeline.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
@@ -978,7 +979,7 @@ FailureOr<SmallVector<NativeDirectFragment>> materializeDirectFragments(
                   pending.actorSlot, pending.continuation, *pending.analysis)))
       return failure();
     if (pending.twoStateBody) {
-      bool deferBody = module->hasAttr(sim::metadata::nativeClosedExecutable);
+      bool deferBody = native::has<native::ClosedExecutable>(module);
       auto wrapper = makeDirectFragmentWrapper(
           module, pending.twoStateBody, pending.actor, pending.twoStateWrapper,
           pending.actorSlot, pending.continuation, *pending.analysis,
@@ -1186,7 +1187,7 @@ void NativePipelineAnalysis::markTiming(StringRef name) {
   lastTiming = now;
 }
 LogicalResult NativePipelineAnalysis::initialize() {
-  detailedTiming = module->hasAttr("debug.native_timing");
+  detailedTiming = native::has<native::DebugTiming>(module);
   lastTiming = std::chrono::steady_clock::now();
   if (failed(verifyFunctionalCoverageSchemaBeforeBackend(module)))
     return failure();
@@ -1236,27 +1237,23 @@ LogicalResult NativePipelineAnalysis::initialize() {
   // used because the design symbols themselves do not survive conversion.
   SmallVector<std::pair<std::string, ArrayAttr>> partitionManifests;
   module.walk([&](sim::SimDesignOp design) {
-    if (ArrayAttr manifest = design->getAttrOfType<ArrayAttr>(
-            sim::metadata::nativePartitionManifest))
+    if (ArrayAttr manifest = native::get<native::PartitionManifest>(design))
       partitionManifests.emplace_back(design.getSymName().str(), manifest);
   });
   llvm::sort(partitionManifests, [](const auto &lhs, const auto &rhs) {
     return lhs.first < rhs.first;
   });
   if (partitionManifests.empty()) {
-    module->removeAttr(sim::metadata::nativePartitionManifests);
+    native::remove<native::PartitionManifests>(module);
   } else {
     Builder manifestBuilder(context);
     SmallVector<Attribute> preserved;
     preserved.reserve(partitionManifests.size());
     for (const auto &[design, partitions] : partitionManifests)
-      preserved.push_back(manifestBuilder.getDictionaryAttr({
-          manifestBuilder.getNamedAttr("design",
-                                       manifestBuilder.getStringAttr(design)),
-          manifestBuilder.getNamedAttr("partitions", partitions),
-      }));
-    module->setAttr(sim::metadata::nativePartitionManifests,
-                    manifestBuilder.getArrayAttr(preserved));
+      preserved.push_back(native::DesignPartitionsAttr::get(
+          context, manifestBuilder.getStringAttr(design), partitions));
+    native::set<native::PartitionManifests>(
+        module, manifestBuilder.getArrayAttr(preserved));
   }
   if (failed(prepareManagedLowering(module, dataLayout)))
     return failure();
@@ -1423,8 +1420,8 @@ LogicalResult NativePipelineAnalysis::collectFrames() {
   SmallVector<Attribute> inventory;
   for (const auto &[operation, frame] : analyses) {
     auto function = cast<sim::SimFuncOp>(operation);
-    function->setAttr(sim::metadata::nativeFrameInputs,
-                      frame->getReplayInputs(function));
+    native::set<native::FrameInputs>(function,
+                                     frame->getReplayInputs(function));
     if (auto design = function->getParentOfType<sim::SimDesignOp>())
       inventory.push_back(SymbolRefAttr::get(
           design.getSymNameAttr(), {FlatSymbolRefAttr::get(function)}));
@@ -1432,13 +1429,10 @@ LogicalResult NativePipelineAnalysis::collectFrames() {
       inventory.push_back(FlatSymbolRefAttr::get(function));
   }
   if (!bytecodeOnly) {
-    Builder builder(context);
-    module->setAttr(
-        sim::metadata::nativeFrameCheckpoint,
-        builder.getDictionaryAttr({
-            builder.getNamedAttr("layout", module->getAttr("llvm.data_layout")),
-            builder.getNamedAttr("functions", builder.getArrayAttr(inventory)),
-        }));
+    native::set<native::FrameCheckpoint>(
+        module, native::FrameCheckpointAttr::get(
+                    context, module->getAttr("llvm.data_layout"),
+                    ArrayAttr::get(context, inventory)));
   }
   markTiming("frame analysis and state threading");
   if (detailedTiming)
@@ -1451,27 +1445,24 @@ LogicalResult NativePipelineAnalysis::collectFrames() {
 }
 
 LogicalResult NativePipelineAnalysis::restoreFrames() {
-  auto checkpoint = module->getAttrOfType<DictionaryAttr>(
-      sim::metadata::nativeFrameCheckpoint);
-  auto inventory =
-      checkpoint ? checkpoint.getAs<ArrayAttr>("functions") : ArrayAttr{};
-  if (!inventory ||
-      checkpoint.get("layout") != module->getAttr("llvm.data_layout"))
+  native::FrameCheckpointAttr checkpoint =
+      native::get<native::FrameCheckpoint>(module);
+  if (!checkpoint ||
+      checkpoint.getLayout() != module->getAttr("llvm.data_layout"))
     return module.emitError(
         "native frame replay requires a matching target checkpoint");
   if (failed(initialize()) || bytecodeOnly || failed(planState()))
     return failure();
   SymbolTableCollection symbols;
   DenseSet<Operation *> restored;
-  for (Attribute attribute : inventory) {
+  for (Attribute attribute : checkpoint.getFunctions()) {
     auto name = dyn_cast<SymbolRefAttr>(attribute);
     auto function = name ? symbols.lookupSymbolIn<sim::SimFuncOp>(module, name)
                          : sim::SimFuncOp{};
     if (!function || !restored.insert(function).second)
       return module.emitError(
           "native frame replay has an invalid function identity");
-    auto inputs = function->getAttrOfType<DictionaryAttr>(
-        sim::metadata::nativeFrameInputs);
+    native::FrameInputsAttr inputs = native::get<native::FrameInputs>(function);
     auto frame = SimulationProcessFrameAnalysis::create(function, dataLayout);
     if (!inputs || failed(frame) ||
         (*frame)->getReplayInputs(function) != inputs)
@@ -1517,9 +1508,9 @@ LogicalResult NativePipelineAnalysis::prepareRoots(
   detail::UnmanagedNativeCache unmanaged;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
-        function->removeAttr("native.unmanaged");
+        native::remove<native::Unmanaged>(function);
         if (detail::isUnmanagedNativeProcess(function, unmanaged))
-          function->setAttr("native.unmanaged", UnitAttr::get(context));
+          native::mark<native::Unmanaged>(function);
       });
   // Root records are native implementation details, not canonical process
   // state. Insert them only after suspension-live semantic values have been
@@ -1629,10 +1620,8 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
   // old/new snapshots and transition CFG. An active actor cannot wake its
   // own suppressed wait, and its borrowed evaluator has that same owner.
   // Any external owner, runtime observer or toggle probe retains publication.
-  constexpr StringLiteral noTransitionRoots =
-      "native.no_transition_roots";
   module.walk([&](sim::SimFuncOp function) {
-    function->removeAttr(noTransitionRoots);
+    native::remove<native::NoTransitionRoots>(function);
   });
   if (stateLayout->transitionHandlesExact && staticFanoutPlan.exact) {
     DenseSet<uint32_t> observedRoots = staticFanoutPlan.runtimeTransitionStates;
@@ -1679,7 +1668,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
       if (roots.empty())
         continue;
       auto attribute = DenseI32ArrayAttr::get(context, roots);
-      actor->setAttr(noTransitionRoots, attribute);
+      native::set<native::NoTransitionRoots>(actor, attribute);
       bodyRoots.try_emplace(body.getValue(), attribute);
     }
     module.walk([&](sim::SimFuncOp function) {
@@ -1691,7 +1680,7 @@ LogicalResult NativePipelineAnalysis::prepareFragments(
         name = source.getValue();
       auto found = bodyRoots.find(name);
       if (found != bodyRoots.end())
-        function->setAttr(noTransitionRoots, found->second);
+        native::set<native::NoTransitionRoots>(function, found->second);
     });
   }
 
@@ -1820,8 +1809,7 @@ LogicalResult NativePipelineAnalysis::materialize() {
     return success();
   if (!analyses.empty())
     declareProcessSpawnRuntimeABI(module);
-  bool deferSpawnBodies =
-      module->hasAttr(sim::metadata::nativeClosedExecutable);
+  bool deferSpawnBodies = native::has<native::ClosedExecutable>(module);
   SmallVector<std::pair<LLVM::LLVMFuncOp, SimulationProcessFrameAnalysis *>>
       spawnHelpers;
   SymbolTable helperSymbols(module);
@@ -3408,7 +3396,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
   });
   llvm::DenseMap<StringAttr, size_t> referenceCounts;
   llvm::DenseSet<StringAttr> referencesFromWrappers;
-  bool canReuse = module->hasAttr(sim::metadata::nativeClosedExecutable);
+  bool canReuse = native::has<native::ClosedExecutable>(module);
   if (canReuse) {
     // Symbol-use enumeration stops at nested symbol tables. The executable
     // pipeline has flattened designs; retain cloning for any other layout.
@@ -3466,7 +3454,7 @@ LogicalResult materializeEvalFunctionRoutes(ModuleOp module) {
     for (LLVM::CallOp call : calls)
       call.setCallee(clone.getSymName());
   }
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk trusted executor wrappers: reused=" << reused
                  << " cloned=" << trustedWrapperCalls.size() - reused << '\n';
 
@@ -3961,7 +3949,7 @@ public:
       module.emitError("native LLVM finalization requires a target layout");
       return signalPassFailure();
     }
-    bool detailedTiming = module->hasAttr("debug.native_timing");
+    bool detailedTiming = native::has<native::DebugTiming>(module);
     auto lastTiming = std::chrono::steady_clock::now();
     auto markTiming = [&](StringRef name) {
       if (!detailedTiming)
@@ -4087,8 +4075,7 @@ public:
     // export. Scheduling, continuation frames and size-based inlining policy
     // must be finalized first: moving constants across a suspension earlier
     // would introduce live values missing from the canonical frame plan.
-    if (auto optimization = module->getAttrOfType<IntegerAttr>(
-            "native.optimization_level");
+    if (auto optimization = native::get<native::OptimizationLevel>(module);
         optimization && optimization.getInt() > 0) {
       functions.addPass(createCanonicalizerPass());
       functions.addPass(createCSEPass());
@@ -4104,11 +4091,11 @@ public:
     if (*partitionInventory && failed(detail::publishNativePartitionManifest(
                                    module, **partitionInventory)))
       return signalPassFailure();
-    module->removeAttr("native.optimization_level");
+    native::remove<native::OptimizationLevel>(module);
     ::obelisk::schedule::remove<::obelisk::schedule::Field::MaxInlineOps>(
         module);
-    module->removeAttr("native.max_state_domain_functions");
-    module->removeAttr("debug.native_timing");
+    native::remove<native::MaxStateDomainFunctions>(module);
+    native::remove<native::DebugTiming>(module);
     markTiming("native function finalization");
     if (failed(verify(module)))
       signalPassFailure();

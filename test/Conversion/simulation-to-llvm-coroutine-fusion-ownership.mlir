@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
 // RUN:   -o %t.mlir
 // RUN: FileCheck %s < %t.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.mlir -o /dev/null
+// RUN: obelisk-translate --mlir-to-llvmir %t.mlir -o /dev/null
 
 // A generated Tier-1 body may contain a source continuation whose exact
 // Tier-2 body survived fusion. This fixture is frozen after planning so the

@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -94,14 +95,14 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
   SmallVector<sim::SimFuncOp> functions;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       design, [&](sim::SimFuncOp function) {
-        function->removeAttr(sim::metadata::nativePartition);
+        native::remove<native::Partition>(function);
         if (!function.isExternal())
           functions.push_back(function);
       });
   llvm::sort(functions, [](sim::SimFuncOp lhs, sim::SimFuncOp rhs) {
     return lhs.getSymName() < rhs.getSymName();
   });
-  design->removeAttr(sim::metadata::nativePartitionManifest);
+  native::remove<native::PartitionManifest>(design);
   if (functions.empty())
     return success();
 
@@ -234,8 +235,8 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
     record.partition =
         partitionByOwnerRoot[owners.find(ownerIndices[record.owners.front()])];
     partitions[record.partition].members.push_back(index);
-    record.function->setAttr(
-        sim::metadata::nativePartition,
+    native::set<native::Partition>(
+        record.function,
         builder.getStringAttr(partitions[record.partition].id));
   }
 
@@ -291,18 +292,15 @@ static LogicalResult planNativePartitions(sim::SimDesignOp design) {
     SmallVector<Attribute> ownerAttrs;
     for (StringRef owner : partition.owners)
       ownerAttrs.push_back(builder.getStringAttr(owner));
-    manifest.push_back(builder.getDictionaryAttr({
-        builder.getNamedAttr("id", builder.getStringAttr(partition.id)),
-        builder.getNamedAttr("owners", builder.getArrayAttr(ownerAttrs)),
-        builder.getNamedAttr("members", builder.getArrayAttr(members)),
-        builder.getNamedAttr("imports", sortedStrings(partition.imports, true)),
-        builder.getNamedAttr("exports", sortedStrings(partition.exports, true)),
-        builder.getNamedAttr("dependencies",
-                             sortedStrings(partition.dependencies, false)),
-    }));
+    manifest.push_back(native::PartitionAttr::get(
+        context, builder.getStringAttr(partition.id),
+        builder.getArrayAttr(ownerAttrs), builder.getArrayAttr(members),
+        sortedStrings(partition.imports, true),
+        sortedStrings(partition.exports, true),
+        sortedStrings(partition.dependencies, false)));
   }
-  design->setAttr(sim::metadata::nativePartitionManifest,
-                  builder.getArrayAttr(manifest));
+  native::set<native::PartitionManifest>(design,
+                                         builder.getArrayAttr(manifest));
   return success();
 }
 
@@ -422,7 +420,7 @@ static FailureOr<std::shared_ptr<NativePhysicalPartitions>>
 collectNativePartitionInventory(ModuleOp module) {
   // The physical inventory is meaningful only when the target requested the
   // semantic plan. Avoid annotating the ordinary unsplit/wasm pipeline.
-  if (!module->hasAttr(sim::metadata::nativePartitionManifests)) {
+  if (!native::has<native::PartitionManifests>(module)) {
     return std::shared_ptr<NativePhysicalPartitions>{};
   }
 
@@ -444,8 +442,7 @@ collectNativePartitionInventory(ModuleOp module) {
 
   llvm::StringSet<> validPartitions;
   validPartitions.insert("primary");
-  auto semanticManifests =
-      module->getAttrOfType<ArrayAttr>(sim::metadata::nativePartitionManifests);
+  auto semanticManifests = native::get<native::PartitionManifests>(module);
   // Physical symbols share one module namespace. Until partition IDs are
   // qualified by design, duplicate local class/code-unit IDs across designs
   // must retain the unsplit correctness path.
@@ -453,21 +450,18 @@ collectNativePartitionInventory(ModuleOp module) {
     return std::shared_ptr<NativePhysicalPartitions>{};
   }
   for (Attribute designAttr : semanticManifests) {
-    auto design = dyn_cast<DictionaryAttr>(designAttr);
-    auto partitions =
-        design ? design.getAs<ArrayAttr>("partitions") : ArrayAttr{};
-    if (!partitions) {
+    auto design = dyn_cast<native::DesignPartitionsAttr>(designAttr);
+    if (!design) {
       module.emitError("has a malformed semantic partition manifest");
       return failure();
     }
-    for (Attribute partitionAttr : partitions) {
-      auto partition = dyn_cast<DictionaryAttr>(partitionAttr);
-      auto id = partition ? partition.getAs<StringAttr>("id") : StringAttr{};
-      if (!id) {
+    for (Attribute partitionAttr : design.getPartitions()) {
+      auto partition = dyn_cast<native::PartitionAttr>(partitionAttr);
+      if (!partition) {
         module.emitError("has a malformed semantic partition ID");
         return failure();
       }
-      validPartitions.insert(id.getValue());
+      validPartitions.insert(partition.getId().getValue());
     }
   }
 
@@ -486,8 +480,7 @@ collectNativePartitionInventory(ModuleOp module) {
     if (!definition)
       continue;
     std::string name = SymbolTable::getSymbolName(&operation).getValue().str();
-    auto partition =
-        operation.getAttrOfType<StringAttr>(sim::metadata::nativePartition);
+    StringAttr partition = native::get<native::Partition>(&operation);
     if (!partition) {
       partition = builder.getStringAttr("primary");
     }
@@ -564,14 +557,14 @@ prepareNativePartitionManifest(ModuleOp module, AnalysisManager manager) {
   if (!inputs.valid)
     return failure();
   if (!inputs.inventory) {
-    module->removeAttr(sim::metadata::nativePhysicalPartitionManifest);
+    native::remove<native::PhysicalPartitionManifest>(module);
     return std::shared_ptr<NativePhysicalPartitions>{};
   }
   Builder builder(module.getContext());
   for (const auto &symbol : inputs.inventory->symbols)
-    if (!symbol.operation->hasAttr(sim::metadata::nativePartition))
-      symbol.operation->setAttr(sim::metadata::nativePartition,
-                                builder.getStringAttr(symbol.partition));
+    if (!native::has<native::Partition>(symbol.operation))
+      native::set<native::Partition>(symbol.operation,
+                                     builder.getStringAttr(symbol.partition));
   return inputs.inventory;
 }
 
@@ -631,17 +624,15 @@ publishNativePartitionManifest(ModuleOp module,
     for (unsigned member : partition.members)
       members.push_back(
           FlatSymbolRefAttr::get(module.getContext(), symbols[member].name));
-    manifest.push_back(builder.getDictionaryAttr({
-        builder.getNamedAttr("id", builder.getStringAttr(partition.id)),
-        builder.getNamedAttr("members", builder.getArrayAttr(members)),
-        builder.getNamedAttr("imports", sortedStrings(partition.imports, true)),
-        builder.getNamedAttr("exports", sortedStrings(partition.exports, true)),
-        builder.getNamedAttr("dependencies",
-                             sortedStrings(partition.dependencies, false)),
-    }));
+    manifest.push_back(native::PartitionAttr::get(
+        module.getContext(), builder.getStringAttr(partition.id),
+        /*owners=*/ArrayAttr{}, builder.getArrayAttr(members),
+        sortedStrings(partition.imports, true),
+        sortedStrings(partition.exports, true),
+        sortedStrings(partition.dependencies, false)));
   }
-  module->setAttr(sim::metadata::nativePhysicalPartitionManifest,
-                  builder.getArrayAttr(manifest));
+  native::set<native::PhysicalPartitionManifest>(
+      module, builder.getArrayAttr(manifest));
   return success();
 }
 

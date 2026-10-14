@@ -14,6 +14,7 @@
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Analysis/NativeWordAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -1006,7 +1007,7 @@ private:
   void runOnOperation() override {
     uint64_t formed = 0;
     uint64_t predicationCandidates = 0, predicationSkipped = 0;
-    bool diagnostics = getOperation()->hasAttr("debug.native_timing");
+    bool diagnostics = native::has<native::DebugTiming>(getOperation());
     WalkResult status = getOperation().walk([&](sim::SimDesignOp design) {
       auto graph = design.getComputeGraphAttr();
       if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off ||

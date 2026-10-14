@@ -1,6 +1,7 @@
 //===- SimulationDriverLowering.cpp - Native driver patterns ------------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -24,16 +25,10 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
-constexpr StringLiteral guardedBulkDriveAttr =
-    "native.guarded_bulk_drive";
-constexpr StringLiteral cleanBulkDriveAttr = "native.clean_bulk_drive";
-
 uint64_t encodeNativeStaticHandle(uint32_t id, int32_t offset = 0) {
   return obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_STATIC, id,
                                          offset);
 }
-
-constexpr StringLiteral nativeDriverLowAttr = "native.driver_low";
 
 // Keep ordinary narrow driver resolution straight-line.  Wide port aliases
 // are the case where expanding the identical one-driver proof once per bit
@@ -408,7 +403,7 @@ public:
   LogicalResult
   matchAndRewrite(DriveOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    bool clean = op->hasAttr(cleanBulkDriveAttr);
+    bool clean = native::has<native::CleanBulkDrive>(op);
     if (clean && !cleanLayout)
       return failure();
     const NativeStateLayout &layout = clean ? *cleanLayout : this->layout;
@@ -425,12 +420,11 @@ public:
       // resolved aliases. A per-driver root guard is insufficient: forcing a
       // net leaves its driver unforced, but release needs the retained driver
       // contribution in canonical storage.
-      if (cleanLayout && !op->hasAttr(guardedBulkDriveAttr) &&
+      if (cleanLayout && !native::has<native::GuardedBulkDrive>(op) &&
           !::obelisk::schedule::has<
               ::obelisk::schedule::Field::DeferNetResolution>(op) &&
           !op->hasAttr("simulation.user_net_raw_drive")) {
-        auto id =
-            op->template getAttrOfType<IntegerAttr>("native.driver_id");
+        auto id = native::get<native::DriverId>(op);
         auto found = id ? cleanIndex->driverByID.find(id.getUInt())
                         : cleanIndex->driverByID.end();
         std::optional<uint64_t> handle =
@@ -466,9 +460,9 @@ public:
                {std::pair{fast, true}, std::pair{slow, false}}) {
             rewriter.setInsertionPointToEnd(block);
             Operation *clone = rewriter.clone(*op);
-            clone->setAttr(guardedBulkDriveAttr, rewriter.getUnitAttr());
+            native::mark<native::GuardedBulkDrive>(clone);
             if (useClean)
-              clone->setAttr(cleanBulkDriveAttr, rewriter.getUnitAttr());
+              native::mark<native::CleanBulkDrive>(clone);
             cf::BranchOp::create(rewriter, op.getLoc(), tail,
                                  clone->getResults());
           }
@@ -594,8 +588,7 @@ public:
 
     if constexpr (!std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
       if (layout.hasPassSwitch) {
-        auto driverID =
-            op->template getAttrOfType<IntegerAttr>("native.driver_id");
+        auto driverID = native::get<native::DriverId>(op);
         const NativeStateLayout::Driver *driver = getDriver(driverID);
         if (!driver)
           return failure();
@@ -630,8 +623,7 @@ public:
     }
 
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>) {
-      auto driverID =
-          op->template getAttrOfType<IntegerAttr>("native.driver_id");
+      auto driverID = native::get<native::DriverId>(op);
       const NativeStateLayout::Driver *driver = getDriver(driverID);
       if (!driver)
         return failure();
@@ -661,13 +653,11 @@ public:
       return success();
     }
     std::optional<uint64_t> affectedNet;
-    if (auto netID =
-            op->template getAttrOfType<IntegerAttr>("native.net_id"))
+    if (auto netID = native::get<native::NetId>(op))
       affectedNet = netID.getInt();
     const NativeStateLayout::Driver *exactDriver = nullptr;
-    if (op->hasAttr("native.exact_driver_range")) {
-      auto driverID =
-          op->template getAttrOfType<IntegerAttr>("native.driver_id");
+    if (native::has<native::ExactDriverRange>(op)) {
+      auto driverID = native::get<native::DriverId>(op);
       if (!driverID)
         return failure();
       const NativeStateLayout::Driver *driver = getDriver(driverID);
@@ -685,12 +675,11 @@ public:
     // conservative whole-net lowering below.
     std::optional<DenseSet<std::pair<uint64_t, uint64_t>>> affectedComponents;
     const NativeStateLayout::Driver *affectedDriver = nullptr;
-    auto driverID =
-        op->template getAttrOfType<IntegerAttr>("native.driver_id");
+    auto driverID = native::get<native::DriverId>(op);
     if (driverID)
       affectedDriver = getDriver(driverID);
     std::optional<uint64_t> updateLow;
-    if (auto low = op->template getAttrOfType<IntegerAttr>(nativeDriverLowAttr);
+    if (auto low = native::get<native::DriverLow>(op);
         low && !low.getValue().isNegative() &&
         low.getValue().getActiveBits() <= 64) {
       updateLow = low.getValue().getZExtValue();
@@ -741,9 +730,8 @@ public:
                   index->driversByNet, index->connectedNets,
                   clean ? 1 : bulkConnectedDriverMinWidth))
         bulkNets.push_back(isolated);
-    if (bulkNets.empty() && op->hasAttr("native.whole_driver")) {
-      auto driverID =
-          op->template getAttrOfType<IntegerAttr>("native.driver_id");
+    if (bulkNets.empty() && native::has<native::WholeDriver>(op)) {
+      auto driverID = native::get<native::DriverId>(op);
       const NativeStateLayout::Driver *driver = getDriver(driverID);
       if (driver) {
         const NativeStateLayout::Net *net = nullptr;
@@ -1215,8 +1203,7 @@ void annotateStaticDriverNets(ModuleOp module,
                               const NativeStateLayout &layout) {
   auto annotate = [&](auto drive) {
     if (drive.getDriver().template getDefiningOp<sim::SimContextDriverOp>())
-      drive->setAttr("native.whole_driver",
-                     UnitAttr::get(module.getContext()));
+      native::mark<native::WholeDriver>(drive);
     std::optional<ExactStaticDriverTarget> exactTarget;
     auto frozenID = schedule::get<schedule::Field::ExactDriverId>(drive);
     auto frozenLow = schedule::get<schedule::Field::ExactDriverLow>(drive);
@@ -1234,8 +1221,8 @@ void annotateStaticDriverNets(ModuleOp module,
                     : getStaticDriverID(drive.getDriver());
     if (!driverID)
       return;
-    drive->setAttr(
-        "native.driver_id",
+    native::set<native::DriverId>(
+        drive,
         IntegerAttr::get(IntegerType::get(module.getContext(), 64), *driverID));
     std::optional<unsigned> valueWidth =
         nativeStateWidth(drive.getValue().getType());
@@ -1246,17 +1233,16 @@ void annotateStaticDriverNets(ModuleOp module,
           exactTarget ? std::optional<uint64_t>(exactTarget->lowBit)
                       : getStaticDriverOffset(drive.getDriver(), *driverID);
       if (low)
-        drive->setAttr(
-            nativeDriverLowAttr,
+        native::set<native::DriverLow>(
+            drive,
             IntegerAttr::get(IntegerType::get(module.getContext(), 64), *low));
-      drive->setAttr("native.net_id",
-                     IntegerAttr::get(IntegerType::get(module.getContext(), 64),
-                                      driver.netId));
+      native::set<native::NetId>(
+          drive, IntegerAttr::get(IntegerType::get(module.getContext(), 64),
+                                  driver.netId));
       if (exactTarget && exactTarget->id == *driverID && valueWidth &&
           *valueWidth == driver.drivenWidth &&
           exactTarget->lowBit == driver.drivenLow)
-        drive->setAttr("native.exact_driver_range",
-                       UnitAttr::get(module.getContext()));
+        native::mark<native::ExactDriverRange>(drive);
       return;
     }
   };

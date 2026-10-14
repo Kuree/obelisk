@@ -1,6 +1,7 @@
 //===- SimulationFunctionBodyLowering.cpp - Native body rewrites ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
@@ -51,11 +52,9 @@ void materializeNativeSpawnBatches(Operation *root) {
                             context,
                             (spawn.getCallee() + ".__obelisk_spawn").str()))
                   : LLVM::LLVMFuncOp{};
-        auto offsets = helper ? helper->getAttrOfType<DenseI64ArrayAttr>(
-                                    "native.spawn_capture_offsets")
+        auto offsets = helper ? native::get<native::SpawnCaptureOffsets>(helper)
                               : DenseI64ArrayAttr{};
-        auto size = helper ? helper->getAttrOfType<IntegerAttr>(
-                                 "native.spawn_capture_size")
+        auto size = helper ? native::get<native::SpawnCaptureSize>(helper)
                            : IntegerAttr{};
         if (!spawn || !spawn->use_empty() || !offsets || !size ||
             spawn->getNumOperands() != offsets.size() + 1 ||

@@ -2,6 +2,7 @@
 
 #include "SimulationProcessFunctionLowering.h"
 #include "SimulationProcessWrapperLowering.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
@@ -166,12 +167,12 @@ preparePlainNativeProcess(sim::SimFuncOp function,
   auto body = func::FuncOp::create(
       builder, location, baseName,
       FunctionType::get(context, inputTypes, TypeRange{builder.getI32Type()}));
-  body->setAttr("native.entry_kind",
-                builder.getI32IntegerAttr(
-                    static_cast<uint32_t>(function.getEntryKind())));
-  body->setAttr("native.scratch_size", builder.getI64IntegerAttr(0));
+  native::set<native::EntryKind>(
+      body, builder.getI32IntegerAttr(
+                static_cast<uint32_t>(function.getEntryKind())));
+  native::set<native::ScratchSize>(body, builder.getI64IntegerAttr(0));
   copyNativePartition(function, body);
-  bool unmanagedNative = function->hasAttr("native.unmanaged");
+  bool unmanagedNative = native::has<native::Unmanaged>(function);
   body.getBody().takeBody(function.getBody());
   function.erase();
   for (Block &block : body.getBody())
@@ -215,7 +216,7 @@ lowerPreparedPlainNativeProcess(PreparedPlainNativeProcess &process) {
     cf::CondBranchOp::create(rewriter, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
-    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
+    bool pushFailure = native::has<native::ManagedRootRangePushCheck>(check);
     rewriter.eraseOp(check);
     rewriter.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(
@@ -320,10 +321,9 @@ prepareOrdinaryFunction(sim::SimFuncOp function) {
                            StringAttr{}, ArrayAttr{}, ArrayAttr{}, UnitAttr{});
   if (privateSymbol)
     replacement.setPrivate();
-  replacement->setAttr("native.entry_kind",
-                       builder.getI32IntegerAttr(entryKind));
-  replacement->setAttr("native.scratch_size",
-                       builder.getI64IntegerAttr(0));
+  native::set<native::EntryKind>(replacement,
+                                 builder.getI32IntegerAttr(entryKind));
+  native::set<native::ScratchSize>(replacement, builder.getI64IntegerAttr(0));
   copyNativePartition(function, replacement);
   if (outlinedPassthrough)
     replacement->setAttr("passthrough", outlinedPassthrough);
@@ -380,11 +380,11 @@ lowerPreparedOrdinaryFunction(PreparedOrdinaryNativeFunction &function) {
       return replacement.emitError(
           "observer entry is missing native descriptor metadata");
     OpBuilder builder(replacement.getContext());
-    replacement->setAttr("native.observer_width",
-                         builder.getI32IntegerAttr(
-                             function.observerWidth.getValue().getZExtValue()));
-    replacement->setAttr(
-        "native.observer_four_state",
+    native::set<native::ObserverWidth>(
+        replacement, builder.getI32IntegerAttr(
+                         function.observerWidth.getValue().getZExtValue()));
+    native::set<native::ObserverFourState>(
+        replacement,
         builder.getBoolAttr(function.observerFourState.getValue()));
   }
   return success();

@@ -5,6 +5,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/Transforms/NativeTransforms.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -119,8 +120,8 @@ unsigned outlineCones(ModuleOp module, uint64_t minimumCost,
         helper->setAttr(
             "passthrough",
             builder.getArrayAttr({builder.getStringAttr("noinline")}));
-        if (auto partition = function->getAttr(sim::metadata::nativePartition))
-          helper->setAttr(sim::metadata::nativePartition, partition);
+        if (StringAttr partition = native::get<native::Partition>(function))
+          native::set<native::Partition>(helper, partition);
         Block *entry = helper.addEntryBlock(builder);
         IRMapping mapping;
         for (auto [input, argument] :
@@ -163,8 +164,8 @@ void cacheFunction(ModuleOp module, LLVM::LLVMFuncOp function,
       ("__obelisk_pure_cache." + function.getSymName()).str(), Attribute{}, 8,
       0, false, /*thread_local_=*/true);
   symbols.insert(global);
-  if (auto partition = function->getAttr(sim::metadata::nativePartition))
-    global->setAttr(sim::metadata::nativePartition, partition);
+  if (StringAttr partition = native::get<native::Partition>(function))
+    native::set<native::Partition>(global, partition);
   global.getInitializerRegion().push_back(new Block);
   builder.setInsertionPointToStart(&global.getInitializerRegion().front());
   Value empty = LLVM::ZeroOp::create(builder, loc, cacheType);
@@ -287,7 +288,7 @@ void cacheNativePureCones(ModuleOp module, uint64_t minimumCost,
   }
   for (auto &[function, keys] : candidates)
     cacheFunction(module, function, keys);
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk pure cones: outlined=" << outlined
                  << " cached=" << candidates.size() << '\n';
 }

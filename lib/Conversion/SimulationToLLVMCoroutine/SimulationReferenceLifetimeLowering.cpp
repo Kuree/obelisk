@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
 #include "obelisk/Analysis/SSAValueAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -27,9 +28,6 @@ namespace obelisk {
 
 namespace detail {
 namespace {
-
-constexpr llvm::StringLiteral automaticOwnerReleaseInstrumentedAttr =
-    "native.owner_release_instrumented";
 
 bool isReferenceView(Operation *operation) {
   return isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
@@ -113,7 +111,7 @@ public:
     if (!width || *width == 0)
       return failure();
     Location location = op.getLoc();
-    if (!op->hasAttr(automaticOwnerReleaseInstrumentedAttr))
+    if (!native::has<native::OwnerReleaseInstrumented>(op))
       return op.emitError("automatic reference lifetime was not instrumented");
     Type pointer = LLVM::LLVMPointerType::get(rewriter.getContext());
     Type i32 = rewriter.getI32Type();
@@ -235,7 +233,7 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
   SmallVector<ExitEdge> edgeOrder;
   SmallVector<sim::SimRefAllocOp> plannedAllocations;
   for (sim::SimRefAllocOp allocation : allocations) {
-    if (allocation->hasAttr(automaticOwnerReleaseInstrumentedAttr))
+    if (native::has<native::OwnerReleaseInstrumented>(allocation))
       continue;
     llvm::SetVector<Value> family =
         collectReferenceFamily(allocation.getResult());
@@ -385,8 +383,7 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
                          cleanup->getArguments().take_front(forwarded.size()));
   }
   for (sim::SimRefAllocOp allocation : plannedAllocations)
-    allocation->setAttr(automaticOwnerReleaseInstrumentedAttr,
-                        UnitAttr::get(function.getContext()));
+    native::mark<native::OwnerReleaseInstrumented>(allocation);
   return success();
 }
 

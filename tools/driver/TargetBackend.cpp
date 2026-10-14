@@ -9,6 +9,7 @@
 
 #include "TargetBackend.h"
 #include "obelisk/Conversion/SimulationToSchedule.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
@@ -187,29 +188,25 @@ struct NativePartitionPlan {
 
 FailureOr<std::optional<NativePartitionPlan>>
 readNativePartitionPlan(ModuleOp module) {
-  auto manifest = module->getAttrOfType<ArrayAttr>(
-      obelisk::sim::metadata::nativePhysicalPartitionManifest);
+  auto manifest = native::get<native::PhysicalPartitionManifest>(module);
   if (!manifest)
     return std::optional<NativePartitionPlan>{};
   NativePartitionPlan plan;
   for (mlir::Attribute entryAttr : manifest) {
-    auto entry = dyn_cast<DictionaryAttr>(entryAttr);
-    auto id = entry ? entry.getAs<StringAttr>("id") : StringAttr{};
-    auto members = entry ? entry.getAs<ArrayAttr>("members") : ArrayAttr{};
-    auto exports = entry ? entry.getAs<ArrayAttr>("exports") : ArrayAttr{};
-    if (!id || !members || !exports)
+    auto entry = dyn_cast<native::PartitionAttr>(entryAttr);
+    if (!entry)
       return module.emitError("has malformed physical partition manifest"),
              failure();
     NativePartition &partition = plan.partitions.emplace_back();
-    partition.id = id.getValue().str();
-    for (mlir::Attribute memberAttr : members) {
+    partition.id = entry.getId().str();
+    for (mlir::Attribute memberAttr : entry.getMembers()) {
       auto member = dyn_cast<FlatSymbolRefAttr>(memberAttr);
       if (!member)
         return module.emitError("has malformed physical partition member"),
                failure();
       partition.members.push_back(member.getValue().str());
     }
-    for (mlir::Attribute exportAttr : exports) {
+    for (mlir::Attribute exportAttr : entry.getExports()) {
       auto exportSymbol = dyn_cast<FlatSymbolRefAttr>(exportAttr);
       if (!exportSymbol)
         return module.emitError("has malformed physical partition export"),
@@ -530,10 +527,9 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
       StringAttr::get(
           module.getContext(),
           targetMachine.createDataLayout().getStringRepresentation()));
-  module->setAttr(
-      "native.optimization_level",
-      IntegerAttr::get(mlir::IntegerType::get(module.getContext(), 32),
-                       optLevel));
+  native::set<native::OptimizationLevel>(
+      module, IntegerAttr::get(mlir::IntegerType::get(module.getContext(), 32),
+                               optLevel));
   mlir::PassManager manager(module.getContext());
   // Coroutine lowering verifies its final module explicitly. Avoid repeating
   // whole-module verification at every intermediate preparation stage.
@@ -541,10 +537,9 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
   if (timing)
     manager.enableTiming();
   if (timing)
-    module->setAttr("debug.native_timing",
-                    UnitAttr::get(module.getContext()));
+    native::mark<native::DebugTiming>(module);
   else
-    module->removeAttr("debug.native_timing");
+    native::remove<native::DebugTiming>(module);
   // Export bridges must be part of both executable representations. The
   // materializer is a no-op for ordinary designs, preserving their exact IR.
   if (dpi::has<dpi::HasExports>(module) &&
@@ -1131,10 +1126,9 @@ LogicalResult emitTargetOutput(ModuleOp module,
                     options.kind == NativeOutputKind::Executable &&
                     options.optLevel > 0;
   if (pruneModel)
-    module->setAttr(obelisk::sim::metadata::nativeClosedExecutable,
-                    UnitAttr::get(module.getContext()));
+    native::mark<native::ClosedExecutable>(module);
   else
-    module->removeAttr(obelisk::sim::metadata::nativeClosedExecutable);
+    native::remove<native::ClosedExecutable>(module);
   if (failed(lowerToLLVM(module, *targetMachine, backend->getTriple(),
                          useBytecode, options.vpi, options.bytecodeScope,
                          *nativeScheduler, options.optLevel,
@@ -1184,7 +1178,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   if (pruneModel) {
     // The manifest is an ownership inventory, not a set of live entry points.
     // It has been read above; retain only surviving members in the C++ plan.
-    module->removeAttr(obelisk::sim::metadata::nativePhysicalPartitionManifest);
+    native::remove<native::PhysicalPartitionManifest>(module);
     auto removed = detail::pruneNativeExecutableSymbols(
         module, nativeExports, options.vpi != "off" || requiresStateSync,
         options.verifyEach);

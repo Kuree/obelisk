@@ -1,6 +1,7 @@
 //===- FuseComputeFragments.cpp - Plan static AOT execution batches ------===//
 
 #include "ComputeFusion.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -512,7 +513,7 @@ void ObeliskSimFuseComputeFragmentsPass::runOnOperation() {
   // whole-design admission, so its planned membership is the figure that
   // decides whether a design is losing Tier-1 work to admission or to fusion.
   // Report the distribution, not just the pass timing.
-  if (module->hasAttr("debug.native_timing")) {
+  if (native::has<native::DebugTiming>(module)) {
     uint64_t members = 0;
     size_t largest = 0;
     for (Attribute attribute : fusions) {

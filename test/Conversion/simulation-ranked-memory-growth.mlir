@@ -10,7 +10,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  schedule.native_scheduler = 3 : i32, debug.native_timing} {
+  schedule.native_scheduler = 3 : i32, native.debug_timing} {
   simulation.design @chain {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : i1 design

@@ -15,6 +15,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
@@ -440,8 +441,7 @@ struct ObeliskSimRefineContinuousSensitivityPass
       ++refined;
     }
     numRefined += refined;
-    if (design->getParentOfType<ModuleOp>()->hasAttr(
-            "debug.native_timing"))
+    if (native::has<native::DebugTiming>(design->getParentOfType<ModuleOp>()))
       emitRemark(design.getLoc())
           << "obelisk continuous sensitivity: refined=" << uint64_t(refined);
   }

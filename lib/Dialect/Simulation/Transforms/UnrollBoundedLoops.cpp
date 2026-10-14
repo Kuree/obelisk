@@ -2,6 +2,7 @@
 
 #include "obelisk/Analysis/BoundedLoopAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -446,8 +447,8 @@ class ObeliskSimMarkBoundedLoopsPass
       ::obelisk::schedule::set<schedule::metadata::boundedLoopHeader>(
           loop.condition, marker);
     }
-    if (!loops.empty() && function->getParentOfType<ModuleOp>()->hasAttr(
-                              "debug.native_timing")) {
+    if (!loops.empty() && native::has<native::DebugTiming>(
+                              function->getParentOfType<ModuleOp>())) {
       // The diagnostic engine serializes output from concurrent function
       // passes.
       emitRemark(function.getLoc())

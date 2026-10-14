@@ -78,6 +78,7 @@
 #include "obelisk/Analysis/ActivationMemoryAnalysis.h"
 #include "obelisk/Analysis/ActivationPhaseAnalysis.h"
 #include "obelisk/Analysis/HandleDataflowAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -846,7 +847,7 @@ struct ClockClasses {
 void ObeliskSimFuseClockedKernelsPass::runOnOperation() {
   sim::SimDesignOp design = getOperation();
   ModuleOp module = design->getParentOfType<ModuleOp>();
-  bool report = module && module->hasAttr("debug.native_timing");
+  bool report = module && native::has<native::DebugTiming>(module);
   schedule::ComputeGraphAttr graph = design.getComputeGraphAttr();
   if (!graph || graph.getVpi() != schedule::ComputeVPIMode::Off ||
       graph.getWorkers() != 1) {

@@ -15,7 +15,7 @@
 !byte = !simulation.logic<8>
 !bitref = !simulation.ref<!bit>
 !byteref = !simulation.ref<!byte>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @two_clocks {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -121,7 +121,7 @@ module attributes {debug.native_timing} {
 !byte = !simulation.logic<8>
 !bitref = !simulation.ref<!bit>
 !byteref = !simulation.ref<!byte>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @alias_reader {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -231,7 +231,7 @@ module attributes {debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !bitref = !simulation.ref<!bit>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @mixed_writers {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -324,7 +324,7 @@ module attributes {debug.native_timing} {
 !bitref = !simulation.ref<!bit>
 !byteref = !simulation.ref<!byte>
 !memref = !simulation.ref<!mem>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @dynamic_element {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -415,7 +415,7 @@ module attributes {debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !bitref = !simulation.ref<!bit>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @opaque_late_read {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -508,7 +508,7 @@ module attributes {debug.native_timing} {
 !byte = !simulation.logic<8>
 !bitref = !simulation.ref<!bit>
 !byteref = !simulation.ref<!byte>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @slot_writers {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -581,7 +581,7 @@ module attributes {debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @second_wave {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -688,7 +688,7 @@ module attributes {debug.native_timing} {
 
 !bit = !simulation.logic<1>
 !ref = !simulation.ref<!bit>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @disjoint_waves {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -818,7 +818,7 @@ module attributes {debug.native_timing} {
 !byte = !simulation.logic<8>
 !bitref = !simulation.ref<!bit>
 !byteref = !simulation.ref<!byte>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @delayed_writer {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design
@@ -898,7 +898,7 @@ module attributes {debug.native_timing} {
 !byte = !simulation.logic<8>
 !bitref = !simulation.ref<!bit>
 !byteref = !simulation.ref<!byte>
-module attributes {debug.native_timing} {
+module attributes {native.debug_timing} {
   simulation.design @finish_in_phase {
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !bit design

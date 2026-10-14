@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "obelisk/Conversion/SimulationToSchedule/ComputeGraph.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -1953,8 +1954,7 @@ FailureOr<ArrayAttr> ComputeGraphBuilder::buildRegions() {
           internalEdges[cursor[group]++] = edge;
     }
     if (!boundedBackedges.empty() &&
-        design->getParentOfType<ModuleOp>()->hasAttr(
-            "debug.native_timing"))
+        native::has<native::DebugTiming>(design->getParentOfType<ModuleOp>()))
       llvm::errs() << "obelisk bounded backedges in graph: "
                    << boundedBackedges.size() << '\n';
     SmallVector<Attribute> groupAttributes;

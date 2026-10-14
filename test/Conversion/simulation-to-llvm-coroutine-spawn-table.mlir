@@ -1,5 +1,5 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
-// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
 // RUN: obelisk-opt %s '--test-obelisk-set-module-attributes=attrs="{native.closed_executable}"' > %t.closed.mlir
 // RUN: obelisk-opt %t.closed.mlir --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 

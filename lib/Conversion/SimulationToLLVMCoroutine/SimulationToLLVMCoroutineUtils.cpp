@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -521,8 +522,8 @@ LLVM::LLVMFuncOp getOrDeclareLLVMFunction(ModuleOp module, StringRef name,
 }
 
 void copyNativePartition(Operation *source, Operation *target) {
-  if (Attribute partition = source->getAttr(sim::metadata::nativePartition))
-    target->setAttr(sim::metadata::nativePartition, partition);
+  if (StringAttr partition = native::get<native::Partition>(source))
+    native::set<native::Partition>(target, partition);
 }
 
 } // namespace obelisk::detail

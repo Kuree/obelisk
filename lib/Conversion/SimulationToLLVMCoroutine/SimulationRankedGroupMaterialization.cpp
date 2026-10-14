@@ -3,6 +3,7 @@
 
 #include "SimulationAOTPlanning.h"
 #include "SimulationEvalReadySet.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -382,7 +383,7 @@ materializeNativeRankedGroups(ModuleOp module,
   }
   emit();
   finishSegment();
-  if (module->hasAttr("debug.native_timing")) {
+  if (native::has<native::DebugTiming>(module)) {
     llvm::errs()
         << "obelisk ranked groups: candidates="
         << llvm::count_if(plan.rankedNodes,

@@ -2,6 +2,7 @@
 
 #include "SimulationProcessWrapperLowering.h"
 #include "SimulationProcessRuntimeABI.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -95,14 +96,14 @@ LogicalResult materializeSharedNativeWrappers(ModuleOp module,
     if (Operation *existing = module.lookupSymbol(name)) {
       auto function = dyn_cast<LLVM::LLVMFuncOp>(existing);
       if (!function || function.getFunctionType() != type ||
-          !function->hasAttr("native.shared_callback"))
+          !native::has<native::SharedCallback>(function))
         return existing->emitError("incompatible shared native callback");
       return success();
     }
     builder.setInsertionPointToStart(module.getBody());
     auto function = LLVM::LLVMFuncOp::create(builder, location, name, type,
                                              LLVM::Linkage::Internal);
-    function->setAttr("native.shared_callback", builder.getUnitAttr());
+    native::mark<native::SharedCallback>(function);
     Block *entry = function.addEntryBlock(builder);
     builder.setInsertionPointToStart(entry);
     emit(function, entry);

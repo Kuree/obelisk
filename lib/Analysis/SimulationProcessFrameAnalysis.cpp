@@ -1,6 +1,7 @@
 //===- SimulationProcessFrameAnalysis.cpp - Process frame facts --------===//
 
 #include "obelisk/Analysis/SimulationProcessFrameAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 
@@ -457,7 +458,7 @@ SimulationProcessFrameAnalysis::getContinuationLayout(Block *block) const {
              : ArrayRef<ProcessFrameValue>(found->second);
 }
 
-DictionaryAttr
+native::FrameInputsAttr
 SimulationProcessFrameAnalysis::getReplayInputs(sim::SimFuncOp function) const {
   Builder builder(function.getContext());
   DenseMap<Block *, int64_t> blockIDs;
@@ -468,35 +469,24 @@ SimulationProcessFrameAnalysis::getReplayInputs(sim::SimFuncOp function) const {
     SmallVector<Attribute> types;
     for (Type type : suspension.continuation->getArgumentTypes())
       types.push_back(TypeAttr::get(type));
-    sites.push_back(builder.getDictionaryAttr({
-        builder.getNamedAttr("identity",
-                             builder.getDenseI64ArrayAttr(
-                                 {int64_t(suspension.continuationID),
-                                  blockIDs.lookup(suspension.continuation),
-                                  int64_t(suspension.waitOffset),
-                                  int64_t(suspension.waitSize)})),
-        builder.getNamedAttr("types", builder.getArrayAttr(types)),
-    }));
+    sites.push_back(native::FrameSiteAttr::get(
+        builder.getContext(),
+        builder.getDenseI64ArrayAttr({int64_t(suspension.continuationID),
+                                      blockIDs.lookup(suspension.continuation),
+                                      int64_t(suspension.waitOffset),
+                                      int64_t(suspension.waitSize)}),
+        builder.getArrayAttr(types)));
   }
-  SmallVector<NamedAttribute> inputs{
-      builder.getNamedAttr("version", builder.getI32IntegerAttr(1)),
-      builder.getNamedAttr("signature",
-                           TypeAttr::get(function.getFunctionType())),
-      builder.getNamedAttr(
-          "identity",
-          builder.getDenseI64ArrayAttr(
-              {int64_t(function.getCodeUnitId().value_or(UINT64_MAX)),
-               int64_t(function.getEntryKind()),
-               int64_t(function.getHomeRegion())})),
-      builder.getNamedAttr("abi",
-                           builder.getDenseI64ArrayAttr(
-                               {int64_t(frameSize), int64_t(frameAlignment),
-                                int64_t(checksum), int64_t(bytecodeReadOnly)})),
-      builder.getNamedAttr("continuations", builder.getArrayAttr(sites)),
-  };
-  if (auto arguments = function->getAttr("arg_attrs"))
-    inputs.push_back(builder.getNamedAttr("captures", arguments));
-  return builder.getDictionaryAttr(inputs);
+  return native::FrameInputsAttr::get(
+      builder.getContext(), function.getFunctionType(),
+      builder.getDenseI64ArrayAttr(
+          {int64_t(function.getCodeUnitId().value_or(UINT64_MAX)),
+           int64_t(function.getEntryKind()),
+           int64_t(function.getHomeRegion())}),
+      builder.getDenseI64ArrayAttr({int64_t(frameSize), int64_t(frameAlignment),
+                                    int64_t(checksum),
+                                    int64_t(bytecodeReadOnly)}),
+      builder.getArrayAttr(sites), function.getArgAttrsAttr());
 }
 
 ArrayRef<ProcessFrameValue>

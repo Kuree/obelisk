@@ -272,14 +272,6 @@ prepareManagedClassInventory(ModuleOp module,
     }
     analysis::orderByUnsignedKey(layout.methods,
                                  [](auto method) { return *method.getSlot(); });
-    declaration->setAttr(
-        "native.instance_size",
-        IntegerAttr::get(IntegerType::get(module.getContext(), 64),
-                         layout.size));
-    declaration->setAttr(
-        "native.instance_alignment",
-        IntegerAttr::get(IntegerType::get(module.getContext(), 32),
-                         layout.alignment));
     layouts[declaration.getSymName()] = std::move(layout);
   }
 

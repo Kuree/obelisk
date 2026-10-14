@@ -3,6 +3,7 @@
 #include "SimulationProcessCoroutineLowering.h"
 #include "SimulationProcessRuntimeABI.h"
 #include "SimulationProcessWrapperLowering.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -66,31 +67,21 @@ uint32_t suspensionKind(Operation *operation) {
 void addFrameAttributes(LLVM::LLVMFuncOp ramp,
                         const SimulationProcessFrameAnalysis &analysis,
                         OpBuilder &builder) {
-  ramp->setAttr("frame.size",
-                builder.getI64IntegerAttr(analysis.getFrameSize()));
-  ramp->setAttr("frame.alignment",
-                builder.getI64IntegerAttr(analysis.getFrameAlignment()));
-  ramp->setAttr("frame.checksum",
-                builder.getI64IntegerAttr(analysis.getChecksum()));
   SmallVector<int32_t> continuationIDs;
   for (uint32_t continuation : analysis.getContinuations())
     continuationIDs.push_back(static_cast<int32_t>(continuation));
-  ramp->setAttr("frame.continuations",
-                builder.getDenseI32ArrayAttr(continuationIDs));
   SmallVector<Attribute> fields;
-  for (const ProcessFrameField &field : analysis.getFields()) {
-    NamedAttrList attributes;
-    attributes.set(
-        "kind", builder.getI32IntegerAttr(static_cast<uint32_t>(field.kind)));
-    attributes.set(
-        "flags", builder.getI32IntegerAttr(static_cast<uint32_t>(field.flags)));
-    attributes.set("offset", builder.getI64IntegerAttr(field.offset));
-    attributes.set("size", builder.getI64IntegerAttr(field.size));
-    attributes.set("alignment", builder.getI32IntegerAttr(field.alignment));
-    attributes.set("reserved", builder.getI32IntegerAttr(field.reserved));
-    fields.push_back(attributes.getDictionary(builder.getContext()));
-  }
-  ramp->setAttr("frame.fields", builder.getArrayAttr(fields));
+  for (const ProcessFrameField &field : analysis.getFields())
+    fields.push_back(native::FrameFieldAttr::get(
+        builder.getContext(), static_cast<uint32_t>(field.kind),
+        static_cast<uint32_t>(field.flags), field.offset, field.size,
+        field.alignment, field.reserved));
+  native::set<native::Frame>(
+      ramp, native::FrameAttr::get(
+                builder.getContext(), analysis.getFrameSize(),
+                analysis.getFrameAlignment(), analysis.getChecksum(),
+                builder.getDenseI32ArrayAttr(continuationIDs),
+                builder.getArrayAttr(fields)));
 }
 
 struct RampBlocks {
@@ -132,7 +123,7 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
   builder.setInsertionPoint(operation);
   Location location = operation->getLoc();
   if (blocks.tableActivation) {
-    auto index = operation->getAttrOfType<IntegerAttr>(tableWaitIndexAttr);
+    auto index = native::get<native::TableWait>(operation);
     if (!index)
       return operation->emitError("table activation has an uncertified wait");
     LLVM::ReturnOp::create(
@@ -306,12 +297,9 @@ lowerSuspendTerminator(Operation *operation, Value instance, Value handle,
     Type pointer = LLVM::LLVMPointerType::get(builder.getContext());
     Type i32 = builder.getI32Type();
     Type i64 = builder.getI64Type();
-    auto sizesAttr =
-        task->getAttrOfType<DenseI64ArrayAttr>(nativeMethodArgumentSizesAttr);
-    auto rootsAttr =
-        task->getAttrOfType<DenseI64ArrayAttr>(nativeMethodArgumentRootsAttr);
-    auto referencesAttr =
-        task->getAttrOfType<DenseI64ArrayAttr>(nativeTransferredReferencesAttr);
+    auto sizesAttr = native::get<native::MethodArgumentSizes>(task);
+    auto rootsAttr = native::get<native::MethodArgumentRoots>(task);
+    auto referencesAttr = native::get<native::TransferredReferences>(task);
     if (!sizesAttr ||
         static_cast<uint64_t>(sizesAttr.size()) != task.getArguments().size() ||
         !rootsAttr || (rootsAttr.size() % 4) != 0 || !referencesAttr)
@@ -644,14 +632,14 @@ FailureOr<PreparedSuspendableProcess> prepareSuspendableProcess(
   uint64_t stableID = function.getCodeUnitId().value_or(
       stableProcessID(baseName) &
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
-  bool unmanagedNative = function->hasAttr("native.unmanaged");
+  bool unmanagedNative = native::has<native::Unmanaged>(function);
   if (tableProcess) {
     bool valid = unmanagedNative;
     SmallVector<bool> seen(tableProcess->waits.size(), false);
     function.walk([&](Operation *op) {
       if (!sim::isSuspensionOp(op))
         return;
-      auto index = op->getAttrOfType<IntegerAttr>(tableWaitIndexAttr);
+      auto index = native::get<native::TableWait>(op);
       auto continuation =
           schedule::get<schedule::Field::NativeContinuation>(op);
       if (!isa<schedule::NativeSuspendChangeOp, schedule::NativeSuspendEdgeOp,
@@ -985,7 +973,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     // executes for scheduler dispatch but not for ordinary edges.
     Operation *prologueEnd = nullptr;
     for (Operation &operation : *continuation) {
-      if (operation.hasAttr(managedRootActivationPrologueAttr)) {
+      if (native::has<native::ManagedRootActivationPrologue>(&operation)) {
         prologueEnd = &operation;
         break;
       }
@@ -1220,7 +1208,7 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     cf::CondBranchOp::create(builder, check.getLoc(), ok, continuation,
                              ValueRange{}, failure, ValueRange{});
     Value status = check.getStatus();
-    bool pushFailure = check->hasAttr(managedRootRangePushCheckAttr);
+    bool pushFailure = native::has<native::ManagedRootRangePushCheck>(check);
     check.erase();
     builder.setInsertionPointToStart(failure);
     Value bits = runtime::RTStatusToBitsOp::create(

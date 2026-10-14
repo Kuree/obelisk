@@ -2,6 +2,7 @@
 
 #include "../SimulationToLLVMCoroutine/SimulationAOTPlanning.h"
 #include "../SimulationToLLVMCoroutine/SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -264,7 +265,7 @@ buildNativeClockInferencePlan(ModuleOp module, const NativeStateLayout &layout,
   for (const auto &[bit, fact] : inference.getFacts())
     if (fact.hasTickBound())
       periodic.insert(bit);
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk periodic signal proof: clocks=" << clocks.size()
                  << " copies=" << inference.getCopyCount()
                  << " cadence-outputs=" << inference.getCadenceCount()
@@ -673,7 +674,7 @@ FailureOr<NativeStaticFanoutPlan> buildNativeStaticFanoutPlan(
   }
   auto disableExactFanout = [&](StringRef reason,
                                 sim::SimFuncOp function = {}) {
-    if (module->hasAttr("debug.native_timing")) {
+    if (native::has<native::DebugTiming>(module)) {
       llvm::errs() << "static fanout disabled: " << reason;
       if (function)
         llvm::errs() << " in " << function.getSymName();

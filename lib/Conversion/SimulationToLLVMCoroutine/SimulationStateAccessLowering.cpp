@@ -3,6 +3,7 @@
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/NativeStorageLayout.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -22,10 +23,6 @@ namespace obelisk::detail {
 namespace {
 
 constexpr StringLiteral continuousStoreAttrName = "simulation.continuous_store";
-constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
-    "native.bulk_copy_source_assume_clean";
-constexpr StringLiteral guardedRefStoreAttr =
-    "native.guarded_ref_store";
 
 // Canonical padding is not a language value. Invalid aggregate reads also
 // need the per-member defaults from IEEE 1800-2023 Table 7-1.
@@ -250,7 +247,7 @@ public:
                       entryKind == sim::EntryKind::Continuous ||
                       entryKind == sim::EntryKind::PortInput ||
                       entryKind == sim::EntryKind::PortOutput;
-    bool sourceAssumeClean = op->hasAttr(bulkCopySourceAssumeCleanAttr);
+    bool sourceAssumeClean = native::has<native::BulkCopySourceAssumeClean>(op);
 
     Value sourceValue = loadBulkStatePlane(
         rewriter, location, source, *width, "__obelisk_state_value", false,
@@ -457,7 +454,7 @@ public:
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
     bool runtimePublication =
-        function->hasAttr("native.runtime_publication_certified");
+        native::has<native::RuntimePublicationCertified>(function);
     bool continuous = !isa<sim::EventType>(valueType) &&
                       (op->hasAttr(continuousStoreAttrName) ||
                        entryKind == sim::EntryKind::Continuous ||
@@ -475,7 +472,7 @@ public:
         continuous && directLayout && directLayout->directContinuous;
     if (directRange && directRange->guarded && !assumeClean &&
         (!continuous || directContinuous) && !runtimePublication &&
-        !op->hasAttr(guardedRefStoreAttr)) {
+        !native::has<native::GuardedRefStore>(op)) {
       Block *head = rewriter.getInsertionBlock();
       Block *tail = rewriter.splitBlock(head, op->getIterator());
       Region *region = head->getParent();
@@ -486,7 +483,7 @@ public:
            {std::pair{fast, true}, std::pair{slow, false}}) {
         rewriter.setInsertionPointToEnd(block);
         Operation *clone = rewriter.clone(*op);
-        clone->setAttr(guardedRefStoreAttr, rewriter.getUnitAttr());
+        native::mark<native::GuardedRefStore>(clone);
         if (clean)
           ::obelisk::schedule::set<assumeCleanSpecializationAttr>(
               clone, rewriter.getUnitAttr());
@@ -517,8 +514,7 @@ public:
             directLayout->transitionHandles.contains(directRange->staticID);
     if (needsNotification && directRange &&
         (assumeClean || !directRange->guarded))
-      if (auto roots = function->getAttrOfType<DenseI32ArrayAttr>(
-              "native.no_transition_roots"))
+      if (auto roots = native::get<native::NoTransitionRoots>(function))
         needsNotification = !llvm::is_contained(
             roots.asArrayRef(), static_cast<int32_t>(directRange->staticID));
     if (isa<LLVM::LLVMPointerType>(adaptor.getValue().front().getType())) {

@@ -3,6 +3,7 @@
 #include "SimulationToLLVMCoroutinePrivate.h"
 
 #include "obelisk/Analysis/SimulationStorageAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/Runtime.h"
@@ -123,10 +124,8 @@ public:
       traceSlots =
           LLVM::AddressOfOp::create(rewriter, op.getLoc(), pointer, name);
     }
-    auto patternName =
-        op->getAttrOfType<StringAttr>(nativeContainerPatternPlanGlobalAttr);
-    auto patternSize =
-        op->getAttrOfType<IntegerAttr>(nativeContainerPatternPlanSizeAttr);
+    auto patternName = native::get<native::ContainerPatternPlanGlobal>(op);
+    auto patternSize = native::get<native::ContainerPatternPlanSize>(op);
     if (static_cast<bool>(patternName) != static_cast<bool>(patternSize))
       return failure();
     Value pattern;
@@ -515,7 +514,7 @@ public:
               .getResult();
     } else {
       StringAttr globalName =
-          op->getAttrOfType<StringAttr>(nativeAggregateBitstreamPlanGlobalAttr);
+          native::get<native::AggregateBitstreamPlanGlobal>(op);
       if (!globalName)
         return op.emitOpError(
             "recursive bit-stream plan was not prepared before conversion");
@@ -613,7 +612,7 @@ public:
     Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
 
     StringAttr globalName =
-        op->getAttrOfType<StringAttr>(nativeAggregateBitstreamPlanGlobalAttr);
+        native::get<native::AggregateBitstreamPlanGlobal>(op);
     if (!globalName)
       return op.emitOpError(
           "aggregate bit-stream plan was not prepared before conversion");
@@ -712,7 +711,7 @@ public:
     Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
 
     StringAttr globalName =
-        op->getAttrOfType<StringAttr>(nativeAggregateBitstreamPlanGlobalAttr);
+        native::get<native::AggregateBitstreamPlanGlobal>(op);
     if (!globalName)
       return op.emitOpError(
           "aggregate bit-stream plan was not prepared before conversion");

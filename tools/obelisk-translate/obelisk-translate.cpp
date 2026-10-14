@@ -4,6 +4,8 @@
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/SDF/SDFDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Frontend/SDF.h"
@@ -27,7 +29,7 @@ static llvm::cl::opt<uint64_t> sdfMaxInputBytes(
 int main(int argc, char **argv) {
   TranslateFromMLIRRegistration exportLLVM(
       "mlir-to-llvmir",
-      "translate LLVM dialect IR with typed scheduling metadata",
+      "translate LLVM dialect IR with typed Obelisk backend metadata",
       [](Operation *operation, llvm::raw_ostream &output) {
         llvm::LLVMContext context;
         auto module = translateModuleToLLVMIR(operation, context);
@@ -37,8 +39,9 @@ int main(int argc, char **argv) {
         return success();
       },
       [](DialectRegistry &registry) {
-        registry
-            .insert<LLVM::LLVMDialect, obelisk::schedule::ScheduleDialect>();
+        registry.insert<LLVM::LLVMDialect, obelisk::dpi::DPIDialect,
+                        obelisk::native::NativeDialect,
+                        obelisk::schedule::ScheduleDialect>();
         registerBuiltinDialectTranslation(registry);
         registerLLVMDialectTranslation(registry);
       });

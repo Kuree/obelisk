@@ -1,6 +1,7 @@
 //===- SimulationStatePlaneLowering.cpp - Native state planes --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -953,8 +954,7 @@ bool emitDirectDynamicPackedStore(ConversionPatternRewriter &rewriter,
     return false;
   bool needsNotification = layout->transitionHandles.contains(range->staticID);
   if (auto function = rewriter.getInsertionBlock()->getParentOp())
-    if (auto roots = function->getAttrOfType<DenseI32ArrayAttr>(
-            "native.no_transition_roots"))
+    if (auto roots = native::get<native::NoTransitionRoots>(function))
       needsNotification &= !llvm::is_contained(
           roots.asArrayRef(), static_cast<int32_t>(range->staticID));
   if (!access || access->root != range->staticID || !range->wholeOrInvalid)

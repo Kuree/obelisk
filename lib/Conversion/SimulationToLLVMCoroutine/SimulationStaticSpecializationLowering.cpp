@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -43,8 +44,7 @@ void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
   auto function = dyn_cast<sim::SimFuncOp>(head->getParentOp());
   if (!function)
     return;
-  auto metadata =
-      function->getAttrOfType<ArrayAttr>(nativeTwoStateBlockUnknownsAttr);
+  auto metadata = native::get<native::TwoStateBlockUnknowns>(function);
   if (!metadata)
     return;
   unsigned headIndex = static_cast<unsigned>(
@@ -53,8 +53,8 @@ void recordStaticSpecializationCFGBlocks(ConversionPatternRewriter &rewriter,
   entries.insert(entries.begin() + headIndex + 1, newBlockCount,
                  rewriter.getDenseI64ArrayAttr({}));
   rewriter.modifyOpInPlace(function, [&] {
-    function->setAttr(nativeTwoStateBlockUnknownsAttr,
-                      rewriter.getArrayAttr(entries));
+    native::set<native::TwoStateBlockUnknowns>(function,
+                                               rewriter.getArrayAttr(entries));
   });
 }
 

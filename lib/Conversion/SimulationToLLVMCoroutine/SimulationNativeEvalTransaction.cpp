@@ -5,6 +5,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "llvm/ADT/DenseSet.h"
@@ -705,7 +706,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
     for (Operation *caller : pureCallers[opaqueWork.pop_back_val()])
       if (opaque.insert(caller).second)
         opaqueWork.push_back(caller);
-  if (module->hasAttr("debug.native_timing")) {
+  if (native::has<native::DebugTiming>(module)) {
     SmallVector<StringRef> names;
     for (const auto &entry : externalCuts)
       names.push_back(entry.getKey());
@@ -767,7 +768,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
         }
     });
   }
-  if (module->hasAttr("debug.native_timing")) {
+  if (native::has<native::DebugTiming>(module)) {
     SmallVector<std::pair<unsigned, StringRef>> scopes;
     for (const auto &[operation, mask] : masks)
       if (mask.any())
@@ -1214,7 +1215,7 @@ LogicalResult materializeNativeEvalTransactions(ModuleOp module) {
                : "obelisk_rt_v1_static_nba_specialization_guard",
       IntegerType::get(context, 32),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk eval local pending roots: " << roots.size()
                  << " cores=" << cores.size()
                  << " fixed-candidates=" << candidates.size()

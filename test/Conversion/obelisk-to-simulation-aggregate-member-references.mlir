@@ -2,7 +2,7 @@
 // RUN: FileCheck %s < %t.mlir
 // RUN: obelisk-opt %t.mlir --canonicalize --cse | FileCheck %s
 // RUN: obelisk-opt %t.mlir --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 // RUN: obelisk-opt %t.mlir --encode-obelisk-sim-to-bytecode='vpi=off' -o /dev/null
 
 // References to aggregate members keep a typed parent reference, with a fixed

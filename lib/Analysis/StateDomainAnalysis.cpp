@@ -4,6 +4,7 @@
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/LogicBitAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleEnums.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -266,15 +267,13 @@ bool isConstantInRangeSelection(Operation *op) {
 }
 
 FailureOr<uint64_t> getNativeStateDomainFunctionLimit(Operation *module) {
-  if (auto limit = module->getAttrOfType<IntegerAttr>(
-          "native.max_state_domain_functions")) {
+  if (auto limit = native::get<native::MaxStateDomainFunctions>(module)) {
     if (limit.getInt() < 0)
       return module->emitError(
           "native state-domain function limit cannot be negative");
     return limit.getUInt();
   }
-  auto level =
-      module->getAttrOfType<IntegerAttr>("native.optimization_level");
+  auto level = native::get<native::OptimizationLevel>(module);
   if (level && level.getInt() >= 3)
     return 4096;
   return std::numeric_limits<uint64_t>::max();

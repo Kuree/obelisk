@@ -100,7 +100,7 @@ function(obelisk_add_generated_process_object output_var directory input_file)
             "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
             "--pass-pipeline=builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension)),encode-obelisk-sim-to-bytecode{${generated_bytecode_options}},convert-obelisk-sim-processes-to-llvm-coroutines)"
             -o "${generated_mlir}"
-    COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/mlir-translate" --mlir-to-llvmir
+    COMMAND $<TARGET_FILE:obelisk-translate> --mlir-to-llvmir
             "${generated_mlir}" -o "${generated_raw_llvm}"
     COMMAND "${OBELISK_LLVM_DIST_DIR}/bin/opt"
             "-passes=default<O3>"
@@ -111,6 +111,7 @@ function(obelisk_add_generated_process_object output_var directory input_file)
             -o "${generated_object}"
     DEPENDS
     obelisk-opt
+    obelisk-translate
     "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}"
     VERBATIM
   )

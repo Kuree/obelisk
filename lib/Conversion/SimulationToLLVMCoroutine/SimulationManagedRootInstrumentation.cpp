@@ -4,6 +4,7 @@
 
 #include "obelisk/Analysis/ManagedCollectionAnalysis.h"
 #include "obelisk/Conversion/Passes.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -131,8 +132,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
   Value one = llvmConstant(builder, location, i64, 1);
   Value record =
       LLVM::AllocaOp::create(builder, location, pointer, rootType, one, 8);
-  record.getDefiningOp()->setAttr(managedRootRangeRecordAttr,
-                                  builder.getUnitAttr());
+  native::mark<native::ManagedRootRangeRecord>(record.getDefiningOp());
 
   // Each coroutine activation owns roots only while it is running on
   // the current worker lane. Pop before suspension and reacquire on
@@ -156,7 +156,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
       Operation *reset = LLVM::StoreOp::create(
           builder, location, LLVM::ZeroOp::create(builder, location, rootType),
           record, 8);
-      reset->setAttr(managedRootActivationPrologueAttr, builder.getUnitAttr());
+      native::mark<native::ManagedRootActivationPrologue>(reset);
       activationEnds[block] = reset;
       continue;
     }
@@ -179,8 +179,8 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
     Value status = schedule::NativeManagedRootPushOp::create(
         builder, location, i32, record, slotsBase, rootCount);
     Operation *check = reportManagedStatus(builder, location, Value{}, status);
-    check->setAttr(managedRootRangePushCheckAttr, builder.getUnitAttr());
-    check->setAttr(managedRootActivationPrologueAttr, builder.getUnitAttr());
+    native::mark<native::ManagedRootRangePushCheck>(check);
+    native::mark<native::ManagedRootActivationPrologue>(check);
     activationEnds[block] = check;
   }
 
@@ -258,7 +258,7 @@ LogicalResult instrumentManagedRoots(sim::SimFuncOp function,
         /*lazy=*/true);
     Operation *check =
         reportManagedStatus(builder, collectionPoint->getLoc(), Value{}, status);
-    check->setAttr(managedRootRangePushCheckAttr, builder.getUnitAttr());
+    native::mark<native::ManagedRootRangePushCheck>(check);
   }
 
   SmallVector<Operation *> exits;

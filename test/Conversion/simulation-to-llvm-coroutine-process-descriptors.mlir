@@ -44,8 +44,8 @@ module attributes {
 
 // PARTITION: module attributes {
 // PARTITION-SAME: native.physical_partition_manifest = [
-// PARTITION-SAME: {dependencies = ["unit:42", "unit:43"], exports = [@__obelisk_current_context, @__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor, @task.__obelisk_process_descriptor], id = "primary", imports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements, @task.__obelisk_native_execute]
-// PARTITION-SAME: {dependencies = ["primary"], exports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements], id = "unit:42", imports = [@__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor], members = [@process.__obelisk_coro_ramp, @process.__obelisk_native_execute, @process.__obelisk_native_requirements, @process.__obelisk_schedule_continuations, @process.__obelisk_schedule_ranks, @process.__obelisk_spawn, @process.__obelisk_spawn_plan]}
+// PARTITION-SAME: #native.partition<id = "primary", members = [{{[^]]*}}], imports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements, @task.__obelisk_native_execute], exports = [@__obelisk_current_context, @__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor, @task.__obelisk_process_descriptor], dependencies = ["unit:42", "unit:43"]
+// PARTITION-SAME: #native.partition<id = "unit:42", members = [@process.__obelisk_coro_ramp, @process.__obelisk_native_execute, @process.__obelisk_native_requirements, @process.__obelisk_schedule_continuations, @process.__obelisk_schedule_ranks, @process.__obelisk_spawn, @process.__obelisk_spawn_plan], imports = [@__obelisk_native_coro_execute_v1, @process.__obelisk_process_descriptor], exports = [@process.__obelisk_native_execute, @process.__obelisk_native_requirements], dependencies = ["primary"]>
 // PARTITION: llvm.mlir.global internal constant @process.__obelisk_schedule_ranks
 // PARTITION-SAME: native.partition = "unit:42"
 // PARTITION: llvm.mlir.global internal constant @process.__obelisk_schedule_continuations

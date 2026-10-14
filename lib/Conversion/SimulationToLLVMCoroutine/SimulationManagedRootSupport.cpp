@@ -2,6 +2,7 @@
 
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
@@ -17,7 +18,7 @@ namespace obelisk::detail {
 LLVM::AllocaOp findManagedRootRangeRecord(Operation *scope) {
   LLVM::AllocaOp record;
   scope->walk([&](LLVM::AllocaOp allocation) {
-    if (!allocation->hasAttr(managedRootRangeRecordAttr))
+    if (!native::has<native::ManagedRootRangeRecord>(allocation))
       return WalkResult::advance();
     record = allocation;
     return WalkResult::interrupt();

@@ -25,12 +25,6 @@ inline constexpr llvm::StringLiteral bindings = "simulation.bindings";
 /// Recomputed whenever the bytecode image is rebuilt.
 inline constexpr llvm::StringLiteral bytecodeReadOnly =
     "simulation.bytecode_read_only";
-/// Immutable canonical-frame certificate and module checkpoint inventory.
-/// Valid only at the Frames boundary, before derived native specialization.
-inline constexpr llvm::StringLiteral nativeFrameInputs =
-    "simulation.native_frame_inputs";
-inline constexpr llvm::StringLiteral nativeFrameCheckpoint =
-    "simulation.native_frame_checkpoint";
 inline constexpr llvm::StringLiteral delayScale = "simulation.delay_scale";
 inline constexpr llvm::StringLiteral delayQuantum = "simulation.delay_quantum";
 inline constexpr llvm::StringLiteral captureKind = "simulation.capture_kind";
@@ -217,34 +211,6 @@ inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
     "feature.class_bitstream_source";
 inline constexpr llvm::StringLiteral thisArgument = "simulation.this_argument";
 inline constexpr llvm::StringLiteral lowered = "simulation.lowered";
-
-/// Native-only annotation for a closed-world activation whose state and NBA
-/// accesses may use the actor-boundary clean-specialization proof.
-/// Marks an AOT region body whose bytecode fallback may be frozen before
-/// native-only next-state and publication rewrites consume the annotation.
-/// Stable semantic partition assigned before native lowering.  The value is
-/// independent of worker count and is retained on generated LLVM functions so
-/// object emission and incremental caches share one ownership boundary.
-inline constexpr llvm::StringLiteral nativePartition =
-    "native.partition";
-/// The driver is lowering a complete executable and may omit unreferenced
-/// implementation helpers. Object and IR emission keep their public helpers.
-inline constexpr llvm::StringLiteral nativeClosedExecutable =
-    "native.closed_executable";
-/// Deterministic per-design inventory of native partitions, their members,
-/// imports, exports, and dependencies.
-inline constexpr llvm::StringLiteral nativePartitionManifest =
-    "native.partition_manifest";
-/// Module-level, design-keyed copies of native partition manifests.  Design
-/// operations are erased during LLVM lowering, so later object emission and
-/// cache planning consume this preserved inventory.
-inline constexpr llvm::StringLiteral nativePartitionManifests =
-    "native.partition_manifests";
-/// Link-complete post-lowering inventory of physical LLVM symbols and their
-/// cross-partition references. Object emission consumes this manifest rather
-/// than the pre-lowering semantic inventory.
-inline constexpr llvm::StringLiteral nativePhysicalPartitionManifest =
-    "native.physical_partition_manifest";
 
 inline bool isKnownBoundary(llvm::StringRef name) {
   if (auto field = schedule::symbolizeField(name))

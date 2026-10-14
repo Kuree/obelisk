@@ -5,6 +5,7 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "obelisk/Analysis/GraphAlgorithms.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Schedule/Transforms/Passes.h"
@@ -72,8 +73,8 @@ public:
     if (!graph || graph.getWorkers() != 1 ||
         graph.getVpi() == schedule::ComputeVPIMode::Full)
       return;
-    bool trace = design->getParentOfType<ModuleOp>()->hasAttr(
-        "debug.native_timing");
+    bool trace =
+        native::has<native::DebugTiming>(design->getParentOfType<ModuleOp>());
     if (maxMembers == 1) {
       design.emitOpError(
           "statement fusion member limit must be 0 or at least 2");

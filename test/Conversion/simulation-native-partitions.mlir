@@ -86,11 +86,11 @@ module attributes {
 
 // CHECK: simulation.design @partitions attributes {
 // CHECK-SAME: native.partition_manifest = [
-// CHECK-SAME: {dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"], exports = [], id = "primary", imports = [@a, @b, @class_first, @class_second, @leaf], members = [@root], owners = ["primary"]}
-// CHECK-SAME: {dependencies = [], exports = [@a, @b], id = "scc:6:unit:26:unit:3", imports = [], members = [@a, @b], owners = ["unit:2", "unit:3"]}
-// CHECK-SAME: {dependencies = ["unit:6"], exports = [@class_first], id = "unit:4", imports = [@leaf], members = [@class_first], owners = ["unit:4"]}
-// CHECK-SAME: {dependencies = [], exports = [@class_second], id = "unit:5", imports = [], members = [@class_second], owners = ["unit:5"]}
-// CHECK-SAME: {dependencies = [], exports = [@leaf], id = "unit:6", imports = [], members = [@leaf], owners = ["unit:6"]}
+// CHECK-SAME: #native.partition<id = "primary", owners = ["primary"], members = [@root], imports = [@a, @b, @class_first, @class_second, @leaf], exports = [], dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"]>
+// CHECK-SAME: #native.partition<id = "scc:6:unit:26:unit:3", owners = ["unit:2", "unit:3"], members = [@a, @b], imports = [], exports = [@a, @b], dependencies = []>
+// CHECK-SAME: #native.partition<id = "unit:4", owners = ["unit:4"], members = [@class_first], imports = [@leaf], exports = [@class_first], dependencies = ["unit:6"]>
+// CHECK-SAME: #native.partition<id = "unit:5", owners = ["unit:5"], members = [@class_second], imports = [], exports = [@class_second], dependencies = []>
+// CHECK-SAME: #native.partition<id = "unit:6", owners = ["unit:6"], members = [@leaf], imports = [], exports = [@leaf], dependencies = []>
 // CHECK-SAME: ]}
 // CHECK: simulation.func private @leaf
 // CHECK-SAME: native.partition = "unit:6"
@@ -109,13 +109,13 @@ module attributes {
 // process helpers remain with their semantic owner rather than falling into a
 // worker-dependent catch-all partition.
 // LOWERED: module attributes {
-// LOWERED-SAME: native.partition_manifests = [{design = "partitions", partitions = [
-// LOWERED-SAME: {dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"], exports = [], id = "primary", imports = [@a, @b, @class_first, @class_second, @leaf], members = [@root], owners = ["primary"]}
-// LOWERED-SAME: ]}
+// LOWERED-SAME: native.partition_manifests = [#native.design_partitions<design = "partitions", partitions = [
+// LOWERED-SAME: #native.partition<id = "primary", owners = ["primary"], members = [@root], imports = [@a, @b, @class_first, @class_second, @leaf], exports = [], dependencies = ["scc:6:unit:26:unit:3", "unit:4", "unit:5", "unit:6"]>
+// LOWERED-SAME: ]>]
 // LOWERED-SAME: native.physical_partition_manifest = [
-// LOWERED-SAME: {dependencies = ["primary", "unit:6"], exports = [@class_first], id = "unit:4", imports = [@__obelisk_current_context, @leaf], members = [@class_first]}
-// LOWERED-SAME: {dependencies = [], exports = [], id = "unit:5", imports = [], members = [@class_second]}
-// LOWERED-SAME: {dependencies = [], exports = [@leaf], id = "unit:6", imports = [], members = [@leaf]}
+// LOWERED-SAME: #native.partition<id = "unit:4", members = [@class_first], imports = [@__obelisk_current_context, @leaf], exports = [@class_first], dependencies = ["primary", "unit:6"]>
+// LOWERED-SAME: #native.partition<id = "unit:5", members = [@class_second], imports = [], exports = [], dependencies = []>
+// LOWERED-SAME: #native.partition<id = "unit:6", members = [@leaf], imports = [], exports = [@leaf], dependencies = []>
 // LOWERED: llvm.func @leaf
 // LOWERED-SAME: native.partition = "unit:6"
 // LOWERED: llvm.func @b

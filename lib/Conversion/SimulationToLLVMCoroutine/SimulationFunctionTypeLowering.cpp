@@ -1,6 +1,7 @@
 //===- SimulationFunctionTypeLowering.cpp - Function type rewrites -------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -98,8 +99,8 @@ public:
       function->removeAttr(sim::metadata::bindings);
       if (!resultAttrs.empty())
         function.setResAttrsAttr(rewriter.getArrayAttr(resultAttrs));
-      function->setAttr(nativeTwoStateBlockUnknownsAttr,
-                        rewriter.getArrayAttr(zeroUnknownAttr));
+      native::set<native::TwoStateBlockUnknowns>(
+          function, rewriter.getArrayAttr(zeroUnknownAttr));
     });
     return success();
   }

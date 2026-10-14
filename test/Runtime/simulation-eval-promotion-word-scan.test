@@ -1,8 +1,8 @@
 // RUN: obelisk-opt %S/../Conversion/simulation-eval-promotion-word-scan.mlir --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines,test-obelisk-export-llvm-symbols{globals=__obelisk_state_unknown,__obelisk_eval_selected_variant_v1_0,__obelisk_eval_selected_variant_v1_1,__obelisk_eval_kernel_promotion_latched_v1,__obelisk_eval_promotion_pending_mask_v1,__obelisk_eval_route_promotion_pending_v1,__obelisk_eval_promotion_latched_v1,__obelisk_eval_step_four_state_fallback_v1,__obelisk_eval_fast_nba_roots_v1 main=model_main})' -o %t.exposed.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' -S -o %t.proof.ll
+// RUN: obelisk-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O0>' -S -o %t.proof.ll
 // RUN: %llvm_dist/bin/clang++ -O0 %t.proof.ll %S/Inputs/check-promotion-word-scan.cpp %native_support/libobelisk_rt.a %native_support/libc++.a %native_support/libc++abi.a %native_support/libunwind.a -nostdlib++ -lpthread -ldl -o %t.proof.exe
 // RUN: %t.proof.exe | FileCheck %s --check-prefix=PROOF
-// RUN: mlir-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.o3.ll
+// RUN: obelisk-translate --mlir-to-llvmir %t.exposed.mlir | opt -passes='coro-early,coro-split<reuse-storage>,coro-cleanup,default<O3>' -S -o %t.o3.ll
 // RUN: FileCheck %s --check-prefix=OUTLINE < %t.o3.ll
 // RUN: FileCheck %s --check-prefix=DIRECT --implicit-check-not=__obelisk_eval_function_route_v1_ < %t.o3.ll
 

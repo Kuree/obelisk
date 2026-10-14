@@ -8,8 +8,6 @@
 #include <optional>
 
 namespace obelisk::detail {
-inline constexpr llvm::StringLiteral tableWaitIndexAttr =
-    "native.table_wait";
 struct NativeTableWait {
   uint32_t continuation, actionFlags;
   uint64_t frameOffset, frameSize;

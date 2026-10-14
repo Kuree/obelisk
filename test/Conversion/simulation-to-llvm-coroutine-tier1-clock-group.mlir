@@ -6,7 +6,7 @@
 // RUN: FileCheck %s --check-prefix=RETAIN < %t.lowered.mlir
 // RUN: obelisk-opt %t.closed.mlir --mlir-disable-threading --convert-obelisk-sim-processes-to-llvm-coroutines -o %t.serial.mlir
 // RUN: diff %t.lowered.mlir %t.serial.mlir
-// RUN: mlir-translate --mlir-to-llvmir %t.lowered.mlir | opt -passes=verify -disable-output
+// RUN: obelisk-translate --mlir-to-llvmir %t.lowered.mlir | opt -passes=verify -disable-output
 
 // This fixture is already at the coroutine-conversion boundary: its compute
 // graph, static state plan, superstep, and three-tier schedule are explicit.

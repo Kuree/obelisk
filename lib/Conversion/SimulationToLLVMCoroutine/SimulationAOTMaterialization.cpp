@@ -5,6 +5,7 @@
 #include "SimulationEvalReadySet.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/StorageWriteAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
@@ -802,7 +803,7 @@ FailureOr<bool> makeNativeEvalPlan(
           });
         });
     if (unownedTransitionNeedsActiveSelfCheck) {
-      if (module->hasAttr("debug.native_timing"))
+      if (native::has<native::DebugTiming>(module))
         llvm::errs() << "eval LLVM rejection: unowned active-self transition\n";
       return false;
     }
@@ -970,7 +971,7 @@ FailureOr<bool> makeNativeEvalPlan(
           // the runtime scheduler until an interprocedural path/count proof
           // and a private Eval clone both exist.
           needsRuntimeFallback = true;
-          if (module->hasAttr("debug.native_timing"))
+          if (native::has<native::DebugTiming>(module))
             llvm::errs() << "eval LLVM rejection: NBA helper "
                          << function.getSymName() << '\n';
           return;
@@ -995,7 +996,7 @@ FailureOr<bool> makeNativeEvalPlan(
               << proof->periodicIngressTransitionConflicts
               << ", unique-semantic-root-site=" << proof->uniqueSemanticRootSite
               << ", site-once=" << proof->siteExecutesAtMostOnce << ")";
-          if (module->hasAttr("debug.native_timing")) {
+          if (native::has<native::DebugTiming>(module)) {
             auto site = constantU64(call.getArgOperands()[1]);
             auto root = site ? staticNBAPlan.siteRoots.find(*site)
                              : staticNBAPlan.siteRoots.end();
@@ -2857,7 +2858,7 @@ FailureOr<bool> makeNativeEvalPlan(
       if (!hasOffset && !constantU64(handle)) {
         if (deferColdReference)
           continue;
-        if (module->hasAttr("debug.native_timing")) {
+        if (native::has<native::DebugTiming>(module)) {
           llvm::errs() << "eval load rejection: function="
                        << (owner ? owner.getSymName() : StringRef("?"))
                        << " width=" << *width << '\n';
@@ -2937,7 +2938,7 @@ FailureOr<bool> makeNativeEvalPlan(
           continue;
         auto diagnostic = call.emitError(
             "dynamic state load root is not direct-state certified");
-        if (module->hasAttr("debug.native_timing")) {
+        if (native::has<native::DebugTiming>(module)) {
           diagnostic.attachNote(call.getLoc())
               << "evaluator " << (owner ? owner.getSymName() : StringRef("?"))
               << ", width " << *width << ", root " << chainBase;
@@ -3168,7 +3169,7 @@ FailureOr<bool> makeNativeEvalPlan(
               return llvmConstant(offsetBuilder, loc, i64, value);
             };
             Value amount = call.getArgOperands()[1];
-            if (call->hasAttr(nativeInBoundsHandleOffsetAttr)) {
+            if (native::has<native::InBoundsHandleOffset>(call)) {
               Value result =
                   arith::AddIOp::create(offsetBuilder, loc, base, amount);
               call.getResult().replaceAllUsesWith(result);
@@ -6750,7 +6751,7 @@ FailureOr<bool> makeNativeEvalPlan(
       if (!nonPrivateFanout.contains(root.static_state))
         privateRoots.push_back(index);
     }
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     llvm::errs() << "obelisk native NBA batch: candidates="
                  << privateRoots.size() << " roots=" << nbaRoots.size()
                  << " private-cone="

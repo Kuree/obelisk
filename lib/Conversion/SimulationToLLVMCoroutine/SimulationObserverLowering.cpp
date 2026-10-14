@@ -1,6 +1,7 @@
 //===- SimulationObserverLowering.cpp - Native observer lowering ----------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 
@@ -406,14 +407,12 @@ LogicalResult materializeNativeObserverThunks(ModuleOp module) {
   SmallVector<LLVM::LLVMFuncOp> evaluators;
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
-        if (function->hasAttr("native.observer_width"))
+        if (native::has<native::ObserverWidth>(function))
           evaluators.push_back(function);
       });
   for (LLVM::LLVMFuncOp evaluator : evaluators) {
-    auto width =
-        evaluator->getAttrOfType<IntegerAttr>("native.observer_width");
-    auto fourState =
-        evaluator->getAttrOfType<BoolAttr>("native.observer_four_state");
+    auto width = native::get<native::ObserverWidth>(evaluator);
+    auto fourState = native::get<native::ObserverFourState>(evaluator);
     if (!width || !fourState ||
         failed(makeNativeObserverThunk(
             module, evaluator,

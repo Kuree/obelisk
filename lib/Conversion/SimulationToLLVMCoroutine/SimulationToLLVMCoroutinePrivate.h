@@ -71,37 +71,6 @@ mlir::WalkResult walkNativeFunctions(mlir::Operation *root,
   });
 }
 
-inline constexpr llvm::StringLiteral nativeStringGlobalAttr =
-    "native.string_global";
-inline constexpr llvm::StringLiteral nativeScanPrefixGlobalAttr =
-    "native.scan_prefix_global";
-inline constexpr llvm::StringLiteral nativeFileScanPrefixGlobalAttr =
-    "native.file_scan_prefix_global";
-inline constexpr llvm::StringLiteral nativeAggregateBitstreamPlanGlobalAttr =
-    "native.aggregate_bitstream_plan_global";
-inline constexpr llvm::StringLiteral nativeContainerPatternPlanGlobalAttr =
-    "native.container_pattern_plan_global";
-inline constexpr llvm::StringLiteral nativeContainerPatternPlanSizeAttr =
-    "native.container_pattern_plan_size";
-
-inline constexpr llvm::StringLiteral nativeTwoStateBlockUnknownsAttr =
-    "native.two_state_block_unknowns";
-inline constexpr llvm::StringLiteral nativeInBoundsHandleOffsetAttr =
-    "native.in_bounds_handle_offset";
-inline constexpr llvm::StringLiteral managedRootRangeRecordAttr =
-    "native.managed_root_range_record";
-inline constexpr llvm::StringLiteral managedRootRangePushCheckAttr =
-    "native.managed_root_range_push_check";
-/// Ends the prologue that reacquires an activation's root record at a resume
-/// target; coroutine lowering runs it only on scheduler resumption.
-inline constexpr llvm::StringLiteral managedRootActivationPrologueAttr =
-    "native.managed_root_activation_prologue";
-inline constexpr llvm::StringLiteral nativeMethodArgumentSizesAttr =
-    "native.method_argument_sizes";
-inline constexpr llvm::StringLiteral nativeMethodArgumentRootsAttr =
-    "native.method_argument_roots";
-inline constexpr llvm::StringLiteral nativeTransferredReferencesAttr =
-    "native.transferred_references";
 inline constexpr auto assumeCleanSpecializationAttr =
     ::obelisk::schedule::Field::NativeAssumeCleanSpecialization;
 inline constexpr auto cleanEvalBodyAttr =

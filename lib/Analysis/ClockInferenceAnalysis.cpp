@@ -3,6 +3,7 @@
 #include "obelisk/Analysis/ClockInferenceAnalysis.h"
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -484,7 +485,7 @@ ClockInferenceAnalysis::ClockInferenceAnalysis(
       return !overlaps(bit, writer) || writer.owner == owner;
     });
   };
-  if (module->hasAttr("debug.native_timing"))
+  if (native::has<native::DebugTiming>(module))
     for (const auto &seed : seeds)
       for (const auto &writer : writers[seed.bit.first])
         if (overlaps(seed.bit, writer) && writer.owner != seed.writer)

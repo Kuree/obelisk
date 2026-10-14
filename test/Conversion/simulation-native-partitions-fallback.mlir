@@ -3,7 +3,7 @@
 // RUN:   | FileCheck %s
 // RUN: obelisk-opt %s --obelisk-sim-plan-native-partitions \
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -passes=verify -disable-output
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -passes=verify -disable-output
 
 // Native module assembly has textual symbol ownership that the semantic
 // planner cannot rewrite safely. Keep compiling on the unsplit path, but do

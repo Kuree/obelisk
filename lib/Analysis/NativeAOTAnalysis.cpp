@@ -1,4 +1,5 @@
 #include "obelisk/Analysis/GraphAlgorithms.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 //===- NativeAOTAnalysis.cpp - Native scheduler eligibility --------------===//
 
 #include "obelisk/Analysis/NativeAOTAnalysis.h"
@@ -1394,7 +1395,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
     }
     result.nativeGraphCost += weight;
   }
-  if (module->hasAttr("debug.native_timing")) {
+  if (native::has<native::DebugTiming>(module)) {
     llvm::StringMap<std::pair<uint64_t, uint32_t>> byFunction;
     for (Attribute attribute : nodes) {
       auto fragment = dyn_cast<schedule::ComputeFragmentAttr>(attribute);

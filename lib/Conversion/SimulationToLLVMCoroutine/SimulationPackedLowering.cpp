@@ -4,6 +4,7 @@
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 #include "obelisk/Analysis/LocalStorageAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -53,8 +54,6 @@ constexpr auto inductiveTwoStateAttr =
     ::obelisk::schedule::Field::EvalInductiveTwoState;
 constexpr auto conditionalTwoStateAttr =
     ::obelisk::schedule::Field::EvalConditionallyTwoState;
-constexpr StringLiteral bulkCopySourceAssumeCleanAttr =
-    "native.bulk_copy_source_assume_clean";
 
 LogicalResult convertNativeAggregateType(Type type,
                                          SmallVectorImpl<Type> &results) {
@@ -119,7 +118,7 @@ void fuseWideDynamicRefCopies(
         rewriter, store.getLoc(), load.getReference(), store.getReference());
     copy->setAttrs(store->getAttrDictionary());
     if (::obelisk::schedule::has<assumeCleanSpecializationAttr>(load))
-      copy->setAttr(bulkCopySourceAssumeCleanAttr, rewriter.getUnitAttr());
+      native::mark<native::BulkCopySourceAssumeClean>(copy);
     nativeTwoStateOperations.erase(load.getOperation());
     stateAccesses.erase(load);
     stateAccesses.erase(store);
@@ -272,7 +271,7 @@ LogicalResult lowerPackedSimulationOperations(
           LLVM::ZeroOp::create(initializer, module.getLoc(), pointer));
     }
   }
-  bool detailedTiming = module->hasAttr("debug.native_timing");
+  bool detailedTiming = native::has<native::DebugTiming>(module);
   auto lastTiming = std::chrono::steady_clock::now();
   auto markTiming = [&](StringRef name) {
     if (!detailedTiming)
@@ -632,7 +631,7 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::advance();
       StringAttr name =
           allocateGlobalName("__obelisk_string_literal.", stringOrdinal);
-      operation->setAttr(nativeStringGlobalAttr, name);
+      native::set<native::StringGlobal>(operation, name);
       return reserve(name.getValue(), literal.getValue());
     }
     if (auto scan = dyn_cast<sim::SimStringScanFieldOp>(operation)) {
@@ -640,7 +639,7 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::advance();
       StringAttr name =
           allocateGlobalName("__obelisk_scan_prefix.", scanPrefixOrdinal);
-      operation->setAttr(nativeScanPrefixGlobalAttr, name);
+      native::set<native::ScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), scan.getPrefix());
     }
     if (isa<sim::SimStringScanRawOp, sim::SimStringSkipRawOp>(operation)) {
@@ -650,7 +649,7 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::advance();
       StringAttr name =
           allocateGlobalName("__obelisk_scan_prefix.", scanPrefixOrdinal);
-      operation->setAttr(nativeScanPrefixGlobalAttr, name);
+      native::set<native::ScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), prefix);
     }
     if (auto scan = dyn_cast<sim::SimFileScanFieldOp>(operation)) {
@@ -658,7 +657,7 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::advance();
       StringAttr name = allocateGlobalName("__obelisk_file_scan_prefix.",
                                            fileScanPrefixOrdinal);
-      operation->setAttr(nativeFileScanPrefixGlobalAttr, name);
+      native::set<native::FileScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), scan.getPrefix());
     }
     if (isa<sim::SimFileScanRawOp, sim::SimFileSkipRawOp>(operation)) {
@@ -668,7 +667,7 @@ LogicalResult lowerPackedSimulationOperations(
         return WalkResult::advance();
       StringAttr name = allocateGlobalName("__obelisk_file_scan_prefix.",
                                            fileScanPrefixOrdinal);
-      operation->setAttr(nativeFileScanPrefixGlobalAttr, name);
+      native::set<native::FileScanPrefixGlobal>(operation, name);
       return reserve(name.getValue(), prefix);
     }
     if (auto create = dyn_cast<sim::SimContainerCreateOp>(operation)) {
@@ -686,11 +685,11 @@ LogicalResult lowerPackedSimulationOperations(
       if (!plan->empty()) {
         std::string name =
             "__obelisk_element_pattern_" + std::to_string(create.getTypeId());
-        operation->setAttr(nativeContainerPatternPlanGlobalAttr,
-                           StringAttr::get(context, name));
+        native::set<native::ContainerPatternPlanGlobal>(
+            operation, StringAttr::get(context, name));
         std::string bytes = encodeUnsignedPlan(*plan);
-        operation->setAttr(
-            nativeContainerPatternPlanSizeAttr,
+        native::set<native::ContainerPatternPlanSize>(
+            operation,
             IntegerAttr::get(IntegerType::get(context, 64), bytes.size()));
         if (failed(reserveByteGlobal(create.getLoc(), name, bytes)))
           return WalkResult::interrupt();
@@ -706,8 +705,8 @@ LogicalResult lowerPackedSimulationOperations(
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
       std::string name = "__obelisk_aggregate_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
-      operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
-                         StringAttr::get(context, name));
+      native::set<native::AggregateBitstreamPlanGlobal>(
+          operation, StringAttr::get(context, name));
       needsAggregateBitstreamABI = true;
       return reserve(name, bytes);
     }
@@ -716,8 +715,8 @@ LogicalResult lowerPackedSimulationOperations(
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
       std::string name = "__obelisk_aggregate_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
-      operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
-                         StringAttr::get(context, name));
+      native::set<native::AggregateBitstreamPlanGlobal>(
+          operation, StringAttr::get(context, name));
       needsAggregateBitstreamImportABI = true;
       return reserve(name, bytes);
     }
@@ -735,8 +734,8 @@ LogicalResult lowerPackedSimulationOperations(
       std::string bytes = encodeBitstreamPlan(bitstream.getPlan());
       std::string name = "__obelisk_recursive_bitstream_plan_" +
                          llvm::utohexstr(llvm::hash_value(bytes));
-      operation->setAttr(nativeAggregateBitstreamPlanGlobalAttr,
-                         StringAttr::get(context, name));
+      native::set<native::AggregateBitstreamPlanGlobal>(
+          operation, StringAttr::get(context, name));
       needsRecursiveBitstreamABI = true;
       return reserve(name, bytes);
     }
@@ -961,12 +960,12 @@ LogicalResult lowerPackedSimulationOperations(
           physicalIndex +=
               analysis::getSimulationPhysicalStorageCount(*storage);
         }
-        call->setAttr(nativeMethodArgumentSizesAttr,
-                      DenseI64ArrayAttr::get(context, sizes));
-        call->setAttr(nativeMethodArgumentRootsAttr,
-                      DenseI64ArrayAttr::get(context, roots));
-        call->setAttr(nativeTransferredReferencesAttr,
-                      DenseI64ArrayAttr::get(context, references));
+        native::set<native::MethodArgumentSizes>(
+            call, DenseI64ArrayAttr::get(context, sizes));
+        native::set<native::MethodArgumentRoots>(
+            call, DenseI64ArrayAttr::get(context, roots));
+        native::set<native::TransferredReferences>(
+            call, DenseI64ArrayAttr::get(context, references));
         return WalkResult::advance();
       });
   if (virtualTaskABI.wasInterrupted())
@@ -1003,8 +1002,8 @@ LogicalResult lowerPackedSimulationOperations(
         SmallVector<int64_t> referenceIndices;
         for (unsigned index : referenceArguments[function.getOperation()])
           referenceIndices.push_back(index);
-        function->setAttr(nativeTransferredReferencesAttr,
-                          DenseI64ArrayAttr::get(context, referenceIndices));
+        native::set<native::TransferredReferences>(
+            function, DenseI64ArrayAttr::get(context, referenceIndices));
         return WalkResult::skip();
       });
   if (lifetimeInputs.wasInterrupted())
@@ -1014,7 +1013,7 @@ LogicalResult lowerPackedSimulationOperations(
   // pattern below. Never consume a same-named source attribute.
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [](sim::SimFuncOp function) {
-        function->removeAttr(nativeTwoStateBlockUnknownsAttr);
+        native::remove<native::TwoStateBlockUnknowns>(function);
       });
   NativeStateLayout cleanEvalLayout = makeCleanEvalStateLayout(stateLayout);
   auto classLowering = collectNativeClassLowering(module);
@@ -1362,8 +1361,8 @@ LogicalResult lowerPackedSimulationOperations(
   WalkResult specializedBlockArguments =
       ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
           module, [&](sim::SimFuncOp function) {
-            auto mappings = function->getAttrOfType<ArrayAttr>(
-                nativeTwoStateBlockUnknownsAttr);
+            auto mappings =
+                native::get<native::TwoStateBlockUnknowns>(function);
             if (!mappings)
               return WalkResult::advance();
             if (mappings.size() != function.getBody().getBlocks().size()) {
@@ -1403,7 +1402,7 @@ LogicalResult lowerPackedSimulationOperations(
                 argument.replaceAllUsesWith(zero);
               }
             }
-            function->removeAttr(nativeTwoStateBlockUnknownsAttr);
+            native::remove<native::TwoStateBlockUnknowns>(function);
             return WalkResult::advance();
           });
   if (specializedBlockArguments.wasInterrupted())

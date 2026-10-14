@@ -18,6 +18,8 @@ add_mlir_library(ObeliskSimulationIR
   ObeliskDPIAttrsIncGen
   ObeliskDPIDialectIncGen
   ObeliskDPIEnumsIncGen
+  ObeliskNativeAttrsIncGen
+  ObeliskNativeDialectIncGen
   ObeliskScheduleAttrsIncGen
   ObeliskScheduleOpsIncGen
   ObeliskScheduleDialectIncGen
@@ -30,6 +32,7 @@ add_mlir_library(ObeliskSimulationIR
 
   LINK_LIBS PUBLIC
   ObeliskDPIIR
+  ObeliskNativeIR
   ObeliskRuntimeIR
   MLIRCallInterfaces
   MLIRCastInterfaces

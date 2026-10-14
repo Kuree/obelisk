@@ -1,6 +1,7 @@
 //===- SimulationGroupDataflow.cpp - Predicated native computation --------===//
 
 #include "SimulationToLLVMCoroutinePrivate.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Runtime/ReadySet.h"
 
@@ -54,8 +55,8 @@ bool materializeNativeGroupDataflow(LLVM::LLVMFuncOp function,
   }
   (void)runRegionDCE(rewriter, function->getRegions());
   auto reject = [&](StringRef reason, Operation *operation = nullptr) {
-    if (function->getParentOfType<ModuleOp>()->hasAttr(
-            "debug.native_timing")) {
+    if (native::has<native::DebugTiming>(
+            function->getParentOfType<ModuleOp>())) {
       llvm::errs() << "obelisk group dataflow rejected: "
                    << function.getSymName() << " " << reason;
       if (operation)

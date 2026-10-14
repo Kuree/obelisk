@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=ADJ
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,coro-split<reuse-storage>,verify' | FileCheck %s --check-prefix=FRAME
-// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | mlir-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,coro-split<reuse-storage>,verify' | FileCheck %s --check-prefix=FRAME
+// RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | obelisk-translate --mlir-to-llvmir | opt -S -passes='verify,coro-early,sroa,instcombine,simplifycfg,coro-split<reuse-storage>,coro-elide,coro-cleanup,sroa,instcombine,simplifycfg,dce,strip-dead-prototypes,verify' | FileCheck %s --check-prefix=SPLIT
 
 !choice = !simulation.unpacked_union<fields = [
   #simulation.field<name = "byte", type = i8, ordinal = 0, packedOffset = 0>,
@@ -299,8 +299,7 @@ module attributes {
 // CHECK-DAG: llvm.mlir.global internal constant @delay_process.__obelisk_frame_fields
 // CHECK-DAG: llvm.mlir.global external constant @plain_process.__obelisk_process_descriptor
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_coro_ramp
-// CHECK-SAME: frame.alignment = 8 : i64
-// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2>
+// CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = 8, checksum = {{[^,]+}}, continuations = [0, 1, 2]
 // CHECK-SAME: passthrough = ["presplitcoroutine"]
 // CHECK-DAG: llvm.intr.coro.id
 // CHECK-DAG: llvm.intr.coro.size
@@ -313,8 +312,7 @@ module attributes {
 // CHECK-LABEL: llvm.func @delay_process.__obelisk_native_execute
 // CHECK: llvm.call tail @__obelisk_native_coro_execute_v1
 // CHECK-LABEL: llvm.func @all_waits.__obelisk_coro_ramp
-// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2, 3, 4, 5, 6>
-// CHECK-SAME: frame.size = 96 : i64
+// CHECK-SAME: native.frame = #native.frame<size = 96, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, 2, 3, 4, 5, 6]
 // CHECK-DAG: %[[ANY_WAIT:[0-9]+]] = llvm.getelementptr {{.*}}[32]
 // CHECK-DAG: %[[ANY_EDGE_CHANGE_ADDR:[0-9]+]] = llvm.getelementptr %[[ANY_WAIT]][40]
 // CHECK-DAG: llvm.store %{{[0-9]+}}, %[[ANY_EDGE_CHANGE_ADDR]]
@@ -322,17 +320,15 @@ module attributes {
 // CHECK-DAG: llvm.store %{{[0-9]+}}, %[[ANY_EDGE_POSEDGE_ADDR]]
 // CHECK-DAG: llvm.getelementptr {{.*}}[60]
 // CHECK-LABEL: llvm.func @loop_wait.__obelisk_coro_ramp
-// CHECK-SAME: frame.continuations = array<i32: 0, 1>
+// CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1]
 // CHECK-LABEL: llvm.func @shared_observer_binding.__obelisk_coro_ramp
-// CHECK-SAME: frame.continuations = array<i32: 0, 1>
+// CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1]
 // CHECK-LABEL: llvm.func @reuse_continuation_slots.__obelisk_coro_ramp
-// CHECK-SAME: frame.continuations = array<i32: 0, 1, 2>
-// CHECK-SAME: frame.size = 64 : i64
+// CHECK-SAME: native.frame = #native.frame<size = 64, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, 2]
 // CHECK-LABEL: llvm.func @maximum_continuation_id.__obelisk_coro_ramp
-// CHECK-SAME: frame.continuations = array<i32: 0, 1, -1>
+// CHECK-SAME: native.frame = #native.frame<size = {{[^,]+}}, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1, -1]
 // CHECK-LABEL: llvm.func @suspension_live_value.__obelisk_coro_ramp
-// CHECK-SAME: frame.continuations = array<i32: 0, 1>
-// CHECK-SAME: frame.size = 40 : i64
+// CHECK-SAME: native.frame = #native.frame<size = 40, alignment = {{[^,]+}}, checksum = {{[^,]+}}, continuations = [0, 1]
 // CHECK-LABEL: llvm.func @plain_process
 // CHECK-SAME: native.scratch_size = 0 : i64
 // CHECK: llvm.alloca

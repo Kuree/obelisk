@@ -1,7 +1,7 @@
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines | FileCheck %s --check-prefix=NATIVE
 // RUN: obelisk-opt %s --encode-obelisk-sim-to-bytecode='vpi=off' | FileCheck %s --check-prefix=BYTECODE
 // RUN: obelisk-opt %s --convert-obelisk-sim-processes-to-llvm-coroutines \
-// RUN:   | mlir-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
+// RUN:   | obelisk-translate --mlir-to-llvmir | opt -S -passes=verify -o /dev/null
 
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",

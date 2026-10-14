@@ -6,6 +6,7 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
 #include "obelisk/Conversion/SimulationRuntime.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -139,8 +140,8 @@ analyzeTableProcess(sim::SimFuncOp function,
     plan.waits.push_back(std::move(wait));
   }
   for (auto [index, suspension] : llvm::enumerate(analysis.getSuspensions()))
-    suspension.operation->setAttr(
-        tableWaitIndexAttr,
+    native::set<native::TableWait>(
+        suspension.operation,
         IntegerAttr::get(IntegerType::get(function.getContext(), 32), index));
   return plan;
 }

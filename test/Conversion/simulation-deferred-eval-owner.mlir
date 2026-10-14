@@ -33,7 +33,7 @@
 
 !clk = !simulation.ref<i1>
 !int = !simulation.ref<i32>
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, native.closed_executable, debug.native_timing} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, native.closed_executable, native.debug_timing} {
   simulation.design @deferred_finish {
     simulation.scope.decl 0 hierarchy "t"
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "t.root"
@@ -127,7 +127,7 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 !clk = !simulation.ref<i1>
 !int = !simulation.ref<i32>
-module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, native.closed_executable, debug.native_timing} {
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu", schedule.native_scheduler = 3 : i32, native.closed_executable, native.debug_timing} {
   simulation.design @deferred_finish_runtime {
     simulation.scope.decl 0 hierarchy "t"
     simulation.code_unit.decl 1 in 0 root_initializer hierarchy "t.root"

@@ -1,3 +1,4 @@
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- SimulationProcessActivationLowering.cpp - Activation helpers ---===//
 
@@ -44,8 +45,7 @@ makeProcessActivationHelper(ModuleOp module, SymbolTable &symbols,
   for (BlockArgument argument : function.getBody().front().getArguments())
     arguments.push_back(convertProcessType(argument.getType(), context));
   ArrayRef<int64_t> transferredReferences;
-  if (auto references = function->getAttrOfType<DenseI64ArrayAttr>(
-          nativeTransferredReferencesAttr))
+  if (auto references = native::get<native::TransferredReferences>(function))
     transferredReferences = references.asArrayRef();
   std::string checkedHelperName =
       (function.getSymName() + ".__obelisk_activate_checked").str();
@@ -365,10 +365,10 @@ FailureOr<LLVM::LLVMFuncOp> makeProcessSpawnHelper(
   copyNativePartition(function, helper);
   // Retain the layout for root-spawn table materialization. Dynamic callers
   // use the typed marshalling body below.
-  helper->setAttr("native.spawn_capture_offsets",
-                  builder.getDenseI64ArrayAttr(offsets));
-  helper->setAttr("native.spawn_capture_size",
-                  builder.getI64IntegerAttr(captureSize));
+  native::set<native::SpawnCaptureOffsets>(
+      helper, builder.getDenseI64ArrayAttr(offsets));
+  native::set<native::SpawnCaptureSize>(helper,
+                                        builder.getI64IntegerAttr(captureSize));
   indexModuleSymbol(module, symbols, helper);
   if (materializeBody && failed(makeProcessSpawnBody(helper, analysis)))
     return failure();
@@ -386,8 +386,7 @@ makeProcessSpawnBody(LLVM::LLVMFuncOp helper,
   Type pointer = LLVM::LLVMPointerType::get(context);
   Type i64 = builder.getI64Type();
   uint64_t captureSize =
-      helper->getAttrOfType<IntegerAttr>("native.spawn_capture_size")
-          .getUInt();
+      native::get<native::SpawnCaptureSize>(helper).getUInt();
   std::string planName = (helper.getSymName() + "_plan").str();
   Block *entry = helper.addEntryBlock(builder);
   builder.setInsertionPointToStart(entry);

@@ -18,6 +18,7 @@
 #include "obelisk/Analysis/StateDomainAnalysis.h"
 #include "obelisk/Analysis/StaticSpecializationAnalysis.h"
 #include "obelisk/Conversion/SimulationToSchedule/Utils.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
@@ -993,7 +994,7 @@ LogicalResult materializeEvalTwoStateVariants(
           bool trackKnownState = true) -> FailureOr<sim::SimFuncOp> {
     auto traceRejection = [&](StringRef reason,
                               Operation *operation = nullptr) {
-      if (!module->hasAttr("debug.native_timing"))
+      if (!native::has<native::DebugTiming>(module))
         return;
       llvm::errs() << "obelisk eval probe rejected: " << source.getSymName()
                    << ": " << reason;

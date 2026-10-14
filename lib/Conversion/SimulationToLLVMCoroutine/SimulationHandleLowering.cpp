@@ -3,6 +3,7 @@
 #include "SimulationLocalStorageLowering.h"
 #include "SimulationToLLVMCoroutinePrivate.h"
 
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/StableHandle.h"
@@ -56,7 +57,7 @@ Value offsetNativeHandle(OpBuilder &builder, Location location, Value handle,
   // resolving it. The proof permits plain encoded addition afterwards: the
   // physical root fits in the nonnegative signed 32-bit offset field.
   if (inBounds)
-    call->setAttr(nativeInBoundsHandleOffsetAttr, builder.getUnitAttr());
+    native::mark<native::InBoundsHandleOffset>(call);
   return call.getResult();
 }
 

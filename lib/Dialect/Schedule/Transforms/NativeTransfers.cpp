@@ -2,6 +2,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "obelisk/Analysis/SimulationAnalysis.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Schedule/ScheduleOps.h"
@@ -223,8 +224,8 @@ class PrepareNativeTransferKernelsPass final
       auto function = sim::SimFuncOp::create(
           builder, kernel.getLoc(), kernel.getSymName().str() + ".impl",
           signature, sim::EntryKind::PortInput,
-          ArrayRef<NamedAttribute>{builder.getNamedAttr(
-              "native.unmanaged", builder.getUnitAttr())},
+          ArrayRef<NamedAttribute>{
+              native::named<native::Unmanaged>(builder.getUnitAttr())},
           arguments);
       Block *entry = &function.getBody().front();
       Block *body = new Block;
@@ -269,8 +270,8 @@ class PrepareNativeTransferKernelsPass final
       // admission performed again on a representation-lowered body.
       detail::NativeTableProcess table;
       for (const auto &wait : (*frame)->getSuspensions()) {
-        wait.operation->setAttr(detail::tableWaitIndexAttr,
-                                builder.getI32IntegerAttr(0));
+        native::set<native::TableWait>(wait.operation,
+                                       builder.getI32IntegerAttr(0));
         table.waits.push_back(
             {wait.continuationID,
              0,
