@@ -71,7 +71,7 @@ endmodule
 // QUERY-NEXT: strobe manual 100.000000 2 2
 // REPORT: functional: 100.00% (2/2)
 
-// The one mutable v1 schema retains the static type option.
+// The one mutable schema retains the static type option.
 // SCHEMA: functional_option_plan owner={{[1-9][0-9]*}} expression={{[1-9][0-9]*}} owner_kind=1 scope=2 option=12 ordinal=12 flags=0
 
 // IR: simulation.covergroup.clock_event.register

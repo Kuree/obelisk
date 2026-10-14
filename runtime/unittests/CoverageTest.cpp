@@ -43,7 +43,7 @@ void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
 size_t sectionOffset(const std::vector<uint8_t> &bytes,
                      obelisk::coverage::SectionKind kind) {
   uint64_t directory = read64(bytes, 24);
-  uint32_t count = read32(bytes, 32);
+  uint32_t count = read32(bytes, 12);
   for (uint32_t index = 0; index != count; ++index) {
     size_t record = static_cast<size_t>(directory + index * 32);
     if (read32(bytes, record) == static_cast<uint32_t>(kind))
@@ -8405,7 +8405,7 @@ TEST(CoverageDatabaseTest, RejectsNoncanonicalReservedBytesAndRunTagCounts) {
 
   ASSERT_EQ(obelisk::coverage::serialize(database, image),
             obelisk::coverage::Status::Ok);
-  put32(image, 12, 1);
+  put32(image, 8, 1);
   refreshChecksum(image);
   EXPECT_EQ(obelisk::coverage::parse(image.data(), image.size(), parsed),
             obelisk::coverage::Status::InvalidEnum);

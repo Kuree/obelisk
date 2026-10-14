@@ -44,7 +44,7 @@ void put32(std::vector<uint8_t> &bytes, size_t offset, uint32_t value) {
 
 size_t sectionOffset(const std::vector<uint8_t> &bytes, SectionKind kind) {
   uint64_t directory = read64(bytes, 24);
-  uint32_t count = read32(bytes, 32);
+  uint32_t count = read32(bytes, 12);
   for (uint32_t index = 0; index != count; ++index) {
     size_t record = static_cast<size_t>(directory + index * 32);
     if (read32(bytes, record) == static_cast<uint32_t>(kind))
@@ -1773,15 +1773,9 @@ TEST(CoverageDatabaseTest, GeneratedFixedFieldDiagnosticsAreExact) {
         "value_type");
 }
 
-TEST(CoverageDatabaseTest, RejectsOtherVersionsAndUnknownSections) {
+TEST(CoverageDatabaseTest, RejectsUnknownSections) {
   Database db = makeTypedDatabase();
   std::vector<uint8_t> image;
-  ASSERT_EQ(serialize(db, image), Status::Ok);
-  put32(image, 8, CodecVersion + 1);
-  EXPECT_EQ(parse(image.data(), image.size(), db), Status::VersionMismatch);
-  put32(image, 8, 1);
-  EXPECT_EQ(parse(image.data(), image.size(), db), Status::VersionMismatch);
-
   ASSERT_EQ(serialize(makeTypedDatabase(), image), Status::Ok);
   put32(image, HeaderSize, 0xffffu);
   refreshChecksum(image);

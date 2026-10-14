@@ -1115,7 +1115,7 @@ def SimCoverageSaveOp
                        MemRead<SimCoverageResource>,
                        MemWrite<SimIOResource>]>
       ]> {
-  let summary = "save one code-coverage metric to an exact-v1 database";
+  let summary = "save one code-coverage metric to a coverage database";
 }
 
 def SimCoverageMergeOp
@@ -1125,7 +1125,7 @@ def SimCoverageMergeOp
                        MemRead<SimCoverageResource>,
                        MemWrite<SimCoverageResource>]>
       ]> {
-  let summary = "merge one code-coverage metric from an exact-v1 database";
+  let summary = "merge one code-coverage metric from a coverage database";
 }
 
 def SimCovergroupSampleEnabledOp : SimOp<"covergroup.sample_enabled", [
@@ -1175,7 +1175,7 @@ def SimCovergroupSampleOp : SimOp<"covergroup.sample", [
   let description = [{
     Carries the once-evaluated results of every sample-phase expression needed
     by the instance's typed plan. `expression_ids` contains the corresponding
-    stable `FunctionalExpression` identities from the embedded v2 schema in
+    stable `FunctionalExpression` identities from the embedded schema in
     operand order. These are semantic identities, never physical table
     indices. The runtime resolves the handle's constructor configuration and
     atomically performs direct-bin matching, transition automata, ignore and
@@ -1354,7 +1354,7 @@ def SimCovergroupSetTypeIntegerOptionOp
       ]> {
   let summary = "set a mutable integral option on a covergroup type owner";
   let description = [{
-    `type` and `item` are stable v1 schema identities. `item` is zero for the
+    `type` and `item` are stable schema identities. `item` is zero for the
     covergroup or a positive template FunctionalItem ID. The update applies
     immediately to cumulative queries and to configurations resolved later.
     The group-only `distribute_first` option affects future bin construction;

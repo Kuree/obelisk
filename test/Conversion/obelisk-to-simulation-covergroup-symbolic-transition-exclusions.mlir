@@ -6,7 +6,7 @@
 
 // IEEE 1800-2023 19.5.5 and 19.5.6 apply transition exclusions after
 // distribution. Preserve symbolic range and wildcard step predicates in the
-// v1 plan so the runtime can subtract them from concrete ordinary alternatives
+// plan so the runtime can subtract them from concrete ordinary alternatives
 // without enumerating either predicate's value space.
 
 // CHECK-DAG: functional_bin id=[[ORDINARY:[1-9][0-9]*]] item=[[ITEM:[1-9][0-9]*]] name=ordinary kind=2 flags=0

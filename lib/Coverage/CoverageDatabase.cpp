@@ -7211,12 +7211,10 @@ Status serialize(const Database &database, WriteCallback callback, void *user,
       return Status::OutOfMemory;
     }
     prefix.raw(Magic, 8);
-    prefix.u32(CodecVersion);
     prefix.u32(database.flags);
+    prefix.u32(static_cast<uint32_t>(sections.size()));
     prefix.u64(total);
     prefix.u64(HeaderSize);
-    prefix.u32(static_cast<uint32_t>(sections.size()));
-    prefix.u32(HeaderSize);
     Digest fingerprint = computeSchemaFingerprint(database);
     prefix.raw(fingerprint);
     uint64_t offset = start;
@@ -7314,29 +7312,26 @@ Status parse(const uint8_t *data, size_t size, Database &output,
                   "header");
     if (std::memcmp(data, Magic, 8) != 0)
       return fail(Status::BadMagic, 0, SectionKind::Strings, NoRecord, "magic");
-    if (read32(data + 8) != CodecVersion)
-      return fail(Status::VersionMismatch, 8, SectionKind::Strings, NoRecord,
-                  "version");
-    if ((read32(data + 12) & ~KnownHeaderFlags) != 0)
-      return fail(Status::InvalidEnum, 12, SectionKind::Strings, NoRecord,
+    if ((read32(data + 8) & ~KnownHeaderFlags) != 0)
+      return fail(Status::InvalidEnum, 8, SectionKind::Strings, NoRecord,
                   "flags");
     if (read64(data + 16) != size || size > limits.maxImageBytes)
       return fail(size > limits.maxImageBytes ? Status::LimitExceeded
                                               : Status::BadCount,
                   16, SectionKind::Strings, NoRecord, "image_size");
     uint64_t dirOffset = read64(data + 24);
-    uint32_t count = read32(data + 32);
-    if (read32(data + 36) != HeaderSize || dirOffset != HeaderSize)
+    uint32_t count = read32(data + 12);
+    if (dirOffset != HeaderSize)
       return fail(Status::BadRecordSize, 24, SectionKind::Strings, NoRecord,
                   "header_size");
     uint64_t dirSize = 0, dirEnd = 0;
     if (count > limits.maxRecords)
-      return fail(Status::LimitExceeded, 32, SectionKind::Strings, NoRecord,
+      return fail(Status::LimitExceeded, 12, SectionKind::Strings, NoRecord,
                   "section_count");
     const size_t payloadSize = size - ChecksumSize;
     if (mulOverflow(count, DirectoryRecordSize, dirSize) ||
         addOverflow(dirOffset, dirSize, dirEnd) || dirEnd > payloadSize)
-      return fail(Status::IntegerOverflow, 32, SectionKind::Strings, NoRecord,
+      return fail(Status::IntegerOverflow, 12, SectionKind::Strings, NoRecord,
                   "section_count");
     Digest expected{};
     std::copy(data + payloadSize, data + size, expected.begin());
@@ -7344,8 +7339,8 @@ Status parse(const uint8_t *data, size_t size, Database &output,
       return fail(Status::ChecksumMismatch, payloadSize, SectionKind::Strings,
                   NoRecord, "sha256");
     Digest fingerprint{};
-    std::copy(data + 40, data + 72, fingerprint.begin());
-    result.flags = read32(data + 12);
+    std::copy(data + 32, data + 64, fingerprint.begin());
+    result.flags = read32(data + 8);
     result.schemaFingerprint = fingerprint;
     std::vector<DirectoryEntry> entries;
     IndexSet<uint32_t> kinds;
@@ -9402,8 +9397,6 @@ const char *statusName(Status s) {
     return "limit exceeded";
   case Status::BadMagic:
     return "bad magic";
-  case Status::VersionMismatch:
-    return "codec version mismatch";
   case Status::Truncated:
     return "truncated input";
   case Status::IntegerOverflow:

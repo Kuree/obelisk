@@ -5501,7 +5501,7 @@ obelisk_rt_status resolveStaticFunctionalType(
                                             sourceCube))
             return OBELISK_RT_INVALID_DESIGN;
           // Casting widens each candidate to the effective point width. Check
-          // that even one physical result fits the exact-v1 database limits
+          // that even one physical result fits the database limits
           // before the helper allocates its target-width planes; the exact
           // candidate count is checked below after conversion.
           if (!canAppend(0, targetLimbCount,
@@ -8364,7 +8364,7 @@ obelisk_rt_status resolveStaticFunctionalType(
     // Build a bounded reduced ordered multi-valued decision diagram for the
     // exact language U - union(rectangles). Forward states retain the explicit
     // rectangles that still match a prefix. Backward interning merges equal
-    // suffix languages and omits dead edges, yielding the canonical v1 graph.
+    // suffix languages and omits dead edges, yielding the canonical graph.
     using RectangleState = std::vector<uint32_t>;
     struct RawEdge {
       const ResolvedFunctionalBin *bin = nullptr;

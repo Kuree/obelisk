@@ -22,7 +22,7 @@
 // RUN:   --convert-obelisk-sim-processes-to-llvm-coroutines -o /dev/null 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=BAD-STRING-READ
 
-// The exact-v1 schema is embedded before either backend boundary. Both
+// The schema is embedded before either backend boundary. Both
 // backends consume the schema-ordered FunctionalExpression batch; native
 // lowering materializes typed descriptors for the runtime calls.
 module functional_sample_backend;

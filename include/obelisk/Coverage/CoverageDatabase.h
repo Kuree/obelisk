@@ -38,7 +38,6 @@ enum class Status : uint32_t {
   OutOfMemory,
   LimitExceeded,
   BadMagic,
-  VersionMismatch,
   Truncated,
   IntegerOverflow,
   Misaligned,

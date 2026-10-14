@@ -2224,8 +2224,7 @@ void jsonReport(
                              exclusion.reason);
   llvm::json::OStream out(stream);
   out.object([&] {
-    out.attribute("format", "obelisk-coverage-report-v1");
-    out.attribute("codec_version", CodecVersion);
+    out.attribute("format", "obelisk-coverage-report");
     out.attribute("schema_fingerprint",
                   digestText(computeSchemaFingerprint(database)));
     out.attributeObject("metrics", [&] {
@@ -3479,8 +3478,7 @@ int main(int argc, char **argv) {
     return 1;
   if (options.command == "inspect") {
     llvm::outs()
-        << "format: obcov\ncodec-version: " << CodecVersion
-        << "\nchecksum: sha256-trailer"
+        << "format: obcov\nchecksum: sha256-trailer"
         << "\nschema-fingerprint: "
         << digestText(computeSchemaFingerprint(database))
         << "\nproducer: " << database.producer

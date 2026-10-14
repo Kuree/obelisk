@@ -38,6 +38,5 @@ endmodule
 // CHECK-NEXT: POINT 100 16 16
 // MERGED: COVERAGE 100 32 32
 // MERGED-NEXT: POINT 100 32 32
-// INSPECT: codec-version: 2
 // INSPECT: functional-configurations: 16
 // INSPECT: resolved-functional-bins: 16

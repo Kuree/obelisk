@@ -26,5 +26,5 @@ endmodule
 
 // IEEE 1800-2017 19.11 excludes an empty point from its parent computation;
 // the nonzero-weight covergroup therefore has a zero denominator and returns
-// 0.0. The resolved v1 schema retains an explicit zero-cardinality auto group.
+// 0.0. The resolved schema retains an explicit zero-cardinality auto group.
 // CHECK: zero 0.000000

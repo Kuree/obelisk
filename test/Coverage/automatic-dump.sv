@@ -38,7 +38,6 @@ endmodule
 
 
 // LINE-INSPECT: format: obcov
-// LINE-INSPECT: codec-version: 2
 // LINE-INSPECT: runs: 1
 // LINE-INSPECT: line-points: 3
 // LINE-INSPECT: functional-types: 1

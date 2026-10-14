@@ -83,11 +83,6 @@ endmodule
         !expectedMagic.every((byte, index) => file.data[index] === byte)) {
       throw new Error(`invalid coverage magic at ${label}`);
     }
-    const view = new DataView(
-      file.data.buffer, file.data.byteOffset, file.data.byteLength,
-    );
-    if (view.getUint32(8, true) !== 1)
-      throw new Error(`coverage image at ${label} is not exact v1`);
   };
 
   // The unit tests mock the compiler worker so they stay runnable before the

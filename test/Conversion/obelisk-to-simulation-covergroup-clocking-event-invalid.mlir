@@ -11,7 +11,7 @@
 
 // Block events register one synchronous sample observer at construction and
 // instrument the target definition. They do not create a parked process, and
-// the single mutable v1 path has no compatibility operation.
+// the single mutable path has no compatibility operation.
 // BLOCK-COUNT-2: simulation.covergroup.block_event.fire
 // BLOCK-DAG: simulation.covergroup.block_event.register
 // BLOCK-DAG: simulation.covergroup_block_event_sample_evaluator

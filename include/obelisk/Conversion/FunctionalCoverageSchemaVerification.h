@@ -1,7 +1,7 @@
 //===- FunctionalCoverageSchemaVerification.h -----------------*- C++ -*-===//
 //
 // Dedicated pre-backend validation of typed functional-coverage IR against
-// the embedded exact-v1 schema. This deliberately does not run from core op
+// the embedded schema. This deliberately does not run from core op
 // verifiers: structural IR remains independently constructible and schema
 // parsing happens once at the backend boundary.
 //
@@ -50,7 +50,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       sim::metadata::coverageSchemaBlob);
   if (!blob)
     return module.emitError(
-        "typed functional coverage requires an embedded exact-v1 coverage "
+        "typed functional coverage requires an embedded coverage "
         "schema");
   ArrayRef<int8_t> signedBytes = blob.asArrayRef();
   coverage::Database schema;
@@ -60,7 +60,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
                       signedBytes.size(), schema, {}, &diagnostic);
   if (status != coverage::Status::Ok)
     return module.emitError()
-           << "cannot parse embedded exact-v1 coverage schema: "
+           << "cannot parse embedded coverage schema: "
            << coverage::statusName(status)
            << (diagnostic.field ? " at field " : "")
            << (diagnostic.field ? diagnostic.field : "")
@@ -288,7 +288,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
                              int64_t rawItem) -> LogicalResult {
     if (!types.contains(type)) {
       operation->emitError(
-          "declaration schema type is absent from the embedded exact-v1 "
+          "declaration schema type is absent from the embedded "
           "functional schema");
       return failure();
     }
@@ -511,7 +511,7 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
           static_cast<size_t>(create.getArgumentCount()));
       if (!types.contains(type)) {
         create.emitError(
-            "declaration schema type is absent from the embedded exact-v1 "
+            "declaration schema type is absent from the embedded "
             "functional schema");
         invalid = true;
       }

@@ -300,17 +300,17 @@ def ResolvedValueSetPredicateValue
 def ResolvedValueSetMatchesCount
     : CoverageResolvedValueSetRole<"MatchesCount", 6>;
 
-// The v2 envelope can be emitted to a non-seekable sink in one pass. The
+// The envelope can be emitted to a non-seekable sink in one pass. The
 // checksum is a SHA-256 trailer over the header, directory and section bytes.
 // Section records are shared by every producer and consumer through TableGen.
+// The format is unversioned: producers and consumers are built together.
 def CoverageWireFormat {
-  int version = 2;
-  int headerSize = 72;
+  int headerSize = 64;
   int directoryRecordSize = 32;
   int checksumSize = 32;
 }
 
-// The reader rejects every unknown section and every other codec version.
+// The reader rejects every unknown section.
 class CoverageSection<string cppName_, int value_, int recordSize_,
                       bit required_ = 0, bit staticSchema_ = 0> {
   string cppName = cppName_;

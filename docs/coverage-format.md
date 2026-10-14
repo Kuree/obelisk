@@ -1,26 +1,25 @@
-# Coverage codec v2 and scaling
+# Coverage codec and scaling
 
 The compiler, native runtime, bytecode runtime, and `obelisk-cov` share the
 portable codec in `lib/Coverage/CoverageDatabase.cpp`. The declarative source
 of record sizes, domains, and wire constants is
 `include/obelisk/Coverage/CoverageDatabase.td`; `obelisk-tblgen` generates the
 declarations, parser descriptors, and serializer descriptors. Embedded static
-schemas and persisted runs use the same codec. V1 files are rejected.
+schemas and persisted runs use the same codec. The format is unversioned while
+it is under development: producers and consumers are built together.
 
 ## Wire layout
 
-Integers are little endian. The header is 72 bytes:
+Integers are little endian. The header is 64 bytes:
 
 | Offset | Width | Field |
 | --- | --- | --- |
 | 0 | 8 | `OBCOV\r\n\x1a` magic |
-| 8 | 4 | Codec version, 2 |
-| 12 | 4 | Flags, currently zero |
+| 8 | 4 | Flags, currently zero |
+| 12 | 4 | Directory record count |
 | 16 | 8 | Total file size, including checksum |
-| 24 | 8 | Directory offset, 72 |
-| 32 | 4 | Directory record count |
-| 36 | 4 | Header size, 72 |
-| 40 | 32 | Static schema fingerprint |
+| 24 | 8 | Directory offset, 64 |
+| 32 | 32 | Static schema fingerprint |
 
 Each directory entry contains a 32-bit section kind, 32-bit section flags,
 64-bit byte offset, 64-bit byte length, and 64-bit record count. Entries and
@@ -34,11 +33,10 @@ as the sink accepts them. It then writes the digest as the final callback.
 Validation, sink failure, and allocation diagnostics remain explicit. Atomic
 file publication occurs only after a complete successful write.
 
-The JSON report schema retains its independent
-`obelisk-coverage-report-v1` identifier. Its `codec_version` is 2; it is also the
+The JSON report is identified as `obelisk-coverage-report`; it is also the
 payload embedded in the HTML report. Text, JSON, HTML, LCOV, inspect, and merge
-all read through the shared v2 parser. The Python schema dump helper verifies
-the same trailer and payload bounds.
+all read through the shared parser, and `obelisk-opt
+--test-obelisk-print-coverage-schema` prints an embedded schema through it.
 
 ## Cost model
 
@@ -238,7 +236,7 @@ while live instances exist, then constructs again using the current policy.
 Resolution adds one option row or updates its already indexed ordinal, without
 a nested search. The persistence codec retains construction-time policy rows
 and separate run-local mutable type-option rows using the existing enum and
-record columns, so its version and layout stay unchanged.
+record columns, so its layout stays unchanged.
 
 The coverage tool shows the captured `distribute_first` boolean per instance
 in JSON, text, and HTML. Final procedural values appear as run-local

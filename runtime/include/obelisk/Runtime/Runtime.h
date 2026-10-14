@@ -4839,7 +4839,7 @@ obelisk_rt_v1_functional_coverage_load_db(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_context_seed(obelisk_rt_context *context,
                                              uint64_t seed);
 
-/// One schema-indexed value transported by the exact v1 functional-coverage
+/// One schema-indexed value transported by the functional-coverage
 /// ABI. Integral planes are little-endian byte strings of `value_size` bytes;
 /// the final byte is zero-padded above `bit_width`. Four-state values carry a
 /// second plane with the same layout. Real and shortreal values point at one
@@ -4981,12 +4981,12 @@ obelisk_rt_status obelisk_rt_v1_covergroup_sample(
     const obelisk_rt_functional_value_v1 *expressions,
     uint64_t expression_count);
 // Register one covergroup clocking event with the active detached owner
-// process. `event_plan` is one exact v1 computed-observer record whose primary
+// process. `event_plan` is one computed-observer record whose primary
 // observers retain their construction-time results and whose optional
 // condition observers implement event iff clauses. Dependencies may name
 // global, static, or live automatic packed state, or a managed class-field
 // watch resolved from an exact-alias argument-reference capture. `strobe` is
-// the compiler's exact v1 schema expectation; registration rejects it if it
+// the compiler's schema expectation; registration rejects it if it
 // differs from the resolved instance policy. False selects synchronous
 // sampling and true selects one Postponed sample per numeric time. The bound
 // sample observer must return known i1 true.

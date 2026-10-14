@@ -8,7 +8,7 @@
 
 // IEEE 1800-2017 Table 19-1 makes per_instance a Boolean covergroup-instance
 // option evaluated when the covergroup is constructed. Keep that contract in
-// the typed v1 plan instead of treating its one-bit result as an integer.
+// the typed plan instead of treating its one-bit result as an integer.
 // SIM: simulation.covergroup.create
 // SIM-SAME: payloads[{{.*}}]
 // SIM-SAME: : (i1, {{.*}}, i1) -> !simulation.covergroup_handle

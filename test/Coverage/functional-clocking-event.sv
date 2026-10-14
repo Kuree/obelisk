@@ -92,7 +92,7 @@ endmodule
 // QUERY-NEXT: clocking full 100.000000 2 2
 // REPORT: functional: 100.00% (2/2)
 
-// SamplingEvent, Event, Boolean. The schema stays the sole mutable v1 format;
+// SamplingEvent, Event, Boolean. The schema stays the sole mutable format;
 // the automatic sampler does not introduce an alternate execution revision.
 // SCHEMA: functional_expression id={{[1-9][0-9]*}} owner={{[1-9][0-9]*}} owner_kind=1 role=1 result_kind=1 width=0 signedness=3 owner_ordinal=0 owner_subordinal=0 phase=3 result_ordinal=0
 

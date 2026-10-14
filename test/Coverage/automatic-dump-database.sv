@@ -11,7 +11,6 @@
 // $fatal, where the message of the fatal itself still precedes it.
 
 // DATABASE-INSPECT: format: obcov
-// DATABASE-INSPECT: codec-version: 2
 // DATABASE-INSPECT: runs: 1
 // DATABASE-INSPECT: line-points: 0
 // DATABASE-INSPECT: functional-types: 1

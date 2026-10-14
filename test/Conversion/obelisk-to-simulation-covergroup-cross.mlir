@@ -19,7 +19,7 @@
 
 // IEEE 1800-2017 19.6: a cross is a typed functional item whose target order
 // is the source order. Its iff is a sample-time Boolean expression. With no
-// explicit bins, the physical v1 plan retains a symbolic automatic cross.
+// explicit bins, the physical plan retains a symbolic automatic cross.
 // SCHEMA-DAG: functional_item id=[[A:[0-9]+]] type=[[TYPE:[0-9]+]] name=a kind=1 ordinal=0
 // SCHEMA-DAG: functional_item id=[[B:[0-9]+]] type=[[TYPE]] name=b kind=1 ordinal=1
 // SCHEMA-DAG: functional_item id=[[AB:[0-9]+]] type=[[TYPE]] name=ab kind=2 ordinal=2
@@ -104,7 +104,7 @@
 // EXPLICIT-SIM-NEXT: %[[BIN_IFF_BOOL:.*]] = simulation.ref.load {{.*}} : !simulation.ref<i1> -> i1
 // EXPLICIT-SIM-NEXT: simulation.covergroup.sample {{.*}} values[%[[FIRST_SAMPLE]], %[[SECOND_SAMPLE]], %[[BIN_IFF_BOOL]]] ids [{{.*}}]
 // IEEE 1800-2023 19.6.1: || forms the union of selected cross products. The
-// exact v1 plan retains both OR itself and its nesting under AND.
+// exact plan retains both OR itself and its nesting under AND.
 // OR-SELECTOR-DAG: functional_item id=[[OA:[0-9]+]] type=[[OTYPE:[0-9]+]] name=a kind=1 ordinal=0
 // OR-SELECTOR-DAG: functional_item id=[[OB:[0-9]+]] type=[[OTYPE]] name=b kind=1 ordinal=1
 // OR-SELECTOR-DAG: functional_item id=[[OC:[0-9]+]] type=[[OTYPE]] name=c kind=1 ordinal=2

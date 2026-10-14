@@ -8,7 +8,7 @@
 
 // IEEE 1800-2017 Tables 19-1 and 19-3 couple the instance Boolean
 // get_inst_coverage option to the static Boolean merge_instances option. Keep
-// their distinct scopes in the typed v1 plan and constructor option batch.
+// their distinct scopes in the typed plan and constructor option batch.
 // SIM: simulation.covergroup.create
 // SIM-SAME: payloads[{{.*}}]
 // SIM-SAME: : (i1, {{.*}}, i1, i1) -> !simulation.covergroup_handle

@@ -690,7 +690,7 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
     if (!id || id.getValue().isNegative() || id.getValue().isZero() ||
         failed(type)) {
       formal.emitError("constructor formal is absent from the embedded typed "
-                       "v1 FunctionalFormal plan");
+                       "FunctionalFormal plan");
       return failure();
     }
     std::string path = getHierarchyName(formal).str();
@@ -2552,7 +2552,7 @@ UnitLowering::emitCovergroupSample(semantic::SVCovergroupTypeOp covergroup,
     if (!id || id.getValue().isNegative() || id.getValue().isZero() ||
         failed(type)) {
       formal.emitError("constructor formal is absent from the embedded typed "
-                       "v1 FunctionalFormal plan");
+                       "FunctionalFormal plan");
       return failure();
     }
     std::string path = getHierarchyName(formal).str();
@@ -2811,7 +2811,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
         sim::metadata::coverageFunctionalItemId);
     if (!item || item.getValue().isZero()) {
       functionalItemMethodOwner->emitError(
-          "functional coverage item method has no typed v1 FunctionalItem "
+          "functional coverage item method has no typed FunctionalItem "
           "identity");
       return failure();
     }

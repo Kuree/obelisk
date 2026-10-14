@@ -7,7 +7,7 @@
 // RUN:   | FileCheck %s --check-prefix=SCHEMA
 
 // IEEE 1800-2023 adds real-valued coverpoints.  Keep samples and option
-// values typed as f64 through preparation; the v1 schema represents exact
+// values typed as f64 through preparation; the schema represents exact
 // values, simple ranges, and the two tolerance forms as real intervals.
 // SIM: simulation.covergroup.create {{.*}} payloads[{{.*}}] argument_count 0 formal_ids [] expression_ids [{{.*}}] : (f64
 // SIM: simulation.covergroup.sample {{.*}} values[{{.*}}] ids [{{.*}}] : (!simulation.context, !simulation.covergroup_handle<{{.*}}>, f64, !simulation.logic<1>) -> ()

@@ -55,7 +55,7 @@
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001047d inputs=7 outputs=1 flags=0
 // BYTECODE-DAG: intrinsic {{.*}}id=0x0001040c inputs=4 outputs=0 flags=0
 // ITEM: has a nonexistent or wrong-owner functional item ID
-// SCHEMA-TYPE: declaration schema type is absent from the embedded exact-v1 functional schema
+// SCHEMA-TYPE: declaration schema type is absent from the embedded functional schema
 // SCOPE: requires a covergroup or cross option owner
 
 module top;

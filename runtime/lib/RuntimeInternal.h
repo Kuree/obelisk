@@ -1814,7 +1814,7 @@ struct FunctionalCoverageTypeState {
   std::vector<FunctionalCoverageCrossState> crosses;
   std::vector<uint64_t> instances;
   /// Resolved ordinary transition alternatives removed by bounded transition
-  /// ignore/illegal words. This is derived from the v1 schema and therefore
+  /// ignore/illegal words. This is derived from the schema and therefore
   /// is an implementation detail rather than a serialized identity.
   std::unordered_set<uint64_t> suppressedTransitionAlternatives;
 };

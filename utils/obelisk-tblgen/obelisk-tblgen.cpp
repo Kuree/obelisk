@@ -4794,8 +4794,7 @@ bool emitCoverageDecls(const RecordKeeper &records, raw_ostream &os) {
   os << "#define OBELISK_COVERAGE_FORMAT_DECLS_H_INC\n\n";
   os << "namespace obelisk::coverage {\n";
   const Record *wireFormat = records.getDef("CoverageWireFormat");
-  for (auto field : {std::pair{"CodecVersion", "version"},
-                     std::pair{"HeaderSize", "headerSize"},
+  for (auto field : {std::pair{"HeaderSize", "headerSize"},
                      std::pair{"DirectoryRecordSize", "directoryRecordSize"},
                      std::pair{"ChecksumSize", "checksumSize"}})
     os << "inline constexpr uint32_t " << field.first << " = "

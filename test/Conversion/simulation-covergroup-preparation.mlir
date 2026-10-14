@@ -66,6 +66,6 @@ module attributes {
 // BYTECODE-DAG: intrinsic {{[0-9]+}}: id=0x0001047f {{.*}}outputs=0
 // BYTECODE-DAG: intrinsic {{[0-9]+}}: id=0x00010481 {{.*}}outputs=0
 // BYTECODE-DAG: intrinsic {{[0-9]+}}: id=0x00010480 {{.*}}outputs=0
-// MISSING: typed functional coverage requires an embedded exact-v1 coverage schema
+// MISSING: typed functional coverage requires an embedded coverage schema
 // BAD-BATCH: does not contain the complete schema-ordered primitive constructor FunctionalExpression batch
 // BAD-SELECTOR: has a nonexistent cross selector ID

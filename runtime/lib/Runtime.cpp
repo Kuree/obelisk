@@ -154,17 +154,13 @@ bool validExecutionExtension(
       extension->size != sizeof(*extension))
     return false;
   if (coverage) {
-    if (!extension->coverage_schema || extension->coverage_schema_size < 104 ||
+    if (!extension->coverage_schema ||
+        extension->coverage_schema_size < obelisk::coverage::HeaderSize +
+                                              obelisk::coverage::ChecksumSize ||
         extension->coverage_schema_size > SIZE_MAX)
       return false;
-    const uint32_t codecVersion =
-        uint32_t{extension->coverage_schema[8]} |
-        (uint32_t{extension->coverage_schema[9]} << 8) |
-        (uint32_t{extension->coverage_schema[10]} << 16) |
-        (uint32_t{extension->coverage_schema[11]} << 24);
     if (std::memcmp(extension->coverage_schema, obelisk::coverage::Magic,
-                    sizeof(obelisk::coverage::Magic)) != 0 ||
-        codecVersion != obelisk::coverage::CodecVersion)
+                    sizeof(obelisk::coverage::Magic)) != 0)
       return false;
   }
   if (coverage != (extension->coverage_schema != nullptr) ||

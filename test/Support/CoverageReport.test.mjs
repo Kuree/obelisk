@@ -13,7 +13,6 @@ if (process.argv.length !== 3) {
 const reportScript = fs.readFileSync(process.argv[2], 'utf8');
 
 const emptyReport = () => ({
-  codec_version: '2',
   schema_fingerprint: '0123456789abcdef',
   files: [],
   scopes: [],

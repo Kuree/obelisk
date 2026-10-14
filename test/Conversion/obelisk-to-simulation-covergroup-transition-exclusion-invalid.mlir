@@ -27,7 +27,7 @@ module attributes {obelisk.coverage.language_version = 2023 : i32} {
           }
           // IEEE 1800-2023 19.5.4 through 19.5.6 permit wildcard ordinary
           // transition bins to coexist with fixed-length transition
-          // exclusions. Preserve both words symbolically in the v1 schema.
+          // exclusions. Preserve both words symbolically in the schema.
           // CHECK-DAG: functional_bin id=[[WILD:[1-9][0-9]*]] item=[[ITEM:[1-9][0-9]*]] name=wild kind=2 flags=16
           // CHECK-DAG: functional_bin id=[[IGNORED:[1-9][0-9]*]] item=[[ITEM]] name=ignored kind=2 flags=4
           // CHECK-DAG: transition_program bin=[[WILD]] item=[[ITEM]] {{.*}} alternative_count=1
