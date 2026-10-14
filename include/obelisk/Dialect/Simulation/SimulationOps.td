@@ -797,6 +797,7 @@ def SimCovergroupPrepareOp : SimOp<"covergroup.prepare", [
     `expression_ids` $expression_ids attr-dict
     `:` functional-type($payloads, results)
   }];
+  let hasVerifier = 1;
 }
 
 def SimCovergroupCandidatesOp : SimOp<"covergroup.candidates", [

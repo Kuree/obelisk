@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SimulationVerifiers.h"
+#include "obelisk/Coverage/CoverageLimits.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
@@ -1414,6 +1415,10 @@ SimCovergroupPrepareOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (!symbolTable.lookupNearestSymbolFrom<SimCovergroupDeclOp>(
           *this, getDeclarationAttr()))
     return emitOpError("references an unknown covergroup declaration");
+  return success();
+}
+
+LogicalResult SimCovergroupPrepareOp::verify() {
   if (getExpressionIds().size() != getPayloads().size())
     return emitOpError("requires one FunctionalExpression ID per payload");
   llvm::DenseSet<int64_t> seen;
@@ -1429,8 +1434,10 @@ LogicalResult SimCovergroupCandidatesOp::verify() {
       !isa<UnpackedStructType>(queue.getElementType()))
     return emitOpError("requires an unbounded CrossQueueType");
   if (!getSelector() || getSelectorAttr().getValue().isNegative() ||
-      getMaximumAttr().getValue().isNegative() || getMaximum() > 4096)
-    return emitOpError("requires a positive selector and maximum in [0, 4096]");
+      getMaximumAttr().getValue().isNegative() ||
+      getMaximum() > coverage::MaxFunctionalCrossWithCandidates)
+    return emitOpError("requires a positive selector and maximum in [0, ")
+           << coverage::MaxFunctionalCrossWithCandidates << "]";
   return success();
 }
 

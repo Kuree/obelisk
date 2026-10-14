@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "obelisk/Coverage/CoverageFormatDecls.h.inc"
+#include "obelisk/Coverage/CoverageLimits.h"
 
 namespace obelisk::coverage {
 
@@ -29,17 +30,6 @@ using Digest = std::array<uint8_t, 32>;
 using UUID = std::array<uint8_t, 16>;
 
 inline constexpr uint8_t Magic[8] = {'O', 'B', 'C', 'O', 'V', '\r', '\n', 0x1a};
-
-/// Maximum finite source-occurrence domain materialized for one Clause 19.5.1
-/// `with` predicate. The compiler and runtime share this exact v2 resource
-/// bound so constructor evaluation cannot create an unbounded expression
-/// batch.
-inline constexpr uint32_t MaxFunctionalWithCandidates = 4096;
-
-/// Maximum value-tuple domain materialized for one Clause 19.6.1.2 cross
-/// selector `with` predicate. This is an implementation resource bound in the
-/// sole mutable model, not a format revision boundary.
-inline constexpr uint32_t MaxFunctionalCrossWithCandidates = 4096;
 
 enum class Status : uint32_t {
   Ok,

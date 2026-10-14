@@ -35,6 +35,18 @@ module {
 
 // -----
 
+!queue = !simulation.queue<!simulation.unpacked_struct<[#simulation.field<name = "a", type = i1, ordinal = 0, packedOffset = 0>]>, 0>
+module {
+  func.func @f(%ctx: !simulation.context, %token: i64, %queue: !queue) {
+    // expected-error@+1 {{requires a positive selector and maximum in [0, 4096]}}
+    simulation.covergroup.candidates %ctx, %token into %queue
+      selector 70 maximum 4097 : !queue
+    return
+  }
+}
+
+// -----
+
 module {
   func.func @f(%ctx: !simulation.context, %token: i64, %queue: i64) {
     // expected-error@+1 {{requires an unbounded CrossQueueType}}
