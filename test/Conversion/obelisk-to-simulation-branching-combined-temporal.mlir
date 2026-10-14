@@ -158,13 +158,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK-NOT: simulation.spawn @unit_0.$concurrent_eos_branch_report.
 
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = {{[0-9]+}} -> {{[0-9]+}}, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_horizon = 3 : i64
 // CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
 // CHECK-SAME: simulation.combined_bounded_branching_monitor
 // CHECK-SAME: simulation.combined_bounded_branching_pairs = 4 : i64
 // CHECK-SAME: simulation.combined_bounded_branching_pairs_before_minimization = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-5: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_0.$concurrent_eos_branch.

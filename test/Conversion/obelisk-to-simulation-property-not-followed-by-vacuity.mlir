@@ -75,11 +75,11 @@ module {
 // CHECK: simulation.bytes.constant "vacuous-or-failed-hit"
 // CHECK-NOT: $concurrent_eos
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "{{(heuristic|z3)}}", queries = {{[0-9]+}}, alternatives = {{[0-9]+}} -> {{[0-9]+}}, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_coalescer
 // CHECK-SAME: simulation.branching_antecedent_result_horizon = 1 : i64
 // CHECK-SAME: simulation.followed_by_monitor
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
 // CHECK-SAME: simulation.temporal_property_negation
 // CHECK: %[[A:.*]] = simulation.assert.sampled_read {{.*}} from %arg2
 // CHECK: %[[AT:.*]] = simulation.logic.is_true %[[A]]

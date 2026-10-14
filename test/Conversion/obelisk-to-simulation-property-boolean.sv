@@ -34,19 +34,13 @@
 // Z3 proves `(a && b) || (!a && b)` equivalent to `b` before monitor SSA is
 // built, removing one sampled read and the branching state entirely.
 // CHECK-LABEL: simulation.func private @unit_3(
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 4 -> 1>]
 // CHECK-COUNT-1: simulation.assert.sampled_read
 // CHECK-NOT: simulation.branching_sequence_monitor
 // A non-equivalent else branch keeps both guarded alternatives.
 // CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 2, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // A missing else is a vacuous success when the condition is false. The cover
 // pass action executes for either success, while the alternative remains
 // marked separately for future vacuity counters.
@@ -69,11 +63,7 @@
 // and negative case guards. The minimizer proves the result is just `!b`,
 // eliminating the selector and its four-state equality guard.
 // CHECK-LABEL: simulation.func private @unit_6(
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 8 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 4 -> 1, literals = 8 -> 1>]
 // CHECK-COUNT-1: simulation.assert.sampled_read
 // CHECK-NOT: simulation.logic.compare case_eq
 // Without a default, no matching label is a vacuous success. The pass action
@@ -105,13 +95,9 @@
 // Duplicate/contradiction cleanup cannot remove the consensus cube; Z3 proves
 // it redundant before lowering, demonstrating cover-property solver use.
 // CHECK-LABEL: simulation.func private @unit_9(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 8 -> 2, literals = 24 -> 4>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_sequence_monitor
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 8 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 24 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-COUNT-3: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
 

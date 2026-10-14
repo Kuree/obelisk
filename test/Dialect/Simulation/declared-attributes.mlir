@@ -15,4 +15,13 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
           #simulation.integer_expression<kind = constant, width = 8,
                                          value = 1 : i8>]>,
         unit]}
+
+  // CHECK-LABEL: func.func private @minimized
+  // CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = 9, alternatives = 3 -> 2, literals = 6 -> 4>, #simulation.boolean_minimization<consequent, solver = "heuristic", queries = 0, alternatives = 2 -> 2, literals = 2 -> 2>]
+  func.func private @minimized() attributes {simulation.boolean_minimizations = [
+    #simulation.boolean_minimization<antecedent, solver = "z3", queries = 9,
+                                     alternatives = 3 -> 2, literals = 6 -> 4>,
+    #simulation.boolean_minimization<consequent, solver = "heuristic",
+                                     queries = 0, alternatives = 2 -> 2,
+                                     literals = 2 -> 2>]}
 }

@@ -713,6 +713,8 @@ using EnumFormatNames = ObeliskSimulationDialect::EnumFormatNamesAttrHelper;
 using EnumFormatValues = ObeliskSimulationDialect::EnumFormatValuesAttrHelper;
 using EnumMethodNames = ObeliskSimulationDialect::EnumMethodNamesAttrHelper;
 using EnumMethodValues = ObeliskSimulationDialect::EnumMethodValuesAttrHelper;
+using BooleanMinimizations =
+    ObeliskSimulationDialect::BooleanMinimizationsAttrHelper;
 
 } // namespace obelisk::sim::metadata
 

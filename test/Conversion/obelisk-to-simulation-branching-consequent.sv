@@ -21,11 +21,9 @@
 // success, not one callback per alternative.
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: home_region = 8 : i32
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<consequent, solver = "{{(heuristic|z3)}}", queries = {{[0-9]+}}, alternatives = 3 -> 2, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_consequent_monitor
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "{{(heuristic|z3)}}"
 // CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: [[A_SAMPLE:%.*]] = simulation.assert.sampled_read %arg0 from %arg2

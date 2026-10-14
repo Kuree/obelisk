@@ -134,9 +134,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 
 // CHECK-LABEL: simulation.func private @unit_2(
 // CHECK-SAME: simulation.assertion_target_id = [[BRANCH_ID:[0-9]+]] : i64
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = {{[0-9]+}} -> {{[0-9]+}}, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_sequence_monitor
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK: [[BRANCH_ACTION:%.*]] = simulation.assert.action_state {{.*}} assertion [[BRANCH_ID]] {simulation.concurrent_attempt_action_state}
 // CHECK: [[BRANCH_PASS:%.*]] = arith.constant {{.*}} 1 : i32
 // CHECK: arith.andi [[BRANCH_ACTION]], [[BRANCH_PASS]] : i32

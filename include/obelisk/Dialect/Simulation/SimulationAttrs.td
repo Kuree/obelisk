@@ -290,6 +290,26 @@ def SimIntegerExpressionAttr
   let genVerifyDecl = 1;
 }
 
+def SimBooleanMinimizationAttr
+    : SimAttr<"BooleanMinimization", "boolean_minimization"> {
+  let summary = "boolean minimization of one concurrent property operand";
+  let description = [{
+    Compile-time statistics of one minimization of the boolean sequence
+    alternatives of a concurrent property's `scope` operand: the `solver`
+    backend, the number of queries it answered, and the alternative and
+    literal counts before and after minimization.
+  }];
+  let parameters = (ins EnumParameter<SimBooleanMinimizationScope>:$scope,
+      StringRefParameter<>:$solver, "uint64_t":$queries,
+      "uint64_t":$alternativesBefore, "uint64_t":$alternativesAfter,
+      "uint64_t":$literalsBefore, "uint64_t":$literalsAfter);
+  let assemblyFormat = [{
+    `<` $scope `,` `solver` `=` $solver `,` `queries` `=` $queries `,`
+    `alternatives` `=` $alternativesBefore `->` $alternativesAfter `,`
+    `literals` `=` $literalsBefore `->` $literalsAfter `>`
+  }];
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

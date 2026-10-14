@@ -31,12 +31,8 @@
 // The exact partition initially emits four successful cubes. Z3 removes one
 // redundant cube within its vacuity class without crossing classification.
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 4 -> 3, literals = 11 -> 7>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 7 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 11 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 2 : i64
 // CHECK-COUNT-3: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
@@ -45,12 +41,8 @@
 // `iff` keeps only !a&&!c vacuous. The other four successful regions are
 // nonvacuous, including equality through two false operand evaluations.
 // CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 5 -> 5, literals = 16 -> 15>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 15 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 16 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
 // CHECK-COUNT-4: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
@@ -59,12 +51,8 @@
 // The case form retains one selector comparison while producing the same
 // 4->3 solver reduction and two vacuous success regions as the conditional.
 // CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 4 -> 3, literals = 11 -> 7>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 7 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 11 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 2 : i64
 // CHECK-COUNT-3: simulation.assert.sampled_read
 // CHECK: simulation.logic.compare case_eq
@@ -75,12 +63,8 @@
 // classified. The generated monitor still samples each semantic atom once and
 // dispatches one cover-property action for the single source evaluation.
 // CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 34 -> 12, literals = 204 -> 53>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 12 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 12 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 34 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 53 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 204 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 5 : i64
 // CHECK-COUNT-6: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
@@ -89,12 +73,8 @@
 // Nested not/or/and lowering preserves false-vacuous results and minimizes
 // only within each successful classification before materializing the monitor.
 // CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 28 -> 8, literals = 160 -> 25>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 8 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 8 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 28 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 25 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 160 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 2 : i64
 // CHECK-COUNT-6: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
@@ -103,12 +83,8 @@
 // The double-negated implication is truth-equivalent to the original and its
 // false-antecedent success remains vacuous across both negations.
 // CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 3 -> 2, literals = 6 -> 3>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 6 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
 // CHECK-COUNT-2: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read

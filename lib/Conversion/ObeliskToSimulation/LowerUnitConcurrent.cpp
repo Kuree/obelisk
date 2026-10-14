@@ -4302,43 +4302,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   std::optional<bool> consequentUniformIntrinsicEndStrong;
   std::optional<bool> expectEndStrong;
   auto recordBooleanMinimization = [&](const BooleanMinimizationStats &stats,
-                                       StringRef scope) {
-    auto accumulate = [&](StringRef name, uint64_t value) {
-      uint64_t existing = 0;
-      if (auto attribute = function->getAttrOfType<IntegerAttr>(name))
-        existing = attribute.getValue().getZExtValue();
-      function->setAttr(name, builder.getI64IntegerAttr(existing + value));
-    };
-    StringRef aggregateBackend = stats.backend;
-    if (auto existing = function->getAttrOfType<StringAttr>(
-            "simulation.sva_boolean_solver");
-        existing && existing.getValue() == "z3")
-      aggregateBackend = "z3";
-    function->setAttr("simulation.sva_boolean_solver",
-                      builder.getStringAttr(aggregateBackend));
-    accumulate("simulation.sva_boolean_solver_queries", stats.solverQueries);
-    accumulate("simulation.sva_boolean_alternatives_before",
-               stats.alternativesBefore);
-    accumulate("simulation.sva_boolean_alternatives_after",
-               stats.alternativesAfter);
-    accumulate("simulation.sva_boolean_literals_before", stats.literalsBefore);
-    accumulate("simulation.sva_boolean_literals_after", stats.literalsAfter);
-
-    auto scopedName = [&](StringRef suffix) {
-      return (Twine("simulation.sva_boolean_") + scope + "_" + suffix).str();
-    };
-    function->setAttr(scopedName("solver"),
-                      builder.getStringAttr(stats.backend));
-    function->setAttr(scopedName("solver_queries"),
-                      builder.getI64IntegerAttr(stats.solverQueries));
-    function->setAttr(scopedName("alternatives_before"),
-                      builder.getI64IntegerAttr(stats.alternativesBefore));
-    function->setAttr(scopedName("alternatives_after"),
-                      builder.getI64IntegerAttr(stats.alternativesAfter));
-    function->setAttr(scopedName("literals_before"),
-                      builder.getI64IntegerAttr(stats.literalsBefore));
-    function->setAttr(scopedName("literals_after"),
-                      builder.getI64IntegerAttr(stats.literalsAfter));
+                                       sim::BooleanMinimizationScope scope) {
+    SmallVector<Attribute> records;
+    if (ArrayAttr existing =
+            sim::get<sim::metadata::BooleanMinimizations>(function))
+      llvm::append_range(records, existing);
+    records.push_back(sim::BooleanMinimizationAttr::get(
+        builder.getContext(), scope, stats.backend, stats.solverQueries,
+        stats.alternativesBefore, stats.alternativesAfter, stats.literalsBefore,
+        stats.literalsAfter));
+    sim::set<sim::metadata::BooleanMinimizations>(
+        function, builder.getArrayAttr(records));
   };
   if (multiClockAttempt) {
     // The staged actor below owns temporal evaluation. Keep the ordinary
@@ -4583,11 +4557,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!coverSequence)
       if (std::optional<BooleanMinimizationStats> stats =
               minimizeBooleanAlternatives(*lhs))
-        recordBooleanMinimization(*stats, "antecedent");
+        recordBooleanMinimization(*stats,
+                                  sim::BooleanMinimizationScope::Antecedent);
     if (!coverSequence && succeeded(rhs))
       if (std::optional<BooleanMinimizationStats> stats =
               minimizeBooleanAlternatives(*rhs))
-        recordBooleanMinimization(*stats, "consequent");
+        recordBooleanMinimization(*stats,
+                                  sim::BooleanMinimizationScope::Consequent);
     implication = binary;
     bool ordinaryBranchingConsequentAfterMinimization =
         lhs->front().ages.size() == 1 && succeeded(rhs) && rhs->size() > 1;
@@ -4709,7 +4685,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       if (!coverSequence) {
         if (std::optional<BooleanMinimizationStats> stats =
                 minimizeBooleanAlternatives(*compiled))
-          recordBooleanMinimization(*stats, "property");
+          recordBooleanMinimization(*stats,
+                                    sim::BooleanMinimizationScope::Property);
       }
       if (compiled->size() == 1)
         sequence = std::move(compiled->front());

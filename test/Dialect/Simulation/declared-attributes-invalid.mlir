@@ -36,3 +36,15 @@ func.func private @range_on_function() attributes {
 
 // expected-error @+1 {{attribute 'simulation.gc_polled' belongs on a module}}
 func.func private @polled() attributes {simulation.gc_polled}
+
+// -----
+
+// expected-error @+1 {{attribute 'simulation.boolean_minimizations' must contain #simulation.boolean_minimization entries}}
+func.func private @untyped_minimizations() attributes {
+  simulation.boolean_minimizations = [{scope = "antecedent"}]}
+
+// -----
+
+// expected-error @+1 {{attribute 'simulation.random_mode_index' has the wrong payload kind}}
+func.func private @wrong_payload() attributes {
+  simulation.random_mode_index = "first"}

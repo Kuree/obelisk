@@ -22,9 +22,9 @@
 // result before temporal negation. Its two same-clock alternatives remain
 // eligible for the optional compiler-side Boolean minimizer.
 // BRANCHING-LABEL: simulation.func private @unit_0(
+// BRANCHING-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "{{(heuristic|z3)}}", queries = {{[0-9]+}}, alternatives = {{[0-9]+}} -> {{[0-9]+}}, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // BRANCHING-SAME: simulation.branching_antecedent_alternatives = 2 : i64
 // BRANCHING-SAME: simulation.branching_antecedent_result_coalescer
-// BRANCHING-SAME: simulation.sva_boolean_antecedent_solver = "{{(heuristic|z3)}}"
 // BRANCHING-SAME: simulation.temporal_property_negation
 // BRANCHING: simulation.branching_antecedent_universal_success
 // BRANCHING: simulation.spawn @unit_0.fork.14.0.2

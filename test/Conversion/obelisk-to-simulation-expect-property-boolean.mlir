@@ -112,14 +112,10 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: simulation.func private @[[MONITOR:[^(]+]](
 // CHECK-SAME: domain = 0 : i32
 // CHECK-SAME: home_region = 8 : i32
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 10 -> 5, literals = 40 -> 15>]
 // CHECK-SAME: simulation.expect_monitor_actor
 // CHECK-SAME: simulation.expect_one_cycle_alternatives = 5 : i64
 // CHECK-SAME: simulation.expect_one_cycle_branching
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 10 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 15 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 40 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK: %[[SUCCESS:.*]] = arith.constant {{.*}}true

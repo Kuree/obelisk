@@ -382,6 +382,21 @@ def SimIntegerExpressionKind
   let cppNamespace = "::obelisk::sim";
 }
 
+// Operand of a concurrent property whose sequence alternatives were minimized.
+def SimBooleanMinimizationAntecedent
+    : I32EnumAttrCase<"Antecedent", 0, "antecedent">;
+def SimBooleanMinimizationConsequent
+    : I32EnumAttrCase<"Consequent", 1, "consequent">;
+def SimBooleanMinimizationProperty
+    : I32EnumAttrCase<"Property", 2, "property">;
+def SimBooleanMinimizationScope
+    : I32EnumAttr<"BooleanMinimizationScope", "minimized property operand", [
+        SimBooleanMinimizationAntecedent, SimBooleanMinimizationConsequent,
+        SimBooleanMinimizationProperty
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimNetWire : I32EnumAttrCase<"Wire", 0, "wire">;
 def SimNetTri : I32EnumAttrCase<"Tri", 1, "tri">;
 def SimNetUWire : I32EnumAttrCase<"UWire", 2, "uwire">;

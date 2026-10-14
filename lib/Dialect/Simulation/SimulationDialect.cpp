@@ -587,7 +587,8 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::AssertionControlTargetId, metadata::AssertionControlled,
       metadata::AssertionKillControlled, metadata::AssertionLocalTypes,
       metadata::AssertionPath, metadata::AssertionTargetId,
-      metadata::AsynchronousPropertyAbort, metadata::BoundedAntecedentHorizon,
+      metadata::AsynchronousPropertyAbort, metadata::BooleanMinimizations,
+      metadata::BoundedAntecedentHorizon,
       metadata::BranchingAntecedentAlternatives,
       metadata::BranchingAntecedentBackedge,
       metadata::BranchingAntecedentChannel,
@@ -793,6 +794,9 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
       !allOf(llvm::IsaPred<IntegerExpressionAttr, UnitAttr>))
     return error()
            << "must contain #simulation.integer_expression or unit entries";
+  if (name == BooleanMinimizations::getNameStr() &&
+      !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
+    return error() << "must contain #simulation.boolean_minimization entries";
   if ((name == GCPolled::getNameStr() ||
        name == PulseRejectPercent::getNameStr() ||
        name == PulseErrorPercent::getNameStr() ||

@@ -149,13 +149,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // have exhausted.
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-SAME: home_region = 8 : i32
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "{{(heuristic|z3)}}", queries = {{[0-9]+}}, alternatives = 7 -> 6, literals = 57 -> 39>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 6 : i64
 // CHECK-SAME: simulation.branching_sequence_monitor
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 6 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 7 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 39 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 57 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "{{(heuristic|z3)}}"
 // CHECK: simulation.suspend.edge posedge
 // CHECK-SAME: resume_region = 8 : i32
 // CHECK-COUNT-4: simulation.assert.sampled_read

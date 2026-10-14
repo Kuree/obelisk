@@ -83,18 +83,13 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // The enabled Z3 pipeline validates the minimized groups without merging
 // temporal identity; x is never sampled and a/d are each sampled once.
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[1-9][0-9]*}}, alternatives = 3 -> 2, literals = 2 -> 1>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_match_channels = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
 // CHECK-SAME: simulation.mixed_empty_antecedent_current_tick_channels = 1 : i64
 // CHECK-SAME: simulation.mixed_empty_antecedent_handoff_channels = 1 : i64
 // CHECK-SAME: simulation.mixed_empty_antecedent_nonoverlap
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver_queries = {{[1-9][0-9]*}} : i64
 // O0-LABEL: simulation.func private @unit_0(
 // O0-COUNT-2: simulation.ref.alloc
 // O0: simulation.spawn @unit_0.$concurrent_eos_branch.

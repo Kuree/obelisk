@@ -176,6 +176,9 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::StringAttr":$assertion_path,
     "::mlir::IntegerAttr":$assertion_target_id,
     "::mlir::UnitAttr":$asynchronous_property_abort,
+    // Monitor function: one `#simulation.boolean_minimization` per minimized
+    // property operand, in lowering order.
+    "::mlir::ArrayAttr":$boolean_minimizations,
     "::mlir::IntegerAttr":$bounded_antecedent_horizon,
     "::mlir::IntegerAttr":$branching_antecedent_alternatives,
     "::mlir::UnitAttr":$branching_antecedent_backedge,

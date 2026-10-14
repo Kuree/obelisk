@@ -66,13 +66,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // tautological activation. Neither source operand is sampled at runtime; only
 // c is read.
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[1-9][0-9]*}}, alternatives = 2 -> 1, literals = 0 -> 0>]
 // CHECK-SAME: simulation.empty_antecedent_nonoverlap
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 0 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 0 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver_queries = {{[1-9][0-9]*}} : i64
 // CHECK-NOT: simulation.branching_antecedent_monitor
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.assert.sampled_read {{%.*}} from %arg4

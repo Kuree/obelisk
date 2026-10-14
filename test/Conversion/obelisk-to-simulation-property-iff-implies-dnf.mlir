@@ -110,12 +110,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // `implies` preserves the false-LHS path as one vacuous alternative while
 // coalescing all overlapping successes into one observable cover pass.
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 5 -> 5, literals = 10 -> 10>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 10 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 10 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-SAME: simulation.vacuous_sequence_alternatives = 1 : i64
 // CHECK-COUNT-4: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
@@ -125,12 +121,8 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // `iff` admits DNF operands and invokes Z3 before emitting a single one-cycle
 // result path. Three semantic symbols remain after the 5->3 / 12->5 proof.
 // CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<property, solver = "z3", queries = {{[0-9]+}}, alternatives = 5 -> 3, literals = 12 -> 5>]
 // CHECK-SAME: simulation.branching_sequence_alternatives = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_after = 5 : i64
-// CHECK-SAME: simulation.sva_boolean_literals_before = 12 : i64
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // CHECK-COUNT-3: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
 // CHECK-COUNT-2: simulation.spawn @unit_1.fork.41.

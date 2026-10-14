@@ -40,20 +40,12 @@
 // With four-state operands no alternative is redundant: an X a makes both a
 // and !a false.
 // FOUR-STATE-LABEL: simulation.func private @unit_0(
-// FOUR-STATE-SAME: simulation.sva_boolean_antecedent_alternatives_after = 3 : i64
-// FOUR-STATE-SAME: simulation.sva_boolean_antecedent_alternatives_before = 3 : i64
+// FOUR-STATE-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "{{[^"]*}}", queries = {{[0-9]+}}, alternatives = 3 -> 3, literals = {{[0-9]+}} -> {{[0-9]+}}>]
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 3 -> 2, literals = 6 -> 4>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_match_channels = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_coalescer
-// CHECK-SAME: simulation.sva_boolean_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_alternatives_before = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 6 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
-// CHECK-SAME: simulation.sva_boolean_solver = "z3"
 // The a&&c antecedent channel makes its consequent `a` tautologically pass.
 // With no observable pass action, canonicalization removes that dead channel's
 // sampled c read after the Z3-proven antecedent reduction.
@@ -62,14 +54,10 @@
 // CHECK-COUNT-1: simulation.spawn @unit_0.fork.18.0.2
 // CHECK-NOT: simulation.spawn @unit_0.fork.18.0.2
 // CHECK-LABEL: simulation.func private @unit_1(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 4 -> 1>, #simulation.boolean_minimization<consequent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 2, literals = 2 -> 2>]
 // CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_consequent_monitor
 // CHECK-NOT: simulation.branching_antecedent_monitor
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-3: simulation.assert.sampled_read
 // CHECK-NOT: simulation.assert.sampled_read
 // CHECK-NOT: obelisk.sv.assertion
@@ -91,17 +79,13 @@
 // CHECK: simulation.spawn @unit_2.$concurrent_eos_branch_report.69.fail{{.*}} {simulation.branching_antecedent_eos_result = "fail", simulation.branching_antecedent_eos_source_age = 1 : i64}
 // CHECK-NOT: @unit_2.$concurrent_eos_branch_report.69.pass
 // CHECK-LABEL: simulation.func private @unit_2(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 4 -> 1>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 1 : i64
 // CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "strong"
 // CHECK-SAME: simulation.branching_antecedent_eos_coalescer
 // CHECK-SAME: simulation.branching_antecedent_match_channels = 1 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_coalescer
 // CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-2: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_2.$concurrent_eos_branch.69
@@ -125,17 +109,13 @@
 // CHECK: simulation.spawn @unit_3.$concurrent_eos_branch_report.92.pass{{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
 // CHECK-NOT: @unit_3.$concurrent_eos_branch_report.92.fail
 // CHECK-LABEL: simulation.func private @unit_3(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 4 -> 1>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 1 : i64
 // CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
 // CHECK-SAME: simulation.branching_antecedent_eos_coalescer
 // CHECK-SAME: simulation.branching_antecedent_match_channels = 1 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_coalescer
 // CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-2: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_3.$concurrent_eos_branch.92
@@ -159,6 +139,7 @@
 // CHECK: simulation.spawn @unit_4.$concurrent_eos_branch_report.115.pass{{.*}} {simulation.branching_antecedent_eos_result = "pass", simulation.branching_antecedent_eos_source_age = 1 : i64}
 // CHECK-NOT: @unit_4.$concurrent_eos_branch_report.115.fail
 // CHECK-LABEL: simulation.func private @unit_4(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 6 -> 2>]
 // CHECK-SAME: simulation.bounded_antecedent_horizon = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 1 : i64
 // CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
@@ -166,11 +147,6 @@
 // CHECK-SAME: simulation.branching_antecedent_match_channels = 1 : i64
 // CHECK-SAME: simulation.branching_antecedent_result_coalescer
 // CHECK-SAME: simulation.branching_antecedent_result_horizon = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 6 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-2: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_4.$concurrent_eos_branch.115
@@ -191,17 +167,13 @@
 // CHECK-COUNT-2: simulation.spawn @unit_5.$concurrent_eos_report.143.weak
 // CHECK-NOT: simulation.spawn @unit_5.$concurrent_eos_report.143.weak
 // CHECK-LABEL: simulation.func private @unit_5(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 4 -> 1>]
 // CHECK-SAME: simulation.branching_consequent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_consequent_eos_coalescer
 // CHECK-SAME: simulation.branching_consequent_monitor
 // CHECK-NOT: simulation.branching_antecedent_monitor
 // CHECK-SAME: simulation.end_of_simulation_strength = "weak"
 // CHECK-SAME: simulation.strong_weak_monitor
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-2: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_5.$concurrent_eos.143.weak
@@ -221,14 +193,10 @@
 // CHECK-COUNT-1: simulation.spawn @unit_6.$concurrent_eos_report.174.weak
 // CHECK-NOT: simulation.spawn @unit_6.$concurrent_eos_report.174.weak
 // CHECK-LABEL: simulation.func private @unit_6(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<consequent, solver = "z3", queries = {{[0-9]+}}, alternatives = 2 -> 1, literals = 6 -> 2>]
 // CHECK-NOT: simulation.branching_consequent_monitor
 // CHECK-SAME: simulation.end_of_simulation_strength = "weak"
 // CHECK-SAME: simulation.strong_weak_monitor
-// CHECK-SAME: simulation.sva_boolean_consequent_alternatives_after = 1 : i64
-// CHECK-SAME: simulation.sva_boolean_consequent_alternatives_before = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_consequent_literals_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_consequent_literals_before = 6 : i64
-// CHECK-SAME: simulation.sva_boolean_consequent_solver = "z3"
 // CHECK-COUNT-1: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_6.$concurrent_eos.174.weak
@@ -253,6 +221,7 @@
 // CHECK-COUNT-2: simulation.spawn @unit_7.$concurrent_eos_branch_report.202.pass
 // CHECK-NOT: simulation.spawn @unit_7.$concurrent_eos_branch_report.202.pass
 // CHECK-LABEL: simulation.func private @unit_7(
+// CHECK-SAME: simulation.boolean_minimizations = [#simulation.boolean_minimization<antecedent, solver = "z3", queries = {{[0-9]+}}, alternatives = 3 -> 2, literals = 6 -> 4>]
 // CHECK-SAME: simulation.branching_antecedent_alternatives = 2 : i64
 // CHECK-SAME: simulation.branching_antecedent_consequent_eos_strength = "weak"
 // CHECK-SAME: simulation.branching_antecedent_eos_coalescer
@@ -265,11 +234,6 @@
 // CHECK-SAME: simulation.combined_bounded_branching_pairs_before_minimization = 6 : i64
 // CHECK-SAME: simulation.consequent_first_match_equivalence
 // CHECK-SAME: simulation.first_match_monitor
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_after = 2 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_alternatives_before = 3 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_after = 4 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_literals_before = 6 : i64
-// CHECK-SAME: simulation.sva_boolean_antecedent_solver = "z3"
 // CHECK-COUNT-5: simulation.ref.alloc
 // CHECK-NOT: simulation.ref.alloc
 // CHECK: simulation.spawn @unit_7.$concurrent_eos_branch.202
