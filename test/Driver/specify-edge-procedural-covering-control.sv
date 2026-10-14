@@ -39,7 +39,7 @@ module specify_edge_procedural_covering_control;
   end
 endmodule
 
-// CHECK: procedural_wake_kind = 2 : i32
+// CHECK: wakeKind = 2,
 // CHECK-NOT: simulation.timing_path_monitor_rules
 // RUNTIME: posedge-pending 0
 // RUNTIME-NEXT: posedge-done 1

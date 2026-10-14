@@ -791,6 +791,12 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == TimingPathRules::getNameStr() &&
+      !allOf(llvm::IsaPred<TimingPathRuleAttr>))
+    return error() << "must contain #simulation.timing_path_rule entries";
+  if (name == TimingPathMonitorRules::getNameStr() &&
+      !allOf(llvm::IsaPred<TimingPathMonitorAttr>))
+    return error() << "must contain #simulation.timing_path_monitor entries";
   if (name == CalleeFormals::getNameStr() &&
       !allOf(llvm::IsaPred<CalleeFormalAttr>))
     return error() << "must contain #simulation.callee_formal entries";

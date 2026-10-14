@@ -79,7 +79,7 @@ module specify_edge_procedural_derived_control;
   end
 endmodule
 
-// SIM: procedural_wake_kind = 2 : i32
+// SIM: wakeKind = 2,
 // SIM: simulation.suspend.observe
 // SIM-COUNT-1: simulation.ref.store_inertial_path
 // SIM: simulation.timing_path_monitor_rules

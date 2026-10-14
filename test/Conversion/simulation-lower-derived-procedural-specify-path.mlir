@@ -37,21 +37,15 @@ module {
         attributes {
           entry_kind = 14 : i32, code_unit_id = 9960001 : i64,
           simulation.observer_result = 1 : i32,
-          simulation.timing_path_monitor_rules = [{
-            inputs = ["top.clock"], snapshots = ["top.snapshot"],
-            input_lows = array<i64: 0>, input_widths = array<i64: 1>,
-            input_lsbs = array<i64: 0>, output_low = 1 : i64,
-            output_width = 2 : i64, output_root_width = 4 : i64,
-            edge_identifier = 1 : i32, edge_pending = "top.pending",
-            edge_epoch = "top.epoch", condition_kind = 0 : i32,
-            condition_group = 0 : i32}, {
-            inputs = ["top.clock"], snapshots = ["top.snapshot"],
-            input_lows = array<i64: 0>, input_widths = array<i64: 1>,
-            input_lsbs = array<i64: 0>, output_low = 3 : i64,
-            output_width = 1 : i64, output_root_width = 4 : i64,
-            edge_identifier = 0 : i32, edge_pending = "top.pending",
-            edge_epoch = "top.epoch", condition_kind = 0 : i32,
-            condition_group = 0 : i32}],
+          simulation.timing_path_monitor_rules = [
+            #simulation.timing_path_monitor<inputs = ["top.clock"], snapshots = ["top.snapshot"],
+              selection = #simulation.timing_path_selection<inputLows = [0], inputWidths = [1], inputLsbs = [0], outputLow = 1, outputWidth = 2, outputRootWidth = 4>,
+              edge = #simulation.timing_path_edge<identifier = 1, pending = "top.pending", epoch = "top.epoch">,
+              condition = #simulation.timing_path_condition<kind = none, group = 0>>,
+            #simulation.timing_path_monitor<inputs = ["top.clock"], snapshots = ["top.snapshot"],
+              selection = #simulation.timing_path_selection<inputLows = [0], inputWidths = [1], inputLsbs = [0], outputLow = 3, outputWidth = 1, outputRootWidth = 4>,
+              edge = #simulation.timing_path_edge<identifier = 0, pending = "top.pending", epoch = "top.epoch">,
+              condition = #simulation.timing_path_condition<kind = none, group = 0>>],
           simulation.bindings = [
             #simulation.argument_binding<path = "top.clock", argument = 1, kind = direct, copyOut = false>,
             #simulation.argument_binding<path = "top.enable", argument = 2, kind = direct, copyOut = false>,

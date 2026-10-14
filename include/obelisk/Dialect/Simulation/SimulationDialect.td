@@ -372,6 +372,8 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::DenseI64ArrayAttr":$timing_delayed_source_delays,
     "::mlir::DenseI64ArrayAttr":$timing_delayed_storage_ids,
     "::mlir::DenseI64ArrayAttr":$timing_delayed_terminal_indices,
+    // `#simulation.timing_path_monitor` and `#simulation.timing_path_rule`
+    // entries, with delays in design precision ticks.
     "::mlir::ArrayAttr":$timing_path_monitor_rules,
     "::mlir::ArrayAttr":$timing_path_rules,
     "::mlir::FlatSymbolRefAttr":$timing_timer_helper,

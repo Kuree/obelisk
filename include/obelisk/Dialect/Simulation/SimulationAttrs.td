@@ -589,6 +589,135 @@ def SimVirtualInterfaceCalleeAttr
   let genVerifyDecl = 1;
 }
 
+// Module path delays (IEEE 1800-2023 30.4). Preparation keeps delays and
+// pulse limits in femtoseconds; the simulation attributes hold design
+// precision ticks.
+
+def SimTimingPathConditionAttr
+    : SimAttr<"TimingPathCondition", "timing_path_condition"> {
+  let summary = "the condition of a module path";
+  let description = [{
+    Paths of one destination with the same `group` are alternatives selected
+    by their condition. An `if` path names its condition expression `node`;
+    once its observer is outlined, `evaluator` computes the condition from
+    the unit-local `captures`.
+  }];
+  let parameters = (ins
+      EnumParameter<SimTimingPathConditionKind>:$kind, "uint32_t":$group,
+      OptionalParameter<"std::optional<uint64_t>">:$node,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$evaluator,
+      OptionalParameter<"::mlir::ArrayAttr">:$captures);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimTimingPathSelectionAttr
+    : SimAttr<"TimingPathSelection", "timing_path_selection"> {
+  let summary = "the bits a module path connects";
+  let description = [{
+    Source terminal `i` contributes bits `inputLows[i]` to
+    `inputLows[i] + inputWidths[i] - 1`; edge-sensitive paths also name the
+    least significant source bit `inputLsbs[i]` that qualifies the edge. The
+    path drives `outputWidth` bits from `outputLow` of a destination of
+    `outputRootWidth` bits, through a `full` (`*>`) or parallel (`=>`)
+    connection, from the continuous driver with node `driverNode`.
+  }];
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$inputLows,
+      "::mlir::DenseI64ArrayAttr":$inputWidths,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$inputLsbs,
+      "uint64_t":$outputLow, "uint64_t":$outputWidth,
+      "uint64_t":$outputRootWidth, DefaultValuedParameter<"bool", "false">:$full,
+      OptionalParameter<"std::optional<uint64_t>">:$driverNode);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimTimingPathEdgeAttr : SimAttr<"TimingPathEdge", "timing_path_edge"> {
+  let summary = "the edge qualification of an edge-sensitive module path";
+  let description = [{
+    `identifier` is the source edge (0 any change, 1 posedge, 2 negedge,
+    3 edge) and `polarity` the data path polarity (0 none, 1 `+`, 2 `-`),
+    IEEE 1800-2023 30.4.3. Storage at `pending` and `epoch` holds the
+    qualified destination bits and their qualification time.
+  }];
+  let parameters = (ins "uint32_t":$identifier,
+      DefaultValuedParameter<"uint32_t", "0">:$polarity,
+      "::mlir::StringAttr":$pending, "::mlir::StringAttr":$epoch);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimTimingPathProceduralAttr
+    : SimAttr<"TimingPathProcedural", "timing_path_procedural"> {
+  let summary = "a module path whose destination procedures write";
+  let description = [{
+    The destination is procedural storage with descriptor `site`. `wakeKind`
+    classifies the writer that applies the path (1 and 2 qualify writes, 3
+    only cancels); `monitor` is set on the writer that monitors the sources.
+  }];
+  let parameters = (ins "uint64_t":$site, "uint32_t":$wakeKind,
+      "bool":$monitor);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimTimingPathRuleAttr : SimAttr<"TimingPathRule", "timing_path_rule"> {
+  let summary = "one module path delay applied to a path destination";
+  let description = [{
+    Changes of the source terminals `inputs`, compared with their previous
+    values in `snapshots`, schedule the destination after `delays` (1, 2, 3,
+    6 or 12 transition delays) with path `polarity` (0 none, 1 `+`, 2 `-`).
+    Pulses shorter than `pulseReject` are filtered and shorter than
+    `pulseError` produce X (IEEE 1800-2023 30.7), as configured by
+    `pulseOnDetect` and `pulseShowCancelled`.
+  }];
+  let parameters = (ins "::mlir::ArrayAttr":$inputs,
+      "::mlir::ArrayAttr":$snapshots, "uint32_t":$polarity,
+      "::mlir::DenseI64ArrayAttr":$delays,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$pulseReject,
+      OptionalParameter<"::mlir::DenseI64ArrayAttr">:$pulseError,
+      DefaultValuedParameter<"bool", "false">:$pulseOnDetect,
+      DefaultValuedParameter<"bool", "false">:$pulseShowCancelled,
+      OptionalParameter<"::obelisk::sim::TimingPathSelectionAttr">:$selection,
+      OptionalParameter<"::obelisk::sim::TimingPathEdgeAttr">:$edge,
+      OptionalParameter<"::obelisk::sim::TimingPathProceduralAttr">:
+          $procedural,
+      OptionalParameter<"::obelisk::sim::TimingPathConditionAttr">:$condition);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// This rule with another condition.
+    TimingPathRuleAttr
+    withCondition(::obelisk::sim::TimingPathConditionAttr condition) const;
+    /// This rule with other delays and pulse limits.
+    TimingPathRuleAttr withDelays(::mlir::DenseI64ArrayAttr delays,
+                                  ::mlir::DenseI64ArrayAttr pulseReject,
+                                  ::mlir::DenseI64ArrayAttr pulseError) const;
+  }];
+}
+
+def SimTimingPathMonitorAttr
+    : SimAttr<"TimingPathMonitor", "timing_path_monitor"> {
+  let summary = "source monitoring for a procedural module path";
+  let description = [{
+    The writer that monitors an edge-sensitive procedural path qualifies
+    destination bits when the source terminals `inputs` change, compared with
+    `snapshots`.
+  }];
+  let parameters = (ins "::mlir::ArrayAttr":$inputs,
+      "::mlir::ArrayAttr":$snapshots,
+      "::obelisk::sim::TimingPathSelectionAttr":$selection,
+      "::obelisk::sim::TimingPathEdgeAttr":$edge,
+      OptionalParameter<"::obelisk::sim::TimingPathConditionAttr">:$condition);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// This monitor with another condition.
+    TimingPathMonitorAttr
+    withCondition(::obelisk::sim::TimingPathConditionAttr condition) const;
+  }];
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

@@ -5315,46 +5315,16 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         SmallVector<Value, 4> conditionCaptures;
       };
       SmallVector<MonitorRule, 4> monitors;
-      for (Attribute attr : monitorRules) {
-        auto rule = dyn_cast<DictionaryAttr>(attr);
-        auto inputs = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{};
-        auto snapshots =
-            rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
-        auto lsbs = rule ? rule.getAs<DenseI64ArrayAttr>("input_lsbs")
-                         : DenseI64ArrayAttr{};
-        auto outputLow =
-            rule ? rule.getAs<IntegerAttr>("output_low") : IntegerAttr{};
-        auto outputWidth =
-            rule ? rule.getAs<IntegerAttr>("output_width") : IntegerAttr{};
-        auto outputRootWidth =
-            rule ? rule.getAs<IntegerAttr>("output_root_width") : IntegerAttr{};
-        auto edge =
-            rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
-        auto pendingPath =
-            rule ? rule.getAs<StringAttr>("edge_pending") : StringAttr{};
-        auto epochPath =
-            rule ? rule.getAs<StringAttr>("edge_epoch") : StringAttr{};
-        if (!rule || !inputs || !snapshots || inputs.empty() ||
-            inputs.size() != snapshots.size() || !lsbs ||
-            static_cast<size_t>(lsbs.size()) != inputs.size() || !outputLow ||
-            outputLow.getInt() < 0 || !outputWidth ||
-            outputWidth.getInt() <= 0 || !outputRootWidth ||
-            outputRootWidth.getInt() <= 0 || !edge || edge.getInt() < 0 ||
-            edge.getInt() > 3 || !pendingPath || !epochPath)
-          return function.emitError(
-              "invalid derived procedural timing path monitor");
+      for (auto rule : monitorRules.getAsRange<sim::TimingPathMonitorAttr>()) {
+        sim::TimingPathSelectionAttr selection = rule.getSelection();
+        sim::TimingPathEdgeAttr edge = rule.getEdge();
         MonitorRule monitor;
-        monitor.outputLow = static_cast<uint64_t>(outputLow.getInt());
-        monitor.outputWidth = static_cast<uint64_t>(outputWidth.getInt());
-        monitor.outputRootWidth =
-            static_cast<uint64_t>(outputRootWidth.getInt());
-        monitor.edge = static_cast<int32_t>(edge.getInt());
-        if (monitor.outputLow >= monitor.outputRootWidth ||
-            monitor.outputWidth > monitor.outputRootWidth - monitor.outputLow)
-          return function.emitError(
-              "derived procedural monitor destination is out of bounds");
-        monitor.pending = values.lookup(pendingPath.getValue());
-        monitor.epoch = values.lookup(epochPath.getValue());
+        monitor.outputLow = selection.getOutputLow();
+        monitor.outputWidth = selection.getOutputWidth();
+        monitor.outputRootWidth = selection.getOutputRootWidth();
+        monitor.edge = static_cast<int32_t>(edge.getIdentifier());
+        monitor.pending = values.lookup(edge.getPending().getValue());
+        monitor.epoch = values.lookup(edge.getEpoch().getValue());
         auto pendingRef =
             monitor.pending ? dyn_cast<sim::RefType>(monitor.pending.getType())
                             : sim::RefType{};
@@ -5367,13 +5337,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
             !epochRef || epochRef.getElementType() != builder.getI64Type())
           return function.emitError(
               "derived procedural monitor state no longer resolves");
-        for (auto [index, pair] :
-             llvm::enumerate(llvm::zip(inputs, snapshots))) {
-          auto inputPath = dyn_cast<StringAttr>(std::get<0>(pair));
-          auto snapshotPath = dyn_cast<StringAttr>(std::get<1>(pair));
-          if (!inputPath || !snapshotPath || lsbs[index] < 0)
-            return function.emitError(
-                "invalid derived procedural monitor source");
+        for (auto [inputPath, snapshotPath, lsb] :
+             llvm::zip(rule.getInputs().getAsRange<StringAttr>(),
+                       rule.getSnapshots().getAsRange<StringAttr>(),
+                       selection.getInputLsbs().asArrayRef())) {
           Value input = values.lookup(inputPath.getValue());
           Value snapshot = values.lookup(snapshotPath.getValue());
           if (!input || !snapshot || !isa<sim::RefType>(snapshot.getType()))
@@ -5381,28 +5348,22 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                 "derived procedural monitor source no longer resolves");
           monitor.sources.push_back({input, snapshot,
                                      snapshotPath.getValue().str(),
-                                     static_cast<uint64_t>(lsbs[index])});
+                                     static_cast<uint64_t>(lsb)});
         }
-        if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
-          monitor.conditionKind = static_cast<int32_t>(kind.getInt());
-        if (auto group = rule.getAs<IntegerAttr>("condition_group"))
-          monitor.conditionGroup = static_cast<int32_t>(group.getInt());
-        if (monitor.conditionKind < 0 || monitor.conditionKind > 2 ||
-            monitor.conditionGroup < 0)
-          return function.emitError(
-              "invalid derived procedural monitor condition");
-        if (monitor.conditionKind == 1) {
-          monitor.conditionEvaluator =
-              rule.getAs<FlatSymbolRefAttr>("condition_evaluator");
-          auto captures = rule.getAs<ArrayAttr>("condition_captures");
+        if (sim::TimingPathConditionAttr condition = rule.getCondition()) {
+          monitor.conditionKind = static_cast<int32_t>(condition.getKind());
+          monitor.conditionGroup = static_cast<int32_t>(condition.getGroup());
+        }
+        if (monitor.conditionKind ==
+            static_cast<int32_t>(sim::TimingPathConditionKind::If)) {
+          monitor.conditionEvaluator = rule.getCondition().getEvaluator();
+          ArrayAttr captures = rule.getCondition().getCaptures();
           if (!monitor.conditionEvaluator || !captures)
             return function.emitError(
                 "derived procedural monitor condition has no evaluator ABI");
-          for (Attribute captureAttr : captures) {
-            auto capturePath = dyn_cast<StringAttr>(captureAttr);
-            Value capture =
-                capturePath ? values.lookup(capturePath.getValue()) : Value{};
-            if (!capture && capturePath)
+          for (auto capturePath : captures.getAsRange<StringAttr>()) {
+            Value capture = values.lookup(capturePath.getValue());
+            if (!capture)
               capture = lvalues.lookup(capturePath.getValue());
             if (!capture)
               return function.emitError(
@@ -5751,125 +5712,41 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     if ((entryKind != sim::EntryKind::Continuous && !proceduralActor) ||
         rules.empty())
       return function.emitError("invalid timing path actor");
-    for (Attribute attr : rules) {
-      auto rule = dyn_cast<DictionaryAttr>(attr);
-      auto polarity =
-          rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
-      auto delays =
-          rule ? rule.getAs<DenseI64ArrayAttr>("delays") : DenseI64ArrayAttr{};
-      auto pulseReject = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject")
-                              : DenseI64ArrayAttr{};
-      auto pulseError = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error")
-                             : DenseI64ArrayAttr{};
-      auto pulseOnDetect =
-          rule ? rule.getAs<BoolAttr>("pulse_on_detect") : BoolAttr{};
-      auto pulseShowCancelled =
-          rule ? rule.getAs<BoolAttr>("pulse_show_cancelled") : BoolAttr{};
-      auto edgeSensitive =
-          rule ? rule.getAs<BoolAttr>("edge_sensitive") : BoolAttr{};
-      auto edgeIdentifier =
-          rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
-      auto edgePolarity =
-          rule ? rule.getAs<IntegerAttr>("edge_polarity") : IntegerAttr{};
-      int64_t edgeIdentifierValue =
-          edgeIdentifier ? edgeIdentifier.getInt() : 0;
-      int64_t edgePolarityValue = edgePolarity ? edgePolarity.getInt() : 0;
-      if (!rule || !polarity || polarity.getInt() < 0 ||
-          polarity.getInt() > 2 || !delays ||
-          (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
-           delays.size() != 6 && delays.size() != 12) ||
-          (static_cast<bool>(pulseReject) != static_cast<bool>(pulseError)) ||
-          (pulseReject && pulseReject.size() != delays.size()) ||
-          (pulseError && pulseError.size() != delays.size()) ||
-          edgeIdentifierValue < 0 || edgeIdentifierValue > 3 ||
-          edgePolarityValue < 0 || edgePolarityValue > 2 ||
-          (!(edgeSensitive && edgeSensitive.getValue()) &&
-           (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
-          llvm::any_of(delays.asArrayRef(),
-                       [](int64_t delay) { return delay < 0; }))
-        return function.emitError("invalid frozen overlapping timing path");
-      SmallVector<StringAttr> inputPaths;
-      SmallVector<StringAttr> snapshotPaths;
-      SmallVector<int64_t> inputLows;
-      SmallVector<int64_t> inputWidths;
-      SmallVector<int64_t> inputLsbs;
-      if (auto input = rule.getAs<StringAttr>("input"))
-        inputPaths.push_back(input);
-      if (auto snapshot = rule.getAs<StringAttr>("snapshot"))
-        snapshotPaths.push_back(snapshot);
-      if (auto inputs = rule.getAs<ArrayAttr>("inputs"))
-        for (Attribute input : inputs)
-          if (auto path = dyn_cast<StringAttr>(input))
-            inputPaths.push_back(path);
-      if (auto snapshots = rule.getAs<ArrayAttr>("snapshots"))
-        for (Attribute snapshot : snapshots)
-          if (auto path = dyn_cast<StringAttr>(snapshot))
-            snapshotPaths.push_back(path);
-      if (auto lows = rule.getAs<DenseI64ArrayAttr>("input_lows"))
-        llvm::append_range(inputLows, lows.asArrayRef());
-      if (auto widths = rule.getAs<DenseI64ArrayAttr>("input_widths"))
-        llvm::append_range(inputWidths, widths.asArrayRef());
-      if (auto lsbs = rule.getAs<DenseI64ArrayAttr>("input_lsbs"))
-        llvm::append_range(inputLsbs, lsbs.asArrayRef());
-      if (inputPaths.empty() || inputPaths.size() != snapshotPaths.size())
-        return function.emitError("invalid frozen timing path terminals");
+    for (auto rule : rules.getAsRange<sim::TimingPathRuleAttr>()) {
+      DenseI64ArrayAttr delays = rule.getDelays();
+      DenseI64ArrayAttr pulseReject = rule.getPulseReject();
+      DenseI64ArrayAttr pulseError = rule.getPulseError();
+      sim::TimingPathSelectionAttr selection = rule.getSelection();
+      sim::TimingPathEdgeAttr edge = rule.getEdge();
       TimingPathRuleState state;
-      if (auto procedural = rule.getAs<BoolAttr>("procedural_storage"))
-        state.proceduralStorage = procedural.getValue();
-      if (auto wake = rule.getAs<IntegerAttr>("procedural_wake_kind"))
-        state.proceduralWakeKind = static_cast<int32_t>(wake.getInt());
-      if (auto monitor = rule.getAs<BoolAttr>("procedural_monitor"))
-        state.proceduralMonitor = monitor.getValue();
-      if (auto site = rule.getAs<IntegerAttr>("path_site_id")) {
-        if (site.getInt() < 0)
-          return function.emitError("invalid procedural timing path site");
-        state.siteID = static_cast<uint64_t>(site.getInt());
+      if (sim::TimingPathProceduralAttr procedural = rule.getProcedural()) {
+        state.proceduralStorage = true;
+        state.proceduralWakeKind =
+            static_cast<int32_t>(procedural.getWakeKind());
+        state.proceduralMonitor = procedural.getMonitor();
+        state.siteID = procedural.getSite();
       }
-      if (state.proceduralStorage != proceduralActor ||
-          (state.proceduralStorage &&
-           (!rule.get("path_site_id") || !rule.get("procedural_wake_kind"))) ||
-          (state.proceduralStorage && state.proceduralWakeKind == 0) ||
-          state.proceduralWakeKind < 0 || state.proceduralWakeKind > 3)
+      if (state.proceduralStorage != proceduralActor)
         return function.emitError("timing path actor kind does not match rule");
-      state.edgeSensitive = edgeSensitive && edgeSensitive.getValue();
-      state.pulseOnDetect = pulseOnDetect && pulseOnDetect.getValue();
-      state.pulseShowCancelled =
-          pulseShowCancelled && pulseShowCancelled.getValue();
-      state.edgeIdentifier = static_cast<int32_t>(edgeIdentifierValue);
-      state.edgePolarity = static_cast<int32_t>(edgePolarityValue);
-      state.masked = !inputLows.empty() || rule.get("output_low") ||
-                     rule.get("output_width");
-      if (state.masked && (inputLows.size() != inputPaths.size() ||
-                           inputWidths.size() != inputPaths.size()))
-        return function.emitError("invalid frozen timing path selections");
-      if (state.edgeSensitive && inputLsbs.size() != inputPaths.size())
-        return function.emitError(
-            "edge-sensitive timing path has no frozen LSB mapping");
-      if (state.masked) {
-        auto outputLow = rule.getAs<IntegerAttr>("output_low");
-        auto outputWidth = rule.getAs<IntegerAttr>("output_width");
-        auto outputRootWidth = rule.getAs<IntegerAttr>("output_root_width");
-        auto full = rule.getAs<BoolAttr>("connection_full");
-        if (!outputLow || outputLow.getInt() < 0 || !outputWidth ||
-            outputWidth.getInt() <= 0 || !outputRootWidth ||
-            outputRootWidth.getInt() <= 0 || !full)
-          return function.emitError("invalid frozen timing path destination");
-        state.outputLow = static_cast<uint64_t>(outputLow.getInt());
-        state.outputWidth = static_cast<uint64_t>(outputWidth.getInt());
-        state.outputRootWidth = static_cast<uint64_t>(outputRootWidth.getInt());
-        state.full = full.getValue();
-        if (state.outputLow >= state.outputRootWidth ||
-            state.outputWidth > state.outputRootWidth - state.outputLow)
-          return function.emitError("timing path destination is out of bounds");
-        if (auto driverNodeID = rule.getAs<IntegerAttr>("driver_node_id")) {
-          if (driverNodeID.getInt() < 0)
-            return function.emitError("invalid timing path driver identity");
-          state.driverNodeID = static_cast<uint64_t>(driverNodeID.getInt());
-        }
+      state.edgeSensitive = static_cast<bool>(edge);
+      state.pulseOnDetect = rule.getPulseOnDetect();
+      state.pulseShowCancelled = rule.getPulseShowCancelled();
+      state.edgeIdentifier =
+          edge ? static_cast<int32_t>(edge.getIdentifier()) : 0;
+      state.edgePolarity = edge ? static_cast<int32_t>(edge.getPolarity()) : 0;
+      state.masked = static_cast<bool>(selection);
+      if (selection) {
+        state.outputLow = selection.getOutputLow();
+        state.outputWidth = selection.getOutputWidth();
+        state.outputRootWidth = selection.getOutputRootWidth();
+        state.full = selection.getFull();
+        if (std::optional<uint64_t> driverNode = selection.getDriverNode())
+          state.driverNodeID = *driverNode;
       }
-      for (size_t index = 0; index != inputPaths.size(); ++index) {
-        StringAttr inputPath = inputPaths[index];
-        StringAttr snapshotPath = snapshotPaths[index];
+      for (auto [index, terminal] : llvm::enumerate(
+               llvm::zip(rule.getInputs().getAsRange<StringAttr>(),
+                         rule.getSnapshots().getAsRange<StringAttr>()))) {
+        auto [inputPath, snapshotPath] = terminal;
         Value input = values.lookup(inputPath.getValue());
         Value snapshot = values.lookup(snapshotPath.getValue());
         Value current = input ? readTimingPathInput(input) : Value{};
@@ -5881,19 +5758,15 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         uint64_t low = 0;
         uint64_t width = sim::getPackedWidth(current.getType()).value_or(0);
         uint64_t lsb = 0;
-        if (state.masked) {
-          if (inputLows[index] < 0 || inputWidths[index] <= 0)
-            return function.emitError("invalid timing path source selection");
-          low = static_cast<uint64_t>(inputLows[index]);
-          width = static_cast<uint64_t>(inputWidths[index]);
+        if (selection) {
+          low = static_cast<uint64_t>(selection.getInputLows()[index]);
+          width = static_cast<uint64_t>(selection.getInputWidths()[index]);
           std::optional<unsigned> rootWidth =
               sim::getPackedWidth(current.getType());
           if (!rootWidth || low >= *rootWidth || width > *rootWidth - low)
             return function.emitError("timing path source is out of bounds");
-          if (state.edgeSensitive) {
-            if (inputLsbs[index] < 0)
-              return function.emitError("invalid timing path source LSB");
-            lsb = static_cast<uint64_t>(inputLsbs[index]);
+          if (edge) {
+            lsb = static_cast<uint64_t>(selection.getInputLsbs()[index]);
             if (lsb < low || lsb >= low + width)
               return function.emitError(
                   "timing path source LSB is out of bounds");
@@ -5902,16 +5775,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         state.sources.push_back(
             {input, snapshot, snapshotPath.getValue().str(), low, width, lsb});
       }
-      if (state.edgeSensitive && !state.masked)
-        return function.emitError(
-            "edge-sensitive timing path requires packed terminal metadata");
-      if (state.edgeSensitive) {
-        auto pendingPath = rule.getAs<StringAttr>("edge_pending");
-        auto epochPath = rule.getAs<StringAttr>("edge_epoch");
-        state.edgePending =
-            pendingPath ? values.lookup(pendingPath.getValue()) : Value{};
-        state.edgeEpoch =
-            epochPath ? values.lookup(epochPath.getValue()) : Value{};
+      if (edge) {
+        state.edgePending = values.lookup(edge.getPending().getValue());
+        state.edgeEpoch = values.lookup(edge.getEpoch().getValue());
         sim::RefType pendingRef =
             state.edgePending
                 ? dyn_cast<sim::RefType>(state.edgePending.getType())
@@ -5995,25 +5861,20 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
                                 state.pulseReject);
       normalizeTransitionValues(
           pulseError ? pulseError.asArrayRef() : delayValues, state.pulseError);
-      if (auto kind = rule.getAs<IntegerAttr>("condition_kind"))
-        state.conditionKind = static_cast<int32_t>(kind.getInt());
-      if (auto group = rule.getAs<IntegerAttr>("condition_group"))
-        state.conditionGroup = static_cast<int32_t>(group.getInt());
-      if (state.conditionKind < 0 || state.conditionKind > 2 ||
-          state.conditionGroup < 0)
-        return function.emitError("invalid frozen timing path condition");
-      if (state.conditionKind == 1) {
-        state.conditionEvaluator =
-            rule.getAs<FlatSymbolRefAttr>("condition_evaluator");
-        auto captures = rule.getAs<ArrayAttr>("condition_captures");
+      if (sim::TimingPathConditionAttr condition = rule.getCondition()) {
+        state.conditionKind = static_cast<int32_t>(condition.getKind());
+        state.conditionGroup = static_cast<int32_t>(condition.getGroup());
+      }
+      if (state.conditionKind ==
+          static_cast<int32_t>(sim::TimingPathConditionKind::If)) {
+        state.conditionEvaluator = rule.getCondition().getEvaluator();
+        ArrayAttr captures = rule.getCondition().getCaptures();
         if (!state.conditionEvaluator || !captures)
           return function.emitError(
               "conditional timing path has no evaluator ABI");
-        for (Attribute captureAttr : captures) {
-          auto capturePath = dyn_cast<StringAttr>(captureAttr);
-          Value capture =
-              capturePath ? values.lookup(capturePath.getValue()) : Value{};
-          if (!capture && capturePath)
+        for (auto capturePath : captures.getAsRange<StringAttr>()) {
+          Value capture = values.lookup(capturePath.getValue());
+          if (!capture)
             capture = lvalues.lookup(capturePath.getValue());
           if (!capture)
             return function.emitError(

@@ -99,8 +99,8 @@ module {
         attributes {entry_kind = 7 : i32, code_unit_id = 4 : i64,
                     schedule.primitive_name = "bufif1",
                     simulation.timing_path_rules = [
-                      {input = "top.data", snapshot = "top.data_snapshot", polarity = 1 : i32, delays = array<i64: 2, 3, 4>},
-                      {input = "top.control", snapshot = "top.control_snapshot", polarity = 2 : i32, delays = array<i64: 5, 7, 11>}],
+                      #simulation.timing_path_rule<inputs = ["top.data"], snapshots = ["top.data_snapshot"], polarity = 1, delays = [2, 3, 4]>,
+                      #simulation.timing_path_rule<inputs = ["top.control"], snapshots = ["top.control_snapshot"], polarity = 2, delays = [5, 7, 11]>],
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.path_out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.path_out", argument = 2, kind = lvalue_only, copyOut = false>,

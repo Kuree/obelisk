@@ -31,7 +31,7 @@ endmodule
 
 // The qualification logic is in the implicit actor loop header, once per
 // activation, rather than duplicated at the assignment leaf.
-// SIM: procedural_wake_kind = 2 : i32
+// SIM: wakeKind = 2,
 // SIM-COUNT-1: simulation.ref.store_inertial_path
 // CHECK: time-zero-pending 1 x
 // CHECK-NEXT: time-zero-done 3 1

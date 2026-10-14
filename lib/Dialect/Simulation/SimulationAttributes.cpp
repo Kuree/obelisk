@@ -753,6 +753,126 @@ LogicalResult VirtualInterfaceCalleeAttr::verify(
   return success();
 }
 
+LogicalResult TimingPathConditionAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, TimingPathConditionKind kind,
+    uint32_t, std::optional<uint64_t>, FlatSymbolRefAttr evaluator,
+    ArrayAttr captures) {
+  if (static_cast<bool>(evaluator) != static_cast<bool>(captures) ||
+      (evaluator && kind != TimingPathConditionKind::If) ||
+      (captures && !llvm::all_of(captures, llvm::IsaPred<StringAttr>)))
+    return emitError() << "timing path condition evaluator is malformed";
+  return success();
+}
+
+LogicalResult TimingPathSelectionAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, DenseI64ArrayAttr inputLows,
+    DenseI64ArrayAttr inputWidths, DenseI64ArrayAttr inputLsbs,
+    uint64_t outputLow, uint64_t outputWidth, uint64_t outputRootWidth, bool,
+    std::optional<uint64_t>) {
+  if (inputLows.size() != inputWidths.size() ||
+      (inputLsbs && inputLsbs.size() != inputLows.size()) ||
+      llvm::any_of(inputLows.asArrayRef(),
+                   [](int64_t low) { return low < 0; }) ||
+      llvm::any_of(inputWidths.asArrayRef(),
+                   [](int64_t width) { return width <= 0; }) ||
+      (inputLsbs && llvm::any_of(inputLsbs.asArrayRef(),
+                                 [](int64_t lsb) { return lsb < 0; })))
+    return emitError() << "timing path source selection is malformed";
+  if (outputWidth == 0 || outputLow >= outputRootWidth ||
+      outputWidth > outputRootWidth - outputLow)
+    return emitError() << "timing path destination is out of bounds";
+  return success();
+}
+
+LogicalResult
+TimingPathEdgeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                           uint32_t identifier, uint32_t polarity, StringAttr,
+                           StringAttr) {
+  if (identifier > 3 || polarity > 2)
+    return emitError() << "timing path edge is malformed";
+  return success();
+}
+
+LogicalResult
+TimingPathProceduralAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                                 uint64_t, uint32_t wakeKind, bool) {
+  if (wakeKind == 0 || wakeKind > 3)
+    return emitError() << "procedural timing path wake kind is malformed";
+  return success();
+}
+
+/// Checks the source terminals of a module path and their selection.
+static LogicalResult
+verifyTimingPathTerminals(function_ref<InFlightDiagnostic()> emitError,
+                          ArrayAttr inputs, ArrayAttr snapshots,
+                          TimingPathSelectionAttr selection,
+                          TimingPathEdgeAttr edge) {
+  if (inputs.empty() || inputs.size() != snapshots.size() ||
+      !llvm::all_of(inputs, llvm::IsaPred<StringAttr>) ||
+      !llvm::all_of(snapshots, llvm::IsaPred<StringAttr>))
+    return emitError() << "timing path terminals are malformed";
+  if (selection &&
+      static_cast<size_t>(selection.getInputLows().size()) != inputs.size())
+    return emitError() << "timing path selection does not match its terminals";
+  if (edge && (!selection || !selection.getInputLsbs()))
+    return emitError() << "edge-sensitive timing path needs source LSBs";
+  return success();
+}
+
+LogicalResult TimingPathRuleAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, ArrayAttr inputs,
+    ArrayAttr snapshots, uint32_t polarity, DenseI64ArrayAttr delays,
+    DenseI64ArrayAttr pulseReject, DenseI64ArrayAttr pulseError, bool, bool,
+    TimingPathSelectionAttr selection, TimingPathEdgeAttr edge,
+    TimingPathProceduralAttr, TimingPathConditionAttr) {
+  if (failed(verifyTimingPathTerminals(emitError, inputs, snapshots, selection,
+                                       edge)))
+    return failure();
+  size_t count = delays.size();
+  if (polarity > 2 ||
+      (count != 1 && count != 2 && count != 3 && count != 6 && count != 12) ||
+      llvm::any_of(delays.asArrayRef(),
+                   [](int64_t delay) { return delay < 0; }))
+    return emitError() << "timing path delays are malformed";
+  if (static_cast<bool>(pulseReject) != static_cast<bool>(pulseError) ||
+      (pulseReject && (static_cast<size_t>(pulseReject.size()) != count ||
+                       static_cast<size_t>(pulseError.size()) != count)))
+    return emitError() << "timing path pulse limits are malformed";
+  return success();
+}
+
+TimingPathRuleAttr
+TimingPathRuleAttr::withCondition(TimingPathConditionAttr condition) const {
+  return get(getContext(), getInputs(), getSnapshots(), getPolarity(),
+             getDelays(), getPulseReject(), getPulseError(), getPulseOnDetect(),
+             getPulseShowCancelled(), getSelection(), getEdge(),
+             getProcedural(), condition);
+}
+
+TimingPathRuleAttr
+TimingPathRuleAttr::withDelays(DenseI64ArrayAttr delays,
+                               DenseI64ArrayAttr pulseReject,
+                               DenseI64ArrayAttr pulseError) const {
+  return get(getContext(), getInputs(), getSnapshots(), getPolarity(), delays,
+             pulseReject, pulseError, getPulseOnDetect(),
+             getPulseShowCancelled(), getSelection(), getEdge(),
+             getProcedural(), getCondition());
+}
+
+TimingPathMonitorAttr
+TimingPathMonitorAttr::withCondition(TimingPathConditionAttr condition) const {
+  return get(getContext(), getInputs(), getSnapshots(), getSelection(),
+             getEdge(), condition);
+}
+
+LogicalResult TimingPathMonitorAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, ArrayAttr inputs,
+    ArrayAttr snapshots, TimingPathSelectionAttr selection,
+    TimingPathEdgeAttr edge, TimingPathConditionAttr) {
+  return verifyTimingPathTerminals(emitError, inputs, snapshots, selection,
+                                   edge);
+}
+
 LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {

@@ -80,12 +80,12 @@ endmodule
 // The three exact ifnone identities are (parallel, low), (parallel, high),
 // and (full, low). Each ordinary `if` and its ifnone fallback share one group;
 // neither the terminal selection nor connection kind may be omitted.
-// GROUP-COUNT-2: condition_group = 0 : i32
-// GROUP-COUNT-2: condition_group = 1 : i32
-// GROUP-COUNT-2: condition_group = 2 : i32
-// KIND-IF-COUNT-3: condition_kind = 1 : i32
-// KIND-NONE-COUNT-3: condition_kind = 2 : i32
-// POL-POS-COUNT-3: polarity = 1 : i32
-// POL-NEG-COUNT-3: polarity = 2 : i32
+// GROUP-COUNT-2: group = 0{{[,>]}}
+// GROUP-COUNT-2: group = 1{{[,>]}}
+// GROUP-COUNT-2: group = 2{{[,>]}}
+// KIND-IF-COUNT-3: kind = if,
+// KIND-NONE-COUNT-3: kind = ifnone,
+// POL-POS-COUNT-3: polarity = 1, delays =
+// POL-NEG-COUNT-3: polarity = 2, delays =
 // Four distinct static delays are shared across the six conditional rules.
 // DRIVE-COUNT-4: simulation.driver.drive_inertial_path

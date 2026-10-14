@@ -22,14 +22,9 @@ module {
              simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9943001 : i64,
                     simulation.timing_path_rules = [
-                      {inputs = ["top.source"], snapshots = ["top.snapshot"],
-                       input_lows = array<i64: 0>, input_widths = array<i64: 1>,
-                       output_low = 0 : i64, output_width = 1 : i64,
-                       output_root_width = 1 : i64,
-                       connection_full = false, polarity = 0 : i32,
-                       delays = array<i64: 1, 2, 3, 4>,
-                       condition_kind = 0 : i32,
-                       condition_group = 0 : i32}],
+                      #simulation.timing_path_rule<inputs = ["top.source"], snapshots = ["top.snapshot"], polarity = 0, delays = [1, 2, 3, 4],
+                        selection = #simulation.timing_path_selection<inputLows = [0], inputWidths = [1], outputLow = 0, outputWidth = 1, outputRootWidth = 1>,
+                        condition = #simulation.timing_path_condition<kind = none, group = 0>>],
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.source", argument = 2, kind = direct, copyOut = false>,
@@ -39,4 +34,4 @@ module {
   }
 }
 
-// CHECK: error: invalid frozen overlapping timing path
+// CHECK: error: timing path delays are malformed

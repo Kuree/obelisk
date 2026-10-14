@@ -80,8 +80,8 @@ endmodule
 
 // SIM-DAG: simulation.ref.store_inertial_path{{.*}}nonblocking = true
 // SIM-DAG: simulation.ref.store_inertial_path{{.*}}nonblocking = false
-// SIM-DAG: procedural_wake_kind = 1 : i32
-// SIM-DAG: procedural_wake_kind = 3 : i32
+// SIM-DAG: wakeKind = 1,
+// SIM-DAG: wakeKind = 3,
 // CHECK: pending 5 0 0000
 // CHECK-NEXT: override 7 1 0111
 // CHECK-NEXT: stable 12 1 0111

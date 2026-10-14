@@ -102,4 +102,29 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
     simulation.virtual_interface_callees = [
       #simulation.virtual_interface_callee<scope = 4, callee = @unit_3,
         captures = ["top.a"], reads = ["top.b"], writes = []>]}
+
+  // CHECK-LABEL: func.func private @timing_paths
+  // CHECK-SAME: simulation.timing_path_monitor_rules = [#simulation.timing_path_monitor<inputs = ["top.clk"], snapshots = ["top.clk_snapshot"], selection = <inputLows = [0], inputWidths = [1], inputLsbs = [0], outputLow = 0, outputWidth = 4, outputRootWidth = 4>, edge = <identifier = 1, pending = "top.pending", epoch = "top.epoch">>]
+  // CHECK-SAME: simulation.timing_path_rules = [#simulation.timing_path_rule<inputs = ["top.clk"], snapshots = ["top.clk_snapshot"], polarity = 1, delays = [2, 3], pulseReject = [1, 1], pulseError = [2, 2], pulseOnDetect = true, selection = <inputLows = [0], inputWidths = [1], inputLsbs = [0], outputLow = 0, outputWidth = 4, outputRootWidth = 4, full = true, driverNode = 7>, edge = <identifier = 1, pending = "top.pending", epoch = "top.epoch">, procedural = <site = 3, wakeKind = 1, monitor = true>, condition = <kind = if, group = 0, node = 9, evaluator = @cond, captures = ["top.en"]>>]
+  func.func private @timing_paths() attributes {
+    simulation.timing_path_monitor_rules = [#simulation.timing_path_monitor<
+      inputs = ["top.clk"], snapshots = ["top.clk_snapshot"],
+      selection = #simulation.timing_path_selection<inputLows = [0],
+        inputWidths = [1], inputLsbs = [0], outputLow = 0, outputWidth = 4,
+        outputRootWidth = 4>,
+      edge = #simulation.timing_path_edge<identifier = 1,
+        pending = "top.pending", epoch = "top.epoch">>],
+    simulation.timing_path_rules = [#simulation.timing_path_rule<
+      inputs = ["top.clk"], snapshots = ["top.clk_snapshot"], polarity = 1,
+      delays = [2, 3], pulseReject = [1, 1], pulseError = [2, 2],
+      pulseOnDetect = true,
+      selection = #simulation.timing_path_selection<inputLows = [0],
+        inputWidths = [1], inputLsbs = [0], outputLow = 0, outputWidth = 4,
+        outputRootWidth = 4, full = true, driverNode = 7>,
+      edge = #simulation.timing_path_edge<identifier = 1,
+        pending = "top.pending", epoch = "top.epoch">,
+      procedural = #simulation.timing_path_procedural<site = 3, wakeKind = 1,
+                                                      monitor = true>,
+      condition = #simulation.timing_path_condition<kind = if, group = 0,
+        node = 9, evaluator = @cond, captures = ["top.en"]>>]}
 }

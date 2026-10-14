@@ -116,3 +116,26 @@ func.func private @element_modes() attributes {
   // expected-error @+1 {{random element modes are malformed}}
   property = #simulation.random_property<field = @f, type = i1, width = 1,
     modeIndex = 0, isSigned = false, isRandC = false, elementModeField = @m>}
+
+// -----
+
+func.func private @edge_without_lsbs() attributes {
+  // expected-error @+1 {{edge-sensitive timing path needs source LSBs}}
+  rule = #simulation.timing_path_rule<inputs = ["a"], snapshots = ["s"],
+    polarity = 0, delays = [1],
+    edge = #simulation.timing_path_edge<identifier = 1, pending = "p",
+                                        epoch = "e">>}
+
+// -----
+
+func.func private @pulse_limits() attributes {
+  // expected-error @+1 {{timing path pulse limits are malformed}}
+  rule = #simulation.timing_path_rule<inputs = ["a"], snapshots = ["s"],
+    polarity = 0, delays = [1, 2], pulseReject = [1, 1]>}
+
+// -----
+
+func.func private @destination() attributes {
+  // expected-error @+1 {{timing path destination is out of bounds}}
+  selection = #simulation.timing_path_selection<inputLows = [0],
+    inputWidths = [1], outputLow = 3, outputWidth = 2, outputRootWidth = 4>}

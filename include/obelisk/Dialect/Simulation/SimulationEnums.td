@@ -212,6 +212,17 @@ def SimVPITypeKind : I32EnumAttr<
   let cppNamespace = "::obelisk::sim";
 }
 
+// Condition of a module path (IEEE 1800-2023 30.4.4).
+def SimTimingPathUnconditional : I32EnumAttrCase<"Unconditional", 0, "none">;
+def SimTimingPathIf : I32EnumAttrCase<"If", 1, "if">;
+def SimTimingPathIfNone : I32EnumAttrCase<"IfNone", 2, "ifnone">;
+def SimTimingPathConditionKind
+    : I32EnumAttr<"TimingPathConditionKind", "module path condition", [
+        SimTimingPathUnconditional, SimTimingPathIf, SimTimingPathIfNone
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 // Direction of a subroutine formal argument (IEEE 1800-2023 13.5).
 def SimFormalIn : I32EnumAttrCase<"In", 0, "in">;
 def SimFormalOut : I32EnumAttrCase<"Out", 1, "out">;

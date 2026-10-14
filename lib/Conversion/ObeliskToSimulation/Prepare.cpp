@@ -4249,81 +4249,19 @@ void ObeliskSimPreparePass::runOnOperation() {
             break;
           }
         }
-        SmallVector<NamedAttribute> attrs{
-            builder.getNamedAttr("inputs", builder.getArrayAttr(inputAttrs)),
-            builder.getNamedAttr("snapshots",
-                                 builder.getArrayAttr(snapshotAttrs)),
-            builder.getNamedAttr("input_lows",
-                                 builder.getDenseI64ArrayAttr(inputLows)),
-            builder.getNamedAttr("input_widths",
-                                 builder.getDenseI64ArrayAttr(inputWidths)),
-            builder.getNamedAttr("input_lsbs",
-                                 builder.getDenseI64ArrayAttr(inputLsbs)),
-            builder.getNamedAttr("output_low", builder.getI64IntegerAttr(
-                                                   intersectionLow - span.low)),
-            builder.getNamedAttr("output_width",
-                                 builder.getI64IntegerAttr(intersectionWidth)),
-            builder.getNamedAttr("output_root_width",
-                                 builder.getI64IntegerAttr(span.width)),
-            builder.getNamedAttr("driver_node_id",
-                                 builder.getI64IntegerAttr(*span.nodeID)),
-            builder.getNamedAttr("connection_full",
-                                 builder.getBoolAttr(candidate.full)),
-            builder.getNamedAttr("polarity",
-                                 builder.getI32IntegerAttr(candidate.polarity)),
-            builder.getNamedAttr("edge_sensitive",
-                                 builder.getBoolAttr(candidate.edgeSensitive)),
-            builder.getNamedAttr(
-                "edge_identifier",
-                builder.getI32IntegerAttr(candidate.edgeIdentifier)),
-            builder.getNamedAttr("edge_polarity", builder.getI32IntegerAttr(
-                                                      candidate.edgePolarity)),
-            builder.getNamedAttr(
-                "delay_fs", builder.getDenseI64ArrayAttr(candidate.delays)),
-            builder.getNamedAttr(
-                "pulse_reject_fs",
-                builder.getDenseI64ArrayAttr(candidate.pulseRejectLimits)),
-            builder.getNamedAttr(
-                "pulse_error_fs",
-                builder.getDenseI64ArrayAttr(candidate.pulseErrorLimits)),
-            builder.getNamedAttr("pulse_on_detect",
-                                 builder.getBoolAttr(candidate.pulseOnDetect)),
-            builder.getNamedAttr(
-                "pulse_show_cancelled",
-                builder.getBoolAttr(candidate.pulseShowCancelled)),
-            builder.getNamedAttr("condition_kind", builder.getI32IntegerAttr(
-                                                       candidate.condition ? 1
-                                                       : candidate.ifnone  ? 2
-                                                                          : 0)),
-            builder.getNamedAttr("condition_group",
-                                 builder.getI32IntegerAttr(group->second)),
-        };
-        Operation *monitorPrimary = nullptr;
-        if (candidate.edgeSensitive) {
-          attrs.push_back(
-              builder.getNamedAttr("edge_pending", edgePendingPath));
-          attrs.push_back(builder.getNamedAttr("edge_epoch", edgeEpochPath));
-        }
-        if (span.procedural) {
-          auto descriptor = descriptors.find(output);
-          attrs.push_back(builder.getNamedAttr("procedural_storage",
-                                               builder.getBoolAttr(true)));
-          attrs.push_back(builder.getNamedAttr(
-              "path_site_id",
-              builder.getI64IntegerAttr(descriptor->second.id)));
-          ProceduralWakeClassification wake =
-              classifyProceduralWake(span, candidate);
-          monitorPrimary = wake.monitorPrimary;
-          // Kind 3 is an explicit cancellation-only writer. It never performs
-          // snapshot-based edge qualification; the path-level validation above
-          // proves that another writer observes this source exactly.
-          int32_t wakeKind = wake.kind == 0 ? 3 : wake.kind;
-          attrs.push_back(builder.getNamedAttr(
-              "procedural_wake_kind", builder.getI32IntegerAttr(wakeKind)));
-          attrs.push_back(builder.getNamedAttr(
-              "procedural_monitor",
-              builder.getBoolAttr(wake.monitorPrimary != nullptr)));
-        }
+        ArrayAttr inputs = builder.getArrayAttr(inputAttrs);
+        ArrayAttr snapshotPaths = builder.getArrayAttr(snapshotAttrs);
+        auto selection = sim::TimingPathSelectionAttr::get(
+            context, builder.getDenseI64ArrayAttr(inputLows),
+            builder.getDenseI64ArrayAttr(inputWidths),
+            builder.getDenseI64ArrayAttr(inputLsbs), intersectionLow - span.low,
+            intersectionWidth, span.width, candidate.full, *span.nodeID);
+        sim::TimingPathEdgeAttr edge;
+        if (candidate.edgeSensitive)
+          edge = sim::TimingPathEdgeAttr::get(context, candidate.edgeIdentifier,
+                                              candidate.edgePolarity,
+                                              edgePendingPath, edgeEpochPath);
+        std::optional<uint64_t> conditionNode;
         if (candidate.condition) {
           auto nodeID =
               candidate.condition->getAttrOfType<IntegerAttr>("node_id");
@@ -4333,24 +4271,51 @@ void ObeliskSimPreparePass::runOnOperation() {
             invalid = true;
             break;
           }
-          attrs.push_back(builder.getNamedAttr("condition_node_id", nodeID));
+          conditionNode = nodeID.getValue().getZExtValue();
         }
-        DictionaryAttr frozenRule = builder.getDictionaryAttr(attrs);
-        frozenTimingRules[span.unit].push_back(frozenRule);
+        auto condition = sim::TimingPathConditionAttr::get(
+            context,
+            candidate.condition ? sim::TimingPathConditionKind::If
+            : candidate.ifnone  ? sim::TimingPathConditionKind::IfNone
+                                : sim::TimingPathConditionKind::Unconditional,
+            group->second, conditionNode, FlatSymbolRefAttr{}, ArrayAttr{});
+        Operation *monitorPrimary = nullptr;
+        sim::TimingPathProceduralAttr procedural;
+        if (span.procedural) {
+          auto descriptor = descriptors.find(output);
+          ProceduralWakeClassification wake =
+              classifyProceduralWake(span, candidate);
+          monitorPrimary = wake.monitorPrimary;
+          // Kind 3 is an explicit cancellation-only writer. It never performs
+          // snapshot-based edge qualification; the path-level validation above
+          // proves that another writer observes this source exactly.
+          procedural = sim::TimingPathProceduralAttr::get(
+              context, descriptor->second.id, wake.kind == 0 ? 3 : wake.kind,
+              wake.monitorPrimary != nullptr);
+        }
+        // Delays and pulse limits stay in femtoseconds until the unit's
+        // design precision is known.
+        frozenTimingRules[span.unit].push_back(sim::TimingPathRuleAttr::get(
+            context, inputs, snapshotPaths, candidate.polarity,
+            builder.getDenseI64ArrayAttr(candidate.delays),
+            builder.getDenseI64ArrayAttr(candidate.pulseRejectLimits),
+            builder.getDenseI64ArrayAttr(candidate.pulseErrorLimits),
+            candidate.pulseOnDetect, candidate.pulseShowCancelled, selection,
+            edge, procedural, condition));
         if (monitorPrimary) {
-          NamedAttrList monitor;
-          for (StringRef name :
-               {"inputs", "snapshots", "input_lows", "input_widths",
-                "input_lsbs", "output_low", "output_width", "output_root_width",
-                "edge_identifier", "edge_pending", "edge_epoch",
-                "condition_kind", "condition_group", "condition_node_id"})
-            if (Attribute value = frozenRule.get(name))
-              monitor.set(name, value);
+          if (!edge) {
+            emitError(getSemanticLocation(candidate.declaration))
+                << "monitored procedural specify path has no edge "
+                   "qualification state";
+            invalid = true;
+            break;
+          }
           SmallVector<Attribute> monitorRules;
           if (auto existing = monitorPrimary->getAttrOfType<ArrayAttr>(
                   "obelisk.timing_path_monitor_rules"))
             llvm::append_range(monitorRules, existing.getValue());
-          monitorRules.push_back(builder.getDictionaryAttr(monitor));
+          monitorRules.push_back(sim::TimingPathMonitorAttr::get(
+              context, inputs, snapshotPaths, selection, edge, condition));
           monitorPrimary->setAttr("obelisk.timing_path_monitor_rules",
                                   builder.getArrayAttr(monitorRules));
         }
@@ -8710,35 +8675,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::StringSet<> existingCaptures;
     for (const auto &capture : unitCaptures[unit.source])
       existingCaptures.insert(capture.first);
-    for (Attribute attr : rules) {
-      auto rule = dyn_cast<DictionaryAttr>(attr);
-      SmallVector<StringAttr> inputs;
-      if (auto array = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{})
-        for (Attribute input : array)
-          if (auto path = dyn_cast<StringAttr>(input))
-            inputs.push_back(path);
-      if (auto legacy = rule ? rule.getAs<StringAttr>("input") : StringAttr{})
-        inputs.push_back(legacy);
-      SmallVector<StringAttr> snapshots;
-      if (auto array = rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{})
-        for (Attribute snapshot : array)
-          if (auto path = dyn_cast<StringAttr>(snapshot))
-            snapshots.push_back(path);
-      if (auto legacy =
-              rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{})
-        snapshots.push_back(legacy);
-      if (!rule || inputs.empty() || snapshots.empty() ||
-          inputs.size() != snapshots.size()) {
-        emitError(getSemanticLocation(unit.source))
-            << "timing path has no frozen source snapshots";
-        invalid = true;
-        continue;
-      }
-      bool edgeSensitive = false;
-      if (auto edge = rule.getAs<BoolAttr>("edge_sensitive"))
-        edgeSensitive = edge.getValue();
-      if (edgeSensitive)
-        for (StringAttr input : inputs) {
+    for (auto rule : rules.getAsRange<sim::TimingPathRuleAttr>()) {
+      sim::TimingPathEdgeAttr edge = rule.getEdge();
+      if (edge)
+        for (auto input : rule.getInputs().getAsRange<StringAttr>()) {
           auto found = descriptors.find(input.getValue());
           if (found == descriptors.end()) {
             emitError(getSemanticLocation(unit.source))
@@ -8751,12 +8691,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                 {input.getValue().str(), found->second});
           unitReadCaptures[unit.source].insert(input.getValue());
         }
-      if (edgeSensitive)
-        for (StringRef name : {"edge_pending", "edge_epoch"}) {
-          auto state = rule.getAs<StringAttr>(name);
-          auto found =
-              state ? descriptors.find(state.getValue()) : descriptors.end();
-          if (!state || found == descriptors.end()) {
+      if (edge)
+        for (StringAttr state : {edge.getPending(), edge.getEpoch()}) {
+          auto found = descriptors.find(state.getValue());
+          if (found == descriptors.end()) {
             emitError(getSemanticLocation(unit.source))
                 << "edge-sensitive timing path qualification state no longer "
                    "resolves";
@@ -8768,7 +8706,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 {state.getValue().str(), found->second});
           unitWrittenCaptures[unit.source].insert(state.getValue());
         }
-      for (StringAttr snapshot : snapshots) {
+      for (auto snapshot : rule.getSnapshots().getAsRange<StringAttr>()) {
         auto found = descriptors.find(snapshot.getValue());
         if (found == descriptors.end()) {
           emitError(getSemanticLocation(unit.source))
@@ -8780,11 +8718,12 @@ void ObeliskSimPreparePass::runOnOperation() {
           unitCaptures[unit.source].push_back(
               {snapshot.getValue().str(), found->second});
       }
-      auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id");
+      sim::TimingPathConditionAttr pathCondition = rule.getCondition();
+      std::optional<uint64_t> conditionNode =
+          pathCondition ? pathCondition.getNode() : std::nullopt;
       if (!conditionNode)
         continue;
-      auto condition =
-          timingConditions.find(conditionNode.getValue().getZExtValue());
+      auto condition = timingConditions.find(*conditionNode);
       if (condition == timingConditions.end()) {
         emitError(getSemanticLocation(unit.source))
             << "timing path condition evaluator no longer resolves";
@@ -8835,27 +8774,21 @@ void ObeliskSimPreparePass::runOnOperation() {
       else
         unitWrittenCaptures[unit.source].insert(path.getValue());
     };
-    for (Attribute attr : rules) {
-      auto rule = dyn_cast<DictionaryAttr>(attr);
-      auto inputs = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{};
-      auto snapshots = rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
-      if (!inputs || !snapshots || inputs.size() != snapshots.size()) {
-        emitError(getSemanticLocation(unit.source))
-            << "derived procedural path monitor has invalid terminals";
-        invalid = true;
-        continue;
+    for (auto rule : rules.getAsRange<sim::TimingPathMonitorAttr>()) {
+      for (auto [input, snapshot] :
+           llvm::zip(rule.getInputs().getAsRange<StringAttr>(),
+                     rule.getSnapshots().getAsRange<StringAttr>())) {
+        addCapture(input, true);
+        addCapture(snapshot, false);
       }
-      for (auto [input, snapshot] : llvm::zip(inputs, snapshots)) {
-        addCapture(dyn_cast<StringAttr>(input), true);
-        addCapture(dyn_cast<StringAttr>(snapshot), false);
-      }
-      addCapture(rule.getAs<StringAttr>("edge_pending"), false);
-      addCapture(rule.getAs<StringAttr>("edge_epoch"), false);
-      auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id");
+      addCapture(rule.getEdge().getPending(), false);
+      addCapture(rule.getEdge().getEpoch(), false);
+      sim::TimingPathConditionAttr pathCondition = rule.getCondition();
+      std::optional<uint64_t> conditionNode =
+          pathCondition ? pathCondition.getNode() : std::nullopt;
       if (!conditionNode)
         continue;
-      auto condition =
-          timingConditions.find(conditionNode.getValue().getZExtValue());
+      auto condition = timingConditions.find(*conditionNode);
       if (condition == timingConditions.end()) {
         emitError(getSemanticLocation(unit.source))
             << "derived procedural path condition no longer resolves";
@@ -8932,84 +8865,62 @@ void ObeliskSimPreparePass::runOnOperation() {
   // Resolve the condition-node identities only after capture analysis has
   // frozen each outlined evaluator ABI. Copy that immutable ABI into the
   // driver rule so per-unit lowering needs no semantic-tree lookup.
+  // Records the outlined evaluator of an `if` path condition.
+  auto freezeTimingCondition = [&](PreparedUnit &unit,
+                                   sim::TimingPathConditionAttr condition)
+      -> FailureOr<sim::TimingPathConditionAttr> {
+    if (!condition || !condition.getNode())
+      return condition;
+    auto found = timingConditions.find(*condition.getNode());
+    auto evaluator = found == timingConditions.end()
+                         ? FlatSymbolRefAttr{}
+                         : sim::get<sim::metadata::Observer>(found->second);
+    auto captures =
+        found == timingConditions.end()
+            ? ArrayAttr{}
+            : sim::get<sim::metadata::ObserverCaptures>(found->second);
+    if (!evaluator || !captures) {
+      emitError(getSemanticLocation(unit.source))
+          << "timing path condition has no frozen evaluator ABI";
+      return failure();
+    }
+    return sim::TimingPathConditionAttr::get(
+        context, condition.getKind(), condition.getGroup(), condition.getNode(),
+        evaluator, captures);
+  };
   for (PreparedUnit &unit : units) {
-    auto rules =
-        unit.source->getAttrOfType<ArrayAttr>("obelisk.timing_path_rules");
-    if (!rules)
-      continue;
     SmallVector<Attribute> frozen;
-    for (Attribute attr : rules) {
-      auto rule = dyn_cast<DictionaryAttr>(attr);
-      if (!rule) {
-        invalid = true;
-        break;
-      }
-      NamedAttrList fields(rule.getValue());
-      if (auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id")) {
-        auto condition =
-            timingConditions.find(conditionNode.getValue().getZExtValue());
-        auto evaluator =
-            condition == timingConditions.end()
-                ? FlatSymbolRefAttr{}
-                : sim::get<sim::metadata::Observer>(condition->second);
-        auto captures =
-            condition == timingConditions.end()
-                ? ArrayAttr{}
-                : sim::get<sim::metadata::ObserverCaptures>(condition->second);
-        if (!evaluator || !captures) {
-          emitError(getSemanticLocation(unit.source))
-              << "timing path condition has no frozen evaluator ABI";
+    if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
+            "obelisk.timing_path_rules")) {
+      for (auto rule : rules.getAsRange<sim::TimingPathRuleAttr>()) {
+        FailureOr<sim::TimingPathConditionAttr> condition =
+            freezeTimingCondition(unit, rule.getCondition());
+        if (failed(condition)) {
           invalid = true;
           break;
         }
-        fields.set("condition_evaluator", evaluator);
-        fields.set("condition_captures", captures);
+        frozen.push_back(rule.withCondition(*condition));
       }
-      frozen.push_back(builder.getDictionaryAttr(fields));
+      if (!invalid)
+        unit.source->setAttr("obelisk.timing_path_rules",
+                             builder.getArrayAttr(frozen));
     }
-    if (!invalid)
-      unit.source->setAttr("obelisk.timing_path_rules",
-                           builder.getArrayAttr(frozen));
-  }
-  for (PreparedUnit &unit : units) {
-    auto rules = unit.source->getAttrOfType<ArrayAttr>(
-        "obelisk.timing_path_monitor_rules");
-    if (!rules)
-      continue;
-    SmallVector<Attribute> frozen;
-    for (Attribute attr : rules) {
-      auto rule = dyn_cast<DictionaryAttr>(attr);
-      if (!rule) {
-        invalid = true;
-        break;
-      }
-      NamedAttrList fields(rule.getValue());
-      if (auto conditionNode = rule.getAs<IntegerAttr>("condition_node_id")) {
-        auto condition =
-            timingConditions.find(conditionNode.getValue().getZExtValue());
-        auto evaluator =
-            condition == timingConditions.end()
-                ? FlatSymbolRefAttr{}
-                : sim::get<sim::metadata::Observer>(condition->second);
-        auto captures =
-            condition == timingConditions.end()
-                ? ArrayAttr{}
-                : sim::get<sim::metadata::ObserverCaptures>(condition->second);
-        if (!evaluator || !captures) {
-          emitError(getSemanticLocation(unit.source))
-              << "derived procedural path condition has no frozen evaluator "
-                 "ABI";
+    frozen.clear();
+    if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
+            "obelisk.timing_path_monitor_rules")) {
+      for (auto rule : rules.getAsRange<sim::TimingPathMonitorAttr>()) {
+        FailureOr<sim::TimingPathConditionAttr> condition =
+            freezeTimingCondition(unit, rule.getCondition());
+        if (failed(condition)) {
           invalid = true;
           break;
         }
-        fields.set("condition_evaluator", evaluator);
-        fields.set("condition_captures", captures);
+        frozen.push_back(rule.withCondition(*condition));
       }
-      frozen.push_back(builder.getDictionaryAttr(fields));
+      if (!invalid)
+        unit.source->setAttr("obelisk.timing_path_monitor_rules",
+                             builder.getArrayAttr(frozen));
     }
-    if (!invalid)
-      unit.source->setAttr("obelisk.timing_path_monitor_rules",
-                           builder.getArrayAttr(frozen));
   }
   if (invalid)
     return abort();
@@ -9949,195 +9860,37 @@ void ObeliskSimPreparePass::runOnOperation() {
       functionAttrs.push_back(sim::named<sim::metadata::UdpMetadata>(udp));
     if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
             "obelisk.timing_path_rules")) {
+      // Delays and pulse limits are whole design precision ticks.
+      auto toTicks = [&](DenseI64ArrayAttr femtoseconds) -> DenseI64ArrayAttr {
+        SmallVector<int64_t, 12> ticks;
+        for (int64_t value : femtoseconds.asArrayRef()) {
+          if (value < 0 ||
+              static_cast<uint64_t>(value) % designPrecisionFs != 0)
+            return {};
+          ticks.push_back(static_cast<int64_t>(static_cast<uint64_t>(value) /
+                                               designPrecisionFs));
+        }
+        return builder.getDenseI64ArrayAttr(ticks);
+      };
       SmallVector<Attribute> tickRules;
       bool rulesInvalid = false;
-      for (Attribute attr : rules) {
-        auto rule = dyn_cast<DictionaryAttr>(attr);
-        auto input = rule ? rule.getAs<StringAttr>("input") : StringAttr{};
-        auto inputs = rule ? rule.getAs<ArrayAttr>("inputs") : ArrayAttr{};
-        auto snapshot =
-            rule ? rule.getAs<StringAttr>("snapshot") : StringAttr{};
-        auto snapshots =
-            rule ? rule.getAs<ArrayAttr>("snapshots") : ArrayAttr{};
-        auto inputLows = rule ? rule.getAs<DenseI64ArrayAttr>("input_lows")
-                              : DenseI64ArrayAttr{};
-        auto inputWidths = rule ? rule.getAs<DenseI64ArrayAttr>("input_widths")
-                                : DenseI64ArrayAttr{};
-        auto inputLsbs = rule ? rule.getAs<DenseI64ArrayAttr>("input_lsbs")
-                              : DenseI64ArrayAttr{};
-        auto outputLow =
-            rule ? rule.getAs<IntegerAttr>("output_low") : IntegerAttr{};
-        auto outputWidth =
-            rule ? rule.getAs<IntegerAttr>("output_width") : IntegerAttr{};
-        auto outputRootWidth =
-            rule ? rule.getAs<IntegerAttr>("output_root_width") : IntegerAttr{};
-        auto driverNodeID =
-            rule ? rule.getAs<IntegerAttr>("driver_node_id") : IntegerAttr{};
-        auto proceduralStorage =
-            rule ? rule.getAs<BoolAttr>("procedural_storage") : BoolAttr{};
-        auto pathSiteID =
-            rule ? rule.getAs<IntegerAttr>("path_site_id") : IntegerAttr{};
-        auto proceduralWakeKind =
-            rule ? rule.getAs<IntegerAttr>("procedural_wake_kind")
-                 : IntegerAttr{};
-        auto proceduralMonitor =
-            rule ? rule.getAs<BoolAttr>("procedural_monitor") : BoolAttr{};
-        auto connectionFull =
-            rule ? rule.getAs<BoolAttr>("connection_full") : BoolAttr{};
-        auto polarity =
-            rule ? rule.getAs<IntegerAttr>("polarity") : IntegerAttr{};
-        auto edgeSensitive =
-            rule ? rule.getAs<BoolAttr>("edge_sensitive") : BoolAttr{};
-        auto edgeIdentifier =
-            rule ? rule.getAs<IntegerAttr>("edge_identifier") : IntegerAttr{};
-        auto edgePolarity =
-            rule ? rule.getAs<IntegerAttr>("edge_polarity") : IntegerAttr{};
-        auto edgePending =
-            rule ? rule.getAs<StringAttr>("edge_pending") : StringAttr{};
-        auto edgeEpoch =
-            rule ? rule.getAs<StringAttr>("edge_epoch") : StringAttr{};
-        auto delays = rule ? rule.getAs<DenseI64ArrayAttr>("delay_fs")
-                           : DenseI64ArrayAttr{};
-        auto pulseReject =
-            rule ? rule.getAs<DenseI64ArrayAttr>("pulse_reject_fs")
-                 : DenseI64ArrayAttr{};
-        auto pulseError = rule ? rule.getAs<DenseI64ArrayAttr>("pulse_error_fs")
-                               : DenseI64ArrayAttr{};
-        auto pulseOnDetect =
-            rule ? rule.getAs<BoolAttr>("pulse_on_detect") : BoolAttr{};
-        auto pulseShowCancelled =
-            rule ? rule.getAs<BoolAttr>("pulse_show_cancelled") : BoolAttr{};
-        bool edgeSensitiveValue = edgeSensitive && edgeSensitive.getValue();
-        int64_t edgeIdentifierValue =
-            edgeIdentifier ? edgeIdentifier.getInt() : 0;
-        int64_t edgePolarityValue = edgePolarity ? edgePolarity.getInt() : 0;
-        bool legacyTerminals = input && snapshot && !inputs && !snapshots;
-        bool arrayTerminals = inputs && snapshots && !inputs.empty() &&
-                              inputs.size() == snapshots.size();
-        if ((!legacyTerminals && !arrayTerminals) || !polarity ||
-            polarity.getInt() < 0 || polarity.getInt() > 2 ||
-            edgeIdentifierValue < 0 || edgeIdentifierValue > 3 ||
-            edgePolarityValue < 0 || edgePolarityValue > 2 ||
-            (!edgeSensitiveValue &&
-             (edgeIdentifierValue != 0 || edgePolarityValue != 0)) ||
-            (edgeSensitiveValue && (!edgePending || !edgeEpoch)) || !delays ||
-            (delays.size() != 1 && delays.size() != 2 && delays.size() != 3 &&
-             delays.size() != 6 && delays.size() != 12) ||
-            !pulseReject || pulseReject.size() != delays.size() ||
-            !pulseError || pulseError.size() != delays.size() ||
-            !pulseOnDetect || !pulseShowCancelled ||
-            (arrayTerminals &&
-             (!inputLows || !inputWidths ||
-              static_cast<size_t>(inputLows.size()) != inputs.size() ||
-              static_cast<size_t>(inputWidths.size()) != inputs.size() ||
-              (edgeSensitiveValue &&
-               (!inputLsbs ||
-                static_cast<size_t>(inputLsbs.size()) != inputs.size())) ||
-              !outputLow || !outputWidth || !outputRootWidth ||
-              !connectionFull))) {
+      for (auto rule : rules.getAsRange<sim::TimingPathRuleAttr>()) {
+        DenseI64ArrayAttr delays = toTicks(rule.getDelays());
+        DenseI64ArrayAttr reject = rule.getPulseReject()
+                                       ? toTicks(rule.getPulseReject())
+                                       : DenseI64ArrayAttr{};
+        DenseI64ArrayAttr error = rule.getPulseError()
+                                      ? toTicks(rule.getPulseError())
+                                      : DenseI64ArrayAttr{};
+        if (!delays || !reject || !error ||
+            llvm::any_of(llvm::zip(reject.asArrayRef(), error.asArrayRef()),
+                         [](auto pair) {
+                           return std::get<1>(pair) < std::get<0>(pair);
+                         })) {
           rulesInvalid = true;
           break;
         }
-        SmallVector<int64_t, 12> ticks;
-        for (int64_t femtoseconds : delays.asArrayRef()) {
-          if (femtoseconds < 0 ||
-              static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {
-            rulesInvalid = true;
-            break;
-          }
-          ticks.push_back(static_cast<int64_t>(
-              static_cast<uint64_t>(femtoseconds) / designPrecisionFs));
-        }
-        if (rulesInvalid)
-          break;
-        auto scalePulseLimits = [&](DenseI64ArrayAttr values,
-                                    SmallVectorImpl<int64_t> &result) {
-          for (int64_t femtoseconds : values.asArrayRef()) {
-            if (femtoseconds < 0 ||
-                static_cast<uint64_t>(femtoseconds) % designPrecisionFs != 0) {
-              rulesInvalid = true;
-              return;
-            }
-            result.push_back(static_cast<int64_t>(
-                static_cast<uint64_t>(femtoseconds) / designPrecisionFs));
-          }
-        };
-        SmallVector<int64_t, 12> rejectTicks;
-        SmallVector<int64_t, 12> errorTicks;
-        scalePulseLimits(pulseReject, rejectTicks);
-        scalePulseLimits(pulseError, errorTicks);
-        if (rulesInvalid ||
-            llvm::any_of(llvm::zip(rejectTicks, errorTicks), [](auto pair) {
-              return std::get<1>(pair) < std::get<0>(pair);
-            })) {
-          rulesInvalid = true;
-          break;
-        }
-        SmallVector<NamedAttribute> fields;
-        if (legacyTerminals) {
-          fields.push_back(builder.getNamedAttr("input", input));
-          fields.push_back(builder.getNamedAttr("snapshot", snapshot));
-        } else {
-          fields.push_back(builder.getNamedAttr("inputs", inputs));
-          fields.push_back(builder.getNamedAttr("snapshots", snapshots));
-          fields.push_back(builder.getNamedAttr("input_lows", inputLows));
-          fields.push_back(builder.getNamedAttr("input_widths", inputWidths));
-          if (inputLsbs)
-            fields.push_back(builder.getNamedAttr("input_lsbs", inputLsbs));
-          fields.push_back(builder.getNamedAttr("output_low", outputLow));
-          fields.push_back(builder.getNamedAttr("output_width", outputWidth));
-          fields.push_back(
-              builder.getNamedAttr("output_root_width", outputRootWidth));
-          fields.push_back(
-              builder.getNamedAttr("connection_full", connectionFull));
-          if (driverNodeID)
-            fields.push_back(
-                builder.getNamedAttr("driver_node_id", driverNodeID));
-          if (proceduralStorage)
-            fields.push_back(
-                builder.getNamedAttr("procedural_storage", proceduralStorage));
-          if (pathSiteID)
-            fields.push_back(builder.getNamedAttr("path_site_id", pathSiteID));
-          if (proceduralWakeKind)
-            fields.push_back(builder.getNamedAttr("procedural_wake_kind",
-                                                  proceduralWakeKind));
-          if (proceduralMonitor)
-            fields.push_back(
-                builder.getNamedAttr("procedural_monitor", proceduralMonitor));
-        }
-        fields.push_back(builder.getNamedAttr("polarity", polarity));
-        fields.push_back(builder.getNamedAttr(
-            "edge_sensitive", builder.getBoolAttr(edgeSensitiveValue)));
-        fields.push_back(builder.getNamedAttr(
-            "edge_identifier", builder.getI32IntegerAttr(edgeIdentifierValue)));
-        fields.push_back(builder.getNamedAttr(
-            "edge_polarity", builder.getI32IntegerAttr(edgePolarityValue)));
-        if (edgeSensitiveValue) {
-          fields.push_back(builder.getNamedAttr("edge_pending", edgePending));
-          fields.push_back(builder.getNamedAttr("edge_epoch", edgeEpoch));
-        }
-        fields.push_back(builder.getNamedAttr(
-            "delays", builder.getDenseI64ArrayAttr(ticks)));
-        fields.push_back(builder.getNamedAttr(
-            "pulse_reject", builder.getDenseI64ArrayAttr(rejectTicks)));
-        fields.push_back(builder.getNamedAttr(
-            "pulse_error", builder.getDenseI64ArrayAttr(errorTicks)));
-        fields.push_back(
-            builder.getNamedAttr("pulse_on_detect", pulseOnDetect));
-        fields.push_back(
-            builder.getNamedAttr("pulse_show_cancelled", pulseShowCancelled));
-        for (StringRef name :
-             {"condition_kind", "condition_group", "condition_node_id"})
-          if (auto value = rule.getAs<IntegerAttr>(name))
-            fields.push_back(builder.getNamedAttr(name, value));
-        if (auto evaluator =
-                rule.getAs<FlatSymbolRefAttr>("condition_evaluator"))
-          fields.push_back(
-              builder.getNamedAttr("condition_evaluator", evaluator));
-        if (auto captures = rule.getAs<ArrayAttr>("condition_captures"))
-          fields.push_back(
-              builder.getNamedAttr("condition_captures", captures));
-        tickRules.push_back(builder.getDictionaryAttr(fields));
+        tickRules.push_back(rule.withDelays(delays, reject, error));
       }
       if (rulesInvalid) {
         emitError(getSemanticLocation(unit.source))
