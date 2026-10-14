@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <unordered_set>
 #ifdef OBELISK_Z3_SINGLE_THREADED
 #include <mutex>
 #endif
@@ -389,6 +390,31 @@ detail::checkRandomDomainOverlapZ3(llvm::ArrayRef<RandomDomainPattern> patterns,
   return Satisfiability::Unknown;
 }
 
+/// Nonlinear products the optional program analysis accepts.
+static constexpr unsigned maxNonlinearProducts = 16;
+
+/// Products of two non-constant bit-vectors in an expression DAG.
+static unsigned countNonlinearProducts(const z3::expr &root) {
+  std::vector<z3::expr> pending{root};
+  std::unordered_set<unsigned> visited;
+  unsigned count = 0;
+  while (!pending.empty()) {
+    z3::expr node = pending.back();
+    pending.pop_back();
+    if (!node.is_app() || !visited.insert(node.id()).second)
+      continue;
+    if (node.decl().decl_kind() == Z3_OP_BMUL) {
+      unsigned symbolic = 0;
+      for (unsigned index = 0; index != node.num_args(); ++index)
+        symbolic += !node.arg(index).is_numeral();
+      count += symbolic > 1;
+    }
+    for (unsigned index = 0; index != node.num_args(); ++index)
+      pending.push_back(node.arg(index));
+  }
+  return count;
+}
+
 RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
                                            size_t programSize,
                                            uint64_t resourceLimit,
@@ -435,6 +461,12 @@ RandomProgramAnalysis analyzeRandomProgram(const uint8_t *program,
     }
     std::optional<z3::expr> hard = shim.translate(smt->hard);
     if (!hard)
+      return analysis;
+    // Asserting a formula runs Z3's polynomial normalization before the
+    // resource limit applies, and products of many symbolic factors (such as
+    // a ** with a random exponent) make it unbounded. This analysis is
+    // optional; leave such relations to the exact sampling plan.
+    if (countNonlinearProducts(*hard) > maxNonlinearProducts)
       return analysis;
     solver.push();
     solver.add(*hard);

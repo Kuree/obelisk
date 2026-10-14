@@ -928,6 +928,9 @@ public:
   std::unordered_map<Z3_ast, CardinalityInputs> cardinalityInputs;
 };
 
+/// Rewriting steps allowed to one plan's simplification.
+constexpr unsigned maxRewriteSteps = 5'000'000;
+
 inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
                               std::vector<Z3_ast> &formulas, bool real) {
   Z3_tactic floating = nullptr;
@@ -968,8 +971,21 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
     floatingFirst = Z3_tactic_and_then(context, floatingSimplified, first);
     Z3_tactic_inc_ref(context, floatingFirst);
   }
-  Z3_tactic tactic =
+  Z3_tactic unbounded =
       Z3_tactic_and_then(context, real ? floatingFirst : first, simplify);
+  Z3_tactic_inc_ref(context, unbounded);
+  // Tactics ignore the context's resource limit. Keep products nested rather
+  // than flattening them into sorted monomials, which for a chain of squarings
+  // (a ** with a random exponent) grows exponentially within one rewrite, and
+  // bound the rewriter's steps deterministically. Exhaustion fails the tactic
+  // and is diagnosed as a plan that cannot be compiled.
+  Z3_params limits = Z3_mk_params(context);
+  Z3_params_inc_ref(context, limits);
+  Z3_params_set_uint(context, limits, Z3_mk_string_symbol(context, "max_steps"),
+                     maxRewriteSteps);
+  Z3_params_set_bool(context, limits, Z3_mk_string_symbol(context, "flat"),
+                     false);
+  Z3_tactic tactic = Z3_tactic_using_params(context, unbounded, limits);
   Z3_tactic_inc_ref(context, tactic);
   Z3_apply_result result = Z3_tactic_apply(context, tactic, goal);
   bool valid = result && Z3_get_error_code(context) == Z3_OK;
@@ -985,6 +1001,8 @@ inline bool bitBlastPredicate(Z3_context context, Z3_ast predicate,
   if (result)
     Z3_apply_result_dec_ref(context, result);
   Z3_tactic_dec_ref(context, tactic);
+  Z3_params_dec_ref(context, limits);
+  Z3_tactic_dec_ref(context, unbounded);
   if (real) {
     Z3_tactic_dec_ref(context, floatingFirst);
     Z3_tactic_dec_ref(context, floatingSimplified);
