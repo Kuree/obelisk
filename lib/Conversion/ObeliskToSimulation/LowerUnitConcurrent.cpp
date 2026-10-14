@@ -194,6 +194,28 @@ static LogicalResult appendFixedSequence(FixedSequence &result,
                                          const FixedSequence &nested,
                                          uint64_t offset);
 
+/// IEEE 1800-2023 16.6 reads a sequence Boolean like an `if` condition: X, Z
+/// and 0 are false. For a two-state operand, `!x` is therefore exactly the
+/// negation of `x`, so a sequence records it as `x` negated and Boolean
+/// minimization can pair it with `x`. A four-state operand is not: X makes both
+/// `x` and `!x` false, so that negation stays an opaque literal.
+static Operation *getTwoStateLogicalNotOperand(Operation *predicate) {
+  auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(predicate);
+  if (!unary ||
+      unary.getOperatorKind() != semantic::SVUnaryOperator::LogicalNot)
+    return nullptr;
+  SmallVector<Operation *> children = getChildren(unary);
+  if (children.size() != 1)
+    return nullptr;
+  auto type = children.front()->getAttrOfType<TypeAttr>("semantic_type");
+  if (!type ||
+      !isa<semantic::IntegralType, semantic::RangedPackedArrayType,
+           semantic::PackedArrayType>(type.getValue()) ||
+      isFourStateSemanticType(type.getValue()))
+    return nullptr;
+  return children.front();
+}
+
 static bool isSingleBooleanAge(const FixedSequence &sequence) {
   return sequence.ages.size() == 1 &&
          sequence.ages.front().matchItems.empty() &&
@@ -1177,7 +1199,10 @@ static FailureOr<FixedSequence> compileFixedSequence(Operation *operation) {
       nested = std::move(*compiled);
     } else {
       nested.ages.resize(1);
-      nested.ages.front().predicates.push_back(children.front());
+      if (Operation *operand = getTwoStateLogicalNotOperand(children.front()))
+        nested.ages.front().negatedPredicates.push_back(operand);
+      else
+        nested.ages.front().predicates.push_back(children.front());
     }
     if (nested.emptyMatch)
       return nested;
@@ -1843,7 +1868,11 @@ compileFixedSequenceAlternatives(Operation *operation,
       } else {
         FixedSequence term;
         term.ages.resize(1);
-        term.ages.front().predicates.push_back(children.front());
+        if (Operation *operand =
+                getTwoStateLogicalNotOperand(children.front()))
+          term.ages.front().negatedPredicates.push_back(operand);
+        else
+          term.ages.front().predicates.push_back(children.front());
         nested.push_back(std::move(term));
       }
       if (nested.empty() ||
