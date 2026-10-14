@@ -765,6 +765,34 @@ def SimInterconnectLeafAttr
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+def SimRandomElementModesAttr
+    : SimAttr<"RandomElementModes", "random_element_modes"> {
+  let summary = "per-element rand_mode() bits of a fixed random array";
+  let description = [{
+    A `width`-bit element mode bitmap that rand_mode() resets with its
+    variable: the receiver's class `field`, or static design `storage`.
+  }];
+  let parameters = (ins "uint32_t":$width,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$field,
+      OptionalParameter<"std::optional<uint64_t>">:$storage);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandModeDispatchAttr
+    : SimAttr<"RandModeDispatch", "rand_mode_dispatch"> {
+  let summary = "class-specific static state of an object rand_mode() call";
+  let description = [{
+    When the receiver is an instance of `target`, obj.rand_mode() also sets
+    the shared rand_mode() words in static `storages` and resets the element
+    modes `elements` of that class.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$target,
+      "::mlir::DenseI64ArrayAttr":$storages, "::mlir::ArrayAttr":$elements);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

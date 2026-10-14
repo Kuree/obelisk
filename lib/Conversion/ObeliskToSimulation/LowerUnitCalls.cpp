@@ -1172,25 +1172,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
               object = sim::SimClassCastOp::create(builder, location,
                                                    targetType, object);
           }
-          for (Attribute attribute : elementFields) {
-            auto entry = dyn_cast<DictionaryAttr>(attribute);
-            auto field = entry ? entry.getAs<FlatSymbolRefAttr>("field")
-                               : FlatSymbolRefAttr{};
-            auto storage =
-                entry ? entry.getAs<IntegerAttr>("storage") : IntegerAttr{};
-            auto width =
-                entry ? entry.getAs<IntegerAttr>("width") : IntegerAttr{};
-            if (!width || width.getValue().isNegative() ||
-                width.getValue().isZero() ||
-                width.getValue().getActiveBits() > 32 ||
-                static_cast<bool>(field) == static_cast<bool>(storage) ||
-                (storage && (storage.getValue().isNegative() ||
-                             storage.getValue().getActiveBits() > 63))) {
-              emitError(location) << "rand_mode element dispatch is malformed";
-              return failure();
-            }
-            Type bitmapType =
-                builder.getIntegerType(width.getValue().getZExtValue());
+          for (auto entry :
+               elementFields.getAsRange<sim::RandomElementModesAttr>()) {
+            FlatSymbolRefAttr field = entry.getField();
+            Type bitmapType = builder.getIntegerType(entry.getWidth());
             Value bitmapReference;
             if (field && (!object || !target)) {
               emitError(location)
@@ -1207,7 +1192,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
               bitmapReference = sim::SimContextStorageOp::create(
                   builder, location,
                   sim::RefType::get(function.getContext(), bitmapType),
-                  function.getBody().front().getArgument(0), storage);
+                  function.getBody().front().getArgument(0),
+                  builder.getI64IntegerAttr(*entry.getStorage()));
             Value bitmapZero = arith::ConstantOp::create(
                 builder, location, bitmapType,
                 builder.getIntegerAttr(
@@ -1221,18 +1207,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       };
       if (staticDispatchAttr) {
         Block *done = addBlock();
-        for (Attribute attribute : staticDispatchAttr) {
-          auto entry = dyn_cast<DictionaryAttr>(attribute);
-          auto target = entry ? entry.getAs<FlatSymbolRefAttr>("class")
-                              : FlatSymbolRefAttr{};
-          auto storages = entry ? entry.getAs<DenseI64ArrayAttr>("storages")
-                                : DenseI64ArrayAttr{};
-          if (!target || !storages ||
-              llvm::any_of(storages.asArrayRef(),
-                           [](int64_t storage) { return storage < 0; })) {
-            emitError(location) << "rand_mode static dispatch is malformed";
-            return failure();
-          }
+        for (auto entry :
+             staticDispatchAttr.getAsRange<sim::RandModeDispatchAttr>()) {
+          FlatSymbolRefAttr target = entry.getTarget();
           Value matches = sim::SimClassIsInstanceOp::create(
               builder, location, loweredReceiver, target);
           Block *selected = addBlock();
@@ -1240,9 +1217,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           cf::CondBranchOp::create(builder, location, matches, selected,
                                    ValueRange{}, next, ValueRange{});
           setCurrent(selected);
-          if (failed(storeMode(storages.asArrayRef(),
-                               entry.getAs<ArrayAttr>("element_fields"),
-                               target)))
+          if (failed(storeMode(entry.getStorages().asArrayRef(),
+                               entry.getElements(), target)))
             return failure();
           cf::BranchOp::create(builder, location, done);
           setCurrent(next);
@@ -1647,12 +1623,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                           : Type(builder.getI1Type());
     Block *done = addBlock();
     Value result = done->addArgument(resultType, location);
-    for (Attribute attribute : dispatchClasses) {
-      auto target = dyn_cast<FlatSymbolRefAttr>(attribute);
-      if (!target) {
-        emitError(location) << "object random-stream dispatch is malformed";
-        return failure();
-      }
+    for (auto target : dispatchClasses.getAsRange<FlatSymbolRefAttr>()) {
       Value matches = sim::SimClassIsInstanceOp::create(
           builder, location, *loweredReceiver, target);
       Block *selected = addBlock();

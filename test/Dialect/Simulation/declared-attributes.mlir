@@ -145,4 +145,12 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
       vpiType = #simulation.vpi_type<kind = int, isSigned = true,
         isFourState = false, range = [31, 0], children = [], childNames = []>,
       nettype = @wire_t>]}
+
+  // CHECK-LABEL: func.func private @rand_mode
+  // CHECK-SAME: simulation.rand_mode_static_dispatch = [#simulation.rand_mode_dispatch<target = @Derived, storages = [4], elements = [#simulation.random_element_modes<width = 8, field = @modes>, #simulation.random_element_modes<width = 2, storage = 5>]>]
+  func.func private @rand_mode() attributes {
+    simulation.rand_mode_static_dispatch = [#simulation.rand_mode_dispatch<
+      target = @Derived, storages = [4],
+      elements = [#simulation.random_element_modes<width = 8, field = @modes>,
+                  #simulation.random_element_modes<width = 2, storage = 5>]>]}
 }

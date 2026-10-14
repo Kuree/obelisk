@@ -873,6 +873,28 @@ LogicalResult TimingPathMonitorAttr::verify(
                                    edge);
 }
 
+LogicalResult
+RandomElementModesAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                               uint32_t width, FlatSymbolRefAttr field,
+                               std::optional<uint64_t> storage) {
+  if (width == 0 || static_cast<bool>(field) == storage.has_value() ||
+      (storage && *storage > INT64_MAX))
+    return emitError() << "random element modes need a width and one state "
+                          "location";
+  return success();
+}
+
+LogicalResult
+RandModeDispatchAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                             FlatSymbolRefAttr, DenseI64ArrayAttr storages,
+                             ArrayAttr elements) {
+  if (llvm::any_of(storages.asArrayRef(),
+                   [](int64_t storage) { return storage < 0; }) ||
+      !llvm::all_of(elements, llvm::IsaPred<RandomElementModesAttr>))
+    return emitError() << "rand_mode dispatch is malformed";
+  return success();
+}
+
 LogicalResult UdpRowAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                                  StringAttr, StringAttr state,
                                  StringAttr output, bool) {

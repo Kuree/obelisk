@@ -65,6 +65,7 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::FlatSymbolRefAttr":$constraint_mode_field,
     "::mlir::IntegerAttr":$constraint_mode_static_storage,
     "::mlir::DenseI64ArrayAttr":$constraint_mode_static_storages,
+    // Class symbols, most derived first.
     "::mlir::ArrayAttr":$object_random_dispatch_classes,
     "::mlir::UnitAttr":$rand_mode,
     "::mlir::IntegerAttr":$rand_mode_ancestor_mask,
@@ -74,9 +75,11 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::IntegerAttr":$rand_mode_family_mask,
     "::mlir::IntegerAttr":$rand_mode_property,
     "::mlir::IntegerAttr":$rand_mode_selection_mask,
+    // `#simulation.rand_mode_dispatch` entries.
     "::mlir::ArrayAttr":$rand_mode_static_dispatch,
     "::mlir::IntegerAttr":$rand_mode_static_storage,
     "::mlir::IntegerAttr":$rand_mode_struct_depth,
+    // `#simulation.random_element_modes` entries.
     "::mlir::ArrayAttr":$rand_mode_struct_element_fields,
     "::mlir::UnitAttr":$random_arithmetic_node,
     "::mlir::UnitAttr":$random_arithmetic_operand,

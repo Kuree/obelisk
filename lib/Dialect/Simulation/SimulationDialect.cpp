@@ -791,6 +791,15 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == RandModeStaticDispatch::getNameStr() &&
+      !allOf(llvm::IsaPred<RandModeDispatchAttr>))
+    return error() << "must contain #simulation.rand_mode_dispatch entries";
+  if (name == RandModeStructElementFields::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomElementModesAttr>))
+    return error() << "must contain #simulation.random_element_modes entries";
+  if (name == ObjectRandomDispatchClasses::getNameStr() &&
+      !allOf(llvm::IsaPred<FlatSymbolRefAttr>))
+    return error() << "must contain class symbols";
   if (name == InterconnectLeaves::getNameStr() &&
       !allOf(llvm::IsaPred<InterconnectLeafAttr>))
     return error() << "must contain #simulation.interconnect_leaf entries";

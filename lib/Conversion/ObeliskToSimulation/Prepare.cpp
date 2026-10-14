@@ -7934,14 +7934,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                 sim::get<sim::metadata::RandomArrayModeField>(property);
             auto elementStorage =
                 sim::get<sim::metadata::StaticRandomArrayModeStorage>(property);
-            if (layout && (bitmap || elementStorage)) {
-              SmallVector<NamedAttribute> fields{builder.getNamedAttr(
-                  "width", builder.getI32IntegerAttr(layout->elementCount))};
-              fields.push_back(
-                  bitmap ? builder.getNamedAttr("field", bitmap)
-                         : builder.getNamedAttr("storage", elementStorage));
-              elementFields.push_back(builder.getDictionaryAttr(fields));
-            }
+            if (layout && (bitmap || elementStorage))
+              elementFields.push_back(sim::RandomElementModesAttr::get(
+                  context, layout->elementCount, bitmap,
+                  bitmap ? std::nullopt
+                         : std::optional<uint64_t>(
+                               elementStorage.getValue().getZExtValue())));
             if (auto members =
                     sim::get<sim::metadata::RandomStructMembers>(property))
               for (auto member :
@@ -7952,15 +7950,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                     member.getElementModeStorage();
                 if (!memberLayout || (!memberBitmap && !memberStorage))
                   continue;
-                elementFields.push_back(builder.getDictionaryAttr({
-                    builder.getNamedAttr(
-                        "width",
-                        builder.getI32IntegerAttr(memberLayout->elementCount)),
-                    memberBitmap ? builder.getNamedAttr("field", memberBitmap)
-                                 : builder.getNamedAttr(
-                                       "storage", builder.getI64IntegerAttr(
-                                                      *memberStorage)),
-                }));
+                elementFields.push_back(sim::RandomElementModesAttr::get(
+                    context, memberLayout->elementCount, memberBitmap,
+                    memberBitmap ? std::nullopt : memberStorage));
               }
             if (property.getLifetime() != semantic::SVVariableLifetime::Static)
               continue;
@@ -8002,13 +7994,10 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
           FlatSymbolRefAttr classSymbol =
               FlatSymbolRefAttr::get(context, className.getValue());
-          dispatch.push_back(builder.getDictionaryAttr({
-              builder.getNamedAttr("class", classSymbol),
-              builder.getNamedAttr("storages", builder.getDenseI64ArrayAttr(
-                                                   entry.staticModeStorages)),
-              builder.getNamedAttr("element_fields",
-                                   builder.getArrayAttr(entry.elementFields)),
-          }));
+          dispatch.push_back(sim::RandModeDispatchAttr::get(
+              context, classSymbol,
+              builder.getDenseI64ArrayAttr(entry.staticModeStorages),
+              builder.getArrayAttr(entry.elementFields)));
         }
         sim::set<sim::metadata::RandModeStaticDispatch>(
             call, builder.getArrayAttr(dispatch));
@@ -8150,12 +8139,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (!selectionCount)
           if (auto layout = getFixedRandomArrayLayout(type);
               layout && (bitmap || storage))
-            elementFields.push_back(builder.getDictionaryAttr({
-                builder.getNamedAttr(
-                    "width", builder.getI32IntegerAttr(layout->elementCount)),
-                bitmap ? builder.getNamedAttr("field", bitmap)
-                       : builder.getNamedAttr("storage", storage),
-            }));
+            elementFields.push_back(sim::RandomElementModesAttr::get(
+                context, layout->elementCount, bitmap,
+                bitmap ? std::nullopt
+                       : std::optional<uint64_t>(
+                             storage.getValue().getZExtValue())));
       }
       FailureOr<Type> selectedType =
           getNormalizedSemanticType(callChildren.front());
