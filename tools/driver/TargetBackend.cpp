@@ -547,7 +547,7 @@ lowerToLLVM(ModuleOp module, TargetMachine &targetMachine, StringRef triple,
     module->removeAttr("debug.native_timing");
   // Export bridges must be part of both executable representations. The
   // materializer is a no-op for ordinary designs, preserving their exact IR.
-  if (module->hasAttr("simulation.has_dpi_exports") &&
+  if (dpi::has<dpi::HasExports>(module) &&
       failed(materializeDPIExportBridges(module)))
     return failure();
   bool hasLanguageOverride = false;
@@ -1178,7 +1178,7 @@ LogicalResult emitTargetOutput(ModuleOp module,
   registerBuiltinDialectTranslation(*module.getContext());
   llvm::StringSet<> nativeExports;
   for (LLVM::LLVMFuncOp function : module.getOps<LLVM::LLVMFuncOp>()) {
-    if (function->hasAttr("dpi.export_id"))
+    if (dpi::has<dpi::Export>(function))
       nativeExports.insert(function.getSymName());
   }
   if (pruneModel) {

@@ -19,6 +19,7 @@
 #include "PrepareTopology.h"
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 
@@ -89,13 +90,13 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
   SmallVector<Attribute> aggregateInputs;
   SmallVector<Attribute> aggregateCopyOuts;
   bool invalid = false;
-  auto makeABI = [&](Type type, sim::DPIArgumentDirection direction,
-                     Location location) -> FailureOr<sim::DPIABIAttr> {
+  auto makeABI = [&](Type type, dpi::ArgumentDirection direction,
+                     Location location) -> FailureOr<dpi::ABIAttr> {
     FailureOr<DPIABIType> classified = classifyDPIABIType(type, location);
     if (failed(classified))
       return failure();
-    return sim::DPIABIAttr::get(
-        context, static_cast<sim::DPIABIKind>(classified->kind), direction,
+    return dpi::ABIAttr::get(
+        context, static_cast<dpi::ABIKind>(classified->kind), direction,
         classified->width, classified->fourState, classified->isSigned);
   };
   for (Operation *child : getChildren(subroutine)) {
@@ -108,22 +109,22 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
       invalid = true;
       continue;
     }
-    sim::DPIArgumentDirection direction =
-        static_cast<sim::DPIArgumentDirection>(formal.getDirection());
-    FailureOr<sim::DPIABIAttr> input =
+    dpi::ArgumentDirection direction =
+        static_cast<dpi::ArgumentDirection>(formal.getDirection());
+    FailureOr<dpi::ABIAttr> input =
         makeABI(*semanticType, direction, getSemanticLocation(formal));
     if (failed(input)) {
       invalid = true;
       continue;
     }
     Attribute aggregateLayout = builder.getUnitAttr();
-    if (input->getKind() == sim::DPIABIKind::UnpackedAggregate) {
+    if (input->getKind() == dpi::ABIKind::UnpackedAggregate) {
       FailureOr<Type> normalized = getNormalizedSemanticType(formal);
       if (failed(normalized)) {
         invalid = true;
         continue;
       }
-      FailureOr<sim::DPIAggregateABIAttr> layout = makeDPIAggregateABI(
+      FailureOr<dpi::AggregateABIAttr> layout = makeDPIAggregateABI(
           *semanticType, *normalized, getSemanticLocation(formal), builder);
       if (failed(layout)) {
         invalid = true;
@@ -135,18 +136,18 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
         invalid = true;
         continue;
       }
-      input = sim::DPIABIAttr::get(context, input->getKind(), direction,
-                                   static_cast<uint32_t>(*span),
-                                   input->getFourState(), input->getIsSigned());
+      input = dpi::ABIAttr::get(context, input->getKind(), direction,
+                                static_cast<uint32_t>(*span),
+                                input->getFourState(), input->getIsSigned());
       aggregateLayout = *layout;
     }
     inputs.push_back(*input);
     aggregateInputs.push_back(aggregateLayout);
-    if (direction != sim::DPIArgumentDirection::Input)
-      copyOuts.push_back(sim::DPIABIAttr::get(
-          context, input->getKind(), sim::DPIArgumentDirection::Output,
+    if (direction != dpi::ArgumentDirection::Input)
+      copyOuts.push_back(dpi::ABIAttr::get(
+          context, input->getKind(), dpi::ArgumentDirection::Output,
           input->getWidth(), input->getFourState(), input->getIsSigned()));
-    if (direction != sim::DPIArgumentDirection::Input)
+    if (direction != dpi::ArgumentDirection::Input)
       aggregateCopyOuts.push_back(aggregateLayout);
   }
   SmallVector<Attribute> signature(inputs);
@@ -165,9 +166,9 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
           << "DPI function has no resolved result signature";
       invalid = true;
     } else if (!isa<semantic::VoidType>(sourceSignature.getResult(0))) {
-      FailureOr<sim::DPIABIAttr> result = makeABI(
-          sourceSignature.getResult(0), sim::DPIArgumentDirection::Result,
-          getSemanticLocation(subroutine));
+      FailureOr<dpi::ABIAttr> result =
+          makeABI(sourceSignature.getResult(0), dpi::ArgumentDirection::Result,
+                  getSemanticLocation(subroutine));
       if (failed(result))
         invalid = true;
       else
@@ -9421,21 +9422,17 @@ void ObeliskSimPreparePass::runOnOperation() {
         subroutine && subroutine.getIsDpiImport().value_or(false)) {
       dpiTarget = true;
       StringAttr cIdentifier = subroutine.getDpiCIdentifierAttr();
-      call->setAttr(
-          "dpi.import_id",
-          builder.getI32IntegerAttr(getStableDPIID(cIdentifier.getValue())));
-      call->setAttr("dpi.c_identifier", cIdentifier);
-      call->setAttr("dpi.scope_id",
-                    builder.getI64IntegerAttr(getScopeId(targetSource)));
-      call->setAttr(
-          "dpi.is_pure",
-          builder.getBoolAttr(subroutine.getIsPure().value_or(false)));
-      call->setAttr(
-          "dpi.is_context",
-          builder.getBoolAttr(subroutine.getIsDpiContext().value_or(false)));
-      call->setAttr("dpi.is_task",
-                    builder.getBoolAttr(subroutine.getSubroutineKind() ==
-                                        semantic::SVSubroutineKind::Task));
+      dpi::set<dpi::ImportId>(call, builder.getI32IntegerAttr(getStableDPIID(
+                                        cIdentifier.getValue())));
+      dpi::set<dpi::CIdentifier>(call, cIdentifier);
+      dpi::set<dpi::ScopeId>(
+          call, builder.getI64IntegerAttr(getScopeId(targetSource)));
+      if (subroutine.getIsPure().value_or(false))
+        dpi::mark<dpi::Pure>(call);
+      if (subroutine.getIsDpiContext().value_or(false))
+        dpi::mark<dpi::Context>(call);
+      if (subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task)
+        dpi::mark<dpi::Task>(call);
     }
     if (auto subroutine =
             dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
@@ -10509,71 +10506,59 @@ void ObeliskSimPreparePass::runOnOperation() {
       bool dpiImport = subroutine.getIsDpiImport().value_or(false);
       StringAttr dpiExport = subroutine.getDpiExportCIdentifierAttr();
       if (dpiImport || dpiExport) {
-        FailureOr<PreparedDPISignature> dpi =
+        FailureOr<PreparedDPISignature> signature =
             prepareDPISignature(subroutine, builder);
-        if (failed(dpi)) {
+        if (failed(signature)) {
           invalid = true;
           continue;
         }
         StringAttr cIdentifier =
             dpiImport ? subroutine.getDpiCIdentifierAttr() : dpiExport;
-        StringRef role =
-            dpiImport ? "simulation.dpi_import" : "simulation.dpi_export";
+        UnitAttr marker = builder.getUnitAttr();
+        NamedAttribute role = dpiImport ? dpi::named<dpi::Import>(marker)
+                                        : dpi::named<dpi::Export>(marker);
+        IntegerAttr scopeID =
+            builder.getI64IntegerAttr(getScopeId(unit.source));
+        IntegerAttr logicalInputs =
+            builder.getI32IntegerAttr(signature->logicalInputs);
+        functionAttrs.push_back(role);
+        functionAttrs.push_back(dpi::named<dpi::CIdentifier>(cIdentifier));
+        functionAttrs.push_back(dpi::named<dpi::ScopeId>(scopeID));
         functionAttrs.push_back(
-            builder.getNamedAttr(role, builder.getUnitAttr()));
+            dpi::named<dpi::ABISignature>(signature->entries));
         functionAttrs.push_back(
-            builder.getNamedAttr("simulation.dpi_c_identifier", cIdentifier));
-        functionAttrs.push_back(builder.getNamedAttr(
-            "simulation.dpi_scope_id",
-            builder.getI64IntegerAttr(getScopeId(unit.source))));
-        functionAttrs.push_back(builder.getNamedAttr(
-            "simulation.dpi_abi_signature", dpi->entries));
-        functionAttrs.push_back(builder.getNamedAttr(
-            "simulation.dpi_aggregate_layouts", dpi->aggregateLayouts));
-        functionAttrs.push_back(builder.getNamedAttr(
-            "simulation.dpi_logical_inputs",
-            builder.getI32IntegerAttr(dpi->logicalInputs)));
+            dpi::named<dpi::AggregateLayouts>(signature->aggregateLayouts));
+        functionAttrs.push_back(dpi::named<dpi::LogicalInputs>(logicalInputs));
         sim::SimCodeUnitDeclOp declaration =
             codeUnitDeclarations.lookup(unit.source);
-        declaration->setAttr(role, builder.getUnitAttr());
-        declaration->setAttr("simulation.dpi_c_identifier", cIdentifier);
-        declaration->setAttr("simulation.dpi_abi_signature", dpi->entries);
-        declaration->setAttr("simulation.dpi_aggregate_layouts",
-                             dpi->aggregateLayouts);
-        declaration->setAttr("simulation.dpi_logical_inputs",
-                             builder.getI32IntegerAttr(dpi->logicalInputs));
+        declaration->setAttr(role.getName(), marker);
+        dpi::set<dpi::CIdentifier>(declaration, cIdentifier);
+        dpi::set<dpi::ABISignature>(declaration, signature->entries);
+        dpi::set<dpi::AggregateLayouts>(declaration,
+                                        signature->aggregateLayouts);
+        dpi::set<dpi::LogicalInputs>(declaration, logicalInputs);
         if (!dpiImport)
-          declaration->setAttr(
-              "simulation.dpi_scope_id",
-              builder.getI64IntegerAttr(getScopeId(unit.source)));
+          dpi::set<dpi::ScopeId>(declaration, scopeID);
         if (dpiImport) {
-          functionAttrs.push_back(builder.getNamedAttr(
-              "simulation.dpi_import_id",
-              builder.getI32IntegerAttr(getStableDPIID(
-                  subroutine.getDpiCIdentifierAttr().getValue()))));
-          declaration->setAttr(
-              "simulation.dpi_import_id",
-              builder.getI32IntegerAttr(getStableDPIID(
-                  subroutine.getDpiCIdentifierAttr().getValue())));
+          IntegerAttr importID = builder.getI32IntegerAttr(
+              getStableDPIID(subroutine.getDpiCIdentifierAttr().getValue()));
+          functionAttrs.push_back(dpi::named<dpi::ImportId>(importID));
+          dpi::set<dpi::ImportId>(declaration, importID);
           if (subroutine.getSubroutineKind() ==
               semantic::SVSubroutineKind::Task) {
-            declaration->setAttr("simulation.dpi_task", builder.getUnitAttr());
-            functionAttrs.push_back(builder.getNamedAttr(
-                "simulation.dpi_task", builder.getUnitAttr()));
+            dpi::mark<dpi::Task>(declaration);
+            functionAttrs.push_back(dpi::named<dpi::Task>(marker));
           }
           if (subroutine.getIsPure().value_or(false))
-            functionAttrs.push_back(builder.getNamedAttr(
-                "simulation.dpi_pure", builder.getUnitAttr()));
+            functionAttrs.push_back(dpi::named<dpi::Pure>(marker));
           if (subroutine.getIsDpiContext().value_or(false))
-            functionAttrs.push_back(builder.getNamedAttr(
-                "simulation.dpi_context", builder.getUnitAttr()));
+            functionAttrs.push_back(dpi::named<dpi::Context>(marker));
         } else {
-          module->setAttr("simulation.has_dpi_exports", builder.getUnitAttr());
+          dpi::mark<dpi::HasExports>(module);
           IntegerAttr exportID =
               builder.getI32IntegerAttr(getStableDPIID(dpiExport.getValue()));
-          functionAttrs.push_back(
-              builder.getNamedAttr("simulation.dpi_export_id", exportID));
-          declaration->setAttr("simulation.dpi_export_id", exportID);
+          functionAttrs.push_back(dpi::named<dpi::ExportId>(exportID));
+          dpi::set<dpi::ExportId>(declaration, exportID);
         }
       }
     }

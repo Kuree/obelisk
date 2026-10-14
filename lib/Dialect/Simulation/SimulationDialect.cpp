@@ -149,7 +149,7 @@ bool containsLateInlineMetadata(SimDesignOp design) {
 bool hasUnknownInlineMetadata(Operation *operation) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if (!name.starts_with("simulation.") && !name.starts_with("schedule."))
+    if (!metadata::isCompilerMetadata(name))
       continue;
     if (metadata::isKnownOperation(name))
       continue;
@@ -167,7 +167,7 @@ bool hasUnknownInlineBoundaryMetadata(ArrayAttr dictionaries) {
       return true;
     for (NamedAttribute named : dictionary) {
       StringRef name = named.getName().strref();
-      if ((name.starts_with("simulation.") || name.starts_with("schedule.")) &&
+      if (metadata::isCompilerMetadata(name) &&
           !metadata::isKnownBoundary(name))
         return true;
     }

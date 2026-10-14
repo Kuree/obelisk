@@ -56,20 +56,20 @@ static void addStatistic(Pass::Statistic *statistic, uint64_t amount = 1) {
 }
 
 static bool isDPIExportMetadata(StringRef name) {
-  return name == "simulation.dpi_export" ||
-         name == "simulation.dpi_c_identifier" ||
-         name == "simulation.dpi_scope_id" ||
-         name == "simulation.dpi_export_id" ||
-         name == "simulation.dpi_abi_signature" ||
-         name == "simulation.dpi_aggregate_layouts" ||
-         name == "simulation.dpi_logical_inputs";
+  return name == dpi::Export::getNameStr() ||
+         name == dpi::CIdentifier::getNameStr() ||
+         name == dpi::ScopeId::getNameStr() ||
+         name == dpi::ExportId::getNameStr() ||
+         name == dpi::ABISignature::getNameStr() ||
+         name == dpi::AggregateLayouts::getNameStr() ||
+         name == dpi::LogicalInputs::getNameStr();
 }
 
 static bool hasUnknownOperationMetadata(Operation *operation,
                                         bool allowDPIExport = false) {
   for (NamedAttribute named : operation->getAttrs()) {
     StringRef name = named.getName().strref();
-    if ((name.starts_with("simulation.") || name.starts_with("schedule.")) &&
+    if (sim::metadata::isCompilerMetadata(name) &&
         !sim::metadata::isKnownOperation(name) &&
         !(allowDPIExport && isDPIExportMetadata(name)))
       return true;
@@ -82,21 +82,17 @@ static bool hasUnknownOperationMetadata(Operation *operation,
 /// destination references and every input/inout value remain ABI-pinned.
 static std::optional<llvm::BitVector>
 getDPIOutputArguments(sim::SimFuncOp function) {
-  if (!function->hasAttr("simulation.dpi_export") ||
-      function->hasAttr(sim::metadata::dpiElidedInputs) ||
+  if (!dpi::has<dpi::Export>(function) ||
+      dpi::has<dpi::ElidedInputs>(function) ||
       function.getEntryKind() != sim::EntryKind::Task ||
       !function.getFunctionType().getResults().empty())
     return std::nullopt;
 
-  auto identifier =
-      function->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
-  auto scope = function->getAttrOfType<IntegerAttr>("simulation.dpi_scope_id");
-  auto exportID =
-      function->getAttrOfType<IntegerAttr>("simulation.dpi_export_id");
-  auto logicalInputs =
-      function->getAttrOfType<IntegerAttr>("simulation.dpi_logical_inputs");
-  auto signature =
-      function->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
+  auto identifier = dpi::get<dpi::CIdentifier>(function);
+  auto scope = dpi::get<dpi::ScopeId>(function);
+  auto exportID = dpi::get<dpi::ExportId>(function);
+  auto logicalInputs = dpi::get<dpi::LogicalInputs>(function);
+  auto signature = dpi::get<dpi::ABISignature>(function);
   if (!identifier || identifier.empty() || !scope || !exportID ||
       !logicalInputs || logicalInputs.getValue().isNegative() || !signature)
     return std::nullopt;
@@ -105,15 +101,14 @@ getDPIOutputArguments(sim::SimFuncOp function) {
   if (inputCount > signature.size() || type.getNumInputs() <= inputCount ||
       !isa<sim::ContextType>(type.getInput(0)))
     return std::nullopt;
-  if (auto layouts = function->getAttrOfType<ArrayAttr>(
-          "simulation.dpi_aggregate_layouts");
+  if (auto layouts = dpi::get<dpi::AggregateLayouts>(function);
       layouts && layouts.size() != signature.size())
     return std::nullopt;
 
-  SmallVector<sim::DPIABIAttr> entries;
+  SmallVector<dpi::ABIAttr> entries;
   entries.reserve(signature.size());
   for (Attribute attribute : signature) {
-    auto entry = dyn_cast<sim::DPIABIAttr>(attribute);
+    auto entry = dyn_cast<dpi::ABIAttr>(attribute);
     if (!entry)
       return std::nullopt;
     entries.push_back(entry);
@@ -123,30 +118,30 @@ getDPIOutputArguments(sim::SimFuncOp function) {
   uint64_t copyOut = inputCount;
   uint64_t destination = inputCount + 1;
   for (uint64_t index = 0; index != inputCount; ++index) {
-    sim::DPIABIAttr input = entries[index];
-    if (input.getDirection() == sim::DPIArgumentDirection::Result)
+    dpi::ABIAttr input = entries[index];
+    if (input.getDirection() == dpi::ArgumentDirection::Result)
       return std::nullopt;
     auto capture = dyn_cast_or_null<sim::CaptureKindAttr>(
         function.getArgAttr(index + 1, sim::metadata::captureKind));
     if (!capture || capture.getValue() != sim::CaptureKind::Formal)
       return std::nullopt;
-    if (input.getDirection() == sim::DPIArgumentDirection::Input)
+    if (input.getDirection() == dpi::ArgumentDirection::Input)
       continue;
     if (copyOut >= entries.size() || destination >= type.getNumInputs() ||
         !isa<sim::RefType>(type.getInput(destination)))
       return std::nullopt;
-    sim::DPIABIAttr output = entries[copyOut++];
+    dpi::ABIAttr output = entries[copyOut++];
     auto destinationCapture = dyn_cast_or_null<sim::CaptureKindAttr>(
         function.getArgAttr(destination, sim::metadata::captureKind));
     if (!destinationCapture ||
         destinationCapture.getValue() != sim::CaptureKind::Formal ||
-        output.getDirection() != sim::DPIArgumentDirection::Output ||
+        output.getDirection() != dpi::ArgumentDirection::Output ||
         output.getKind() != input.getKind() ||
         output.getWidth() != input.getWidth() ||
         output.getFourState() != input.getFourState() ||
         output.getIsSigned() != input.getIsSigned())
       return std::nullopt;
-    if (input.getDirection() == sim::DPIArgumentDirection::Output)
+    if (input.getDirection() == dpi::ArgumentDirection::Output)
       candidates.set(index + 1);
     ++destination;
   }
@@ -1043,8 +1038,8 @@ void BoundaryEliminator::mutate() {
       if (info.dpiOutputArguments.test(argument))
         elidedDPIInputs.push_back(argument - 1);
     if (!elidedDPIInputs.empty())
-      info.function->setAttr(
-          sim::metadata::dpiElidedInputs,
+      dpi::set<dpi::ElidedInputs>(
+          info.function,
           DenseI64ArrayAttr::get(design.getContext(), elidedDPIInputs));
     updateBindings(info.function, info.eraseArguments);
     if (failed(info.function.eraseArguments(info.eraseArguments)) ||

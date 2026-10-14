@@ -10,7 +10,8 @@ def ObeliskSimulationDialect : Dialect {
   let cppNamespace = "::obelisk::sim";
   let dependentDialects = ["::obelisk::schedule::ScheduleDialect", "::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",
-                           "::obelisk::runtime::ObeliskRuntimeDialect"];
+                           "::obelisk::runtime::ObeliskRuntimeDialect",
+                           "::obelisk::dpi::DPIDialect"];
   let summary = "Target-independent executable SystemVerilog simulation IR";
   let description = [{
     `simulation` is the SSA and explicit-effect boundary after elaborated

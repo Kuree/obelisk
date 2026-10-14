@@ -48,24 +48,24 @@ Type dpiScalarType(MLIRContext *context, uint32_t category) {
 bool isDPIVector(uint32_t category) { return category == 6 || category == 7; }
 
 bool isDPIString(uint32_t category) {
-  return category == static_cast<uint32_t>(sim::DPIABIKind::String);
+  return category == static_cast<uint32_t>(dpi::ABIKind::String);
 }
 
 bool isDPIChandle(uint32_t category) {
-  return category == static_cast<uint32_t>(sim::DPIABIKind::Chandle);
+  return category == static_cast<uint32_t>(dpi::ABIKind::Chandle);
 }
 
 bool isDPIReal(uint32_t category) {
-  return category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal) ||
-         category == static_cast<uint32_t>(sim::DPIABIKind::Real);
+  return category == static_cast<uint32_t>(dpi::ABIKind::ShortReal) ||
+         category == static_cast<uint32_t>(dpi::ABIKind::Real);
 }
 
 bool isDPIOpenArray(uint32_t category) {
-  return category == static_cast<uint32_t>(sim::DPIABIKind::OpenArray);
+  return category == static_cast<uint32_t>(dpi::ABIKind::OpenArray);
 }
 
 bool isDPIAggregate(uint32_t category) {
-  return category == static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+  return category == static_cast<uint32_t>(dpi::ABIKind::UnpackedAggregate);
 }
 
 uint8_t dpiDescriptorKind(const DPIOperandABI &abi) {
@@ -75,9 +75,9 @@ uint8_t dpiDescriptorKind(const DPIOperandABI &abi) {
     return OBELISK_RT_DBREG_OPEN_ARRAY;
   if (isDPIAggregate(abi.category))
     return OBELISK_RT_DBREG_AGGREGATE;
-  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
+  if (abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal))
     return OBELISK_RT_DBREG_REAL32;
-  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
+  if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Real))
     return OBELISK_RT_DBREG_REAL64;
   return abi.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
 }
@@ -128,21 +128,18 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
 
   std::string thunkName = ("__obelisk_dpi_thunk_" + Twine(spec.importID)).str();
   if (auto existing = module.lookupSymbol<LLVM::LLVMFuncOp>(thunkName)) {
-    auto cIdentifier =
-        existing->getAttrOfType<StringAttr>("dpi.c_identifier");
-    auto signature =
-        existing->getAttrOfType<ArrayAttr>("dpi.abi_signature");
+    auto cIdentifier = dpi::get<dpi::CIdentifier>(existing);
+    auto signature = dpi::get<dpi::ABISignature>(existing);
     auto compatible = [](ArrayAttr lhs, ArrayAttr rhs) {
       if (!lhs || !rhs || lhs.size() != rhs.size())
         return false;
       for (auto [left, right] : llvm::zip_equal(lhs, rhs)) {
-        auto leftABI = dyn_cast<sim::DPIABIAttr>(left);
-        auto rightABI = dyn_cast<sim::DPIABIAttr>(right);
+        auto leftABI = dyn_cast<dpi::ABIAttr>(left);
+        auto rightABI = dyn_cast<dpi::ABIAttr>(right);
         if (!leftABI || !rightABI || leftABI.getKind() != rightABI.getKind() ||
             leftABI.getDirection() != rightABI.getDirection())
           return false;
-        if (leftABI.getKind() != sim::DPIABIKind::OpenArray &&
-            leftABI != rightABI)
+        if (leftABI.getKind() != dpi::ABIKind::OpenArray && leftABI != rightABI)
           return false;
       }
       return true;
@@ -160,19 +157,18 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   auto thunk =
       LLVM::LLVMFuncOp::create(builder, location, thunkName, callbackType);
   thunk.setLinkage(LLVM::Linkage::Internal);
-  thunk->setAttr("dpi.import_id",
-                 builder.getI32IntegerAttr(spec.importID));
-  thunk->setAttr("dpi.c_identifier", spec.cIdentifier);
-  thunk->setAttr("dpi.abi_signature", spec.abiSignature);
+  dpi::set<dpi::ImportId>(thunk, builder.getI32IntegerAttr(spec.importID));
+  dpi::set<dpi::CIdentifier>(thunk, spec.cIdentifier);
+  dpi::set<dpi::ABISignature>(thunk, spec.abiSignature);
   bool openSignature = llvm::any_of(spec.abiSignature, [](Attribute attribute) {
-    auto abi = dyn_cast<sim::DPIABIAttr>(attribute);
-    return abi && abi.getKind() == sim::DPIABIKind::OpenArray;
+    auto abi = dyn_cast<dpi::ABIAttr>(attribute);
+    return abi && abi.getKind() == dpi::ABIKind::OpenArray;
   });
-  thunk->setAttr("dpi.abi_hash",
-                 builder.getI64IntegerAttr(
-                     openSignature ? 0
-                                   : sim::getDPISignatureHash(spec.abiSignature,
-                                                              logicalInputs)));
+  dpi::set<dpi::ABIHash>(
+      thunk, builder.getI64IntegerAttr(
+                 openSignature ? 0
+                               : dpi::getSignatureHash(spec.abiSignature,
+                                                       logicalInputs)));
   Block *entry = thunk.addEntryBlock(builder);
   Block *validate = new Block;
   Block *invoke = new Block;
@@ -358,7 +354,7 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
   bool hasFunctionResult =
       !spec.isTask && logicalOutputs != 0 &&
       abi[logicalInputs].direction ==
-          static_cast<uint32_t>(sim::DPIArgumentDirection::Result);
+          static_cast<uint32_t>(dpi::ArgumentDirection::Result);
   uint64_t outputCursor = hasFunctionResult ? 1 : 0;
   Value packedFunctionResult;
   if (hasFunctionResult) {
@@ -678,18 +674,14 @@ LogicalResult materializeDPIThunk(ModuleOp module, const DPIThunkSpec &spec) {
 LogicalResult materializeDPIThunks(ModuleOp module) {
   SmallVector<sim::SimCodeUnitDeclOp> declarations;
   module.walk([&](sim::SimCodeUnitDeclOp declaration) {
-    if (declaration->hasAttr("simulation.dpi_import"))
+    if (dpi::has<dpi::Import>(declaration))
       declarations.push_back(declaration);
   });
   for (sim::SimCodeUnitDeclOp declaration : declarations) {
-    auto importID =
-        declaration->getAttrOfType<IntegerAttr>("simulation.dpi_import_id");
-    auto cIdentifier =
-        declaration->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
-    auto signature =
-        declaration->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
-    auto logicalInputs = declaration->getAttrOfType<IntegerAttr>(
-        "simulation.dpi_logical_inputs");
+    auto importID = dpi::get<dpi::ImportId>(declaration);
+    auto cIdentifier = dpi::get<dpi::CIdentifier>(declaration);
+    auto signature = dpi::get<dpi::ABISignature>(declaration);
+    auto logicalInputs = dpi::get<dpi::LogicalInputs>(declaration);
     if (!importID || !cIdentifier || !signature || !logicalInputs)
       return declaration.emitOpError(
           "has incomplete DPI import declaration metadata");
@@ -700,7 +692,7 @@ LogicalResult materializeDPIThunks(ModuleOp module) {
         cIdentifier,
         signature,
         logicalInputs.getValue().getZExtValue(),
-        declaration->hasAttr("simulation.dpi_task"),
+        dpi::has<dpi::Task>(declaration),
     };
     if (failed(materializeDPIThunk(module, spec)))
       return failure();
@@ -709,16 +701,13 @@ LogicalResult materializeDPIThunks(ModuleOp module) {
   SmallVector<sim::SimDPICallOp> sites;
   module.walk([&](sim::SimDPICallOp site) { sites.push_back(site); });
   for (sim::SimDPICallOp site : sites) {
-    auto logicalCountAttr =
-        site->getAttrOfType<IntegerAttr>("dpi.logical_operand_count");
     DPIThunkSpec spec{
         site.getOperation(),
         site.getLoc(),
         site.getImportId(),
         site.getCIdentifierAttr(),
         site.getAbiSignature(),
-        logicalCountAttr ? logicalCountAttr.getValue().getZExtValue()
-                         : site.getArguments().size(),
+        site.getLogicalInputs().value_or(site.getArguments().size()),
         site.getIsTask(),
     };
     if (failed(materializeDPIThunk(module, spec)))

@@ -2082,7 +2082,7 @@ FailureOr<DPIABIType> classifyDPIABIType(Type type, Location location) {
                     simlowering::isSignedSemanticType(type)};
 }
 
-FailureOr<sim::DPIAggregateABIAttr>
+FailureOr<dpi::AggregateABIAttr>
 simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
                                  Location location, Builder &builder,
                                  bool compactTransport) {
@@ -2367,10 +2367,10 @@ simlowering::makeDPIAggregateABI(Type semanticType, Type normalizedType,
   if (failed(emit(semanticType, normalizedType, 0, 0)))
     return emitError(location) << "cannot construct DPI aggregate leaf layout",
            failure();
-  return sim::DPIAggregateABIAttr::get(builder.getContext(), cShape->size,
-                                       static_cast<uint32_t>(cShape->alignment),
-                                       stringCount,
-                                       builder.getDenseI64ArrayAttr(records));
+  return dpi::AggregateABIAttr::get(builder.getContext(), cShape->size,
+                                    static_cast<uint32_t>(cShape->alignment),
+                                    stringCount,
+                                    builder.getDenseI64ArrayAttr(records));
 }
 
 StringRef getDPICTypeSpelling(const DPIABIType &type) {

@@ -31,6 +31,7 @@ module {
     simulation.code_unit.decl 29 in 1 function hierarchy "top.child.unknown_body"
     simulation.code_unit.decl 30 in 1 function hierarchy "top.child.descriptor_target"
     simulation.code_unit.decl 31 in 1 function hierarchy "top.child.descriptor_caller"
+    simulation.code_unit.decl 32 in 1 function hierarchy "top.child.dpi_export"
     simulation.storage.decl 0 in 1 : !simulation.unpacked_array<0 : 3 x !simulation.logic<8>> design
 
     simulation.func private @single(
@@ -104,6 +105,15 @@ module {
       %one = arith.constant 1 : i32
       %result = arith.addi %value, %one {simulation.future_body = true} : i32
       simulation.return %result : i32
+    }
+
+    // DPI boundary metadata pins the callee like simulation metadata does.
+    simulation.func private @dpi_export(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %value: i32 {simulation.capture_kind = 1 : i32}) -> i32
+        attributes {code_unit_id = 32 : i64, entry_kind = 8 : i32,
+                    dpi.export} {
+      simulation.return %value : i32
     }
 
     simulation.func private @nested_leaf(
@@ -207,6 +217,8 @@ module {
           : (!simulation.context, i32) -> i32
       %body = simulation.call @unknown_body(%ctx, %boundary)
           : (!simulation.context, i32) -> i32
+      %dpi = simulation.call @dpi_export(%ctx, %body)
+          : (!simulation.context, i32) -> i32
       simulation.return %recursive : i32
     }
 
@@ -290,6 +302,7 @@ module {
 // O3: simulation.call @recursive
 // O3: simulation.call @boundary_target
 // O3: simulation.call @unknown_body
+// O3: simulation.call @dpi_export
 // O3-LABEL: simulation.func @nested_caller
 // O3-NOT: simulation.call
 // O3-LABEL: simulation.func @descriptor_caller

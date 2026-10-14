@@ -21,6 +21,7 @@
 #include "obelisk/Analysis/SimulationScheduleAnalysis.h"
 #include "obelisk/Conversion/ObeliskToSimulation.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
@@ -1314,10 +1315,10 @@ static int executeCompilation(
   }
 
   DialectRegistry registry;
-  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-                  obelisk::runtime::ObeliskRuntimeDialect,
-                  obelisk::sim::ObeliskSimulationDialect,
-                  mlir::LLVM::LLVMDialect>();
+  registry.insert<
+      obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+      obelisk::dpi::DPIDialect, obelisk::runtime::ObeliskRuntimeDialect,
+      obelisk::sim::ObeliskSimulationDialect, mlir::LLVM::LLVMDialect>();
   // One explicitly sized pool is shared by all MLIR parallel pass adaptors.
   // Its lifetime encloses the context as required by MLIRContext.
   std::unique_ptr<llvm::DefaultThreadPool> compilerPool;
@@ -1466,8 +1467,8 @@ static int executeCompilation(
 
   bool hasDPI = false;
   (*module)->walk([&](obelisk::sim::SimCodeUnitDeclOp declaration) {
-    hasDPI |= declaration->hasAttr("simulation.dpi_import") ||
-              declaration->hasAttr("simulation.dpi_export");
+    hasDPI |= obelisk::dpi::has<obelisk::dpi::Import>(declaration) ||
+              obelisk::dpi::has<obelisk::dpi::Export>(declaration);
   });
   if (native && targetName == "wasm32") {
     if (hasDPI) {

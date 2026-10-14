@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_H
 
+#include "obelisk/Dialect/DPI/DPIAttrs.h"
 #include "obelisk/Dialect/Runtime/RuntimeTypes.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 #include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
@@ -68,11 +69,6 @@ InlineLegality getInlineLegality(SimCallOp call, SimFuncOp callee,
 ::mlir::LogicalResult normalizeClassDirectCall(SimClassDirectCallOp call);
 ::mlir::LogicalResult normalizeClassDirectCalls(::mlir::Operation *root,
                                                 uint64_t *count = nullptr);
-
-/// Stable hash of a validated logical DPI ABI signature. This is shared by
-/// native thunk registration and pointer-free bytecode call-site metadata.
-uint64_t getDPISignatureHash(::mlir::ArrayAttr signature,
-                             uint64_t logicalInputs);
 
 /// Validate the transient source-name bindings frozen onto a prepared
 /// simulation function. This is shared by the operation verifier and passes

@@ -84,13 +84,13 @@ module attributes {schedule.native_scheduler = 3 : i32} {
     }
     simulation.func @disable_latch(%ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 8 : i32, code_unit_id = 3 : i64,
-                    simulation.dpi_export,
-                    simulation.dpi_c_identifier = "disable_latch",
-                    simulation.dpi_scope_id = 0 : i64,
-                    simulation.dpi_export_id = 1 : i32,
-                    simulation.dpi_logical_inputs = 0 : i32,
-                    simulation.dpi_abi_signature = [],
-                    simulation.dpi_aggregate_layouts = []} {
+                    dpi.export,
+                    dpi.c_identifier = "disable_latch",
+                    dpi.scope_id = 0 : i64,
+                    dpi.export_id = 1 : i32,
+                    dpi.logical_inputs = 0 : i32,
+                    dpi.abi_signature = [],
+                    dpi.aggregate_layouts = []} {
       simulation.control.disable 11 {hierarchical = true}
       simulation.return
     }

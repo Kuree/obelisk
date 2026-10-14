@@ -207,7 +207,7 @@ module {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           code_unit_id = 8 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export
+          dpi.export
         } {
       %node = simulation.class.alloc %ctx :
         !simulation.context -> !simulation.class_handle<@Node>

@@ -73,7 +73,7 @@ module {
   }
 }
 
-// CHECK-NOT: simulation.has_dpi_exports
+// CHECK-NOT: dpi.has_exports
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.sv_add" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 59 {{.*}} hierarchy "dpi_imports.update" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
 // CHECK-DAG: simulation.vpi_object.anchor {{.*}} type 20 {{.*}} hierarchy "dpi_imports.notify" {{.*}}vpi_properties = #simulation.vpi_properties<[#simulation.vpi_property<selector = 50 : i32, value = true>]>
@@ -98,4 +98,4 @@ module {
 // CHECK-NOT: direction = result
 // CHECK-NEXT: simulation.status.check
 // CHECK-NOT: obelisk.sv.
-// CHECK-NOT: simulation.has_dpi_exports
+// CHECK-NOT: dpi.has_exports

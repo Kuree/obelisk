@@ -3,6 +3,7 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_TD
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONOPS_TD
 
+include "obelisk/Dialect/DPI/DPIAttrs.td"
 include "obelisk/Dialect/Schedule/ScheduleAttrs.td"
 include "obelisk/Dialect/Simulation/SimulationDialect.td"
 include "obelisk/Dialect/Simulation/SimulationEnums.td"
@@ -3160,7 +3161,7 @@ def SimDPICallOp : SimOp<"dpi.call", [
     I32Attr:$import_id,
     StrAttr:$c_identifier,
     I64Attr:$scope_id,
-    SimDPIABIArrayAttr:$abi_signature,
+    DPIABIArrayAttr:$abi_signature,
     BoolAttr:$is_pure,
     BoolAttr:$is_context,
     BoolAttr:$is_task,
@@ -3168,7 +3169,15 @@ def SimDPICallOp : SimOp<"dpi.call", [
     I32Attr:$source_line,
     I32Attr:$source_column,
     AnyType:$runtime_context,
-    Variadic<AnyType>:$arguments
+    Variadic<AnyType>:$arguments,
+    // Per ABI signature entry: a #dpi.open_array_abi bound to an open-array
+    // formal, or unit.
+    OptionalAttr<ArrayAttr>:$open_array_layouts,
+    // Per ABI signature entry: a #dpi.aggregate_abi, or unit.
+    OptionalAttr<ArrayAttr>:$aggregate_layouts,
+    // Logical operands before type conversion flattened them; absent while
+    // every operand is still one logical value.
+    OptionalAttr<I32Attr>:$logical_inputs
   );
   // Data results are followed by one internal runtime status. Keeping the
   // status in this operation makes failure propagation explicit without

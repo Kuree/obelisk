@@ -26,26 +26,25 @@ namespace obelisk::detail {
 namespace {
 
 bool isVector(const DPIOperandABI &abi) {
-  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::BitVector) ||
-         abi.category == static_cast<uint32_t>(sim::DPIABIKind::LogicVector);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::BitVector) ||
+         abi.category == static_cast<uint32_t>(dpi::ABIKind::LogicVector);
 }
 
 bool isString(const DPIOperandABI &abi) {
-  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::String);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::String);
 }
 
 bool isChandle(const DPIOperandABI &abi) {
-  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::Chandle);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::Chandle);
 }
 
 bool isReal(const DPIOperandABI &abi) {
-  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal) ||
-         abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal) ||
+         abi.category == static_cast<uint32_t>(dpi::ABIKind::Real);
 }
 
 bool isAggregate(const DPIOperandABI &abi) {
-  return abi.category ==
-         static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::UnpackedAggregate);
 }
 
 Type cScalarType(MLIRContext *context, const DPIOperandABI &abi) {
@@ -74,9 +73,9 @@ uint8_t descriptorKind(const DPIOperandABI &abi) {
     return OBELISK_RT_DBREG_STRING;
   if (isAggregate(abi))
     return OBELISK_RT_DBREG_AGGREGATE;
-  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
+  if (abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal))
     return OBELISK_RT_DBREG_REAL32;
-  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
+  if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Real))
     return OBELISK_RT_DBREG_REAL64;
   return abi.fourState ? OBELISK_RT_DBREG_LOGIC : OBELISK_RT_DBREG_BITS;
 }
@@ -112,16 +111,11 @@ struct ExportSpec {
 };
 
 FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
-  auto identifier =
-      operation->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
-  auto exportID =
-      operation->getAttrOfType<IntegerAttr>("simulation.dpi_export_id");
-  auto signature =
-      operation->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
-  auto inputs =
-      operation->getAttrOfType<IntegerAttr>("simulation.dpi_logical_inputs");
-  auto aggregateLayouts =
-      operation->getAttrOfType<ArrayAttr>("simulation.dpi_aggregate_layouts");
+  auto identifier = dpi::get<dpi::CIdentifier>(operation);
+  auto exportID = dpi::get<dpi::ExportId>(operation);
+  auto signature = dpi::get<dpi::ABISignature>(operation);
+  auto inputs = dpi::get<dpi::LogicalInputs>(operation);
+  auto aggregateLayouts = dpi::get<dpi::AggregateLayouts>(operation);
   if (!identifier || !exportID || !signature || !inputs ||
       exportID.getValue().getActiveBits() > 32 ||
       inputs.getValue().getActiveBits() > 32 ||
@@ -145,13 +139,12 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
   }
   uint32_t inputCount = static_cast<uint32_t>(inputs.getValue().getZExtValue());
   llvm::BitVector elidedInputs(inputCount);
-  if (auto elided = operation->getAttrOfType<DenseI64ArrayAttr>(
-          sim::metadata::dpiElidedInputs)) {
+  if (DenseI64ArrayAttr elided = dpi::get<dpi::ElidedInputs>(operation)) {
     for (int64_t index : elided.asArrayRef()) {
       if (index < 0 || static_cast<uint64_t>(index) >= inputCount ||
           elidedInputs.test(index) ||
           abi[index].direction !=
-              static_cast<uint32_t>(sim::DPIArgumentDirection::Output))
+              static_cast<uint32_t>(dpi::ArgumentDirection::Output))
         return operation->emitError(
                    "has invalid elided DPI output-input metadata"),
                failure();
@@ -163,13 +156,13 @@ FailureOr<ExportSpec> getExportSpec(Operation *operation, StringRef symbol) {
                     symbol.str(),
                     identifier,
                     static_cast<uint32_t>(exportID.getValue().getZExtValue()),
-                    sim::getDPISignatureHash(signature, inputCount),
+                    dpi::getSignatureHash(signature, inputCount),
                     inputCount,
                     signature,
                     aggregateLayouts,
                     std::move(abi),
                     std::move(elidedInputs),
-                    operation->hasAttr("simulation.dpi_task")};
+                    dpi::has<dpi::Task>(operation)};
 }
 
 Value descriptorField(OpBuilder &builder, Location location, Value base,
@@ -244,7 +237,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
            << "' collides with a reserved generated/runtime symbol";
   bool hasResult = outputCount != 0 &&
                    spec.abi[spec.inputCount].direction ==
-                       static_cast<uint32_t>(sim::DPIArgumentDirection::Result);
+                       static_cast<uint32_t>(dpi::ArgumentDirection::Result);
   const DPIOperandABI *resultABI =
       hasResult ? &spec.abi[spec.inputCount] : nullptr;
 
@@ -260,9 +253,9 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     cArguments.push_back(pointer);
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
-    bool byPointer = abi.direction != static_cast<uint32_t>(
-                                          sim::DPIArgumentDirection::Input) ||
-                     isVector(abi) || isAggregate(abi);
+    bool byPointer =
+        abi.direction != static_cast<uint32_t>(dpi::ArgumentDirection::Input) ||
+        isVector(abi) || isAggregate(abi);
     cArguments.push_back(byPointer || isString(abi) || isChandle(abi)
                              ? pointer
                              : cScalarType(context, abi));
@@ -277,11 +270,10 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   if (auto found = functions.find(spec.cIdentifier.getValue());
       found != functions.end()) {
     LLVM::LLVMFuncOp existing = found->second;
-    auto marker = existing->getAttrOfType<IntegerAttr>("dpi.export_id");
-    auto hash = existing->getAttrOfType<IntegerAttr>("dpi.abi_hash");
-    auto signature =
-        existing->getAttrOfType<ArrayAttr>("dpi.abi_signature");
-    if (!marker || !hash ||
+    auto marker = dpi::get<dpi::ExportId>(existing);
+    auto hash = dpi::get<dpi::ABIHash>(existing);
+    auto signature = dpi::get<dpi::ABISignature>(existing);
+    if (!dpi::has<dpi::Export>(existing) || !marker || !hash ||
         static_cast<uint32_t>(marker.getValue().getZExtValue()) !=
             spec.exportID ||
         hash.getValue().getZExtValue() != spec.abiHash ||
@@ -296,11 +288,12 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   auto wrapper = LLVM::LLVMFuncOp::create(builder, location,
                                           spec.cIdentifier.getValue(), cType);
   functions.try_emplace(spec.cIdentifier.getValue(), wrapper);
-  wrapper->setAttr("dpi.export_id",
-                   builder.getI32IntegerAttr(spec.exportID));
-  wrapper->setAttr("dpi.abi_hash",
-                   builder.getI64IntegerAttr(spec.abiHash));
-  wrapper->setAttr("dpi.abi_signature", spec.signature);
+  // The C-visible entry. Bytecode export thunks carry the same identity but
+  // are reached only through the runtime export table.
+  dpi::mark<dpi::Export>(wrapper);
+  dpi::set<dpi::ExportId>(wrapper, builder.getI32IntegerAttr(spec.exportID));
+  dpi::set<dpi::ABIHash>(wrapper, builder.getI64IntegerAttr(spec.abiHash));
+  dpi::set<dpi::ABISignature>(wrapper, spec.signature);
   auto setNarrowExtension = [&](bool result, uint32_t index,
                                 const DPIOperandABI &abi) {
     Type type = cScalarType(context, abi);
@@ -309,8 +302,8 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     // svBit and svLogic are unsigned C typedefs regardless of the source SV
     // expression's signedness.  Only byte/shortint use signed C spellings.
     bool cSigned =
-        (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Byte) ||
-         abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortInt)) &&
+        (abi.category == static_cast<uint32_t>(dpi::ABIKind::Byte) ||
+         abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortInt)) &&
         abi.isSigned;
     StringRef name = cSigned ? LLVM::LLVMDialect::getSExtAttrName()
                              : LLVM::LLVMDialect::getZExtAttrName();
@@ -325,8 +318,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   uint32_t attributeCursor = resultABI && isVector(*resultABI) ? 1 : 0;
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
-    if (abi.direction ==
-            static_cast<uint32_t>(sim::DPIArgumentDirection::Input) &&
+    if (abi.direction == static_cast<uint32_t>(dpi::ArgumentDirection::Input) &&
         !isVector(abi) && !isAggregate(abi) && !isString(abi) &&
         !isChandle(abi) && !isReal(abi))
       setNarrowExtension(false, attributeCursor, abi);
@@ -370,12 +362,12 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     formalArguments.push_back(entry->getArgument(cCursor++));
 
   auto aggregateLayout = [&](uint32_t index) {
-    return dyn_cast<sim::DPIAggregateABIAttr>(spec.aggregateLayouts[index]);
+    return dyn_cast<dpi::AggregateABIAttr>(spec.aggregateLayouts[index]);
   };
   auto aggregatePlan = [&](uint32_t index) -> Value {
     if (aggregatePlans[index])
       return aggregatePlans[index];
-    sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+    dpi::AggregateABIAttr layout = aggregateLayout(index);
     ArrayRef<int64_t> words = layout.getLeaves().asArrayRef();
     Value plan = entryAlloca(builder, location, i64, words.size(), 8);
     for (auto [word, constant] : llvm::enumerate(words))
@@ -425,7 +417,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   Value activeContext;
   auto rootAggregate = [&](uint32_t signatureIndex,
                            std::pair<Value, Value> planes) {
-    sim::DPIAggregateABIAttr layout = aggregateLayout(signatureIndex);
+    dpi::AggregateABIAttr layout = aggregateLayout(signatureIndex);
     if (!layout || layout.getStringCount() == 0)
       return;
     if (!activeContext)
@@ -461,12 +453,12 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     const DPIOperandABI &abi = spec.abi[index];
     auto planes = makePlanes(abi);
     inputPlanes.push_back(planes);
-    bool initialize = abi.direction !=
-                      static_cast<uint32_t>(sim::DPIArgumentDirection::Output);
+    bool initialize =
+        abi.direction != static_cast<uint32_t>(dpi::ArgumentDirection::Output);
     Value argument = formalArguments[index];
     if (initialize) {
       if (isAggregate(abi)) {
-        sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+        dpi::AggregateABIAttr layout = aggregateLayout(index);
         if (!layout)
           return spec.operation->emitError(
               "has no concrete exported aggregate layout");
@@ -497,7 +489,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
         rootAggregate(index, planes);
       } else if (isReal(abi)) {
         Value value = abi.direction == static_cast<uint32_t>(
-                                           sim::DPIArgumentDirection::Input)
+                                           dpi::ArgumentDirection::Input)
                           ? argument
                           : loadCScalar(builder, location, argument, abi);
         LLVM::StoreOp::create(builder, location, value, planes.first,
@@ -505,7 +497,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
       } else if (isString(abi) || isChandle(abi)) {
         Value value = argument;
         if (abi.direction !=
-            static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+            static_cast<uint32_t>(dpi::ArgumentDirection::Input))
           value = LLVM::LoadOp::create(builder, location, pointer, argument, 1);
         storeInteger(planes.first,
                      LLVM::PtrToIntOp::create(builder, location, i64, value),
@@ -520,15 +512,14 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
                        llvmConstant(builder, location, i32, abi.fourState)});
       } else {
         Value value = abi.direction == static_cast<uint32_t>(
-                                           sim::DPIArgumentDirection::Input)
+                                           dpi::ArgumentDirection::Input)
                           ? argument
                           : loadCScalar(builder, location, argument, abi);
-        if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Bit)) {
+        if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Bit)) {
           value = arith::AndIOp::create(builder, location, value,
                                         llvmConstant(builder, location, i8, 1));
           storeInteger(planes.first, value, abi);
-        } else if (abi.category ==
-                   static_cast<uint32_t>(sim::DPIABIKind::Logic)) {
+        } else if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Logic)) {
           Value one = llvmConstant(builder, location, i8, 1);
           Value aval = arith::AndIOp::create(builder, location, value, one);
           Value bval = arith::AndIOp::create(
@@ -570,14 +561,13 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
     zeroCVector(builder, location, vectorResult, *resultABI);
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
-    if (abi.direction ==
-        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+    if (abi.direction == static_cast<uint32_t>(dpi::ArgumentDirection::Input))
       continue;
     Value target = formalArguments[index];
     if (isVector(abi))
       zeroCVector(builder, location, target, abi);
     else if (isAggregate(abi)) {
-      sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+      dpi::AggregateABIAttr layout = aggregateLayout(index);
       LLVM::MemsetOp::create(
           builder, location, target, llvmConstant(builder, location, i8, 0),
           llvmConstant(builder, location, i64, layout.getCSize()), false);
@@ -609,7 +599,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
                          Value target) {
     if (isAggregate(abi)) {
       uint32_t signatureIndex = spec.inputCount + outputIndex;
-      sim::DPIAggregateABIAttr layout = aggregateLayout(signatureIndex);
+      dpi::AggregateABIAttr layout = aggregateLayout(signatureIndex);
       if (!layout)
         return;
       SmallVector<Value> arguments{
@@ -705,8 +695,7 @@ materializeCWrapper(ModuleOp module, const ExportSpec &spec,
   }
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
-    if (abi.direction ==
-        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+    if (abi.direction == static_cast<uint32_t>(dpi::ArgumentDirection::Input))
       continue;
     const DPIOperandABI &outputABI = spec.abi[spec.inputCount + outputCursor];
     writeCValue(outputCursor, outputABI, formalArguments[index]);
@@ -899,12 +888,12 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   Value outputs = entry->getArgument(3);
   SmallVector<Value> aggregatePlans(spec.abi.size());
   auto aggregateLayout = [&](uint32_t index) {
-    return dyn_cast<sim::DPIAggregateABIAttr>(spec.aggregateLayouts[index]);
+    return dyn_cast<dpi::AggregateABIAttr>(spec.aggregateLayouts[index]);
   };
   auto aggregatePlan = [&](uint32_t index) -> Value {
     if (aggregatePlans[index])
       return aggregatePlans[index];
-    sim::DPIAggregateABIAttr layout = aggregateLayout(index);
+    dpi::AggregateABIAttr layout = aggregateLayout(index);
     if (!layout)
       return {};
     ArrayRef<int64_t> words = layout.getLeaves().asArrayRef();
@@ -984,7 +973,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   SmallVector<Value> handleSlots;
   for (uint32_t index = 0; index != spec.inputCount; ++index)
     if (spec.abi[index].direction !=
-        static_cast<uint32_t>(sim::DPIArgumentDirection::Input)) {
+        static_cast<uint32_t>(dpi::ArgumentDirection::Input)) {
       Value slot = entryAlloca(builder, location, i64, 1, 8);
       LLVM::StoreOp::create(builder, location,
                             llvmConstant(builder, location, i64, UINT64_MAX),
@@ -1035,16 +1024,15 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
                                             activationParameters[parameter++]));
       }
     }
-    if (abi.direction ==
-        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+    if (abi.direction == static_cast<uint32_t>(dpi::ArgumentDirection::Input))
       continue;
     if (parameter >= activationParameters.size() ||
         activationParameters[parameter] != i64)
       return activation.emitError(
           "is missing an exported-task destination reference");
     Value allocationStatus;
-    sim::DPIAggregateABIAttr aggregate =
-        isAggregate(abi) ? aggregateLayout(index) : sim::DPIAggregateABIAttr{};
+    dpi::AggregateABIAttr aggregate =
+        isAggregate(abi) ? aggregateLayout(index) : dpi::AggregateABIAttr{};
     if (aggregate && aggregate.getStringCount() != 0) {
       allocationStatus =
           LLVM::CallOp::create(
@@ -1152,8 +1140,7 @@ LogicalResult materializeNativeTaskThunk(ModuleOp module,
   };
   for (uint32_t index = 0; index != spec.inputCount; ++index) {
     const DPIOperandABI &abi = spec.abi[index];
-    if (abi.direction ==
-        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+    if (abi.direction == static_cast<uint32_t>(dpi::ArgumentDirection::Input))
       continue;
     Value reference =
         LLVM::LoadOp::create(builder, location, i64, handleSlots[handle++], 8);
@@ -1252,7 +1239,7 @@ LogicalResult materializeBytecodeTaskThunk(LLVM::LLVMFuncOp thunk,
       Value plan = LLVM::ZeroOp::create(builder, location, pointer);
       uint64_t wordCount = 0;
       auto layout =
-          dyn_cast<sim::DPIAggregateABIAttr>(spec.aggregateLayouts[index]);
+          dyn_cast<dpi::AggregateABIAttr>(spec.aggregateLayouts[index]);
       if (layout && layout.getStringCount() != 0) {
         ArrayRef<int64_t> words = layout.getLeaves().asArrayRef();
         plan = entryAlloca(builder, location, builder.getI64Type(),
@@ -1561,13 +1548,13 @@ LogicalResult materializeNativeThunk(ModuleOp module, LLVM::LLVMFuncOp thunk,
 } // namespace
 
 LogicalResult materializeDPIExportWrappers(ModuleOp module) {
-  if (!module->hasAttr("simulation.has_dpi_exports"))
+  if (!dpi::has<dpi::HasExports>(module))
     return success();
   SmallVector<sim::SimFuncOp> bridges;
   llvm::StringMap<LLVM::LLVMFuncOp> functions;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
-        if (function->hasAttr("simulation.dpi_export_bridge"))
+        if (dpi::has<dpi::ExportBridge>(function))
           bridges.push_back(function);
       });
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
@@ -1649,7 +1636,7 @@ LogicalResult materializeDPIExportWrappers(ModuleOp module) {
 }
 
 LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
-  if (!module->hasAttr("simulation.has_dpi_exports"))
+  if (!dpi::has<dpi::HasExports>(module))
     return success();
   SmallVector<LLVM::LLVMFuncOp> thunks;
   SmallVector<LLVM::LLVMFuncOp> bodies;
@@ -1657,13 +1644,12 @@ LogicalResult materializeNativeDPIExportThunks(ModuleOp module) {
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
         functions.try_emplace(function.getSymName(), function);
-        if (function->hasAttr("dpi.export_bridge"))
+        if (dpi::has<dpi::ExportBridgeSymbol>(function))
           thunks.push_back(function);
       });
   for (LLVM::LLVMFuncOp thunk : thunks) {
-    auto bridgeName =
-        thunk->getAttrOfType<StringAttr>("dpi.export_bridge");
-    auto bodyName = thunk->getAttrOfType<StringAttr>("dpi.export_body");
+    auto bridgeName = dpi::get<dpi::ExportBridgeSymbol>(thunk);
+    auto bodyName = dpi::get<dpi::ExportBodySymbol>(thunk);
     if (!bridgeName)
       return thunk.emitError("native DPI export has no bridge symbol");
     FailureOr<ExportSpec> spec = getExportSpec(thunk, bridgeName.getValue());

@@ -101,10 +101,9 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       directSymbols.try_emplace(name.getValue(), &operation);
   llvm::StringMap<Operation *> importCIdentifiers;
   module.walk([&](sim::SimCodeUnitDeclOp declaration) {
-    if (!declaration->hasAttr("simulation.dpi_import"))
+    if (!dpi::has<dpi::Import>(declaration))
       return;
-    if (auto identifier = declaration->getAttrOfType<StringAttr>(
-            "simulation.dpi_c_identifier"))
+    if (auto identifier = dpi::get<dpi::CIdentifier>(declaration))
       importCIdentifiers.try_emplace(identifier.getValue(), declaration);
   });
   module.walk([&](sim::SimDPICallOp call) {
@@ -112,22 +111,15 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
   });
   bool invalid = false;
   module.walk([&](sim::SimFuncOp function) {
-    if (!function->hasAttr("simulation.dpi_export_bridge"))
+    if (!dpi::has<dpi::ExportBridge>(function))
       return;
-    auto exportID =
-        function->getAttrOfType<IntegerAttr>("simulation.dpi_export_id");
-    auto scopeID =
-        function->getAttrOfType<IntegerAttr>("simulation.dpi_scope_id");
-    auto identifier =
-        function->getAttrOfType<StringAttr>("simulation.dpi_c_identifier");
-    auto bodySymbol = function->getAttrOfType<StringAttr>(
-        "simulation.dpi_export_body_symbol");
-    auto signature =
-        function->getAttrOfType<ArrayAttr>("simulation.dpi_abi_signature");
-    auto aggregateLayouts =
-        function->getAttrOfType<ArrayAttr>("simulation.dpi_aggregate_layouts");
-    auto inputs =
-        function->getAttrOfType<IntegerAttr>("simulation.dpi_logical_inputs");
+    auto exportID = dpi::get<dpi::ExportId>(function);
+    auto scopeID = dpi::get<dpi::ScopeId>(function);
+    auto identifier = dpi::get<dpi::CIdentifier>(function);
+    auto bodySymbol = dpi::get<dpi::ExportBodySymbol>(function);
+    auto signature = dpi::get<dpi::ABISignature>(function);
+    auto aggregateLayouts = dpi::get<dpi::AggregateLayouts>(function);
+    auto inputs = dpi::get<dpi::LogicalInputs>(function);
     std::optional<int64_t> codeUnitID = function.getCodeUnitId();
     if (!exportID || !scopeID || !identifier || !bodySymbol || !signature ||
         !inputs || !codeUnitID || *codeUnitID <= 0 ||
@@ -159,7 +151,7 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
     bool hasResult = false;
     uint32_t copyOuts = 0;
     for (auto [index, attribute] : llvm::enumerate(signature)) {
-      auto abi = dyn_cast<sim::DPIABIAttr>(attribute);
+      auto abi = dyn_cast<dpi::ABIAttr>(attribute);
       if (!abi) {
         function.emitOpError("has malformed DPI export ABI metadata");
         invalid = true;
@@ -167,14 +159,14 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       }
       auto direction = abi.getDirection();
       if (index < inputCount) {
-        if (direction == sim::DPIArgumentDirection::Result) {
+        if (direction == dpi::ArgumentDirection::Result) {
           function.emitOpError("has a result in its DPI formal inventory");
           invalid = true;
           return;
         }
-        copyOuts += direction == sim::DPIArgumentDirection::Output ||
-                    direction == sim::DPIArgumentDirection::InOut;
-      } else if (direction == sim::DPIArgumentDirection::Result) {
+        copyOuts += direction == dpi::ArgumentDirection::Output ||
+                    direction == dpi::ArgumentDirection::InOut;
+      } else if (direction == dpi::ArgumentDirection::Result) {
         if (index != inputCount || hasResult) {
           function.emitOpError("has a misplaced DPI function result");
           invalid = true;
@@ -191,16 +183,16 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
     }
     uint64_t outputCursor = inputCount + (hasResult ? 1 : 0);
     for (uint64_t index = 0; index != inputCount; ++index) {
-      auto formal = cast<sim::DPIABIAttr>(signature[index]);
-      if (formal.getDirection() == sim::DPIArgumentDirection::Input)
+      auto formal = cast<dpi::ABIAttr>(signature[index]);
+      if (formal.getDirection() == dpi::ArgumentDirection::Input)
         continue;
       if (outputCursor >= signature.size()) {
         function.emitOpError("has a truncated DPI export copy-out inventory");
         invalid = true;
         return;
       }
-      auto output = cast<sim::DPIABIAttr>(signature[outputCursor++]);
-      if (output.getDirection() != sim::DPIArgumentDirection::Output ||
+      auto output = cast<dpi::ABIAttr>(signature[outputCursor++]);
+      if (output.getDirection() != dpi::ArgumentDirection::Output ||
           output.getKind() != formal.getKind() ||
           output.getWidth() != formal.getWidth() ||
           output.getFourState() != formal.getFourState() ||
@@ -216,15 +208,14 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
       invalid = true;
       return;
     }
-    auto elidedInputs = function->getAttrOfType<DenseI64ArrayAttr>(
-        sim::metadata::dpiElidedInputs);
+    DenseI64ArrayAttr elidedInputs = dpi::get<dpi::ElidedInputs>(function);
     llvm::BitVector seenElidedInputs(inputCount);
     if (elidedInputs)
       for (int64_t index : elidedInputs.asArrayRef()) {
         if (index < 0 || static_cast<uint64_t>(index) >= inputCount ||
             seenElidedInputs.test(index) ||
-            cast<sim::DPIABIAttr>(signature[index]).getDirection() !=
-                sim::DPIArgumentDirection::Output) {
+            cast<dpi::ABIAttr>(signature[index]).getDirection() !=
+                dpi::ArgumentDirection::Output) {
           function.emitOpError("has invalid elided DPI output metadata");
           invalid = true;
           return;
@@ -246,14 +237,14 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
     exports.push_back(
         {static_cast<uint32_t>(exportID.getValue().getZExtValue()),
          scopeID.getValue().getZExtValue(), static_cast<uint64_t>(*codeUnitID),
-         sim::getDPISignatureHash(signature, inputCount),
+         dpi::getSignatureHash(signature, inputCount),
          static_cast<uint32_t>(inputCount), static_cast<uint32_t>(outputCount),
          function.getSymName().str(), bodySymbol.getValue().str(),
          identifier.getValue().str(), signature, aggregateLayouts, elidedInputs,
          bytecodeFunction ? std::optional<uint32_t>(static_cast<uint32_t>(
                                 bytecodeFunction.getValue().getZExtValue()))
                           : std::nullopt,
-         function->hasAttr("simulation.dpi_task")});
+         dpi::has<dpi::Task>(function)});
   });
   if (invalid)
     return failure();
@@ -309,22 +300,20 @@ collectDPIExports(ModuleOp module, bool bytecodeOnly, Type pointer, Type i32,
         builder, module.getLoc(), thunkName,
         LLVM::LLVMFunctionType::get(i32, {pointer, pointer, i32, pointer, i32},
                                     false));
-    thunk->setAttr("dpi.export_bridge",
-                   builder.getStringAttr(info.symbol));
-    thunk->setAttr("dpi.export_body",
-                   builder.getStringAttr(info.bodySymbol));
-    thunk->setAttr("simulation.dpi_c_identifier",
-                   builder.getStringAttr(info.cIdentifier));
-    thunk->setAttr("simulation.dpi_export_id",
-                   builder.getI32IntegerAttr(info.exportID));
-    thunk->setAttr("simulation.dpi_abi_signature", info.abi);
-    thunk->setAttr("simulation.dpi_aggregate_layouts", info.aggregateLayouts);
+    dpi::set<dpi::ExportBridgeSymbol>(thunk,
+                                      builder.getStringAttr(info.symbol));
+    dpi::set<dpi::ExportBodySymbol>(thunk,
+                                    builder.getStringAttr(info.bodySymbol));
+    dpi::set<dpi::CIdentifier>(thunk, builder.getStringAttr(info.cIdentifier));
+    dpi::set<dpi::ExportId>(thunk, builder.getI32IntegerAttr(info.exportID));
+    dpi::set<dpi::ABISignature>(thunk, info.abi);
+    dpi::set<dpi::AggregateLayouts>(thunk, info.aggregateLayouts);
     if (info.elidedInputs)
-      thunk->setAttr(sim::metadata::dpiElidedInputs, info.elidedInputs);
-    thunk->setAttr("simulation.dpi_logical_inputs",
-                   builder.getI32IntegerAttr(info.inputCount));
+      dpi::set<dpi::ElidedInputs>(thunk, info.elidedInputs);
+    dpi::set<dpi::LogicalInputs>(thunk,
+                                 builder.getI32IntegerAttr(info.inputCount));
     if (info.isTask)
-      thunk->setAttr("simulation.dpi_task", builder.getUnitAttr());
+      dpi::mark<dpi::Task>(thunk);
     directSymbols.try_emplace(thunkName, thunk);
   }
   return success();
@@ -712,7 +701,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
   }
 
   SmallVector<ExportInfo> exports;
-  if (module->hasAttr("simulation.has_dpi_exports") &&
+  if (dpi::has<dpi::HasExports>(module) &&
       failed(collectDPIExports(module, bytecodeOnly, pointer, i32, exports)))
     return failure();
 

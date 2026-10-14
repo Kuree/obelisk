@@ -4156,8 +4156,7 @@ LogicalResult SimDesignOp::verifyRegions() {
         return anchor.emitOpError("references an unknown backing code-unit ID");
       SimCodeUnitDeclOp codeUnit =
           codeUnits.lookup(backing.getId().getValue().getZExtValue());
-      if (codeUnit.getInternalAttr() ||
-          codeUnit->hasAttr("simulation.dpi_import") ||
+      if (codeUnit.getInternalAttr() || dpi::has<dpi::Import>(codeUnit) ||
           !isVPIVisibleEntryKind(codeUnit.getCodeUnitKind()))
         return anchor.emitOpError(
             "backing code unit must be a VPI-visible task or function");

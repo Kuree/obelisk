@@ -5,6 +5,7 @@
 #include "obelisk/Conversion/SimulationToLLVMCoroutine.h"
 #include "obelisk/Conversion/SimulationToSchedule.h"
 #include "obelisk/Conversion/SlangToObelisk.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Obelisk/ObeliskDialect.h"
 #include "obelisk/Dialect/Runtime/RuntimeDialect.h"
 #include "obelisk/Dialect/SDF/SDFDialect.h"
@@ -63,11 +64,11 @@ int main(int argc, char **argv) {
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
-  registry.insert<obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
-                  obelisk::runtime::ObeliskRuntimeDialect,
-                  obelisk::sdf::ObeliskSDFDialect,
-                  obelisk::schedule::ScheduleDialect,
-                  obelisk::sim::ObeliskSimulationDialect>();
+  registry.insert<
+      obelisk::slangir::SlangDialect, obelisk::ir::ObeliskDialect,
+      obelisk::dpi::DPIDialect, obelisk::runtime::ObeliskRuntimeDialect,
+      obelisk::sdf::ObeliskSDFDialect, obelisk::schedule::ScheduleDialect,
+      obelisk::sim::ObeliskSimulationDialect>();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "Obelisk IR optimizer\n", registry));

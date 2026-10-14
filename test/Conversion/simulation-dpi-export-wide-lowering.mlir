@@ -11,7 +11,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  simulation.has_dpi_exports
+  dpi.has_exports
 } {
   simulation.design @wide {
     simulation.scope.decl 0 hierarchy "wide"
@@ -32,16 +32,16 @@ module attributes {
         -> !simulation.logic<1048576>
         attributes {
           code_unit_id = 2 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "wide_export_c",
-          simulation.dpi_export_id = 900 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = logic_vector, direction = input,
+          dpi.export,
+          dpi.c_identifier = "wide_export_c",
+          dpi.export_id = 900 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = logic_vector, direction = input,
                                   width = 1048576, fourState = true,
                                   isSigned = false>,
-            #simulation.dpi_abi<kind = logic_vector, direction = result,
+            #dpi.abi<kind = logic_vector, direction = result,
                                   width = 1048576, fourState = true,
                                   isSigned = false>
           ]
@@ -55,25 +55,25 @@ module attributes {
             {simulation.capture_kind = 1 : i32})
         attributes {
           code_unit_id = 3 : i64, entry_kind = 12 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "wide_aggregate_export_c",
-          simulation.dpi_export_id = 901 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_elided_inputs = array<i64: 0>,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = unpacked_aggregate,
+          dpi.export,
+          dpi.c_identifier = "wide_aggregate_export_c",
+          dpi.export_id = 901 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.elided_inputs = array<i64: 0>,
+          dpi.abi_signature = [
+            #dpi.abi<kind = unpacked_aggregate,
                                   direction = output, width = 65536,
                                   fourState = true, isSigned = false>,
-            #simulation.dpi_abi<kind = unpacked_aggregate,
+            #dpi.abi<kind = unpacked_aggregate,
                                   direction = output, width = 65536,
                                   fourState = true, isSigned = false>
           ],
-          simulation.dpi_aggregate_layouts = [
-            #simulation.dpi_aggregate_abi<cSize = 65536, cAlignment = 4,
+          dpi.aggregate_layouts = [
+            #dpi.aggregate_abi<cSize = 65536, cAlignment = 4,
                 stringCount = 0,
                 leaves = [1, 0, 0, 8192, 8, 8, 0, 1, 0, 0, 0, 7, 8, 1, 0, 0]>,
-            #simulation.dpi_aggregate_abi<cSize = 65536, cAlignment = 4,
+            #dpi.aggregate_abi<cSize = 65536, cAlignment = 4,
                 stringCount = 0,
                 leaves = [1, 0, 0, 8192, 8, 8, 0, 1, 0, 0, 0, 7, 8, 1, 0, 0]>
           ]

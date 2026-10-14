@@ -2,6 +2,7 @@
 
 #include "LowerUnit.h"
 #include "PrepareRandomFunctions.h"
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
 #include "obelisk/Runtime/Runtime.h"
@@ -2274,8 +2275,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     uint32_t dpiCategory;
     uint32_t dpiWidth;
     bool dpiFourState;
-    sim::DPIOpenArrayABIAttr openArray;
-    sim::DPIAggregateABIAttr aggregate;
+    dpi::OpenArrayABIAttr openArray;
+    dpi::AggregateABIAttr aggregate;
   };
   auto getDPITransportWidth = [](Type type) -> std::optional<unsigned> {
     if (isa<sim::StringType, sim::ChandleType, sim::DynamicArrayType,
@@ -2319,7 +2320,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   };
   auto makeOpenArrayLayout =
       [&](Type formalSemantic, Type actualSemantic,
-          Type transportType) -> FailureOr<sim::DPIOpenArrayABIAttr> {
+          Type transportType) -> FailureOr<dpi::OpenArrayABIAttr> {
     // The actual supplies the concrete width of unsized packed dimensions.
     // Remove only its unpacked dimensions; the remaining packed shape is one
     // canonical C element and is normalized to [width-1:0] by the DPI ABI.
@@ -2346,7 +2347,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         normalizeSemanticType(element, location, function);
     if (failed(normalizedElement))
       return failure();
-    FailureOr<sim::DPIAggregateABIAttr> elementLayout =
+    FailureOr<dpi::AggregateABIAttr> elementLayout =
         makeDPIAggregateABI(element, *normalizedElement, location, builder,
                             /*compactTransport=*/true);
     if (failed(elementLayout))
@@ -2522,9 +2523,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     bool transportFourState = storage == 0
                                   ? elementABI->fourState
                                   : sim::containsFourStateLeaf(transportType);
-    return sim::DPIOpenArrayABIAttr::get(
+    return dpi::OpenArrayABIAttr::get(
         builder.getContext(), storage,
-        static_cast<sim::DPIABIKind>(elementABI->kind), elementWidth,
+        static_cast<dpi::ABIKind>(elementABI->kind), elementWidth,
         *transportWidth, transportFourState, elementABI->fourState,
         elementLayout->getCSize(), elementLayout->getCAlignment(),
         elementLayout->getStringCount(), elementLayout->getLeaves(), packedLeft,
@@ -2535,7 +2536,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   };
   auto makeAggregateLayout =
       [&](Type semanticType,
-          Type normalizedType) -> FailureOr<sim::DPIAggregateABIAttr> {
+          Type normalizedType) -> FailureOr<dpi::AggregateABIAttr> {
     return makeDPIAggregateABI(semanticType, normalizedType, location, builder);
   };
   for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
@@ -2567,7 +2568,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     auto dpiCategoryAttr = formal.getAs<IntegerAttr>("dpi_category");
     uint32_t dpiCategory =
         dpiCategoryAttr ? static_cast<uint32_t>(dpiCategoryAttr.getInt()) : 0;
-    bool dpiImport = op->hasAttr("dpi.import_id");
+    bool dpiImport = dpi::has<dpi::ImportId>(op);
     auto formalSemantic = formal.getAs<TypeAttr>("semantic_type");
     bool openFormal =
         dpiImport && formalSemantic &&
@@ -2576,7 +2577,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                        return dimension.kind ==
                               SemanticDimensionKind::OpenArray;
                      });
-    sim::DPIAggregateABIAttr formalAggregateLayout;
+    dpi::AggregateABIAttr formalAggregateLayout;
     if (dpiImport && !openFormal) {
       if (isa<semantic::DynArrayType, semantic::QueueType,
               semantic::AssocArrayType, sim::DynamicArrayType, sim::QueueType,
@@ -2587,8 +2588,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       bool aggregateFormal =
-          dpiCategory ==
-          static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+          dpiCategory == static_cast<uint32_t>(dpi::ABIKind::UnpackedAggregate);
       std::optional<unsigned> width = getDPITransportWidth(formalType);
       if (aggregateFormal)
         if (std::optional<uint64_t> span = sim::getProvenanceSpan(formalType);
@@ -2602,15 +2602,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         TypeAttr formalSemantic = formal.getAs<TypeAttr>("semantic_type");
         if (!formalSemantic)
           return failure();
-        FailureOr<sim::DPIAggregateABIAttr> layout =
+        FailureOr<dpi::AggregateABIAttr> layout =
             makeAggregateLayout(formalSemantic.getValue(), formalType);
         if (failed(layout))
           return failure();
         formalAggregateLayout = *layout;
       }
-      dpiOperandABI.push_back(sim::DPIABIAttr::get(
-          builder.getContext(), static_cast<sim::DPIABIKind>(dpiCategory),
-          static_cast<sim::DPIArgumentDirection>(direction), *width,
+      dpiOperandABI.push_back(dpi::ABIAttr::get(
+          builder.getContext(), static_cast<dpi::ABIKind>(dpiCategory),
+          static_cast<dpi::ArgumentDirection>(direction), *width,
           aggregateFormal ? streamContainsFourState(formalType)
                           : isDPIFourState(formalType),
           formalSigned));
@@ -2631,7 +2631,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           return emitError(location)
                      << "DPI open-array binding has no semantic shape",
                  failure();
-        FailureOr<sim::DPIOpenArrayABIAttr> layout =
+        FailureOr<dpi::OpenArrayABIAttr> layout =
             makeOpenArrayLayout(formalSemantic.getValue(),
                                 semanticType.getValue(), (*argument).getType());
         if (failed(layout))
@@ -2641,9 +2641,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                          : FailureOr<Value>(*argument);
         if (failed(transport))
           return failure();
-        dpiOperandABI.push_back(sim::DPIABIAttr::get(
-            builder.getContext(), sim::DPIABIKind::OpenArray,
-            sim::DPIArgumentDirection::Input, layout->getElementWidth(),
+        dpiOperandABI.push_back(dpi::ABIAttr::get(
+            builder.getContext(), dpi::ABIKind::OpenArray,
+            dpi::ArgumentDirection::Input, layout->getElementWidth(),
             layout->getFourState(), false));
         dpiOpenArrayLayouts.push_back(*layout);
         dpiAggregateLayouts.push_back(builder.getUnitAttr());
@@ -2697,7 +2697,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return emitError(location)
                    << "DPI open-array binding has no semantic shape",
                failure();
-      FailureOr<sim::DPIOpenArrayABIAttr> layout =
+      FailureOr<dpi::OpenArrayABIAttr> layout =
           makeOpenArrayLayout(formalSemantic.getValue(),
                               semanticType.getValue(), (*loaded).getType());
       if (failed(layout))
@@ -2714,9 +2714,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                        : FailureOr<Value>(*loaded);
       if (failed(transport))
         return failure();
-      dpiOperandABI.push_back(sim::DPIABIAttr::get(
-          builder.getContext(), sim::DPIABIKind::OpenArray,
-          static_cast<sim::DPIArgumentDirection>(direction),
+      dpiOperandABI.push_back(dpi::ABIAttr::get(
+          builder.getContext(), dpi::ABIKind::OpenArray,
+          static_cast<dpi::ArgumentDirection>(direction),
           layout->getElementWidth(), layout->getFourState(), false));
       dpiOpenArrayLayouts.push_back(*layout);
       dpiAggregateLayouts.push_back(builder.getUnitAttr());
@@ -2727,7 +2727,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                           (*transport).getType(),
                           false,
                           isSignedNode(actual),
-                          static_cast<uint32_t>(sim::DPIABIKind::OpenArray),
+                          static_cast<uint32_t>(dpi::ABIKind::OpenArray),
                           layout->getElementWidth(),
                           layout->getFourState(),
                           *layout,
@@ -2836,8 +2836,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           recordSensitivity(capture);
         operands.push_back(capture);
       }
-  BoolAttr dpiTaskAttr = op->getAttrOfType<BoolAttr>("dpi.is_task");
-  bool dpiTask = dpiTaskAttr && dpiTaskAttr.getValue();
+  bool dpiTask = dpi::has<dpi::Task>(op);
   sim::SimFuncOp directCallee =
       lookupNearestSymbolFrom<sim::SimFuncOp>(op, callee);
   const UnitLoweringInputs::Callable *callable =
@@ -2855,7 +2854,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     for (const CopyOut &copyOut : copyOuts)
       callResultTypes.push_back(copyOut.resultType);
   SmallVector<Value> callResults;
-  if (auto importID = op->getAttrOfType<IntegerAttr>("dpi.import_id")) {
+  if (IntegerAttr importID = dpi::get<dpi::ImportId>(op)) {
     if (operands.empty())
       return emitError(location) << "DPI call is missing its runtime context",
              failure();
@@ -2878,9 +2877,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           getDPIABIKind(semanticResult.getValue(), location);
       if (failed(resultCategory))
         return failure();
-      signature.push_back(sim::DPIABIAttr::get(
-          builder.getContext(), static_cast<sim::DPIABIKind>(*resultCategory),
-          sim::DPIArgumentDirection::Result, *width, isDPIFourState(resultType),
+      signature.push_back(dpi::ABIAttr::get(
+          builder.getContext(), static_cast<dpi::ABIKind>(*resultCategory),
+          dpi::ArgumentDirection::Result, *width, isDPIFourState(resultType),
           isSignedSemanticType(semanticResult.getValue())));
       dpiOpenArrayLayouts.push_back(builder.getUnitAttr());
       dpiAggregateLayouts.push_back(builder.getUnitAttr());
@@ -2890,10 +2889,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return emitError(location)
                    << "DPI copy-out has no fixed transport width",
                failure();
-      signature.push_back(sim::DPIABIAttr::get(
-          builder.getContext(),
-          static_cast<sim::DPIABIKind>(copyOut.dpiCategory),
-          sim::DPIArgumentDirection::Output, copyOut.dpiWidth,
+      signature.push_back(dpi::ABIAttr::get(
+          builder.getContext(), static_cast<dpi::ABIKind>(copyOut.dpiCategory),
+          dpi::ArgumentDirection::Output, copyOut.dpiWidth,
           copyOut.dpiFourState, copyOut.formalSigned));
       dpiOpenArrayLayouts.push_back(copyOut.openArray
                                         ? Attribute(copyOut.openArray)
@@ -2913,19 +2911,16 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         builder, location, dpiResultTypes,
         builder.getI32IntegerAttr(
             static_cast<uint32_t>(importID.getValue().getZExtValue())),
-        op->getAttrOfType<StringAttr>("dpi.c_identifier"),
-        op->getAttrOfType<IntegerAttr>("dpi.scope_id"),
+        dpi::get<dpi::CIdentifier>(op), dpi::get<dpi::ScopeId>(op),
         builder.getArrayAttr(signature),
-        op->getAttrOfType<BoolAttr>("dpi.is_pure"),
-        op->getAttrOfType<BoolAttr>("dpi.is_context"),
-        op->getAttrOfType<BoolAttr>("dpi.is_task"),
-        builder.getStringAttr(sourceFile),
+        builder.getBoolAttr(dpi::has<dpi::Pure>(op)),
+        builder.getBoolAttr(dpi::has<dpi::Context>(op)),
+        builder.getBoolAttr(dpiTask), builder.getStringAttr(sourceFile),
         builder.getI32IntegerAttr(sourceLine),
-        builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands);
-    call->setAttr("dpi.open_array_layouts",
-                  builder.getArrayAttr(dpiOpenArrayLayouts));
-    call->setAttr("dpi.aggregate_layouts",
-                  builder.getArrayAttr(dpiAggregateLayouts));
+        builder.getI32IntegerAttr(sourceColumn), runtimeContext, operands,
+        builder.getArrayAttr(dpiOpenArrayLayouts),
+        builder.getArrayAttr(dpiAggregateLayouts),
+        /*logical_inputs=*/IntegerAttr{});
     sim::SimStatusCheckOp::create(builder, location, call.getResults().back());
     llvm::append_range(callResults, call.getResults().drop_back());
   } else if (!directTask) {

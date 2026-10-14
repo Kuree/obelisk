@@ -11,85 +11,85 @@ module attributes {
   simulation.design @dpi {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 function hierarchy "dpi.add" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = int, direction = input, width = 32,
+      dpi.abi_signature = [
+        #dpi.abi<kind = int, direction = input, width = 32,
                               fourState = false, isSigned = true>,
-        #simulation.dpi_abi<kind = int, direction = result, width = 32,
+        #dpi.abi<kind = int, direction = result, width = 32,
                               fourState = false, isSigned = true>
       ],
-      simulation.dpi_c_identifier = "c_add",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 17 : i32,
-      simulation.dpi_logical_inputs = 1 : i32
+      dpi.c_identifier = "c_add",
+      dpi.import,
+      dpi.import_id = 17 : i32,
+      dpi.logical_inputs = 1 : i32
     }
     simulation.code_unit.decl 2 in 0 function hierarchy "dpi.call"
     simulation.code_unit.decl 3 in 0 function hierarchy "dpi.notify" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = int, direction = input, width = 32,
+      dpi.abi_signature = [
+        #dpi.abi<kind = int, direction = input, width = 32,
                               fourState = false, isSigned = true>
       ],
-      simulation.dpi_c_identifier = "notify",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 18 : i32,
-      simulation.dpi_logical_inputs = 1 : i32
+      dpi.c_identifier = "notify",
+      dpi.import,
+      dpi.import_id = 18 : i32,
+      dpi.logical_inputs = 1 : i32
     }
     simulation.code_unit.decl 4 in 0 function hierarchy "dpi.echo" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = string, direction = input, width = 64,
+      dpi.abi_signature = [
+        #dpi.abi<kind = string, direction = input, width = 64,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = string, direction = result, width = 64,
+        #dpi.abi<kind = string, direction = result, width = 64,
                               fourState = false, isSigned = false>
       ],
-      simulation.dpi_c_identifier = "echo",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 19 : i32,
-      simulation.dpi_logical_inputs = 1 : i32
+      dpi.c_identifier = "echo",
+      dpi.import,
+      dpi.import_id = 19 : i32,
+      dpi.logical_inputs = 1 : i32
     }
     simulation.code_unit.decl 5 in 0 function hierarchy "dpi.bounce_handle" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = chandle, direction = input, width = 64,
+      dpi.abi_signature = [
+        #dpi.abi<kind = chandle, direction = input, width = 64,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = chandle, direction = result, width = 64,
+        #dpi.abi<kind = chandle, direction = result, width = 64,
                               fourState = false, isSigned = false>
       ],
-      simulation.dpi_c_identifier = "bounce_handle",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 20 : i32,
-      simulation.dpi_logical_inputs = 1 : i32
+      dpi.c_identifier = "bounce_handle",
+      dpi.import,
+      dpi.import_id = 20 : i32,
+      dpi.logical_inputs = 1 : i32
     }
     simulation.code_unit.decl 6 in 0 function hierarchy "dpi.mutate" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = string, direction = inout, width = 64,
+      dpi.abi_signature = [
+        #dpi.abi<kind = string, direction = inout, width = 64,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = string, direction = output, width = 64,
+        #dpi.abi<kind = string, direction = output, width = 64,
                               fourState = false, isSigned = false>
       ],
-      simulation.dpi_c_identifier = "mutate",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 21 : i32,
-      simulation.dpi_logical_inputs = 1 : i32
+      dpi.c_identifier = "mutate",
+      dpi.import,
+      dpi.import_id = 21 : i32,
+      dpi.logical_inputs = 1 : i32
     }
     simulation.code_unit.decl 7 in 0 function hierarchy "dpi.transform" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = real, direction = input, width = 64,
+      dpi.abi_signature = [
+        #dpi.abi<kind = real, direction = input, width = 64,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = shortreal, direction = input, width = 32,
+        #dpi.abi<kind = shortreal, direction = input, width = 32,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = shortreal, direction = output, width = 32,
+        #dpi.abi<kind = shortreal, direction = output, width = 32,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = real, direction = inout, width = 64,
+        #dpi.abi<kind = real, direction = inout, width = 64,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = shortreal, direction = result, width = 32,
+        #dpi.abi<kind = shortreal, direction = result, width = 32,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = shortreal, direction = output, width = 32,
+        #dpi.abi<kind = shortreal, direction = output, width = 32,
                               fourState = false, isSigned = false>,
-        #simulation.dpi_abi<kind = real, direction = output, width = 64,
+        #dpi.abi<kind = real, direction = output, width = 64,
                               fourState = false, isSigned = false>
       ],
-      simulation.dpi_c_identifier = "transform",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 22 : i32,
-      simulation.dpi_logical_inputs = 4 : i32
+      dpi.c_identifier = "transform",
+      dpi.import,
+      dpi.import_id = 22 : i32,
+      dpi.logical_inputs = 4 : i32
     }
 
     simulation.func @call(
@@ -100,9 +100,9 @@ module attributes {
       %result:2 = simulation.dpi.call "c_add" id 17 scope 0
           context %context : !simulation.context(%value) {
             abi_signature = [
-              #simulation.dpi_abi<kind = int, direction = input, width = 32,
+              #dpi.abi<kind = int, direction = input, width = 32,
                                     fourState = false, isSigned = true>,
-              #simulation.dpi_abi<kind = int, direction = result, width = 32,
+              #dpi.abi<kind = int, direction = result, width = 32,
                                     fourState = false, isSigned = true>
             ],
             is_context = false,
@@ -115,7 +115,7 @@ module attributes {
       %void_status = simulation.dpi.call "notify" id 18 scope 0
           context %context : !simulation.context(%value) {
             abi_signature = [
-              #simulation.dpi_abi<kind = int, direction = input, width = 32,
+              #dpi.abi<kind = int, direction = input, width = 32,
                                     fourState = false, isSigned = true>
             ],
             is_context = false,
@@ -129,10 +129,10 @@ module attributes {
       %echoed:2 = simulation.dpi.call "echo" id 19 scope 0
           context %context : !simulation.context(%text) {
             abi_signature = [
-              #simulation.dpi_abi<kind = string, direction = input,
+              #dpi.abi<kind = string, direction = input,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = string, direction = result,
+              #dpi.abi<kind = string, direction = result,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -147,10 +147,10 @@ module attributes {
       %bounced:2 = simulation.dpi.call "bounce_handle" id 20 scope 0
           context %context : !simulation.context(%handle) {
             abi_signature = [
-              #simulation.dpi_abi<kind = chandle, direction = input,
+              #dpi.abi<kind = chandle, direction = input,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = chandle, direction = result,
+              #dpi.abi<kind = chandle, direction = result,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -164,10 +164,10 @@ module attributes {
       %mutated:2 = simulation.dpi.call "mutate" id 21 scope 0
           context %context : !simulation.context(%text) {
             abi_signature = [
-              #simulation.dpi_abi<kind = string, direction = inout,
+              #dpi.abi<kind = string, direction = inout,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = string, direction = output,
+              #dpi.abi<kind = string, direction = output,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -186,25 +186,25 @@ module attributes {
           context %context : !simulation.context(
             %real, %short, %short_zero, %accumulated) {
             abi_signature = [
-              #simulation.dpi_abi<kind = real, direction = input,
+              #dpi.abi<kind = real, direction = input,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = shortreal, direction = input,
+              #dpi.abi<kind = shortreal, direction = input,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = shortreal, direction = output,
+              #dpi.abi<kind = shortreal, direction = output,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = real, direction = inout,
+              #dpi.abi<kind = real, direction = inout,
                                     width = 64, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = shortreal, direction = result,
+              #dpi.abi<kind = shortreal, direction = result,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = shortreal, direction = output,
+              #dpi.abi<kind = shortreal, direction = output,
                                     width = 32, fourState = false,
                                     isSigned = false>,
-              #simulation.dpi_abi<kind = real, direction = output,
+              #dpi.abi<kind = real, direction = output,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],

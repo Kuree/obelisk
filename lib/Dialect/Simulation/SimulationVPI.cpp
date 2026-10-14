@@ -56,8 +56,7 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit) {
   // A DPI import declaration is represented by a source-inventory anchor.
   // Its code unit is only the executable ABI thunk and must not become a
   // second VPI function/task with the same hierarchical name.
-  return !codeUnit.getInternalAttr() &&
-         !codeUnit->hasAttr("simulation.dpi_import") &&
+  return !codeUnit.getInternalAttr() && !dpi::has<dpi::Import>(codeUnit) &&
          isVPIVisibleEntryKind(codeUnit.getCodeUnitKind());
 }
 

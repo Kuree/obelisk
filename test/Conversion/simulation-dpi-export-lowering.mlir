@@ -12,7 +12,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  simulation.has_dpi_exports
+  dpi.has_exports
 } {
   simulation.design @exports {
     simulation.scope.decl 0 hierarchy "exports"
@@ -34,21 +34,21 @@ module attributes {
     simulation.code_unit.decl 18 in 0 function hierarchy "exports.scoped"
     simulation.code_unit.decl 19 in 1 function hierarchy "exports.child.scoped"
     simulation.code_unit.decl 20 in 0 function hierarchy "exports.host" {
-      simulation.dpi_abi_signature = [],
-      simulation.dpi_c_identifier = "host",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 200 : i32,
-      simulation.dpi_logical_inputs = 0 : i32
+      dpi.abi_signature = [],
+      dpi.c_identifier = "host",
+      dpi.import,
+      dpi.import_id = 200 : i32,
+      dpi.logical_inputs = 0 : i32
     }
     simulation.code_unit.decl 21 in 0 function hierarchy "exports.nested" {
-      simulation.dpi_abi_signature = [
-        #simulation.dpi_abi<kind = string, direction = result, width = 64,
+      dpi.abi_signature = [
+        #dpi.abi<kind = string, direction = result, width = 64,
                               fourState = false, isSigned = false>
       ],
-      simulation.dpi_c_identifier = "nested_echo",
-      simulation.dpi_import,
-      simulation.dpi_import_id = 201 : i32,
-      simulation.dpi_logical_inputs = 0 : i32
+      dpi.c_identifier = "nested_echo",
+      dpi.import,
+      dpi.import_id = 201 : i32,
+      dpi.logical_inputs = 0 : i32
     }
 
     simulation.func @__obelisk_root(
@@ -79,19 +79,19 @@ module attributes {
             {simulation.capture_kind = 2 : i32}) -> i8
         attributes {
           code_unit_id = 10 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_narrow",
-          simulation.dpi_export_id = -2001470629 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 3 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = byte, direction = input, width = 8,
+          dpi.export,
+          dpi.c_identifier = "export_narrow",
+          dpi.export_id = -2001470629 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 3 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = byte, direction = input, width = 8,
                                   fourState = false, isSigned = true>,
-            #simulation.dpi_abi<kind = bit, direction = input, width = 1,
+            #dpi.abi<kind = bit, direction = input, width = 1,
                                   fourState = false, isSigned = true>,
-            #simulation.dpi_abi<kind = logic, direction = input, width = 1,
+            #dpi.abi<kind = logic, direction = input, width = 1,
                                   fourState = true, isSigned = true>,
-            #simulation.dpi_abi<kind = byte, direction = result, width = 8,
+            #dpi.abi<kind = byte, direction = result, width = 8,
                                   fourState = false, isSigned = true>
           ]
         } {
@@ -106,16 +106,16 @@ module attributes {
             {simulation.capture_kind = 2 : i32}) -> !simulation.logic<37>
         attributes {
           code_unit_id = 11 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_vector",
-          simulation.dpi_export_id = 101 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = logic_vector, direction = input,
+          dpi.export,
+          dpi.c_identifier = "export_vector",
+          dpi.export_id = 101 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = logic_vector, direction = input,
                                   width = 37, fourState = true,
                                   isSigned = false>,
-            #simulation.dpi_abi<kind = logic_vector, direction = result,
+            #dpi.abi<kind = logic_vector, direction = result,
                                   width = 37, fourState = true,
                                   isSigned = false>
           ]
@@ -128,16 +128,16 @@ module attributes {
         %unused: i16 {simulation.capture_kind = 2 : i32}) -> i16
         attributes {
           code_unit_id = 12 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_output",
-          simulation.dpi_export_id = 102 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = shortint, direction = output,
+          dpi.export,
+          dpi.c_identifier = "export_output",
+          dpi.export_id = 102 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = shortint, direction = output,
                                   width = 16, fourState = false,
                                   isSigned = true>,
-            #simulation.dpi_abi<kind = shortint, direction = output,
+            #dpi.abi<kind = shortint, direction = output,
                                   width = 16, fourState = false,
                                   isSigned = true>
           ]
@@ -150,12 +150,12 @@ module attributes {
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {
           code_unit_id = 13 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_ping",
-          simulation.dpi_export_id = 103 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 0 : i32,
-          simulation.dpi_abi_signature = []
+          dpi.export,
+          dpi.c_identifier = "export_ping",
+          dpi.export_id = 103 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 0 : i32,
+          dpi.abi_signature = []
         } {
       simulation.return
     }
@@ -166,15 +166,15 @@ module attributes {
             {simulation.capture_kind = 2 : i32}) -> !simulation.logic<1>
         attributes {
           code_unit_id = 14 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_logic",
-          simulation.dpi_export_id = 104 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = logic, direction = input, width = 1,
+          dpi.export,
+          dpi.c_identifier = "export_logic",
+          dpi.export_id = 104 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = logic, direction = input, width = 1,
                                   fourState = true, isSigned = true>,
-            #simulation.dpi_abi<kind = logic, direction = result, width = 1,
+            #dpi.abi<kind = logic, direction = result, width = 1,
                                   fourState = true, isSigned = true>
           ]
         } {
@@ -189,15 +189,15 @@ module attributes {
              simulation.descriptor_id = 0 : i64}) -> i8
         attributes {
           code_unit_id = 15 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_branch_capture",
-          simulation.dpi_export_id = 105 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = byte, direction = input, width = 8,
+          dpi.export,
+          dpi.c_identifier = "export_branch_capture",
+          dpi.export_id = 105 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = byte, direction = input, width = 8,
                                   fourState = false, isSigned = true>,
-            #simulation.dpi_abi<kind = byte, direction = result, width = 8,
+            #dpi.abi<kind = byte, direction = result, width = 8,
                                   fourState = false, isSigned = true>
           ]
         } {
@@ -217,15 +217,15 @@ module attributes {
             {simulation.capture_kind = 2 : i32}) -> !simulation.string
         attributes {
           code_unit_id = 16 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_echo_string",
-          simulation.dpi_export_id = 106 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = string, direction = input, width = 64,
+          dpi.export,
+          dpi.c_identifier = "export_echo_string",
+          dpi.export_id = 106 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = string, direction = input, width = 64,
                                   fourState = false, isSigned = false>,
-            #simulation.dpi_abi<kind = string, direction = result, width = 64,
+            #dpi.abi<kind = string, direction = result, width = 64,
                                   fourState = false, isSigned = false>
           ]
         } {
@@ -237,20 +237,20 @@ module attributes {
         -> !simulation.string
         attributes {
           code_unit_id = 17 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_reenter_string",
-          simulation.dpi_export_id = 107 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 0 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = string, direction = result, width = 64,
+          dpi.export,
+          dpi.c_identifier = "export_reenter_string",
+          dpi.export_id = 107 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 0 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = string, direction = result, width = 64,
                                   fourState = false, isSigned = false>
           ]
         } {
       %nested:2 = simulation.dpi.call "nested_echo" id 201 scope 0
           context %ctx : !simulation.context() {
             abi_signature = [
-              #simulation.dpi_abi<kind = string, direction = result,
+              #dpi.abi<kind = string, direction = result,
                                     width = 64, fourState = false,
                                     isSigned = false>
             ],
@@ -268,13 +268,13 @@ module attributes {
              simulation.descriptor_id = 1 : i64}) -> i8
         attributes {
           code_unit_id = 18 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_scoped",
-          simulation.dpi_export_id = 108 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 0 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = byte, direction = result, width = 8,
+          dpi.export,
+          dpi.c_identifier = "export_scoped",
+          dpi.export_id = 108 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 0 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = byte, direction = result, width = 8,
                                   fourState = false, isSigned = true>
           ]
         } {
@@ -291,13 +291,13 @@ module attributes {
              simulation.descriptor_id = 2 : i64}) -> i8
         attributes {
           code_unit_id = 19 : i64, entry_kind = 8 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "export_scoped",
-          simulation.dpi_export_id = 108 : i32,
-          simulation.dpi_scope_id = 1 : i64,
-          simulation.dpi_logical_inputs = 0 : i32,
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = byte, direction = result, width = 8,
+          dpi.export,
+          dpi.c_identifier = "export_scoped",
+          dpi.export_id = 108 : i32,
+          dpi.scope_id = 1 : i64,
+          dpi.logical_inputs = 0 : i32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = byte, direction = result, width = 8,
                                   fourState = false, isSigned = true>
           ]
         } {

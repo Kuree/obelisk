@@ -139,24 +139,23 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     return call.emitOpError("DPI ABI signature has too few inputs");
   uint64_t logicalOutputs = call.getAbiSignature().size() - logicalInputs;
   bool openSignature = llvm::any_of(call.getAbiSignature(), [](Attribute attr) {
-    return cast<sim::DPIABIAttr>(attr).getKind() == sim::DPIABIKind::OpenArray;
+    return cast<dpi::ABIAttr>(attr).getKind() == dpi::ABIKind::OpenArray;
   });
-  append64(metadata, openSignature
-                         ? 0
-                         : sim::getDPISignatureHash(call.getAbiSignature(),
-                                                    logicalInputs));
+  append64(metadata,
+           openSignature
+               ? 0
+               : dpi::getSignatureHash(call.getAbiSignature(), logicalInputs));
   append32(metadata, static_cast<uint32_t>(logicalInputs));
   append32(metadata, static_cast<uint32_t>(logicalOutputs));
   for (Attribute attribute : call.getAbiSignature()) {
-    auto abi = cast<sim::DPIABIAttr>(attribute);
+    auto abi = cast<dpi::ABIAttr>(attribute);
     append32(metadata, static_cast<uint32_t>(abi.getKind()));
     append32(metadata, static_cast<uint32_t>(abi.getDirection()));
     append32(metadata, abi.getWidth());
     append32(metadata,
              (abi.getFourState() ? 1u : 0u) | (abi.getIsSigned() ? 2u : 0u));
   }
-  ArrayAttr openLayouts =
-      call->getAttrOfType<ArrayAttr>("dpi.open_array_layouts");
+  ArrayAttr openLayouts = call.getOpenArrayLayoutsAttr();
   if (!openLayouts) {
     SmallVector<Attribute> empty(call.getAbiSignature().size(),
                                  UnitAttr::get(call.getContext()));
@@ -166,12 +165,12 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     return call.emitOpError("has no complete DPI open-array inventory");
   for (auto [attribute, layoutAttribute] :
        llvm::zip_equal(call.getAbiSignature(), openLayouts)) {
-    auto abi = cast<sim::DPIABIAttr>(attribute);
-    if (abi.getKind() != sim::DPIABIKind::OpenArray) {
+    auto abi = cast<dpi::ABIAttr>(attribute);
+    if (abi.getKind() != dpi::ABIKind::OpenArray) {
       append32(metadata, 0);
       continue;
     }
-    auto layout = dyn_cast<sim::DPIOpenArrayABIAttr>(layoutAttribute);
+    auto layout = dyn_cast<dpi::OpenArrayABIAttr>(layoutAttribute);
     if (!layout)
       return call.emitOpError("has malformed open-array metadata");
     uint64_t dimensions = layout.getRanges().size() / 2;
@@ -207,8 +206,7 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     for (int64_t word : layout.getShapePlan().asArrayRef())
       append64(metadata, static_cast<uint64_t>(word));
   }
-  ArrayAttr aggregateLayouts =
-      call->getAttrOfType<ArrayAttr>("dpi.aggregate_layouts");
+  ArrayAttr aggregateLayouts = call.getAggregateLayoutsAttr();
   if (!aggregateLayouts) {
     SmallVector<Attribute> empty(call.getAbiSignature().size(),
                                  UnitAttr::get(call.getContext()));
@@ -218,12 +216,12 @@ LogicalResult Encoder::encodeDPICall(FunctionPlan &plan,
     return call.emitOpError("has no complete DPI aggregate inventory");
   for (auto [attribute, layoutAttribute] :
        llvm::zip_equal(call.getAbiSignature(), aggregateLayouts)) {
-    auto abi = cast<sim::DPIABIAttr>(attribute);
-    if (abi.getKind() != sim::DPIABIKind::UnpackedAggregate) {
+    auto abi = cast<dpi::ABIAttr>(attribute);
+    if (abi.getKind() != dpi::ABIKind::UnpackedAggregate) {
       append32(metadata, 0);
       continue;
     }
-    auto layout = dyn_cast<sim::DPIAggregateABIAttr>(layoutAttribute);
+    auto layout = dyn_cast<dpi::AggregateABIAttr>(layoutAttribute);
     if (!layout)
       return call.emitOpError("has malformed aggregate metadata");
     uint64_t planWords = layout.getLeaves().size();

@@ -19,4 +19,4 @@ module {
   }
 }
 
-// CHECK: #simulation.dpi_abi<kind = open_array
+// CHECK: #dpi.abi<kind = open_array

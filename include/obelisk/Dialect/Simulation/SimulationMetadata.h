@@ -9,6 +9,7 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONMETADATA_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONMETADATA_H
 
+#include "obelisk/Dialect/DPI/DPIDialect.h"
 #include "obelisk/Dialect/Schedule/ScheduleFieldEnums.h"
 #include "obelisk/Dialect/Schedule/ScheduleMetadata.h"
 #include "llvm/ADT/StringRef.h"
@@ -217,8 +218,6 @@ inline constexpr llvm::StringLiteral classBitstreamSourceFeature =
 inline constexpr llvm::StringLiteral thisArgument = "simulation.this_argument";
 inline constexpr llvm::StringLiteral lowered = "simulation.lowered";
 
-inline constexpr llvm::StringLiteral dpiElidedInputs =
-    "simulation.dpi_elided_inputs";
 /// Native-only annotation for a closed-world activation whose state and NBA
 /// accesses may use the actor-boundary clean-specialization proof.
 /// Marks an AOT region body whose bytecode fallback may be frozen before
@@ -277,7 +276,16 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == schedule::metadata::topLevelWildcardWait ||
          name == schedule::metadata::proceduralEventWait ||
          name == schedule::metadata::repeatingAlwaysWait ||
-         name == dpiElidedInputs;
+         name == dpi::ElidedInputs::getNameStr();
+}
+
+/// Namespaces whose attributes are compiler-owned facts. A transformation
+/// that clones, inlines or erases an operation must understand each such
+/// attribute it carries: `isKnownOperation` and `isKnownBoundary` list the
+/// ones that survive these transformations.
+inline bool isCompilerMetadata(llvm::StringRef name) {
+  return name.starts_with("simulation.") || name.starts_with("schedule.") ||
+         name.starts_with("dpi.");
 }
 
 } // namespace obelisk::sim::metadata

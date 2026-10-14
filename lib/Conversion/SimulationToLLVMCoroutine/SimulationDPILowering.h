@@ -27,7 +27,7 @@ struct DPIOperandABI {
 
 inline mlir::FailureOr<DPIOperandABI>
 parseDPIOperandABI(mlir::Attribute attribute, mlir::Operation *operation) {
-  auto abi = mlir::dyn_cast<sim::DPIABIAttr>(attribute);
+  auto abi = mlir::dyn_cast<dpi::ABIAttr>(attribute);
   if (!abi)
     return operation->emitError("has malformed DPI ABI metadata"),
            mlir::failure();

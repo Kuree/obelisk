@@ -290,8 +290,8 @@ public:
     state.addOperands(flatten(adaptor.getOperands()));
     state.addTypes(results);
     state.addAttributes(operation->getAttrs());
-    state.addAttribute(
-        "dpi.logical_operand_count",
+    state.attributes.set(
+        operation.getLogicalInputsAttrName(),
         rewriter.getI32IntegerAttr(operation.getArguments().size()));
     Operation *replacement = rewriter.create(state);
     SmallVector<SmallVector<Value>> replacements;

@@ -326,16 +326,16 @@ LogicalResult makeSchedulerMain(ModuleOp module,
   SmallVector<LLVM::LLVMFuncOp> dpiThunks;
   ::obelisk::detail::walkNativeFunctions<LLVM::LLVMFuncOp>(
       module, [&](LLVM::LLVMFuncOp function) {
-        if (function->hasAttr("dpi.import_id"))
+        if (dpi::has<dpi::ImportId>(function))
           dpiThunks.push_back(function);
       });
   llvm::sort(dpiThunks, [](LLVM::LLVMFuncOp lhs, LLVM::LLVMFuncOp rhs) {
-    return lhs->getAttrOfType<IntegerAttr>("dpi.import_id").getInt() <
-           rhs->getAttrOfType<IntegerAttr>("dpi.import_id").getInt();
+    return dpi::get<dpi::ImportId>(lhs).getInt() <
+           dpi::get<dpi::ImportId>(rhs).getInt();
   });
   for (LLVM::LLVMFuncOp thunk : dpiThunks) {
-    auto importID = thunk->getAttrOfType<IntegerAttr>("dpi.import_id");
-    auto abiHash = thunk->getAttrOfType<IntegerAttr>("dpi.abi_hash");
+    auto importID = dpi::get<dpi::ImportId>(thunk);
+    auto abiHash = dpi::get<dpi::ABIHash>(thunk);
     if (!abiHash)
       return thunk.emitError("DPI thunk is missing its ABI signature hash");
     Value callback = LLVM::AddressOfOp::create(builder, location, pointer,

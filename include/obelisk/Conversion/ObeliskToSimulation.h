@@ -22,7 +22,7 @@ class Pass;
 namespace obelisk {
 
 /// Canonical C ABI categories supported by the DPI import boundary.
-/// Keep these values in sync with sim::DPIABIKind; they are serialized into
+/// Keep these values in sync with dpi::ABIKind; they are serialized into
 /// bytecode signature metadata and are therefore part of the internal ABI.
 enum class DPIABIKind : uint32_t {
   Bit = 0,

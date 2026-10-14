@@ -15,6 +15,9 @@ add_mlir_library(ObeliskSimulationIR
   SimulationOpDefs3.cpp
 
   DEPENDS
+  ObeliskDPIAttrsIncGen
+  ObeliskDPIDialectIncGen
+  ObeliskDPIEnumsIncGen
   ObeliskScheduleAttrsIncGen
   ObeliskScheduleOpsIncGen
   ObeliskScheduleDialectIncGen
@@ -26,6 +29,7 @@ add_mlir_library(ObeliskSimulationIR
   ObeliskVPIObjectModelIncGen
 
   LINK_LIBS PUBLIC
+  ObeliskDPIIR
   ObeliskRuntimeIR
   MLIRCallInterfaces
   MLIRCastInterfaces

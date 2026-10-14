@@ -72,5 +72,5 @@ module {
   }
 }
 
-// CHECK: #simulation.dpi_abi<kind = unpacked_aggregate
-// CHECK: dpi_aggregate_abi
+// CHECK: #dpi.abi<kind = unpacked_aggregate
+// CHECK: #dpi.aggregate_abi

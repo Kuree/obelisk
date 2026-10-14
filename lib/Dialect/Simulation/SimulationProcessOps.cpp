@@ -663,44 +663,38 @@ LogicalResult SimDPICallOp::verify() {
   if (getNumResults() == 0 ||
       !isa<runtime::StatusType>(getResults().back().getType()))
     return emitOpError("must return a trailing runtime status");
-  auto physicalCount = getOperation()->getAttrOfType<IntegerAttr>(
-      "dpi.logical_operand_count");
-  uint64_t logicalInputs = physicalCount
-                               ? physicalCount.getValue().getZExtValue()
-                               : getArguments().size();
+  uint64_t logicalInputs = getLogicalInputs().value_or(getArguments().size());
   if (logicalInputs > getAbiSignature().size())
     return emitOpError("logical operand count exceeds the ABI signature");
 
-  SmallVector<DPIABIAttr> signature;
+  SmallVector<dpi::ABIAttr> signature;
   signature.reserve(getAbiSignature().size());
   for (Attribute attr : getAbiSignature()) {
-    auto abi = dyn_cast<DPIABIAttr>(attr);
+    auto abi = dyn_cast<dpi::ABIAttr>(attr);
     if (!abi)
       return emitOpError("ABI signature entries must be DPI ABI attributes");
     signature.push_back(abi);
   }
-  ArrayAttr openLayouts = getOperation()->getAttrOfType<ArrayAttr>(
-      "dpi.open_array_layouts");
+  ArrayAttr openLayouts = getOpenArrayLayoutsAttr();
   if (openLayouts && openLayouts.size() != signature.size())
     return emitOpError(
         "DPI open-array layout inventory must match the ABI signature");
-  ArrayAttr aggregateLayouts =
-      getOperation()->getAttrOfType<ArrayAttr>("dpi.aggregate_layouts");
+  ArrayAttr aggregateLayouts = getAggregateLayoutsAttr();
   if (aggregateLayouts && aggregateLayouts.size() != signature.size())
     return emitOpError(
         "DPI aggregate layout inventory must match the ABI signature");
   for (auto [index, abi] : llvm::enumerate(signature)) {
     Attribute layout = openLayouts ? openLayouts[index] : Attribute{};
-    if (abi.getKind() == DPIABIKind::OpenArray) {
-      if (!isa_and_nonnull<DPIOpenArrayABIAttr>(layout))
+    if (abi.getKind() == dpi::ABIKind::OpenArray) {
+      if (!isa_and_nonnull<dpi::OpenArrayABIAttr>(layout))
         return emitOpError("open-array ABI entry has no concrete shape");
     } else if (layout && !isa<UnitAttr>(layout)) {
       return emitOpError("non-open DPI ABI entry has open-array shape");
     }
     Attribute aggregate =
         aggregateLayouts ? aggregateLayouts[index] : Attribute{};
-    if (abi.getKind() == DPIABIKind::UnpackedAggregate) {
-      if (!isa_and_nonnull<DPIAggregateABIAttr>(aggregate))
+    if (abi.getKind() == dpi::ABIKind::UnpackedAggregate) {
+      if (!isa_and_nonnull<dpi::AggregateABIAttr>(aggregate))
         return emitOpError("aggregate ABI entry has no exact C layout");
     } else if (aggregate && !isa<UnitAttr>(aggregate)) {
       return emitOpError("non-aggregate DPI ABI entry has aggregate layout");
@@ -709,18 +703,18 @@ LogicalResult SimDPICallOp::verify() {
 
   uint64_t outputCursor = logicalInputs;
   if (!getIsTask() && outputCursor < signature.size() &&
-      signature[outputCursor].getDirection() == DPIArgumentDirection::Result)
+      signature[outputCursor].getDirection() == dpi::ArgumentDirection::Result)
     ++outputCursor;
   for (uint64_t index = 0; index != logicalInputs; ++index) {
-    DPIABIAttr input = signature[index];
-    if (input.getDirection() == DPIArgumentDirection::Result)
+    dpi::ABIAttr input = signature[index];
+    if (input.getDirection() == dpi::ArgumentDirection::Result)
       return emitOpError("a DPI formal cannot have result direction");
-    if (input.getDirection() == DPIArgumentDirection::Input)
+    if (input.getDirection() == dpi::ArgumentDirection::Input)
       continue;
     if (outputCursor >= signature.size())
       return emitOpError("DPI signature is missing a formal copy-out");
-    DPIABIAttr output = signature[outputCursor++];
-    if (output.getDirection() != DPIArgumentDirection::Output ||
+    dpi::ABIAttr output = signature[outputCursor++];
+    if (output.getDirection() != dpi::ArgumentDirection::Output ||
         output.getKind() != input.getKind() ||
         output.getWidth() != input.getWidth() ||
         output.getFourState() != input.getFourState() ||
@@ -728,18 +722,19 @@ LogicalResult SimDPICallOp::verify() {
       return emitOpError("DPI formal copy-out must match its input ABI entry");
   }
   if (!getIsTask() &&
-      llvm::any_of(ArrayRef<DPIABIAttr>(signature).drop_front(outputCursor),
-                   [](DPIABIAttr abi) {
-                     return abi.getDirection() == DPIArgumentDirection::Result;
+      llvm::any_of(ArrayRef<dpi::ABIAttr>(signature).drop_front(outputCursor),
+                   [](dpi::ABIAttr abi) {
+                     return abi.getDirection() ==
+                            dpi::ArgumentDirection::Result;
                    }))
     return emitOpError("a DPI function signature must place its result first");
   if (outputCursor != signature.size())
     return emitOpError("DPI signature has excess result entries");
 
-  auto verifyLogicalType = [&](Type type, DPIABIAttr abi,
+  auto verifyLogicalType = [&](Type type, dpi::ABIAttr abi,
                                uint64_t index) -> LogicalResult {
-    if (abi.getKind() == DPIABIKind::OpenArray) {
-      auto layout = cast<DPIOpenArrayABIAttr>(openLayouts[index]);
+    if (abi.getKind() == dpi::ABIKind::OpenArray) {
+      auto layout = cast<dpi::OpenArrayABIAttr>(openLayouts[index]);
       if (layout.getStorage() == 1)
         return isa<DynamicArrayType, QueueType>(type)
                    ? success()
@@ -760,7 +755,7 @@ LogicalResult SimDPICallOp::verify() {
                        "fixed open-array value disagrees with its transport "
                        "layout");
     }
-    if (abi.getKind() == DPIABIKind::UnpackedAggregate) {
+    if (abi.getKind() == dpi::ABIKind::UnpackedAggregate) {
       std::optional<uint64_t> width = getProvenanceSpan(type);
       std::function<bool(Type)> hasLogic = [&](Type current) {
         if (Type scalar = getPackedScalarType(current))
@@ -778,20 +773,20 @@ LogicalResult SimDPICallOp::verify() {
                  : emitOpError(
                        "sized aggregate value disagrees with its DPI layout");
     }
-    if (abi.getKind() == DPIABIKind::String)
+    if (abi.getKind() == dpi::ABIKind::String)
       return isa<StringType>(type)
                  ? success()
                  : emitOpError("string DPI ABI entry requires a string value");
-    if (abi.getKind() == DPIABIKind::Chandle)
+    if (abi.getKind() == dpi::ABIKind::Chandle)
       return isa<ChandleType>(type)
                  ? success()
                  : emitOpError(
                        "chandle DPI ABI entry requires a chandle value");
-    if (abi.getKind() == DPIABIKind::ShortReal)
+    if (abi.getKind() == dpi::ABIKind::ShortReal)
       return type.isF32()
                  ? success()
                  : emitOpError("shortreal DPI ABI entry requires an f32 value");
-    if (abi.getKind() == DPIABIKind::Real)
+    if (abi.getKind() == dpi::ABIKind::Real)
       return type.isF64()
                  ? success()
                  : emitOpError("real DPI ABI entry requires an f64 value");
@@ -802,7 +797,7 @@ LogicalResult SimDPICallOp::verify() {
           "logical operand or result type disagrees with its DPI ABI entry");
     return success();
   };
-  if (!physicalCount) {
+  if (!getLogicalInputs()) {
     if (!isa<runtime::ContextType, ContextType>(getRuntimeContext().getType()))
       return emitOpError(
           "runtime context must have simulation or runtime context type");
@@ -813,14 +808,14 @@ LogicalResult SimDPICallOp::verify() {
           "ABI signature must describe every data operand and result");
     for (auto [index, pair] : llvm::enumerate(llvm::zip_equal(
              getArguments(),
-             ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs)))) {
+             ArrayRef<dpi::ABIAttr>(signature).take_front(logicalInputs)))) {
       auto [value, abi] = pair;
       if (failed(verifyLogicalType(value.getType(), abi, index)))
         return failure();
     }
     for (auto [offset, pair] : llvm::enumerate(llvm::zip_equal(
              getResults().drop_back(),
-             ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs)))) {
+             ArrayRef<dpi::ABIAttr>(signature).drop_front(logicalInputs)))) {
       auto [value, abi] = pair;
       if (failed(
               verifyLogicalType(value.getType(), abi, logicalInputs + offset)))
@@ -829,15 +824,15 @@ LogicalResult SimDPICallOp::verify() {
     return success();
   }
 
-  auto verifyPhysicalTypes = [&](TypeRange types, ArrayRef<DPIABIAttr> entries,
-                                 uint64_t entryBase,
-                                 StringRef role) -> LogicalResult {
+  auto verifyPhysicalTypes =
+      [&](TypeRange types, ArrayRef<dpi::ABIAttr> entries, uint64_t entryBase,
+          StringRef role) -> LogicalResult {
     size_t physical = 0;
     for (auto [offset, abi] : llvm::enumerate(entries)) {
       auto open =
-          abi.getKind() == DPIABIKind::OpenArray
-              ? cast<DPIOpenArrayABIAttr>(openLayouts[entryBase + offset])
-              : DPIOpenArrayABIAttr{};
+          abi.getKind() == dpi::ABIKind::OpenArray
+              ? cast<dpi::OpenArrayABIAttr>(openLayouts[entryBase + offset])
+              : dpi::OpenArrayABIAttr{};
       unsigned planes =
           (open ? open.getTransportFourState() : abi.getFourState()) ? 2 : 1;
       if (physical + planes > types.size())
@@ -848,8 +843,8 @@ LogicalResult SimDPICallOp::verify() {
         uint64_t width = abi.getWidth();
         if (open)
           width = open.getTransportWidth();
-        bool valid = abi.getKind() == DPIABIKind::ShortReal ? type.isF32()
-                     : abi.getKind() == DPIABIKind::Real
+        bool valid = abi.getKind() == dpi::ABIKind::ShortReal ? type.isF32()
+                     : abi.getKind() == dpi::ABIKind::Real
                          ? type.isF64()
                          : isa<IntegerType>(type) &&
                                cast<IntegerType>(type).getWidth() == width;
@@ -864,13 +859,13 @@ LogicalResult SimDPICallOp::verify() {
   };
   if (failed(verifyPhysicalTypes(
           getArguments().getTypes(),
-          ArrayRef<DPIABIAttr>(signature).take_front(logicalInputs), 0,
+          ArrayRef<dpi::ABIAttr>(signature).take_front(logicalInputs), 0,
           "input")))
     return failure();
   return verifyPhysicalTypes(
       getResults().drop_back().getTypes(),
-      ArrayRef<DPIABIAttr>(signature).drop_front(logicalInputs), logicalInputs,
-      "result");
+      ArrayRef<dpi::ABIAttr>(signature).drop_front(logicalInputs),
+      logicalInputs, "result");
 }
 
 LogicalResult SimSpawnOp::verify() {

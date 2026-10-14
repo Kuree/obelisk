@@ -25,7 +25,7 @@ module attributes {
     // A source-level DPI import and its executable ABI thunk share a name.
     // The anchor is the VPI function; the thunk remains internal and unindexed.
     simulation.code_unit.decl 1 in 1 function hierarchy "top.dpi_import" {
-      simulation.dpi_import
+      dpi.import
     }
     simulation.code_unit.decl 2 in 1 initial hierarchy "top.initial"
     simulation.func @initial(%ctx: !simulation.context

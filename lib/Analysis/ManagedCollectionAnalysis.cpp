@@ -95,8 +95,8 @@ bool carriesManagedValues(Type type) {
 }
 
 bool isForeignEntry(sim::SimFuncOp function) {
-  return function->hasAttr("simulation.dpi_export") ||
-         function->hasAttr("simulation.dpi_export_bridge");
+  return dpi::has<dpi::Export>(function) ||
+         dpi::has<dpi::ExportBridge>(function);
 }
 
 /// A call into compiled code: a function, method, or DPI import call, or a

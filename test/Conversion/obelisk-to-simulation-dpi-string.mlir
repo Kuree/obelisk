@@ -26,10 +26,10 @@ module {
 }
 
 // CHECK: simulation.code_unit.decl {{.*}} hierarchy "dpi_values.consume"
-// CHECK-SAME: #simulation.dpi_abi<kind = string, direction = input, width = 64, fourState = false, isSigned = false>
-// CHECK-SAME: simulation.dpi_c_identifier = "consume"
+// CHECK-SAME: #dpi.abi<kind = string, direction = input, width = 64, fourState = false, isSigned = false>
+// CHECK-SAME: dpi.c_identifier = "consume"
 // CHECK: simulation.code_unit.decl {{.*}} hierarchy "dpi_values.bounce"
-// CHECK-SAME: #simulation.dpi_abi<kind = chandle, direction = input, width = 64, fourState = false, isSigned = false>
-// CHECK-SAME: #simulation.dpi_abi<kind = chandle, direction = result, width = 64, fourState = false, isSigned = false>
-// CHECK-SAME: simulation.dpi_c_identifier = "bounce"
+// CHECK-SAME: #dpi.abi<kind = chandle, direction = input, width = 64, fourState = false, isSigned = false>
+// CHECK-SAME: #dpi.abi<kind = chandle, direction = result, width = 64, fourState = false, isSigned = false>
+// CHECK-SAME: dpi.c_identifier = "bounce"
 // CHECK-NOT: obelisk.sv.

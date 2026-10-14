@@ -29,20 +29,12 @@ namespace obelisk {
 
 namespace {
 
-constexpr StringLiteral kExportAttr = "simulation.dpi_export";
-constexpr StringLiteral kExportBridgeAttr = "simulation.dpi_export_bridge";
-constexpr StringLiteral kExportBodySymbolAttr =
-    "simulation.dpi_export_body_symbol";
-constexpr StringLiteral kLogicalInputsAttr = "simulation.dpi_logical_inputs";
+// Moved from the SystemVerilog body to its scope-specific export bridge.
 constexpr std::array<StringLiteral, 8> kExportMetadata = {
-    kExportAttr,
-    "simulation.dpi_c_identifier",
-    "simulation.dpi_scope_id",
-    "simulation.dpi_export_id",
-    "simulation.dpi_abi_signature",
-    "simulation.dpi_aggregate_layouts",
-    kLogicalInputsAttr,
-    sim::metadata::dpiElidedInputs,
+    dpi::Export::getNameStr(),        dpi::CIdentifier::getNameStr(),
+    dpi::ScopeId::getNameStr(),       dpi::ExportId::getNameStr(),
+    dpi::ABISignature::getNameStr(),  dpi::AggregateLayouts::getNameStr(),
+    dpi::LogicalInputs::getNameStr(), dpi::ElidedInputs::getNameStr(),
 };
 
 FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,
@@ -141,13 +133,13 @@ public:
 } // namespace
 
 LogicalResult materializeDPIExportBridges(ModuleOp module) {
-  if (!module->hasAttr("simulation.has_dpi_exports"))
+  if (!dpi::has<dpi::HasExports>(module))
     return success();
   SmallVector<sim::SimFuncOp> exports;
   ::obelisk::detail::walkNativeFunctions<sim::SimFuncOp>(
       module, [&](sim::SimFuncOp function) {
-        if (function->hasAttr(kExportAttr) &&
-            !function->hasAttr(kExportBridgeAttr))
+        if (dpi::has<dpi::Export>(function) &&
+            !dpi::has<dpi::ExportBridge>(function))
           exports.push_back(function);
       });
   if (exports.empty())
@@ -182,8 +174,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
         function.isExternal())
       return function.emitOpError(
           "DPI export must be a defined function or task");
-    auto logicalInputs =
-        function->getAttrOfType<IntegerAttr>(kLogicalInputsAttr);
+    auto logicalInputs = dpi::get<dpi::LogicalInputs>(function);
     if (!logicalInputs || logicalInputs.getValue().isNegative() ||
         logicalInputs.getValue().getActiveBits() > 32)
       return function.emitOpError(
@@ -256,10 +247,11 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
         continue;
       attrs.append(attr);
     }
-    attrs.set(kExportBridgeAttr, UnitAttr::get(module.getContext()));
+    UnitAttr marker = UnitAttr::get(module.getContext());
+    attrs.set(dpi::ExportBridge::getNameStr(), marker);
     if (task)
-      attrs.set("simulation.dpi_task", UnitAttr::get(module.getContext()));
-    attrs.set(kExportBodySymbolAttr,
+      attrs.set(dpi::Task::getNameStr(), marker);
+    attrs.set(dpi::ExportBodySymbol::getNameStr(),
               StringAttr::get(module.getContext(), function.getSymName()));
     attrs.set("code_unit_id",
               IntegerAttr::get(IntegerType::get(module.getContext(), 64),
@@ -316,8 +308,7 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
     // marker on both functions would create duplicate scope registrations;
     // the ordinary body remains reachable through this bridge and internal
     // SystemVerilog calls.
-    function->setAttr("simulation.dpi_export_body",
-                      UnitAttr::get(module.getContext()));
+    dpi::mark<dpi::ExportBody>(function);
     for (StringLiteral name : kExportMetadata)
       function->removeAttr(name);
   }

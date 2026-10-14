@@ -689,7 +689,7 @@ inline constexpr ::llvm::StringLiteral vpiTypedefLayersAttrName =
     "vpi_typedef_layers";
 inline constexpr ::llvm::StringLiteral vpiSourceTypeIdentityAttrName =
     "vpi_source_type_identity";
-::mlir::FailureOr<::obelisk::sim::DPIAggregateABIAttr>
+::mlir::FailureOr<dpi::AggregateABIAttr>
 makeDPIAggregateABI(::mlir::Type semanticType, ::mlir::Type normalizedType,
                     ::mlir::Location location, ::mlir::Builder &builder,
                     bool compactTransport = false);

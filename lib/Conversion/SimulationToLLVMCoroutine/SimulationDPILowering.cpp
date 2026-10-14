@@ -36,27 +36,26 @@ uint64_t appendHash(uint64_t hash, uint64_t value, unsigned bytes) {
 }
 
 bool isDPIReal(const DPIOperandABI &abi) {
-  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal) ||
-         abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal) ||
+         abi.category == static_cast<uint32_t>(dpi::ABIKind::Real);
 }
 
 bool isDPIOpenArray(const DPIOperandABI &abi) {
-  return abi.category == static_cast<uint32_t>(sim::DPIABIKind::OpenArray);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::OpenArray);
 }
 
 bool isDPIAggregate(const DPIOperandABI &abi) {
-  return abi.category ==
-         static_cast<uint32_t>(sim::DPIABIKind::UnpackedAggregate);
+  return abi.category == static_cast<uint32_t>(dpi::ABIKind::UnpackedAggregate);
 }
 
-uint64_t getDPIOpenArrayElementSize(sim::DPIOpenArrayABIAttr layout) {
+uint64_t getDPIOpenArrayElementSize(dpi::OpenArrayABIAttr layout) {
   return layout.getElementCSize();
 }
 
 Type getDPIRealType(MLIRContext *context, const DPIOperandABI &abi) {
-  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal))
+  if (abi.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal))
     return Float32Type::get(context);
-  if (abi.category == static_cast<uint32_t>(sim::DPIABIKind::Real))
+  if (abi.category == static_cast<uint32_t>(dpi::ABIKind::Real))
     return Float64Type::get(context);
   return {};
 }
@@ -90,11 +89,8 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
   Type i32 = rewriter.getI32Type();
   Type i64 = rewriter.getI64Type();
   Value null = LLVM::ZeroOp::create(rewriter, location, pointer);
-  auto logicalCountAttr = operation->getAttrOfType<IntegerAttr>(
-      "dpi.logical_operand_count");
-  uint64_t logicalInputs = logicalCountAttr
-                               ? logicalCountAttr.getValue().getZExtValue()
-                               : operation.getArguments().size();
+  uint64_t logicalInputs =
+      operation.getLogicalInputs().value_or(operation.getArguments().size());
   ArrayAttr signature = operation.getAbiSignature();
   if (logicalInputs > signature.size())
     return operation.emitOpError("has an invalid logical operand count");
@@ -108,16 +104,14 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       return failure();
     abi.push_back(*parsed);
   }
-  ArrayAttr openLayouts =
-      operation->getAttrOfType<ArrayAttr>("dpi.open_array_layouts");
+  ArrayAttr openLayouts = operation.getOpenArrayLayoutsAttr();
   if (!openLayouts) {
     SmallVector<Attribute> empty(signature.size(), rewriter.getUnitAttr());
     openLayouts = rewriter.getArrayAttr(empty);
   }
   if (openLayouts.size() != signature.size())
     return operation.emitOpError("has no complete DPI open-array inventory");
-  ArrayAttr aggregateLayouts =
-      operation->getAttrOfType<ArrayAttr>("dpi.aggregate_layouts");
+  ArrayAttr aggregateLayouts = operation.getAggregateLayoutsAttr();
   if (!aggregateLayouts) {
     SmallVector<Attribute> empty(signature.size(), rewriter.getUnitAttr());
     aggregateLayouts = rewriter.getArrayAttr(empty);
@@ -126,7 +120,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     return operation.emitOpError("has no complete DPI aggregate inventory");
 
   struct OpenArrayStorage {
-    sim::DPIOpenArrayABIAttr layout;
+    dpi::OpenArrayABIAttr layout;
     Value descriptor;
     Value data;
     Value plan;
@@ -150,7 +144,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     Value shape;
   };
   struct AggregateStorage {
-    sim::DPIAggregateABIAttr layout;
+    dpi::AggregateABIAttr layout;
     Value data;
     Value plan;
     Value value;
@@ -177,10 +171,9 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       return operation.emitOpError("is missing a physical DPI input plane");
     Value value = physicalInputs[physicalInput++];
     Value unknown;
-    auto openLayout =
-        isDPIOpenArray(abi[index])
-            ? dyn_cast<sim::DPIOpenArrayABIAttr>(openLayouts[index])
-            : sim::DPIOpenArrayABIAttr{};
+    auto openLayout = isDPIOpenArray(abi[index])
+                          ? dyn_cast<dpi::OpenArrayABIAttr>(openLayouts[index])
+                          : dpi::OpenArrayABIAttr{};
     bool inputFourState =
         openLayout ? openLayout.getTransportFourState() : abi[index].fourState;
     if (inputFourState) {
@@ -262,7 +255,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
             byteGEP(rewriter, location, plan, word * sizeof(uint64_t)), 8);
       if (recursive) {
         if (abi[index].direction ==
-                static_cast<uint32_t>(sim::DPIArgumentDirection::Output) ||
+                static_cast<uint32_t>(dpi::ArgumentDirection::Output) ||
             layout.getShapePlan().empty())
           return operation.emitOpError(
               "recursive DPI open arrays cannot be output-only");
@@ -295,8 +288,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                     c64(layout.getTransportWidth()),
                     c32(layout.getTransportFourState()),
                     c32(abi[index].direction !=
-                        static_cast<uint32_t>(
-                            sim::DPIArgumentDirection::Input)),
+                        static_cast<uint32_t>(dpi::ArgumentDirection::Input)),
                     c32(static_cast<uint32_t>(layout.getElementKind())),
                     c32(layout.getElementWidth()), c32(layout.getFourState()),
                     c32(static_cast<uint32_t>(layout.getPackedLeft())),
@@ -389,7 +381,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
                         layout.getElementCAlignment());
       }
       if (abi[index].direction !=
-          static_cast<uint32_t>(sim::DPIArgumentDirection::Output)) {
+          static_cast<uint32_t>(dpi::ArgumentDirection::Output)) {
         if (dynamic) {
           Value exportStatus =
               LLVM::CallOp::create(
@@ -490,7 +482,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       };
       uint32_t elementKind = static_cast<uint32_t>(layout.getElementKind());
       bool packed =
-          elementKind <= static_cast<uint32_t>(sim::DPIABIKind::LogicVector);
+          elementKind <= static_cast<uint32_t>(dpi::ABIKind::LogicVector);
       bool cLayout = true;
       uint32_t flags =
           (abi[index].direction != 0 ? OBELISK_RT_DPI_OPEN_ARRAY_WRITABLE : 0) |
@@ -550,7 +542,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       continue;
     }
     if (isDPIAggregate(abi[index])) {
-      auto layout = dyn_cast<sim::DPIAggregateABIAttr>(aggregateLayouts[index]);
+      auto layout = dyn_cast<dpi::AggregateABIAttr>(aggregateLayouts[index]);
       if (!layout)
         return operation.emitOpError("has malformed aggregate metadata");
       value = padDPIPlane(rewriter, location, value, abi[index].width);
@@ -587,7 +579,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
         return llvmConstant(rewriter, location, i64, constant);
       };
       if (abi[index].direction !=
-          static_cast<uint32_t>(sim::DPIArgumentDirection::Output)) {
+          static_cast<uint32_t>(dpi::ArgumentDirection::Output)) {
         Value packStatus =
             LLVM::CallOp::create(
                 rewriter, location, TypeRange{i32},
@@ -640,12 +632,12 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
   uint64_t copyOutCursor =
       !operation.getIsTask() && logicalOutputs != 0 &&
               abi[logicalInputs].direction ==
-                  static_cast<uint32_t>(sim::DPIArgumentDirection::Result)
+                  static_cast<uint32_t>(dpi::ArgumentDirection::Result)
           ? 1
           : 0;
   for (uint64_t input = 0; input != logicalInputs; ++input) {
     if (abi[input].direction ==
-        static_cast<uint32_t>(sim::DPIArgumentDirection::Input))
+        static_cast<uint32_t>(dpi::ArgumentDirection::Input))
       continue;
     if (copyOutCursor >= logicalOutputs)
       return operation.emitOpError("has malformed DPI copy-out ordering");
@@ -711,11 +703,11 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
     uint32_t kind =
         isDPIOpenArray(entry)   ? OBELISK_RT_DBREG_OPEN_ARRAY
         : isDPIAggregate(entry) ? OBELISK_RT_DBREG_AGGREGATE
-        : entry.category == static_cast<uint32_t>(sim::DPIABIKind::String)
+        : entry.category == static_cast<uint32_t>(dpi::ABIKind::String)
             ? OBELISK_RT_DBREG_STRING
-        : entry.category == static_cast<uint32_t>(sim::DPIABIKind::ShortReal)
+        : entry.category == static_cast<uint32_t>(dpi::ABIKind::ShortReal)
             ? OBELISK_RT_DBREG_REAL32
-        : entry.category == static_cast<uint32_t>(sim::DPIABIKind::Real)
+        : entry.category == static_cast<uint32_t>(dpi::ABIKind::Real)
             ? OBELISK_RT_DBREG_REAL64
         : entry.fourState ? OBELISK_RT_DBREG_LOGIC
                           : OBELISK_RT_DBREG_BITS;
@@ -798,7 +790,7 @@ LogicalResult lowerNativeDPICall(sim::SimDPICallOp operation,
       llvmConstant(rewriter, location, i64,
                    llvm::any_of(abi, isDPIOpenArray)
                        ? 0
-                       : sim::getDPISignatureHash(signature, logicalInputs)),
+                       : dpi::getSignatureHash(signature, logicalInputs)),
       8);
 
   Value statusBits =

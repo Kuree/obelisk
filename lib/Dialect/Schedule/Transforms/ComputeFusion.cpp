@@ -259,7 +259,7 @@ public:
         continue;
       auto function = functions.lookup(name.getValue());
       auto sites = callers.find(name.getValue());
-      if (!function || function->hasAttr("simulation.dpi_export") ||
+      if (!function || dpi::has<dpi::Export>(function) ||
           sites == callers.end()) {
         complete = false;
         continue;

@@ -363,7 +363,7 @@ module {
     simulation.scope.decl 0
     simulation.scope.decl 1 parent 0 hierarchy "top"
     simulation.code_unit.decl 1 in 1 function hierarchy "top.f" debug "f" {
-      simulation.dpi_import
+      dpi.import
     }
     simulation.vpi_object.anchor @top id 0 type 32 in 1 ordinal 0 hierarchy "top" debug "top" {backing = #simulation.vpi_backing<kind = scope, id = 1 : i64>}
     // expected-error @+1 {{backing code unit must be a VPI-visible task or function}}

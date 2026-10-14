@@ -5,7 +5,7 @@
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
-  simulation.has_dpi_exports
+  dpi.has_exports
 } {
   simulation.design @dead_dpi_output {
     simulation.scope.decl 0 hierarchy "top"
@@ -19,12 +19,12 @@ module attributes {
     // CHECK-LABEL: simulation.func nested @exported(
     // CHECK-SAME: %arg0: !simulation.context
     // CHECK-SAME: %arg1: !simulation.ref<i32>
-    // CHECK-SAME: simulation.dpi_abi_signature = [
+    // CHECK-SAME: dpi.abi_signature = [
     // CHECK-SAME: direction = output
     // CHECK-SAME: direction = output
-    // CHECK-SAME: simulation.dpi_elided_inputs = array<i64: 0>
-    // CHECK-SAME: simulation.dpi_logical_inputs = 1 : i32
-    // CHECK-NOT: simulation.bindings
+    // CHECK-SAME: dpi.elided_inputs = array<i64: 0>
+    // CHECK-SAME: dpi.logical_inputs = 1 : i32
+    // CHECK-SAME: simulation.bindings = []
     simulation.func nested @exported(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
         %unused_copy_in: i32 {simulation.capture_kind = 1 : i32},
@@ -32,11 +32,11 @@ module attributes {
             {simulation.capture_kind = 1 : i32})
         attributes {
           code_unit_id = 1 : i64, entry_kind = 12 : i32,
-          simulation.dpi_export,
-          simulation.dpi_c_identifier = "exported_c",
-          simulation.dpi_export_id = 1 : i32,
-          simulation.dpi_scope_id = 0 : i64,
-          simulation.dpi_logical_inputs = 1 : i32,
+          dpi.export,
+          dpi.c_identifier = "exported_c",
+          dpi.export_id = 1 : i32,
+          dpi.scope_id = 0 : i64,
+          dpi.logical_inputs = 1 : i32,
           simulation.bindings = [
             #simulation.argument_binding<path = "top.exported.value",
                 argument = 1, kind = formal_local, copyOut = true,
@@ -44,10 +44,10 @@ module attributes {
             #simulation.argument_binding<path = "top.exported.value",
                 argument = 2, kind = copy_out_destination, copyOut = false>
           ],
-          simulation.dpi_abi_signature = [
-            #simulation.dpi_abi<kind = int, direction = output, width = 32,
+          dpi.abi_signature = [
+            #dpi.abi<kind = int, direction = output, width = 32,
                                   fourState = false, isSigned = true>,
-            #simulation.dpi_abi<kind = int, direction = output, width = 32,
+            #dpi.abi<kind = int, direction = output, width = 32,
                                   fourState = false, isSigned = true>
           ]
         } {
