@@ -502,14 +502,50 @@ namespace {
 // exactly its source path and an assignment affects only subsequent reads.
 // Every executed initializer/RHS remains an evaluation input even when its
 // local result is unused: a bad state dereference still contributes ERROR.
+/// Constraint function calls expand into the constraint's expression tree,
+/// and every use of an argument or computed variable copies its expression.
+/// Reuse can therefore grow the tree exponentially; bound the copies so such
+/// a function reports an error instead of exhausting compile time.
+class ExpansionBudget {
+public:
+  static constexpr uint64_t limit = uint64_t{1} << 20;
+
+  /// Charge every operation in `root`; false once the budget is exhausted.
+  bool spend(Operation *root) {
+    uint64_t count = 0;
+    root->walk([&](Operation *) { ++count; });
+    if (exhausted() || count > remaining) {
+      remaining = 0;
+      return false;
+    }
+    remaining -= count;
+    return true;
+  }
+
+  bool exhausted() const { return remaining == 0; }
+
+  void diagnose(Location location) {
+    if (reported)
+      return;
+    reported = true;
+    emitError(location) << "constraint function calls expand to more than "
+                        << limit << " expression nodes";
+  }
+
+private:
+  uint64_t remaining = limit;
+  bool reported = false;
+};
+
 class ConstraintFunctionBody {
 public:
   ConstraintFunctionBody(semantic::SVSubroutineSymbolOp function,
                          semantic::SVCallExpressionOp call,
                          const llvm::StringMap<Operation *> &symbols,
-                         Builder &builder, Block &expressions)
+                         Builder &builder, Block &expressions,
+                         ExpansionBudget &budget)
       : function(function), call(call), symbols(symbols), builder(builder),
-        expressions(expressions) {}
+        expressions(expressions), budget(budget) {}
 
   FailureOr<Operation *> compile() {
     resultType = call->getAttrOfType<TypeAttr>("semantic_type");
@@ -619,6 +655,9 @@ private:
       region->front().push_back(operand->clone());
     Operation *node = Operation::create(state);
     expressions.push_back(node);
+    // An exhausted budget fails the whole expansion; the tree built so far
+    // is discarded with the expression block.
+    budget.spend(node);
     return node;
   }
 
@@ -912,6 +951,8 @@ private:
       }
     }
     expressions.push_back(cloned);
+    if (!budget.spend(cloned))
+      return failure();
     return cloned;
   }
 
@@ -1410,15 +1451,15 @@ private:
   Environment initialValues;
   uint64_t remainingUnrollBudget = 4096;
   llvm::SmallPtrSet<Operation *, 16> writable;
+  ExpansionBudget &budget;
 };
 
 } // namespace
 
-static FailureOr<Operation *>
-getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
-                            semantic::SVCallExpressionOp call,
-                            const llvm::StringMap<Operation *> &symbols,
-                            Builder &builder, Block &expressions) {
+static FailureOr<Operation *> getConstraintFunctionResult(
+    semantic::SVSubroutineSymbolOp function, semantic::SVCallExpressionOp call,
+    const llvm::StringMap<Operation *> &symbols, Builder &builder,
+    Block &expressions, ExpansionBudget &budget) {
   MLIRContext *context = function.getContext();
   SmallVector<semantic::SVReturnStatementOp> returns;
   SmallVector<semantic::SVExpressionStatementOp> expressionStatements;
@@ -1458,10 +1499,15 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
   });
   if (unsupportedLocal || unsupportedStatement) {
     FailureOr<Operation *> result =
-        ConstraintFunctionBody(function, call, symbols, builder, expressions)
+        ConstraintFunctionBody(function, call, symbols, builder, expressions,
+                               budget)
             .compile();
     if (succeeded(result))
       return result;
+    if (budget.exhausted()) {
+      budget.diagnose(getSemanticLocation(call));
+      return failure();
+    }
     emitError(getSemanticLocation(call))
         << "constraint function " << function.getName().value_or("")
         << " must be a side-effect-free expression function or an admitted "
@@ -1517,10 +1563,15 @@ getConstraintFunctionResult(semantic::SVSubroutineSymbolOp function,
       return operands.back();
   }
   FailureOr<Operation *> result =
-      ConstraintFunctionBody(function, call, symbols, builder, expressions)
+      ConstraintFunctionBody(function, call, symbols, builder, expressions,
+                             budget)
           .compile();
   if (succeeded(result))
     return result;
+  if (budget.exhausted()) {
+    budget.diagnose(getSemanticLocation(call));
+    return failure();
+  }
   emitError(getSemanticLocation(call))
       << "constraint function " << function.getName().value_or("")
       << " must be a side-effect-free expression function or an admitted "
@@ -1536,6 +1587,7 @@ LogicalResult expandRandomConstraintFunctions(
     llvm::function_ref<
         FailureOr<semantic::SVSubroutineSymbolOp>(semantic::SVCallExpressionOp)>
         resolveConstraintFunction) {
+  ExpansionBudget budget;
   std::function<FailureOr<Operation *>(
       Operation *, const llvm::DenseMap<Operation *, Operation *> &, bool,
       SmallVectorImpl<Operation *> &)>
@@ -1550,8 +1602,15 @@ LogicalResult expandRandomConstraintFunctions(
       auto symbol = semanticSymbols.find(reference.getLeafReference());
       if (symbol != semanticSymbols.end())
         if (auto substitution = substitutions.find(symbol->second);
-            substitution != substitutions.end())
-          return substitution->second->clone();
+            substitution != substitutions.end()) {
+          Operation *copy = substitution->second->clone();
+          if (!budget.spend(copy)) {
+            copy->destroy();
+            budget.diagnose(getSemanticLocation(source));
+            return failure();
+          }
+          return copy;
+        }
     }
 
     if (auto callExpression = dyn_cast<semantic::SVCallExpressionOp>(source);
@@ -1607,7 +1666,7 @@ LogicalResult expandRandomConstraintFunctions(
       auto functionExpressions = std::make_unique<Block>();
       FailureOr<Operation *> result = getConstraintFunctionResult(
           *function, callExpression, semanticSymbols, builder,
-          *functionExpressions);
+          *functionExpressions, budget);
       if (failed(result))
         return failure();
       callStack.push_back(function->getOperation());
@@ -1628,10 +1687,18 @@ LogicalResult expandRandomConstraintFunctions(
                            builder.getI64IntegerAttr(argumentCount));
         auto *region = state.addRegion();
         region->push_back(new Block());
-        for (Operation &argument : templates->getOperations())
+        bool spent = true;
+        for (Operation &argument : templates->getOperations()) {
           region->front().push_back(argument.clone());
+          spent &= budget.spend(&region->front().back());
+        }
         region->front().push_back(*cloned);
         cloned = Operation::create(state);
+        if (!spent) {
+          (*cloned)->destroy();
+          budget.diagnose(getSemanticLocation(callExpression));
+          return failure();
+        }
       }
       if (succeeded(cloned))
         if (auto inputs =
@@ -1647,6 +1714,11 @@ LogicalResult expandRandomConstraintFunctions(
     }
 
     Operation *cloned = source->cloneWithoutRegions();
+    if (!budget.spend(cloned)) {
+      cloned->destroy();
+      budget.diagnose(getSemanticLocation(source));
+      return failure();
+    }
     if (functionBody) {
       cloned->setAttr(randomFunctionExpressionAttrName, builder.getUnitAttr());
       if (auto reference =
