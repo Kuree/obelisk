@@ -1375,7 +1375,7 @@
         {
           "feature": "Contained objects and foreach priority",
           "status": "partial",
-          "detail": "Static foreach expansion preserves declaration-order iteration so later body instances receive higher soft priority, including descending ranges. Full object-containment and runtime-iteration relationships still need coverage."
+          "detail": "Static foreach expansion preserves declaration-order iteration so later body instances receive higher soft priority, including descending ranges. Contained objects rank below their container, with later handles above earlier ones. An object contained through several handles does not yet take the priority of its last handle, and runtime-iteration relationships still need coverage."
         }
       ],
       "evidence": {
@@ -1397,7 +1397,8 @@
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.sv",
           "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.sv",
-          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.sv"
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-contained-soft-priority-runtime.sv"
         ]
       }
     },

@@ -6870,11 +6870,60 @@ void ObeliskSimPreparePass::runOnOperation() {
                           randomPostHookSourceAttrName)))
       invalid = true;
     collectEffectiveConstraints(hierarchy, constraintGroups);
+    unsigned containerGroupCount = constraintGroups.size();
     for (NestedObjectPlan &plan : nestedObjectPlans) {
       for (const EffectiveConstraintGroup &group : plan.constraintGroups) {
         plan.globalConstraintIndices.push_back(constraintGroups.size());
         constraintGroups.push_back(group);
       }
+    }
+    // IEEE 1800-2023 18.5.13.1: constraints in contained objects have lower
+    // priority than all constraints of their container, and objects whose
+    // handles are declared later have higher priority. Order executable
+    // bodies, which assign soft priorities, by a post-order walk of the
+    // contained-object handle paths, then the container's own blocks. Plans
+    // are collected with sibling handles in declaration order.
+    SmallVector<unsigned> executableGroupOrder;
+    {
+      struct PathNode {
+        llvm::SmallDenseMap<Attribute, unsigned, 4> children;
+        SmallVector<unsigned> childOrder;
+        SmallVector<unsigned> plans;
+      };
+      SmallVector<PathNode> nodes(1);
+      for (auto [planIndex, plan] : llvm::enumerate(nestedObjectPlans)) {
+        SmallVector<Attribute> path{plan.field};
+        for (const RandomObjectPathElement &element : plan.nestedObjectPath)
+          path.push_back(element.field);
+        unsigned node = 0;
+        for (Attribute step : path) {
+          auto [found, inserted] =
+              nodes[node].children.try_emplace(step, nodes.size());
+          unsigned child = found->second;
+          if (inserted) {
+            nodes[node].childOrder.push_back(child);
+            nodes.emplace_back();
+          }
+          node = child;
+        }
+        nodes[node].plans.push_back(planIndex);
+      }
+      SmallVector<std::pair<unsigned, bool>> pending{{0, false}};
+      while (!pending.empty()) {
+        auto [node, visited] = pending.pop_back_val();
+        if (!visited) {
+          pending.push_back({node, true});
+          for (unsigned child : llvm::reverse(nodes[node].childOrder))
+            pending.push_back({child, false});
+          continue;
+        }
+        for (unsigned planIndex : nodes[node].plans)
+          llvm::append_range(
+              executableGroupOrder,
+              nestedObjectPlans[planIndex].globalConstraintIndices);
+      }
+      for (unsigned index = 0; index != containerGroupCount; ++index)
+        executableGroupOrder.push_back(index);
     }
     if (constraintGroups.size() > 64) {
       emitError(getSemanticLocation(call))
@@ -6899,8 +6948,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     // Stable mode-bit order follows the first base declaration of each named
     // block. Executable body and soft-priority order instead follow active
     // source declaration order, with every derived declaration after all base
-    // declarations. Keep those two orderings deliberately separate.
-    for (auto [groupIndex, group] : llvm::enumerate(constraintGroups)) {
+    // declarations and contained objects before their container. Keep those
+    // two orderings deliberately separate.
+    for (unsigned groupIndex : executableGroupOrder) {
+      const EffectiveConstraintGroup &group = constraintGroups[groupIndex];
       for (semantic::SVConstraintBlockSymbolOp constraint : group) {
         if (constraint.getIsPure().value_or(false)) {
           emitError(getSemanticLocation(constraint))
