@@ -10,6 +10,12 @@ add_mlir_library(ObeliskScheduleIR
   ObeliskScheduleDialectIncGen
   ObeliskScheduleAttrsIncGen
   ObeliskScheduleEnumsIncGen
+  # ScheduleOps.cpp includes the Simulation ops it schedules.
+  ObeliskSimulationDialectIncGen
+  ObeliskSimulationEnumsIncGen
+  ObeliskSimulationAttrsIncGen
+  ObeliskSimulationOpsIncGen
+  ObeliskSimulationTypesIncGen
   LINK_LIBS PUBLIC
   MLIRArithDialect
   MLIRControlFlowInterfaces
