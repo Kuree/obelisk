@@ -644,7 +644,7 @@
         {
           "feature": "Expression on the left-hand side",
           "status": "supported",
-          "detail": "Up to 64 bits, a rand property or a constant selection of one is weighted as its assignment field, and any other integral expression containing a rand variable is exported to the compiled plan and weighted by its values through auxiliary sampler variables. Expressions whose inputs a solve-before path splits are diagnosed, as are fields. Without compiler Z3 only properties and constant selections are executable."
+          "detail": "Up to 64 bits, a rand property or a constant selection of one is weighted as its assignment field, and any other integral expression containing a rand variable is exported to the compiled plan and weighted by its values through auxiliary sampler variables. Expressions whose inputs a solve-before path splits are diagnosed, as are fields. Without compiler Z3 only complete properties are executable."
         },
         {
           "feature": "Unsigned weight interpretation",

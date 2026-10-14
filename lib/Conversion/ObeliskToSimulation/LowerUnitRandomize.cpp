@@ -4071,6 +4071,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         distTarget.property =
             static_cast<unsigned>(variable.getValue().getZExtValue());
         distTarget.offset = propertyOffsets[*distTarget.property];
+      } else if (!rawDistWeights) {
+        // The bounded traversal's materialized proposals sample one complete
+        // property per distribution.
+        emitError(getSemanticLocation(expression))
+            << "dist on anything other than a complete rand property "
+               "requires compiler Z3 sampling plans";
+        return failure();
       } else {
         FailureOr<unsigned> width = expressionWidth(target);
         if (failed(width))
@@ -4089,12 +4096,6 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         } else if (!dependsOnCandidate(target)) {
           emitError(getSemanticLocation(expression))
               << "dist requires its expression to contain a rand variable";
-          return failure();
-        } else if (!rawDistWeights) {
-          emitError(getSemanticLocation(expression))
-              << "dist on an expression other than a rand property or a "
-                 "constant selection of one requires compiler Z3 sampling "
-                 "plans";
           return failure();
         } else {
           distTarget.exported = true;
