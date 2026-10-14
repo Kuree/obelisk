@@ -16,12 +16,8 @@ module {
         %in: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64,
                     schedule.primitive_name = "bad",
-                    simulation.udp_metadata = {
-                      is_edge_sensitive = false, is_sequential = false,
-                      name = "bad", port_directions = array<i64: 0, 0>,
-                      port_names = ["out", "in"], table_edges = array<i64: 0>,
-                      table_inputs = ["?"], table_outputs = array<i64: 48>,
-                      table_states = array<i64: 0>},
+                    simulation.udp_metadata = #simulation.udp<name = "bad", ports = ["out", "in"], portDirections = [0, 0], sequential = false, edgeSensitive = false,
+                      rows = [#simulation.udp_row<inputs = "?", state = "", output = "0", edge = false>]>,
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.in", argument = 2, kind = direct, copyOut = false>]} {
@@ -53,13 +49,8 @@ module {
         %in: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 2 : i64,
                     schedule.primitive_name = "seq",
-                    simulation.udp_metadata = {
-                      init_value = "1'bz", is_edge_sensitive = false,
-                      is_sequential = true, name = "seq",
-                      port_directions = array<i64: 2, 0>,
-                      port_names = ["out", "in"], table_edges = array<i64: 0>,
-                      table_inputs = ["0"], table_outputs = array<i64: 48>,
-                      table_states = array<i64: 63>},
+                    simulation.udp_metadata = #simulation.udp<name = "seq", ports = ["out", "in"], portDirections = [2, 0], sequential = true, edgeSensitive = false, initValue = "1'bz",
+                      rows = [#simulation.udp_row<inputs = "0", state = "?", output = "0", edge = false>]>,
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.in", argument = 2, kind = direct, copyOut = false>]} {
@@ -91,12 +82,8 @@ module {
         %in: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 3 : i64,
                     schedule.primitive_name = "row",
-                    simulation.udp_metadata = {
-                      is_edge_sensitive = false, is_sequential = false,
-                      name = "row", port_directions = array<i64: 1, 0>,
-                      port_names = ["out", "in"], table_edges = array<i64: 1>,
-                      table_inputs = ["0"], table_outputs = array<i64: 45>,
-                      table_states = array<i64: 63>},
+                    simulation.udp_metadata = #simulation.udp<name = "row", ports = ["out", "in"], portDirections = [1, 0], sequential = false, edgeSensitive = false,
+                      rows = [#simulation.udp_row<inputs = "0", state = "?", output = "-", edge = true>]>,
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.in", argument = 2, kind = direct, copyOut = false>]} {

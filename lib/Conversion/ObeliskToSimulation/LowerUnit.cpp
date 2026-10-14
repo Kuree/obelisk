@@ -3334,34 +3334,17 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
   Value result;
   std::optional<std::array<Value, 2>> strengthResults;
   if (auto udp = sim::get<sim::metadata::UdpMetadata>(function)) {
-    auto udpName = udp.getAs<StringAttr>("name");
-    auto portNames = udp.getAs<ArrayAttr>("port_names");
-    auto portDirections = udp.getAs<DenseI64ArrayAttr>("port_directions");
-    auto tableInputs = udp.getAs<ArrayAttr>("table_inputs");
-    auto tableStates = udp.getAs<DenseI64ArrayAttr>("table_states");
-    auto tableOutputs = udp.getAs<DenseI64ArrayAttr>("table_outputs");
-    auto tableEdges = udp.getAs<DenseI64ArrayAttr>("table_edges");
-    auto sequential = udp.getAs<BoolAttr>("is_sequential");
-    auto edgeSensitive = udp.getAs<BoolAttr>("is_edge_sensitive");
-    if (!udpName || udpName.getValue() != name || !portNames ||
-        !portDirections || !tableInputs || !tableStates || !tableOutputs ||
-        !tableEdges || !sequential || !edgeSensitive ||
-        static_cast<int64_t>(portNames.size()) != portDirections.size() ||
-        portNames.size() < 2 ||
-        static_cast<int64_t>(tableInputs.size()) != tableStates.size() ||
-        static_cast<int64_t>(tableInputs.size()) != tableOutputs.size() ||
-        static_cast<int64_t>(tableInputs.size()) != tableEdges.size())
+    ArrayAttr portNames = udp.getPorts();
+    if (udp.getName().getValue() != name || portNames.size() < 2)
       return function.emitError("malformed frozen UDP declaration metadata");
-    bool isSequential = sequential.getValue();
-    ArrayRef<int64_t> directions = portDirections.asArrayRef();
+    bool isSequential = udp.getSequential();
+    ArrayRef<int64_t> directions = udp.getPortDirections().asArrayRef();
     int64_t expectedOutputDirection = isSequential ? 2 : 1;
     if (directions.front() != expectedOutputDirection ||
         !llvm::all_of(directions.drop_front(),
                       [](int64_t direction) { return direction == 0; }) ||
-        !llvm::all_of(portNames, [](Attribute name) {
-          auto string = dyn_cast<StringAttr>(name);
-          return string && !string.getValue().empty();
-        }))
+        !llvm::all_of(portNames.getAsRange<StringAttr>(),
+                      [](StringAttr name) { return !name.getValue().empty(); }))
       return function.emitError(
           "UDP ports must be one output followed by inputs");
     if (outputs.size() != 1 || logicType.getWidth() != 1)
@@ -3430,7 +3413,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
           builder, location, logicType, output->reference);
       Value initialState = outputX;
       bool initialDriverX = true;
-      if (auto spelling = udp.getAs<StringAttr>("init_value")) {
+      if (StringAttr spelling = udp.getInitValue()) {
         FailureOr<ParsedConstant> parsed =
             parseSVInteger(spelling.getValue(), 1, location);
         if (failed(parsed))
@@ -3557,26 +3540,19 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     Value currentDifference;
     Value previousDifference;
     Value edgeCurrentDifference;
-    ArrayRef<int64_t> states = tableStates.asArrayRef();
-    ArrayRef<int64_t> tableOutputValues = tableOutputs.asArrayRef();
-    ArrayRef<int64_t> edges = tableEdges.asArrayRef();
     bool sawEdge = false;
-    for (int64_t rowIndex = static_cast<int64_t>(tableInputs.size()) - 1;
-         rowIndex >= 0; --rowIndex) {
-      auto row = dyn_cast<StringAttr>(tableInputs[rowIndex]);
-      int64_t stateValue = states[rowIndex];
-      int64_t outputValue = tableOutputValues[rowIndex];
-      char state = static_cast<char>(stateValue);
-      char output = static_cast<char>(outputValue);
-      bool rowHasEdge = edges[rowIndex] != 0;
-      if (!row ||
-          (isSequential
-               ? (stateValue != '0' && stateValue != '1' && stateValue != 'x' &&
-                  stateValue != '?' && stateValue != 'b')
-               : stateValue != 0) ||
-          (outputValue != '0' && outputValue != '1' && outputValue != 'x' &&
-           (isSequential ? outputValue != '-' : true)) ||
-          (edges[rowIndex] != 0 && edges[rowIndex] != 1))
+    for (auto tableRow :
+         llvm::reverse(udp.getRows().getAsRange<sim::UdpRowAttr>())) {
+      char state = tableRow.getState().empty()
+                       ? '\0'
+                       : tableRow.getState().getValue().front();
+      char output = tableRow.getOutput().getValue().front();
+      bool rowHasEdge = tableRow.getEdge();
+      if ((isSequential ? (state != '0' && state != '1' && state != 'x' &&
+                           state != '?' && state != 'b')
+                        : state != '\0') ||
+          (output != '0' && output != '1' && output != 'x' &&
+           (isSequential ? output != '-' : true)))
         return function.emitError("malformed UDP table row");
 
       enum class EdgeKind {
@@ -3592,7 +3568,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       unsigned edgeInput = 0;
       SmallVector<char> currentSymbols;
       SmallVector<char> previousSymbols(inputCount, '?');
-      StringRef text = row.getValue();
+      StringRef text = tableRow.getInputs().getValue();
       for (size_t cursor = 0; cursor < text.size();) {
         if (currentSymbols.size() >= inputCount)
           return function.emitError("malformed UDP input row encoding");
@@ -3735,7 +3711,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                         : currentState;
       compiledRows.push_back({matches, rowOutput, rowHasEdge});
     }
-    if (edgeSensitive.getValue() != sawEdge)
+    if (udp.getEdgeSensitive() != sawEdge)
       return function.emitError("malformed UDP declaration edge metadata");
     // Rows were compiled from last to first. Apply edge rows in that order so
     // earlier source rows win within the edge class, then apply all level rows
@@ -5905,11 +5881,9 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   if (loopsForever) {
     loopHeader = addBlock();
     auto udp = sim::get<sim::metadata::UdpMetadata>(function);
-    auto sequentialUdp =
-        udp ? udp.getAs<BoolAttr>("is_sequential") : BoolAttr{};
-    if (sequentialUdp && sequentialUdp.getValue()) {
-      auto ports = udp.getAs<ArrayAttr>("port_names");
-      if (!ports || ports.size() < 2)
+    if (udp && udp.getSequential()) {
+      ArrayAttr ports = udp.getPorts();
+      if (ports.size() < 2)
         return function.emitError(
             "sequential UDP has malformed frozen port metadata");
       unsigned inputCount = ports.size() - 1;

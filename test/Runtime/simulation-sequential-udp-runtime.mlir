@@ -53,14 +53,8 @@ module attributes {
         %input: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9230001 : i64,
                     schedule.primitive_name = "udp_rise",
-                    simulation.udp_metadata = {
-                      init_value = "1'b0", is_edge_sensitive = true,
-                      is_sequential = true, name = "udp_rise",
-                      port_directions = array<i64: 2, 0>,
-                      port_names = ["out", "input"],
-                      table_edges = array<i64: 1>, table_inputs = ["r"],
-                      table_outputs = array<i64: 49>,
-                      table_states = array<i64: 63>},
+                    simulation.udp_metadata = #simulation.udp<name = "udp_rise", ports = ["out", "input"], portDirections = [2, 0], sequential = true, edgeSensitive = true, initValue = "1'b0",
+                      rows = [#simulation.udp_row<inputs = "r", state = "?", output = "1", edge = true>]>,
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.out", argument = 1, kind = lvalue_only, copyOut = false>,
                       #simulation.argument_binding<path = "top.input", argument = 2, kind = direct, copyOut = false>]} {

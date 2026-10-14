@@ -40,15 +40,9 @@ module {
         %out: !simulation.driver<!simulation.logic<1>> {simulation.capture_kind = 5 : i32, simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 9220001 : i64,
                     schedule.primitive_name = "udp_edge",
-                    simulation.udp_metadata = {
-                      init_value = "1'b0", is_edge_sensitive = true,
-                      is_sequential = true, name = "udp_edge",
-                      port_directions = array<i64: 2, 0>,
-                      port_names = ["out", "in"],
-                      table_edges = array<i64: 1, 1>,
-                      table_inputs = ["(b?)", "p"],
-                      table_outputs = array<i64: 49, 49>,
-                      table_states = array<i64: 63, 63>},
+                    simulation.udp_metadata = #simulation.udp<name = "udp_edge", ports = ["out", "in"], portDirections = [2, 0], sequential = true, edgeSensitive = true, initValue = "1'b0",
+                      rows = [#simulation.udp_row<inputs = "(b?)", state = "?", output = "1", edge = true>,
+                        #simulation.udp_row<inputs = "p", state = "?", output = "1", edge = true>]>,
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.in", argument = 1, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.out", argument = 3, kind = lvalue_only, copyOut = false>]} {

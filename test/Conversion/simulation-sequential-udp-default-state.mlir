@@ -37,14 +37,8 @@ module attributes {
              simulation.descriptor_id = 0 : i64})
         attributes {entry_kind = 7 : i32, code_unit_id = 1 : i64,
                     schedule.primitive_name = "udp_default_x",
-                    simulation.udp_metadata = {
-                      is_edge_sensitive = false, is_sequential = true,
-                      name = "udp_default_x",
-                      port_directions = array<i64: 2, 0>,
-                      port_names = ["out", "input"],
-                      table_edges = array<i64: 0>, table_inputs = ["?"],
-                      table_outputs = array<i64: 45>,
-                      table_states = array<i64: 63>},
+                    simulation.udp_metadata = #simulation.udp<name = "udp_default_x", ports = ["out", "input"], portDirections = [2, 0], sequential = true, edgeSensitive = false,
+                      rows = [#simulation.udp_row<inputs = "?", state = "?", output = "-", edge = false>]>,
                     simulation.bindings = [
                       #simulation.argument_binding<path = "top.input", argument = 1, kind = direct, copyOut = false>,
                       #simulation.argument_binding<path = "top.out", argument = 2, kind = lvalue_only, copyOut = false>]} {

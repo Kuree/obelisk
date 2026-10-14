@@ -873,6 +873,25 @@ LogicalResult TimingPathMonitorAttr::verify(
                                    edge);
 }
 
+LogicalResult UdpRowAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                                 StringAttr, StringAttr state,
+                                 StringAttr output, bool) {
+  if (state.size() > 1 || output.size() != 1)
+    return emitError() << "UDP table symbols must be single characters";
+  return success();
+}
+
+LogicalResult UdpAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                              StringAttr, ArrayAttr ports,
+                              DenseI64ArrayAttr portDirections, bool, bool,
+                              StringAttr, ArrayAttr rows) {
+  if (static_cast<int64_t>(ports.size()) != portDirections.size() ||
+      !llvm::all_of(ports, llvm::IsaPred<StringAttr>) ||
+      !llvm::all_of(rows, llvm::IsaPred<UdpRowAttr>))
+    return emitError() << "UDP declaration is malformed";
+  return success();
+}
+
 LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {

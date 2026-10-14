@@ -378,7 +378,8 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::ArrayAttr":$timing_path_rules,
     "::mlir::FlatSymbolRefAttr":$timing_timer_helper,
     "::mlir::IntegerAttr":$timing_timer_storage,
-    "::mlir::DictionaryAttr":$udp_metadata,
+    // The `#simulation.udp` declaration of a primitive instance's unit.
+    "::obelisk::sim::UdpAttr":$udp_metadata,
     "::mlir::UnitAttr":$user_defined_net,
     "::mlir::UnitAttr":$user_net_driver,
     "::mlir::UnitAttr":$user_net_raw_drive,

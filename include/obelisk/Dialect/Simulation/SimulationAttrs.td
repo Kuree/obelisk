@@ -718,6 +718,36 @@ def SimTimingPathMonitorAttr
   }];
 }
 
+def SimUdpRowAttr : SimAttr<"UdpRow", "udp_row"> {
+  let summary = "one row of a user-defined primitive table";
+  let description = [{
+    The input field `inputs` (levels, edges and `(vw)` transitions), the
+    current `state` symbol of a sequential primitive (empty for a
+    combinational one) and the `output` symbol (IEEE 1800-2023 29.3.6).
+    `edge` marks a row with an edge.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$inputs,
+      "::mlir::StringAttr":$state, "::mlir::StringAttr":$output,
+      "bool":$edge);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimUdpAttr : SimAttr<"Udp", "udp"> {
+  let summary = "the declaration of a user-defined primitive";
+  let description = [{
+    Primitive `name` with `ports` listed output first, their frontend
+    `portDirections`, and its table `rows` (IEEE 1800-2023 29). A sequential
+    primitive may declare its initial output `initValue`.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$name, "::mlir::ArrayAttr":$ports,
+      "::mlir::DenseI64ArrayAttr":$portDirections, "bool":$sequential,
+      "bool":$edgeSensitive, OptionalParameter<"::mlir::StringAttr">:$initValue,
+      "::mlir::ArrayAttr":$rows);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

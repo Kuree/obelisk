@@ -186,6 +186,49 @@ prepareDPISignature(semantic::SVSubroutineSymbolOp subroutine,
                               static_cast<uint32_t>(inputs.size())};
 }
 
+/// The executable form of the frontend's declaration metadata of a
+/// user-defined primitive, or null when it is malformed.
+static sim::UdpAttr getUdpDeclaration(DictionaryAttr metadata) {
+  auto name = metadata.getAs<StringAttr>("name");
+  auto ports = metadata.getAs<ArrayAttr>("port_names");
+  auto directions = metadata.getAs<DenseI64ArrayAttr>("port_directions");
+  auto inputs = metadata.getAs<ArrayAttr>("table_inputs");
+  auto states = metadata.getAs<DenseI64ArrayAttr>("table_states");
+  auto outputs = metadata.getAs<DenseI64ArrayAttr>("table_outputs");
+  auto edges = metadata.getAs<DenseI64ArrayAttr>("table_edges");
+  auto sequential = metadata.getAs<BoolAttr>("is_sequential");
+  auto edgeSensitive = metadata.getAs<BoolAttr>("is_edge_sensitive");
+  if (!name || !ports || !directions || !inputs || !states || !outputs ||
+      !edges || !sequential || !edgeSensitive ||
+      static_cast<int64_t>(ports.size()) != directions.size() ||
+      !llvm::all_of(ports, llvm::IsaPred<StringAttr>) ||
+      static_cast<int64_t>(inputs.size()) != states.size() ||
+      static_cast<int64_t>(inputs.size()) != outputs.size() ||
+      static_cast<int64_t>(inputs.size()) != edges.size())
+    return {};
+  MLIRContext *context = metadata.getContext();
+  // Table symbols are characters; a combinational row has no state.
+  auto symbol = [&](int64_t value) {
+    char character = static_cast<char>(value);
+    return StringAttr::get(context,
+                           value == 0 ? StringRef() : StringRef(&character, 1));
+  };
+  SmallVector<Attribute> rows;
+  for (auto [row, state, output, edge] :
+       llvm::zip(inputs, states.asArrayRef(), outputs.asArrayRef(),
+                 edges.asArrayRef())) {
+    auto text = dyn_cast<StringAttr>(row);
+    if (!text || output == 0 || (edge != 0 && edge != 1))
+      return {};
+    rows.push_back(sim::UdpRowAttr::get(context, text, symbol(state),
+                                        symbol(output), edge != 0));
+  }
+  return sim::UdpAttr::get(context, name, ports, directions,
+                           sequential.getValue(), edgeSensitive.getValue(),
+                           metadata.getAs<StringAttr>("init_value"),
+                           ArrayAttr::get(context, rows));
+}
+
 static semantic::SVClassTypeOp getOwningClass(Operation *member) {
   for (Operation *parent = member ? member->getParentOp() : nullptr; parent;
        parent = parent->getParentOp())
@@ -9856,8 +9899,17 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getDenseI64ArrayAttr(ticks)));
     }
     if (auto udp = unit.source->getAttrOfType<DictionaryAttr>(
-            udpSemanticMetadataAttrName))
-      functionAttrs.push_back(sim::named<sim::metadata::UdpMetadata>(udp));
+            udpSemanticMetadataAttrName)) {
+      sim::UdpAttr declaration = getUdpDeclaration(udp);
+      if (!declaration) {
+        emitError(getSemanticLocation(unit.source))
+            << "malformed frozen UDP declaration metadata";
+        invalid = true;
+        continue;
+      }
+      functionAttrs.push_back(
+          sim::named<sim::metadata::UdpMetadata>(declaration));
+    }
     if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
             "obelisk.timing_path_rules")) {
       // Delays and pulse limits are whole design precision ticks.

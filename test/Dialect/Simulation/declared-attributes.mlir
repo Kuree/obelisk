@@ -127,4 +127,13 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
                                                       monitor = true>,
       condition = #simulation.timing_path_condition<kind = if, group = 0,
         node = 9, evaluator = @cond, captures = ["top.en"]>>]}
+
+  // CHECK-LABEL: func.func private @udp
+  // CHECK-SAME: simulation.udp_metadata = #simulation.udp<name = "latch", ports = ["q", "d"], portDirections = [2, 0], sequential = true, edgeSensitive = false, initValue = "1'b0", rows = [#simulation.udp_row<inputs = "1", state = "?", output = "1", edge = false>]>
+  func.func private @udp() attributes {
+    simulation.udp_metadata = #simulation.udp<name = "latch", ports = ["q", "d"],
+      portDirections = [2, 0], sequential = true, edgeSensitive = false,
+      initValue = "1'b0",
+      rows = [#simulation.udp_row<inputs = "1", state = "?", output = "1",
+                                  edge = false>]>}
 }
