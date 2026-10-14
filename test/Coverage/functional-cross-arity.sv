@@ -31,10 +31,10 @@ module top;
 endmodule
 
 // OUT: PRODUCT 100.00
+// REPORT: coverpoint cp0: 2/2 (100.00%)
 // REPORT: cross product: 4/4 (100.00%)
 // REPORT-NEXT: automatic: 4/4
 // REPORT-DAG: auto bin <b,a,{{[a,]+}}>: 1 [covered, at_least 1]
 // REPORT-DAG: auto bin <b,b,{{[a,]+}}>: 1 [covered, at_least 1]
 // REPORT-DAG: auto bin <a,a,{{[a,]+}}>: 1 [covered, at_least 1]
 // REPORT-DAG: auto bin <a,b,{{[a,]+}}>: 1 [covered, at_least 1]
-// REPORT: coverpoint

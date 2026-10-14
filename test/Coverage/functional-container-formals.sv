@@ -137,8 +137,8 @@ endmodule
 // Derived::group extends Base::group (IEEE 19.4.1), so its type row names
 // Base::group as its base.
 // JSON: "functional_types":[
-// JSON-DAG: {{[{]}}"id":[[BASE:[0-9]+]],"scope":{{[0-9]+}},"name":"","base":0,"comment":"","hierarchy":"Base::group"
-// JSON-DAG: {{[{]}}"id":[[DERIVED:[0-9]+]],"scope":{{[0-9]+}},"name":"","base":[[BASE]],"comment":"","hierarchy":"Derived::group"
+// JSON-DAG: {{[{]}}"id":[[BASE:[0-9]+]],"scope":{{[0-9]+}},"name":"group","base":0,"comment":"","hierarchy":"Base::group"
+// JSON-DAG: {{[{]}}"id":[[DERIVED:[0-9]+]],"scope":{{[0-9]+}},"name":"group","base":[[BASE]],"comment":"","hierarchy":"Derived::group"
 // JSON-DAG: {{[{]}}"id":[[ARRAYS:[0-9]+]],"scope":{{[0-9]+}},"name":"arrays",
 // JSON-DAG: {{[{]}}"id":[[PATHS:[0-9]+]],"scope":{{[0-9]+}},"name":"paths",
 // JSON-DAG: {{[{]}}"id":[[SAMPLED:[0-9]+]],"scope":{{[0-9]+}},"name":"sampled",

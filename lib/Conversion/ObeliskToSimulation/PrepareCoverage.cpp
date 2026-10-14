@@ -2549,10 +2549,12 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
           signalPassFailure();
           return;
         }
+        // An embedded covergroup's anonymous type is named by its property
+        // (IEEE 1800-2023 19.4), the last component of its hierarchy.
         schema.functionalTypes.push_back(
             {typeID, scope,
-             declaration.getDebugName().value_or(typeHierarchy).str(), 0,
-             languageVersion, typeHierarchy});
+             reportName(declaration.getDebugName().value_or(""), typeHierarchy),
+             0, languageVersion, typeHierarchy});
         if (auto base = declaration.getBaseAttr()) {
           schema.functionalTypes.back().base =
               covergroupTypeIDs.lookup(base.getRootReference());

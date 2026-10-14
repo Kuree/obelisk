@@ -867,6 +867,13 @@ ReportData analyze(const Database &database, const std::string &test) {
   IndexMap<ConfigurationKey, IndexSet<uint64_t>> resolvedBinIDs;
   for (const ResolvedFunctionalItem &item : database.resolvedFunctionalItems)
     resolvedItems[{item.type, item.configuration}].push_back(&item);
+  // Report items in declaration order; IDs hash the source path.
+  for (auto &[configuration, items] : resolvedItems)
+    std::stable_sort(items.begin(), items.end(),
+                     [](const ResolvedFunctionalItem *left,
+                        const ResolvedFunctionalItem *right) {
+                       return left->ordinal < right->ordinal;
+                     });
   for (const ResolvedFunctionalBin &bin : database.resolvedFunctionalBins) {
     ConfigurationKey key{bin.type, bin.configuration};
     resolvedBins[{bin.type, bin.configuration, bin.item}].push_back(&bin);
@@ -2013,15 +2020,22 @@ void textReport(llvm::raw_ostream &out, const Database &database,
     for (const Exclusion &exclusion : database.exclusions)
       if (exclusion.metric == MetricKind::Functional)
         functionalExclusions.emplace(exclusion.entity, exclusion.reason);
-    IndexMap<uint64_t, const FunctionalType *> types;
+    // Types are listed by hierarchy, which unlike their IDs does not depend
+    // on the source path.
+    std::vector<const FunctionalType *> types;
     for (const FunctionalType &type : database.functionalTypes)
-      types[type.id] = &type;
+      if (report.functionalTypes.count(type.id))
+        types.push_back(&type);
+    std::stable_sort(types.begin(), types.end(),
+                     [](const FunctionalType *left, const FunctionalType *right) {
+                       return std::tie(left->hierarchy, left->name) <
+                              std::tie(right->hierarchy, right->name);
+                     });
     out << "functional detail:\n";
-    for (const auto &[typeID, typeReport] : report.functionalTypes) {
-      auto type = types.find(typeID);
-      if (type == types.end())
-        continue;
-      out << "  type " << type->second->name << " (" << typeID
+    for (const FunctionalType *type : types) {
+      const uint64_t typeID = type->id;
+      const auto &typeReport = report.functionalTypes.at(typeID);
+      out << "  type " << type->name << " (" << typeID
           << "): " << llvm::format("%.2f", typeReport.percentage) << "%\n";
       out << "    type options: goal " << typeReport.goal << ", weight "
           << typeReport.weight << ", merge_instances "
