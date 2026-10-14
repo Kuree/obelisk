@@ -24,10 +24,38 @@ namespace obelisk::coverage::detail {
 // Fixed-width reference lookup has a fixed depth even for adversarial IDs.
 // Variable-width keys cost O(key bytes), including their common prefixes.
 template <typename T, typename Enable = void> struct IndexKey;
+
+// Encoded lookup keys up to InlineSize bytes stay on the stack, so finding an
+// existing key does not allocate. Longer keys move to the heap once.
+class IndexKeyBytes {
+  static constexpr size_t InlineSize = 64;
+  uint8_t inlineBytes[InlineSize];
+  std::vector<uint8_t> heap;
+  size_t length = 0;
+
+public:
+  void push_back(uint8_t byte) {
+    if (length < InlineSize) {
+      inlineBytes[length++] = byte;
+      return;
+    }
+    if (heap.empty())
+      heap.assign(inlineBytes, inlineBytes + InlineSize);
+    heap.push_back(byte);
+    ++length;
+  }
+  const uint8_t *begin() const {
+    return length <= InlineSize ? inlineBytes : heap.data();
+  }
+  const uint8_t *end() const { return begin() + length; }
+  size_t size() const { return length; }
+  uint8_t operator[](size_t index) const { return begin()[index]; }
+};
 template <typename T>
 struct IndexKey<
     T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool>>> {
-  static void append(std::vector<uint8_t> &bytes, T value) {
+  template <typename Bytes>
+  static void append(Bytes &bytes, T value) {
     using U = std::make_unsigned_t<T>;
     U bits = static_cast<U>(value);
     if constexpr (std::is_signed_v<T>)
@@ -37,18 +65,21 @@ struct IndexKey<
   }
 };
 template <> struct IndexKey<bool> {
-  static void append(std::vector<uint8_t> &bytes, bool value) {
+  template <typename Bytes>
+  static void append(Bytes &bytes, bool value) {
     bytes.push_back(value);
   }
 };
 template <typename T> struct IndexKey<T, std::enable_if_t<std::is_enum_v<T>>> {
-  static void append(std::vector<uint8_t> &bytes, T value) {
+  template <typename Bytes>
+  static void append(Bytes &bytes, T value) {
     IndexKey<std::underlying_type_t<T>>::append(
         bytes, static_cast<std::underlying_type_t<T>>(value));
   }
 };
 template <> struct IndexKey<std::string> {
-  static void append(std::vector<uint8_t> &bytes, const std::string &value) {
+  template <typename Bytes>
+  static void append(Bytes &bytes, const std::string &value) {
     for (unsigned char byte : value) {
       bytes.push_back(1);
       bytes.push_back(byte);
@@ -57,14 +88,16 @@ template <> struct IndexKey<std::string> {
   }
 };
 template <typename T, size_t N> struct IndexKey<std::array<T, N>> {
-  static void append(std::vector<uint8_t> &bytes,
+  template <typename Bytes>
+  static void append(Bytes &bytes,
                      const std::array<T, N> &value) {
     for (const auto &element : value)
       IndexKey<T>::append(bytes, element);
   }
 };
 template <typename T> struct IndexKey<std::vector<T>> {
-  static void append(std::vector<uint8_t> &bytes, const std::vector<T> &value) {
+  template <typename Bytes>
+  static void append(Bytes &bytes, const std::vector<T> &value) {
     for (const auto &element : value) {
       bytes.push_back(1);
       IndexKey<T>::append(bytes, element);
@@ -73,7 +106,8 @@ template <typename T> struct IndexKey<std::vector<T>> {
   }
 };
 template <typename... T> struct IndexKey<std::tuple<T...>> {
-  static void append(std::vector<uint8_t> &bytes,
+  template <typename Bytes>
+  static void append(Bytes &bytes,
                      const std::tuple<T...> &value) {
     std::apply(
         [&](const auto &...element) {
@@ -84,7 +118,8 @@ template <typename... T> struct IndexKey<std::tuple<T...>> {
   }
 };
 template <typename A, typename B> struct IndexKey<std::pair<A, B>> {
-  static void append(std::vector<uint8_t> &bytes,
+  template <typename Bytes>
+  static void append(Bytes &bytes,
                      const std::pair<A, B> &value) {
     IndexKey<std::decay_t<A>>::append(bytes, value.first);
     IndexKey<std::decay_t<B>>::append(bytes, value.second);
@@ -126,11 +161,17 @@ template <typename Key, typename Value> class IndexMap {
   Entry *first = nullptr;
   Entry *last = nullptr;
 
-  static unsigned branch(const std::vector<uint8_t> &key, size_t bit) {
+  template <typename Bytes>
+  static unsigned branch(const Bytes &key, size_t bit) {
     assert(bit / 8 < key.size());
     return (key[bit / 8] >> (7 - bit % 8)) & 1;
   }
-  Entry *lookup(const std::vector<uint8_t> &key) const {
+  static bool sameBytes(const std::vector<uint8_t> &stored,
+                        const IndexKeyBytes &key) {
+    return stored.size() == key.size() &&
+           std::equal(key.begin(), key.end(), stored.begin());
+  }
+  Entry *lookup(const IndexKeyBytes &key) const {
     if (root == None)
       return nullptr;
     size_t node = root;
@@ -140,9 +181,9 @@ template <typename Key, typename Value> class IndexMap {
       node = nodes[node].child[branch(key, nodes[node].bit)];
     }
     Entry *entry = nodes[node].first;
-    return entry->bytes == key ? entry : nullptr;
+    return sameBytes(entry->bytes, key) ? entry : nullptr;
   }
-  Entry *lookupBound(const std::vector<uint8_t> &key, bool after) const {
+  Entry *lookupBound(const IndexKeyBytes &key, bool after) const {
     if (root == None)
       return nullptr;
     size_t position = root, prefix = 0;
@@ -250,32 +291,32 @@ public:
   const_iterator begin() const { return {this, first}; }
   const_iterator end() const { return {this, nullptr}; }
   iterator find(const Key &key) {
-    std::vector<uint8_t> bytes;
+    IndexKeyBytes bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookup(bytes)};
   }
   const_iterator find(const Key &key) const {
-    std::vector<uint8_t> bytes;
+    IndexKeyBytes bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookup(bytes)};
   }
   iterator lower_bound(const Key &key) {
-    std::vector<uint8_t> bytes;
+    IndexKeyBytes bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookupBound(bytes, false)};
   }
   const_iterator lower_bound(const Key &key) const {
-    std::vector<uint8_t> bytes;
+    IndexKeyBytes bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookupBound(bytes, false)};
   }
   iterator upper_bound(const Key &key) {
-    std::vector<uint8_t> bytes;
+    IndexKeyBytes bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookupBound(bytes, true)};
   }
   const_iterator upper_bound(const Key &key) const {
-    std::vector<uint8_t> bytes;
+    IndexKeyBytes bytes;
     IndexKey<Key>::append(bytes, key);
     return {this, lookupBound(bytes, true)};
   }
@@ -340,15 +381,17 @@ private:
   std::pair<iterator, bool> emplaceWithUndo(std::vector<InsertionUndo> *journal,
                                             K &&key, Args &&...args) {
     Key ownedKey(std::forward<K>(key));
-    std::vector<uint8_t> bytes;
-    IndexKey<Key>::append(bytes, ownedKey);
+    IndexKeyBytes probe;
+    IndexKey<Key>::append(probe, ownedKey);
     size_t candidate = root;
     while (candidate != None && nodes[candidate].bit != None &&
-           nodes[candidate].bit / 8 < bytes.size()) {
-      candidate = nodes[candidate].child[branch(bytes, nodes[candidate].bit)];
+           nodes[candidate].bit / 8 < probe.size()) {
+      candidate = nodes[candidate].child[branch(probe, nodes[candidate].bit)];
     }
-    if (candidate != None && nodes[candidate].first->bytes == bytes)
+    if (candidate != None && sameBytes(nodes[candidate].first->bytes, probe))
       return {{this, nodes[candidate].first}, false};
+    // Only a new leaf owns its encoded key.
+    std::vector<uint8_t> bytes(probe.begin(), probe.end());
     size_t differingBit = 0;
     if (candidate != None) {
       const auto &existing = nodes[candidate].first->bytes;

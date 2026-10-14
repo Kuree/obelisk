@@ -1831,7 +1831,8 @@ struct FunctionalCoverageTypeKey {
 
 namespace obelisk::coverage::detail {
 template <> struct IndexKey<::FunctionalCoverageTypeKey> {
-  static void append(std::vector<uint8_t> &bytes,
+  template <typename Bytes>
+  static void append(Bytes &bytes,
                      const ::FunctionalCoverageTypeKey &key) {
     IndexKey<uint64_t>::append(bytes, key.typeID);
     IndexKey<Digest>::append(bytes, key.configuration);
@@ -1868,7 +1869,8 @@ struct FunctionalCoverageTransitionState {
 
 namespace obelisk::coverage::detail {
 template <> struct IndexKey<::FunctionalCoverageTransitionState> {
-  static void append(std::vector<uint8_t> &bytes,
+  template <typename Bytes>
+  static void append(Bytes &bytes,
                      const ::FunctionalCoverageTransitionState &key) {
     IndexKey<uint32_t>::append(bytes, key.ordinal);
     IndexKey<uint32_t>::append(bytes, key.gapForbiddenOrdinal);
