@@ -32,8 +32,8 @@ template <typename Op> LogicalResult compile(Op op, PlanCache &cache) {
   const auto *data = reinterpret_cast<const uint8_t *>(bytes.data());
   uint32_t flags = read32(data + 20);
   if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-      !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)))
+      !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
     return success();
   std::vector<uint32_t> captures;
   for (Value capture : op.getCaptures())

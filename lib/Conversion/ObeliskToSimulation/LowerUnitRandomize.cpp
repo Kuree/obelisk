@@ -7408,11 +7408,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   if (hasRealProgram)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_REAL;
 #ifdef OBELISK_ENABLE_Z3
-  programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
   if (distPlans.empty())
-    programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   else
-    programFlags |= OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED;
+    programFlags |= OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED;
 #endif
   if (hasSolveBefore)
     programFlags |= OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE;

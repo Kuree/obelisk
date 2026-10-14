@@ -20,7 +20,7 @@
 // SUCCESS-SAME: "ODR1\01\00\18\00\0A\00\00\00
 // The repeated state argument reuses one capture. The constant in-range
 // select s[0] cannot fail, so no creation-validity capture is needed.
-// SUCCESS-SAME: \01\00\00\00r\02\00\00
+// SUCCESS-SAME: \01\00\00\00b\02\00\00
 // The two path masks for s.b -> s.a are preserved instead of collapsing to
 // the containing property: s starts at bit 6, so the masks are 0xc0 and 0x300.
 // SUCCESS-SAME: \C0\00\00\00\00\00\00\00\00\03\00\00\00\00\00\00

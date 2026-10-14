@@ -1373,7 +1373,7 @@ compileRandomSamplerPlan(const uint8_t *program, size_t programSize,
   std::vector<std::pair<unsigned, ID>> roots;
   random::DistBitSequence distBits(
       captureWidths.size(), std::nullopt,
-      read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
+      read32(program + 20) & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED);
   for (unsigned index = 0; index != instructions; ++index) {
     const uint8_t *p = program + header + size_t(index) * 16;
     unsigned opcode = p[0], bits = wide ? read32(p + 4) : p[1];

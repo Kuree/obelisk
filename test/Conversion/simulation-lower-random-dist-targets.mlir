@@ -7,7 +7,7 @@
 // bits are exported after its group's guard, and its records are marked as
 // an expression target with offset zero.
 
-// CHECK: simulation.random.solve: {{.*}} flags [HAS_DIST, {{.*}}SMT_WEIGHTED]
+// CHECK: simulation.random.solve: {{.*}} flags [HAS_DIST, {{.*}}EXACT_WEIGHTED]
 // CHECK: END_DIST_GUARD width 1{{$}}
 // CHECK-NEXT: PUSH_VARIABLE width 4{{$}}
 // CHECK-NEXT: CAST width 32

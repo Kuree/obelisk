@@ -92,14 +92,14 @@ program(uint32_t width, uint32_t captures,
   for (const auto &edge : solveEdges)
     if (edge.functionPriority)
       flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
-               OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+               OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   if (priorityInputs.size() != 0)
     flags |= OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY |
              OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-             OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+             OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   for (const auto &range : distRanges)
     if (range.flags & OBELISK_RT_RANDOM_DIST_RAW_WEIGHT)
-      flags |= OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED;
+      flags |= OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED;
   append32(bytes, flags);
   for (const EncodedInstruction &instruction : instructions) {
     bytes.push_back(instruction.opcode);
@@ -1373,7 +1373,7 @@ TEST_F(RandSolveTest, PartialAndUnorderedFieldsJoinTheLatestLegalLayer) {
     EXPECT_GT(selected, 1800u);
     EXPECT_LT(selected, 2200u);
 #ifdef OBELISK_TEST_COMPILED_SAMPLER
-    bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+    bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
     appendTestSamplerPlan(bytes);
     selected = 0;
     for (unsigned iteration = 0; iteration != 768; ++iteration) {
@@ -1690,7 +1690,7 @@ TEST_F(RandSolveTest, OrderedResidualCountsProjectedValuesWithLiveModes) {
                {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
               false, {{guardMask, UINT32_MAX, 0}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t assignment = 0, state = 71, endpoint = 7;
   uint32_t success = 0;
@@ -1745,7 +1745,7 @@ TEST_F(RandSolveTest, OrderedResidualParsesDomainsAfterSolveEdges) {
                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
                        false, {{guardMask, UINT32_MAX}}, {},
                        {{0, 0, 32, UINT32_MAX, 7}, {0, 0, 32, UINT32_MAX, 11}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t assignment = 0, state = 71, endpoint = 7;
   uint32_t success = 0;
@@ -1778,7 +1778,7 @@ TEST_F(RandSolveTest, OrderedResidualResolvesSoftPrioritiesBeforeProjection) {
                         {OBELISK_RT_RANDOM_EQ_V1, 1},
                         {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 1, 0}},
                        true, {{guardMask, UINT32_MAX}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t captures[] = {7, 11}, assignment = 0, state = 71;
   uint32_t success = 0;
@@ -1816,7 +1816,7 @@ TEST_F(RandSolveTest, UniformResidualUsesWholeJointSetInsteadOfCyclicGaps) {
                {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
                {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}});
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   appendTestSamplerPlan(bytes);
   uint64_t assignment = 0, state = 71;
   uint32_t success = 0;
@@ -1849,60 +1849,6 @@ TEST_F(RandSolveTest, UniformResidualUsesWholeJointSetInsteadOfCyclicGaps) {
   EXPECT_EQ(obelisk_rt_v1_random_solve(context, bytes.data(), bytes.size(), 0,
                                        1, nullptr, 0, &assignment, &success),
             OBELISK_RT_INVALID_ARGUMENT);
-}
-
-TEST_F(RandSolveTest, CompletesSparseRootsWithLiveCapturesAndSoftModes) {
-  std::vector<uint8_t> bytes =
-      program(32, 3,
-              {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-               {OBELISK_RT_RANDOM_MUL_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 0},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 1},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 1, 0},
-               {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 32},
-               {OBELISK_RT_RANDOM_PUSH_CAPTURE_V1, 32, 0, 2},
-               {OBELISK_RT_RANDOM_EQ_V1, 1},
-               {OBELISK_RT_RANDOM_END_SOFT_V1, 1, 0, 2, 1}},
-              true);
-  uint64_t captures[] = {49, 7, 9};
-  uint64_t assignment = 0, nextState = 0;
-  uint32_t success = 0;
-  auto solve = [&](uint64_t modes, uint64_t attempts) {
-    return obelisk_rt_v1_random_solve_modes_state(
-        context, bytes.data(), bytes.size(), 0x40000000, UINT32_MAX, modes,
-        attempts, 71, 15, captures, 3, &assignment, &success, &nextState);
-  };
-  // Preserve the old API's enumeration work bound unless the compiler opts in.
-  ASSERT_EQ(solve(0, 1), OBELISK_RT_OK);
-  EXPECT_EQ(success, 0u);
-  bytes[20] |= OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION;
-  appendTestSamplerPlan(bytes);
-  ASSERT_EQ(solve(0, 1), OBELISK_RT_OK);
-  EXPECT_EQ(success, 1u);
-  EXPECT_EQ(assignment, 7u);
-  EXPECT_EQ(nextState, 71u);
-  ASSERT_EQ(solve(uint64_t{1} << 1, 1), OBELISK_RT_OK);
-  EXPECT_EQ(success, 1u);
-  EXPECT_EQ(assignment, 0x7ffffff9u);
-  ASSERT_EQ(solve(uint64_t{1} << 2, 1), OBELISK_RT_OK);
-  EXPECT_EQ(success, 1u);
-  EXPECT_EQ(assignment, 7u);
-  ASSERT_EQ(solve(1, 1), OBELISK_RT_OK);
-  EXPECT_EQ(success, 1u);
-  EXPECT_EQ(assignment, 9u);
-  captures[0] = 2;
-  ASSERT_EQ(solve(0, 1), OBELISK_RT_OK);
-  EXPECT_EQ(success, 0u);
-  EXPECT_EQ(assignment, 0u);
-  EXPECT_EQ(nextState, 71u);
-  captures[0] = 49;
-  ASSERT_EQ(solve(0, 0), OBELISK_RT_OK);
-  EXPECT_EQ(success, 0u);
 }
 
 TEST_F(RandSolveTest, WeightedRangesRetainOriginalMassAfterFiltering) {

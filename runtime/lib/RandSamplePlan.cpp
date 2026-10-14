@@ -338,52 +338,6 @@ public:
     return result;
   }
 
-  bool minimum(const Bits &variable, unsigned width, const uint64_t *start,
-               const uint64_t *mutableMask, uint64_t *output) {
-    ID lowerBound = 1;
-    for (unsigned bit = 0; bit != width; ++bit)
-      lowerBound = ((start[bit / 64] >> (bit % 64)) & 1)
-                       ? circuit.conjunction(variable[bit], lowerBound)
-                       : circuit.disjunction(variable[bit], lowerBound);
-    push();
-    require(lowerBound);
-    auto status = check();
-    if (status == SamplerResult::Invalid)
-      return false;
-    if (status == SamplerResult::Unsatisfiable)
-      pop();
-    for (unsigned bit = width; bit-- != 0;) {
-      push();
-      require(variable[bit] ^ 1);
-      status = check();
-      if (status == SamplerResult::Invalid)
-        return false;
-      if (status == SamplerResult::Unsatisfiable) {
-        pop();
-        require(variable[bit]);
-      }
-    }
-    ModelCounter counter(circuit, bits);
-    if (!counter.build(predicate()) || counter.count().zero())
-      return false;
-    write(counter.assignment(ModelCount()), width, start, mutableMask, output);
-    return true;
-  }
-
-  void write(const std::vector<bool> &value, unsigned width,
-             const uint64_t *start, const uint64_t *mutableMask,
-             uint64_t *output) {
-    size_t words = (uint64_t(width) + 63) / 64;
-    for (size_t word = 0; word != words; ++word)
-      output[word] = start[word] & ~mutableMask[word];
-    for (size_t bit = 0; bit != value.size(); ++bit)
-      if (value[bit])
-        output[physicalBits[bit] / 64] |= uint64_t{1}
-                                          << (physicalBits[bit] % 64);
-    if (width % 64)
-      output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
-  }
-
   /// Cyclic sampling (IEEE 1800-2023 18.4.2). An iteration returns each
   /// legal value at most once and ends when none of the values it has not
   /// returned satisfies the constraints; a different constraint set (program
@@ -1141,8 +1095,8 @@ SamplerResult sampleRandomPlan(
                          : OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE;
   unsigned width = read32(program + 8), instructions = read32(program + 12);
   unsigned flags = read32(program + 20);
-  bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) != 0;
-  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+  bool uniform = (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM) != 0;
+  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
   bool exact = uniform || weighted;
   bool functionPriority =
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
@@ -1152,8 +1106,7 @@ SamplerResult sampleRandomPlan(
       ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) && !weighted) ||
       (weighted &&
        (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) || functionPriority)) ||
-      ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE) && !exact) ||
-      (exact && !randomState) || (orderedLayerCount && !orderedMasks))
+      !exact || !randomState || (orderedLayerCount && !orderedMasks))
     return SamplerResult::Unavailable;
   std::vector<size_t> captureOffsets(captureCount);
   for (size_t capture = 1; capture < captureCount; ++capture)
@@ -1612,12 +1565,8 @@ SamplerResult sampleRandomPlan(
                       retainedSoft, constraintMask, captures, captureWidths,
                       captureOffsets, start, mutableMask, *randomState,
                       orderedMasks, orderedLayerCount, assignment);
-  if (uniform)
-    return f.ordered(width, booleanBits, physicalBits, start, mutableMask,
-                     *randomState, orderedMasks, orderedLayerCount, assignment)
-               ? SamplerResult::Satisfiable
-               : SamplerResult::Invalid;
-  return f.minimum(variable, width, start, mutableMask, assignment)
+  return f.ordered(width, booleanBits, physicalBits, start, mutableMask,
+                   *randomState, orderedMasks, orderedLayerCount, assignment)
              ? SamplerResult::Satisfiable
              : SamplerResult::Invalid;
 }

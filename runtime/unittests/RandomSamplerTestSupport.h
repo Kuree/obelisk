@@ -9,9 +9,8 @@
 inline void appendTestSamplerPlan(std::vector<uint8_t> &bytes) {
   uint32_t flags = obelisk::random::planRead32(bytes.data() + 20);
   if ((flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-      !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)))
+      !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
     return;
   bool wide = bytes[4] == 2;
   uint32_t captures = obelisk::random::planRead32(bytes.data() + 16);

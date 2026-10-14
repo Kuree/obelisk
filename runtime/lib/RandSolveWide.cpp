@@ -419,17 +419,16 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
   bool encodedPriority =
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY) != 0;
   std::vector<uint32_t> maskCaptures;
-  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+  bool weighted = (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
   bool encodedDist = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
   if (result.aggregateWidth == 0 || encodedCaptureCount != captureCount ||
       read32(bytes + 28) != 0 ||
       (flags & ~(OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                 OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                 OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
+                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
                  OBELISK_RT_RANDOM_PROGRAM_HAS_REAL |
@@ -437,7 +436,7 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     return false;
   bool real = (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) != 0;
   if (real && (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-                !(flags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)))
+                !(flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM)))
     return false;
   if ((encodedDist != weighted) || (weighted && encodedPriority))
     return false;
@@ -445,8 +444,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS) != 0;
   if (dynamicMasks && !encodedPriority)
     return false;
-  if (encodedOrder && !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                                 OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)))
+  if (encodedOrder && !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                                 OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)))
     return false;
   if (encodedPriority && !encodedOrder)
     return false;
@@ -785,8 +784,8 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
       // legacy bounded radix traversal only stores narrow domain indices.
       if (width > 64 &&
           (!(flags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-           !(flags & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                      OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED))))
+           !(flags & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                      OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED))))
         return false;
       DomainGroup &group = result.domainGroups[groupIndex];
       if (seen[groupIndex] &&
@@ -1318,8 +1317,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     normalize(mutableMask);
 
     obelisk_rt_random_state_v1 randomState{rngState, rngIncrement};
-    if (read32(programBytes + 20) & (OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                                     OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)) {
+    if (read32(programBytes + 20) & (OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                                     OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)) {
       for (const DomainGroup &group : program.domainGroups) {
         WideValue overlap =
             extract(mutableMask.words.data(), mutableMask.words.size(),
@@ -1483,19 +1482,6 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
     if (program.hasSoft && complete && hasBest) {
       std::copy(best.words.begin(), best.words.end(), outAssignmentWords);
       *outSuccess = 1;
-    }
-    if (!complete && maxAttempts != 0 &&
-        (read32(programBytes + 20) &
-         OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) {
-      auto result = obelisk::runtime::sampleRandomPlan(
-          programBytes, static_cast<size_t>(programSize), startWords,
-          mutableMaskWords, assignmentWordCount, constraintMask, captureWords,
-          captureWidths, captureCount, outAssignmentWords);
-      if (result == obelisk::runtime::SamplerResult::Satisfiable)
-        *outSuccess = 1;
-      else
-        std::fill_n(outAssignmentWords,
-                    static_cast<size_t>(assignmentWordCount), 0);
     }
     *outRngState = randomState.state;
     return OBELISK_RT_OK;

@@ -112,7 +112,7 @@ std::vector<uint8_t> program(uint32_t aggregateWidth, uint32_t captureCount,
   }
   if (flags & OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY)
     append32(bytes, 0);
-  if (flags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) {
+  if (flags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) {
     uint32_t groups = 0;
     for (const auto &record : weighted)
       groups = std::max(groups, record.group + 1);
@@ -510,7 +510,7 @@ TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
        OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}};
   auto encode = [&](std::vector<SolveBeforeEdge> edges) {
     return program(65, 0, truth,
-                   OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                   OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
                    {}, std::move(edges));
   };
@@ -528,7 +528,7 @@ TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
   bytes.pop_back();
   rejects(bytes);
   bytes = encode({{{1, 0}, {0, 1}}});
-  bytes[20] &= ~OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM;
+  bytes[20] &= ~OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   rejects(bytes);
 }
 
@@ -746,7 +746,7 @@ TEST_F(RandSolveWideTest, FunctionArgumentStagesPreserveWideFailureSemantics) {
                         {OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 130},
                         {OBELISK_RT_RANDOM_LOGICAL_NOT_V1, 1},
                         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, 1}},
-                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
                            OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                            OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY,
                        {}, {{{0, 0, 4}, {UINT64_MAX, UINT64_MAX, 3}, 0, true}});
@@ -781,7 +781,7 @@ TEST_F(RandSolveWideTest, OrderedProjectionSpansWordsAndHonorsModes) {
                         {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
                         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
                            OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
                        {}, {{{0, 0, 4}, {UINT64_MAX, UINT64_MAX, 3}, 0}});
   uint64_t start[] = {0, 0, 0}, mutableMask[] = {UINT64_MAX, UINT64_MAX, 7};
@@ -848,7 +848,7 @@ TEST_F(RandSolveWideTest, OrderedDomainsFollowVariableLengthEdges) {
                         {OBELISK_RT_RANDOM_LOGICAL_IMPLIES_V1, 1},
                         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
                            OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                            OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS,
                        {{0, 0, 32, UINT32_MAX, 7}, {0, 0, 32, UINT32_MAX, 11}},
@@ -883,7 +883,7 @@ TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
                         {OBELISK_RT_RANDOM_EQ_V1, 1},
                         {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
                          OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-                       OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM);
+                       OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start[] = {0, 0, UINT64_C(0x1234567800000000)};
   uint64_t mutableMask[] = {UINT64_MAX, UINT64_MAX, UINT32_MAX};
   uint64_t captures[] = {49}, assignment[3] = {};
@@ -927,7 +927,7 @@ TEST_F(RandSolveWideTest, UniformSparseComponentWithWideFreeAndFrozenFields) {
   EXPECT_EQ(assignment[0] | assignment[1] | assignment[2], 0u);
 }
 
-TEST_F(RandSolveWideTest, CompletesWideSystemFunctionsWithCaptureBoundaries) {
+TEST_F(RandSolveWideTest, SolvesWideSystemFunctionsWithCaptureBoundaries) {
   std::vector<uint8_t> bytes =
       program(128, 2,
               {{OBELISK_RT_RANDOM_PUSH_VARIABLE_V1, 128},
@@ -947,7 +947,7 @@ TEST_F(RandSolveWideTest, CompletesWideSystemFunctionsWithCaptureBoundaries) {
                {OBELISK_RT_RANDOM_EQ_V1, 1},
                {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
                 OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
-              OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION);
+              OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, UINT64_MAX};
   uint64_t captures[] = {96, 0, uint64_t{1} << 32};
   uint32_t captureWidths[] = {32, 128};
@@ -993,7 +993,7 @@ TEST_F(RandSolveWideTest, WeightedWideMassIgnoresCompanionMultiplicity) {
        {OBELISK_RT_RANDOM_LOGICAL_AND_V1, 1},
        {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
       OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-          OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+          OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
       {}, {},
       {{0, UINT32_MAX, 0, 1, 0, 1, 0, 0, OBELISK_RT_RANDOM_DIST_RAW_WEIGHT},
        {0, UINT32_MAX, 0, 1, 1, 1, 1, 1, OBELISK_RT_RANDOM_DIST_RAW_WEIGHT}});
@@ -1040,7 +1040,7 @@ TEST_F(RandSolveWideTest, WeightedFull64BitRangeAndLargeMassNeverOverflow) {
                  {OBELISK_RT_RANDOM_GT_V1, 1},
                  {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
                 OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                    OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+                    OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
                 {}, {}, {{0, UINT32_MAX, 0, 64, 0, 0, 0, 0, flags}});
     uint64_t start = 0, mask = UINT64_MAX,
              captures[] = {UINT64_MAX, UINT64_MAX, 1};
@@ -1071,7 +1071,7 @@ TEST_F(RandSolveWideTest, RetainsMoreThanSixtyFourSoftPriorities) {
   }
   auto bytes = program(70, 0, instructions,
                        OBELISK_RT_RANDOM_PROGRAM_HAS_SOFT |
-                           OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM);
+                           OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM);
   uint64_t start[] = {0, 0}, mask[] = {UINT64_MAX, 63}, assignment[2] = {};
   uint64_t state = 713;
   uint32_t success = 0;
@@ -1116,7 +1116,7 @@ TEST_F(RandSolveWideTest, WeightedExpressionTargetWeighsEachValue) {
   auto bytes = program(
       4, 1, instructions,
       OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-          OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+          OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
       {}, {},
       {{0, UINT32_MAX, 0, 3, 0, 1, 0, 0, target},
        {0, UINT32_MAX, 0, 3, 1, 6, 1, 0,
@@ -1160,7 +1160,7 @@ TEST_F(RandSolveWideTest, WeightedProjectionNormalizesHugeLegalCardinalities) {
                {OBELISK_RT_RANDOM_GT_V1, 1},
                {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0, UINT32_MAX}},
               OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
-                  OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED,
+                  OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED,
               {}, {},
               {{0, UINT32_MAX, 0, 64, 0, 0, 0, 0, raw},
                {0, UINT32_MAX, 0, 64, 1, 1, 1, 0, raw}});

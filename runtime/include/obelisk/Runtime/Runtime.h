@@ -4701,20 +4701,16 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE UINT32_C(2)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DIST UINT32_C(4)
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS UINT32_C(8)
-// Permit a compiled sampling plan to complete an unfinished ordinary traversal.
-// max_attempts then bounds the enumeration fast path rather than completion.
-// This flag does not alter ordered or weighted sampling.
-#define OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION UINT32_C(16)
 // Sample integral residuals uniformly over legal assignments or each enabled
 // solve-order projection, conditional on the accepted preceding layers.
 // Requires a stateful entry point and a compiler-generated sampling plan; a
 // nonzero max_attempts enables sampling without bounding the exact finite
-// count. Legacy flags retain their traversal order. Weighted programs retain
-// their separate policy.
-#define OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM UINT32_C(32)
+// count. Programs without an exact flag use the bounded traversal. Weighted
+// programs use EXACT_WEIGHTED instead.
+#define OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM UINT32_C(32)
 // Function arguments subdivide the constraints into priority stages. Higher
 // stages ignore lower-stage constraints and become state for later stages.
-// Requires SMT_UNIFORM; failed later stages commit no assignment or RNG state.
+// Requires EXACT_UNIFORM; failed later stages commit no assignment or RNG state.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY UINT32_C(64)
 // Exact weighted target projections with arbitrary-precision unsigned masses.
 // Requires a compiled sampling plan and stateful sampling. Dist records use
@@ -4726,7 +4722,7 @@ struct obelisk_rt_random_state_v1 {
 // The RPN hard/soft predicates must include each distribution's membership
 // and nonzero-weight support. END_DIST_GUARD supplies optional activation;
 // its operand is a group index, and omitting it means unconditional activation.
-#define OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED UINT32_C(128)
+#define OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED UINT32_C(128)
 // Priority source records may mask their references and arguments by a live
 // capture. Guards removed by 18.5.12 contribute no solve-stage dependency.
 // Requires HAS_FUNCTION_PRIORITY; a nonzero reserved record word is one plus
@@ -4836,7 +4832,7 @@ typedef enum obelisk_rt_random_opcode_v1 {
   OBELISK_RT_RANDOM_COUNT_ONES_V1 = 42,
   OBELISK_RT_RANDOM_CLOG2_V1 = 43,
   // Pops a distribution's activation guard. Operand is the group index;
-  // flags and auxiliary are zero. Valid only under SMT_WEIGHTED.
+  // flags and auxiliary are zero. Valid only under EXACT_WEIGHTED.
   OBELISK_RT_RANDOM_END_DIST_GUARD_V1 = 44,
   // Keep the stack top in the next temporary slot without popping it, or
   // push a previously stored value. Slots are immutable and are recomputed
@@ -4867,12 +4863,12 @@ typedef enum obelisk_rt_random_opcode_v1 {
   // Export one bit of the stack top to the compiled sampling plan. Operand
   // identifies the weight capture; auxiliary is the ascending bit index.
   // Width is the complete expression width. Only the final bit pops the value.
-  // Valid only under SMT_WEIGHTED; flags are zero.
+  // Valid only under EXACT_WEIGHTED; flags are zero.
   OBELISK_RT_RANDOM_END_DIST_WEIGHT_BIT_V1 = 57,
   // Export one bit of a distributed expression to the compiled sampling plan.
   // Operand is the distribution group; auxiliary is the ascending bit index.
   // Width is the group's target width. Only the final bit pops the value.
-  // Valid only under SMT_WEIGHTED; flags are zero.
+  // Valid only under EXACT_WEIGHTED; flags are zero.
   OBELISK_RT_RANDOM_END_DIST_TARGET_BIT_V1 = 58
 } obelisk_rt_random_opcode_v1;
 
@@ -5221,8 +5217,6 @@ obelisk_rt_status obelisk_rt_v1_random_cycle_next(uint64_t key,
 // the first aggregate assignment and `max_attempts` is a deterministic work
 // bound. A successful solve writes both outputs. Exhaustion is reported by
 // out_success == 0 and is not a runtime API error.
-// SMT_COMPLETION programs with a compiled plan additionally complete an
-// exhausted nonzero traversal. Legacy programs retain their work bound.
 obelisk_rt_status obelisk_rt_v1_random_solve(
     obelisk_rt_context *context, const uint8_t *program, uint64_t program_size,
     uint64_t start, uint64_t max_attempts, const uint64_t *captures,

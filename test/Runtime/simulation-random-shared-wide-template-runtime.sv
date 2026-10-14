@@ -14,7 +14,7 @@
 // copy share one value across roots; live capture changes and failure
 // retention of frozen properties are checked at run time.
 // PLAN: simulation.random.solve_wide
-// PLAN-SAME: "ODR1\02\00 \00\04\01\00\00?\00\00\00\01\00\00\001\02\00\00\09\00\00\00
+// PLAN-SAME: "ODR1\02\00 \00\04\01\00\00?\00\00\00\01\00\00\00!\02\00\00\09\00\00\00
 // RUNTIME: shared wide template valid 1
 
 // One diamond computes (e + e) - e, which is e again, and adds the 130-bit

@@ -479,7 +479,7 @@ inline bool readSamplerPlan(const uint8_t *program, size_t size,
   uint32_t previous = 0, expected = 0;
   DistBitSequence distBits(captures, std::nullopt,
                            planRead32(program + 20) &
-                               OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED);
+                               OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED);
   for (uint32_t index = 0; index != instructions; ++index) {
     const uint8_t *p = program + instructionHeader + size_t(index) * 16;
     uint8_t opcode = p[0];

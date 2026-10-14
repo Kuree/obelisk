@@ -297,8 +297,8 @@ relations, including computed IEEE arithmetic. Nonfinite results preserve
 four-state unknown planes; two-state casts consume them as zero. Computed
 numeric conversions extract sanitized IEEE bits and reuse the conversion
 kernel for rounding halfway away from zero, truncation and arbitrary-width
-low bits. A metadata patch to the pinned compiler Z3 exposes its existing
-local deterministic completion option; unreachable NaN completion functions
+low bits. The process-wide `rewriter.hi_fp_unspecified` Z3 parameter selects
+Z3's deterministic completion; unreachable NaN completion functions
 never become sampler inputs. MLIR covers active real points, live addition
 captures, arithmetic at both precisions and 1/32/130-bit results. Universal
 Z3 checks cover every binary32/64 arithmetic-result encoding at widths
@@ -309,11 +309,10 @@ bitcasts, real arrays, joint real/integral distributions
 and complete real probability semantics remain open.
 
 The compiler appends `HAS_SAMPLER_PLAN` bundles and opts into exact sampling
-through the existing `SMT_UNIFORM` C ABI flag. The legacy flag name is retained
-for byte-format compatibility; it requires a compiled plan rather than Z3.
-A nonzero work bound enables exact solving; zero still requests no solve.
-Existing bounded C ABI clients retain their work limit and cyclic ordering;
-`SMT_COMPLETION` clients can separately opt into complete cyclic discovery.
+through the `EXACT_UNIFORM` or `EXACT_WEIGHTED` C ABI flag; either requires a
+compiled plan rather than Z3. A nonzero work bound enables exact solving; zero
+still requests no solve. Programs without an exact flag, which only a compiler
+built without Z3 emits, retain the bounded traversal and its work limit.
 For integral bitstreams of arbitrary width, ordered runtime residuals
 count existential projections of each enabled solve-order layer, sample its
 legal values uniformly, and cofactor the original relation before solving

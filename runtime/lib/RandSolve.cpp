@@ -608,9 +608,8 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
                           OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                          OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
-                          OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                          OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED |
+                          OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                          OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_GUARD_INPUT_MASKS |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN |
                           OBELISK_RT_RANDOM_PROGRAM_HAS_REAL |
@@ -620,7 +619,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     bool real = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_REAL) != 0;
     if (real &&
         (!(programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) ||
-         !(programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM)))
+         !(programFlags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM)))
       return OBELISK_RT_INVALID_ARGUMENT;
     size_t bundleSize = static_cast<size_t>(programSize);
     if (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_SAMPLER_PLAN) {
@@ -642,7 +641,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       return OBELISK_RT_INVALID_ARGUMENT;
     if (encodedPriority &&
         (!encodedSolveBefore ||
-         !(programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) ||
+         !(programFlags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM) ||
          (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST)))
       return OBELISK_RT_INVALID_ARGUMENT;
     uint32_t solveEdgeCount = 0;
@@ -674,7 +673,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     }
     bool encodedDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
     bool weighted =
-        (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+        (programFlags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
     if (weighted && (!encodedDist || encodedPriority))
       return OBELISK_RT_INVALID_ARGUMENT;
     uint32_t distGroupCount = 0;
@@ -966,7 +965,7 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
       if (overlap != 0)
         domainMutableMask |= group.targetMask;
     }
-    if (weighted || ((programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM) &&
+    if (weighted || ((programFlags & OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM) &&
                      !encodedDist)) {
       if (!randomState)
         return OBELISK_RT_INVALID_ARGUMENT;
@@ -1295,17 +1294,6 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     if (encodedSoft && complete && hasHardFallback) {
       *outAssignment = hardFallback;
       *outSuccess = 1;
-    }
-    if (!complete && maxAttempts != 0 &&
-        (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION)) {
-      uint64_t assignment = 0;
-      auto result = obelisk::runtime::sampleRandomPlan(
-          program, bundleSize, &start, &mutableMask, 1, constraintMask,
-          captures, nullptr, captureCount, &assignment);
-      if (result == obelisk::runtime::SamplerResult::Satisfiable) {
-        *outAssignment = assignment;
-        *outSuccess = 1;
-      }
     }
     return OBELISK_RT_OK;
   }

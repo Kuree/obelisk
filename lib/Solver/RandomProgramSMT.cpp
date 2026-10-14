@@ -217,9 +217,8 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
                         OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DIST |
                         OBELISK_RT_RANDOM_PROGRAM_HAS_DOMAINS |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_COMPLETION |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_UNIFORM |
-                        OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED)) != 0 ||
+                        OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                        OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED)) != 0 ||
       instructionCount > (std::numeric_limits<size_t>::max() - headerSize) /
                              OBELISK_RT_RANDOM_INSTRUCTION_SIZE_V2)
     return std::nullopt;
@@ -311,7 +310,7 @@ std::optional<RandomProgramSMT> buildRandomProgramSMT(const uint8_t *program,
         solveEdgesOffset + static_cast<size_t>(solveEdgeCount) * solveEdgeSize;
   }
   bool hasDist = (programFlags & OBELISK_RT_RANDOM_PROGRAM_HAS_DIST) != 0;
-  bool weighted = (programFlags & OBELISK_RT_RANDOM_PROGRAM_SMT_WEIGHTED) != 0;
+  bool weighted = (programFlags & OBELISK_RT_RANDOM_PROGRAM_EXACT_WEIGHTED) != 0;
   if ((weighted && !hasDist) || (hasDist && hasSolveBefore && !weighted))
     return std::nullopt;
   uint32_t distGroupCount = 0;
