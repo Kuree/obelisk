@@ -624,6 +624,126 @@ RandomAliasGuardAttr::verify(function_ref<InFlightDiagnostic()> emitError,
 }
 
 LogicalResult
+RandomDomainAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                         uint64_t offset, uint64_t width, ArrayAttr patterns) {
+  if (width == 0 || patterns.empty() ||
+      !llvm::all_of(patterns, llvm::IsaPred<RandomPatternAttr>))
+    return emitError() << "random domain needs a width and "
+                          "#simulation.random_pattern entries";
+  return success();
+}
+
+LogicalResult
+RandomCycleStateAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                             Attribute key, Attribute position,
+                             Attribute domain) {
+  bool fields = llvm::all_of(ArrayRef<Attribute>{key, position, domain},
+                             llvm::IsaPred<FlatSymbolRefAttr>);
+  bool paths = llvm::all_of(ArrayRef<Attribute>{key, position, domain},
+                            llvm::IsaPred<StringAttr>);
+  if (!fields && !paths)
+    return emitError() << "randc state must name three class fields or three "
+                          "storage paths";
+  return success();
+}
+
+LogicalResult
+RandomMemberStorageAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                                DenseI64ArrayAttr path, Type, uint64_t,
+                                uint64_t) {
+  if (path.empty() || llvm::any_of(path.asArrayRef(),
+                                   [](int64_t ordinal) { return ordinal < 0; }))
+    return emitError() << "random member storage path is malformed";
+  return success();
+}
+
+/// Checks the per-element rand_mode() state of a fixed-array random variable
+/// whose own storage is a class field when `instance` is set.
+static LogicalResult
+verifyElementModes(function_ref<InFlightDiagnostic()> emitError, bool instance,
+                   FlatSymbolRefAttr field, std::optional<uint64_t> storage) {
+  if (field && storage)
+    return emitError() << "random element modes need one state location";
+  if ((field && !instance) || (storage && instance))
+    return emitError()
+           << "random element modes must live beside their variable";
+  return success();
+}
+
+LogicalResult RandomPropertyAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr field,
+    StringAttr path, SymbolRefAttr, Type, uint64_t width, uint32_t modeIndex,
+    bool, bool isRandC, std::optional<uint64_t> modeStorage,
+    RandomContainerSizeAttr containerSize, RandomNestedObjectAttr nested,
+    RandomMemberStorageAttr member, FlatSymbolRefAttr elementModeField,
+    std::optional<uint64_t> elementModeStorage,
+    std::optional<uint32_t> elementWidth, RandomCycleStateAttr cycle,
+    ArrayAttr domains) {
+  if (static_cast<bool>(field) == static_cast<bool>(path))
+    return emitError() << "random property must name exactly one field or path";
+  if (width == 0 || modeIndex >= kRandomModeBits)
+    return emitError() << "random property width or mode index is invalid";
+  if ((containerSize || nested) && !field)
+    return emitError() << "random container sizes and nested properties are "
+                          "class fields";
+  if (member && (containerSize || nested))
+    return emitError() << "random structure members are direct properties";
+  if (modeStorage && field)
+    return emitError() << "only static random properties keep rand_mode() "
+                          "storage";
+  bool elementModes = elementModeField || elementModeStorage;
+  if (elementModes != elementWidth.has_value() ||
+      (elementModes && (containerSize || nested)))
+    return emitError() << "random element modes are malformed";
+  if (failed(verifyElementModes(emitError, static_cast<bool>(field),
+                                elementModeField, elementModeStorage)))
+    return failure();
+  if (cycle &&
+      (!isRandC || cycle.isInstanceState() != static_cast<bool>(field)))
+    return emitError() << "randc state must match its variable";
+  if (domains && !llvm::all_of(domains, llvm::IsaPred<RandomDomainAttr>))
+    return emitError() << "random property domains must be "
+                          "#simulation.random_domain entries";
+  return success();
+}
+
+RandomPropertyAttr RandomPropertyAttr::withPath(StringAttr path) const {
+  return get(getContext(), getField(), path, getSymbol(), getType(), getWidth(),
+             getModeIndex(), getIsSigned(), getIsRandC(), getModeStorage(),
+             getContainerSize(), getNested(), getMember(),
+             getElementModeField(), getElementModeStorage(), getElementWidth(),
+             getCycle(), getDomains());
+}
+
+LogicalResult
+RandomContainerAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                            FlatSymbolRefAttr, Type, Type,
+                            uint32_t elementWidth, uint32_t modeIndex,
+                            bool inertClassHandles, RandomNestedObjectAttr) {
+  if (modeIndex >= kRandomModeBits || elementWidth > 64 ||
+      (elementWidth == 0 && !inertClassHandles))
+    return emitError() << "random container element width or mode index is "
+                          "invalid";
+  return success();
+}
+
+LogicalResult
+RandomStructMemberAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                               DenseI64ArrayAttr path, Type, Type, bool isRandC,
+                               uint32_t modeIndex, RandomCycleStateAttr cycle,
+                               FlatSymbolRefAttr elementModeField,
+                               std::optional<uint64_t> elementModeStorage) {
+  if (path.empty() || modeIndex >= kRandomModeBits)
+    return emitError() << "random structure member path or mode index is "
+                          "invalid";
+  if (cycle && !isRandC)
+    return emitError() << "only randc structure members keep randc state";
+  if (elementModeField && elementModeStorage)
+    return emitError() << "random element modes need one state location";
+  return success();
+}
+
+LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {
   auto rangeWidth = [](DenseI64ArrayAttr range) -> std::optional<uint64_t> {

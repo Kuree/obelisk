@@ -663,16 +663,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
       SmallVector<Attribute> rewrittenProperties;
       rewrittenProperties.reserve(properties.size());
       bool rewroteProperties = false;
-      for (Attribute attribute : properties) {
-        auto property = dyn_cast<DictionaryAttr>(attribute);
-        if (!property) {
-          rewrittenProperties.push_back(attribute);
-          continue;
-        }
+      for (auto property : properties.getAsRange<sim::RandomPropertyAttr>()) {
         if (scopeRandomize) {
-          auto path = property.getAs<StringAttr>(randomPropertyPathAttrName);
-          auto reference =
-              property.getAs<SymbolRefAttr>(randomPropertySymbolAttrName);
+          StringAttr path = property.getPath();
+          SymbolRefAttr reference = property.getSymbol();
           Operation *referencedSymbol = nullptr;
           if (reference) {
             auto symbol = semanticSymbols.find(reference.getLeafReference());
@@ -684,19 +678,19 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
                                             referencedSymbol)
                    : std::nullopt;
           if (qualified) {
-            NamedAttrList rewritten(property);
-            rewritten.set(randomPropertyPathAttrName,
-                          StringAttr::get(call.getContext(), *qualified));
-            property =
-                DictionaryAttr::get(call.getContext(), rewritten.getAttrs());
+            property = property.withPath(
+                StringAttr::get(call.getContext(), *qualified));
             rewroteProperties = true;
           }
         }
         rewrittenProperties.push_back(property);
-        for (StringRef name :
-             {randomPropertyPathAttrName, randomRandCKeyPathAttrName,
-              randomRandCPositionPathAttrName, randomRandCDomainPathAttrName}) {
-          auto path = property.getAs<StringAttr>(name);
+        SmallVector<StringAttr, 4> paths{property.getPath()};
+        if (sim::RandomCycleStateAttr cycle = property.getCycle();
+            cycle && !cycle.isInstanceState())
+          for (Attribute state :
+               {cycle.getKey(), cycle.getPosition(), cycle.getDomain()})
+            paths.push_back(cast<StringAttr>(state));
+        for (StringAttr path : paths) {
           if (!path)
             continue;
           auto descriptor = descriptors.find(path.getValue());

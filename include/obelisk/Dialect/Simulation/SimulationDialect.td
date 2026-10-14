@@ -85,6 +85,7 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::FlatSymbolRefAttr":$random_array_mode_field,
     "::mlir::IntegerAttr":$random_constraint_block,
     "::mlir::IntegerAttr":$random_constraint_count,
+    // `#simulation.random_container` entries.
     "::mlir::ArrayAttr":$random_container_properties,
     // Hidden i64 fields that carry one randc property's permutation state.
     "::mlir::FlatSymbolRefAttr":$random_cycle_key_field,
@@ -117,12 +118,14 @@ def ObeliskSimulationDialect : Dialect {
     "::obelisk::sim::RandomizeHookAttr":$random_pre_hook,
     "::mlir::IntegerAttr":$random_priority_arguments,
     "::mlir::IntegerAttr":$random_priority_inputs,
+    // `#simulation.random_property` entries.
     "::mlir::ArrayAttr":$random_properties,
     "::mlir::UnitAttr":$random_real_finite,
     "::mlir::IntegerAttr":$random_receiver_index,
     // `#simulation.random_alias_guard` entries.
     "::mlir::ArrayAttr":$random_recursive_alias_guards,
     "::mlir::FlatSymbolRefAttr":$random_state_field,
+    // `#simulation.random_struct_member` entries of a structure property.
     "::mlir::ArrayAttr":$random_struct_members,
     "::mlir::IntegerAttr":$random_total_width,
     "::mlir::IntegerAttr":$random_variable,

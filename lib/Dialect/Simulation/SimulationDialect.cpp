@@ -791,6 +791,15 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == RandomProperties::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomPropertyAttr>))
+    return error() << "must contain #simulation.random_property entries";
+  if (name == RandomContainerProperties::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomContainerAttr>))
+    return error() << "must contain #simulation.random_container entries";
+  if (name == RandomStructMembers::getNameStr() &&
+      !allOf(llvm::IsaPred<RandomStructMemberAttr>))
+    return error() << "must contain #simulation.random_struct_member entries";
   if (name == RandomNestedHooks::getNameStr() &&
       !allOf(llvm::IsaPred<RandomNestedHooksAttr>))
     return error() << "must contain #simulation.random_nested_hooks entries";

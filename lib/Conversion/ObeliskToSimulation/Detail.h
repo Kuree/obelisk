@@ -70,34 +70,6 @@ inline constexpr auto concurrentCancelObserverRequestAttrName =
     ::obelisk::schedule::Field::ConcurrentCancelObserverRequest;
 inline constexpr auto concurrentAbortObserverRequestAttrName =
     ::obelisk::schedule::Field::ConcurrentAbortObserverRequest;
-inline constexpr ::mlir::StringLiteral randomPropertyModeIndexAttrName =
-    "rand_mode_index";
-inline constexpr ::mlir::StringLiteral randomContainerSizeAttrName =
-    "container_size";
-inline constexpr ::mlir::StringLiteral randomContainerTypeAttrName =
-    "container_type";
-inline constexpr ::mlir::StringLiteral randomNestedObjectFieldAttrName =
-    "nested_object_field";
-inline constexpr ::mlir::StringLiteral randomNestedObjectTypeAttrName =
-    "nested_object_type";
-inline constexpr ::mlir::StringLiteral randomNestedObjectStorageTypeAttrName =
-    "nested_object_storage_type";
-inline constexpr ::mlir::StringLiteral randomNestedModeIndexAttrName =
-    "nested_rand_mode_index";
-inline constexpr ::mlir::StringLiteral randomNestedObjectPathAttrName =
-    "nested_object_path";
-inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
-    "reference_path";
-inline constexpr ::mlir::StringLiteral randomPropertySymbolAttrName =
-    "reference_symbol";
-inline constexpr ::mlir::StringLiteral randomPropertyModeStorageAttrName =
-    "rand_mode_storage";
-inline constexpr ::mlir::StringLiteral randomRandCKeyPathAttrName =
-    "randc_key_path";
-inline constexpr ::mlir::StringLiteral randomRandCPositionPathAttrName =
-    "randc_position_path";
-inline constexpr ::mlir::StringLiteral randomRandCDomainPathAttrName =
-    "randc_domain_path";
 
 /// Total, side-effect-free integral system functions encoded by the random
 /// program. Unlike user functions, these do not introduce implicit solve

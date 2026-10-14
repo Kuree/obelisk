@@ -58,4 +58,34 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
       #simulation.random_nested_selection<field = @child, path = [@child],
                                           target = @Leaf>,
       #simulation.random_nested_selection<field = @child>]}
+
+  // CHECK-LABEL: func.func private @random_properties
+  // CHECK-SAME: simulation.random_container_properties = [#simulation.random_container<field = @queue, type = !simulation.queue<i8, 0>, elementType = i8, elementWidth = 8, modeIndex = 2>]
+  // CHECK-SAME: simulation.random_properties = [#simulation.random_property<field = @mode, type = i4, width = 4, modeIndex = 0, isSigned = false, isRandC = true, cycle = <key = @key, position = @position, domain = @domain>, domains = [#simulation.random_domain<offset = 0, width = 4, patterns = [#simulation.random_pattern<mask = -4 : i64, value = 4 : i64>]>]>, #simulation.random_property<path = "top.s", type = i8, width = 8, modeIndex = 1, isSigned = true, isRandC = false, modeStorage = 3, member = <path = [1], type = !simulation.unpacked_struct<[#simulation.field<name = "a", type = i1, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>]>, parentModeMask = 0, staticModeMask = 3>>]
+  // CHECK-SAME: simulation.random_struct_members = [#simulation.random_struct_member<path = [0], semanticType = i4, type = i4, isRandC = true, modeIndex = 1, cycle = <key = "top.k", position = "top.p", domain = "top.d">, elementModeStorage = 7>]
+  func.func private @random_properties() attributes {
+    simulation.random_container_properties = [#simulation.random_container<
+      field = @queue, type = !simulation.queue<i8, 0>, elementType = i8,
+      elementWidth = 8, modeIndex = 2, inertClassHandles = false>],
+    simulation.random_properties = [
+      #simulation.random_property<field = @mode, type = i4, width = 4,
+        modeIndex = 0, isSigned = false, isRandC = true,
+        cycle = #simulation.random_cycle_state<key = @key,
+                                               position = @position,
+                                               domain = @domain>,
+        domains = [#simulation.random_domain<offset = 0, width = 4,
+          patterns = [#simulation.random_pattern<mask = -4 : i64,
+                                                 value = 4 : i64>]>]>,
+      #simulation.random_property<path = "top.s", type = i8, width = 8,
+        modeIndex = 1, isSigned = true, isRandC = false, modeStorage = 3,
+        member = #simulation.random_member_storage<path = [1],
+          type = !simulation.unpacked_struct<[#simulation.field<name = "a", type = i1, ordinal = 0, packedOffset = 0>, #simulation.field<name = "b", type = i8, ordinal = 1, packedOffset = 0>]>,
+          parentModeMask = 0, staticModeMask = 3>>],
+    simulation.random_struct_members = [#simulation.random_struct_member<
+      path = [0], semanticType = i4, type = i4, isRandC = true,
+      modeIndex = 1,
+      cycle = #simulation.random_cycle_state<key = "top.k",
+                                             position = "top.p",
+                                             domain = "top.d">,
+      elementModeStorage = 7>]}
 }

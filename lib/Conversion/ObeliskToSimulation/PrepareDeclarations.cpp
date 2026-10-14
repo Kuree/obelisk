@@ -1055,21 +1055,10 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           !sourceStructure.getIsUnion()) {
         SmallVector<Attribute> members;
         for (auto [index, member] : llvm::enumerate(structMembers)) {
-          SmallVector<NamedAttribute> attributes{
-              builder.getNamedAttr("path",
-                                   builder.getDenseI64ArrayAttr(member.path)),
-              builder.getNamedAttr("semantic_type",
-                                   TypeAttr::get(member.semanticType)),
-              builder.getNamedAttr("type", TypeAttr::get(member.type)),
-              builder.getNamedAttr("is_randc",
-                                   builder.getBoolAttr(member.isRandC)),
-              builder.getNamedAttr(
-                  "mode_index",
-                  builder.getI64IntegerAttr(property.getRandMode() ==
-                                                    semantic::SVRandMode::None
-                                                ? 0
-                                                : randomPropertyIndex++)),
-          };
+          uint32_t modeIndex =
+              property.getRandMode() == semantic::SVRandMode::None
+                  ? 0
+                  : randomPropertyIndex++;
           auto addField = [&](StringRef suffix, Type fieldType) {
             std::string name =
                 fieldName + "_member_" + std::to_string(index) + suffix.str();
@@ -1081,31 +1070,32 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                 builder.getStringAttr("__obelisk_random_member_state"));
             return symbol;
           };
+          // Static members receive their randc state and element modes once
+          // class-wide storage exists.
+          sim::RandomCycleStateAttr cycle;
           if (!isStatic && member.isRandC) {
-            attributes.push_back(builder.getNamedAttr(
-                "randc_key_field",
-                addField("_randc_key",
-                         getRandomCyclicStateType(member.type,
-                                                  builder.getI64Type()))));
-            attributes.push_back(builder.getNamedAttr(
-                "randc_position_field",
-                addField("_randc_position",
-                         getRandomCyclicStateType(member.type,
-                                                  builder.getI64Type()))));
-            attributes.push_back(builder.getNamedAttr(
-                "randc_domain_field",
+            Type wordState =
+                getRandomCyclicStateType(member.type, builder.getI64Type());
+            FlatSymbolRefAttr key = addField("_randc_key", wordState);
+            FlatSymbolRefAttr position = addField("_randc_position", wordState);
+            FlatSymbolRefAttr domain =
                 reserveCyclicDomain(getSemanticLocation(property),
                                     fieldName + "_member_" +
                                         std::to_string(index) + "_randc_domain",
-                                    member.type)));
+                                    member.type);
+            cycle =
+                sim::RandomCycleStateAttr::get(context, key, position, domain);
           }
+          FlatSymbolRefAttr elementModeField;
           if (!isStatic)
             if (auto layout = getFixedRandomArrayLayout(member.type))
-              attributes.push_back(builder.getNamedAttr(
-                  "element_mode_field",
+              elementModeField =
                   addField("_element_modes",
-                           builder.getIntegerType(layout->elementCount))));
-          members.push_back(builder.getDictionaryAttr(attributes));
+                           builder.getIntegerType(layout->elementCount));
+          members.push_back(sim::RandomStructMemberAttr::get(
+              context, builder.getDenseI64ArrayAttr(member.path),
+              member.semanticType, member.type, member.isRandC, modeIndex,
+              cycle, elementModeField, std::nullopt));
         }
         sim::set<sim::metadata::RandomStructMembers>(
             property, builder.getArrayAttr(members));

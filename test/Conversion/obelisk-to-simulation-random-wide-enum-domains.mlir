@@ -11,7 +11,7 @@
 // Independent 65-bit array subdomains use offsets beyond a machine word.
 // Compiler Z3 must prove that even a 257-bit equality to a nonmember is empty.
 // ARRAY-DAG: mask = -1 : i130, value = 18446744073709551616 : i130
-// ARRAY-DAG: offset = 65 : i64, patterns = [{mask = -1 : i65
+// ARRAY-DAG: #simulation.random_domain<offset = 65, width = 65, patterns = [#simulation.random_pattern<mask = -1 : i65
 // SCOPE-DAG: mask = -1 : i129, value = -340282366920938463463374607431768211456 : i129
 // SCOPE-DAG: mask = -1 : i257, value = 340282366920938463463374607431768211456 : i257
 // FINITE-DAG: arith.constant {{.*}} 340282366920938463463374607431768211456 : i257

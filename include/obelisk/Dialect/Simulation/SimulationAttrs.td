@@ -410,6 +410,153 @@ def SimRandomNestedSelectionAttr
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+def SimRandomPatternAttr : SimAttr<"RandomPattern", "random_pattern"> {
+  let summary = "a ternary pattern of a finite random domain";
+  let description = [{
+    Matches the values whose bits under `mask` equal `value`; the other bits
+    are free.
+  }];
+  let parameters = (ins "::mlir::IntegerAttr":$mask,
+      "::mlir::IntegerAttr":$value);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def SimRandomDomainAttr : SimAttr<"RandomDomain", "random_domain"> {
+  let summary = "the finite value domain of a bit range of a random property";
+  let description = [{
+    Bits `offset` to `offset + width - 1` of the property take only values
+    matched by one of the disjoint `#simulation.random_pattern`s of
+    `patterns` (an enum type's values, IEEE 1800-2023 18.4).
+  }];
+  let parameters = (ins "uint64_t":$offset, "uint64_t":$width,
+      "::mlir::ArrayAttr":$patterns);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomCycleStateAttr
+    : SimAttr<"RandomCycleState", "random_cycle_state"> {
+  let summary = "the permutation state of a randc variable";
+  let description = [{
+    The permutation `key`, the `position` in the current cycle, and the cycle
+    `domain` of a randc variable (IEEE 1800-2023 18.4.2). Instance state
+    names three class fields; static state names three storage paths.
+  }];
+  let parameters = (ins "::mlir::Attribute":$key,
+      "::mlir::Attribute":$position, "::mlir::Attribute":$domain);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// Whether the state lives in class fields rather than static storage.
+    bool isInstanceState() const {
+      return ::mlir::isa<::mlir::FlatSymbolRefAttr>(getKey());
+    }
+  }];
+}
+
+def SimRandomContainerSizeAttr
+    : SimAttr<"RandomContainerSize", "random_container_size"> {
+  let summary = "a random dynamic container whose size is randomized";
+  let description = [{
+    The property is the size of a container of type `type`.
+    `sizeConstraintMask` selects the constraint blocks that constrain the
+    size; `unconditional` is set when one of them always applies.
+  }];
+  let parameters = (ins "::mlir::Type":$type, "uint64_t":$sizeConstraintMask,
+      "bool":$unconditional);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def SimRandomMemberStorageAttr
+    : SimAttr<"RandomMemberStorage", "random_member_storage"> {
+  let summary = "a random member of an unpacked structure property";
+  let description = [{
+    The member at the element ordinals `path` of the property's storage of
+    type `type`. The member is enabled when every rand_mode() bit of
+    `parentModeMask` is enabled and, for static properties, the bits of
+    `staticModeMask`.
+  }];
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$path, "::mlir::Type":$type,
+      "uint64_t":$parentModeMask, "uint64_t":$staticModeMask);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomPropertyAttr : SimAttr<"RandomProperty", "random_property"> {
+  let summary = "one random variable of a randomize() call";
+  let description = [{
+    A packed random variable of type `type` and `width` bits: the receiver's
+    class `field`, or the unit-local storage `path` (named by `symbol` for a
+    scope randomize()). `modeIndex` is its rand_mode() index; static
+    properties keep their rand_mode() bit in storage `modeStorage`.
+
+    The variable may be the size of a random dynamic container
+    (`containerSize`), a property of a nested random object (`nested`, whose
+    `field` names the property within that object), or a member of an
+    unpacked structure (`member`). Fixed arrays carry per-element rand_mode()
+    bits in `elementModeField` or `elementModeStorage`, `elementWidth` bits
+    per element. randc variables keep their `cycle` state, and enum values
+    restrict the variable to `domains`.
+  }];
+  let parameters = (ins OptionalParameter<"::mlir::FlatSymbolRefAttr">:$field,
+      OptionalParameter<"::mlir::StringAttr">:$path,
+      OptionalParameter<"::mlir::SymbolRefAttr">:$symbol, "::mlir::Type":$type,
+      "uint64_t":$width, "uint32_t":$modeIndex, "bool":$isSigned,
+      "bool":$isRandC,
+      OptionalParameter<"std::optional<uint64_t>">:$modeStorage,
+      OptionalParameter<"::obelisk::sim::RandomContainerSizeAttr">:
+          $containerSize,
+      OptionalParameter<"::obelisk::sim::RandomNestedObjectAttr">:$nested,
+      OptionalParameter<"::obelisk::sim::RandomMemberStorageAttr">:$member,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$elementModeField,
+      OptionalParameter<"std::optional<uint64_t>">:$elementModeStorage,
+      OptionalParameter<"std::optional<uint32_t>">:$elementWidth,
+      OptionalParameter<"::obelisk::sim::RandomCycleStateAttr">:$cycle,
+      OptionalParameter<"::mlir::ArrayAttr">:$domains);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// This property with its unit-local storage at `path` instead.
+    RandomPropertyAttr withPath(::mlir::StringAttr path) const;
+  }];
+}
+
+def SimRandomContainerAttr : SimAttr<"RandomContainer", "random_container"> {
+  let summary = "a random dynamic array or queue of a randomize() call";
+  let description = [{
+    The receiver's class `field` of container type `type`, whose elements of
+    `elementType` are randomized as `elementWidth`-bit values; with
+    `inertClassHandles`, its class-handle elements are not randomized.
+    `nested` places the field in a nested random object.
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$field, "::mlir::Type":$type,
+      "::mlir::Type":$elementType, "uint32_t":$elementWidth,
+      "uint32_t":$modeIndex,
+      DefaultValuedParameter<"bool", "false">:$inertClassHandles,
+      OptionalParameter<"::obelisk::sim::RandomNestedObjectAttr">:$nested);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
+def SimRandomStructMemberAttr
+    : SimAttr<"RandomStructMember", "random_struct_member"> {
+  let summary = "a rand or randc member of an unpacked structure property";
+  let description = [{
+    The member at the element ordinals `path`, of source type `semanticType`
+    and executable type `type`, with rand_mode() index `modeIndex`. A randc
+    member keeps its `cycle` state; a fixed-array member keeps per-element
+    rand_mode() bits in `elementModeField` or `elementModeStorage`.
+  }];
+  let parameters = (ins "::mlir::DenseI64ArrayAttr":$path,
+      "::mlir::Type":$semanticType, "::mlir::Type":$type, "bool":$isRandC,
+      "uint32_t":$modeIndex,
+      OptionalParameter<"::obelisk::sim::RandomCycleStateAttr">:$cycle,
+      OptionalParameter<"::mlir::FlatSymbolRefAttr">:$elementModeField,
+      OptionalParameter<"std::optional<uint64_t>">:$elementModeStorage);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

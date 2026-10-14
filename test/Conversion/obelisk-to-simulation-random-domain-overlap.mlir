@@ -46,11 +46,7 @@ module attributes {
           simulation.randomize, simulation.randomize_scope, simulation.randomize_explicit_properties,
           simulation.constraint_mode_static_storages = array<i64>, simulation.random_constraint_count = 0 : i32,
           simulation.random_container_properties = [], simulation.random_nested_constraint_modes = [], simulation.random_nested_hooks = [], simulation.random_recursive_alias_guards = [], simulation.random_total_width = 4 : i64,
-          simulation.random_properties = [{is_randc = false, is_signed = false, rand_mode_index = 0 : i32, reference_path = "top.x", type = i4, width = 4 : i64,
-            domains = [{offset = 0 : i64, width = 4 : i64, patterns = [
-              {mask = -4 : i4, value = 4 : i4},
-              {mask = -2 : i4, value = -6 : i4}
-            ]}]}],
+          simulation.random_properties = [#simulation.random_property<isRandC = false, isSigned = false, modeIndex = 0, path = "top.x", type = i4, width = 4, domains = [#simulation.random_domain<offset = 0, width = 4, patterns = [#simulation.random_pattern<mask = -4 : i4, value = 4 : i4>, #simulation.random_pattern<mask = -2 : i4, value = -6 : i4>]>]>],
           subroutine_kind = 0 : i32, system_scope_path = "top", system_scope_symbol = @unused
         } {}
       }
@@ -82,11 +78,7 @@ module attributes {
           simulation.randomize, simulation.randomize_scope, simulation.randomize_explicit_properties,
           simulation.constraint_mode_static_storages = array<i64>, simulation.random_constraint_count = 0 : i32,
           simulation.random_container_properties = [], simulation.random_nested_constraint_modes = [], simulation.random_nested_hooks = [], simulation.random_recursive_alias_guards = [], simulation.random_total_width = 130 : i64,
-          simulation.random_properties = [{is_randc = false, is_signed = false, rand_mode_index = 0 : i32, reference_path = "top.x", type = i130, width = 130 : i64,
-            domains = [{offset = 0 : i64, width = 130 : i64, patterns = [
-              {mask = -4 : i130, value = 1267650600228229401496703205380 : i130},
-              {mask = -2 : i130, value = 1267650600228229401496703205386 : i130}
-            ]}]}],
+          simulation.random_properties = [#simulation.random_property<isRandC = false, isSigned = false, modeIndex = 0, path = "top.x", type = i130, width = 130, domains = [#simulation.random_domain<offset = 0, width = 130, patterns = [#simulation.random_pattern<mask = -4 : i130, value = 1267650600228229401496703205380 : i130>, #simulation.random_pattern<mask = -2 : i130, value = 1267650600228229401496703205386 : i130>]>]>],
           subroutine_kind = 0 : i32, system_scope_path = "top", system_scope_symbol = @unused
         } {}
       }
@@ -120,11 +112,7 @@ module attributes {
           simulation.randomize, simulation.randomize_scope, simulation.randomize_explicit_properties,
           simulation.constraint_mode_static_storages = array<i64>, simulation.random_constraint_count = 0 : i32,
           simulation.random_container_properties = [], simulation.random_nested_constraint_modes = [], simulation.random_nested_hooks = [], simulation.random_recursive_alias_guards = [], simulation.random_total_width = 4 : i64,
-          simulation.random_properties = [{is_randc = false, is_signed = false, rand_mode_index = 0 : i32, reference_path = "top.x", type = i4, width = 4 : i64,
-            domains = [{offset = 0 : i64, width = 4 : i64, patterns = [
-              {mask = -4 : i4, value = 4 : i4},
-              {mask = -2 : i4, value = 6 : i4}
-            ]}]}],
+          simulation.random_properties = [#simulation.random_property<isRandC = false, isSigned = false, modeIndex = 0, path = "top.x", type = i4, width = 4, domains = [#simulation.random_domain<offset = 0, width = 4, patterns = [#simulation.random_pattern<mask = -4 : i4, value = 4 : i4>, #simulation.random_pattern<mask = -2 : i4, value = 6 : i4>]>]>],
           subroutine_kind = 0 : i32, system_scope_path = "top", system_scope_symbol = @unused
         } {}
       }
@@ -158,11 +146,7 @@ module attributes {
           simulation.randomize, simulation.randomize_scope, simulation.randomize_explicit_properties,
           simulation.constraint_mode_static_storages = array<i64>, simulation.random_constraint_count = 0 : i32,
           simulation.random_container_properties = [], simulation.random_nested_constraint_modes = [], simulation.random_nested_hooks = [], simulation.random_recursive_alias_guards = [], simulation.random_total_width = 4 : i64,
-          simulation.random_properties = [{is_randc = false, is_signed = false, rand_mode_index = 0 : i32, reference_path = "top.x", type = i4, width = 4 : i64,
-            domains = [{offset = 0 : i64, width = 4 : i64, patterns = [
-              {mask = -4 : i4, value = 4 : i4},
-              {mask = -2 : i4, value = 6 : i4}
-            ]}]}],
+          simulation.random_properties = [#simulation.random_property<isRandC = false, isSigned = false, modeIndex = 0, path = "top.x", type = i4, width = 4, domains = [#simulation.random_domain<offset = 0, width = 4, patterns = [#simulation.random_pattern<mask = -4 : i4, value = 4 : i4>, #simulation.random_pattern<mask = -2 : i4, value = 6 : i4>]>]>],
           subroutine_kind = 0 : i32, system_scope_path = "top", system_scope_symbol = @unused
         } {
           obelisk.sv.constraint.list attributes {item_count = 1 : i64, node_id = 3 : i64} {
@@ -202,11 +186,7 @@ module attributes {
           simulation.randomize, simulation.randomize_scope, simulation.randomize_explicit_properties,
           simulation.constraint_mode_static_storages = array<i64>, simulation.random_constraint_count = 0 : i32,
           simulation.random_container_properties = [], simulation.random_nested_constraint_modes = [], simulation.random_nested_hooks = [], simulation.random_recursive_alias_guards = [], simulation.random_total_width = 130 : i64,
-          simulation.random_properties = [{is_randc = false, is_signed = false, rand_mode_index = 0 : i32, reference_path = "top.x", type = i130, width = 130 : i64,
-            domains = [{offset = 0 : i64, width = 130 : i64, patterns = [
-              {mask = -4 : i130, value = 1267650600228229401496703205380 : i130},
-              {mask = -2 : i130, value = 1267650600228229401496703205382 : i130}
-            ]}]}],
+          simulation.random_properties = [#simulation.random_property<isRandC = false, isSigned = false, modeIndex = 0, path = "top.x", type = i130, width = 130, domains = [#simulation.random_domain<offset = 0, width = 130, patterns = [#simulation.random_pattern<mask = -4 : i130, value = 1267650600228229401496703205380 : i130>, #simulation.random_pattern<mask = -2 : i130, value = 1267650600228229401496703205382 : i130>]>]>],
           subroutine_kind = 0 : i32, system_scope_path = "top", system_scope_symbol = @unused
         } {}
       }
@@ -240,11 +220,7 @@ module attributes {
           simulation.randomize, simulation.randomize_scope, simulation.randomize_explicit_properties,
           simulation.constraint_mode_static_storages = array<i64>, simulation.random_constraint_count = 0 : i32,
           simulation.random_container_properties = [], simulation.random_nested_constraint_modes = [], simulation.random_nested_hooks = [], simulation.random_recursive_alias_guards = [], simulation.random_total_width = 4 : i64,
-          simulation.random_properties = [{is_randc = false, is_signed = false, rand_mode_index = 0 : i32, reference_path = "top.x", type = i4, width = 4 : i64,
-            domains = [{offset = 0 : i64, width = 4 : i64, patterns = [
-              {mask = -4 : i4, value = 4 : i4},
-              {mask = -4 : i4, value = 4 : i4}
-            ]}]}],
+          simulation.random_properties = [#simulation.random_property<isRandC = false, isSigned = false, modeIndex = 0, path = "top.x", type = i4, width = 4, domains = [#simulation.random_domain<offset = 0, width = 4, patterns = [#simulation.random_pattern<mask = -4 : i4, value = 4 : i4>, #simulation.random_pattern<mask = -4 : i4, value = 4 : i4>]>]>],
           subroutine_kind = 0 : i32, system_scope_path = "top", system_scope_symbol = @unused
         } {}
       }

@@ -650,105 +650,33 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     }
     return success();
   };
-  for (Attribute propertyAttr : properties) {
-    auto property = dyn_cast<DictionaryAttr>(propertyAttr);
-    auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
-                          : FlatSymbolRefAttr{};
-    auto referencePath =
-        property ? property.getAs<StringAttr>(randomPropertyPathAttrName)
-                 : StringAttr{};
-    auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
-    auto widthAttr =
-        property ? property.getAs<IntegerAttr>("width") : IntegerAttr{};
-    auto modeIndexAttr =
-        property ? property.getAs<IntegerAttr>(randomPropertyModeIndexAttrName)
-                 : IntegerAttr{};
-    auto signedAttr =
-        property ? property.getAs<BoolAttr>("is_signed") : BoolAttr{};
-    auto randcAttr =
-        property ? property.getAs<BoolAttr>("is_randc") : BoolAttr{};
-    auto modeStorageAttr =
-        property
-            ? property.getAs<IntegerAttr>(randomPropertyModeStorageAttrName)
-            : IntegerAttr{};
-    bool isContainerSize =
-        property && property.contains(randomContainerSizeAttrName);
-    auto containerTypeAttr =
-        property ? property.getAs<TypeAttr>(randomContainerTypeAttrName)
-                 : TypeAttr{};
-    auto sizeConstraintMaskAttr =
-        property ? property.getAs<IntegerAttr>("size_constraint_mask")
-                 : IntegerAttr{};
-    auto unconditionalSizeConstraintAttr =
-        property ? property.getAs<BoolAttr>("unconditional_size_constraint")
-                 : BoolAttr{};
-    auto nestedObjectField =
-        property
-            ? property.getAs<FlatSymbolRefAttr>(randomNestedObjectFieldAttrName)
-            : FlatSymbolRefAttr{};
-    auto nestedObjectTypeAttr =
-        property ? property.getAs<TypeAttr>(randomNestedObjectTypeAttrName)
-                 : TypeAttr{};
-    auto nestedObjectStorageTypeAttr =
-        property
-            ? property.getAs<TypeAttr>(randomNestedObjectStorageTypeAttrName)
-            : TypeAttr{};
-    auto nestedModeIndexAttr =
-        property ? property.getAs<IntegerAttr>(randomNestedModeIndexAttrName)
-                 : IntegerAttr{};
-    auto nestedObjectPathAttr =
-        property ? property.getAs<ArrayAttr>(randomNestedObjectPathAttrName)
-                 : ArrayAttr{};
-    bool isNestedObject = static_cast<bool>(nestedObjectField);
-    if (static_cast<bool>(field) == static_cast<bool>(referencePath) ||
-        !typeAttr || !widthAttr || !modeIndexAttr || !signedAttr ||
-        !randcAttr || modeIndexAttr.getValue().isNegative() ||
-        modeIndexAttr.getValue().getActiveBits() > 32 ||
-        modeIndexAttr.getValue().getZExtValue() >= 64 ||
-        widthAttr.getValue().isZero() || widthAttr.getValue().isNegative() ||
-        widthAttr.getValue().getActiveBits() > 64 ||
-        (isContainerSize != static_cast<bool>(containerTypeAttr)) ||
-        (isContainerSize &&
-         (!field || referencePath || !sizeConstraintMaskAttr ||
-          !unconditionalSizeConstraintAttr ||
-          sizeConstraintMaskAttr.getValue().getBitWidth() > 64)) ||
-        (isNestedObject &&
-         (!field || referencePath || !nestedObjectTypeAttr ||
-          !nestedObjectStorageTypeAttr || !nestedModeIndexAttr ||
-          nestedModeIndexAttr.getValue().isNegative() ||
-          nestedModeIndexAttr.getValue().getActiveBits() > 32 ||
-          nestedModeIndexAttr.getValue().getZExtValue() >= 64)) ||
-        (!isNestedObject && nestedObjectPathAttr)) {
-      emitError(location) << "randomize property plan is malformed";
-      return failure();
-    }
-    uint64_t width = widthAttr.getValue().getZExtValue();
+  for (auto property : properties.getAsRange<sim::RandomPropertyAttr>()) {
+    FlatSymbolRefAttr field = property.getField();
+    StringAttr referencePath = property.getPath();
+    sim::RandomContainerSizeAttr containerSize = property.getContainerSize();
+    bool isContainerSize = static_cast<bool>(containerSize);
+    sim::RandomNestedObjectAttr nested = property.getNested();
+    bool isNestedObject = static_cast<bool>(nested);
+    FlatSymbolRefAttr nestedObjectField =
+        nested ? nested.getField() : FlatSymbolRefAttr{};
+    uint64_t width = property.getWidth();
     if (width > UINT32_MAX - plannedWidth) {
       emitError(location)
           << "randomize property plan exceeds its 32-bit bit-offset space";
       return failure();
     }
-    Type type = typeAttr.getValue();
+    Type type = property.getType();
     std::optional<unsigned> typeWidth = getRandomPropertyWidth(type);
     if (!typeWidth || *typeWidth != width) {
       emitError(location) << "randomize property type width is inconsistent";
       return failure();
     }
-    auto storagePath = property.getAs<DenseI64ArrayAttr>("storage_path");
-    auto storageTypeAttr = property.getAs<TypeAttr>("storage_type");
-    auto parentModeMaskAttr = property.getAs<IntegerAttr>("parent_mode_mask");
-    auto staticModeMaskAttr = property.getAs<IntegerAttr>("static_mode_mask");
-    if (storagePath || storageTypeAttr || parentModeMaskAttr ||
-        staticModeMaskAttr) {
-      if (!storagePath || storagePath.empty() || !storageTypeAttr ||
-          !parentModeMaskAttr || !staticModeMaskAttr ||
-          parentModeMaskAttr.getValue().getBitWidth() != 64 ||
-          staticModeMaskAttr.getValue().getBitWidth() != 64 ||
-          isContainerSize || isNestedObject) {
-        emitError(location) << "random structure member storage is malformed";
-        return failure();
-      }
-      Type selected = storageTypeAttr.getValue();
+    sim::RandomMemberStorageAttr member = property.getMember();
+    DenseI64ArrayAttr storagePath =
+        member ? member.getPath() : DenseI64ArrayAttr{};
+    Type storageType = member ? member.getType() : Type{};
+    if (member) {
+      Type selected = storageType;
       for (int64_t ordinal : storagePath.asArrayRef()) {
         auto structure = dyn_cast<sim::UnpackedStructType>(selected);
         if (!structure || ordinal < 0 ||
@@ -769,14 +697,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value nestedObjectReference;
     FlatSymbolRefAttr nestedModeField;
     if (isNestedObject) {
-      Type objectReferenceType = sim::ManagedRefType::get(
-          function.getContext(), nestedObjectStorageTypeAttr.getValue(),
-          objectType.getClassName());
+      Type objectReferenceType =
+          sim::ManagedRefType::get(function.getContext(), nested.getStorage(),
+                                   objectType.getClassName());
       nestedObjectReference = sim::SimClassFieldRefOp::create(
           builder, location, objectReferenceType, receiver, nestedObjectField);
       auto nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-          function, cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
-                        .getClassName());
+          function, nested.getConcrete().getClassName());
       while (nestedDeclaration &&
              !sim::has<sim::metadata::RandomModeField>(nestedDeclaration)) {
         if (!nestedDeclaration.getBaseAttr())
@@ -793,8 +720,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
     } else if (field) {
-      Type referencedType = isContainerSize ? containerTypeAttr.getValue()
-                            : storagePath   ? storageTypeAttr.getValue()
+      Type referencedType = isContainerSize ? containerSize.getType()
+                            : storagePath   ? storageType
                                             : type;
       Type referenceType = sim::ManagedRefType::get(
           function.getContext(), referencedType, objectType.getClassName());
@@ -803,39 +730,27 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     } else {
       reference = lvalues.lookup(referencePath.getValue());
       if (!reference || getReferenceElementType(reference) !=
-                            (storagePath ? storageTypeAttr.getValue() : type)) {
+                            (storagePath ? storageType : type)) {
         emitError(location)
             << "static random property has no typed unit-local reference: "
             << referencePath.getValue();
         return failure();
       }
     }
-    std::optional<uint64_t> randomModeStorage;
-    if (modeStorageAttr) {
-      APInt storage = modeStorageAttr.getValue();
-      if (field || storage.isNegative() || storage.getActiveBits() > 63) {
-        emitError(location) << "static random property mode is malformed";
-        return failure();
-      }
-      randomModeStorage = storage.getZExtValue();
+    std::optional<uint64_t> randomModeStorage = property.getModeStorage();
+    if (randomModeStorage && *randomModeStorage > INT64_MAX) {
+      emitError(location) << "static random property mode is malformed";
+      return failure();
     }
-    auto elementModeField =
-        property.getAs<FlatSymbolRefAttr>("element_mode_field");
-    auto elementModeStorage =
-        property.getAs<IntegerAttr>("element_mode_storage");
-    auto elementWidth = property.getAs<IntegerAttr>("element_width");
+    FlatSymbolRefAttr elementModeField = property.getElementModeField();
+    std::optional<uint64_t> elementModeStorage =
+        property.getElementModeStorage();
+    std::optional<uint32_t> elementWidth = property.getElementWidth();
     Value elementModeReference;
-    if (elementModeField || elementModeStorage || elementWidth) {
+    if (elementWidth) {
       auto layout = getFixedRandomArrayLayout(type);
-      if (!layout || !elementWidth || elementWidth.getValue().isNegative() ||
-          elementWidth.getValue().getActiveBits() > 32 ||
-          elementWidth.getValue().getZExtValue() != layout->elementWidth ||
-          static_cast<bool>(elementModeField) ==
-              static_cast<bool>(elementModeStorage) ||
-          isContainerSize || isNestedObject || (elementModeField && !field) ||
-          (elementModeStorage &&
-           (field || elementModeStorage.getValue().isNegative() ||
-            elementModeStorage.getValue().getActiveBits() > 63))) {
+      if (!layout || *elementWidth != layout->elementWidth ||
+          (elementModeStorage && *elementModeStorage > INT64_MAX)) {
         emitError(location) << "randomize array element modes are malformed";
         return failure();
       }
@@ -851,7 +766,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           elementModeReference = sim::SimContextStorageOp::create(
               builder, location,
               sim::RefType::get(function.getContext(), bitmapType),
-              function.getBody().front().getArgument(0), elementModeStorage);
+              function.getBody().front().getArgument(0),
+              builder.getI64IntegerAttr(*elementModeStorage));
       }
     }
     if (referencePath &&
@@ -864,38 +780,22 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value randcKeyReference;
     Value randcPositionReference;
     Value randcDomainReference;
-    if (randcAttr.getValue()) {
+    if (property.getIsRandC()) {
       auto cyclicWidth = sim::getPackedWidth(type);
       if (auto layout = getFixedRandomArrayLayout(type))
         cyclicWidth = layout->elementWidth;
       Type wordState = getRandomCyclicStateType(type, i64);
       Type domainState = getRandomCyclicStateType(
           type, sim::StringType::get(function.getContext()));
-      auto keyField = property.getAs<FlatSymbolRefAttr>("randc_key_field");
-      auto positionField =
-          property.getAs<FlatSymbolRefAttr>("randc_position_field");
-      auto domainField =
-          property.getAs<FlatSymbolRefAttr>("randc_domain_field");
-      auto keyPath = property.getAs<StringAttr>(randomRandCKeyPathAttrName);
-      auto positionPath =
-          property.getAs<StringAttr>(randomRandCPositionPathAttrName);
-      auto domainPath =
-          property.getAs<StringAttr>(randomRandCDomainPathAttrName);
-      bool hasKeyField = static_cast<bool>(keyField);
-      bool hasPositionField = static_cast<bool>(positionField);
-      bool hasKeyPath = static_cast<bool>(keyPath);
-      bool hasPositionPath = static_cast<bool>(positionPath);
-      if (!cyclicWidth || *cyclicWidth > 32 ||
-          hasKeyField != hasPositionField ||
-          hasKeyField != static_cast<bool>(domainField) ||
-          hasKeyPath != hasPositionPath ||
-          hasKeyPath != static_cast<bool>(domainPath) ||
-          hasKeyField == hasKeyPath ||
-          hasKeyField != static_cast<bool>(field)) {
+      sim::RandomCycleStateAttr cycle = property.getCycle();
+      if (!cyclicWidth || *cyclicWidth > 32 || !cycle) {
         emitError(location) << "randc property plan is malformed";
         return failure();
       }
-      if (hasKeyField) {
+      if (cycle.isInstanceState()) {
+        auto keyField = cast<FlatSymbolRefAttr>(cycle.getKey());
+        auto positionField = cast<FlatSymbolRefAttr>(cycle.getPosition());
+        auto domainField = cast<FlatSymbolRefAttr>(cycle.getDomain());
         Type stateReferenceType = sim::ManagedRefType::get(
             function.getContext(), wordState, objectType.getClassName());
         randcKeyReference = sim::SimClassFieldRefOp::create(
@@ -908,9 +808,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                      objectType.getClassName()),
             receiver, domainField);
       } else {
-        randcKeyReference = lvalues.lookup(keyPath.getValue());
-        randcPositionReference = lvalues.lookup(positionPath.getValue());
-        randcDomainReference = lvalues.lookup(domainPath.getValue());
+        randcKeyReference =
+            lvalues.lookup(cast<StringAttr>(cycle.getKey()).getValue());
+        randcPositionReference =
+            lvalues.lookup(cast<StringAttr>(cycle.getPosition()).getValue());
+        randcDomainReference =
+            lvalues.lookup(cast<StringAttr>(cycle.getDomain()).getValue());
         if (!randcKeyReference || !randcPositionReference ||
             !randcDomainReference ||
             getReferenceElementType(randcKeyReference) != wordState ||
@@ -923,28 +826,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     }
     SmallVector<PropertyDomain> propertyDomains;
-    if (auto domains = property.getAs<ArrayAttr>("domains")) {
+    if (ArrayAttr domains = property.getDomains()) {
       llvm::SmallBitVector coveredBits(width);
-      for (Attribute domainAttr : domains) {
-        auto domain = dyn_cast<DictionaryAttr>(domainAttr);
-        auto offsetAttr =
-            domain ? domain.getAs<IntegerAttr>("offset") : IntegerAttr{};
-        auto domainWidthAttr =
-            domain ? domain.getAs<IntegerAttr>("width") : IntegerAttr{};
-        auto patternsAttr =
-            domain ? domain.getAs<ArrayAttr>("patterns") : ArrayAttr{};
-        if (!offsetAttr || !domainWidthAttr || !patternsAttr ||
-            patternsAttr.empty() || offsetAttr.getValue().isNegative() ||
-            domainWidthAttr.getValue().isNegative() ||
-            offsetAttr.getValue().getActiveBits() > 64 ||
-            domainWidthAttr.getValue().getActiveBits() > 64) {
-          emitError(location) << "randomize property domain is malformed";
-          return failure();
-        }
-        uint64_t domainOffset = offsetAttr.getValue().getZExtValue();
-        uint64_t domainWidth = domainWidthAttr.getValue().getZExtValue();
-        if (domainWidth == 0 || domainOffset > width ||
-            domainWidth > width - domainOffset) {
+      for (auto domain : domains.getAsRange<sim::RandomDomainAttr>()) {
+        uint64_t domainOffset = domain.getOffset();
+        uint64_t domainWidth = domain.getWidth();
+        if (domainOffset > width || domainWidth > width - domainOffset) {
           emitError(location) << "randomize property domain is out of range";
           return failure();
         }
@@ -964,14 +851,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                       0};
         SmallVector<solver::RandomDomainPattern> overlapPatterns;
         APInt cardinality(domainWidth + 1, 0);
-        for (Attribute patternAttr : patternsAttr) {
-          auto pattern = dyn_cast<DictionaryAttr>(patternAttr);
-          auto maskAttr =
-              pattern ? pattern.getAs<IntegerAttr>("mask") : IntegerAttr{};
-          auto valueAttr =
-              pattern ? pattern.getAs<IntegerAttr>("value") : IntegerAttr{};
-          if (!maskAttr || !valueAttr ||
-              maskAttr.getValue().getActiveBits() > domainWidth ||
+        for (auto pattern :
+             domain.getPatterns().getAsRange<sim::RandomPatternAttr>()) {
+          IntegerAttr maskAttr = pattern.getMask();
+          IntegerAttr valueAttr = pattern.getValue();
+          if (maskAttr.getValue().getActiveBits() > domainWidth ||
               valueAttr.getValue().getActiveBits() > domainWidth) {
             emitError(location)
                 << "randomize property domain pattern is malformed";
@@ -1013,31 +897,26 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
     }
     SmallVector<ObjectPathElement> nestedObjectPath;
-    if (failed(parseNestedObjectPath(nestedObjectPathAttr, nestedObjectPath)))
+    if (failed(parseNestedObjectPath(nested ? nested.getPath() : ArrayAttr{},
+                                     nestedObjectPath)))
       return failure();
     planned.push_back(
         {field,
          type,
          static_cast<unsigned>(width),
-         static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
+         property.getModeIndex(),
          isContainerSize,
-         containerTypeAttr ? containerTypeAttr.getValue() : Type{},
-         sizeConstraintMaskAttr
-             ? sizeConstraintMaskAttr.getValue().getZExtValue()
-             : 0,
-         unconditionalSizeConstraintAttr &&
-             unconditionalSizeConstraintAttr.getValue(),
+         containerSize ? containerSize.getType() : Type{},
+         containerSize ? containerSize.getSizeConstraintMask() : 0,
+         containerSize && containerSize.getUnconditional(),
          nestedObjectReference,
-         nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue() : Type{},
+         nested ? Type(nested.getConcrete()) : Type{},
          field,
-         nestedModeIndexAttr
-             ? static_cast<unsigned>(
-                   nestedModeIndexAttr.getValue().getZExtValue())
-             : 0,
+         nested ? nested.getOuterModeIndex() : 0,
          nestedModeField,
-         signedAttr.getValue(),
+         property.getIsSigned(),
          reference,
-         randcAttr.getValue(),
+         property.getIsRandC(),
          randcKeyReference,
          randcPositionReference,
          {},
@@ -1050,17 +929,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     planned.back().elementModeReference = elementModeReference;
     planned.back().randcDomainReference = randcDomainReference;
     planned.back().storagePath = storagePath;
-    planned.back().storageType =
-        storageTypeAttr ? storageTypeAttr.getValue() : Type{};
-    planned.back().parentModeMask =
-        parentModeMaskAttr ? parentModeMaskAttr.getValue().getZExtValue() : 0;
+    planned.back().storageType = storageType;
+    planned.back().parentModeMask = member ? member.getParentModeMask() : 0;
     planned.back().staticModeMask =
-        staticModeMaskAttr ? staticModeMaskAttr.getValue().getZExtValue()
-                           : UINT64_MAX;
-    planned.back().elementWidth =
-        elementWidth
-            ? static_cast<unsigned>(elementWidth.getValue().getZExtValue())
-            : 0;
+        member ? member.getStaticModeMask() : UINT64_MAX;
+    planned.back().elementWidth = elementWidth.value_or(0);
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -1092,74 +965,25 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FlatSymbolRefAttr nestedObjectRootField;
   };
   SmallVector<ContainerProperty> plannedContainers;
-  for (Attribute propertyAttr : containerProperties) {
-    auto property = dyn_cast<DictionaryAttr>(propertyAttr);
-    auto field = property ? property.getAs<FlatSymbolRefAttr>("field")
-                          : FlatSymbolRefAttr{};
-    auto typeAttr = property ? property.getAs<TypeAttr>("type") : TypeAttr{};
-    auto elementTypeAttr =
-        property ? property.getAs<TypeAttr>("element_type") : TypeAttr{};
-    auto elementWidthAttr =
-        property ? property.getAs<IntegerAttr>("element_width") : IntegerAttr{};
-    auto modeIndexAttr =
-        property ? property.getAs<IntegerAttr>(randomPropertyModeIndexAttrName)
-                 : IntegerAttr{};
-    auto nestedObjectField =
-        property
-            ? property.getAs<FlatSymbolRefAttr>(randomNestedObjectFieldAttrName)
-            : FlatSymbolRefAttr{};
-    auto nestedObjectTypeAttr =
-        property ? property.getAs<TypeAttr>(randomNestedObjectTypeAttrName)
-                 : TypeAttr{};
-    auto nestedObjectStorageTypeAttr =
-        property
-            ? property.getAs<TypeAttr>(randomNestedObjectStorageTypeAttrName)
-            : TypeAttr{};
-    auto nestedModeIndexAttr =
-        property ? property.getAs<IntegerAttr>(randomNestedModeIndexAttrName)
-                 : IntegerAttr{};
-    auto nestedObjectPathAttr =
-        property ? property.getAs<ArrayAttr>(randomNestedObjectPathAttrName)
-                 : ArrayAttr{};
-    bool inertClassHandles =
-        property && property.contains("inert_class_handles");
-    bool isNestedObject = static_cast<bool>(nestedObjectField);
-    bool hasCompleteNestedObject = nestedObjectField && nestedObjectTypeAttr &&
-                                   nestedObjectStorageTypeAttr &&
-                                   nestedModeIndexAttr;
-    bool hasAnyNestedObject = nestedObjectField || nestedObjectTypeAttr ||
-                              nestedObjectStorageTypeAttr ||
-                              nestedModeIndexAttr;
-    if (!field || !typeAttr || !elementTypeAttr || !elementWidthAttr ||
-        !modeIndexAttr || elementWidthAttr.getValue().isNegative() ||
-        (!inertClassHandles && elementWidthAttr.getValue().isZero()) ||
-        elementWidthAttr.getValue().getActiveBits() > 32 ||
-        elementWidthAttr.getValue().getZExtValue() > 64 ||
-        modeIndexAttr.getValue().isNegative() ||
-        modeIndexAttr.getValue().getActiveBits() > 32 ||
-        modeIndexAttr.getValue().getZExtValue() >= 64 ||
-        (hasAnyNestedObject != hasCompleteNestedObject) ||
-        (isNestedObject &&
-         (!isa<sim::ClassHandleType>(nestedObjectTypeAttr.getValue()) ||
-          !isa<sim::ClassHandleType>(nestedObjectStorageTypeAttr.getValue()) ||
-          nestedModeIndexAttr.getValue().isNegative() ||
-          nestedModeIndexAttr.getValue().getActiveBits() > 32 ||
-          nestedModeIndexAttr.getValue().getZExtValue() >= 64))) {
-      emitError(location) << "random dynamic-container plan is malformed";
-      return failure();
-    }
+  for (auto property :
+       containerProperties.getAsRange<sim::RandomContainerAttr>()) {
+    FlatSymbolRefAttr field = property.getField();
+    sim::RandomNestedObjectAttr nested = property.getNested();
+    FlatSymbolRefAttr nestedObjectField =
+        nested ? nested.getField() : FlatSymbolRefAttr{};
+    bool inertClassHandles = property.getInertClassHandles();
+    bool isNestedObject = static_cast<bool>(nested);
     Type containerElementType;
-    if (auto array = dyn_cast<sim::DynamicArrayType>(typeAttr.getValue()))
+    if (auto array = dyn_cast<sim::DynamicArrayType>(property.getType()))
       containerElementType = array.getElementType();
-    else if (auto queue = dyn_cast<sim::QueueType>(typeAttr.getValue()))
+    else if (auto queue = dyn_cast<sim::QueueType>(property.getType()))
       containerElementType = queue.getElementType();
-    uint64_t elementWidth = elementWidthAttr.getValue().getZExtValue();
-    if (!containerElementType ||
-        containerElementType != elementTypeAttr.getValue() ||
+    uint64_t elementWidth = property.getElementWidth();
+    Type elementType = property.getElementType();
+    if (!containerElementType || containerElementType != elementType ||
         ((!inertClassHandles &&
-          sim::getPackedWidth(elementTypeAttr.getValue()) != elementWidth) ||
-         (inertClassHandles &&
-          !isa<sim::ClassHandleType>(elementTypeAttr.getValue())))) {
+          sim::getPackedWidth(elementType) != elementWidth) ||
+         (inertClassHandles && !isa<sim::ClassHandleType>(elementType)))) {
       emitError(location) << "random dynamic-container type is inconsistent";
       return failure();
     }
@@ -1167,14 +991,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value nestedObjectReference;
     FlatSymbolRefAttr nestedModeField;
     if (isNestedObject) {
-      Type objectReferenceType = sim::ManagedRefType::get(
-          function.getContext(), nestedObjectStorageTypeAttr.getValue(),
-          objectType.getClassName());
+      Type objectReferenceType =
+          sim::ManagedRefType::get(function.getContext(), nested.getStorage(),
+                                   objectType.getClassName());
       nestedObjectReference = sim::SimClassFieldRefOp::create(
           builder, location, objectReferenceType, receiver, nestedObjectField);
       auto nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
-          function, cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
-                        .getClassName());
+          function, nested.getConcrete().getClassName());
       while (nestedDeclaration &&
              !sim::has<sim::metadata::RandomModeField>(nestedDeclaration)) {
         if (!nestedDeclaration.getBaseAttr())
@@ -1191,28 +1014,21 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
     } else {
-      Type referenceType =
-          sim::ManagedRefType::get(function.getContext(), typeAttr.getValue(),
-                                   objectType.getClassName());
+      Type referenceType = sim::ManagedRefType::get(
+          function.getContext(), property.getType(), objectType.getClassName());
       reference = sim::SimClassFieldRefOp::create(
           builder, location, referenceType, receiver, field);
     }
     SmallVector<ObjectPathElement> nestedObjectPath;
-    if ((!isNestedObject && nestedObjectPathAttr) ||
-        failed(parseNestedObjectPath(nestedObjectPathAttr, nestedObjectPath)))
+    if (failed(parseNestedObjectPath(nested ? nested.getPath() : ArrayAttr{},
+                                     nestedObjectPath)))
       return failure();
     plannedContainers.push_back(
-        {typeAttr.getValue(), elementTypeAttr.getValue(),
-         static_cast<unsigned>(elementWidth),
-         static_cast<unsigned>(modeIndexAttr.getValue().getZExtValue()),
-         reference, nestedObjectReference,
-         nestedObjectTypeAttr ? nestedObjectTypeAttr.getValue() : Type{}, field,
-         nestedModeIndexAttr
-             ? static_cast<unsigned>(
-                   nestedModeIndexAttr.getValue().getZExtValue())
-             : 0,
-         nestedModeField, std::move(nestedObjectPath), inertClassHandles,
-         nestedObjectField});
+        {property.getType(), elementType, static_cast<unsigned>(elementWidth),
+         property.getModeIndex(), reference, nestedObjectReference,
+         nested ? Type(nested.getConcrete()) : Type{}, field,
+         nested ? nested.getOuterModeIndex() : 0, nestedModeField,
+         std::move(nestedObjectPath), inertClassHandles, nestedObjectField});
   }
   SmallVector<bool> containerNeedsIdentity(plannedContainers.size(), false);
   auto sameContainerOccurrence = [](const ContainerProperty &left,

@@ -3197,11 +3197,11 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       }
     if (auto members = sim::get<sim::metadata::RandomStructMembers>(property)) {
       SmallVector<Attribute> updated;
-      for (auto [index, attribute] : llvm::enumerate(members)) {
-        auto member = cast<DictionaryAttr>(attribute);
-        NamedAttrList attributes(member);
-        if (auto layout = getFixedRandomArrayLayout(
-                member.getAs<TypeAttr>("type").getValue())) {
+      for (auto [index, member] :
+           llvm::enumerate(members.getAsRange<sim::RandomStructMemberAttr>())) {
+        std::optional<uint64_t> elementModeStorage =
+            member.getElementModeStorage();
+        if (auto layout = getFixedRandomArrayLayout(member.getType())) {
           std::string elements = (llvm::Twine(path) + ".$rand_member_" +
                                   llvm::Twine(index) + "_element_modes")
                                      .str();
@@ -3213,8 +3213,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           }
           uint64_t elementId = nextStorageId++;
           Type elementType = builder.getIntegerType(layout->elementCount);
-          attributes.set("element_mode_storage",
-                         builder.getI64IntegerAttr(elementId));
+          elementModeStorage = elementId;
           descriptors[elements] = {DescriptorInfo::Kind::Storage, elementId,
                                    scopeId, elementType,
                                    sim::NetResolutionKind::Wire};
@@ -3227,7 +3226,11 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               schedule::ComputeObservabilityKindAttr{},
               sim::VPITypeSemanticsAttr{});
         }
-        updated.push_back(attributes.getDictionary(property.getContext()));
+        updated.push_back(sim::RandomStructMemberAttr::get(
+            property.getContext(), member.getPath(), member.getSemanticType(),
+            member.getType(), member.getIsRandC(), member.getModeIndex(),
+            member.getCycle(), member.getElementModeField(),
+            elementModeStorage));
       }
       sim::set<sim::metadata::RandomStructMembers>(
           property, builder.getArrayAttr(updated));

@@ -86,3 +86,33 @@ func.func private @guard_depth() attributes {
 // expected-error @+1 {{attribute 'simulation.random_nested_hooks' must contain #simulation.random_nested_hooks entries}}
 func.func private @untyped_hooks() attributes {
   simulation.random_nested_hooks = [{pre_callee = @f}]}
+
+// -----
+
+func.func private @property_target() attributes {
+  // expected-error @+1 {{random property must name exactly one field or path}}
+  property = #simulation.random_property<field = @f, path = "top.f",
+    type = i1, width = 1, modeIndex = 0, isSigned = false, isRandC = false>}
+
+// -----
+
+func.func private @mixed_cycle() attributes {
+  // expected-error @+1 {{randc state must name three class fields or three storage paths}}
+  cycle = #simulation.random_cycle_state<key = @k, position = "top.p",
+                                         domain = @d>}
+
+// -----
+
+func.func private @static_cycle_on_field() attributes {
+  // expected-error @+1 {{randc state must match its variable}}
+  property = #simulation.random_property<field = @f, type = i1, width = 1,
+    modeIndex = 0, isSigned = false, isRandC = true,
+    cycle = #simulation.random_cycle_state<key = "k", position = "p",
+                                           domain = "d">>}
+
+// -----
+
+func.func private @element_modes() attributes {
+  // expected-error @+1 {{random element modes are malformed}}
+  property = #simulation.random_property<field = @f, type = i1, width = 1,
+    modeIndex = 0, isSigned = false, isRandC = false, elementModeField = @m>}
