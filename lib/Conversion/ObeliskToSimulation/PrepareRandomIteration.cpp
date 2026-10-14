@@ -15,6 +15,9 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+/// Static foreach instances expanded into one randomize plan.
+static constexpr uint64_t maxStaticForeachInstances = 256;
+
 LogicalResult
 expandStaticRandomForeachConstraints(MutableArrayRef<Operation *> roots,
                                      Builder &builder) {
@@ -77,6 +80,17 @@ expandStaticRandomForeachConstraints(MutableArrayRef<Operation *> roots,
       // instances. An empty conjunction is true.
       if (dimensions.empty())
         count = 0;
+      // Each instance becomes part of the exact sampling plan, whose
+      // construction and runtime counting grow faster than linearly in the
+      // number of instances. Diagnose larger expansions instead of exhausting
+      // compile or run time.
+      if (count > maxStaticForeachInstances) {
+        emitError(getSemanticLocation(loop))
+            << "static foreach constraint expands to " << count
+            << " instances; exact sampling plans support at most "
+            << maxStaticForeachInstances;
+        return WalkResult::interrupt();
+      }
 
       NamedAttrList attributes(loop->getAttrs());
       attributes.erase("loop_dimensions");
