@@ -233,17 +233,21 @@ public:
       break;
     }
     case OBELISK_RT_RANDOM_CLOG2_V1: {
-      result = constant(0, width);
+      // $clog2 is at most the input width, so select among indices only as
+      // wide as that bound and zero-extend once, as for $countones.
+      unsigned indexWidth = std::min(width, 32u - __builtin_clz(input.width));
+      result = constant(0, indexWidth);
       Z3_ast lowerNonzero = Z3_mk_false(context);
       for (unsigned bit = 0; bit != input.width; ++bit) {
         Z3_ast selected =
             truth({Z3_mk_extract(context, bit, bit, input.value), 1});
-        Z3_ast atBit =
-            Z3_mk_ite(context, lowerNonzero, constant(uint64_t(bit) + 1, width),
-                      constant(bit, width));
+        Z3_ast atBit = Z3_mk_ite(context, lowerNonzero,
+                                 constant(uint64_t(bit) + 1, indexWidth),
+                                 constant(bit, indexWidth));
         result = Z3_mk_ite(context, selected, atBit, result);
         lowerNonzero = disjunction(lowerNonzero, selected);
       }
+      result = resize({result, indexWidth}, width);
       break;
     }
     default:
