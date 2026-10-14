@@ -38,67 +38,10 @@ namespace obelisk::simlowering {
 namespace sim = ::obelisk::sim;
 namespace semantic = ::obelisk::ir;
 
-/// Metadata the prepare pass freezes onto each code unit for the unit
-/// lowering, and that finalization removes again.
-inline constexpr ::llvm::StringLiteral bindingsAttrName =
-    sim::metadata::bindings;
-inline constexpr ::llvm::StringLiteral delayScaleAttrName =
-    sim::metadata::delayScale;
-inline constexpr ::llvm::StringLiteral delayQuantumAttrName =
-    sim::metadata::delayQuantum;
-inline constexpr ::mlir::StringLiteral calleeAttrName = "simulation.callee";
-inline constexpr ::mlir::StringLiteral calleeCapturesAttrName =
-    "simulation.callee_captures";
-inline constexpr ::mlir::StringLiteral calleeReadCapturesAttrName =
-    "simulation.callee_read_captures";
-inline constexpr ::mlir::StringLiteral calleeWrittenCapturesAttrName =
-    "simulation.callee_written_captures";
-inline constexpr ::mlir::StringLiteral calleeFormalsAttrName =
-    "simulation.callee_formals";
-inline constexpr ::mlir::StringLiteral staticClassPropertyAttrName =
-    "simulation.static_class_property";
-/// Connect a one-time static option initializer to its typed coverage owner.
-inline constexpr ::mlir::StringLiteral
-    coverageTypeOptionInitializerOwnerAttrName =
-        "simulation.initialize_type_option_owner";
-inline constexpr ::mlir::StringLiteral
-    coverageTypeOptionInitializerKindAttrName =
-        "simulation.initialize_type_option_kind";
-/// A point/cross selection qualifies static storage; it is not a value field.
-inline constexpr ::mlir::StringLiteral coverageTypeOptionItemQualifierAttrName =
-    "simulation.type_option_item_qualifier";
-inline constexpr ::mlir::StringLiteral staticClassReceiverAttrName =
-    "simulation.static_class_receiver";
-inline constexpr ::mlir::StringLiteral dynamicCastEnumValuesAttrName =
-    "simulation.dynamic_cast_enum_values";
-inline constexpr ::mlir::StringLiteral enumMethodValuesAttrName =
-    "simulation.enum_method_values";
-inline constexpr ::mlir::StringLiteral enumMethodNamesAttrName =
-    "simulation.enum_method_names";
-inline constexpr ::mlir::StringLiteral enumFormatValuesAttrName =
-    "simulation.enum_format_values";
-inline constexpr ::mlir::StringLiteral enumFormatNamesAttrName =
-    "simulation.enum_format_names";
-inline constexpr ::mlir::StringLiteral dynamicCastTaskAttrName =
-    "simulation.dynamic_cast_task";
 inline constexpr ::mlir::StringLiteral readMemEnumKeyValuesAttrName =
     "readmem_enum_key_values";
 inline constexpr ::mlir::StringLiteral readMemEnumElementValuesAttrName =
     "readmem_enum_element_values";
-inline constexpr ::mlir::StringLiteral placeholderAttrName =
-    "simulation.placeholder";
-/// Marks a Simulation-dialect property-initializer fragment deliberately
-/// nested in semantic constructor syntax so unit lowering preserves its
-/// position immediately after an explicit super.new call.
-inline constexpr ::mlir::StringLiteral preparedInitializerAttrName =
-    "simulation.prepared_initializer";
-/// Marks an event storage cell whose declaration initializer supplies the
-/// initial handle. The root initializer must not first create an unused
-/// synchronization object for such a cell (IEEE 1800-2017 6.17).
-inline constexpr ::mlir::StringLiteral eventExplicitInitializerAttrName =
-    "simulation.event_explicit_initializer";
-inline constexpr ::mlir::StringLiteral staticNetConstantAttrName =
-    "simulation.static_net_constant";
 /// Value elaboration folded an expression to, carried over by the frontend.
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
@@ -107,18 +50,6 @@ inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
 /// nesting (IEEE 1800-2017 20.7).
 inline constexpr ::mlir::StringLiteral arrayQueryDimensionsAttrName =
     "obelisk.array_query_dimensions";
-/// A fixed unpacked `interconnect` can acquire a distinct data/net type for
-/// every leaf (IEEE 1800-2017 6.6.8). Prepare represents those typeless
-/// structural aggregates as independent typed descriptors and freezes the
-/// selected descriptor path directly on each semantic leaf expression.
-inline constexpr ::mlir::StringLiteral interconnectLeafPathAttrName =
-    "simulation.interconnect_leaf_path";
-inline constexpr ::mlir::StringLiteral interconnectLeavesAttrName =
-    "simulation.interconnect_leaves";
-inline constexpr ::mlir::StringLiteral interconnectVPITypeAttrName =
-    "simulation.interconnect_vpi_type";
-inline constexpr ::mlir::StringLiteral interconnectNettypeAttrName =
-    "simulation.interconnect_nettype";
 /// Identity a type reference shares with every reference to a matching type
 /// (IEEE 1800-2017 6.22.1). Written by the Slang importer, so the spelling is
 /// fixed there as well.
@@ -130,20 +61,6 @@ inline constexpr ::mlir::StringLiteral typeReferenceIdentityAttrName =
 /// spelling until unit lowering consumes it.
 inline constexpr ::mlir::StringLiteral udpSemanticMetadataAttrName =
     "udp_metadata";
-inline constexpr ::mlir::StringLiteral udpMetadataAttrName =
-    "simulation.udp_metadata";
-inline constexpr ::llvm::StringLiteral captureKindAttrName =
-    sim::metadata::captureKind;
-inline constexpr ::llvm::StringLiteral descriptorIdAttrName =
-    sim::metadata::descriptorId;
-inline constexpr ::mlir::StringLiteral observerResultAttrName =
-    "simulation.observer_result";
-/// Optional packed/real result type imposed by the context that requested an
-/// observer. Procedural continuous assignments use the target's assignment
-/// type so every reevaluation has exactly the same conversion as the initial
-/// statement execution.
-inline constexpr ::mlir::StringLiteral observerCoercedTypeAttrName =
-    "simulation.observer_coerced_type";
 inline constexpr auto observerEventPrimaryAttrName =
     ::obelisk::schedule::Field::EventPrimary;
 /// Unit lowering is a parallel nested-function pipeline. Observer users mark
@@ -153,127 +70,6 @@ inline constexpr auto concurrentCancelObserverRequestAttrName =
     ::obelisk::schedule::Field::ConcurrentCancelObserverRequest;
 inline constexpr auto concurrentAbortObserverRequestAttrName =
     ::obelisk::schedule::Field::ConcurrentAbortObserverRequest;
-inline constexpr ::mlir::StringLiteral sequenceEndpointEventAttrName =
-    "simulation.sequence_endpoint_event";
-inline constexpr ::mlir::StringLiteral sequenceEndpointDefaultClockAttrName =
-    "simulation.sequence_endpoint_default_clock";
-inline constexpr ::mlir::StringLiteral sequenceEndpointMonitorAttrName =
-    "simulation.sequence_endpoint_monitor";
-inline constexpr ::mlir::StringLiteral sequenceEndpointPathAttrName =
-    "simulation.sequence_endpoint_path";
-inline constexpr ::mlir::StringLiteral assertionLocalTypesAttrName =
-    "simulation.assertion_local_types";
-inline constexpr ::mlir::StringLiteral randomizeAttrName =
-    "simulation.randomize";
-inline constexpr ::mlir::StringLiteral randomizeScopeAttrName =
-    "simulation.randomize_scope";
-inline constexpr ::mlir::StringLiteral randomizeDispatchAttrName =
-    "simulation.randomize_dispatch";
-inline constexpr ::mlir::StringLiteral randomizeHelperAttrName =
-    "simulation.randomize_helper";
-inline constexpr ::mlir::StringLiteral randomizeHelperCapturesAttrName =
-    "simulation.randomize_helper_captures";
-inline constexpr ::mlir::StringLiteral randomizeHelperReadCapturesAttrName =
-    "simulation.randomize_helper_read_captures";
-inline constexpr ::mlir::StringLiteral randomizeHelperReceiverAttrName =
-    "simulation.randomize_helper_receiver";
-inline constexpr ::mlir::StringLiteral randomizeNestedDispatchAttrName =
-    "simulation.randomize_nested_dispatch";
-inline constexpr ::mlir::StringLiteral randomizeNestedDispatchFieldAttrName =
-    "simulation.randomize_nested_dispatch_field";
-inline constexpr ::mlir::StringLiteral randomizeNestedDispatchStorageAttrName =
-    "simulation.randomize_nested_dispatch_storage_type";
-inline constexpr ::mlir::StringLiteral randomizeNestedDispatchPathAttrName =
-    "simulation.randomize_nested_dispatch_path";
-inline constexpr ::mlir::StringLiteral
-    randomizeNestedDispatchSelectionPathAttrName =
-        "simulation.randomize_nested_dispatch_selection_path";
-inline constexpr ::mlir::StringLiteral randomizeNestedPlansAttrName =
-    "simulation.randomize_nested_plans";
-inline constexpr ::mlir::StringLiteral randomizePlanClassAttrName =
-    "simulation.randomize_plan_class";
-inline constexpr ::mlir::StringLiteral randomizeConstraintTemplateAttrName =
-    "simulation.randomize_constraint_template";
-inline constexpr ::mlir::StringLiteral objectRandomDispatchClassesAttrName =
-    "simulation.object_random_dispatch_classes";
-inline constexpr ::mlir::StringLiteral randomizeCheckerOnlyAttrName =
-    "simulation.randomize_checker_only";
-inline constexpr ::mlir::StringLiteral randomizeExplicitPropertiesAttrName =
-    "simulation.randomize_explicit_properties";
-inline constexpr ::mlir::StringLiteral randomReceiverIndexAttrName =
-    "simulation.random_receiver_index";
-inline constexpr ::mlir::StringLiteral randomPreHookAttrName =
-    "simulation.random_pre_hook";
-inline constexpr ::mlir::StringLiteral randomPreHookOwnerAttrName =
-    "simulation.random_pre_hook_owner";
-inline constexpr ::mlir::StringLiteral randomPreHookSourceAttrName =
-    "simulation.random_pre_hook_source";
-inline constexpr ::mlir::StringLiteral randomPreHookCapturesAttrName =
-    "simulation.random_pre_hook_captures";
-inline constexpr ::mlir::StringLiteral randomPreHookReadCapturesAttrName =
-    "simulation.random_pre_hook_read_captures";
-inline constexpr ::mlir::StringLiteral randomPostHookAttrName =
-    "simulation.random_post_hook";
-inline constexpr ::mlir::StringLiteral randomPostHookOwnerAttrName =
-    "simulation.random_post_hook_owner";
-inline constexpr ::mlir::StringLiteral randomPostHookSourceAttrName =
-    "simulation.random_post_hook_source";
-inline constexpr ::mlir::StringLiteral randomPostHookCapturesAttrName =
-    "simulation.random_post_hook_captures";
-inline constexpr ::mlir::StringLiteral randomPostHookReadCapturesAttrName =
-    "simulation.random_post_hook_read_captures";
-inline constexpr ::mlir::StringLiteral randomModeAttrName =
-    "simulation.rand_mode";
-inline constexpr ::mlir::StringLiteral randomModePropertyAttrName =
-    "simulation.rand_mode_property";
-inline constexpr ::mlir::StringLiteral randomArrayModeFieldAttrName =
-    "simulation.random_array_mode_field";
-inline constexpr ::mlir::StringLiteral randomStructMembersAttrName =
-    "simulation.random_struct_members";
-inline constexpr ::mlir::StringLiteral randomModeStructDepthAttrName =
-    "simulation.rand_mode_struct_depth";
-inline constexpr ::mlir::StringLiteral randomModeSelectionMaskAttrName =
-    "simulation.rand_mode_selection_mask";
-inline constexpr ::mlir::StringLiteral randomModeAncestorMaskAttrName =
-    "simulation.rand_mode_ancestor_mask";
-inline constexpr ::mlir::StringLiteral randomModeFamilyMaskAttrName =
-    "simulation.rand_mode_family_mask";
-inline constexpr ::mlir::StringLiteral randomModeStructElementFieldsAttrName =
-    "simulation.rand_mode_struct_element_fields";
-inline constexpr ::mlir::StringLiteral randomArrayElementWidthAttrName =
-    "simulation.random_array_element_width";
-inline constexpr ::mlir::StringLiteral randomModeArrayFieldAttrName =
-    "simulation.rand_mode_array_field";
-inline constexpr ::mlir::StringLiteral randomModeArrayStorageAttrName =
-    "simulation.rand_mode_array_storage";
-inline constexpr ::mlir::StringLiteral randomModeArrayTypeAttrName =
-    "simulation.rand_mode_array_type";
-inline constexpr ::mlir::StringLiteral randomModeStaticStorageAttrName =
-    "simulation.rand_mode_static_storage";
-inline constexpr ::mlir::StringLiteral randomModeStaticDispatchAttrName =
-    "simulation.rand_mode_static_dispatch";
-inline constexpr ::mlir::StringLiteral staticRandomModeStorageAttrName =
-    "simulation.static_random_mode_storage";
-inline constexpr ::mlir::StringLiteral staticRandomArrayModeStorageAttrName =
-    "simulation.static_random_array_mode_storage";
-inline constexpr ::mlir::StringLiteral constraintModeAttrName =
-    "simulation.constraint_mode";
-inline constexpr ::mlir::StringLiteral constraintModeBlockAttrName =
-    "simulation.constraint_mode_block";
-inline constexpr ::mlir::StringLiteral constraintModeStaticStorageAttrName =
-    "simulation.constraint_mode_static_storage";
-inline constexpr ::mlir::StringLiteral constraintModeStaticStoragesAttrName =
-    "simulation.constraint_mode_static_storages";
-inline constexpr ::mlir::StringLiteral staticConstraintStorageAttrName =
-    "simulation.static_constraint_storage";
-inline constexpr ::mlir::StringLiteral randomConstraintBlockAttrName =
-    "simulation.random_constraint_block";
-inline constexpr ::mlir::StringLiteral randomConstraintCountAttrName =
-    "simulation.random_constraint_count";
-inline constexpr ::mlir::StringLiteral randomPropertiesAttrName =
-    "simulation.random_properties";
-inline constexpr ::mlir::StringLiteral randomContainerPropertiesAttrName =
-    "simulation.random_container_properties";
 inline constexpr ::mlir::StringLiteral randomPropertyModeIndexAttrName =
     "rand_mode_index";
 inline constexpr ::mlir::StringLiteral randomContainerSizeAttrName =
@@ -290,20 +86,6 @@ inline constexpr ::mlir::StringLiteral randomNestedModeIndexAttrName =
     "nested_rand_mode_index";
 inline constexpr ::mlir::StringLiteral randomNestedObjectPathAttrName =
     "nested_object_path";
-inline constexpr ::mlir::StringLiteral randomNestedConstraintModesAttrName =
-    "simulation.random_nested_constraint_modes";
-inline constexpr ::mlir::StringLiteral randomNestedHooksAttrName =
-    "simulation.random_nested_hooks";
-inline constexpr ::mlir::StringLiteral randomRecursiveAliasGuardsAttrName =
-    "simulation.random_recursive_alias_guards";
-inline constexpr ::mlir::StringLiteral randomNestedStateFieldAttrName =
-    "simulation.random_nested_state_field";
-inline constexpr ::mlir::StringLiteral randomNestedStateConcreteTypeAttrName =
-    "simulation.random_nested_state_concrete_type";
-inline constexpr ::mlir::StringLiteral randomNestedStateStorageTypeAttrName =
-    "simulation.random_nested_state_storage_type";
-inline constexpr ::mlir::StringLiteral randomNestedStatePathAttrName =
-    "simulation.random_nested_state_path";
 inline constexpr ::mlir::StringLiteral randomPropertyPathAttrName =
     "reference_path";
 inline constexpr ::mlir::StringLiteral randomPropertySymbolAttrName =
@@ -316,32 +98,6 @@ inline constexpr ::mlir::StringLiteral randomRandCPositionPathAttrName =
     "randc_position_path";
 inline constexpr ::mlir::StringLiteral randomRandCDomainPathAttrName =
     "randc_domain_path";
-inline constexpr ::mlir::StringLiteral randomTotalWidthAttrName =
-    "simulation.random_total_width";
-inline constexpr ::mlir::StringLiteral randomVariableAttrName =
-    "simulation.random_variable";
-inline constexpr ::mlir::StringLiteral randomVariableBitOffsetAttrName =
-    "simulation.random_variable_bit_offset";
-inline constexpr ::mlir::StringLiteral randomFunctionStateAttrName =
-    "simulation.random_function_state";
-inline constexpr ::mlir::StringLiteral randomFunctionOrderAttrName =
-    "simulation.random_function_order";
-inline constexpr ::mlir::StringLiteral randomPriorityInputsAttrName =
-    "simulation.random_priority_inputs";
-inline constexpr ::mlir::StringLiteral randomPriorityArgumentsAttrName =
-    "simulation.random_priority_arguments";
-inline constexpr ::mlir::StringLiteral randomGuardInputsAttrName =
-    "simulation.random_guard_inputs";
-inline constexpr ::mlir::StringLiteral randomEvaluationErrorAttrName =
-    "simulation.random_evaluation_error";
-inline constexpr ::mlir::StringLiteral randomEvaluationInputsAttrName =
-    "simulation.random_evaluation_inputs";
-inline constexpr ::mlir::StringLiteral randomFunctionConditionalAttrName =
-    "simulation.random_function_conditional";
-inline constexpr ::mlir::StringLiteral randomFunctionExpressionAttrName =
-    "simulation.random_function_expression";
-inline constexpr ::mlir::StringLiteral randomFunctionCaseConditionAttrName =
-    "simulation.random_function_case_condition";
 
 /// Total, side-effect-free integral system functions encoded by the random
 /// program. Unlike user functions, these do not introduce implicit solve
@@ -372,17 +128,6 @@ enum class ObserverResult : uint32_t {
   Truth,
   Event,
 };
-
-inline constexpr ::mlir::StringLiteral observerCapturesAttrName =
-    "simulation.observer_captures";
-inline constexpr ::mlir::StringLiteral observerDependenciesAttrName =
-    "simulation.observer_dependencies";
-/// Marks a foreach iterator that must remain addressable while an outlined
-/// observer reevaluates an expression from the loop body.
-inline constexpr ::mlir::StringLiteral foreachIteratorObserverCaptureAttrName =
-    "simulation.foreach_iterator_observer_capture";
-inline constexpr ::mlir::StringLiteral sampledObserverAttrName =
-    "simulation.sampled_observer";
 
 inline bool isGlobalPastSampledFunction(::llvm::StringRef name) {
   return name == "$past_gclk" || name == "$rose_gclk" || name == "$fell_gclk" ||
@@ -427,22 +172,6 @@ inline constexpr ::mlir::StringLiteral clockingEventListAttrName =
     "clocking_event_list";
 inline constexpr ::mlir::StringLiteral clockingEventMonitorRequiredAttrName =
     "clocking_event_monitor";
-inline constexpr ::mlir::StringLiteral clockingEventMonitorAttrName =
-    "simulation.clocking_event_monitor";
-inline constexpr ::mlir::StringLiteral clockingEventMonitorPathAttrName =
-    "simulation.clocking_event_monitor_path";
-inline constexpr ::mlir::StringLiteral
-    virtualInterfaceClockEventMembersAttrName =
-        "simulation.virtual_interface_clock_events";
-/// Names the interface member whose elaborated instance owns a child scope.
-/// This avoids recovering escaped or indexed identifiers from display paths
-/// when a virtual-interface member selects another interface instance.
-inline constexpr ::mlir::StringLiteral virtualInterfaceParentMemberAttrName =
-    "simulation.virtual_interface_parent_member";
-/// Ordered nested-interface selections omitted from a flattened semantic call
-/// receiver. Each entry records the member name and child interface identity.
-inline constexpr ::mlir::StringLiteral virtualInterfaceReceiverMembersAttrName =
-    "simulation.virtual_interface_receiver_members";
 inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =

@@ -14,10 +14,6 @@ class SimFuncOp;
 
 namespace obelisk::analysis {
 
-/// Marks a call into compiled code that cannot reach a GC poll.
-inline constexpr llvm::StringLiteral gcPollFreeAttrName =
-    "simulation.gc_poll_free";
-
 /// An operation that may allocate managed storage itself: one with the
 /// `AllocatesManagedStorage` trait, or a DPI call that converts managed values
 /// across its boundary. Calls into compiled code are summarized separately by

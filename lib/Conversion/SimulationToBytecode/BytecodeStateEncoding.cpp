@@ -8,9 +8,6 @@ using namespace mlir;
 
 namespace obelisk::bytecode {
 
-static constexpr StringLiteral continuousStoreAttrName =
-    "simulation.continuous_store";
-
 std::optional<LogicalResult>
 Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimEventCreateOp>(operation))
@@ -92,11 +89,11 @@ Encoder::encodeStateOperation(FunctionPlan &plan, Operation *operation) {
                                    valueKind == String || valueKind == Real32 ||
                                    valueKind == Real64;
     sim::EntryKind entryKind = plan.function.getEntryKind();
-    bool continuous =
-        supportsContinuousStore && (op->hasAttr(continuousStoreAttrName) ||
-                                    entryKind == sim::EntryKind::Continuous ||
-                                    entryKind == sim::EntryKind::PortInput ||
-                                    entryKind == sim::EntryKind::PortOutput);
+    bool continuous = supportsContinuousStore &&
+                      (sim::has<sim::metadata::ContinuousStore>(op) ||
+                       entryKind == sim::EntryKind::Continuous ||
+                       entryKind == sim::EntryKind::PortInput ||
+                       entryKind == sim::EntryKind::PortOutput);
     emit({StoreState,
           static_cast<uint16_t>(
               continuous ? OBELISK_RT_DB_STORE_STATE_CONTINUOUS : 0),

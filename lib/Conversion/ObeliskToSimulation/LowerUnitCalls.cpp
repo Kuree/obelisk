@@ -626,9 +626,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return dummyResult();
     }
   }
-  if (op->hasAttr(randomizeAttrName) ||
-      op->hasAttr(randomizeDispatchAttrName) ||
-      op->hasAttr(randomizeNestedDispatchAttrName))
+  if (sim::has<sim::metadata::Randomize>(op) ||
+      sim::has<sim::metadata::RandomizeDispatch>(op) ||
+      sim::has<sim::metadata::RandomizeNestedDispatch>(op))
     return lowerRandomize(op);
   StringRef covergroupMethod = op.getCalleeName();
   if ((covergroupMethod == "sample" || covergroupMethod == "start" ||
@@ -654,8 +654,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool containerBuiltin = false;
   bool associativeBuiltin = false;
   if (op.getIsSystemCall() && !op.getCalleeName().starts_with("$") &&
-      !children.empty() && !op->hasAttr(randomModeAttrName) &&
-      !op->hasAttr(constraintModeAttrName)) {
+      !children.empty() && !sim::has<sim::metadata::RandMode>(op) &&
+      !sim::has<sim::metadata::ConstraintMode>(op)) {
     Operation *receiverNode =
         op.getHasIteratorExpression() ? children.back() : children.front();
     FailureOr<Type> receiverType = getNormalizedSemanticType(receiverNode);
@@ -668,35 +668,26 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     associativeBuiltin =
         succeeded(receiverType) && isa<sim::AssocArrayType>(*receiverType);
   }
-  if (op->hasAttr(randomModeAttrName) ||
+  if (sim::has<sim::metadata::RandMode>(op) ||
       (op.getIsSystemCall() && op.getCalleeName() == "rand_mode")) {
     if (children.empty() || children.size() > 2) {
       emitError(location) << "rand_mode expects a receiver and optional on/off "
                              "argument";
       return failure();
     }
-    auto propertyIndexAttr =
-        op->getAttrOfType<IntegerAttr>(randomModePropertyAttrName);
-    auto staticStorageAttr =
-        op->getAttrOfType<IntegerAttr>(randomModeStaticStorageAttrName);
+    auto propertyIndexAttr = sim::get<sim::metadata::RandModeProperty>(op);
+    auto staticStorageAttr = sim::get<sim::metadata::RandModeStaticStorage>(op);
     auto staticDispatchAttr =
-        op->getAttrOfType<ArrayAttr>(randomModeStaticDispatchAttrName);
-    auto arrayTypeAttr =
-        op->getAttrOfType<TypeAttr>(randomModeArrayTypeAttrName);
-    auto arrayModeField =
-        op->getAttrOfType<FlatSymbolRefAttr>(randomModeArrayFieldAttrName);
-    auto arrayModeStorage =
-        op->getAttrOfType<IntegerAttr>(randomModeArrayStorageAttrName);
-    auto structureDepth =
-        op->getAttrOfType<IntegerAttr>(randomModeStructDepthAttrName);
-    auto selectionMask =
-        op->getAttrOfType<IntegerAttr>(randomModeSelectionMaskAttrName);
-    auto ancestorMask =
-        op->getAttrOfType<IntegerAttr>(randomModeAncestorMaskAttrName);
-    auto familyMask =
-        op->getAttrOfType<IntegerAttr>(randomModeFamilyMaskAttrName);
+        sim::get<sim::metadata::RandModeStaticDispatch>(op);
+    auto arrayTypeAttr = sim::get<sim::metadata::RandModeArrayType>(op);
+    auto arrayModeField = sim::get<sim::metadata::RandModeArrayField>(op);
+    auto arrayModeStorage = sim::get<sim::metadata::RandModeArrayStorage>(op);
+    auto structureDepth = sim::get<sim::metadata::RandModeStructDepth>(op);
+    auto selectionMask = sim::get<sim::metadata::RandModeSelectionMask>(op);
+    auto ancestorMask = sim::get<sim::metadata::RandModeAncestorMask>(op);
+    auto familyMask = sim::get<sim::metadata::RandModeFamilyMask>(op);
     auto structureElementFields =
-        op->getAttrOfType<ArrayAttr>(randomModeStructElementFieldsAttrName);
+        sim::get<sim::metadata::RandModeStructElementFields>(op);
     if (structureDepth || selectionMask || ancestorMask || familyMask) {
       if (!structureDepth || structureDepth.getValue().isNegative() ||
           structureDepth.getValue().getActiveBits() > 32 || !selectionMask ||
@@ -857,15 +848,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                          function, objectType.getClassName())
                    : sim::SimClassDeclOp{};
     while (declaration &&
-           !declaration->hasAttr("simulation.random_mode_field")) {
+           !sim::has<sim::metadata::RandomModeField>(declaration)) {
       if (!declaration.getBaseAttr())
         break;
       declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
     auto modeField = declaration
-                         ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                               "simulation.random_mode_field")
+                         ? sim::get<sim::metadata::RandomModeField>(declaration)
                          : FlatSymbolRefAttr{};
     if (!staticStorageAttr && (!declaration || !modeField)) {
       emitError(location) << "rand_mode receiver has no mode state";
@@ -1294,7 +1284,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     return convert(enabled, *resultType, false, location);
   }
-  if (op->hasAttr(constraintModeAttrName) ||
+  if (sim::has<sim::metadata::ConstraintMode>(op) ||
       (op.getIsSystemCall() && op.getCalleeName() == "constraint_mode")) {
     if (children.empty() || children.size() > 2) {
       emitError(location)
@@ -1302,8 +1292,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
              "query or on/off argument";
       return failure();
     }
-    auto blockIndexAttr =
-        op->getAttrOfType<IntegerAttr>(constraintModeBlockAttrName);
+    auto blockIndexAttr = sim::get<sim::metadata::ConstraintModeBlock>(op);
     if (!blockIndexAttr && children.size() != 2) {
       emitError(location)
           << "class-wide constraint_mode requires an on/off argument";
@@ -1352,7 +1341,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           builder.getI64IntegerAttr(storage));
     };
     auto staticStorageAttr =
-        op->getAttrOfType<IntegerAttr>(constraintModeStaticStorageAttrName);
+        sim::get<sim::metadata::ConstraintModeStaticStorage>(op);
     if (staticStorageAttr) {
       APInt storage = staticStorageAttr.getValue();
       APInt blockIndex =
@@ -1397,16 +1386,15 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
                                                      objectType.getClassName());
     while (declaration &&
-           !declaration->hasAttr("simulation.constraint_mode_field")) {
+           !sim::has<sim::metadata::ConstraintModeField>(declaration)) {
       if (!declaration.getBaseAttr())
         break;
       declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
-    auto modeField = declaration
-                         ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                               "simulation.constraint_mode_field")
-                         : FlatSymbolRefAttr{};
+    auto modeField =
+        declaration ? sim::get<sim::metadata::ConstraintModeField>(declaration)
+                    : FlatSymbolRefAttr{};
     if (!declaration || !modeField) {
       emitError(location) << "constraint_mode receiver has no mode state";
       return failure();
@@ -1459,8 +1447,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                        disabled);
       }
       sim::SimManagedStoreOp::create(builder, location, mode, reference);
-      if (auto staticStorages = op->getAttrOfType<DenseI64ArrayAttr>(
-              constraintModeStaticStoragesAttrName)) {
+      if (auto staticStorages =
+              sim::get<sim::metadata::ConstraintModeStaticStorages>(op)) {
         Value staticMode = arith::SelectOp::create(
             builder, location, *enabled, zero,
             arith::ConstantOp::create(builder, location, i64,
@@ -1540,20 +1528,19 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, objectType.getClassName());
       while (declaration &&
-             !declaration->hasAttr("simulation.random_state_field")) {
+             !sim::has<sim::metadata::RandomStateField>(declaration)) {
         if (!declaration.getBaseAttr())
           break;
         declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, declaration.getBaseAttr());
       }
-      auto stateField = declaration
-                            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                  "simulation.random_state_field")
-                            : FlatSymbolRefAttr{};
-      auto incrementField = declaration
-                                ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                      "simulation.random_increment_field")
-                                : FlatSymbolRefAttr{};
+      auto stateField =
+          declaration ? sim::get<sim::metadata::RandomStateField>(declaration)
+                      : FlatSymbolRefAttr{};
+      auto incrementField =
+          declaration
+              ? sim::get<sim::metadata::RandomIncrementField>(declaration)
+              : FlatSymbolRefAttr{};
       if (!declaration || !stateField || !incrementField) {
         emitError(location)
             << objectRandomMethod << " receiver has no object-local stream";
@@ -1651,7 +1638,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     };
 
     auto dispatchClasses =
-        op->getAttrOfType<ArrayAttr>(objectRandomDispatchClassesAttrName);
+        sim::get<sim::metadata::ObjectRandomDispatchClasses>(op);
     if (!dispatchClasses)
       return emitMethod(*loweredReceiver);
 
@@ -1749,7 +1736,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                << "unsupported weak_reference built-in method " << name,
            failure();
   }
-  auto callee = op->getAttrOfType<FlatSymbolRefAttr>(calleeAttrName);
+  auto callee = sim::get<sim::metadata::Callee>(op);
   if (!callee && !children.empty()) {
     FailureOr<Type> receiverType = getNormalizedSemanticType(children.front());
     if (succeeded(receiverType) && isa<sim::StringType>(*receiverType)) {
@@ -1925,10 +1912,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     unsupported(op) << " (indirect or system call)";
     return failure();
   }
-  if (op->hasAttr("simulation.class_instance")) {
-    auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+  if (sim::has<sim::metadata::ClassInstance>(op)) {
+    auto formals = sim::get<sim::metadata::CalleeFormals>(op);
     std::optional<ArrayRef<int64_t>> defaulted = op.getDefaultedArguments();
-    bool superCall = op->hasAttr("simulation.class_super");
+    bool superCall = sim::has<sim::metadata::ClassSuper>(op);
     bool implicitThis = !superCall && formals && thisObject &&
                         children.size() == formals.size();
     if (!formals) {
@@ -1954,8 +1941,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                     : lowerExpression(children.front());
     if (failed(receiver) || !isa<sim::ClassHandleType>((*receiver).getType()))
       return failure();
-    auto method =
-        op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_method");
+    auto method = sim::get<sim::metadata::ClassMethod>(op);
     auto declaration =
         method ? lookupNearestSymbolFrom<sim::SimClassMethodDeclOp>(function,
                                                                     method)
@@ -1986,7 +1972,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     SmallVector<Value> arguments;
     SmallVector<ClassCopyOut> copyOuts;
     SmallVector<TaskIndirectCopyOut> taskIndirectCopyOuts;
-    bool classTask = op->hasAttr("simulation.is_task");
+    bool classTask = sim::has<sim::metadata::IsTask>(op);
     size_t formalIndex = 0;
     for (auto [actual, formalAttr] :
          llvm::zip_equal(ArrayRef<Operation *>(children).drop_front(
@@ -2117,7 +2103,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                             isSignedNode(destination)});
       }
     }
-    if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto captures = sim::get<sim::metadata::CalleeCaptures>(op))
       for (Attribute captureAttr : captures) {
         StringRef path = cast<StringAttr>(captureAttr).getValue();
         Value capture = values.lookup(path);
@@ -2173,14 +2159,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                    schedule::ContinuationSiteAttr{},
                                    continuation);
       };
-      if (!op->hasAttr("simulation.class_virtual")) {
+      if (!sim::has<sim::metadata::ClassVirtual>(op)) {
         emitTaskCall(callee, *receiver);
         return finishTask();
       }
 
-      auto slot = op->getAttrOfType<IntegerAttr>("simulation.class_slot");
-      auto signature =
-          op->getAttrOfType<IntegerAttr>("simulation.class_signature");
+      auto slot = sim::get<sim::metadata::ClassSlot>(op);
+      auto signature = sim::get<sim::metadata::ClassSignature>(op);
       if (!method || !slot || !signature || signature.getValue().isZero())
         return emitError(location)
                    << "virtual class task has no frozen slot and signature",
@@ -2192,10 +2177,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return finishTask();
     }
     ValueRange results;
-    if (op->hasAttr("simulation.class_virtual")) {
-      auto slot = op->getAttrOfType<IntegerAttr>("simulation.class_slot");
-      auto signature =
-          op->getAttrOfType<IntegerAttr>("simulation.class_signature");
+    if (sim::has<sim::metadata::ClassVirtual>(op)) {
+      auto slot = sim::get<sim::metadata::ClassSlot>(op);
+      auto signature = sim::get<sim::metadata::ClassSignature>(op);
       if (!method || !slot || !signature || signature.getValue().isZero()) {
         emitError(location)
             << "virtual call has no frozen method slot and signature";
@@ -2233,12 +2217,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                      builder.getBoolAttr(false))
         .getResult();
   }
-  bool directTask = op->hasAttr("simulation.is_task");
+  bool directTask = sim::has<sim::metadata::IsTask>(op);
   SmallVector<Value> operands{function.getBody().front().getArgument(0)};
-  auto formals = op->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
-  auto virtualCallees =
-      op->getAttrOfType<ArrayAttr>("simulation.virtual_interface_callees");
-  bool staticClassReceiver = op->hasAttr(staticClassReceiverAttrName);
+  auto formals = sim::get<sim::metadata::CalleeFormals>(op);
+  auto virtualCallees = sim::get<sim::metadata::VirtualInterfaceCallees>(op);
+  bool staticClassReceiver = sim::has<sim::metadata::StaticClassReceiver>(op);
   unsigned receiverCount = staticClassReceiver || virtualCallees ? 1 : 0;
   if (!formals || formals.size() + receiverCount != children.size()) {
     emitError(location)
@@ -2795,11 +2778,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   }
 
   llvm::StringSet<> readCaptures;
-  if (auto reads = op->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
+  if (auto reads = sim::get<sim::metadata::CalleeReadCaptures>(op))
     for (Attribute read : reads)
       readCaptures.insert(cast<StringAttr>(read).getValue());
   llvm::StringSet<> writtenCaptures;
-  if (auto writes = op->getAttrOfType<ArrayAttr>(calleeWrittenCapturesAttrName))
+  if (auto writes = sim::get<sim::metadata::CalleeWrittenCaptures>(op))
     for (Attribute written : writes)
       writtenCaptures.insert(cast<StringAttr>(written).getValue());
   bool excludeWrittenSensitivity =
@@ -2822,7 +2805,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         recordSensitivity(capture);
     }
   if (!virtualCallees)
-    if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto captures = sim::get<sim::metadata::CalleeCaptures>(op))
       for (Attribute captureAttr : captures) {
         StringRef path = cast<StringAttr>(captureAttr).getValue();
         Value capture = values.lookup(path);
@@ -3092,8 +3075,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   auto recordReadCaptures = [&](Operation *source) {
-    if (auto reads =
-            source->getAttrOfType<ArrayAttr>(calleeReadCapturesAttrName))
+    if (auto reads = sim::get<sim::metadata::CalleeReadCaptures>(source))
       for (Attribute readAttr : reads) {
         StringRef path = cast<StringAttr>(readAttr).getValue();
         Value capture = values.lookup(path);
@@ -3148,7 +3130,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     }
     SmallVector<Value> arguments;
     recordReadCaptures(op);
-    if (auto captures = op->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto captures = sim::get<sim::metadata::CalleeCaptures>(op))
       for (Attribute captureAttr : captures) {
         StringRef path = cast<StringAttr>(captureAttr).getValue();
         Value capture = values.lookup(path);
@@ -3237,10 +3219,10 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
                function.getBody().front().getArgument(0), *referent)
         .getResult();
   }
-  auto callee = call ? call->getAttrOfType<FlatSymbolRefAttr>(calleeAttrName)
-                     : FlatSymbolRefAttr{};
-  auto formals = call ? call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName)
-                      : ArrayAttr{};
+  auto callee =
+      call ? sim::get<sim::metadata::Callee>(call) : FlatSymbolRefAttr{};
+  auto formals =
+      call ? sim::get<sim::metadata::CalleeFormals>(call) : ArrayAttr{};
   if (!call || !callee || !formals) {
     unsupported(op) << " (unresolved constructor"
                     << (!call ? ": missing call" : "")
@@ -3395,7 +3377,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
         {*destinationRef, formalType, formalSigned, isSignedNode(destination)});
   }
   recordReadCaptures(call);
-  if (auto captures = call->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+  if (auto captures = sim::get<sim::metadata::CalleeCaptures>(call))
     for (Attribute captureAttr : captures) {
       StringRef path = cast<StringAttr>(captureAttr).getValue();
       Value capture = values.lookup(path);
@@ -3459,19 +3441,18 @@ LogicalResult UnitLowering::initializeObjectRandomStream(Value object,
       lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
                                                    objectType.getClassName());
   while (declaration &&
-         !declaration->hasAttr("simulation.random_state_field")) {
+         !sim::has<sim::metadata::RandomStateField>(declaration)) {
     if (!declaration.getBaseAttr())
       break;
     declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
         function, declaration.getBaseAttr());
   }
-  auto stateField = declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                      "simulation.random_state_field")
-                                : FlatSymbolRefAttr{};
-  auto incrementField = declaration
-                            ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                  "simulation.random_increment_field")
-                            : FlatSymbolRefAttr{};
+  auto stateField = declaration
+                        ? sim::get<sim::metadata::RandomStateField>(declaration)
+                        : FlatSymbolRefAttr{};
+  auto incrementField =
+      declaration ? sim::get<sim::metadata::RandomIncrementField>(declaration)
+                  : FlatSymbolRefAttr{};
   if (!declaration || !stateField || !incrementField) {
     emitError(location) << "class hierarchy has no inline random stream";
     return failure();

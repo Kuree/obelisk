@@ -984,7 +984,7 @@ module {
     simulation.class.decl @C id 1 {
       is_abstract = false, is_final = false, is_interface = false
     }
-    // expected-error @below {{class bit-stream visibility must be a typed public/protected/local value}}
+    // expected-error @below {{'simulation.class_bitstream_visibility' has the wrong payload kind}}
     simulation.class.field @C_value of @C at 0 : i8 {
       is_static = false, is_weak = false,
       simulation.class_bitstream_member,

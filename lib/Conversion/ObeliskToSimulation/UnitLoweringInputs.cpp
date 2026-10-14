@@ -36,7 +36,7 @@ UnitLoweringInputs::UnitLoweringInputs(Operation *module)
     if (auto function = dyn_cast<sim::SimFuncOp>(operation)) {
       callables.try_emplace(
           function, Callable{function.getFunctionType(),
-                             function->hasAttr("simulation.void_function")});
+                             sim::has<sim::metadata::VoidFunction>(function)});
       return WalkResult::advance();
     }
     if (auto member = dyn_cast<ir::SVMemberAccessExpressionOp>(operation)) {

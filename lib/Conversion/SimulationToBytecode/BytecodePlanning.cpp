@@ -149,10 +149,9 @@ void pruneNativeFunctions(sim::SimDesignOp design,
 LogicalResult Encoder::planFunctions() {
   analysis::SimulationEffectAnalysis effects(design);
   design.walk([&](sim::SimFuncOp function) {
-    function->removeAttr(sim::metadata::bytecodeReadOnly);
+    sim::remove<sim::metadata::BytecodeReadOnly>(function);
     if (effects.isReadOnly(function))
-      function->setAttr(sim::metadata::bytecodeReadOnly,
-                        UnitAttr::get(design.getContext()));
+      sim::mark<sim::metadata::BytecodeReadOnly>(function);
   });
   SmallVector<sim::SimFuncOp> functions;
   for (sim::SimFuncOp function : design.getBody().getOps<sim::SimFuncOp>()) {

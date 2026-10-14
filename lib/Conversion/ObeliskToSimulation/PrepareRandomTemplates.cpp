@@ -701,8 +701,8 @@ LogicalResult materializeRandomConstraintTemplates(
       semantic::SVConstraintBlockSymbolOp effective = group.back();
       sim::RandomConstraintBlockReferenceAttr reference;
       if (effective.getIsStatic().value_or(false)) {
-        auto storage = effective->getAttrOfType<IntegerAttr>(
-            staticConstraintStorageAttrName);
+        auto storage =
+            sim::get<sim::metadata::StaticConstraintStorage>(effective);
         if (!storage) {
           representable = false;
           break;

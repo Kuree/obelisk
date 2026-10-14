@@ -232,7 +232,7 @@ ManagedClassLayoutAnalysis::getBitstreamFields(const Class &layout) const {
   SmallVector<const Field *> result;
   for (const Class *owner : llvm::reverse(hierarchy))
     for (const Field &field : owner->fields)
-      if (field.declaration->hasAttr(sim::metadata::classBitstreamMember))
+      if (sim::has<sim::metadata::ClassBitstreamMember>(field.declaration))
         result.push_back(&field);
   return result;
 }

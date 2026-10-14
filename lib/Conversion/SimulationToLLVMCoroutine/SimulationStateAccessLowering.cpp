@@ -22,8 +22,6 @@ using namespace mlir;
 namespace obelisk::detail {
 namespace {
 
-constexpr StringLiteral continuousStoreAttrName = "simulation.continuous_store";
-
 // Canonical padding is not a language value. Invalid aggregate reads also
 // need the per-member defaults from IEEE 1800-2023 Table 7-1.
 Value maskStoragePlane(OpBuilder &builder, Location location, Value bits,
@@ -243,7 +241,7 @@ public:
     bool fourState = containsLogic(valueType) && !twoState;
     sim::SimFuncOp function = op->getParentOfType<sim::SimFuncOp>();
     sim::EntryKind entryKind = function.getEntryKind();
-    bool continuous = op->hasAttr(continuousStoreAttrName) ||
+    bool continuous = sim::has<sim::metadata::ContinuousStore>(op) ||
                       entryKind == sim::EntryKind::Continuous ||
                       entryKind == sim::EntryKind::PortInput ||
                       entryKind == sim::EntryKind::PortOutput;
@@ -456,7 +454,7 @@ public:
     bool runtimePublication =
         native::has<native::RuntimePublicationCertified>(function);
     bool continuous = !isa<sim::EventType>(valueType) &&
-                      (op->hasAttr(continuousStoreAttrName) ||
+                      (sim::has<sim::metadata::ContinuousStore>(op) ||
                        entryKind == sim::EntryKind::Continuous ||
                        entryKind == sim::EntryKind::PortInput ||
                        entryKind == sim::EntryKind::PortOutput);

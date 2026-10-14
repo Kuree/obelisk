@@ -59,7 +59,7 @@ getCaptureCopyProcess(sim::SimFuncOp function) {
     if (!argument || argument.getOwner() != &entry)
       return false;
     auto kind = function.getArgAttrOfType<IntegerAttr>(
-        argument.getArgNumber(), sim::metadata::captureKind);
+        argument.getArgNumber(), sim::metadata::CaptureKind::getNameStr());
     return kind &&
            kind.getInt() == static_cast<int32_t>(sim::CaptureKind::Storage);
   };

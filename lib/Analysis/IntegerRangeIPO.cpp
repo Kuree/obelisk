@@ -40,7 +40,7 @@ std::optional<ConstantIntRanges> getIntegerResultRange(Value value) {
   auto result = dyn_cast<OpResult>(value);
   if (!result || !isa<IntegerType, sim::LogicType>(value.getType()))
     return std::nullopt;
-  auto summaries = sim::get<sim::ResultRanges>(result.getOwner());
+  auto summaries = sim::get<sim::metadata::ResultRanges>(result.getOwner());
   return summaries && result.getResultNumber() < summaries.size()
              ? decodeIntegerRange(summaries[result.getResultNumber()],
                                   sim::getPackedWidth(value.getType()))
@@ -95,7 +95,8 @@ Attribute getIntegerResultExpression(Value value) {
   auto result = dyn_cast<OpResult>(value);
   if (!result)
     return {};
-  ArrayAttr expressions = sim::get<sim::ResultExprs>(result.getOwner());
+  ArrayAttr expressions =
+      sim::get<sim::metadata::ResultExprs>(result.getOwner());
   if (!expressions || result.getResultNumber() >= expressions.size())
     return {};
   auto expression = dyn_cast<sim::IntegerExpressionAttr>(
@@ -238,11 +239,11 @@ void prepareIntegerRangeIPO(Operation *scope) {
   // Recompute from unconstrained entries even if a rewrite removed every
   // call. Certificates from the previous graph must never survive that case.
   scope->walk([&](Operation *op) {
-    sim::remove<sim::ResultRanges>(op);
-    sim::remove<sim::ResultExprs>(op);
+    sim::remove<sim::metadata::ResultRanges>(op);
+    sim::remove<sim::metadata::ResultExprs>(op);
     if (auto function = dyn_cast<sim::SimFuncOp>(op))
       for (unsigned i = 0; i < function.getNumArguments(); ++i)
-        function.removeArgAttr(i, sim::IntegerRange::getNameStr());
+        function.removeArgAttr(i, sim::metadata::IntegerRange::getNameStr());
   });
   if (calls.empty())
     return;
@@ -253,8 +254,8 @@ void prepareIntegerRangeIPO(Operation *scope) {
     indices[function] = functions.size();
     functions.push_back(function);
     for (unsigned i = 0; i < function.getNumArguments(); ++i)
-      function.removeArgAttr(i, sim::IntegerRange::getNameStr());
-    sim::remove<sim::ResultRanges>(function);
+      function.removeArgAttr(i, sim::metadata::IntegerRange::getNameStr());
+    sim::remove<sim::metadata::ResultRanges>(function);
     SmallVector<Attribute> expressions(function.getNumResults(),
                                        UnitAttr::get(scope->getContext()));
     bool first = true;
@@ -270,7 +271,7 @@ void prepareIntegerRangeIPO(Operation *scope) {
       }
       first = false;
     });
-    sim::set<sim::ResultExprs>(
+    sim::set<sim::metadata::ResultExprs>(
         function, ArrayAttr::get(scope->getContext(), expressions));
   });
   SymbolTableCollection symbols;
@@ -319,8 +320,8 @@ void prepareIntegerRangeIPO(Operation *scope) {
     }
   }
   for (auto call : calls) {
-    sim::remove<sim::ResultRanges>(call);
-    sim::remove<sim::ResultExprs>(call);
+    sim::remove<sim::metadata::ResultRanges>(call);
+    sim::remove<sim::metadata::ResultExprs>(call);
     auto target = symbols.lookupNearestSymbolFrom<sim::SimFuncOp>(
         call, call.getCalleeAttr());
     auto found = target ? indices.find(target) : indices.end();
@@ -337,7 +338,8 @@ void prepareIntegerRangeIPO(Operation *scope) {
     if (!scalarReturns && !scalarArguments)
       continue;
     targets[call] = found->second;
-    sim::set<sim::ResultExprs>(call, sim::get<sim::ResultExprs>(target));
+    sim::set<sim::metadata::ResultExprs>(
+        call, sim::get<sim::metadata::ResultExprs>(target));
   }
   // Every round starts from sound may facts. Refinement is bounded rather
   // than waiting for a potentially enormous recursive range chain to settle.
@@ -418,23 +420,25 @@ void prepareIntegerRangeIPO(Operation *scope) {
       for (auto range : facts[i].returns)
         returns.push_back(encodeRange(scope->getContext(), range));
       auto attribute = ArrayAttr::get(scope->getContext(), returns);
-      changed |= sim::get<sim::ResultRanges>(function) != attribute;
-      sim::set<sim::ResultRanges>(function, attribute);
+      changed |= sim::get<sim::metadata::ResultRanges>(function) != attribute;
+      sim::set<sim::metadata::ResultRanges>(function, attribute);
       if (closed.contains(function) && visited[i])
         for (unsigned j = 0; j < arguments[i].size(); ++j) {
           // An argument without a range carries no certificate.
           Attribute range = encodeRange(scope->getContext(), arguments[i][j]);
           if (isa<UnitAttr>(range))
             range = {};
-          changed |=
-              function.getArgAttr(j, sim::IntegerRange::getNameStr()) != range;
-          function.setArgAttr(j, sim::IntegerRange::getNameStr(), range);
+          changed |= function.getArgAttr(
+                         j, sim::metadata::IntegerRange::getNameStr()) != range;
+          function.setArgAttr(j, sim::metadata::IntegerRange::getNameStr(),
+                              range);
         }
     }
     for (auto call : calls)
       if (auto found = targets.find(call); found != targets.end())
-        sim::set<sim::ResultRanges>(
-            call, sim::get<sim::ResultRanges>(functions[found->second]));
+        sim::set<sim::metadata::ResultRanges>(
+            call,
+            sim::get<sim::metadata::ResultRanges>(functions[found->second]));
     if (!changed)
       break;
   }

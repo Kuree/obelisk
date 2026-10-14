@@ -216,11 +216,12 @@ public:
         }
     });
     getOperation().walk([&](Operation *op) {
-      obelisk::sim::remove<obelisk::sim::ResultRanges>(op);
-      obelisk::sim::remove<obelisk::sim::ResultExprs>(op);
+      obelisk::sim::remove<obelisk::sim::metadata::ResultRanges>(op);
+      obelisk::sim::remove<obelisk::sim::metadata::ResultExprs>(op);
       if (auto function = dyn_cast<obelisk::sim::SimFuncOp>(op))
         for (unsigned i = 0; i < function.getNumArguments(); ++i)
-          function.removeArgAttr(i, obelisk::sim::IntegerRange::getNameStr());
+          function.removeArgAttr(
+              i, obelisk::sim::metadata::IntegerRange::getNameStr());
     });
   }
 };

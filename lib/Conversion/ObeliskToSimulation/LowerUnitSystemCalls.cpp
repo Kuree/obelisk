@@ -21,10 +21,10 @@ namespace {
 bool needsExpressionHistoryDefault(Operation *expression) {
   return !isa<semantic::SVNamedValueExpressionOp>(expression) ||
          getConstantSpelling(expression).has_value() ||
-         expression->hasAttr("simulation.sample_default_constant") ||
-         expression->hasAttr("simulation.sample_default_snapshot") ||
-         expression->hasAttr("simulation.sample_default_dynamic") ||
-         expression->hasAttr("simulation.sample_default_current");
+         sim::has<sim::metadata::SampleDefaultConstant>(expression) ||
+         sim::has<sim::metadata::SampleDefaultSnapshot>(expression) ||
+         sim::has<sim::metadata::SampleDefaultDynamic>(expression) ||
+         sim::has<sim::metadata::SampleDefaultCurrent>(expression);
 }
 
 uint64_t historyValidityID(uint64_t siteID) {
@@ -135,10 +135,12 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
       return failure();
     DictionaryAttr attrs = function.getArgAttrDict(argument.getArgNumber());
     auto kind = attrs ? dyn_cast_or_null<sim::CaptureKindAttr>(
-                            attrs.get(captureKindAttrName))
+                            attrs.get(sim::metadata::CaptureKind::getNameStr()))
                       : sim::CaptureKindAttr{};
     IntegerAttr descriptor =
-        attrs ? attrs.getAs<IntegerAttr>(descriptorIdAttrName) : IntegerAttr{};
+        attrs ? attrs.getAs<IntegerAttr>(
+                    sim::metadata::DescriptorId::getNameStr())
+              : IntegerAttr{};
     if (!kind || !descriptor ||
         (kind.getValue() != sim::CaptureKind::Storage &&
          kind.getValue() != sim::CaptureKind::Net))
@@ -169,8 +171,10 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
   }
 
   auto captureKey = [&](DictionaryAttr attrs) {
-    auto kind = cast<sim::CaptureKindAttr>(attrs.get(captureKindAttrName));
-    auto descriptor = attrs.getAs<IntegerAttr>(descriptorIdAttrName);
+    auto kind = cast<sim::CaptureKindAttr>(
+        attrs.get(sim::metadata::CaptureKind::getNameStr()));
+    auto descriptor =
+        attrs.getAs<IntegerAttr>(sim::metadata::DescriptorId::getNameStr());
     return (Twine(static_cast<uint32_t>(kind.getValue())) + ":" +
             Twine(descriptor.getValue().getZExtValue()))
         .str();
@@ -230,8 +234,7 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
     }
     std::string symbol =
         (function.getSymName() + ".$clocked_sample." + Twine(siteID)).str();
-    auto parentHierarchy =
-        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    auto parentHierarchy = sim::get<sim::metadata::HierarchicalName>(function);
     StringRef parentName =
         parentHierarchy ? parentHierarchy.getValue() : function.getSymName();
     std::string hierarchy =
@@ -252,8 +255,8 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
                 outlineBuilder.getContext(), outlineBuilder.getStringAttr(key),
                 outlineBuilder.getI64IntegerAttr(siteID),
                 outlineBuilder.getStringAttr(hierarchy))),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy)),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy)),
     };
     sim::SimFuncOp sampler = sim::SimFuncOp::create(
         outlineBuilder, location, symbol,
@@ -334,7 +337,7 @@ FailureOr<Value> UnitLowering::lowerAlternateClockSample(
           sampleBuilder.getI64IntegerAttr(depth));
     }
     cf::BranchOp::create(sampleBuilder, location, wait);
-    sampler->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+    sim::mark<sim::metadata::Lowered>(sampler);
   }
 
   Value processContext = function.getBody().front().getArgument(0);
@@ -492,30 +495,27 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       name == "$assertfailon" || name == "$assertfailoff" ||
       name == "$assertnonvacuouson" || name == "$assertvacuousoff" ||
       name == "$assertcontrol") {
-    auto action =
-        op->getAttrOfType<IntegerAttr>("simulation.assertion_control_action");
-    auto actionArgument = op->getAttrOfType<IntegerAttr>(
-        "simulation.assertion_control_action_argument");
-    auto targets = op->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.assertion_control_ids");
+    auto action = sim::get<sim::metadata::AssertionControlAction>(op);
+    auto actionArgument =
+        sim::get<sim::metadata::AssertionControlActionArgument>(op);
+    auto targets = sim::get<sim::metadata::AssertionControlIds>(op);
     if (static_cast<bool>(action) == static_cast<bool>(actionArgument) ||
         !targets) {
       emitError(location) << name
                           << " has no prepared assertion-control selection";
       return failure();
     }
-    auto depths = op->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.assertion_control_depths");
-    auto levelsArgument = op->getAttrOfType<IntegerAttr>(
-        "simulation.assertion_control_levels_argument");
-    auto assertionTypes = op->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.assertion_control_assertion_types");
-    auto assertionTypesArgument = op->getAttrOfType<IntegerAttr>(
-        "simulation.assertion_control_assertion_types_argument");
-    auto directiveTypes = op->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.assertion_control_directive_types");
-    auto directiveTypesArgument = op->getAttrOfType<IntegerAttr>(
-        "simulation.assertion_control_directive_types_argument");
+    auto depths = sim::get<sim::metadata::AssertionControlDepths>(op);
+    auto levelsArgument =
+        sim::get<sim::metadata::AssertionControlLevelsArgument>(op);
+    auto assertionTypes =
+        sim::get<sim::metadata::AssertionControlAssertionTypes>(op);
+    auto assertionTypesArgument =
+        sim::get<sim::metadata::AssertionControlAssertionTypesArgument>(op);
+    auto directiveTypes =
+        sim::get<sim::metadata::AssertionControlDirectiveTypes>(op);
+    auto directiveTypesArgument =
+        sim::get<sim::metadata::AssertionControlDirectiveTypesArgument>(op);
     if (static_cast<bool>(depths) != static_cast<bool>(levelsArgument) ||
         static_cast<bool>(assertionTypes) !=
             static_cast<bool>(assertionTypesArgument) ||
@@ -1047,7 +1047,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       first = *loweredCode;
     }
 
-    auto scale = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    auto scale = sim::get<sim::metadata::DelayScale>(function);
     if (!scale || !scale.getValue().isStrictlyPositive()) {
       function.emitError("code unit has no valid frozen time scale");
       return failure();
@@ -1133,7 +1133,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << name << " requires exactly one argument";
       return failure();
     }
-    if (!function->hasAttr("simulation.global_future_resolver")) {
+    if (!sim::has<sim::metadata::GlobalFutureResolver>(function)) {
       emitError(location)
           << name << " requires the detached global-future assertion resolver";
       return failure();
@@ -1586,8 +1586,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           source, comparisonType, comparisonSigned, location, comparisonSigned);
       if (failed(comparisonSource))
         return failure();
-      ArrayAttr enumValues =
-          op->getAttrOfType<ArrayAttr>(dynamicCastEnumValuesAttrName);
+      ArrayAttr enumValues = sim::get<sim::metadata::DynamicCastEnumValues>(op);
       if (!enumValues || enumValues.empty()) {
         emitError(location) << "enum $cast has no valid frozen membership";
         return failure();
@@ -1620,7 +1619,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     }
 
-    bool taskForm = op->hasAttr(dynamicCastTaskAttrName);
+    bool taskForm = sim::has<sim::metadata::DynamicCastTask>(op);
     if (conditionalStore) {
       Block *store = addBlock();
       Block *resume = addBlock();
@@ -2103,8 +2102,8 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     auto semanticType =
         children.front()->getAttrOfType<TypeAttr>("semantic_type");
-    ArrayAttr values = op->getAttrOfType<ArrayAttr>(enumMethodValuesAttrName);
-    ArrayAttr names = op->getAttrOfType<ArrayAttr>(enumMethodNamesAttrName);
+    ArrayAttr values = sim::get<sim::metadata::EnumMethodValues>(op);
+    ArrayAttr names = sim::get<sim::metadata::EnumMethodNames>(op);
     if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
         !values || values.empty() || !names || values.size() != names.size()) {
       emitError(location) << "enum name() has no valid frozen inventory";
@@ -2157,7 +2156,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     }
     auto semanticType =
         children.front()->getAttrOfType<TypeAttr>("semantic_type");
-    ArrayAttr values = op->getAttrOfType<ArrayAttr>(enumMethodValuesAttrName);
+    ArrayAttr values = sim::get<sim::metadata::EnumMethodValues>(op);
     if (!semanticType || !isa<semantic::EnumType>(semanticType.getValue()) ||
         !values || values.empty()) {
       emitError(location) << "enum " << name
@@ -2398,7 +2397,7 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << name << " accepts no arguments";
       return failure();
     }
-    auto scaleAttr = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    auto scaleAttr = sim::get<sim::metadata::DelayScale>(function);
     if (!scaleAttr || !scaleAttr.getValue().isStrictlyPositive()) {
       function.emitError("code unit has no valid frozen time scale");
       return failure();

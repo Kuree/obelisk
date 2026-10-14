@@ -512,11 +512,11 @@ LogicalResult materializeCovergroupTypeOptionInitializers(
           publish = sim::CovergroupInstanceOptionKind::DistributeFirst;
       }
       if (publish) {
-        initializer->setAttr(coverageTypeOptionInitializerOwnerAttrName,
-                             definition.getOwnerSymbolAttr());
-        initializer->setAttr(coverageTypeOptionInitializerKindAttrName,
-                             sim::CovergroupInstanceOptionKindAttr::get(
-                                 builder.getContext(), *publish));
+        sim::set<sim::metadata::InitializeTypeOptionOwner>(
+            initializer, definition.getOwnerSymbolAttr());
+        sim::set<sim::metadata::InitializeTypeOptionKind>(
+            initializer, sim::CovergroupInstanceOptionKindAttr::get(
+                             builder.getContext(), *publish));
       }
     }
     property->setAttr("obelisk.aggregate_member_initializer_ordinals",
@@ -539,8 +539,7 @@ LogicalResult materializeCovergroupTypeOptionInitializers(
       if (isa<semantic::SVMemberAccessExpressionOp>(operation) &&
           isa<semantic::SVCoverpointSymbolOp, semantic::SVCoverCrossSymbolOp>(
               property->getParentOp()))
-        operation->setAttr(coverageTypeOptionItemQualifierAttrName,
-                           builder.getUnitAttr());
+        sim::mark<sim::metadata::TypeOptionItemQualifier>(operation);
     }
   });
   return failure(invalid);
@@ -645,8 +644,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             succeeded(source) && containsClassBitstreamSource(*source);
         needsClassBitstreamMetadata |= containsClass;
         if (containsClass && isExactCurrentInstanceThis(child))
-          streaming->setAttr(sim::metadata::classBitstreamAllowHiddenRoot,
-                             UnitAttr::get(context));
+          sim::mark<sim::metadata::ClassBitstreamAllowHiddenRoot>(streaming);
         if (withFlag != 0)
           ++next;
       }
@@ -683,13 +681,11 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         succeeded(source) && containsClassBitstreamSource(*source);
     needsClassBitstreamMetadata |= containsClass;
     if (containsClass && isExactCurrentInstanceThis(children.front()))
-      conversion->setAttr(sim::metadata::classBitstreamAllowHiddenRoot,
-                          UnitAttr::get(context));
+      sim::mark<sim::metadata::ClassBitstreamAllowHiddenRoot>(conversion);
     return WalkResult::advance();
   });
   if (needsClassBitstreamMetadata)
-    module->setAttr(sim::metadata::classBitstreamSource,
-                    UnitAttr::get(context));
+    sim::mark<sim::metadata::ClassBitstreamSource>(module);
   if (needsClassBitstreamMetadata) {
     llvm::DenseMap<Type, uint64_t> fixedClassWidths;
     for (semantic::SVClassTypeOp classType : result.sources)
@@ -701,8 +697,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       auto found = semanticType ? fixedClassWidths.find(semanticType.getValue())
                                 : fixedClassWidths.end();
       if (found != fixedClassWidths.end())
-        operation->setAttr("simulation.class_bitstream_width",
-                           builder.getI64IntegerAttr(found->second));
+        sim::set<sim::metadata::ClassBitstreamWidth>(
+            operation, builder.getI64IntegerAttr(found->second));
     });
   }
   // The IEEE weak_reference specializations live in the standard package,
@@ -977,21 +973,19 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       // separate from the physical class layout: synthetic RNG/rand_mode
       // fields must never leak into a language bit stream either.
       if (needsClassBitstreamMetadata && !isStatic) {
-        field->setAttr(sim::metadata::classBitstreamMember,
-                       builder.getUnitAttr());
-        field->setAttr(
-            sim::metadata::classBitstreamVisibility,
+        sim::mark<sim::metadata::ClassBitstreamMember>(field);
+        sim::set<sim::metadata::ClassBitstreamVisibility>(
+            field,
             sim::MemberVisibilityAttr::get(
                 builder.getContext(), static_cast<sim::MemberVisibility>(
                                           property.getMemberVisibility())));
       }
       fieldDeclarations[property] = field;
       if (property.getRandMode() != semantic::SVRandMode::None) {
-        field->setAttr(sim::metadata::randomModeIndex,
-                       builder.getI64IntegerAttr(randomPropertyIndex++));
+        sim::set<sim::metadata::RandomModeIndex>(
+            field, builder.getI64IntegerAttr(randomPropertyIndex++));
         if (!isStatic && isa<sim::ClassHandleType>(*type))
-          field->setAttr(sim::metadata::randomObjectEdge,
-                         builder.getUnitAttr());
+          sim::mark<sim::metadata::RandomObjectEdge>(field);
         if (!isStatic && sim::getPackedWidth(*type)) {
           sim::RandomVariableKind kind = sim::RandomVariableKind::Rand;
           switch (property.getRandMode()) {
@@ -1004,16 +998,16 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
           case semantic::SVRandMode::None:
             llvm_unreachable("non-random property reached random metadata");
           }
-          field->setAttr(sim::metadata::randomVariableKind,
-                         sim::RandomVariableKindAttr::get(context, kind));
+          sim::set<sim::metadata::RandomVariableKind>(
+              field, sim::RandomVariableKindAttr::get(context, kind));
           std::optional<Type> semanticType = property.getSemanticType();
           if (!semanticType) {
             emitError(getSemanticLocation(property))
                 << "random property has no semantic type";
             invalid = true;
           } else {
-            field->setAttr(
-                sim::metadata::randomVariableSigned,
+            sim::set<sim::metadata::RandomVariableSigned>(
+                field,
                 builder.getBoolAttr(isSignedSemanticType(*semanticType)));
           }
         }
@@ -1036,11 +1030,11 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             addRandCField("_randc_position", "__obelisk_randc_position");
         result.randcDomainFieldSymbols[property] = reserveCyclicDomain(
             getSemanticLocation(property), fieldName + "_randc_domain", *type);
-        if (field->hasAttr(sim::metadata::randomVariableKind)) {
-          field->setAttr(sim::metadata::randomCycleKeyField,
-                         result.randcKeyFieldSymbols.lookup(property));
-          field->setAttr(sim::metadata::randomCyclePositionField,
-                         result.randcPositionFieldSymbols.lookup(property));
+        if (sim::has<sim::metadata::RandomVariableKind>(field)) {
+          sim::set<sim::metadata::RandomCycleKeyField>(
+              field, result.randcKeyFieldSymbols.lookup(property));
+          sim::set<sim::metadata::RandomCyclePositionField>(
+              field, result.randcPositionFieldSymbols.lookup(property));
         }
       }
       if (!isStatic && property.getRandMode() != semantic::SVRandMode::None)
@@ -1052,10 +1046,10 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
               builder.getIntegerType(layout->elementCount), ordinal++,
               IntegerAttr{}, /*isStatic=*/false, /*isWeak=*/false,
               builder.getStringAttr("__obelisk_rand_element_modes"));
-          property->setAttr(randomArrayModeFieldAttrName, symbol);
-          field->setAttr(randomArrayModeFieldAttrName, symbol);
-          field->setAttr(randomArrayElementWidthAttrName,
-                         builder.getI32IntegerAttr(layout->elementWidth));
+          sim::set<sim::metadata::RandomArrayModeField>(property, symbol);
+          sim::set<sim::metadata::RandomArrayModeField>(field, symbol);
+          sim::set<sim::metadata::RandomArrayElementWidth>(
+              field, builder.getI32IntegerAttr(layout->elementWidth));
         }
       if (sourceStructure && !sourceStructure.getIsPacked() &&
           !sourceStructure.getIsUnion()) {
@@ -1113,8 +1107,8 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                            builder.getIntegerType(layout->elementCount))));
           members.push_back(builder.getDictionaryAttr(attributes));
         }
-        property->setAttr(randomStructMembersAttrName,
-                          builder.getArrayAttr(members));
+        sim::set<sim::metadata::RandomStructMembers>(
+            property, builder.getArrayAttr(members));
       }
     }
     // Every inheritance tree owns exactly one inline PCG stream.
@@ -1129,18 +1123,18 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
             builder.getStringAttr(debugName));
         return symbol;
       };
-      declaration->setAttr(
-          "simulation.random_state_field",
+      sim::set<sim::metadata::RandomStateField>(
+          declaration,
           addRandomField("__obelisk_rng_state", "__obelisk_rng_state"));
-      declaration->setAttr(
-          "simulation.random_increment_field",
+      sim::set<sim::metadata::RandomIncrementField>(
+          declaration,
           addRandomField("__obelisk_rng_increment", "__obelisk_rng_increment"));
-      declaration->setAttr(
-          sim::metadata::randomModeField,
+      sim::set<sim::metadata::RandomModeField>(
+          declaration,
           addRandomField("__obelisk_rand_mode", "__obelisk_rand_mode"));
-      declaration->setAttr("simulation.constraint_mode_field",
-                           addRandomField("__obelisk_constraint_mode",
-                                          "__obelisk_constraint_mode"));
+      sim::set<sim::metadata::ConstraintModeField>(
+          declaration, addRandomField("__obelisk_constraint_mode",
+                                      "__obelisk_constraint_mode"));
     }
     // Append managed histories after the existing inventory so source fields
     // and their ordinal-derived symbols keep their identities.
@@ -1214,7 +1208,7 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
       auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
       sim::SimClassFieldDeclOp field = fieldDeclarations.lookup(child);
       if (!property || !field ||
-          !field->hasAttr(sim::metadata::randomVariableKind))
+          !sim::has<sim::metadata::RandomVariableKind>(field))
         continue;
       references.push_back(sim::RandomVariableReferenceAttr::get(
           context, {}, result.fieldSymbols.lookup(property)));
@@ -1407,7 +1401,7 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
     if (!definition)
       return {};
     StringAttr definitionName =
-        body->getAttrOfType<StringAttr>("simulation.vpi_definition_name");
+        sim::get<sim::metadata::VpiDefinitionName>(body);
     if (!definitionName)
       definitionName = definition->getAttrOfType<StringAttr>("name");
     if (!definitionName)
@@ -1511,8 +1505,8 @@ FailureOr<PreparedScopeDeclarations> materializeScopeDeclarations(
               ? instance->getParentOfType<semantic::SVInstanceBodySymbolOp>()
               : semantic::SVInstanceBodySymbolOp{};
       if (parentBody && parentBody->hasAttr("virtual_interface_identity"))
-        declaration->setAttr(virtualInterfaceParentMemberAttrName,
-                             builder.getStringAttr(getDebugName(instance)));
+        sim::set<sim::metadata::VirtualInterfaceParentMember>(
+            declaration, builder.getStringAttr(getDebugName(instance)));
     }
     result.declarations.push_back(declaration);
     auto unitAttr = body->getAttrOfType<IntegerAttr>("time_unit_fs");

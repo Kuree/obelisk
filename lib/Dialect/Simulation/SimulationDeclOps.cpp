@@ -1099,12 +1099,9 @@ LogicalResult SimStorageDeclOp::verify() {
           *this, static_cast<uint16_t>(reflection::VPIObjectKind::Reg),
           reflectionProperties(*this), reflectionDefinitionLoc(*this))))
     return failure();
-  Attribute delegated = (*this)->getAttr(metadata::vpiIdentityDelegated);
+  FlatSymbolRefAttr delegated = get<metadata::VpiIdentityDelegated>(*this);
   if (!delegated)
     return success();
-  if (!isa<FlatSymbolRefAttr>(delegated))
-    return emitOpError(
-        "delegated VPI identity must name its owning object anchor");
   VPITypeSemanticsAttr semantic = getVpiTypeAttr();
   bool sawArray = false;
   while (semantic && semantic.getKind() == VPITypeKind::UnpackedArray) {
@@ -1844,8 +1841,7 @@ SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
           "implicit constructor must reference a void constructor function "
           "for this class");
   }
-  if (Attribute attribute = (*this)->getAttr(metadata::randomModeField)) {
-    auto reference = dyn_cast<FlatSymbolRefAttr>(attribute);
+  if (FlatSymbolRefAttr reference = get<metadata::RandomModeField>(*this)) {
     SimClassFieldDeclOp field = lookupClassField(symbolTable, *this, reference);
     if (getBaseAttr() || !field || field.getOwner() != getSymName() ||
         field.getIsStatic() || !field.getType().isInteger(64))
@@ -1878,7 +1874,7 @@ SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                  << " is not visible from class " << current.getSymName();
         auto handle = dyn_cast<ClassHandleType>(field.getType());
         if (field.getIsStatic() || field.getIsWeak() || !handle ||
-            !field->hasAttr(metadata::randomObjectEdge))
+            !sim::has<sim::metadata::RandomObjectEdge>(field))
           return emitOpError()
                  << "random-variable reference path field " << pathComponent
                  << " must be a strong rand object edge";
@@ -1899,8 +1895,7 @@ SimClassDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                << "random-variable reference target " << reference.getTarget()
                << " is not visible from class " << current.getSymName();
       if (target.getIsStatic() ||
-          !target->getAttrOfType<RandomVariableKindAttr>(
-              metadata::randomVariableKind))
+          !sim::get<sim::metadata::RandomVariableKind>(target))
         return emitOpError()
                << "random-variable reference target " << reference.getTarget()
                << " must be a packed instance rand or randc field";
@@ -1928,60 +1923,36 @@ LogicalResult SimClassFieldDeclOp::verify() {
     return emitOpError("static properties cannot have an instance offset");
   if (getIsWeak() && !isa<ClassHandleType>(getType()))
     return emitOpError("weak properties must have class-handle type");
-  Attribute bitstreamMember = (*this)->getAttr(metadata::classBitstreamMember);
-  Attribute bitstreamVisibility =
-      (*this)->getAttr(metadata::classBitstreamVisibility);
-  if (bitstreamMember && !isa<UnitAttr>(bitstreamMember))
-    return emitOpError(
-        "class bit-stream member marker must be a unit attribute");
+  bool bitstreamMember = has<metadata::ClassBitstreamMember>(*this);
+  MemberVisibilityAttr visibility =
+      get<metadata::ClassBitstreamVisibility>(*this);
   if (bitstreamMember && getIsStatic())
     return emitOpError("static properties cannot be object bit-stream members");
-  auto visibility = dyn_cast_or_null<MemberVisibilityAttr>(bitstreamVisibility);
-  if (bitstreamVisibility && !visibility)
-    return emitOpError("class bit-stream visibility must be a typed "
-                       "public/protected/local value");
-  if (static_cast<bool>(bitstreamMember) !=
-      static_cast<bool>(bitstreamVisibility))
+  if (bitstreamMember != static_cast<bool>(visibility))
     return emitOpError(
         "class bit-stream member and visibility metadata must be paired");
-  Attribute modeAttribute = (*this)->getAttr(metadata::randomModeIndex);
-  auto modeIndex = dyn_cast_or_null<IntegerAttr>(modeAttribute);
-  if (modeAttribute && !modeIndex)
-    return emitOpError("random mode index must be an integer attribute");
+  // The simulation dialect verifies the payload kinds of this metadata.
+  IntegerAttr modeIndex = get<metadata::RandomModeIndex>(*this);
   if (modeIndex && (modeIndex.getValue().isNegative() ||
                     modeIndex.getValue().getActiveBits() > 6))
     return emitOpError(
         "random mode index exceeds the 64-property executable boundary");
-  if (Attribute edge = (*this)->getAttr(metadata::randomObjectEdge)) {
-    if (!isa<UnitAttr>(edge))
-      return emitOpError("random object edge must be a unit attribute");
+  if (has<metadata::RandomObjectEdge>(*this)) {
     if (!modeIndex || getIsStatic() || getIsWeak() ||
         !isa<ClassHandleType>(getType()))
       return emitOpError(
           "random object edge requires an indexed, strong instance "
           "class-handle field");
   }
-  Attribute variableAttribute = (*this)->getAttr(metadata::randomVariableKind);
-  auto variableKind =
-      dyn_cast_or_null<RandomVariableKindAttr>(variableAttribute);
-  if (variableAttribute && !variableKind)
-    return emitOpError(
-        "random variable kind must be a RandomVariableKind attribute");
-  Attribute signedAttribute = (*this)->getAttr(metadata::randomVariableSigned);
-  auto isSigned = dyn_cast_or_null<BoolAttr>(signedAttribute);
-  Attribute keyAttribute = (*this)->getAttr(metadata::randomCycleKeyField);
-  Attribute positionAttribute =
-      (*this)->getAttr(metadata::randomCyclePositionField);
-  auto key = dyn_cast_or_null<FlatSymbolRefAttr>(keyAttribute);
-  auto position = dyn_cast_or_null<FlatSymbolRefAttr>(positionAttribute);
-  if (signedAttribute && !isSigned)
-    return emitOpError("random variable signedness must be a boolean");
-  if ((keyAttribute && !key) || (positionAttribute && !position))
-    return emitOpError("randc state fields must be flat symbol references");
+  RandomVariableKindAttr variableKind =
+      get<metadata::RandomVariableKind>(*this);
+  BoolAttr isSigned = get<metadata::RandomVariableSigned>(*this);
+  FlatSymbolRefAttr key = get<metadata::RandomCycleKeyField>(*this);
+  FlatSymbolRefAttr position = get<metadata::RandomCyclePositionField>(*this);
   if (variableKind) {
     std::optional<unsigned> width = getPackedWidth(getType());
     if (!modeIndex || getIsStatic() || !width || *width == 0 ||
-        (*this)->hasAttr(metadata::randomObjectEdge))
+        has<metadata::RandomObjectEdge>(*this))
       return emitOpError(
           "random variable metadata requires an indexed, packed instance "
           "field distinct from an object edge");
@@ -1994,7 +1965,7 @@ LogicalResult SimClassFieldDeclOp::verify() {
           "randc variables require key and position fields; rand variables "
           "forbid them");
     // The randc state fields themselves are resolved in verifySymbolUses.
-  } else if (signedAttribute || keyAttribute || positionAttribute) {
+  } else if (isSigned || key || position) {
     return emitOpError(
         "random variable auxiliary metadata requires a variable kind");
   }
@@ -2009,10 +1980,8 @@ SimClassFieldDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("references an unknown owner class");
   // Structural verification already rejected a randc field that is missing
   // either state reference, so only a complete pair reaches a lookup here.
-  auto key = dyn_cast_or_null<FlatSymbolRefAttr>(
-      (*this)->getAttr(metadata::randomCycleKeyField));
-  auto position = dyn_cast_or_null<FlatSymbolRefAttr>(
-      (*this)->getAttr(metadata::randomCyclePositionField));
+  FlatSymbolRefAttr key = get<metadata::RandomCycleKeyField>(*this);
+  FlatSymbolRefAttr position = get<metadata::RandomCyclePositionField>(*this);
   if (!key || !position)
     return success();
   SimClassFieldDeclOp keyField = lookupClassField(symbolTable, *this, key);
@@ -3249,8 +3218,7 @@ LogicalResult SimDesignOp::verifyRegions() {
 
   llvm::DenseSet<Attribute> delegatedAnchors;
   for (SimStorageDeclOp storage : storages) {
-    auto delegated = storage->getAttrOfType<FlatSymbolRefAttr>(
-        metadata::vpiIdentityDelegated);
+    auto delegated = sim::get<sim::metadata::VpiIdentityDelegated>(storage);
     if (!delegated)
       continue;
     SimVPIObjectAnchorOp anchor =
@@ -3430,8 +3398,7 @@ LogicalResult SimDesignOp::verifyRegions() {
       return failure();
     if (semantic.getKind() == VPITypeKind::Enum &&
         !semantic.getTypedefAliases()) {
-      auto identity =
-          op.getAttrOfType<IntegerAttr>(metadata::vpiSourceTypeIdentity);
+      IntegerAttr identity = get<metadata::VpiSourceTypeIdentity>(&op);
       if (!identity)
         return op.emitError(
             "anonymous enum VPI value requires an exact source type "
@@ -4642,8 +4609,7 @@ LogicalResult SimDesignOp::verifyRegions() {
         }
       }
     }
-    if (ArrayAttr bindings =
-            function->getAttrOfType<ArrayAttr>(metadata::bindings))
+    if (ArrayAttr bindings = sim::get<sim::metadata::Bindings>(function))
       for (Attribute attribute : bindings) {
         auto binding = dyn_cast<DescriptorBindingAttr>(attribute);
         if (!binding)
@@ -4691,8 +4657,8 @@ LogicalResult SimDesignOp::verifyRegions() {
           getCaptureKind(function.getArgAttrDict(index));
       if (!kind)
         return failure(); // Already diagnosed by the function verifier.
-      auto descriptor =
-          function.getArgAttrOfType<IntegerAttr>(index, metadata::descriptorId);
+      auto descriptor = function.getArgAttrOfType<IntegerAttr>(
+          index, sim::metadata::DescriptorId::getNameStr());
       std::optional<uint64_t> descriptorId;
       if (descriptor && !descriptor.getValue().isNegative() &&
           descriptor.getValue().getBitWidth() <= 64)
@@ -4704,14 +4670,18 @@ LogicalResult SimDesignOp::verifyRegions() {
         if (descriptorId && storageTypes.count(*descriptorId)) {
           Type storageType = storageTypes.lookup(*descriptorId);
           auto rootType = function.getArgAttrOfType<TypeAttr>(
-              index, metadata::descriptorRootType);
+              index, sim::metadata::DescriptorRootType::getNameStr());
           auto low = function.getArgAttrOfType<IntegerAttr>(
-              index, metadata::descriptorLow);
+              index, sim::metadata::DescriptorLow::getNameStr());
           if (!rootType) {
             if (low ||
-                function.getArgAttr(index, metadata::descriptorIndices) ||
-                function.getArgAttr(index, metadata::descriptorAggregateType) ||
-                function.getArgAttr(index, metadata::descriptorPackedLow))
+                function.getArgAttr(
+                    index, sim::metadata::DescriptorIndices::getNameStr()) ||
+                function.getArgAttr(
+                    index,
+                    sim::metadata::DescriptorAggregateType::getNameStr()) ||
+                function.getArgAttr(
+                    index, sim::metadata::DescriptorPackedLow::getNameStr()))
               break;
             expected = RefType::get(getContext(), storageType);
             break;
@@ -4729,7 +4699,7 @@ LogicalResult SimDesignOp::verifyRegions() {
           Type selected = storageType;
           uint64_t computedLow = 0;
           auto indices = function.getArgAttrOfType<DenseI64ArrayAttr>(
-              index, metadata::descriptorIndices);
+              index, sim::metadata::DescriptorIndices::getNameStr());
           bool validView = true;
           if (indices) {
             for (int64_t rawIndex : indices.asArrayRef()) {
@@ -4750,13 +4720,13 @@ LogicalResult SimDesignOp::verifyRegions() {
             }
           }
           auto aggregateType = function.getArgAttrOfType<TypeAttr>(
-              index, metadata::descriptorAggregateType);
+              index, sim::metadata::DescriptorAggregateType::getNameStr());
           if ((indices && !aggregateType) ||
               (aggregateType && aggregateType.getValue() != selected))
             validView = false;
 
           auto packedLow = function.getArgAttrOfType<IntegerAttr>(
-              index, metadata::descriptorPackedLow);
+              index, sim::metadata::DescriptorPackedLow::getNameStr());
           Type viewElement = reference ? reference.getElementType() : Type{};
           if (validView && selected != viewElement) {
             std::optional<unsigned> selectedWidth = getPackedWidth(selected);

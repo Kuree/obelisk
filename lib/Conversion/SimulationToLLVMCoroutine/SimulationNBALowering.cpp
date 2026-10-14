@@ -89,7 +89,7 @@ public:
       flags |= OBELISK_RT_INERTIAL_DRIVER_VECTOR_DELAY;
     if (op.getDeferResolution())
       flags |= OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
-    if (op->hasAttr("simulation.user_net_raw_drive"))
+    if (sim::has<sim::metadata::UserNetRawDrive>(op))
       flags |= OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW;
     if (op.getValue().getType().isF32())
       flags |= OBELISK_RT_INERTIAL_DRIVER_REAL32;
@@ -175,7 +175,7 @@ public:
     uint32_t flags = 0;
     if (op.getDeferResolution())
       flags |= OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION;
-    if (op->hasAttr("simulation.user_net_raw_drive"))
+    if (sim::has<sim::metadata::UserNetRawDrive>(op))
       flags |= OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW;
     if (op.getPulseOnDetect())
       flags |= OBELISK_RT_INERTIAL_PATH_ON_DETECT;
@@ -651,7 +651,7 @@ public:
             rootIndex >= staticPlan->roots.size())
           return std::nullopt;
         auto descriptor = owner.getArgAttrOfType<IntegerAttr>(
-            argument.getArgNumber(), "simulation.descriptor_id");
+            argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
         auto handle = descriptor
                           ? stateLayout->storage.find(descriptor.getInt())
                           : stateLayout->storage.end();

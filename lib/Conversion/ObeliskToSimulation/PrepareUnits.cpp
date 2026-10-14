@@ -43,7 +43,7 @@ static FailureOr<sim::EntryKind> getEntryKind(Operation *op) {
   if (isa<semantic::SVSystemTimingCheckSymbolOp>(op) &&
       op->hasAttr("obelisk.basic_timing_check"))
     return sim::EntryKind::Always;
-  if (op->hasAttr(sequenceEndpointEventAttrName))
+  if (sim::has<sim::metadata::SequenceEndpointEvent>(op))
     return sim::EntryKind::Always;
   if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
       (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
@@ -105,7 +105,7 @@ static std::string getCodeUnitHierarchy(Operation *op) {
             Twine(nodeID.getValue().getZExtValue()))
         .str();
   }
-  if (op->hasAttr(sequenceEndpointEventAttrName))
+  if (sim::has<sim::metadata::SequenceEndpointEvent>(op))
     return (getHierarchyName(op) + ".$sequence_endpoint").str();
   if (isa<semantic::SVClockingBlockSymbolOp>(op) &&
       (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
@@ -172,8 +172,8 @@ PreparedUnits::resolveVirtualInterfaceCallees(
   if (!interface)
     return {};
   SymbolRefAttr identity = interface.getInterfaceName();
-  if (auto receiverMembers = call->getAttrOfType<ArrayAttr>(
-          virtualInterfaceReceiverMembersAttrName);
+  if (auto receiverMembers =
+          sim::get<sim::metadata::VirtualInterfaceReceiverMembers>(call);
       receiverMembers && !receiverMembers.empty())
     if (auto member = dyn_cast<DictionaryAttr>(
             receiverMembers[receiverMembers.size() - 1]))
@@ -703,7 +703,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           return;
         }
         Operation *rhs = assignmentChildren.back();
-        rhs->setAttr(observerCoercedTypeAttrName, TypeAttr::get(observerType));
+        sim::set<sim::metadata::ObserverCoercedType>(
+            rhs, TypeAttr::get(observerType));
         observerCandidates.push_back({rhs, ObserverResult::Value,
                                       "override_rhs", unit.id, unit.hierarchy});
         return;
@@ -835,7 +836,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
                     semantic::SVUnbasedUnsizedIntegerLiteralOp,
                     semantic::SVRealLiteralOp, semantic::SVTimeLiteralOp>(
                     spelling) ||
-                spelling->hasAttr("simulation.constant_value"))
+                sim::has<sim::metadata::ConstantValue>(spelling))
               continue;
             if (auto system = dyn_cast<semantic::SVCallExpressionOp>(spelling);
                 system && system.getIsSystemCall() &&
@@ -859,16 +860,16 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           }
           if (complete) {
             for (Operation *argument : classArguments)
-              argument->setAttr(
-                  observerCoercedTypeAttrName,
+              sim::set<sim::metadata::ObserverCoercedType>(
+                  argument,
                   TypeAttr::get(IntegerType::get(module.getContext(), 64)));
             for (Operation *argument : observedArguments)
               observerCandidates.push_back({argument, ObserverResult::Value,
                                             "monitor", unit.id,
                                             unit.hierarchy});
           }
-          call->setAttr("simulation.monitor_observation_complete",
-                        builder.getBoolAttr(complete));
+          sim::set<sim::metadata::MonitorObservationComplete>(
+              call, builder.getBoolAttr(complete));
         }
       }
       auto event = dyn_cast<semantic::SVSignalEventControlOp>(nested);
@@ -954,8 +955,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         // Event expressions compare class-handle identity, not object
         // contents. Observers operate on packed values, so carry the stable
         // non-address object ID across their comparison boundary.
-        children.front()->setAttr(
-            observerCoercedTypeAttrName,
+        sim::set<sim::metadata::ObserverCoercedType>(
+            children.front(),
             TypeAttr::get(IntegerType::get(module.getContext(), 64)));
       observerCandidates.push_back({children.front(), primaryResult, "primary",
                                     unit.id, unit.hierarchy});
@@ -1060,7 +1061,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
       Type resultType = isa<sim::LogicType>(scalar)
                             ? Type(sim::LogicType::get(context, 1))
                             : Type(IntegerType::get(context, 1));
-      operand->setAttr(observerCoercedTypeAttrName, TypeAttr::get(resultType));
+      sim::set<sim::metadata::ObserverCoercedType>(operand,
+                                                   TypeAttr::get(resultType));
       uint64_t nodeID = check.getNodeId();
       std::string hierarchy =
           (getHierarchyName(check) + ".$timing_condition." + Twine(index))
@@ -1123,17 +1125,16 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     }
     std::string symbol =
         llvm::formatv("observer_{0}_{1}", candidate.parentID, ordinal).str();
-    candidate.expression->setAttr("simulation.observer",
-                                  FlatSymbolRefAttr::get(context, symbol));
-    candidate.expression->setAttr(
-        observerResultAttrName,
+    sim::set<sim::metadata::Observer>(candidate.expression,
+                                      FlatSymbolRefAttr::get(context, symbol));
+    sim::set<sim::metadata::ObserverResult>(
+        candidate.expression,
         builder.getI32IntegerAttr(static_cast<uint32_t>(candidate.result)));
     if (candidate.label == "override_rhs")
       ::obelisk::schedule::set<::obelisk::schedule::Field::OverrideEvaluator>(
           candidate.expression, builder.getUnitAttr());
     if (candidate.label == "abort" || candidate.sampled)
-      candidate.expression->setAttr(sampledObserverAttrName,
-                                    builder.getUnitAttr());
+      sim::mark<sim::metadata::SampledObserver>(candidate.expression);
     result.units.push_back({candidate.expression,
                             id,
                             sim::EntryKind::Observer,
@@ -1177,11 +1178,10 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
               << "colliding code unit is here";
           invalid = true;
         } else {
-          assignment->setAttr(
-              "simulation.nba_event_code_unit_id",
-              IntegerAttr::get(IntegerType::get(context, 64), id));
-          assignment->setAttr("simulation.nba_event_hierarchy",
-                              builder.getStringAttr(hierarchy));
+          sim::set<sim::metadata::NbaEventCodeUnitId>(
+              assignment, IntegerAttr::get(IntegerType::get(context, 64), id));
+          sim::set<sim::metadata::NbaEventHierarchy>(
+              assignment, builder.getStringAttr(hierarchy));
         }
       }
     }
@@ -1211,8 +1211,8 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           invalid = true;
           continue;
         }
-        branch->setAttr("simulation.fork_code_unit_id",
-                        IntegerAttr::get(IntegerType::get(context, 64), id));
+        sim::set<sim::metadata::ForkCodeUnitId>(
+            branch, IntegerAttr::get(IntegerType::get(context, 64), id));
         assignForkCodeUnits(branch, hierarchy);
       }
       return;

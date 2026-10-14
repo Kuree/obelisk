@@ -346,12 +346,12 @@ void ObeliskSimFinalizePass::runOnOperation() {
       module.getContext(), functions, [&](sim::SimFuncOp function) {
         LogicalResult verified = verifyExecutableSubtree(
             function, module, executableSymbols, /*skipFunctions=*/false);
-        function->removeAttr(bindingsAttrName);
-        function->removeAttr(delayScaleAttrName);
-        function->removeAttr(delayQuantumAttrName);
-        function->removeAttr(sim::metadata::lowered);
-        function->removeAttr(sim::metadata::thisArgument);
-        function->removeAttr("simulation.constructor");
+        sim::remove<sim::metadata::Bindings>(function);
+        sim::remove<sim::metadata::DelayScale>(function);
+        sim::remove<sim::metadata::DelayQuantum>(function);
+        sim::remove<sim::metadata::Lowered>(function);
+        sim::remove<sim::metadata::ThisArgument>(function);
+        sim::remove<sim::metadata::Constructor>(function);
         return verified;
       }));
 

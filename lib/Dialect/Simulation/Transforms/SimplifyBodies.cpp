@@ -280,7 +280,7 @@ DenseSet<Operation *> getClearTerminationEntries(
 void removeDeadPrivateStores(sim::SimDesignOp design) {
   DenseSet<uint64_t> candidates;
   for (auto storage : design.getOps<sim::SimStorageDeclOp>())
-    if (storage->hasAttr(sim::metadata::subroutineStorage) &&
+    if (sim::has<sim::metadata::SubroutineStorage>(storage) &&
         isa<IntegerType, sim::LogicType>(storage.getType()))
       candidates.insert(storage.getId());
   if (candidates.empty())
@@ -567,10 +567,9 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
         sim::SimRefAllocOp::create(builder, function.getLoc(), ref, initial);
     // The slot is flushed to its exclusive canonical root at every boundary,
     // so reloading the root at any resumption recreates the same contents.
-    local->setAttr(sim::metadata::flushedPrivateSlot, builder.getUnitAttr());
+    sim::mark<sim::metadata::FlushedPrivateSlot>(local);
     if (defaultSlot)
-      local->setAttr(sim::metadata::activationDefaultSlot,
-                     builder.getUnitAttr());
+      sim::mark<sim::metadata::ActivationDefaultSlot>(local);
     for (OpOperand *use : originalUses)
       use->set(local);
     for (Operation *boundary : boundaries) {
@@ -619,9 +618,9 @@ void promotePrivateAggregates(sim::SimDesignOp design) {
       auto flush = sim::SimRefStoreOp::create(builder, boundary->getLoc(),
                                               value, canonical);
       if (llvm::all_of(access.stores, [](auto store) {
-            return store->hasAttr("simulation.continuous_store");
+            return sim::has<sim::metadata::ContinuousStore>(store);
           }))
-        flush->setAttr("simulation.continuous_store", builder.getUnitAttr());
+        sim::mark<sim::metadata::ContinuousStore>(flush);
     }
     // Other instances of the same source process may run while suspended.
     // Reload canonical state before any resumed access; private SSA never

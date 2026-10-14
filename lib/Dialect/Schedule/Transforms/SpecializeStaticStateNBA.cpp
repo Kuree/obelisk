@@ -66,7 +66,7 @@ void ObeliskSimSpecializeStaticStateNBAPass::runOnOperation() {
         if (!function || argument.getOwner() != &function.getBody().front())
           return std::nullopt;
         auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-            argument.getArgNumber(), sim::metadata::descriptorId);
+            argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
         if (!descriptor || descriptor.getValue().isNegative() ||
             descriptor.getValue().getBitWidth() > 64)
           return std::nullopt;

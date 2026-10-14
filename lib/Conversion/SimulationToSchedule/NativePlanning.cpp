@@ -191,11 +191,12 @@ FailureOr<SmallVector<NativePeriodicClock>> buildNativePeriodicClockPlan(
     std::optional<uint64_t> descriptor;
     if (reference) {
       auto attribute = function.getArgAttrOfType<IntegerAttr>(
-          reference.getArgNumber(), sim::metadata::descriptorId);
+          reference.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
       if (attribute)
         descriptor = attribute.getInt();
       if (auto low = function.getArgAttrOfType<IntegerAttr>(
-              reference.getArgNumber(), sim::metadata::descriptorLow)) {
+              reference.getArgNumber(),
+              sim::metadata::DescriptorLow::getNameStr())) {
         if (low.getValue().isNegative() ||
             low.getValue().getActiveBits() > 64 ||
             low.getUInt() > UINT64_MAX - localBitOffset)
@@ -288,7 +289,7 @@ buildNativePeriodicAliasPlan(ModuleOp module,
       if (argument.getOwner() != &function.getBody().front())
         return std::nullopt;
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          argument.getArgNumber(), sim::metadata::descriptorId);
+          argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
       if (descriptor)
         return descriptor.getValue().getZExtValue();
       return std::nullopt;
@@ -367,7 +368,8 @@ buildNativePeriodicAliasPlan(ModuleOp module,
       if (argument.getOwner() != &function.getBody().front())
         return WalkResult::advance();
       if (auto low = function.getArgAttrOfType<IntegerAttr>(
-              argument.getArgNumber(), sim::metadata::descriptorLow)) {
+              argument.getArgNumber(),
+              sim::metadata::DescriptorLow::getNameStr())) {
         if (low.getValue().isNegative() ||
             low.getValue().getActiveBits() > 64 ||
             low.getUInt() > UINT64_MAX - sourceLocalBitOffset)

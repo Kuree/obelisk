@@ -637,7 +637,7 @@ materializeStandaloneEvalBody(sim::SimDesignOp design, SymbolTable &symbols,
     if (auto allocation = dyn_cast<sim::SimRefAllocOp>(definition)) {
       if (!sourceLocals.lookup(value))
         return {};
-      if (allocation->hasAttr(sim::metadata::activationDefaultSlot)) {
+      if (sim::has<sim::metadata::ActivationDefaultSlot>(allocation)) {
         Value initial = materialize(allocation.getInitialValue(), materialize);
         if (!initial)
           return {};
@@ -1000,7 +1000,7 @@ std::optional<uint64_t> resolveStorageRoot(Value value) {
       if (!function || argument.getOwner() != &function.getBody().front())
         return std::nullopt;
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          argument.getArgNumber(), sim::metadata::descriptorId);
+          argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
       if (!descriptor || descriptor.getValue().isNegative() ||
           descriptor.getValue().getBitWidth() > 64)
         return std::nullopt;
@@ -1042,7 +1042,7 @@ std::optional<ExactDriverSlice> resolveExactDriverSlice(Value value) {
       if (!function || argument.getOwner() != &function.getBody().front())
         return std::nullopt;
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          argument.getArgNumber(), sim::metadata::descriptorId);
+          argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
       if (!descriptor || descriptor.getValue().isNegative() ||
           descriptor.getValue().getBitWidth() > 64)
         return std::nullopt;
@@ -3293,10 +3293,9 @@ FailureOr<sim::SimFuncOp> materializeStraightLineKernel(
     helperArgumentAttrs.front() = candidates.front().function.getArgAttrDict(0);
     for (DictionaryAttr &attrs :
          MutableArrayRef(helperArgumentAttrs).drop_front())
-      attrs = helperBuilder.getDictionaryAttr(helperBuilder.getNamedAttr(
-          "simulation.capture_kind",
-          helperBuilder.getI32IntegerAttr(
-              static_cast<int32_t>(sim::CaptureKind::Formal))));
+      attrs = helperBuilder.getDictionaryAttr(
+          sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+              helperBuilder.getContext(), sim::CaptureKind::Formal)));
     SmallVector<NamedAttribute> helperAttributes{helperBuilder.getNamedAttr(
         "code_unit_id", helperBuilder.getI64IntegerAttr(helperCodeUnit))};
     helper = sim::SimFuncOp::create(helperBuilder, kernel.getLoc(), helperName,

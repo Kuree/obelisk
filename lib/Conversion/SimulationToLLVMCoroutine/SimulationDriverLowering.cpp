@@ -214,9 +214,9 @@ std::optional<uint64_t> getStaticDriverOffset(Value value, uint64_t driverID,
   if (!function || block != &function.getBody().front())
     return finish(std::nullopt);
   auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-      argument.getArgNumber(), sim::metadata::descriptorId);
+      argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
   auto low = function.getArgAttrOfType<IntegerAttr>(
-      argument.getArgNumber(), sim::metadata::descriptorLow);
+      argument.getArgNumber(), sim::metadata::DescriptorLow::getNameStr());
   if (!descriptor || descriptor.getValue().isNegative() ||
       descriptor.getValue().getActiveBits() > 64 ||
       descriptor.getValue().getZExtValue() != driverID ||
@@ -263,7 +263,7 @@ std::optional<uint64_t> getStaticDriverID(Value value) {
     if (!function || argument.getOwner() != &function.getBody().front())
       return std::nullopt;
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-        argument.getArgNumber(), sim::metadata::descriptorId);
+        argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
     return descriptor ? std::optional<uint64_t>(descriptor.getInt())
                       : std::nullopt;
   }
@@ -332,7 +332,7 @@ getExactStaticDriverTarget(Value value, DenseSet<Value> &active, bool &cycle) {
           dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp())) {
     if (argument.getOwner() == &function.getBody().front()) {
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          argument.getArgNumber(), sim::metadata::descriptorId);
+          argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
       if (descriptor)
         return done(ExactStaticDriverTarget{
             static_cast<uint64_t>(descriptor.getInt()), 0});
@@ -423,7 +423,7 @@ public:
       if (cleanLayout && !native::has<native::GuardedBulkDrive>(op) &&
           !::obelisk::schedule::has<
               ::obelisk::schedule::Field::DeferNetResolution>(op) &&
-          !op->hasAttr("simulation.user_net_raw_drive")) {
+          !sim::has<sim::metadata::UserNetRawDrive>(op)) {
         auto id = native::get<native::DriverId>(op);
         auto found = id ? cleanIndex->driverByID.find(id.getUInt())
                         : cleanIndex->driverByID.end();
@@ -516,7 +516,7 @@ public:
     const NativeStateLayout *storeLayout = &layout;
     if constexpr (std::is_same_v<DriveOp, sim::SimDriverDriveDelayedNetOp>)
       storeLayout = nullptr;
-    bool userRaw = op->hasAttr("simulation.user_net_raw_drive");
+    bool userRaw = sim::has<sim::metadata::UserNetRawDrive>(op);
     Value oldRawValue;
     Value oldRawUnknown;
     if (userRaw) {

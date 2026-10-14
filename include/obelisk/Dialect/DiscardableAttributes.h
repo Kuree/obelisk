@@ -14,6 +14,8 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Operation.h"
 
+#include "llvm/ADT/StringMap.h"
+
 #include <utility>
 
 namespace obelisk::discardable {
@@ -58,27 +60,45 @@ template <typename Attr> mlir::NamedAttribute named(ValueType<Attr> value) {
   return {mlir::StringAttr::get(value.getContext(), Attr::getNameStr()), value};
 }
 
-/// Verify that `attribute`, whose name carries the dialect prefix, is one of
-/// `Attrs` and has the declared payload kind.
+/// Whether an attribute value has a declaration's payload kind.
+using PayloadCheck = bool (*)(mlir::Attribute);
+
+/// Payload checks of the declarations `Attrs`, keyed by attribute name.
 template <typename... Attrs>
-mlir::LogicalResult verify(mlir::Operation *operation,
-                           mlir::NamedAttribute attribute) {
+const llvm::StringMap<PayloadCheck> &declarations() {
+  static const llvm::StringMap<PayloadCheck> table = [] {
+    llvm::StringMap<PayloadCheck> result;
+    (result.try_emplace(
+         Attrs::getNameStr(),
+         +[](mlir::Attribute value) {
+           return mlir::isa<ValueType<Attrs>>(value);
+         }),
+     ...);
+    return result;
+  }();
+  return table;
+}
+
+/// Verify that `attribute`, whose name carries the dialect prefix, is
+/// declared in `table` and has the declared payload kind.
+inline mlir::LogicalResult verify(const llvm::StringMap<PayloadCheck> &table,
+                                  mlir::Operation *operation,
+                                  mlir::NamedAttribute attribute) {
   llvm::StringRef attributeName = attribute.getName().strref();
-  bool known = false;
-  bool valid = false;
-  (void)((attributeName == Attrs::getNameStr()
-              ? (known = true,
-                 valid = mlir::isa<ValueType<Attrs>>(attribute.getValue()),
-                 true)
-              : false) ||
-         ...);
-  if (!known)
+  auto found = table.find(attributeName);
+  if (found == table.end())
     return operation->emitOpError("has undeclared attribute '")
            << attributeName << "'";
-  if (!valid)
+  if (!found->second(attribute.getValue()))
     return operation->emitOpError("attribute '")
            << attributeName << "' has the wrong payload kind";
   return mlir::success();
+}
+
+template <typename... Attrs>
+mlir::LogicalResult verify(mlir::Operation *operation,
+                           mlir::NamedAttribute attribute) {
+  return verify(declarations<Attrs...>(), operation, attribute);
 }
 
 } // namespace obelisk::discardable

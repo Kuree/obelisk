@@ -41,7 +41,7 @@ LogicalResult NativePipelineAnalysis::specializeEval() {
   bool hasContinuousStore = false;
   module.walk([&](sim::SimRefStoreOp store) {
     auto kind = store->getParentOfType<sim::SimFuncOp>().getEntryKind();
-    hasContinuousStore |= store->hasAttr("simulation.continuous_store") ||
+    hasContinuousStore |= sim::has<sim::metadata::ContinuousStore>(store) ||
                           kind == sim::EntryKind::Continuous ||
                           kind == sim::EntryKind::PortInput ||
                           kind == sim::EntryKind::PortOutput;

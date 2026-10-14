@@ -50,7 +50,7 @@ void dropRedundantSlotRefreshes(sim::SimFuncOp function) {
   SmallVector<Operation *> redundant;
   for (Operation &op : entry) {
     auto alloc = dyn_cast<sim::SimRefAllocOp>(op);
-    if (!alloc || !alloc->hasAttr(sim::metadata::flushedPrivateSlot))
+    if (!alloc || !sim::has<sim::metadata::FlushedPrivateSlot>(alloc))
       continue;
     auto initial = alloc.getInitialValue().getDefiningOp<sim::SimRefLoadOp>();
     Value root = initial ? initial.getReference() : Value{};
@@ -89,7 +89,7 @@ void dropRedundantSlotRefreshes(sim::SimFuncOp function) {
   SmallVector<sim::SimRefAllocOp> slots;
   for (Operation &op : entry)
     if (auto alloc = dyn_cast<sim::SimRefAllocOp>(op);
-        alloc && alloc->hasAttr(sim::metadata::flushedPrivateSlot))
+        alloc && sim::has<sim::metadata::FlushedPrivateSlot>(alloc))
       slots.push_back(alloc);
   for (auto alloc : slots) {
     auto initial = alloc.getInitialValue().getDefiningOp<sim::SimRefLoadOp>();
@@ -98,7 +98,7 @@ void dropRedundantSlotRefreshes(sim::SimFuncOp function) {
       if (Operation *ancestor = entry.findAncestorOpInBlock(*user);
           ancestor && ancestor->isBeforeInBlock(first))
         first = ancestor;
-    if (alloc->hasAttr(sim::metadata::activationDefaultSlot)) {
+    if (sim::has<sim::metadata::ActivationDefaultSlot>(alloc)) {
       // Fresh default scratch does not read canonical state. Sinking its
       // allocation past unrelated pure initializers gives both views the
       // same placement even when several slots share an aggregate default.
@@ -139,7 +139,8 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
   wait->erase();
   // The threading marker expresses where a constant was materialized, not
   // its value. It must not distinguish initial and resume computations.
-  copy.walk([](Operation *op) { op->removeAttr("simulation.rematerialized"); });
+  copy.walk(
+      [](Operation *op) { sim::remove<sim::metadata::Rematerialized>(op); });
   if (resume) {
     auto *entryTerminator = copy.getBody().front().getTerminator();
     if (!isa<cf::BranchOp>(entryTerminator))
@@ -160,7 +161,7 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
       // A flushed private slot equals a fresh copy of its exclusive root at
       // every resumption: recreate it together with the root load.
       auto flushed = [](Operation *op) {
-        return op && op->hasAttr(sim::metadata::flushedPrivateSlot);
+        return op && sim::has<sim::metadata::FlushedPrivateSlot>(op);
       };
       bool slotInitializer = isa_and_nonnull<sim::SimRefLoadOp>(definition) &&
                              definition->hasOneUse() &&
@@ -189,7 +190,7 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
                    });
       auto *cloned = reuse ? mapping.lookup(definition)
                            : builder.clone(*definition, operands);
-      cloned->removeAttr("simulation.rematerialized");
+      sim::remove<sim::metadata::Rematerialized>(cloned);
       for (auto [from, to] :
            llvm::zip_equal(definition->getResults(), cloned->getResults()))
         rematerialized[from] = to;
@@ -199,7 +200,7 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
     // Recreate flushed private slots in entry order so both activations
     // allocate them identically.
     for (Operation &op : source.getBody().front().without_terminator())
-      if (op.hasAttr(sim::metadata::flushedPrivateSlot) &&
+      if (sim::has<sim::metadata::FlushedPrivateSlot>(&op) &&
           !materialize(op.getResult(0), materialize))
         return {};
     auto branch = cast<BranchOpInterface>(suspend);
@@ -216,7 +217,7 @@ cloneActivation(sim::SimFuncOp source, Operation *suspend, bool resume,
     // slot too; otherwise the clone keeps an artificial bootstrap live-in.
     for (auto [original, recreated] : rematerialized)
       if (auto alloc = original.getDefiningOp<sim::SimRefAllocOp>();
-          alloc && alloc->hasAttr(sim::metadata::flushedPrivateSlot))
+          alloc && sim::has<sim::metadata::FlushedPrivateSlot>(alloc))
         mapping.lookup(original).replaceAllUsesWith(recreated);
     cf::BranchOp::create(builder, source.getLoc(),
                          mapping.lookup(suspend->getSuccessor(0)), arguments);

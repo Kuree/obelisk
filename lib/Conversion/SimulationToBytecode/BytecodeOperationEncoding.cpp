@@ -357,7 +357,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
             (op.getDeferResolution()
                  ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                  : 0) |
-            (op->hasAttr("simulation.user_net_raw_drive")
+            (sim::has<sim::metadata::UserNetRawDrive>(op)
                  ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
             (op.getValue().getType().isF32() ? OBELISK_RT_INERTIAL_DRIVER_REAL32
@@ -388,7 +388,7 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan,
         (op.getDeferResolution() ? OBELISK_RT_INERTIAL_DRIVER_DEFER_RESOLUTION
                                  : 0) |
-            (op->hasAttr("simulation.user_net_raw_drive")
+            (sim::has<sim::metadata::UserNetRawDrive>(op)
                  ? OBELISK_RT_INERTIAL_DRIVER_PUBLISH_RAW
                  : 0) |
             (op.getPulseOnDetect() ? OBELISK_RT_INERTIAL_PATH_ON_DETECT : 0) |
@@ -1014,8 +1014,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
       return op.emitOpError("deferred assertion ID must be positive");
     SmallVector<uint32_t> inputs{
         emitU64Constant(plan, static_cast<uint64_t>(op.getId()))};
-    if (auto assertionID = op->getAttrOfType<IntegerAttr>(
-            "simulation.assertion_control_target_id"))
+    if (auto assertionID =
+            sim::get<sim::metadata::AssertionControlTargetId>(op))
       inputs.push_back(
           emitU64Constant(plan, assertionID.getValue().getZExtValue()));
     return emitIntrinsicRegisters(plan, kIntrinsicDeferredEnqueue, inputs,

@@ -57,7 +57,7 @@ std::optional<uint64_t> getStaticDriverID(Value value) {
   if (!function || argument.getOwner() != &function.getBody().front())
     return std::nullopt;
   auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-      argument.getArgNumber(), sim::metadata::descriptorId);
+      argument.getArgNumber(), sim::metadata::DescriptorId::getNameStr());
   if (!descriptor || descriptor.getValue().isNegative() ||
       descriptor.getValue().getActiveBits() > 64)
     return std::nullopt;
@@ -205,8 +205,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       }
       std::optional<uint64_t> strengthGroup;
       std::optional<unsigned> strengthBank;
-      if (auto group = declaration->getAttrOfType<IntegerAttr>(
-              "simulation.strength_group")) {
+      if (auto group = sim::get<sim::metadata::StrengthGroup>(declaration)) {
         if (group.getValue().isNegative() ||
             group.getValue().getActiveBits() > 64) {
           declaration.emitError("driver strength group is not unsigned");
@@ -214,8 +213,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
         }
         strengthGroup = group.getValue().getZExtValue();
       }
-      if (auto bank = declaration->getAttrOfType<IntegerAttr>(
-              "simulation.strength_bank")) {
+      if (auto bank = sim::get<sim::metadata::StrengthBank>(declaration)) {
         if (bank.getValue().isNegative() ||
             bank.getValue().getActiveBits() > 1) {
           declaration.emitError("driver strength bank must be zero or one");
@@ -247,7 +245,7 @@ NativeStateLayoutAnalysis::compute(ModuleOp module) {
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getHighDriver()))
         initialXDrivers.insert(*id);
     } else if (auto drive = dyn_cast<sim::SimDriverDriveChangedOp>(operation);
-               drive && drive->hasAttr("simulation.initial_driver_x")) {
+               drive && sim::has<sim::metadata::InitialDriverX>(drive)) {
       if (std::optional<uint64_t> id = getStaticDriverID(drive.getDriver()))
         initialXDrivers.insert(*id);
     } else if (isa<sim::SimPassSwitchDeclOp>(operation)) {

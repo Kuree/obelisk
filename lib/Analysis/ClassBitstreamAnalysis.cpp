@@ -115,8 +115,7 @@ ClassBitstreamAnalysis::compute(sim::SimDesignOp design,
     for (const ManagedClassLayoutAnalysis::Field *field : schema->fields) {
       sim::SimClassFieldDeclOp fieldDeclaration = field->declaration;
       auto visibility =
-          fieldDeclaration->getAttrOfType<sim::MemberVisibilityAttr>(
-              sim::metadata::classBitstreamVisibility);
+          sim::get<sim::metadata::ClassBitstreamVisibility>(fieldDeclaration);
       if (!visibility) {
         schema->invalidField = fieldDeclaration;
         break;

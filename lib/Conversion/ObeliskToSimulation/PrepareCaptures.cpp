@@ -26,11 +26,11 @@ static bool isStorageBaseUse(Operation *lvalue, Operation *reference) {
   if (lvalue == reference)
     return isa<semantic::SVNamedValueExpressionOp,
                semantic::SVHierarchicalValueExpressionOp>(lvalue) ||
-           lvalue->hasAttr(staticClassPropertyAttrName);
+           sim::has<sim::metadata::StaticClassProperty>(lvalue);
   // A static class property selected through an object expression is its own
   // storage root. The object qualifier is evaluated, but is neither read as
   // the property's value nor written by an assignment to the property.
-  if (lvalue->hasAttr(staticClassPropertyAttrName))
+  if (sim::has<sim::metadata::StaticClassProperty>(lvalue))
     return false;
   SmallVector<Operation *> children = getChildren(lvalue);
   if (isa<semantic::SVMemberAccessExpressionOp,
@@ -125,12 +125,13 @@ static bool markForeachIteratorObserverCapture(
                        : semanticSymbols.end();
       if (found == semanticSymbols.end() || found->second != iterator)
         continue;
-      if (dimension.contains(foreachIteratorObserverCaptureAttrName))
+      if (dimension.contains(
+              sim::metadata::ForeachIteratorObserverCapture::getNameStr()))
         return true;
       SmallVector<Attribute> dimensions(loopDimensions.begin(),
                                         loopDimensions.end());
       NamedAttrList rewritten(dimension);
-      rewritten.set(foreachIteratorObserverCaptureAttrName,
+      rewritten.set(sim::metadata::ForeachIteratorObserverCapture::getNameStr(),
                     UnitAttr::get(foreach.getContext()));
       dimensions[index] =
           DictionaryAttr::get(foreach.getContext(), rewritten.getAttrs());
@@ -313,8 +314,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     std::function<void(Operation *)> collectBinding = [&](Operation *nested) {
       if (isa<semantic::SVEventTriggerStatementOp>(nested))
         result.mayPublishSchedulerState.insert(unit.source);
-      if (auto path =
-              nested->getAttrOfType<StringAttr>(interconnectLeafPathAttrName)) {
+      if (auto path = sim::get<sim::metadata::InterconnectLeafPath>(nested)) {
         auto descriptor = descriptors.find(path.getValue());
         if (descriptor == descriptors.end() ||
             descriptor->second.kind != DescriptorInfo::Kind::Net) {
@@ -406,7 +406,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         reference = pattern.getReferencedSymbol();
       } else if (auto member =
                      dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
-        if (!member->hasAttr(staticClassPropertyAttrName)) {
+        if (!sim::has<sim::metadata::StaticClassProperty>(member)) {
           if (isWrittenReferenceUse(nested))
             result.mayPublishSchedulerState.insert(unit.source);
           return;
@@ -656,11 +656,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
     // they are writes, while any genuine constraint read is discovered from
     // the cloned constraint expressions above.
     unit.source->walk([&](semantic::SVCallExpressionOp call) {
-      auto properties =
-          call->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
+      auto properties = sim::get<sim::metadata::RandomProperties>(call);
       if (!properties)
         return;
-      bool scopeRandomize = call->hasAttr(randomizeScopeAttrName);
+      bool scopeRandomize = sim::has<sim::metadata::RandomizeScope>(call);
       SmallVector<Attribute> rewrittenProperties;
       rewrittenProperties.reserve(properties.size());
       bool rewroteProperties = false;
@@ -721,8 +720,8 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         }
       }
       if (rewroteProperties)
-        call->setAttr(randomPropertiesAttrName,
-                      ArrayAttr::get(call.getContext(), rewrittenProperties));
+        sim::set<sim::metadata::RandomProperties>(
+            call, ArrayAttr::get(call.getContext(), rewrittenProperties));
     });
 
     // Manual covergroup sampling evaluates declaration expressions in the
@@ -801,10 +800,9 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
             targets.insert(hook->second).second)
           callEdges[unit.source].push_back(hook->second);
       };
-      addRandomizeHook(randomPreHookSourceAttrName);
-      addRandomizeHook(randomPostHookSourceAttrName);
-      if (auto nestedHooks =
-              call->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName))
+      addRandomizeHook(sim::metadata::RandomPreHookSource::getNameStr());
+      addRandomizeHook(sim::metadata::RandomPostHookSource::getNameStr());
+      if (auto nestedHooks = sim::get<sim::metadata::RandomNestedHooks>(call))
         for (Attribute nestedAttr : nestedHooks)
           if (auto nested = dyn_cast<DictionaryAttr>(nestedAttr))
             for (StringRef name :

@@ -2145,7 +2145,7 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
            design.getBody().front().getOps<sim::SimStorageDeclOp>()) {
         storages[declaration.getId()] = declaration;
         if (declaration.getLifetime() != sim::Lifetime::Design ||
-            declaration->hasAttr(sim::metadata::subroutineStorage) ||
+            sim::has<sim::metadata::SubroutineStorage>(declaration) ||
             !cov::has<cov::SourceAuthored>(declaration))
           continue;
         addCandidate(declaration, declaration, declaration.getScopeId(), 0,

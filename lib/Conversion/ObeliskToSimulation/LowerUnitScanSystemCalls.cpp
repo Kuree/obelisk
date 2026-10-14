@@ -240,10 +240,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     };
     StringAttr hierarchy = op.getSystemScopePathAttr();
     if (!hierarchy)
-      hierarchy =
-          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
-    IntegerAttr timeMultiplier =
-        function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+      hierarchy = sim::get<sim::metadata::HierarchicalName>(function);
+    IntegerAttr timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
     IntegerAttr timePrecision = designTimePrecisionExponent();
 
     struct DynamicDestination {
@@ -602,10 +600,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
       builder, location, builder.getI1Type(), builder.getBoolAttr(false));
   StringAttr hierarchy = op.getSystemScopePathAttr();
   if (!hierarchy)
-    hierarchy =
-        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
-  IntegerAttr timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    hierarchy = sim::get<sim::metadata::HierarchicalName>(function);
+  IntegerAttr timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
   IntegerAttr timePrecision = designTimePrecisionExponent();
   size_t destinationIndex = 0;
   for (const ScanConversion &conversion : *conversions) {

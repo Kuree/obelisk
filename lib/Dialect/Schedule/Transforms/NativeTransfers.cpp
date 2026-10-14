@@ -43,7 +43,7 @@ public:
     // cannot prove disjointness from the specialized roots either.
     auto needsStaticBinding = [&](unsigned argument) {
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          argument, sim::metadata::descriptorId);
+          argument, sim::metadata::DescriptorId::getNameStr());
       return !specializedRoots.empty() &&
              (!descriptor || specializedRoots.contains(descriptor.getUInt()));
     };
@@ -68,8 +68,8 @@ captureOffsets(sim::SimFuncOp function,
   SmallVector<int64_t> offsets{-1};
   for (unsigned i = 1; i < types.size(); ++i) {
     auto ref = dyn_cast<sim::RefType>(types[i]);
-    auto kind =
-        function.getArgAttrOfType<IntegerAttr>(i, sim::metadata::captureKind);
+    auto kind = function.getArgAttrOfType<IntegerAttr>(
+        i, sim::metadata::CaptureKind::getNameStr());
     if (!ref || !sim::getPackedWidth(ref.getElementType()) || !kind ||
         kind.getInt() != int32_t(sim::CaptureKind::Storage) ||
         !layout[i].hasValueStorage() || layout[i].hasSecondaryStorage() ||
@@ -208,11 +208,10 @@ class PrepareNativeTransferKernelsPass final
       auto signature = cast<FunctionType>(kernel.getSignature());
       SmallVector<DictionaryAttr> arguments;
       for (unsigned i = 0; i < signature.getNumInputs(); ++i)
-        arguments.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
-            sim::metadata::captureKind,
-            builder.getI32IntegerAttr(
-                i == 0 ? int32_t(sim::CaptureKind::Context)
-                       : int32_t(sim::CaptureKind::Formal)))}));
+        arguments.push_back(builder.getDictionaryAttr(
+            {sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                builder.getContext(), i == 0 ? sim::CaptureKind::Context
+                                             : sim::CaptureKind::Formal))}));
       // The plan remains visible until process materialization. The generated
       // template has no descriptor IDs and cannot acquire another actor's
       // static storage or publication owner during representation lowering.

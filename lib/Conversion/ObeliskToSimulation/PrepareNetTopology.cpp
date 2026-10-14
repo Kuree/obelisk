@@ -161,8 +161,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                    ? semantic::SVNetSymbolOp{}
                    : dyn_cast<semantic::SVNetSymbolOp>(symbol->second);
     auto definitions =
-        net ? net->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)
-            : ArrayAttr{};
+        net ? sim::get<sim::metadata::InterconnectLeaves>(net) : ArrayAttr{};
     if (!definitions) {
       std::string prefix = (root + Twine("[")).str();
       SmallVector<std::pair<StringRef, const DescriptorInfo *>> matches;
@@ -205,8 +204,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                        SmallVectorImpl<NetRun> &runs) -> bool {
     if (!expression)
       return false;
-    if (auto leafPath = expression->getAttrOfType<StringAttr>(
-            interconnectLeafPathAttrName)) {
+    if (auto leafPath =
+            sim::get<sim::metadata::InterconnectLeafPath>(expression)) {
       auto descriptor = descriptors.find(leafPath.getValue());
       if (descriptor == descriptors.end() ||
           descriptor->second.kind != DescriptorInfo::Kind::Net)
@@ -972,21 +971,22 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       if (sharedArrayControl) {
         Operation *representative = arrayMembers.front();
         SmallVector<int64_t> representativeIds;
-        if (auto existing = representative->getAttrOfType<DenseI64ArrayAttr>(
-                "simulation.pass_switch_ids"))
+        if (auto existing =
+                sim::get<sim::metadata::PassSwitchIds>(representative))
           llvm::append_range(representativeIds, existing.asArrayRef());
         for (int64_t id : passSwitchIds)
           if (!llvm::is_contained(representativeIds, id))
             representativeIds.push_back(id);
-        representative->setAttr(
-            "simulation.pass_switch_ids",
-            builder.getDenseI64ArrayAttr(representativeIds));
+        sim::set<sim::metadata::PassSwitchIds>(
+            representative, builder.getDenseI64ArrayAttr(representativeIds));
         if (arrayOrdinal == 0)
           executableUnits.push_back(representative);
       } else {
-        unit->setAttr(topologyMos ? "simulation.mos_topology_ids"
-                                  : "simulation.pass_switch_ids",
-                      builder.getDenseI64ArrayAttr(passSwitchIds));
+        DenseI64ArrayAttr ids = builder.getDenseI64ArrayAttr(passSwitchIds);
+        if (topologyMos)
+          sim::set<sim::metadata::MosTopologyIds>(unit, ids);
+        else
+          sim::set<sim::metadata::PassSwitchIds>(unit, ids);
         executableUnits.push_back(unit);
       }
     }
@@ -1163,7 +1163,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
   };
   for (Operation *unit : sourceUnits) {
     if (isControlledPassSwitch(unit) ||
-        unit->hasAttr("simulation.mos_topology_ids"))
+        sim::has<sim::metadata::MosTopologyIds>(unit))
       continue;
     bool continuous =
         isa<semantic::SVContinuousAssignSymbolOp,
@@ -1296,10 +1296,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             "strength1",
             sim::StrengthAttr::get(builder.getContext(), driverStrength1));
         if (strengthBanks) {
-          driver->setAttr("simulation.strength_group",
-                          builder.getI64IntegerAttr(strengthGroup));
-          driver->setAttr("simulation.strength_bank",
-                          builder.getI32IntegerAttr(bank));
+          sim::set<sim::metadata::StrengthGroup>(
+              driver, builder.getI64IntegerAttr(strengthGroup));
+          sim::set<sim::metadata::StrengthBank>(
+              driver, builder.getI32IntegerAttr(bank));
         }
       }
     }
@@ -1433,8 +1433,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     if (!net)
       continue;
     auto scope = interfaceScopes.find(net.getScopeId());
-    StringAttr member =
-        net->getAttrOfType<StringAttr>("simulation.virtual_interface_member");
+    StringAttr member = sim::get<sim::metadata::VirtualInterfaceMember>(net);
     if (scope == interfaceScopes.end() || !member)
       continue;
     std::string key =
@@ -1527,9 +1526,9 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
               builder.getStringAttr(hierarchy),
               builder.getStringAttr("virtual clocking output"),
               builder.getI64IntegerAttr(0), builder.getI64IntegerAttr(*width));
-          driver->setAttr("simulation.virtual_interface_member", member);
-          driver->setAttr("simulation.virtual_interface_clocking_output",
-                          clockingPath);
+          sim::set<sim::metadata::VirtualInterfaceMember>(driver, member);
+          sim::set<sim::metadata::VirtualInterfaceClockingOutput>(driver,
+                                                                  clockingPath);
         } else if (shared->second.netID != net.getId() ||
                    shared->second.descriptor.type != net.getType()) {
           emitError(getSemanticLocation(destination))

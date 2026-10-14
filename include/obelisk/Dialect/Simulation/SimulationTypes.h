@@ -3,7 +3,6 @@
 #ifndef OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_H
 #define OBELISK_DIALECT_SIMULATION_SIMULATIONTYPES_H
 
-#include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationEnums.h"
 
 #include "mlir/IR/BuiltinTypes.h"

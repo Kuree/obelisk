@@ -247,8 +247,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
       RuntimeDimension lowered;
       lowered.hasIterator = hasIterator.getValue();
       lowered.runtime = !hasRange.getValue();
-      lowered.observerCapture =
-          dimension.contains(foreachIteratorObserverCaptureAttrName);
+      lowered.observerCapture = dimension.contains(
+          sim::metadata::ForeachIteratorObserverCapture::getNameStr());
       if (hasRange.getValue()) {
         auto left = dimension.getAs<IntegerAttr>(foreach_metadata::left);
         auto right = dimension.getAs<IntegerAttr>(foreach_metadata::right);
@@ -593,7 +593,8 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
          0,
          path.getValue().str(),
          *iteratorType,
-         dimension.contains(foreachIteratorObserverCaptureAttrName),
+         dimension.contains(
+             sim::metadata::ForeachIteratorObserverCapture::getNameStr()),
          {}});
   }
   if (dimensions.empty())
@@ -764,7 +765,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
   StringRef path = op.getReferencedPath();
   Value initial = localDefaults.lookup(path);
   bool aggregateMemberInitializers =
-      op->hasAttr("simulation.aggregate_member_initializers");
+      sim::has<sim::metadata::AggregateMemberInitializers>(op);
   auto initializeAggregateMembers = [&](Value destination) -> LogicalResult {
     auto referenceType = dyn_cast<sim::RefType>(destination.getType());
     if (!referenceType) {
@@ -774,8 +775,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
     }
     Type aggregateType = referenceType.getElementType();
     for (Operation *child : children) {
-      auto ordinalAttr = child->getAttrOfType<IntegerAttr>(
-          "simulation.initialize_subelement");
+      auto ordinalAttr = sim::get<sim::metadata::InitializeSubelement>(child);
       if (!ordinalAttr) {
         emitError(getSemanticLocation(child))
             << "aggregate member initializer has no field ordinal";
@@ -857,8 +857,7 @@ UnitLowering::lowerVariableDeclaration(semantic::SVVariableDeclStatementOp op) {
   if (!initial && children.empty())
     return success();
   if (!initial) {
-    auto siteIDAttr =
-        op->getAttrOfType<IntegerAttr>("simulation.static_site_id");
+    auto siteIDAttr = sim::get<sim::metadata::StaticSiteId>(op);
     if (!siteIDAttr || !siteIDAttr.getValue().isStrictlyPositive()) {
       emitError(location)
           << "static declaration has no prepared initialization site ID";
@@ -986,9 +985,10 @@ UnitLowering::outlineForkBranch(
       metadata = captureMetadata(builder, sim::CaptureKind::Formal);
     if (!isStaticallyAllocatedOverrideTarget(capture)) {
       SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
-      if (!metadata.contains("simulation.automatic_reference_capture"))
-        entries.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+      if (!metadata.contains(
+              sim::metadata::AutomaticReferenceCapture::getNameStr()))
+        entries.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       metadata = builder.getDictionaryAttr(entries);
     }
     argumentAttrs.push_back(metadata);
@@ -1006,8 +1006,7 @@ UnitLowering::outlineForkBranch(
   };
   for (auto [path, capture] : explicitCaptures)
     addCaptureValue(path, capture);
-  ArrayAttr parentBindings =
-      function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  ArrayAttr parentBindings = sim::get<sim::metadata::Bindings>(function);
   llvm::StringSet<> thisBindingPaths;
   if (parentBindings && thisObject)
     for (Attribute attribute : parentBindings) {
@@ -1023,12 +1022,11 @@ UnitLowering::outlineForkBranch(
       if (auto path = nested->getAttrOfType<StringAttr>("referenced_path");
           path && !path.getValue().empty())
         referencedPaths.insert(path.getValue());
-      if (auto callCaptures =
-              nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+      if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
         for (Attribute capture : callCaptures)
           referencedPaths.insert(cast<StringAttr>(capture).getValue());
       if (auto observerCaptures =
-              nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+              sim::get<sim::metadata::ObserverCaptures>(nested))
         for (Attribute capture : observerCaptures)
           referencedPaths.insert(cast<StringAttr>(capture).getValue());
     });
@@ -1048,13 +1046,13 @@ UnitLowering::outlineForkBranch(
     } else if (auto named =
                    dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
       path = named.getReferencedPath();
-      branchUsesThis |= named->hasAttr("simulation.class_field");
+      branchUsesThis |= sim::has<sim::metadata::ClassField>(named);
     } else if (auto hierarchical =
                    dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
     else if (auto member =
                  dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
-      if (member->hasAttr(staticClassPropertyAttrName))
+      if (sim::has<sim::metadata::StaticClassProperty>(member))
         path = member.getReferencedPath();
     } else if (auto instance =
                    dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
@@ -1071,18 +1069,17 @@ UnitLowering::outlineForkBranch(
               findSemanticCovergroup(construct))
         collectCoveragePaths(covergroup);
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
-        call && call->hasAttr("simulation.class_instance")) {
-      auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
-      bool superCall = call->hasAttr("simulation.class_super");
+        call && sim::has<sim::metadata::ClassInstance>(call)) {
+      auto formals = sim::get<sim::metadata::CalleeFormals>(call);
+      bool superCall = sim::has<sim::metadata::ClassSuper>(call);
       branchUsesThis |=
           superCall || (formals && getChildren(call).size() == formals.size());
     }
-    if (auto callCaptures =
-            nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
       for (Attribute capture : callCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
     if (auto observerCaptures =
-            nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+            sim::get<sim::metadata::ObserverCaptures>(nested))
       for (Attribute capture : observerCaptures) {
         StringRef path = cast<StringAttr>(capture).getValue();
         referencedPaths.insert(path);
@@ -1171,8 +1168,7 @@ UnitLowering::outlineForkBranch(
   std::string hierarchy = (Twine(parentHierarchy) + ".$fork." +
                            Twine(forkNode) + "." + Twine(branchIndex))
                               .str();
-  auto codeUnitIDAttr =
-      branch->getAttrOfType<IntegerAttr>("simulation.fork_code_unit_id");
+  auto codeUnitIDAttr = sim::get<sim::metadata::ForkCodeUnitId>(branch);
   if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive())
     return emitError(location) << "fork branch has no prepared code-unit ID",
            failure();
@@ -1187,15 +1183,14 @@ UnitLowering::outlineForkBranch(
                                  outlineBuilder.getUnitAttr());
 
   SmallVector<NamedAttribute> attributes{
-      outlineBuilder.getNamedAttr(bindingsAttrName,
-                                  outlineBuilder.getArrayAttr(bindings)),
+      sim::named<sim::metadata::Bindings>(
+          outlineBuilder.getArrayAttr(bindings)),
       outlineBuilder.getNamedAttr("code_unit_id",
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
   };
   if (outlinedThisArgument)
-    attributes.push_back(outlineBuilder.getNamedAttr(
-        sim::metadata::thisArgument,
+    attributes.push_back(sim::named<sim::metadata::ThisArgument>(
         outlineBuilder.getI32IntegerAttr(*outlinedThisArgument)));
   SmallVector<Attribute> inheritedControls;
   llvm::StringMap<uint64_t> inherited = inheritedControlIDs;
@@ -1216,13 +1211,13 @@ UnitLowering::outlineForkBranch(
     attributes.push_back(outlineBuilder.getNamedAttr(
         "inherited_controls", outlineBuilder.getArrayAttr(inheritedControls)));
   const StringRef inheritedAttributes[] = {
-      delayScaleAttrName, delayQuantumAttrName, "home_region", "domain"};
+      sim::metadata::DelayScale::getNameStr(),
+      sim::metadata::DelayQuantum::getNameStr(), "home_region", "domain"};
   for (StringRef name : inheritedAttributes)
     if (Attribute attribute = function->getAttr(name))
       attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
-  attributes.push_back(
-      outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                  outlineBuilder.getStringAttr(hierarchy)));
+  attributes.push_back(sim::named<sim::metadata::HierarchicalName>(
+      outlineBuilder.getStringAttr(hierarchy)));
 
   auto outlined =
       sim::SimFuncOp::create(outlineBuilder, location, symbol,
@@ -1233,13 +1228,11 @@ UnitLowering::outlineForkBranch(
   // resolver.  Make that context visible before lowering the cloned branch;
   // the caller cannot attach the marker after outlineForkBranch returns
   // because nested lowering is completed inside this routine.
-  if (branch->hasAttr("simulation.global_future_resolver"))
-    outlined->setAttr("simulation.global_future_resolver",
-                      outlineBuilder.getUnitAttr());
-  if (branch->hasAttr("simulation.procedural_assertion_attempt") &&
-      !branch->hasAttr("simulation.default_assertion_failure"))
-    outlined->setAttr("simulation.procedural_assertion_attempt",
-                      outlineBuilder.getUnitAttr());
+  if (sim::has<sim::metadata::GlobalFutureResolver>(branch))
+    sim::mark<sim::metadata::GlobalFutureResolver>(outlined);
+  if (sim::has<sim::metadata::ProceduralAssertionAttempt>(branch) &&
+      !sim::has<sim::metadata::DefaultAssertionFailure>(branch))
+    sim::mark<sim::metadata::ProceduralAssertionAttempt>(outlined);
 
   OpBuilder bodyBuilder = OpBuilder::atBlockEnd(&outlined.getBody().front());
   IRMapping mapping;
@@ -1275,7 +1268,7 @@ UnitLowering::outlineForkBranch(
   if (outlinedMonitorObservationComplete)
     *outlinedMonitorObservationComplete = nested.monitorObservationComplete;
   root->erase();
-  outlined->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+  sim::mark<sim::metadata::Lowered>(outlined);
   return std::make_pair(outlined, std::move(captures));
 }
 
@@ -1293,15 +1286,14 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                           "." + Twine(ordinal))
                              .str();
 
-  Attribute previousForkID = call->getAttr("simulation.fork_code_unit_id");
-  Attribute previousMonitorCallback =
-      call->getAttr("simulation.monitor_callback");
+  auto previousForkID = sim::get<sim::metadata::ForkCodeUnitId>(call);
+  auto previousMonitorCallback = sim::get<sim::metadata::MonitorCallback>(call);
   StringAttr previousName = call.getCalleeNameAttr();
-  call->setAttr("simulation.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+  sim::set<sim::metadata::ForkCodeUnitId>(
+      call, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
   call->setAttr("callee_name", builder.getStringAttr(immediateName));
   if (persistent)
-    call->setAttr("simulation.monitor_callback", builder.getUnitAttr());
+    sim::mark<sim::metadata::MonitorCallback>(call);
   SmallVector<MonitorObservation> observations;
   bool observationComplete = false;
   FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
@@ -1311,13 +1303,13 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                         persistent ? &observationComplete : nullptr);
   call->setAttr("callee_name", previousName);
   if (previousMonitorCallback)
-    call->setAttr("simulation.monitor_callback", previousMonitorCallback);
+    sim::set<sim::metadata::MonitorCallback>(call, previousMonitorCallback);
   else
-    call->removeAttr("simulation.monitor_callback");
+    sim::remove<sim::metadata::MonitorCallback>(call);
   if (previousForkID)
-    call->setAttr("simulation.fork_code_unit_id", previousForkID);
+    sim::set<sim::metadata::ForkCodeUnitId>(call, previousForkID);
   else
-    call->removeAttr("simulation.fork_code_unit_id");
+    sim::remove<sim::metadata::ForkCodeUnitId>(call);
   if (failed(outlined))
     return failure();
 
@@ -1330,7 +1322,7 @@ UnitLowering::outlinePostponedDisplay(semantic::SVCallExpressionOp call,
                                               sim::ExecutionDomain::Design));
   if (!persistent)
     return outlined;
-  callback->setAttr("simulation.persistent_monitor", builder.getUnitAttr());
+  sim::mark<sim::metadata::PersistentMonitor>(callback);
 
   Block &entry = callback.getBody().front();
   Block *loop = entry.splitBlock(entry.begin());
@@ -1456,12 +1448,11 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
         path = member.getReferencedPath();
       if (!path.empty())
         dependencyPaths.insert(path);
-      if (auto callCaptures =
-              nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+      if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
         for (Attribute capture : callCaptures)
           dependencyPaths.insert(cast<StringAttr>(capture).getValue());
       if (auto observerCaptures =
-              nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+              sim::get<sim::metadata::ObserverCaptures>(nested))
         for (Attribute capture : observerCaptures)
           dependencyPaths.insert(cast<StringAttr>(capture).getValue());
     });
@@ -1478,19 +1469,19 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
   std::string identity =
       (function.getSymName() + ".$pla." + Twine(node) + "." + Twine(ordinal))
           .str();
-  Attribute previousForkID = call->getAttr("simulation.fork_code_unit_id");
+  auto previousForkID = sim::get<sim::metadata::ForkCodeUnitId>(call);
   StringAttr previousName = call.getCalleeNameAttr();
-  call->setAttr("simulation.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+  sim::set<sim::metadata::ForkCodeUnitId>(
+      call, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
   call->setAttr("callee_name", builder.getStringAttr(synchronousName));
   FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> outlined =
       outlineForkBranch(call, node, static_cast<unsigned>(ordinal),
                         /*captureReferences=*/true);
   call->setAttr("callee_name", previousName);
   if (previousForkID)
-    call->setAttr("simulation.fork_code_unit_id", previousForkID);
+    sim::set<sim::metadata::ForkCodeUnitId>(call, previousForkID);
   else
-    call->removeAttr("simulation.fork_code_unit_id");
+    sim::remove<sim::metadata::ForkCodeUnitId>(call);
   if (failed(outlined))
     return failure();
 
@@ -1512,7 +1503,7 @@ UnitLowering::outlineAsyncPla(semantic::SVCallExpressionOp call,
 
   Block &entry = callback.getBody().front();
   SmallVector<Value> watched;
-  if (ArrayAttr bindings = callback->getAttrOfType<ArrayAttr>(bindingsAttrName))
+  if (ArrayAttr bindings = sim::get<sim::metadata::Bindings>(callback))
     for (Attribute attribute : bindings) {
       auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
       if (!binding || !dependencyPaths.contains(binding.getPath().getValue()) ||
@@ -1690,20 +1681,18 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   if (op.getBlockKind() == semantic::SVStatementBlockKind::Sequential &&
       contents.size() == 1 &&
       isa<semantic::SVImmediateAssertionStatementOp>(contents.front())) {
-    auto targetID =
-        op->getAttrOfType<IntegerAttr>("simulation.control_target_id");
+    auto targetID = sim::get<sim::metadata::ControlTargetId>(op);
     if (!targetID || !targetID.getValue().isStrictlyPositive())
       return emitError(getSemanticLocation(op))
                  << "labeled assertion has no prepared control ID",
              failure();
-    contents.front()->setAttr("simulation.assertion_control_target_id",
-                              targetID);
+    sim::set<sim::metadata::AssertionControlTargetId>(contents.front(),
+                                                      targetID);
     return lowerContents();
   }
 
   Location location = getSemanticLocation(op);
-  auto targetIDAttr =
-      op->getAttrOfType<IntegerAttr>("simulation.control_target_id");
+  auto targetIDAttr = sim::get<sim::metadata::ControlTargetId>(op);
   if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
     emitError(location) << "named block has no prepared control ID";
     return failure();
@@ -1724,7 +1713,7 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   Value activation = sim::SimControlEnterOp::create(
       builder, location, builder.getI64IntegerAttr(targetID));
   Block *exit = addBlock();
-  bool resumable = op->hasAttr("simulation.resumable_control_target") &&
+  bool resumable = sim::has<sim::metadata::ResumableControlTarget>(op) &&
                    function.getEntryKind() != sim::EntryKind::Function &&
                    function.getEntryKind() != sim::EntryKind::Observer;
   if (resumable) {
@@ -1758,8 +1747,7 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
     unsupported(op) << " (unresolved disable target)";
     return failure();
   }
-  auto targetIDAttr =
-      op->getAttrOfType<IntegerAttr>("simulation.control_target_id");
+  auto targetIDAttr = sim::get<sim::metadata::ControlTargetId>(op);
   if (!targetIDAttr || !targetIDAttr.getValue().isStrictlyPositive()) {
     emitError(location) << "disable has no prepared control ID";
     return failure();

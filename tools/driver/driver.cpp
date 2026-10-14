@@ -1378,18 +1378,18 @@ static int executeCompilation(
   OwningOpRef<ModuleOp> module = std::move(*importedModule);
 
   if (pulseRejectPercent || pulseErrorPercent) {
-    obelisk::sim::set<obelisk::sim::PulseRejectPercent>(
+    obelisk::sim::set<obelisk::sim::metadata::PulseRejectPercent>(
         (*module),
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseReject));
-    obelisk::sim::set<obelisk::sim::PulseErrorPercent>(
+    obelisk::sim::set<obelisk::sim::metadata::PulseErrorPercent>(
         (*module),
         IntegerAttr::get(IntegerType::get(&context, 32), effectivePulseError));
   }
   if (!globalPulseStyle.empty())
-    obelisk::sim::set<obelisk::sim::PulseOnDetect>(
+    obelisk::sim::set<obelisk::sim::metadata::PulseOnDetect>(
         (*module), BoolAttr::get(&context, globalPulseStyle == "ondetect"));
   if (!globalCancelledPulses.empty())
-    obelisk::sim::set<obelisk::sim::PulseShowCancelled>(
+    obelisk::sim::set<obelisk::sim::metadata::PulseShowCancelled>(
         (*module), BoolAttr::get(&context, globalCancelledPulses == "show"));
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     SmallVector<Attribute> metrics;

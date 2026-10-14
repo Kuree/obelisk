@@ -2787,7 +2787,7 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
            failure();
   Operation *resolvedClock = nullptr;
   if (roots.size() == 2 &&
-      roots.back()->hasAttr(sequenceEndpointDefaultClockAttrName))
+      sim::has<sim::metadata::SequenceEndpointDefaultClock>(roots.back()))
     resolvedClock = roots.back();
   auto clocking = dyn_cast<semantic::SVClockingAssertionExprOp>(*expanded);
   SmallVector<Operation *> clocked =
@@ -2826,16 +2826,15 @@ UnitLowering::lowerSequenceEndpointMonitor(ArrayRef<Operation *> roots) {
                   "repetition with at most 63 cycles per trace",
            failure();
 
-  auto endpointPath =
-      function->getAttrOfType<StringAttr>(sequenceEndpointPathAttrName);
+  auto endpointPath = sim::get<sim::metadata::SequenceEndpointPath>(function);
   Value endpoint =
       endpointPath ? values.lookup(endpointPath.getValue()) : Value{};
   if (!endpoint || !isa<sim::EventType>(endpoint.getType()))
     return function.emitError(
                "sequence endpoint monitor has no endpoint event capture"),
            failure();
-  function->removeAttr(sequenceEndpointMonitorAttrName);
-  function->removeAttr(sequenceEndpointPathAttrName);
+  sim::remove<sim::metadata::SequenceEndpointMonitor>(function);
+  sim::remove<sim::metadata::SequenceEndpointPath>(function);
 
   Location location = getSemanticLocation(instance);
   function->setAttr("home_region",
@@ -3149,7 +3148,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
       sim::EventRegionAttr::get(function.getContext(),
                                 sim::EventRegion::Reactive),
       resolve);
-  suspend->setAttr("simulation.global_future_wait", builder.getUnitAttr());
+  sim::mark<sim::metadata::GlobalFutureWait>(suspend);
   setCurrent(resolve);
 
   Value trueValue = arith::ConstantOp::create(
@@ -3247,8 +3246,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
   emitBranch(done);
   setCurrent(done);
   sim::SimReturnOp::create(builder, location, ValueRange{});
-  function->setAttr("simulation.global_future_resolver",
-                    builder.getUnitAttr());
+  sim::mark<sim::metadata::GlobalFutureResolver>(function);
   ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
       function, builder.getUnitAttr());
   function->setAttr("home_region",
@@ -3260,11 +3258,11 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
 LogicalResult UnitLowering::lowerConcurrentAssertion(
     semantic::SVConcurrentAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
-  if (op->hasAttr("simulation.default_assertion_failure")) {
+  if (sim::has<sim::metadata::DefaultAssertionFailure>(op)) {
     emitDefaultAssertionFailure(location, "concurrent assertion");
     return success();
   }
-  if (op->hasAttr("simulation.global_future_resolver"))
+  if (sim::has<sim::metadata::GlobalFutureResolver>(op))
     return lowerGlobalFutureAssertionResolver(op);
   auto emitEvaluationCoverageHit = [&](Value enabled = {}) {
     auto point = cov::get<cov::LinePointIndex>(op);
@@ -3281,7 +3279,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   SmallVector<Operation *> children = getChildren(op);
 
   bool proceduralAttempt =
-      function->hasAttr("simulation.procedural_assertion_attempt");
+      sim::has<sim::metadata::ProceduralAssertionAttempt>(function);
   bool proceduralStatement =
       op.getIsProcedural().value_or(false) &&
       op.getAssertionKind() != semantic::SVAssertionKind::Expect;
@@ -3342,10 +3340,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
   Value proceduralEpochCurrent;
   if (proceduralAttempt) {
-    auto referencePath = op->getAttrOfType<StringAttr>(
-        "simulation.procedural_assertion_epoch_reference");
-    auto valuePath = op->getAttrOfType<StringAttr>(
-        "simulation.procedural_assertion_epoch_value");
+    auto referencePath =
+        sim::get<sim::metadata::ProceduralAssertionEpochReference>(op);
+    auto valuePath = sim::get<sim::metadata::ProceduralAssertionEpochValue>(op);
     Value reference =
         referencePath ? lvalues.lookup(referencePath.getValue()) : Value{};
     Value expected = valuePath ? values.lookup(valuePath.getValue()) : Value{};
@@ -3496,19 +3493,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
     std::string identity =
         (function.getSymName() + ".$procedural_assertion." + Twine(node)).str();
-    Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
-    Attribute previousEpochReference =
-        op->getAttr("simulation.procedural_assertion_epoch_reference");
-    Attribute previousEpochValue =
-        op->getAttr("simulation.procedural_assertion_epoch_value");
-    op->setAttr("simulation.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
-    op->setAttr("simulation.procedural_assertion_attempt",
-                builder.getUnitAttr());
-    op->setAttr("simulation.procedural_assertion_epoch_reference",
-                builder.getStringAttr(epochReferencePath));
-    op->setAttr("simulation.procedural_assertion_epoch_value",
-                builder.getStringAttr(epochValuePath));
+    auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(op);
+    auto previousEpochReference =
+        sim::get<sim::metadata::ProceduralAssertionEpochReference>(op);
+    auto previousEpochValue =
+        sim::get<sim::metadata::ProceduralAssertionEpochValue>(op);
+    sim::set<sim::metadata::ForkCodeUnitId>(
+        op, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    sim::mark<sim::metadata::ProceduralAssertionAttempt>(op);
+    sim::set<sim::metadata::ProceduralAssertionEpochReference>(
+        op, builder.getStringAttr(epochReferencePath));
+    sim::set<sim::metadata::ProceduralAssertionEpochValue>(
+        op, builder.getStringAttr(epochValuePath));
     SmallVector<std::pair<StringRef, Value>> epochCaptures{
         {epochReferencePath, proceduralAssertionEpoch},
         {epochValuePath, queuedEpoch},
@@ -3517,21 +3513,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineForkBranch(op, node, /*branchIndex=*/48,
                           /*captureReferences=*/true, frozenExpressions,
                           /*globalFutureCurrentCaptures=*/{}, epochCaptures);
-    op->removeAttr("simulation.procedural_assertion_attempt");
+    sim::remove<sim::metadata::ProceduralAssertionAttempt>(op);
     if (previousEpochReference)
-      op->setAttr("simulation.procedural_assertion_epoch_reference",
-                  previousEpochReference);
+      sim::set<sim::metadata::ProceduralAssertionEpochReference>(
+          op, previousEpochReference);
     else
-      op->removeAttr("simulation.procedural_assertion_epoch_reference");
+      sim::remove<sim::metadata::ProceduralAssertionEpochReference>(op);
     if (previousEpochValue)
-      op->setAttr("simulation.procedural_assertion_epoch_value",
-                  previousEpochValue);
+      sim::set<sim::metadata::ProceduralAssertionEpochValue>(
+          op, previousEpochValue);
     else
-      op->removeAttr("simulation.procedural_assertion_epoch_value");
+      sim::remove<sim::metadata::ProceduralAssertionEpochValue>(op);
     if (previousCodeUnit)
-      op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+      sim::set<sim::metadata::ForkCodeUnitId>(op, previousCodeUnit);
     else
-      op->removeAttr("simulation.fork_code_unit_id");
+      sim::remove<sim::metadata::ForkCodeUnitId>(op);
     if (failed(attempt))
       return failure();
     attempt->first->setAttr(
@@ -3546,7 +3542,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   bool expect = op.getAssertionKind() == semantic::SVAssertionKind::Expect;
-  bool expectMonitor = op->hasAttr("simulation.expect_monitor");
+  bool expectMonitor = sim::has<sim::metadata::ExpectMonitor>(op);
   if (expect && !expectMonitor) {
     size_t actionCount = static_cast<size_t>(op.getHasPassAction()) +
                          static_cast<size_t>(op.getHasFailAction());
@@ -3572,21 +3568,22 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             Twine(node) + "." + Twine(occurrence))
                                .str();
 
-    Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
-    Attribute previousCaptures = op->getAttr(calleeCapturesAttrName);
-    op->setAttr("simulation.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
-    op->setAttr("simulation.expect_monitor", builder.getUnitAttr());
-    op->setAttr("simulation.expect_done_path",
-                builder.getStringAttr(donePath));
-    op->setAttr("simulation.expect_result_path",
-                builder.getStringAttr(resultPath));
+    auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(op);
+    auto previousCaptures = sim::get<sim::metadata::CalleeCaptures>(op);
+    sim::set<sim::metadata::ForkCodeUnitId>(
+        op, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    sim::mark<sim::metadata::ExpectMonitor>(op);
+    sim::set<sim::metadata::ExpectDonePath>(op,
+                                            builder.getStringAttr(donePath));
+    sim::set<sim::metadata::ExpectResultPath>(
+        op, builder.getStringAttr(resultPath));
     SmallVector<Attribute> capturePaths;
-    if (auto captures = dyn_cast_or_null<ArrayAttr>(previousCaptures))
-      llvm::append_range(capturePaths, captures);
+    if (previousCaptures)
+      llvm::append_range(capturePaths, previousCaptures);
     capturePaths.push_back(builder.getStringAttr(donePath));
     capturePaths.push_back(builder.getStringAttr(resultPath));
-    op->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
+    sim::set<sim::metadata::CalleeCaptures>(op,
+                                            builder.getArrayAttr(capturePaths));
     Value previousDoneValue = values.lookup(donePath);
     Value previousResultLValue = lvalues.lookup(resultPath);
     values[donePath] = completed;
@@ -3602,21 +3599,20 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       lvalues[resultPath] = previousResultLValue;
     else
       lvalues.erase(resultPath);
-    op->removeAttr("simulation.expect_monitor");
-    op->removeAttr("simulation.expect_done_path");
-    op->removeAttr("simulation.expect_result_path");
+    sim::remove<sim::metadata::ExpectMonitor>(op);
+    sim::remove<sim::metadata::ExpectDonePath>(op);
+    sim::remove<sim::metadata::ExpectResultPath>(op);
     if (previousCaptures)
-      op->setAttr(calleeCapturesAttrName, previousCaptures);
+      sim::set<sim::metadata::CalleeCaptures>(op, previousCaptures);
     else
-      op->removeAttr(calleeCapturesAttrName);
+      sim::remove<sim::metadata::CalleeCaptures>(op);
     if (previousCodeUnit)
-      op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+      sim::set<sim::metadata::ForkCodeUnitId>(op, previousCodeUnit);
     else
-      op->removeAttr("simulation.fork_code_unit_id");
+      sim::remove<sim::metadata::ForkCodeUnitId>(op);
     if (failed(monitor))
       return failure();
-    monitor->first->setAttr("simulation.expect_monitor_actor",
-                            builder.getUnitAttr());
+    sim::mark<sim::metadata::ExpectMonitorActor>(monitor->first);
     sim::SimSpawnOp::create(builder, location, monitor->first.getSymNameAttr(),
                             monitor->second, ArrayAttr{}, ArrayAttr{});
 
@@ -3674,26 +3670,25 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   // assertions selected through a module scope carry their prepared identity
   // directly on the directive.
   IntegerAttr assertionControlID =
-      op->getAttrOfType<IntegerAttr>("simulation.assertion_control_target_id");
+      sim::get<sim::metadata::AssertionControlTargetId>(op);
   if (auto block =
           dyn_cast_or_null<semantic::SVBlockStatementOp>(op->getParentOp())) {
     if (auto path = block.getBlockPathAttr())
-      function->setAttr("simulation.assertion_path", path);
-    if (auto target = block->getAttrOfType<IntegerAttr>(
-            "simulation.control_target_id")) {
-      function->setAttr("simulation.assertion_target_id", target);
+      sim::set<sim::metadata::AssertionPath>(function, path);
+    if (auto target = sim::get<sim::metadata::ControlTargetId>(block)) {
+      sim::set<sim::metadata::AssertionTargetId>(function, target);
       if (!assertionControlID)
         assertionControlID = target;
     }
   }
   if (assertionControlID)
-    function->setAttr("simulation.assertion_target_id", assertionControlID);
+    sim::set<sim::metadata::AssertionTargetId>(function, assertionControlID);
   bool attemptControlled =
-      !expectMonitor && op->hasAttr("simulation.assertion_controlled");
+      !expectMonitor && sim::has<sim::metadata::AssertionControlled>(op);
   bool killControlled =
-      !expectMonitor && op->hasAttr("simulation.assertion_kill_controlled");
+      !expectMonitor && sim::has<sim::metadata::AssertionKillControlled>(op);
   bool actionControlled =
-      op->hasAttr("simulation.assertion_action_controlled");
+      sim::has<sim::metadata::AssertionActionControlled>(op);
   if ((attemptControlled || killControlled || actionControlled) &&
       (!assertionControlID ||
        !assertionControlID.getValue().isStrictlyPositive()))
@@ -3706,8 +3701,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value context = function.getBody().front().getArgument(0);
     auto enabled = sim::SimAssertionEnabledOp::create(
         builder, location, builder.getI1Type(), context, assertionControlID);
-    enabled->setAttr("simulation.concurrent_attempt_enable",
-                     builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAttemptEnable>(enabled);
     return enabled;
   };
   auto queryAttemptEnabledForCoverage = [&]() -> Value {
@@ -3723,8 +3717,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!enabled)
       return candidate;
     auto gated = arith::AndIOp::create(builder, location, candidate, enabled);
-    gated->setAttr("simulation.concurrent_attempt_start",
-                   builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAttemptStart>(gated);
     return gated;
   };
   auto queryActionState = [&]() -> Value {
@@ -3733,8 +3726,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value context = function.getBody().front().getArgument(0);
     auto state = sim::SimAssertionActionStateOp::create(
         builder, location, builder.getI32Type(), context, assertionControlID);
-    state->setAttr("simulation.concurrent_attempt_action_state",
-                   builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAttemptActionState>(state);
     return state;
   };
   auto gateActionPermission = [&](Value condition, Value enabled,
@@ -3742,12 +3734,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!enabled)
       return condition;
     auto gated = arith::AndIOp::create(builder, location, condition, enabled);
-    gated->setAttr("simulation.concurrent_action_control",
-                   builder.getUnitAttr());
-    gated->setAttr("simulation.concurrent_action_class",
-                   builder.getStringAttr(
-                       reportedPassed
-                           ? (vacuous ? "vacuous-pass" : "nonvacuous-pass")
+    sim::mark<sim::metadata::ConcurrentActionControl>(gated);
+    sim::set<sim::metadata::ConcurrentActionClass>(
+        gated,
+        builder.getStringAttr(
+            reportedPassed ? (vacuous ? "vacuous-pass" : "nonvacuous-pass")
                            : "fail"));
     return gated;
   };
@@ -4036,38 +4027,38 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::string identity =
         (function.getSymName() + ".$global_future_resolver." + Twine(node))
             .str();
-    Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
-    Attribute previousCaptures = op->getAttr(calleeCapturesAttrName);
+    auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(op);
+    auto previousCaptures = sim::get<sim::metadata::CalleeCaptures>(op);
     SmallVector<Attribute> capturePaths;
-    if (auto captures = dyn_cast_or_null<ArrayAttr>(previousCaptures))
-      llvm::append_range(capturePaths, captures);
+    if (previousCaptures)
+      llvm::append_range(capturePaths, previousCaptures);
     // The resolved global clock is carried by frozen call metadata rather
     // than a named-value child, so make its descriptor binding explicit in
     // the outlined resolver inventory.
     if (auto path = globalFutureCalls.front()->getAttrOfType<StringAttr>(
             clockingEventPathAttrName))
       capturePaths.push_back(path);
-    op->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
-    op->setAttr("simulation.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
-    op->setAttr("simulation.global_future_resolver", builder.getUnitAttr());
+    sim::set<sim::metadata::CalleeCaptures>(op,
+                                            builder.getArrayAttr(capturePaths));
+    sim::set<sim::metadata::ForkCodeUnitId>(
+        op, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    sim::mark<sim::metadata::GlobalFutureResolver>(op);
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> resolver =
         outlineForkBranch(op, node, /*branchIndex=*/32,
                           /*captureReferences=*/true, expressionCaptures,
                           futureCurrentCaptures);
-    op->removeAttr("simulation.global_future_resolver");
+    sim::remove<sim::metadata::GlobalFutureResolver>(op);
     if (previousCaptures)
-      op->setAttr(calleeCapturesAttrName, previousCaptures);
+      sim::set<sim::metadata::CalleeCaptures>(op, previousCaptures);
     else
-      op->removeAttr(calleeCapturesAttrName);
+      sim::remove<sim::metadata::CalleeCaptures>(op);
     if (previousCodeUnit)
-      op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+      sim::set<sim::metadata::ForkCodeUnitId>(op, previousCodeUnit);
     else
-      op->removeAttr("simulation.fork_code_unit_id");
+      sim::remove<sim::metadata::ForkCodeUnitId>(op);
     if (failed(resolver))
       return failure();
-    resolver->first->setAttr("simulation.global_future_resolver",
-                             builder.getUnitAttr());
+    sim::mark<sim::metadata::GlobalFutureResolver>(resolver->first);
     ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
         resolver->first, builder.getUnitAttr());
     ::obelisk::schedule::set<::obelisk::schedule::Field::PrimeOnSpawn>(
@@ -4078,8 +4069,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sim::SimSpawnOp::create(builder, location, resolver->first.getSymNameAttr(),
                             resolver->second, ArrayAttr{}, ArrayAttr{});
     cf::BranchOp::create(builder, location, wait);
-    function->setAttr("simulation.global_future_monitor",
-                      builder.getUnitAttr());
+    sim::mark<sim::metadata::GlobalFutureMonitor>(function);
     return success();
   }
 
@@ -4187,12 +4177,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           abort = negatedAbort;
           abortCondition = negatedAbortCondition;
           temporalNegationOutsideAbort = true;
-          function->setAttr(
-              "simulation.temporal_property_negation_outside_abort",
-              builder.getUnitAttr());
+          sim::mark<sim::metadata::TemporalPropertyNegationOutsideAbort>(
+              function);
         }
-        function->setAttr("simulation.temporal_property_negation",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::TemporalPropertyNegation>(function);
       }
     }
   }
@@ -4480,11 +4468,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         }
         if (allEmpty) {
           nonoverlapped = false;
-          function->setAttr("simulation.empty_antecedent_nonoverlap",
-                            builder.getUnitAttr());
+          sim::mark<sim::metadata::EmptyAntecedentNonoverlap>(function);
         } else {
-          function->setAttr("simulation.mixed_empty_antecedent_nonoverlap",
-                            builder.getUnitAttr());
+          sim::mark<sim::metadata::MixedEmptyAntecedentNonoverlap>(function);
         }
       } else if (hasEmpty) {
         // Empty matches have no endpoint and therefore do not trigger an
@@ -4492,8 +4478,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         // virtue of its retained nonempty alternatives.
         llvm::erase_if(
             *lhs, [](const FixedSequence &value) { return value.emptyMatch; });
-        function->setAttr("simulation.overlapped_empty_matches_ignored",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::OverlappedEmptyMatchesIgnored>(function);
         if (lhs->empty())
           return emitError(getSemanticLocation(operands.front()))
                      << "an overlapping implication/followed-by antecedent "
@@ -4540,8 +4525,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if ((succeeded(delayedRhs) || succeeded(repetitionRhs)) &&
         directFirstMatchConsequentSequence) {
       erasedConsequentFirstMatch = true;
-      function->setAttr("simulation.consequent_first_match_equivalence",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::ConsequentFirstMatchEquivalence>(function);
     }
     if (succeeded(rhs)) {
       // When both sides branch, an outer consequent first_match wraps a
@@ -4558,8 +4542,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         for (FixedSequence &alternative : *rhs)
           alternative.firstMatchBoundaries.clear();
         erasedConsequentFirstMatch = true;
-        function->setAttr("simulation.consequent_first_match_equivalence",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::ConsequentFirstMatchEquivalence>(function);
       }
       if (consequentEndStrength) {
         for (FixedSequence &alternative : *rhs) {
@@ -4651,8 +4634,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         consequentAlternatives = std::move(*rhs);
     }
     if (followedBy)
-      function->setAttr("simulation.followed_by_monitor",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::FollowedByMonitor>(function);
   } else {
     if (FailureOr<PersistentDelaySequence> delay = compilePersistentDelay(
             outerFirstMatchSequence ? outerFirstMatchSequence : property);
@@ -4660,8 +4642,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       persistentDelay = std::move(*delay);
       hasPersistentDelay = true;
       if (outerFirstMatchSequence)
-        function->setAttr("simulation.persistent_first_match_equivalence",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentFirstMatchEquivalence>(function);
       sequence.ages.resize(1);
     } else if (FailureOr<PersistentUnaryProperty> unary =
                    compilePersistentUnary(property);
@@ -4687,8 +4668,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       persistentRepetition = std::move(*persistent);
       hasPersistentRepetition = true;
       if (outerFirstMatchSequence)
-        function->setAttr("simulation.persistent_first_match_equivalence",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentFirstMatchEquivalence>(function);
       // The persistent monitor owns its own token state below. Keep ordinary
       // bounded validation structurally nonempty without allocating the fixed
       // age bitset.
@@ -4740,10 +4720,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (consequentEndStrength) {
     if (!endStrengthSource)
       endStrengthSource = consequentEndStrength.getOperation();
-    function->setAttr(
-        "simulation.consequent_end_of_simulation_strength",
-        builder.getStringAttr(semantic::stringifySVAssertionStrength(
-            consequentEndStrength.getStrength())));
+    sim::set<sim::metadata::ConsequentEndOfSimulationStrength>(
+        function, builder.getStringAttr(semantic::stringifySVAssertionStrength(
+                      consequentEndStrength.getStrength())));
   }
   Operation *sequenceCompletionSource = property;
   if (endStrength)
@@ -4849,7 +4828,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                      return !alternative.firstMatchBoundaries.empty();
                    });
   if (boundedFirstMatch)
-    function->setAttr("simulation.first_match_monitor", builder.getUnitAttr());
+    sim::mark<sim::metadata::FirstMatchMonitor>(function);
   if ((!branchingSequence && !branchingConsequent && sequence.ages.empty()) ||
       llvm::any_of(sequenceAlternatives,
                    [](const FixedSequence &alternative) {
@@ -5070,12 +5049,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     "implication/followed-by, first_match, "
                     "expect, or cover-sequence per-match accounting",
              failure();
-    function->setAttr(abort.getIsSynchronous()
-                          ? "simulation.synchronous_property_abort"
-                          : "simulation.asynchronous_property_abort",
-                      builder.getUnitAttr());
-    function->setAttr(
-        "simulation.property_abort_action",
+    if (abort.getIsSynchronous())
+      sim::mark<sim::metadata::SynchronousPropertyAbort>(function);
+    else
+      sim::mark<sim::metadata::AsynchronousPropertyAbort>(function);
+    sim::set<sim::metadata::PropertyAbortAction>(
+        function,
         builder.getStringAttr(
             semantic::stringifySVAssertionAbortAction(abort.getAction())));
   }
@@ -5149,10 +5128,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     "without locals, implication/followed-by, disable iff, "
                     "or match items",
              failure();
-    auto donePath =
-        op->getAttrOfType<StringAttr>("simulation.expect_done_path");
-    auto resultPath =
-        op->getAttrOfType<StringAttr>("simulation.expect_result_path");
+    auto donePath = sim::get<sim::metadata::ExpectDonePath>(op);
+    auto resultPath = sim::get<sim::metadata::ExpectResultPath>(op);
     Value completed = donePath ? values.lookup(donePath.getValue()) : Value{};
     Value resultStorage =
         resultPath ? lvalues.lookup(resultPath.getValue()) : Value{};
@@ -5243,19 +5220,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::append_range(metadata, source);
       }
       if (metadata.empty())
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.capture_kind",
-            sim::CaptureKindAttr::get(function.getContext(),
-                                      index == 0 ? sim::CaptureKind::Context
-                                                 : sim::CaptureKind::Formal)));
+        metadata.push_back(
+            sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                function.getContext(), index == 0 ? sim::CaptureKind::Context
+                                                  : sim::CaptureKind::Formal)));
       if (isa<sim::RefType>(capture.getType()) &&
           !isStaticallyAllocatedOverrideTarget(capture) &&
           llvm::none_of(metadata, [](NamedAttribute attribute) {
             return attribute.getName() ==
-                   "simulation.automatic_reference_capture";
+                   sim::metadata::AutomaticReferenceCapture::getNameStr();
           }))
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+        metadata.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       finalArgumentAttrs.push_back(builder.getDictionaryAttr(metadata));
     }
 
@@ -5267,8 +5243,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         finalBuilder.getStringAttr("expect end-of-simulation coordinator"),
         finalBuilder.getUnitAttr());
     SmallVector<NamedAttribute> finalAttributes{
-        finalBuilder.getNamedAttr(bindingsAttrName,
-                                  finalBuilder.getArrayAttr({})),
+        sim::named<sim::metadata::Bindings>(finalBuilder.getArrayAttr({})),
         finalBuilder.getNamedAttr(
             "code_unit_id", finalBuilder.getI64IntegerAttr(finalCodeUnitID)),
         finalBuilder.getNamedAttr("internal", finalBuilder.getUnitAttr()),
@@ -5278,8 +5253,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         finalBuilder.getNamedAttr(
             "domain", sim::ExecutionDomainAttr::get(
                           function.getContext(), sim::ExecutionDomain::Design)),
-        finalBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                  finalBuilder.getStringAttr(finalHierarchy)),
+        sim::named<sim::metadata::HierarchicalName>(
+            finalBuilder.getStringAttr(finalHierarchy)),
     };
     sim::SimFuncOp finalCoordinator = sim::SimFuncOp::create(
         finalBuilder, location, finalSymbol,
@@ -5287,25 +5262,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::EntryKind::Final, finalAttributes, finalArgumentAttrs);
     SymbolTable::setSymbolVisibility(finalCoordinator,
                                      SymbolTable::Visibility::Private);
-    finalCoordinator->setAttr("simulation.expect_eos_coordinator",
-                              builder.getUnitAttr());
+    sim::mark<sim::metadata::ExpectEosCoordinator>(finalCoordinator);
     bool expectOperandStrong = expectEndStrong.value_or(true);
     bool expectOuterStrong =
         temporalNegation ? !expectOperandStrong : expectOperandStrong;
     if (endStrength || temporalNegation) {
-      function->setAttr("simulation.strong_weak_monitor",
-                        builder.getUnitAttr());
-      function->setAttr(
-          "simulation.end_of_simulation_strength",
+      sim::mark<sim::metadata::StrongWeakMonitor>(function);
+      sim::set<sim::metadata::EndOfSimulationStrength>(
+          function,
           builder.getStringAttr(expectOuterStrong ? "strong" : "weak"));
     }
     if (temporalNegation) {
-      function->setAttr(
-          "simulation.negated_operand_end_of_simulation_strength",
+      sim::set<sim::metadata::NegatedOperandEndOfSimulationStrength>(
+          function,
           builder.getStringAttr(expectOperandStrong ? "strong" : "weak"));
     }
-    finalCoordinator->setAttr(
-        "simulation.expect_operand_strength",
+    sim::set<sim::metadata::ExpectOperandStrength>(
+        finalCoordinator,
         builder.getStringAttr(expectOperandStrong ? "strong" : "weak"));
     Block &finalEntry = finalCoordinator.getBody().front();
     Block *checkPending = new Block;
@@ -5365,12 +5338,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     if (expectOneCycleBoolean) {
       if (branchingSequence)
-        function->setAttr("simulation.expect_one_cycle_branching",
-                          builder.getUnitAttr());
-      function->setAttr(
-          "simulation.expect_one_cycle_alternatives",
-          builder.getI64IntegerAttr(
-              branchingSequence ? sequenceAlternatives.size() : 1));
+        sim::mark<sim::metadata::ExpectOneCycleBranching>(function);
+      sim::set<sim::metadata::ExpectOneCycleAlternatives>(
+          function, builder.getI64IntegerAttr(
+                        branchingSequence ? sequenceAlternatives.size() : 1));
       Block *sample = addBlock();
       setCurrent(wait);
       if (failed(emitEventSuspend(clock, sample)))
@@ -5489,14 +5460,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       size_t horizon = 0;
       for (const FixedSequence &alternative : sequenceAlternatives)
         horizon = std::max(horizon, alternative.ages.size());
-      function->setAttr("simulation.expect_bounded_branching",
-                        builder.getUnitAttr());
-      function->setAttr("simulation.expect_bounded_alternatives",
-                        builder.getI64IntegerAttr(sequenceAlternatives.size()));
-      function->setAttr("simulation.expect_bounded_horizon",
-                        builder.getI64IntegerAttr(horizon));
-      function->setAttr(
-          "simulation.expect_bounded_state_words",
+      sim::mark<sim::metadata::ExpectBoundedBranching>(function);
+      sim::set<sim::metadata::ExpectBoundedAlternatives>(
+          function, builder.getI64IntegerAttr(sequenceAlternatives.size()));
+      sim::set<sim::metadata::ExpectBoundedHorizon>(
+          function, builder.getI64IntegerAttr(horizon));
+      sim::set<sim::metadata::ExpectBoundedStateWords>(
+          function,
           builder.getI64IntegerAttr(expectBranchingStateWords.size()));
 
       Block *ageWait = wait;
@@ -5768,13 +5738,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value context = function.getBody().front().getArgument(0);
     auto initialKillEpoch = sim::SimAssertionKillEpochOp::create(
         builder, location, stateType, context, assertionControlID);
-    initialKillEpoch->setAttr("simulation.concurrent_kill_epoch",
-                              builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentKillEpoch>(initialKillEpoch);
     killEpochStorage = sim::SimRefAllocOp::create(
         builder, location, sim::RefType::get(function.getContext(), stateType),
         initialKillEpoch);
-    killEpochStorage.getDefiningOp()->setAttr(
-        "simulation.concurrent_kill_epoch_storage", builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentKillEpochStorage>(
+        killEpochStorage.getDefiningOp());
   }
   auto countNewAttempt = [&](Value enabled) -> Value {
     Value one = arith::ConstantOp::create(builder, location, stateType,
@@ -5782,8 +5751,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (!enabled)
       return one;
     auto count = arith::SelectOp::create(builder, location, enabled, one, zero);
-    count->setAttr("simulation.concurrent_attempt_start",
-                   builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAttemptStart>(count);
     return count;
   };
   bool persistentStateOwner = hasPersistentDelay || hasPersistentUnary ||
@@ -5799,8 +5767,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         !hasPersistentRepetition &&
         (nonoverlapped || antecedentSequence.ages.size() > 1)));
   if (implication && antecedentHorizon > 1)
-    function->setAttr("simulation.bounded_antecedent_horizon",
-                      builder.getI64IntegerAttr(antecedentHorizon));
+    sim::set<sim::metadata::BoundedAntecedentHorizon>(
+        function, builder.getI64IntegerAttr(antecedentHorizon));
   Value stateStorage;
   if (needsState)
     stateStorage = sim::SimRefAllocOp::create(
@@ -5819,9 +5787,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value storage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
-      storage.getDefiningOp()->setAttr(
-          "simulation.concurrent_attempt_action_state_storage",
-          builder.getUnitAttr());
+      sim::mark<sim::metadata::ConcurrentAttemptActionStateStorage>(
+          storage.getDefiningOp());
       attemptActionStateStorages.push_back(storage);
     }
   }
@@ -5899,17 +5866,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       while (argumentAttrs.size() + 2 < inputTypes.size())
         argumentAttrs.push_back(builder.getDictionaryAttr({}));
       argumentAttrs.push_back(builder.getDictionaryAttr({
-          builder.getNamedAttr(
-              "simulation.capture_kind",
-              sim::CaptureKindAttr::get(function.getContext(),
-                                        sim::CaptureKind::Formal)),
-          builder.getNamedAttr("simulation.automatic_reference_capture",
-                               builder.getUnitAttr()),
+          sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+              function.getContext(), sim::CaptureKind::Formal)),
+          sim::named<sim::metadata::AutomaticReferenceCapture>(
+              builder.getUnitAttr()),
       }));
-      argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
-          "simulation.capture_kind",
-          sim::CaptureKindAttr::get(function.getContext(),
-                                    sim::CaptureKind::Formal))}));
+      argumentAttrs.push_back(builder.getDictionaryAttr(
+          {sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+              function.getContext(), sim::CaptureKind::Formal))}));
       evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
 
       Block *body = entry.splitBlock(entry.begin());
@@ -5983,13 +5947,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     std::string identity = (function.getSymName() + ".$concurrent_report." +
                             Twine(node) + "." + Twine(ordinal))
                                .str();
-    Attribute previousCodeUnit =
-        outlined->getAttr("simulation.fork_code_unit_id");
-    outlined->setAttr("simulation.fork_code_unit_id",
-                      builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(outlined);
+    sim::set<sim::metadata::ForkCodeUnitId>(
+        outlined, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     if (defaultFailure)
-      op->setAttr("simulation.default_assertion_failure",
-                  builder.getUnitAttr());
+      sim::mark<sim::metadata::DefaultAssertionFailure>(op);
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback = [&]() {
       SmallVector<std::pair<Operation *, Value>> frozenActionExpressions;
       outlined->walk([&](Operation *nested) {
@@ -6001,11 +5963,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                frozenActionExpressions);
     }();
     if (defaultFailure)
-      op->removeAttr("simulation.default_assertion_failure");
+      sim::remove<sim::metadata::DefaultAssertionFailure>(op);
     if (previousCodeUnit)
-      outlined->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+      sim::set<sim::metadata::ForkCodeUnitId>(outlined, previousCodeUnit);
     else
-      outlined->removeAttr("simulation.fork_code_unit_id");
+      sim::remove<sim::metadata::ForkCodeUnitId>(outlined);
     if (failed(callback))
       return failure();
 
@@ -6019,8 +5981,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         callback->first, builder.getUnitAttr());
     ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
         callback->first, builder.getUnitAttr());
-    guardReactiveCallback(callback->first, callback->second, location,
-                          "simulation.concurrent_report_kill_epoch");
+    guardReactiveCallback(
+        callback->first, callback->second, location,
+        sim::metadata::ConcurrentReportKillEpoch::getNameStr());
     report.emplace(ReportCallback{callback->first, std::move(callback->second),
                                   getSemanticLocation(outlined)});
     return success();
@@ -6081,15 +6044,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::append_range(metadata, source);
       }
       if (metadata.empty())
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.capture_kind",
-            sim::CaptureKindAttr::get(function.getContext(),
-                                      index == 0 ? sim::CaptureKind::Context
-                                                 : sim::CaptureKind::Formal)));
+        metadata.push_back(
+            sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                function.getContext(), index == 0 ? sim::CaptureKind::Context
+                                                  : sim::CaptureKind::Formal)));
       if (isa<sim::RefType>(capture.getType()) &&
           !isStaticallyAllocatedOverrideTarget(capture))
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+        metadata.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
     }
 
@@ -6101,8 +6063,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getStringAttr("concurrent assertion disable observer"),
         outlineBuilder.getUnitAttr());
     SmallVector<NamedAttribute> attributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName,
-                                    outlineBuilder.getArrayAttr({})),
+        sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -6113,8 +6074,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getNamedAttr(
             "domain", sim::ExecutionDomainAttr::get(
                           function.getContext(), sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy)),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy)),
     };
     sim::SimFuncOp cancel = sim::SimFuncOp::create(
         outlineBuilder, getSemanticLocation(disable), symbol,
@@ -6231,8 +6192,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value context = function.getBody().front().getArgument(0);
     auto currentEpoch = sim::SimAssertionKillEpochOp::create(
         builder, location, stateType, context, assertionControlID);
-    currentEpoch->setAttr("simulation.concurrent_kill_epoch_check",
-                          builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentKillEpochCheck>(currentEpoch);
     Value seenEpoch = sim::SimRefLoadOp::create(builder, location, stateType,
                                                 killEpochStorage);
     Value current = arith::CmpIOp::create(
@@ -6438,13 +6398,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                           builder.getI64IntegerAttr(1));
     Value activation =
         arith::SelectOp::create(builder, location, activeAntecedent, one, zero);
-    activation.getDefiningOp()->setAttr(
-        "simulation.persistent_implication_activation", builder.getUnitAttr());
+    sim::mark<sim::metadata::PersistentImplicationActivation>(
+        activation.getDefiningOp());
     Value antecedentResultCount = arith::SelectOp::create(
         builder, location, activeAntecedentFailure, one, zero);
-    antecedentResultCount.getDefiningOp()->setAttr(
-        "simulation.persistent_implication_antecedent_result",
-        builder.getUnitAttr());
+    sim::mark<sim::metadata::PersistentImplicationAntecedentResult>(
+        antecedentResultCount.getDefiningOp());
     scheduleCount(antecedentResultCount, !followedBy);
 
     if (!handoffStorage)
@@ -6524,15 +6483,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::append_range(metadata, sourceAttrs);
       }
       if (metadata.empty())
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.capture_kind",
-            sim::CaptureKindAttr::get(function.getContext(),
-                                      index == 0 ? sim::CaptureKind::Context
-                                                 : sim::CaptureKind::Formal)));
+        metadata.push_back(
+            sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                function.getContext(), index == 0 ? sim::CaptureKind::Context
+                                                  : sim::CaptureKind::Formal)));
       if (isa<sim::RefType>(capture.getType()) &&
           !isStaticallyAllocatedOverrideTarget(capture))
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+        metadata.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
     }
 
@@ -6557,8 +6515,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             "counted concurrent assertion end-of-simulation coordinator"),
         outlineBuilder.getUnitAttr());
     SmallVector<NamedAttribute> attributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName,
-                                    outlineBuilder.getArrayAttr({})),
+        sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -6568,8 +6525,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getNamedAttr(
             "domain", sim::ExecutionDomainAttr::get(
                           function.getContext(), sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy)),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy)),
     };
     sim::SimFuncOp coordinator = sim::SimFuncOp::create(
         outlineBuilder, getSemanticLocation(source), symbol,
@@ -6585,8 +6542,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
         coordinator, builder.getUnitAttr());
     if (identityTag.starts_with("multiclock_"))
-      coordinator->setAttr("simulation.multiclock_sequence_eos_coordinator",
-                           builder.getUnitAttr());
+      sim::mark<sim::metadata::MulticlockSequenceEosCoordinator>(coordinator);
 
     Block &entry = coordinator.getBody().front();
     OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
@@ -6755,23 +6711,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::append_range(metadata, sourceAttrs);
       }
       if (metadata.empty())
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.capture_kind",
-            sim::CaptureKindAttr::get(function.getContext(),
-                                      index == 0 ? sim::CaptureKind::Context
-                                                 : sim::CaptureKind::Formal)));
+        metadata.push_back(
+            sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                function.getContext(), index == 0 ? sim::CaptureKind::Context
+                                                  : sim::CaptureKind::Formal)));
       if (isa<sim::RefType>(capture.getType()) &&
           !isStaticallyAllocatedOverrideTarget(capture))
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+        metadata.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
     }
     unsigned extraCountIndex = inputTypes.size();
     inputTypes.push_back(stateType);
-    argumentAttrs.push_back(builder.getDictionaryAttr({builder.getNamedAttr(
-        "simulation.capture_kind",
-        sim::CaptureKindAttr::get(function.getContext(),
-                                  sim::CaptureKind::Formal))}));
+    argumentAttrs.push_back(builder.getDictionaryAttr(
+        {sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+            function.getContext(), sim::CaptureKind::Formal))}));
 
     uint64_t scopeID = 0;
     std::string parentHierarchy = function.getSymName().str();
@@ -6807,8 +6761,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             "counted persistent concurrent assertion abort dispatcher"),
         outlineBuilder.getUnitAttr());
     SmallVector<NamedAttribute> attributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName,
-                                    outlineBuilder.getArrayAttr({})),
+        sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -6818,8 +6771,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getNamedAttr(
             "domain", sim::ExecutionDomainAttr::get(
                           function.getContext(), sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy)),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy)),
     };
     sim::SimFuncOp dispatcher = sim::SimFuncOp::create(
         outlineBuilder, getSemanticLocation(abort), symbol,
@@ -6827,8 +6780,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::EntryKind::Function, attributes, argumentAttrs);
     SymbolTable::setSymbolVisibility(dispatcher,
                                      SymbolTable::Visibility::Private);
-    dispatcher->setAttr("simulation.concurrent_abort_counted",
-                        builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAbortCounted>(dispatcher);
 
     Block &entry = dispatcher.getBody().front();
     OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
@@ -7016,15 +6968,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::append_range(metadata, sourceAttrs);
       }
       if (metadata.empty())
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.capture_kind",
-            sim::CaptureKindAttr::get(function.getContext(),
-                                      index == 0 ? sim::CaptureKind::Context
-                                                 : sim::CaptureKind::Formal)));
+        metadata.push_back(
+            sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                function.getContext(), index == 0 ? sim::CaptureKind::Context
+                                                  : sim::CaptureKind::Formal)));
       if (isa<sim::RefType>(capture.getType()) &&
           !isStaticallyAllocatedOverrideTarget(capture))
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+        metadata.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       actorArgumentAttrs.push_back(builder.getDictionaryAttr(metadata));
     }
 
@@ -7042,8 +6993,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getStringAttr("concurrent assertion abort observer"),
         outlineBuilder.getUnitAttr());
     SmallVector<NamedAttribute> actorAttributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName,
-                                    outlineBuilder.getArrayAttr({})),
+        sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(actorCodeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -7054,8 +7004,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getNamedAttr(
             "domain", sim::ExecutionDomainAttr::get(
                           function.getContext(), sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(
-            sim::metadata::hierarchicalName,
+        sim::named<sim::metadata::HierarchicalName>(
             outlineBuilder.getStringAttr(actorHierarchy)),
     };
     sim::SimFuncOp actor = sim::SimFuncOp::create(
@@ -7065,8 +7014,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SymbolTable::setSymbolVisibility(actor, SymbolTable::Visibility::Private);
     ::obelisk::schedule::set<::obelisk::schedule::Field::ConcurrentAbort>(
         actor, builder.getUnitAttr());
-    actor->setAttr("simulation.concurrent_abort_counted",
-                   builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAbortCounted>(actor);
     ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
         actor, builder.getUnitAttr());
     ::obelisk::schedule::set<::obelisk::schedule::Field::PrioritySignalResume>(
@@ -7174,15 +7122,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outerStrong ? semantic::SVAssertionStrength::Strong
                     : semantic::SVAssertionStrength::Weak;
     if (!completionPassedOverride) {
-      function->setAttr("simulation.strong_weak_monitor",
-                        builder.getUnitAttr());
-      function->setAttr(
-          "simulation.end_of_simulation_strength",
-          builder.getStringAttr(
-              semantic::stringifySVAssertionStrength(outerStrength)));
+      sim::mark<sim::metadata::StrongWeakMonitor>(function);
+      sim::set<sim::metadata::EndOfSimulationStrength>(
+          function, builder.getStringAttr(
+                        semantic::stringifySVAssertionStrength(outerStrength)));
       if (temporalNegation)
-        function->setAttr(
-            "simulation.negated_operand_end_of_simulation_strength",
+        sim::set<sim::metadata::NegatedOperandEndOfSimulationStrength>(
+            function,
             builder.getStringAttr(semantic::stringifySVAssertionStrength(
                 operandStrong ? semantic::SVAssertionStrength::Strong
                               : semantic::SVAssertionStrength::Weak)));
@@ -7280,10 +7226,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                         function.getContext(), sim::ExecutionDomain::Design));
       finalReport->setAttr("code_unit_id",
                            outlineBuilder.getI64IntegerAttr(reportCodeUnitID));
-      finalReport->setAttr(sim::metadata::hierarchicalName,
-                           outlineBuilder.getStringAttr(reportHierarchy));
-      finalReport->setAttr("simulation.concurrent_eos_report",
-                           outlineBuilder.getUnitAttr());
+      sim::set<sim::metadata::HierarchicalName>(
+          finalReport, outlineBuilder.getStringAttr(reportHierarchy));
+      sim::mark<sim::metadata::ConcurrentEosReport>(finalReport);
       outlineBuilder.insert(clonedReport);
 
       Value context = function.getBody().front().getArgument(0);
@@ -7328,17 +7273,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             llvm::append_range(metadata, source);
         }
         if (metadata.empty())
-          metadata.push_back(builder.getNamedAttr(
-              "simulation.capture_kind",
-              sim::CaptureKindAttr::get(function.getContext(),
-                                        index == 0
-                                            ? sim::CaptureKind::Context
-                                            : sim::CaptureKind::Formal)));
+          metadata.push_back(
+              sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                  function.getContext(), index == 0
+                                             ? sim::CaptureKind::Context
+                                             : sim::CaptureKind::Formal)));
         if (isa<sim::RefType>(capture.getType()) &&
             !isStaticallyAllocatedOverrideTarget(capture))
           metadata.push_back(
-              builder.getNamedAttr("simulation.automatic_reference_capture",
-                                   builder.getUnitAttr()));
+              sim::named<sim::metadata::AutomaticReferenceCapture>(
+                  builder.getUnitAttr()));
         argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
       }
 
@@ -7363,8 +7307,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               "concurrent assertion end-of-simulation coordinator"),
           outlineBuilder.getUnitAttr());
       SmallVector<NamedAttribute> attributes{
-          outlineBuilder.getNamedAttr(bindingsAttrName,
-                                      outlineBuilder.getArrayAttr({})),
+          sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
           outlineBuilder.getNamedAttr(
               "code_unit_id",
               outlineBuilder.getI64IntegerAttr(coordinatorCodeUnitID)),
@@ -7377,8 +7320,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               "domain",
               sim::ExecutionDomainAttr::get(function.getContext(),
                                             sim::ExecutionDomain::Design)),
-          outlineBuilder.getNamedAttr(
-              sim::metadata::hierarchicalName,
+          sim::named<sim::metadata::HierarchicalName>(
               outlineBuilder.getStringAttr(coordinatorHierarchy)),
       };
       sim::SimFuncOp coordinator = sim::SimFuncOp::create(
@@ -7392,10 +7334,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
           coordinator, builder.getUnitAttr());
       if (completionPassedOverride) {
-        coordinator->setAttr("simulation.concurrent_eos_forced_completion",
-                             builder.getUnitAttr());
-        coordinator->setAttr("simulation.concurrent_eos_vacuous",
-                             builder.getUnitAttr());
+        sim::mark<sim::metadata::ConcurrentEosForcedCompletion>(coordinator);
+        sim::mark<sim::metadata::ConcurrentEosVacuous>(coordinator);
       }
       ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
           coordinator, builder.getUnitAttr());
@@ -7419,9 +7359,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         permittedActions = sim::SimRefLoadOp::create(
             coordinatorBuilder, getSemanticLocation(endStrengthSource),
             stateType, current->getArgument(*actionStateCaptureIndex));
-        permittedActions.getDefiningOp()->setAttr(
-            "simulation.concurrent_attempt_action_state_load",
-            coordinatorBuilder.getUnitAttr());
+        sim::mark<sim::metadata::ConcurrentAttemptActionStateLoad>(
+            permittedActions.getDefiningOp());
       }
       for (uint64_t age = horizon; age-- > firstLiveAge;) {
         Block *reportBlock = new Block;
@@ -7449,9 +7388,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           active = arith::AndIOp::create(coordinatorBuilder,
                                          getSemanticLocation(endStrengthSource),
                                          active, permitted);
-          active.getDefiningOp()->setAttr(
-              "simulation.concurrent_action_control",
-              coordinatorBuilder.getUnitAttr());
+          sim::mark<sim::metadata::ConcurrentActionControl>(
+              active.getDefiningOp());
         }
         cf::CondBranchOp::create(
             coordinatorBuilder, getSemanticLocation(endStrengthSource), active,
@@ -7622,14 +7560,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::append_range(metadata, source);
       }
       if (metadata.empty())
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.capture_kind",
-            sim::CaptureKindAttr::get(function.getContext(),
-                                      sim::CaptureKind::Formal)));
+        metadata.push_back(
+            sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                function.getContext(), sim::CaptureKind::Formal)));
       if (isa<sim::RefType>(capture.getType()) &&
           !isStaticallyAllocatedOverrideTarget(capture))
-        metadata.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+        metadata.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
     }
 
@@ -7641,8 +7578,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getStringAttr("concurrent assertion abort observer"),
         outlineBuilder.getUnitAttr());
     SmallVector<NamedAttribute> attributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName,
-                                    outlineBuilder.getArrayAttr({})),
+        sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -7653,8 +7589,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlineBuilder.getNamedAttr(
             "domain", sim::ExecutionDomainAttr::get(
                           function.getContext(), sim::ExecutionDomain::Design)),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy)),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy)),
     };
     sim::SimFuncOp actor = sim::SimFuncOp::create(
         outlineBuilder, getSemanticLocation(abort), symbol,
@@ -7766,28 +7702,23 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   if (hasPersistentDelay) {
-    function->setAttr("simulation.persistent_delay_monitor",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.persistent_delay_minimum",
-                      builder.getI64IntegerAttr(persistentDelay.minimum));
-    function->setAttr(
-        "simulation.persistent_delay_prefix_horizon",
+    sim::mark<sim::metadata::PersistentDelayMonitor>(function);
+    sim::set<sim::metadata::PersistentDelayMinimum>(
+        function, builder.getI64IntegerAttr(persistentDelay.minimum));
+    sim::set<sim::metadata::PersistentDelayPrefixHorizon>(
+        function,
         builder.getI64IntegerAttr(persistentDelay.prefix.ages.size()));
-    function->setAttr("simulation.persistent_delay_aggregate_tokens",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.sva_transition_normal_form",
-                      builder.getStringAttr("canonical-minimal"));
+    sim::mark<sim::metadata::PersistentDelayAggregateTokens>(function);
+    sim::set<sim::metadata::SvaTransitionNormalForm>(
+        function, builder.getStringAttr("canonical-minimal"));
     if (implication) {
-      function->setAttr("simulation.persistent_delay_implication",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentDelayImplication>(function);
       if (nonoverlapped)
-        function->setAttr("simulation.persistent_delay_nonoverlapped",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentDelayNonoverlapped>(function);
     }
     bool retainEveryCoverEndpoint = coverSequence && !firstMatch;
     if (retainEveryCoverEndpoint)
-      function->setAttr("simulation.persistent_delay_all_matches",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentDelayAllMatches>(function);
 
     Value prefixStateStorage;
     if (persistentDelay.prefix.ages.size() > 1)
@@ -8095,22 +8026,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   if (hasPersistentUnary) {
     StringRef spelling =
         semantic::stringifySVAssertionUnaryOperator(persistentUnary.kind);
-    function->setAttr("simulation.persistent_unary_monitor",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.persistent_unary_kind",
-                      builder.getStringAttr(spelling));
-    function->setAttr("simulation.persistent_unary_minimum",
-                      builder.getI64IntegerAttr(persistentUnary.minimum));
-    function->setAttr("simulation.persistent_unary_aggregate_tokens",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.sva_transition_normal_form",
-                      builder.getStringAttr("canonical-minimal"));
+    sim::mark<sim::metadata::PersistentUnaryMonitor>(function);
+    sim::set<sim::metadata::PersistentUnaryKind>(
+        function, builder.getStringAttr(spelling));
+    sim::set<sim::metadata::PersistentUnaryMinimum>(
+        function, builder.getI64IntegerAttr(persistentUnary.minimum));
+    sim::mark<sim::metadata::PersistentUnaryAggregateTokens>(function);
+    sim::set<sim::metadata::SvaTransitionNormalForm>(
+        function, builder.getStringAttr("canonical-minimal"));
     if (implication) {
-      function->setAttr("simulation.persistent_unary_implication",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentUnaryImplication>(function);
       if (nonoverlapped)
-        function->setAttr("simulation.persistent_unary_nonoverlapped",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentUnaryNonoverlapped>(function);
     }
 
     Value eligibleStorage = sim::SimRefAllocOp::create(
@@ -8126,8 +8053,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       handoffStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
-      handoffStorage.getDefiningOp()->setAttr(
-          "simulation.persistent_implication_handoff", builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentImplicationHandoff>(
+          handoffStorage.getDefiningOp());
     }
 
     SmallVector<Value> unaryStateStorages{eligibleStorage};
@@ -8319,28 +8246,22 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   if (hasPersistentUntil) {
-    function->setAttr("simulation.persistent_until_monitor",
-                      builder.getUnitAttr());
-    function->setAttr(
-        "simulation.persistent_until_kind",
+    sim::mark<sim::metadata::PersistentUntilMonitor>(function);
+    sim::set<sim::metadata::PersistentUntilKind>(
+        function,
         builder.getStringAttr(semantic::stringifySVAssertionBinaryOperator(
             persistentUntil.kind)));
     if (persistentUntil.inclusive)
-      function->setAttr("simulation.persistent_until_inclusive",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentUntilInclusive>(function);
     if (persistentUntil.strong)
-      function->setAttr("simulation.persistent_until_strong",
-                        builder.getUnitAttr());
-    function->setAttr("simulation.persistent_until_aggregate_tokens",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.sva_transition_normal_form",
-                      builder.getStringAttr("canonical-minimal"));
+      sim::mark<sim::metadata::PersistentUntilStrong>(function);
+    sim::mark<sim::metadata::PersistentUntilAggregateTokens>(function);
+    sim::set<sim::metadata::SvaTransitionNormalForm>(
+        function, builder.getStringAttr("canonical-minimal"));
     if (implication) {
-      function->setAttr("simulation.persistent_until_implication",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentUntilImplication>(function);
       if (nonoverlapped)
-        function->setAttr("simulation.persistent_until_nonoverlapped",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentUntilNonoverlapped>(function);
     }
 
     Value liveStorage = sim::SimRefAllocOp::create(
@@ -8352,8 +8273,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       handoffStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
-      handoffStorage.getDefiningOp()->setAttr(
-          "simulation.persistent_implication_handoff", builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentImplicationHandoff>(
+          handoffStorage.getDefiningOp());
       untilStateStorages.push_back(handoffStorage);
     }
     if (failed(outlineDisableObserver(untilStateStorages)))
@@ -8510,25 +8431,21 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   if (hasPersistentRepetition) {
-    function->setAttr("simulation.persistent_repetition_monitor",
-                      builder.getUnitAttr());
-    function->setAttr(
-        "simulation.persistent_repetition_kind",
+    sim::mark<sim::metadata::PersistentRepetitionMonitor>(function);
+    sim::set<sim::metadata::PersistentRepetitionKind>(
+        function,
         builder.getStringAttr(semantic::stringifySVSequenceRepetitionKind(
             persistentRepetition.kind)));
-    function->setAttr("simulation.persistent_repetition_min",
-                      builder.getI64IntegerAttr(persistentRepetition.minimum));
+    sim::set<sim::metadata::PersistentRepetitionMin>(
+        function, builder.getI64IntegerAttr(persistentRepetition.minimum));
     if (persistentRepetition.unbounded)
-      function->setAttr("simulation.persistent_repetition_unbounded",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentRepetitionUnbounded>(function);
     else
-      function->setAttr(
-          "simulation.persistent_repetition_max",
-          builder.getI64IntegerAttr(persistentRepetition.maximum));
-    function->setAttr("simulation.persistent_repetition_dfa",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.sva_transition_normal_form",
-                      builder.getStringAttr("canonical-minimal"));
+      sim::set<sim::metadata::PersistentRepetitionMax>(
+          function, builder.getI64IntegerAttr(persistentRepetition.maximum));
+    sim::mark<sim::metadata::PersistentRepetitionDfa>(function);
+    sim::set<sim::metadata::SvaTransitionNormalForm>(
+        function, builder.getStringAttr("canonical-minimal"));
     // An implication must evaluate its consequent for every successful
     // antecedent match (IEEE 1800-2017 16.12.7).  In particular, a
     // nonconsecutive repetition can keep producing endpoints on later false
@@ -8537,17 +8454,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     bool retainEveryRepetitionEndpoint =
         (coverSequence && !firstMatch) || persistentAntecedentImplication;
     if (retainEveryRepetitionEndpoint)
-      function->setAttr("simulation.persistent_repetition_all_matches",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentRepetitionAllMatches>(function);
     if (implication) {
-      function->setAttr("simulation.persistent_repetition_implication",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentRepetitionImplication>(function);
       if (persistentAntecedentImplication)
-        function->setAttr("simulation.persistent_repetition_antecedent",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentRepetitionAntecedent>(function);
       if (nonoverlapped)
-        function->setAttr("simulation.persistent_repetition_nonoverlapped",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentRepetitionNonoverlapped>(function);
     }
 
     struct TokenState {
@@ -8619,8 +8532,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            count <= persistentRepetition.maximum; ++count)
         addTokenState(count, true);
     }
-    function->setAttr("simulation.persistent_repetition_states",
-                      builder.getI64IntegerAttr(tokenStates.size()));
+    sim::set<sim::metadata::PersistentRepetitionStates>(
+        function, builder.getI64IntegerAttr(tokenStates.size()));
     auto findTokenState = [&](uint64_t occurrences, bool pending) {
       auto found =
           tokenStateIndices.find({occurrences, static_cast<uint8_t>(pending)});
@@ -8639,29 +8552,28 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       handoffStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
-      handoffStorage.getDefiningOp()->setAttr(
-          "simulation.persistent_implication_handoff", builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentImplicationHandoff>(
+          handoffStorage.getDefiningOp());
     }
     SmallVector<Value> persistentAntecedentHandoffStorages;
     Value persistentAntecedentFinalHandoffStorage;
     if (persistentAntecedentImplication && nonoverlapped) {
-      function->setAttr("simulation.persistent_antecedent_handoff_states",
-                        builder.getI64IntegerAttr(tokenStates.size() + 1));
+      sim::set<sim::metadata::PersistentAntecedentHandoffStates>(
+          function, builder.getI64IntegerAttr(tokenStates.size() + 1));
       persistentAntecedentHandoffStorages.reserve(tokenStates.size());
       for ([[maybe_unused]] const TokenState &state : tokenStates) {
         Value storage = sim::SimRefAllocOp::create(
             builder, location,
             sim::RefType::get(function.getContext(), stateType), zero);
-        storage.getDefiningOp()->setAttr(
-            "simulation.persistent_antecedent_handoff", builder.getUnitAttr());
+        sim::mark<sim::metadata::PersistentAntecedentHandoff>(
+            storage.getDefiningOp());
         persistentAntecedentHandoffStorages.push_back(storage);
       }
       persistentAntecedentFinalHandoffStorage = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), stateType), zero);
-      persistentAntecedentFinalHandoffStorage.getDefiningOp()->setAttr(
-          "simulation.persistent_antecedent_final_handoff",
-          builder.getUnitAttr());
+      sim::mark<sim::metadata::PersistentAntecedentFinalHandoff>(
+          persistentAntecedentFinalHandoffStorage.getDefiningOp());
     }
 
     SmallVector<Value> repetitionStateStorages;
@@ -9298,8 +9210,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     function->setAttr(
         "domain", sim::ExecutionDomainAttr::get(function.getContext(),
                                                 sim::ExecutionDomain::Design));
-    function->setAttr("simulation.multiclock_sequence_coordinator",
-                      builder.getUnitAttr());
+    sim::mark<sim::metadata::MulticlockSequenceCoordinator>(function);
 
     // Freeze one structurally distinct inventory of direct clocks. Dynamic
     // virtual-interface receivers remain distinct descriptors here even when
@@ -9654,50 +9565,42 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   }
 
   if (branchingAntecedent) {
-    function->setAttr("simulation.branching_antecedent_monitor",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.branching_antecedent_result_coalescer",
-                      builder.getUnitAttr());
-    function->setAttr("simulation.branching_antecedent_alternatives",
-                      builder.getI64IntegerAttr(antecedentAlternatives.size()));
-    function->setAttr("simulation.branching_antecedent_match_channels",
-                      builder.getI64IntegerAttr(antecedentAlternatives.size()));
+    sim::mark<sim::metadata::BranchingAntecedentMonitor>(function);
+    sim::mark<sim::metadata::BranchingAntecedentResultCoalescer>(function);
+    sim::set<sim::metadata::BranchingAntecedentAlternatives>(
+        function, builder.getI64IntegerAttr(antecedentAlternatives.size()));
+    sim::set<sim::metadata::BranchingAntecedentMatchChannels>(
+        function, builder.getI64IntegerAttr(antecedentAlternatives.size()));
     size_t currentTickChannels = llvm::count_if(
         antecedentAlternatives, [](const FixedSequence &alternative) {
           return alternative.currentTickConsequentStart;
         });
     if (currentTickChannels != 0) {
-      function->setAttr(
-          "simulation.mixed_empty_antecedent_current_tick_channels",
-          builder.getI64IntegerAttr(currentTickChannels));
-      function->setAttr(
-          "simulation.mixed_empty_antecedent_handoff_channels",
-          builder.getI64IntegerAttr(antecedentAlternatives.size() -
-                                    currentTickChannels));
+      sim::set<sim::metadata::MixedEmptyAntecedentCurrentTickChannels>(
+          function, builder.getI64IntegerAttr(currentTickChannels));
+      sim::set<sim::metadata::MixedEmptyAntecedentHandoffChannels>(
+          function, builder.getI64IntegerAttr(antecedentAlternatives.size() -
+                                              currentTickChannels));
     }
     if (combinedBoundedBranching) {
-      function->setAttr(
-          "simulation.branching_consequent_alternatives",
-          builder.getI64IntegerAttr(consequentAlternatives.size()));
-      function->setAttr(
-          "simulation.combined_bounded_branching_pairs",
-          builder.getI64IntegerAttr(antecedentAlternatives.size() *
-                                    consequentAlternatives.size()));
-      function->setAttr(
-          "simulation.combined_bounded_branching_pairs_before_minimization",
+      sim::set<sim::metadata::BranchingConsequentAlternatives>(
+          function, builder.getI64IntegerAttr(consequentAlternatives.size()));
+      sim::set<sim::metadata::CombinedBoundedBranchingPairs>(
+          function, builder.getI64IntegerAttr(antecedentAlternatives.size() *
+                                              consequentAlternatives.size()));
+      sim::set<sim::metadata::CombinedBoundedBranchingPairsBeforeMinimization>(
+          function,
           builder.getI64IntegerAttr(antecedentAlternativeAdmissionCount *
                                     consequentAlternativeAdmissionCount));
-      function->setAttr("simulation.combined_bounded_branching_monitor",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::CombinedBoundedBranchingMonitor>(function);
       if (combinedBooleanBranching) {
-        function->setAttr("simulation.combined_boolean_branching_monitor",
-                          builder.getUnitAttr());
-        function->setAttr(
-            "simulation.combined_boolean_branching_pairs",
-            builder.getI64IntegerAttr(antecedentAlternatives.size() *
-                                      consequentAlternatives.size()));
-        function->setAttr(
-            "simulation.combined_boolean_branching_pairs_before_minimization",
+        sim::mark<sim::metadata::CombinedBooleanBranchingMonitor>(function);
+        sim::set<sim::metadata::CombinedBooleanBranchingPairs>(
+            function, builder.getI64IntegerAttr(antecedentAlternatives.size() *
+                                                consequentAlternatives.size()));
+        sim::set<
+            sim::metadata::CombinedBooleanBranchingPairsBeforeMinimization>(
+            function,
             builder.getI64IntegerAttr(antecedentAlternativeAdmissionCount *
                                       consequentAlternativeAdmissionCount));
       }
@@ -9744,8 +9647,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                      alternative.ages.size() - 1 +
                          (channelIsNonoverlapped(channel) ? 1 : 0) +
                          getConsequentAlternative(consequentIndex).ages.size());
-    function->setAttr("simulation.branching_antecedent_result_horizon",
-                      builder.getI64IntegerAttr(sourceAttemptHorizon));
+    sim::set<sim::metadata::BranchingAntecedentResultHorizon>(
+        function, builder.getI64IntegerAttr(sourceAttemptHorizon));
     Value matchedState;
     if (sourceAttemptHorizon > 1)
       matchedState = sim::SimRefAllocOp::create(
@@ -9823,11 +9726,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
       Location finalLocation = getSemanticLocation(implication);
       StringRef strengthSpelling = operandStrong ? "strong" : "weak";
-      function->setAttr("simulation.branching_antecedent_eos_coalescer",
-                        builder.getUnitAttr());
-      function->setAttr(
-          "simulation.branching_antecedent_consequent_eos_strength",
-          builder.getStringAttr(strengthSpelling));
+      sim::mark<sim::metadata::BranchingAntecedentEosCoalescer>(function);
+      sim::set<sim::metadata::BranchingAntecedentConsequentEosStrength>(
+          function, builder.getStringAttr(strengthSpelling));
 
       uint64_t scopeID = 0;
       std::string parentHierarchy = function.getSymName().str();
@@ -9900,17 +9801,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             llvm::append_range(metadata, source);
         }
         if (metadata.empty())
-          metadata.push_back(builder.getNamedAttr(
-              "simulation.capture_kind",
-              sim::CaptureKindAttr::get(function.getContext(),
-                                        index == 0
-                                            ? sim::CaptureKind::Context
-                                            : sim::CaptureKind::Formal)));
+          metadata.push_back(
+              sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+                  function.getContext(), index == 0
+                                             ? sim::CaptureKind::Context
+                                             : sim::CaptureKind::Formal)));
         if (isa<sim::RefType>(capture.getType()) &&
             !isStaticallyAllocatedOverrideTarget(capture))
           metadata.push_back(
-              builder.getNamedAttr("simulation.automatic_reference_capture",
-                                   builder.getUnitAttr()));
+              sim::named<sim::metadata::AutomaticReferenceCapture>(
+                  builder.getUnitAttr()));
         argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
       }
 
@@ -9951,12 +9851,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                           function.getContext(), sim::ExecutionDomain::Design));
         info.function->setAttr("code_unit_id",
                                outlineBuilder.getI64IntegerAttr(codeUnitID));
-        info.function->setAttr(sim::metadata::hierarchicalName,
-                               outlineBuilder.getStringAttr(hierarchy));
-        info.function->setAttr("simulation.concurrent_eos_report",
-                               outlineBuilder.getUnitAttr());
-        info.function->setAttr("simulation.branching_antecedent_eos_report",
-                               outlineBuilder.getUnitAttr());
+        sim::set<sim::metadata::HierarchicalName>(
+            info.function, outlineBuilder.getStringAttr(hierarchy));
+        sim::mark<sim::metadata::ConcurrentEosReport>(info.function);
+        sim::mark<sim::metadata::BranchingAntecedentEosReport>(info.function);
         outlineBuilder.insert(clonedReport);
       };
       if (finalPass)
@@ -9983,8 +9881,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               "branching antecedent end-of-simulation coordinator"),
           outlineBuilder.getUnitAttr());
       SmallVector<NamedAttribute> attributes{
-          outlineBuilder.getNamedAttr(bindingsAttrName,
-                                      outlineBuilder.getArrayAttr({})),
+          sim::named<sim::metadata::Bindings>(outlineBuilder.getArrayAttr({})),
           outlineBuilder.getNamedAttr(
               "code_unit_id",
               outlineBuilder.getI64IntegerAttr(coordinatorCodeUnitID)),
@@ -9997,8 +9894,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               "domain",
               sim::ExecutionDomainAttr::get(function.getContext(),
                                             sim::ExecutionDomain::Design)),
-          outlineBuilder.getNamedAttr(
-              sim::metadata::hierarchicalName,
+          sim::named<sim::metadata::HierarchicalName>(
               outlineBuilder.getStringAttr(coordinatorHierarchy)),
       };
       sim::SimFuncOp coordinator = sim::SimFuncOp::create(
@@ -10010,8 +9906,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       ::obelisk::schedule::set<
           ::obelisk::schedule::Field::ConcurrentEosCoordinator>(
           coordinator, builder.getUnitAttr());
-      coordinator->setAttr("simulation.branching_antecedent_eos_coalescer",
-                           builder.getUnitAttr());
+      sim::mark<sim::metadata::BranchingAntecedentEosCoalescer>(coordinator);
       ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
           coordinator, builder.getUnitAttr());
 
@@ -10062,10 +9957,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         auto dispatch = cf::CondBranchOp::create(
             finalBuilder, finalLocation, condition, reportBlock, ValueRange{},
             continuation, ValueRange{});
-        dispatch->setAttr("simulation.branching_antecedent_eos_result",
-                          builder.getStringAttr(resultSpelling));
-        dispatch->setAttr("simulation.branching_antecedent_eos_source_age",
-                          builder.getI64IntegerAttr(sourceAge));
+        sim::set<sim::metadata::BranchingAntecedentEosResult>(
+            dispatch, builder.getStringAttr(resultSpelling));
+        sim::set<sim::metadata::BranchingAntecedentEosSourceAge>(
+            dispatch, builder.getI64IntegerAttr(sourceAge));
 
         OpBuilder reportBuilder = OpBuilder::atBlockEnd(reportBlock);
         SmallVector<Value> operands;
@@ -10080,10 +9975,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         auto spawn = sim::SimSpawnOp::create(
             reportBuilder, info.report->location,
             info.function.getSymNameAttr(), operands, ArrayAttr{}, ArrayAttr{});
-        spawn->setAttr("simulation.branching_antecedent_eos_result",
-                       builder.getStringAttr(resultSpelling));
-        spawn->setAttr("simulation.branching_antecedent_eos_source_age",
-                       builder.getI64IntegerAttr(sourceAge));
+        sim::set<sim::metadata::BranchingAntecedentEosResult>(
+            spawn, builder.getStringAttr(resultSpelling));
+        sim::set<sim::metadata::BranchingAntecedentEosSourceAge>(
+            spawn, builder.getI64IntegerAttr(sourceAge));
         cf::BranchOp::create(reportBuilder, finalLocation, continuation);
         current = continuation;
       };
@@ -10387,8 +10282,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location, success[boundary.age], matched);
       }
     if (!firstMatchGroups.empty())
-      function->setAttr("simulation.first_match_priority_groups",
-                        builder.getI64IntegerAttr(firstMatchGroups.size()));
+      sim::set<sim::metadata::FirstMatchPriorityGroups>(
+          function, builder.getI64IntegerAttr(firstMatchGroups.size()));
 
     auto applyFirstMatchPriority = [&](Value enabled, size_t alternativeIndex,
                                        uint64_t age) -> Value {
@@ -10406,8 +10301,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::XOrIOp::create(builder, location, groupMatched, trueValue),
             selected);
         enabled = arith::AndIOp::create(builder, location, enabled, allowed);
-        enabled.getDefiningOp()->setAttr("simulation.first_match_priority",
-                                         builder.getUnitAttr());
+        sim::mark<sim::metadata::FirstMatchPriority>(enabled.getDefiningOp());
       }
       return enabled;
     };
@@ -10525,12 +10419,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
 
     auto markConsequentTrigger = [&](Operation *operation, size_t channel,
                                      size_t consequentIndex) {
-      operation->setAttr("simulation.branching_antecedent_consequent_trigger",
-                         builder.getUnitAttr());
-      operation->setAttr("simulation.branching_antecedent_channel",
-                         builder.getI64IntegerAttr(channel));
-      operation->setAttr("simulation.branching_consequent_alternative",
-                         builder.getI64IntegerAttr(consequentIndex));
+      sim::mark<sim::metadata::BranchingAntecedentConsequentTrigger>(operation);
+      sim::set<sim::metadata::BranchingAntecedentChannel>(
+          operation, builder.getI64IntegerAttr(channel));
+      sim::set<sim::metadata::BranchingConsequentAlternative>(
+          operation, builder.getI64IntegerAttr(consequentIndex));
     };
     for (auto [channel, triggered] : llvm::enumerate(terminalMatches)) {
       uint64_t sourceAge = antecedentAlternatives[channel].ages.size() - 1;
@@ -10639,8 +10532,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value noAntecedentMatch =
           arith::AndIOp::create(builder, location, completed, unmatched);
       resultVacuous[age] = noAntecedentMatch;
-      noAntecedentMatch.getDefiningOp()->setAttr(
-          "simulation.branching_antecedent_vacuity", builder.getUnitAttr());
+      sim::mark<sim::metadata::BranchingAntecedentVacuity>(
+          noAntecedentMatch.getDefiningOp());
 
       if (followedBy) {
         // Followed-by is existential across all antecedent matches.  The
@@ -10672,12 +10565,16 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location, noAntecedentMatch, matchedSuccess);
       }
       resultSucceeded[age].getDefiningOp()->setAttr(
-          followedBy ? "simulation.branching_antecedent_existential_success"
-                     : "simulation.branching_antecedent_universal_success",
+          followedBy ? sim::metadata::BranchingAntecedentExistentialSuccess::
+                           getNameStr()
+                     : sim::metadata::BranchingAntecedentUniversalSuccess::
+                           getNameStr(),
           builder.getUnitAttr());
       resultFailed[age].getDefiningOp()->setAttr(
-          followedBy ? "simulation.branching_antecedent_existential_failure"
-                     : "simulation.branching_antecedent_universal_failure",
+          followedBy ? sim::metadata::BranchingAntecedentExistentialFailure::
+                           getNameStr()
+                     : sim::metadata::BranchingAntecedentUniversalFailure::
+                           getNameStr(),
           builder.getUnitAttr());
       resultResolved[age] = arith::OrIOp::create(
           builder, location, resultSucceeded[age], resultFailed[age]);
@@ -10695,8 +10592,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder.getI64IntegerAttr(uint64_t{1} << (age + 1)));
         auto retained =
             arith::SelectOp::create(builder, location, retain, nextMask, zero);
-        retained->setAttr("simulation.branching_antecedent_matched_history",
-                          builder.getUnitAttr());
+        sim::mark<sim::metadata::BranchingAntecedentMatchedHistory>(retained);
         nextMatchedState =
             arith::OrIOp::create(builder, location, nextMatchedState, retained);
       }
@@ -10738,8 +10634,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     };
     auto clearResolvedBit = [&](Value state, uint64_t bit, uint64_t sourceAge) {
       assert(sourceAge < sourceAttemptHorizon);
-      return clearBitWhen(state, bit, resultResolved[sourceAge],
-                          "simulation.branching_antecedent_result_cancel");
+      return clearBitWhen(
+          state, bit, resultResolved[sourceAge],
+          sim::metadata::BranchingAntecedentResultCancel::getNameStr());
     };
 
     for (auto [index, storage] : llvm::enumerate(alternativeStates)) {
@@ -10776,14 +10673,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             nextState = clearResolvedBit(nextState, bit, sourceAge);
             nextState = clearBitWhen(
                 nextState, bit, consequentChannelSucceeded[channel][sourceAge],
-                "simulation.branching_consequent_alternative_cancel");
+                sim::metadata::BranchingConsequentAlternativeCancel::
+                    getNameStr());
           }
           sim::SimRefStoreOp::create(builder, location, nextState, storage);
         }
     }
     auto backedge = cf::BranchOp::create(builder, location, wait);
-    backedge->setAttr("simulation.branching_antecedent_backedge",
-                      builder.getUnitAttr());
+    sim::mark<sim::metadata::BranchingAntecedentBackedge>(backedge);
     return success();
   }
 
@@ -10792,24 +10689,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         branchingConsequent ? ArrayRef<FixedSequence>(consequentAlternatives)
                             : ArrayRef<FixedSequence>(sequenceAlternatives);
     bool perMatchCover = coverSequence;
-    function->setAttr(branchingConsequent
-                          ? "simulation.branching_consequent_monitor"
-                          : "simulation.branching_sequence_monitor",
-                      builder.getUnitAttr());
-    function->setAttr(branchingConsequent
-                          ? "simulation.branching_consequent_alternatives"
-                          : "simulation.branching_sequence_alternatives",
-                      builder.getI64IntegerAttr(alternatives.size()));
+    IntegerAttr alternativeCount =
+        builder.getI64IntegerAttr(alternatives.size());
+    if (branchingConsequent) {
+      sim::mark<sim::metadata::BranchingConsequentMonitor>(function);
+      sim::set<sim::metadata::BranchingConsequentAlternatives>(
+          function, alternativeCount);
+    } else {
+      sim::mark<sim::metadata::BranchingSequenceMonitor>(function);
+      sim::set<sim::metadata::BranchingSequenceAlternatives>(function,
+                                                             alternativeCount);
+    }
     if (branchingConsequent && nonoverlapped)
-      function->setAttr("simulation.branching_consequent_nonoverlapped",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::BranchingConsequentNonoverlapped>(function);
     size_t vacuousAlternatives =
         llvm::count_if(alternatives, [](const FixedSequence &alternative) {
           return alternative.vacuousSuccess;
         });
     if (vacuousAlternatives != 0)
-      function->setAttr("simulation.vacuous_sequence_alternatives",
-                        builder.getI64IntegerAttr(vacuousAlternatives));
+      sim::set<sim::metadata::VacuousSequenceAlternatives>(
+          function, builder.getI64IntegerAttr(vacuousAlternatives));
     SmallVector<Value> alternativeStates;
     alternativeStates.reserve(alternatives.size());
     size_t horizon = 0;
@@ -10837,13 +10736,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       // shared finalizer unions alternative words by relative source age.
       if (!endStrengthSource)
         endStrengthSource = implication.getOperation();
-      function->setAttr("simulation.branching_consequent_eos_coalescer",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::BranchingConsequentEosCoalescer>(function);
       if (consequentUniformIntrinsicEndStrong)
-        function->setAttr(
-            "simulation.branching_consequent_intrinsic_eos_strength",
-            builder.getStringAttr(
-                *consequentUniformIntrinsicEndStrong ? "strong" : "weak"));
+        sim::set<sim::metadata::BranchingConsequentIntrinsicEosStrength>(
+            function, builder.getStringAttr(*consequentUniformIntrinsicEndStrong
+                                                ? "strong"
+                                                : "weak"));
     }
     if ((branchingSequence || branchingConsequent) &&
         failed(outlineEndOfSimulationReports(
@@ -10987,8 +10885,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         if (branchingConsequent) {
           auto gated = arith::AndIOp::create(builder, location,
                                              antecedentTrigger, enabled);
-          gated->setAttr("simulation.branching_consequent_trigger",
-                         builder.getUnitAttr());
+          sim::mark<sim::metadata::BranchingConsequentTrigger>(gated);
           enabled = gated;
         } else
           enabled = gateNewAttempt(enabled, attemptEnabled);
@@ -11073,8 +10970,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       }
     }
     if (!firstMatchGroups.empty())
-      function->setAttr("simulation.first_match_priority_groups",
-                        builder.getI64IntegerAttr(firstMatchGroups.size()));
+      sim::set<sim::metadata::FirstMatchPriorityGroups>(
+          function, builder.getI64IntegerAttr(firstMatchGroups.size()));
 
     auto applyFirstMatchPriority = [&](Value enabled, size_t alternativeIndex,
                                        uint64_t age) -> Value {
@@ -11092,8 +10989,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             arith::XOrIOp::create(builder, location, groupMatched, trueValue),
             selected);
         auto gated = arith::AndIOp::create(builder, location, enabled, allowed);
-        gated->setAttr("simulation.first_match_priority",
-                       builder.getUnitAttr());
+        sim::mark<sim::metadata::FirstMatchPriority>(gated);
         enabled = gated;
       }
       return enabled;
@@ -11105,8 +11001,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             builder, location, stateType, builder.getI64IntegerAttr(1));
         auto launch = arith::SelectOp::create(
             builder, location, antecedentTrigger, firstMask, zero);
-        launch->setAttr("simulation.branching_consequent_trigger",
-                        builder.getUnitAttr());
+        sim::mark<sim::metadata::BranchingConsequentTrigger>(launch);
         Value nextState = launch;
         for (uint64_t age = 0; age + 1 < alternative.ages.size(); ++age) {
           Value enabled = applyFirstMatchPriority(
@@ -11177,8 +11072,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       setCurrent(continuation);
     };
     if (perMatchCover) {
-      function->setAttr("simulation.cover_sequence_per_match",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::CoverSequencePerMatch>(function);
       for (auto [alternativeIndex, alternative] :
            llvm::enumerate(alternatives)) {
         Value matched = alternative.ages.size() == 1
@@ -11231,8 +11125,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         sim::SimRefStoreOp::create(builder, location, nextState, state);
     auto backedge = cf::BranchOp::create(builder, location, wait);
     if (branchingConsequent)
-      backedge->setAttr("simulation.branching_consequent_backedge",
-                        builder.getUnitAttr());
+      sim::mark<sim::metadata::BranchingConsequentBackedge>(backedge);
     return success();
   }
 
@@ -11244,7 +11137,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       SmallVector<Value> ages;
     };
     ArrayAttr typeAttrs =
-        localInstance->getAttrOfType<ArrayAttr>(assertionLocalTypesAttrName);
+        sim::get<sim::metadata::AssertionLocalTypes>(localInstance);
     if (!typeAttrs ||
         typeAttrs.size() != localInstance.getLocalVariableCount() ||
         localInstance.getLocalVariablePaths().size() != typeAttrs.size() ||
@@ -11426,8 +11319,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                                baseMetadata.end());
           if (isa<sim::RefType>(capture.getType()))
             metadata.push_back(
-                builder.getNamedAttr("simulation.automatic_reference_capture",
-                                     builder.getUnitAttr()));
+                sim::named<sim::metadata::AutomaticReferenceCapture>(
+                    builder.getUnitAttr()));
           argumentAttrs.push_back(builder.getDictionaryAttr(metadata));
         }
       }
@@ -11476,10 +11369,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               "domain",
               sim::ExecutionDomainAttr::get(function.getContext(),
                                             sim::ExecutionDomain::Design)),
-          outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                      outlineBuilder.getStringAttr(hierarchy)),
-          outlineBuilder.getNamedAttr("simulation.concurrent_match_call_chain",
-                                      outlineBuilder.getUnitAttr()),
+          sim::named<sim::metadata::HierarchicalName>(
+              outlineBuilder.getStringAttr(hierarchy)),
+          sim::named<sim::metadata::ConcurrentMatchCallChain>(
+              outlineBuilder.getUnitAttr()),
           ::obelisk::schedule::named<
               ::obelisk::schedule::Field::DetachedControls>(
               outlineBuilder.getUnitAttr()),
@@ -11521,7 +11414,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
             nextCall);
         currentCall = nextCall;
       }
-      coordinator->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+      sim::mark<sim::metadata::Lowered>(coordinator);
       sim::SimSpawnOp::create(builder, calls.front().location,
                               coordinator.getSymNameAttr(), captures,
                               ArrayAttr{}, ArrayAttr{});
@@ -11569,7 +11462,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               if (auto named =
                       dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
                 path = named.getReferencedPath();
-                if (named->hasAttr("simulation.class_field"))
+                if (sim::has<sim::metadata::ClassField>(named))
                   hasUnsupportedEvaluation = true;
               } else if (auto hierarchical = dyn_cast<
                              semantic::SVHierarchicalValueExpressionOp>(
@@ -11579,7 +11472,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                              dyn_cast<semantic::SVMemberAccessExpressionOp>(
                                  nested)) {
                 path = member.getReferencedPath();
-                if (member->hasAttr("simulation.class_field"))
+                if (sim::has<sim::metadata::ClassField>(member))
                   hasUnsupportedEvaluation = true;
               }
               bool nonlocal = !path.empty() && !localIndices.contains(path);
@@ -11620,18 +11513,17 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               (function.getSymName() + ".$concurrent_match_call." +
                Twine(node) + "." + Twine(itemID) + "." + Twine(occurrence))
                   .str();
-          Attribute previousCodeUnit =
-              item->getAttr("simulation.fork_code_unit_id");
-          item->setAttr("simulation.fork_code_unit_id",
-                        builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+          auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(item);
+          sim::set<sim::metadata::ForkCodeUnitId>(
+              item, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
           FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
               outlineForkBranch(item, node,
                                 3 + static_cast<unsigned>(occurrence),
                                 /*captureReferences=*/false, sampledArguments);
           if (previousCodeUnit)
-            item->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+            sim::set<sim::metadata::ForkCodeUnitId>(item, previousCodeUnit);
           else
-            item->removeAttr("simulation.fork_code_unit_id");
+            sim::remove<sim::metadata::ForkCodeUnitId>(item);
           if (failed(callback))
             return failure();
           callback->first->setAttr(
@@ -11641,14 +11533,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           callback->first->setAttr("domain", sim::ExecutionDomainAttr::get(
                                                  function.getContext(),
                                                  sim::ExecutionDomain::Design));
-          callback->first->setAttr("simulation.concurrent_match_call",
-                                   builder.getUnitAttr());
+          sim::mark<sim::metadata::ConcurrentMatchCall>(callback->first);
           ::obelisk::schedule::set<
               ::obelisk::schedule::Field::DetachedControls>(
               callback->first, builder.getUnitAttr());
-          guardReactiveCallback(callback->first, callback->second,
-                                getSemanticLocation(item),
-                                "simulation.concurrent_match_call_kill_epoch");
+          guardReactiveCallback(
+              callback->first, callback->second, getSemanticLocation(item),
+              sim::metadata::ConcurrentMatchCallKillEpoch::getNameStr());
           SmallVector<Value> captures = materializeReactiveCallbackCaptures(
               callback->second, getSemanticLocation(item));
           calls.push_back({callback->first, std::move(captures),
@@ -11719,8 +11610,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
               builder, location, matches,
               arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                         builder.getBoolAttr(true))));
-      fails.getDefiningOp()->setAttr(
-          "simulation.implication_antecedent_failure", builder.getUnitAttr());
+      sim::mark<sim::metadata::ImplicationAntecedentFailure>(
+          fails.getDefiningOp());
       if (!observable)
         return success();
       Block *report = addBlock();
@@ -11879,8 +11770,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           return failure();
         Value advances =
             arith::AndIOp::create(builder, location, active, *matches);
-        advances.getDefiningOp()->setAttr("simulation.implication_antecedent",
-                                          builder.getUnitAttr());
+        sim::mark<sim::metadata::ImplicationAntecedent>(
+            advances.getDefiningOp());
         Block *matched = addBlock();
         Block *continued = addBlock();
         continued->addArgument(stateType, location);
@@ -12037,9 +11928,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   for (Value storage : attemptActionStateStorages) {
     Value captured =
         sim::SimRefLoadOp::create(builder, location, stateType, storage);
-    captured.getDefiningOp()->setAttr(
-        "simulation.concurrent_attempt_action_state_load",
-        builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAttemptActionStateLoad>(
+        captured.getDefiningOp());
     capturedActionStates.push_back(captured);
     nextCapturedActionStates.push_back(zero);
   }
@@ -12086,9 +11976,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::AndIOp::create(builder, location, advances, permitted);
       Value carriedBit =
           arith::SelectOp::create(builder, location, carries, targetMask, zero);
-      carriedBit.getDefiningOp()->setAttr(
-          "simulation.concurrent_attempt_action_state_next",
-          builder.getI64IntegerAttr(actionClass));
+      sim::set<sim::metadata::ConcurrentAttemptActionStateNext>(
+          carriedBit.getDefiningOp(), builder.getI64IntegerAttr(actionClass));
       nextCapturedActionStates[actionClass] = arith::OrIOp::create(
           builder, location, nextCapturedActionStates[actionClass], carriedBit);
     }
@@ -12104,9 +11993,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           builder, location, starts, currentActionPermissions[actionClass]);
       Value carriedBit =
           arith::SelectOp::create(builder, location, carries, targetMask, zero);
-      carriedBit.getDefiningOp()->setAttr(
-          "simulation.concurrent_attempt_action_state_next",
-          builder.getI64IntegerAttr(actionClass));
+      sim::set<sim::metadata::ConcurrentAttemptActionStateNext>(
+          carriedBit.getDefiningOp(), builder.getI64IntegerAttr(actionClass));
       nextCapturedActionStates[actionClass] = arith::OrIOp::create(
           builder, location, nextCapturedActionStates[actionClass], carriedBit);
     }
@@ -12327,16 +12215,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         return failure();
       Value advances =
           arith::AndIOp::create(builder, location, active, *matches);
-      advances.getDefiningOp()->setAttr("simulation.implication_antecedent",
-                                        builder.getUnitAttr());
+      sim::mark<sim::metadata::ImplicationAntecedent>(advances.getDefiningOp());
       Value notMatches = arith::XOrIOp::create(
           builder, location, *matches,
           arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                     builder.getBoolAttr(true)));
       Value vacuous =
           arith::AndIOp::create(builder, location, active, notMatches);
-      vacuous.getDefiningOp()->setAttr(
-          "simulation.implication_antecedent_failure", builder.getUnitAttr());
+      sim::mark<sim::metadata::ImplicationAntecedentFailure>(
+          vacuous.getDefiningOp());
       if (shouldScheduleResult(!followedBy) &&
           failed(conditionalResult(vacuous, !followedBy,
                                    /*alreadyReported=*/false,
@@ -12422,8 +12309,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
        llvm::zip_equal(attemptActionStateStorages, nextCapturedActionStates)) {
     auto stored =
         sim::SimRefStoreOp::create(builder, location, nextCaptured, storage);
-    stored->setAttr("simulation.concurrent_attempt_action_state_store",
-                    builder.getUnitAttr());
+    sim::mark<sim::metadata::ConcurrentAttemptActionStateStore>(stored);
   }
   cf::BranchOp::create(builder, location, wait);
   return success();

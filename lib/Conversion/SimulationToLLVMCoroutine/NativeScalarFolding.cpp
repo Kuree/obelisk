@@ -21,8 +21,9 @@ public:
     auto function = getOperation();
     if (function.isExternal() || function.getBody().empty())
       return;
-    function.walk(
-        [](Operation *op) { sim::remove<sim::KnownLogicResult>(op); });
+    function.walk([](Operation *op) {
+      sim::remove<sim::metadata::KnownLogicResult>(op);
+    });
     // Scheduling's contextual memory analysis still consumes structural
     // induction certificates. Replacing a single-iteration loop's body phi or
     // increment with a constant hides that recurrence and loses per-iteration
@@ -73,8 +74,8 @@ public:
       if (isa<sim::LogicType>(value.getType()) && ranges->excludesXZ(value))
         if (auto result = dyn_cast<OpResult>(value);
             result && result.getOwner()->getNumResults() == 1)
-          sim::set<sim::KnownLogicResult>(result.getOwner(),
-                                          UnitAttr::get(&getContext()));
+          sim::set<sim::metadata::KnownLogicResult>(
+              result.getOwner(), UnitAttr::get(&getContext()));
       auto range = ranges->getRange(value, *state);
       if (range && !loopControl.contains(value))
         if (auto constant = range->getConstantValue())

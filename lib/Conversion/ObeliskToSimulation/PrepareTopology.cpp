@@ -1277,8 +1277,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     };
 
     bool top = false;
-    if (BoolAttr frozen =
-            source->getAttrOfType<BoolAttr>("simulation.vpi_top")) {
+    if (BoolAttr frozen = sim::get<sim::metadata::VpiTop>(source)) {
       top = frozen.getValue();
     } else if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source)) {
       Operation *instance = body->getParentOp();
@@ -1288,10 +1287,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
             source))
       top = true;
-    BoolAttr cell =
-        source->getAttrOfType<BoolAttr>("simulation.vpi_cell_instance");
-    BoolAttr automatic =
-        source->getAttrOfType<BoolAttr>("simulation.vpi_automatic");
+    BoolAttr cell = sim::get<sim::metadata::VpiCellInstance>(source);
+    BoolAttr automatic = sim::get<sim::metadata::VpiAutomatic>(source);
     bool isAutomatic = automatic && automatic.getValue();
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
       isAutomatic = subroutine.getDefaultLifetime() ==
@@ -1306,7 +1303,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
     }
     StringAttr definitionName =
-        source->getAttrOfType<StringAttr>("simulation.vpi_definition_name");
+        sim::get<sim::metadata::VpiDefinitionName>(source);
     if (!definitionName)
       if (auto body = dyn_cast<semantic::SVInstanceBodySymbolOp>(source))
         if (auto instance = dyn_cast_or_null<semantic::SVInstanceSymbolOp>(
@@ -1579,7 +1576,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (sim::VPIPropertySetAttr properties =
             identityProperties(source, sourceKind))
       anchor->setAttr("vpi_properties", properties);
-    source->setAttr("simulation.vpi_anchor", anchorSymbols.lookup(source));
+    sim::set<sim::metadata::VpiAnchor>(source, anchorSymbols.lookup(source));
   }
 
   // IO declarations are source-definition members, not the per-instance
@@ -1900,7 +1897,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                     !isAutomaticLocalSymbol(op)) ||
                    isStaticFormal(op) || staticClassProperty;
     if (storage || isa<semantic::SVNetSymbolOp>(op) ||
-        op->hasAttr(sequenceEndpointEventAttrName) ||
+        sim::has<sim::metadata::SequenceEndpointEvent>(op) ||
         (isa<semantic::SVClockingBlockSymbolOp>(op) &&
          (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
           op->hasAttr(clockingEventListAttrName))))
@@ -2186,7 +2183,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             type);
         if (auto identity = source->getAttrOfType<IntegerAttr>(
                 vpiSourceTypeIdentityAttrName))
-          binding->setAttr(sim::metadata::vpiSourceTypeIdentity, identity);
+          sim::set<sim::metadata::VpiSourceTypeIdentity>(binding, identity);
       }
     }
     instance.scope.setVpiSpecializationAttr(specialization);
@@ -2610,7 +2607,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           return;
         if (auto identity = source->getAttrOfType<IntegerAttr>(
                 vpiSourceTypeIdentityAttrName))
-          declaration->setAttr(sim::metadata::vpiSourceTypeIdentity, identity);
+          sim::set<sim::metadata::VpiSourceTypeIdentity>(declaration, identity);
       };
 
   auto emitDescriptor = [&](Operation *op) {
@@ -2650,21 +2647,21 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         if (scope.getId() != scopeId || !scope.getInterfaceTypeAttr())
           continue;
         SmallVector<Attribute> members;
-        if (auto existing = scope->getAttrOfType<ArrayAttr>(
-                virtualInterfaceClockEventMembersAttrName))
+        if (auto existing =
+                sim::get<sim::metadata::VirtualInterfaceClockEvents>(scope))
           llvm::append_range(members, existing);
         members.push_back(builder.getDictionaryAttr(
             {builder.getNamedAttr("member",
                                   builder.getStringAttr(getDebugName(op))),
              builder.getNamedAttr("descriptor",
                                   builder.getI64IntegerAttr(id))}));
-        scope->setAttr(virtualInterfaceClockEventMembersAttrName,
-                       builder.getArrayAttr(members));
+        sim::set<sim::metadata::VirtualInterfaceClockEvents>(
+            scope, builder.getArrayAttr(members));
         break;
       }
       return;
     }
-    if (op->hasAttr(sequenceEndpointEventAttrName)) {
+    if (sim::has<sim::metadata::SequenceEndpointEvent>(op)) {
       Type type = sim::EventType::get(builder.getContext());
       uint64_t id = nextEventId++;
       descriptors[path] = {DescriptorInfo::Kind::Event, id, scopes.lookup(op),
@@ -2682,7 +2679,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     uint64_t scopeId = scopes.lookup(op);
     if (!storage) {
       if (auto leafDefinitions =
-              op->getAttrOfType<ArrayAttr>(interconnectLeavesAttrName)) {
+              sim::get<sim::metadata::InterconnectLeaves>(op)) {
         SmallVector<int64_t> boundsStorage;
         SmallVector<int64_t> packedStorage;
         auto sourceType = op->getAttrOfType<TypeAttr>("semantic_type");
@@ -2821,8 +2818,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               "vpi_properties",
               netProperties(cast<semantic::SVNetSymbolOp>(op)));
           if (sourceTypeIdentity)
-            declaration->setAttr(sim::metadata::vpiSourceTypeIdentity,
-                                 sourceTypeIdentity);
+            sim::set<sim::metadata::VpiSourceTypeIdentity>(declaration,
+                                                           sourceTypeIdentity);
           else
             retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
           std::string leafSymbolName = makeSymbol();
@@ -2847,8 +2844,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     FailureOr<Type> type = getNormalizedSemanticType(op);
     auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
     sim::VPITypeSemanticsAttr inferredInterconnectVPIType =
-        op->getAttrOfType<sim::VPITypeSemanticsAttr>(
-            interconnectVPITypeAttrName);
+        sim::get<sim::metadata::InterconnectVpiType>(op);
     FailureOr<sim::VPITypeSemanticsAttr> inferredMappedVPIType =
         inferredInterconnectVPIType
             ? remapVPITypeAliases(op, inferredInterconnectVPIType)
@@ -2900,24 +2896,22 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                                   op->getAttrOfType<TypeAttr>("semantic_type"));
       retainVPISourceTypeIdentity(op, declaration, retainedVPIType);
       if (namedEventArrayRanges.count(op))
-        declaration->setAttr(sim::metadata::vpiIdentityDelegated,
-                             anchorSymbols.lookup(op));
+        sim::set<sim::metadata::VpiIdentityDelegated>(declaration,
+                                                      anchorSymbols.lookup(op));
       if (isa<sim::EventType>(*type) &&
           isa<semantic::SVVariableSymbolOp, semantic::SVClassPropertySymbolOp>(
               op) &&
           !getChildren(op).empty())
-        declaration->setAttr(eventExplicitInitializerAttrName,
-                             builder.getUnitAttr());
+        sim::mark<sim::metadata::EventExplicitInitializer>(declaration);
       // Storage a subroutine owns is written by its callers, which the driver
       // rules of IEEE 1800-2017 6.5 do not count as competing drivers.
       if (op->getParentOfType<semantic::SVSubroutineSymbolOp>())
-        declaration->setAttr(sim::metadata::subroutineStorage,
-                             builder.getUnitAttr());
+        sim::mark<sim::metadata::SubroutineStorage>(declaration);
       if (auto body =
               dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
           body && body->hasAttr("virtual_interface_identity") &&
           !isCompileTimeOnlyInstanceMember(body))
-        declaration->setAttr("simulation.virtual_interface_member", debug);
+        sim::set<sim::metadata::VirtualInterfaceMember>(declaration, debug);
       return;
     }
 
@@ -3030,8 +3024,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     FlatSymbolRefAttr sourceNettype;
     SymbolRefAttr nettypeReference = net.getNettypeSymbolAttr();
     if (!nettypeReference)
-      nettypeReference =
-          op->getAttrOfType<SymbolRefAttr>(interconnectNettypeAttrName);
+      nettypeReference = sim::get<sim::metadata::InterconnectNettype>(op);
     if (nettypeReference) {
       sourceNettype =
           nettypeSymbols.lookup(resolveSourceNettype(nettypeReference));
@@ -3086,21 +3079,19 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{});
       anchor->setAttr("vpi_properties", netProperties(net));
     }
-    if (net.getNetKind() == semantic::SVNetKind::UserDefined ||
-        net->hasAttr("simulation.inferred_user_net")) {
-      declaration->setAttr("simulation.user_defined_net",
-                           builder.getUnitAttr());
+    if (net.getNetKind() == semantic::SVNetKind::UserDefined) {
+      sim::mark<sim::metadata::UserDefinedNet>(declaration);
       if (auto path = net.getResolutionFunctionPath())
-        declaration->setAttr("simulation.resolution_function_path",
-                             builder.getStringAttr(*path));
+        sim::set<sim::metadata::ResolutionFunctionPath>(
+            declaration, builder.getStringAttr(*path));
       if (auto symbol = net.getResolutionFunctionSymbol())
-        declaration->setAttr("simulation.resolution_function_symbol", *symbol);
+        sim::set<sim::metadata::ResolutionFunctionSymbol>(declaration, *symbol);
     }
     if (auto body =
             dyn_cast<semantic::SVInstanceBodySymbolOp>(op->getParentOp());
         body && body->hasAttr("virtual_interface_identity") &&
         !isCompileTimeOnlyInstanceMember(body))
-      declaration->setAttr("simulation.virtual_interface_member", debug);
+      sim::set<sim::metadata::VirtualInterfaceMember>(declaration, debug);
   };
 
   // Materialize canonical objects first so alias resolution is independent of
@@ -3118,8 +3109,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     if (!constraint.getIsStatic().value_or(false))
       return;
     uint64_t id = nextStorageId++;
-    constraint->setAttr(staticConstraintStorageAttrName,
-                        builder.getI64IntegerAttr(id));
+    sim::set<sim::metadata::StaticConstraintStorage>(
+        constraint, builder.getI64IntegerAttr(id));
     StringRef path = getHierarchyName(constraint);
     if (path.empty()) {
       emitError(getSemanticLocation(constraint))
@@ -3164,8 +3155,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       return;
     }
     uint64_t id = nextStorageId++;
-    property->setAttr(staticRandomModeStorageAttrName,
-                      builder.getI64IntegerAttr(id));
+    sim::set<sim::metadata::StaticRandomModeStorage>(
+        property, builder.getI64IntegerAttr(id));
     Type type = builder.getI64Type();
     uint64_t scopeId = scopes.lookup(property);
     descriptors[hierarchy] = {DescriptorInfo::Kind::Storage, id, scopeId, type,
@@ -3191,8 +3182,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         }
         uint64_t elementId = nextStorageId++;
         Type elementType = builder.getIntegerType(layout->elementCount);
-        property->setAttr(staticRandomArrayModeStorageAttrName,
-                          builder.getI64IntegerAttr(elementId));
+        sim::set<sim::metadata::StaticRandomArrayModeStorage>(
+            property, builder.getI64IntegerAttr(elementId));
         descriptors[elements] = {DescriptorInfo::Kind::Storage, elementId,
                                  scopeId, elementType,
                                  sim::NetResolutionKind::Wire};
@@ -3204,8 +3195,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             schedule::ComputeObservabilityKindAttr{},
             sim::VPITypeSemanticsAttr{});
       }
-    if (auto members =
-            property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName)) {
+    if (auto members = sim::get<sim::metadata::RandomStructMembers>(property)) {
       SmallVector<Attribute> updated;
       for (auto [index, attribute] : llvm::enumerate(members)) {
         auto member = cast<DictionaryAttr>(attribute);
@@ -3239,8 +3229,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         }
         updated.push_back(attributes.getDictionary(property.getContext()));
       }
-      property->setAttr(randomStructMembersAttrName,
-                        builder.getArrayAttr(updated));
+      sim::set<sim::metadata::RandomStructMembers>(
+          property, builder.getArrayAttr(updated));
     }
   });
 

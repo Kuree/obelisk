@@ -685,13 +685,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         }
         continue;
       }
-      if (Attribute delegated =
-              storage->getAttr(sim::metadata::vpiIdentityDelegated)) {
-        auto reference = dyn_cast<FlatSymbolRefAttr>(delegated);
-        auto owner = reference ? anchorsBySymbol.find(reference.getValue())
-                               : anchorsBySymbol.end();
+      if (FlatSymbolRefAttr reference =
+              sim::get<sim::metadata::VpiIdentityDelegated>(storage)) {
+        auto owner = anchorsBySymbol.find(reference.getValue());
         if (includeStatements &&
-            (!reference || owner == anchorsBySymbol.end() ||
+            (owner == anchorsBySymbol.end() ||
              owner->second.getVpiKind() !=
                  static_cast<uint32_t>(VPIObjectKind::NamedEventArray) ||
              owner->second.getEnclosingScopeId() != storage.getScopeId() ||
@@ -2126,8 +2124,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         }
         targetTypespec = target->second;
       } else if (semantic.getKind() == sim::VPITypeKind::Enum) {
-        auto identity = object.identity->getAttrOfType<IntegerAttr>(
-            sim::metadata::vpiSourceTypeIdentity);
+        auto identity =
+            sim::get<sim::metadata::VpiSourceTypeIdentity>(object.identity);
         if (!identity) {
           object.identity->emitError(
               "anonymous enum VPI value has no source type identity");

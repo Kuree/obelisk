@@ -123,7 +123,7 @@ getRandomConstraintPath(Operation *expression,
   if (auto index = propertyForExpression(expression))
     return std::optional<RandomConstraintPath>(RandomConstraintPath{
         *index, 0, static_cast<unsigned>(propertyWidths[*index]), true,
-        expression->hasAttr(randomFunctionStateAttrName)});
+        sim::has<sim::metadata::RandomFunctionState>(expression)});
   SmallVector<Operation *> children = getChildren(expression);
   if (children.empty())
     return std::optional<RandomConstraintPath>{};
@@ -137,12 +137,11 @@ getRandomConstraintPath(Operation *expression,
   if (failed(base) || !*base)
     return base;
   auto evaluationError = [&]() {
-    expression->setAttr(randomEvaluationErrorAttrName,
-                        UnitAttr::get(expression->getContext()));
+    sim::mark<sim::metadata::RandomEvaluationError>(expression);
     (**base).precise = false;
     return base;
   };
-  if (children.front()->hasAttr(randomEvaluationErrorAttrName))
+  if (sim::has<sim::metadata::RandomEvaluationError>(children.front()))
     return evaluationError();
   if (!(**base).precise)
     return base;
@@ -194,8 +193,7 @@ getRandomConstraintPath(Operation *expression,
       if (!parsed->unknown.isZero() ||
           (signedIndex ? !parsed->value.isSignedIntN(64)
                        : parsed->value.getActiveBits() > 63)) {
-        expression->setAttr(randomEvaluationErrorAttrName,
-                            UnitAttr::get(expression->getContext()));
+        sim::mark<sim::metadata::RandomEvaluationError>(expression);
         return std::optional<int64_t>{};
       }
       return std::optional<int64_t>(
@@ -353,9 +351,9 @@ LogicalResult freezeRandomConstraintPriorityInputs(
       inputs |= *childInputs;
     }
     if (function && !function.getIsSystemCall())
-      expression->setAttr(randomGuardInputsAttrName,
-                          builder.getIntegerAttr(
-                              builder.getIntegerType(orderingWidth), inputs));
+      sim::set<sim::metadata::RandomGuardInputs>(
+          expression, builder.getIntegerAttr(
+                          builder.getIntegerType(orderingWidth), inputs));
     return inputs;
   };
   if (failed(guardInputs(root)))
@@ -453,17 +451,16 @@ LogicalResult freezeRandomConstraintPriorityInputs(
           collectReferences(parts.front(), false);
       }
     }
-    expression->setAttr(
-        randomPriorityInputsAttrName,
+    sim::set<sim::metadata::RandomPriorityInputs>(
+        expression,
         builder.getIntegerAttr(builder.getIntegerType(orderingWidth),
                                referencedInputs));
     APInt argumentInputs = APInt::getZero(orderingWidth);
     for (const APInt &argument : arguments)
       argumentInputs |= argument;
-    expression->setAttr(
-        randomPriorityArgumentsAttrName,
-        builder.getIntegerAttr(builder.getIntegerType(orderingWidth),
-                               argumentInputs));
+    sim::set<sim::metadata::RandomPriorityArguments>(
+        expression, builder.getIntegerAttr(
+                        builder.getIntegerType(orderingWidth), argumentInputs));
     functionArgumentsPresent |= !argumentInputs.isZero();
     bool hasArgumentPath = impreciseArguments || !arguments.empty();
     bool hasNonArgumentPath = impreciseNonArguments || !nonArguments.empty();
@@ -490,7 +487,8 @@ LogicalResult freezeRandomConstraintPriorityInputs(
       encoded.push_back(
           builder.getIntegerAttr(builder.getIntegerType(orderingWidth), after));
     }
-    root->setAttr(randomFunctionOrderAttrName, builder.getArrayAttr(encoded));
+    sim::set<sim::metadata::RandomFunctionOrder>(root,
+                                                 builder.getArrayAttr(encoded));
   }
   return failure(invalid);
 }
@@ -647,7 +645,8 @@ private:
     if (type)
       state.addAttribute("semantic_type", type);
     state.addAttribute("node_id", source->getAttr("node_id"));
-    state.addAttribute(randomFunctionExpressionAttrName, builder.getUnitAttr());
+    state.addAttribute(sim::metadata::RandomFunctionExpression::getNameStr(),
+                       builder.getUnitAttr());
     state.addAttributes(attributes);
     auto *region = state.addRegion();
     region->push_back(new Block());
@@ -680,8 +679,8 @@ private:
     return make(source, semantic::SVConversionExpressionOp::getOperationName(),
                 resultType,
                 {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true)),
-                 builder.getNamedAttr(randomEvaluationInputsAttrName,
-                                      builder.getI64IntegerAttr(1))},
+                 sim::named<sim::metadata::RandomEvaluationInputs>(
+                     builder.getI64IntegerAttr(1))},
                 {value, result});
   }
 
@@ -709,8 +708,8 @@ private:
     return make(
         source, semantic::SVConditionalExpressionOp::getOperationName(),
         resultType,
-        {builder.getNamedAttr(randomFunctionConditionalAttrName,
-                              builder.getUnitAttr()),
+        {sim::named<sim::metadata::RandomFunctionConditional>(
+             builder.getUnitAttr()),
          builder.getNamedAttr("condition_count", builder.getI64IntegerAttr(1)),
          builder.getNamedAttr("condition_pattern_flags",
                               builder.getDenseI64ArrayAttr({0})),
@@ -933,7 +932,7 @@ private:
                    ? FailureOr<Operation *>(value)
                    : FailureOr<Operation *>(failure());
     Operation *cloned = source->cloneWithoutRegions();
-    cloned->setAttr(randomFunctionExpressionAttrName, builder.getUnitAttr());
+    sim::mark<sim::metadata::RandomFunctionExpression>(cloned);
     for (auto [sourceRegion, clonedRegion] :
          llvm::zip_equal(source->getRegions(), cloned->getRegions())) {
       for (Block &block : sourceRegion) {
@@ -1332,18 +1331,18 @@ private:
                          {builder.getNamedAttr("item_count",
                                                builder.getI64IntegerAttr(1))},
                          {*selector, labels[labelIndex]})
-                  : make(statement,
-                         semantic::SVBinaryExpressionOp::getOperationName(),
-                         predicateType,
-                         {builder.getNamedAttr(
-                              "operator_kind",
-                              builder.getI32IntegerAttr(static_cast<int32_t>(
-                                  semantic::SVBinaryOperator::CaseEquality))),
-                          builder.getNamedAttr(
-                              randomFunctionCaseConditionAttrName,
-                              builder.getI32IntegerAttr(static_cast<int32_t>(
-                                  caseStatement.getConditionKind())))},
-                         {*selector, labels[labelIndex]});
+                  : make(
+                        statement,
+                        semantic::SVBinaryExpressionOp::getOperationName(),
+                        predicateType,
+                        {builder.getNamedAttr(
+                             "operator_kind",
+                             builder.getI32IntegerAttr(static_cast<int32_t>(
+                                 semantic::SVBinaryOperator::CaseEquality))),
+                         sim::named<sim::metadata::RandomFunctionCaseCondition>(
+                             builder.getI32IntegerAttr(static_cast<int32_t>(
+                                 caseStatement.getConditionKind())))},
+                        {*selector, labels[labelIndex]});
           selection = branch(statement, matches, *result, selection);
         }
       }
@@ -1683,7 +1682,7 @@ LogicalResult expandRandomConstraintFunctions(
         state.addAttribute("semantic_type", source->getAttr("semantic_type"));
         state.addAttribute("node_id", source->getAttr("node_id"));
         state.addAttribute("is_implicit", builder.getBoolAttr(true));
-        state.addAttribute(randomEvaluationInputsAttrName,
+        state.addAttribute(sim::metadata::RandomEvaluationInputs::getNameStr(),
                            builder.getI64IntegerAttr(argumentCount));
         auto *region = state.addRegion();
         region->push_back(new Block());
@@ -1701,14 +1700,13 @@ LogicalResult expandRandomConstraintFunctions(
         }
       }
       if (succeeded(cloned))
-        if (auto inputs =
-                source->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName)) {
+        if (auto inputs = sim::get<sim::metadata::RandomGuardInputs>(source)) {
           APInt mask = inputs.getValue();
-          if (auto existing = (*cloned)->getAttrOfType<IntegerAttr>(
-                  randomGuardInputsAttrName))
+          if (auto existing =
+                  sim::get<sim::metadata::RandomGuardInputs>((*cloned)))
             mask |= existing.getValue().zextOrTrunc(mask.getBitWidth());
-          (*cloned)->setAttr(randomGuardInputsAttrName,
-                             builder.getIntegerAttr(inputs.getType(), mask));
+          sim::set<sim::metadata::RandomGuardInputs>(
+              (*cloned), builder.getIntegerAttr(inputs.getType(), mask));
         }
       return cloned;
     }
@@ -1720,12 +1718,12 @@ LogicalResult expandRandomConstraintFunctions(
       return failure();
     }
     if (functionBody) {
-      cloned->setAttr(randomFunctionExpressionAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::RandomFunctionExpression>(cloned);
       if (auto reference =
               source->getAttrOfType<SymbolRefAttr>("referenced_symbol")) {
         auto symbol = semanticSymbols.find(reference.getLeafReference());
         if (symbol != semanticSymbols.end())
-          cloned->setAttr(randomFunctionStateAttrName, builder.getUnitAttr());
+          sim::mark<sim::metadata::RandomFunctionState>(cloned);
       }
     }
     for (auto [sourceRegion, clonedRegion] :

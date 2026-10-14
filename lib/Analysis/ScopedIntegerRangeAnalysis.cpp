@@ -193,7 +193,7 @@ ScopedIntegerRangeAnalysis::getRange(Value value,
         function && argument.getOwner()->isEntryBlock())
       result = decodeIntegerRange(
           function.getArgAttr(argument.getArgNumber(),
-                              sim::IntegerRange::getNameStr()),
+                              sim::metadata::IntegerRange::getNameStr()),
           width);
   if (auto range = getIntegerResultRange(value))
     result = result ? result->intersection(*range) : *range;

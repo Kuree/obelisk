@@ -311,8 +311,7 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
     : function(function), loweringInputs(loweringInputs),
       builder(function.getContext()), current(&function.getBody().front()) {
   builder.setInsertionPointToStart(current);
-  if (auto argument =
-          function->getAttrOfType<IntegerAttr>(sim::metadata::thisArgument)) {
+  if (auto argument = sim::get<sim::metadata::ThisArgument>(function)) {
     uint64_t index = argument.getValue().getZExtValue();
     if (index < function.getNumArguments())
       thisObject = function.getBody().front().getArgument(index);
@@ -320,17 +319,15 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
       invalidBindings = true;
   }
   if (function.getEntryKind() == sim::EntryKind::Task)
-    if (auto targetID = function->getAttrOfType<IntegerAttr>(
-            "simulation.control_target_id"))
+    if (auto targetID = sim::get<sim::metadata::ControlTargetId>(function))
       taskControlActivation =
           sim::SimControlEnterOp::create(builder, function.getLoc(), targetID);
   // The return variable is an activation-local binding for an automatic
   // function and a captured descriptor for a static one, so the unit names it
   // rather than leaving the binding walk below to discover it.
-  if (auto path = function->getAttrOfType<StringAttr>(
-          sim::metadata::returnVariablePath))
+  if (auto path = sim::get<sim::metadata::ReturnVariablePath>(function))
     returnPath = path.getValue().str();
-  auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  auto bindings = sim::get<sim::metadata::Bindings>(function);
   if (auto inherited = function->getAttrOfType<ArrayAttr>("inherited_controls"))
     for (Attribute attribute : inherited) {
       auto entry = dyn_cast<DictionaryAttr>(attribute);
@@ -396,7 +393,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
       }
       if (argument.getKind() == sim::UnitArgumentKind::LValueOnly) {
         if (auto bank = function.getArgAttrOfType<IntegerAttr>(
-                argument.getArgument(), "simulation.strength_driver_bank")) {
+                argument.getArgument(),
+                sim::metadata::StrengthDriverBank::getNameStr())) {
           if (bank.getValue().isNegative() ||
               bank.getValue().getActiveBits() > 1 ||
               !isa<sim::DriverType>(value.getType())) {
@@ -439,7 +437,8 @@ UnitLowering::UnitLowering(sim::SimFuncOp function,
       }
       values[path] = value;
       if (auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-              argument.getArgument(), sim::metadata::descriptorId))
+              argument.getArgument(),
+              sim::metadata::DescriptorId::getNameStr()))
         descriptorIDs[path] = descriptor.getValue().getZExtValue();
       if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
               sim::DriverType>(value.getType()))
@@ -540,8 +539,8 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
       if (identity && parent) {
         auto parentScope = interfaceScopes.find(*parent);
         if (parentScope != interfaceScopes.end()) {
-          auto member = scope->getAttrOfType<StringAttr>(
-              virtualInterfaceParentMemberAttrName);
+          auto member =
+              sim::get<sim::metadata::VirtualInterfaceParentMember>(scope);
           if (member) {
             std::string key = (Twine(memberKey(parentScope->second.getValue(),
                                                member.getValue())) +
@@ -552,8 +551,7 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
           }
         }
       }
-      auto events = scope->getAttrOfType<ArrayAttr>(
-          virtualInterfaceClockEventMembersAttrName);
+      auto events = sim::get<sim::metadata::VirtualInterfaceClockEvents>(scope);
       if (!identity || !events)
         continue;
       for (Attribute attribute : events) {
@@ -571,8 +569,8 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {
       virtualInterfaceStorageTypes[storage.getId()] = storage.getType();
       auto scope = interfaceScopes.find(storage.getScopeId());
-      StringAttr member = storage->getAttrOfType<StringAttr>(
-          "simulation.virtual_interface_member");
+      StringAttr member =
+          sim::get<sim::metadata::VirtualInterfaceMember>(storage);
       if (scope != interfaceScopes.end() && member)
         virtualInterfaceStorageMembers[memberKey(scope->second.getValue(),
                                                  member.getValue())]
@@ -582,8 +580,7 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
     if (auto net = dyn_cast<sim::SimNetDeclOp>(operation)) {
       virtualInterfaceNetTypes[net.getId()] = net.getType();
       auto scope = interfaceScopes.find(net.getScopeId());
-      StringAttr member = net->getAttrOfType<StringAttr>(
-          "simulation.virtual_interface_member");
+      StringAttr member = sim::get<sim::metadata::VirtualInterfaceMember>(net);
       if (scope != interfaceScopes.end() && member)
         virtualInterfaceNetMembers[memberKey(scope->second.getValue(),
                                              member.getValue())]
@@ -592,10 +589,10 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
     }
     if (auto driver = dyn_cast<sim::SimDriverDeclOp>(operation)) {
       auto scope = interfaceScopes.find(driver.getScopeId());
-      StringAttr member = driver->getAttrOfType<StringAttr>(
-          "simulation.virtual_interface_member");
-      StringAttr output = driver->getAttrOfType<StringAttr>(
-          "simulation.virtual_interface_clocking_output");
+      StringAttr member =
+          sim::get<sim::metadata::VirtualInterfaceMember>(driver);
+      StringAttr output =
+          sim::get<sim::metadata::VirtualInterfaceClockingOutput>(driver);
       if (scope != interfaceScopes.end() && member && output) {
         std::string key =
             (Twine(memberKey(scope->second.getValue(), member.getValue())) +
@@ -1086,14 +1083,11 @@ FailureOr<Value> UnitLowering::bindObserver(
     Operation *expression, ValueRange dynamicDependencies,
     bool includeStaticDependencies, const llvm::StringMap<Value> *overrides) {
   Location location = getSemanticLocation(expression);
-  auto evaluator =
-      expression->getAttrOfType<FlatSymbolRefAttr>("simulation.observer");
-  auto capturePaths =
-      expression->getAttrOfType<ArrayAttr>(observerCapturesAttrName);
+  auto evaluator = sim::get<sim::metadata::Observer>(expression);
+  auto capturePaths = sim::get<sim::metadata::ObserverCaptures>(expression);
   auto dependencyPaths =
-      expression->getAttrOfType<ArrayAttr>(observerDependenciesAttrName);
-  auto resultKind =
-      expression->getAttrOfType<IntegerAttr>(observerResultAttrName);
+      sim::get<sim::metadata::ObserverDependencies>(expression);
+  auto resultKind = sim::get<sim::metadata::ObserverResult>(expression);
   if (!evaluator || !capturePaths || !dependencyPaths || !resultKind) {
     emitError(location) << "computed timing expression has no observer binding";
     return failure();
@@ -1158,8 +1152,8 @@ FailureOr<Value> UnitLowering::bindObserver(
   if (*parsedResult == ObserverResult::Truth ||
       *parsedResult == ObserverResult::Event) {
     resultType = builder.getI1Type();
-  } else if (auto coerced = expression->getAttrOfType<TypeAttr>(
-                 observerCoercedTypeAttrName)) {
+  } else if (auto coerced =
+                 sim::get<sim::metadata::ObserverCoercedType>(expression)) {
     resultType = coerced.getValue();
   } else {
     FailureOr<Type> normalized = getNormalizedSemanticType(expression);
@@ -2242,10 +2236,9 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
                    sim::UnpackedUnionType>(fieldType))
         formatted = formatUnpackedAggregatePattern(member, location);
       else {
-        auto timeMultiplier =
-            function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-        StringAttr lexicalScope = function->getAttrOfType<StringAttr>(
-            sim::metadata::hierarchicalName);
+        auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+        StringAttr lexicalScope =
+            sim::get<sim::metadata::HierarchicalName>(function);
         if (!timeMultiplier || !lexicalScope)
           return failure();
         Value item = member;
@@ -2442,9 +2435,9 @@ UnitLowering::emitFunctionReturn(Location location,
 
   TypeRange resultTypes = function.getFunctionType().getResults();
   bool hasPrimaryResult =
-      !function->hasAttr("simulation.constructor") &&
-      !function->hasAttr("simulation.static_initializer") &&
-      !function->hasAttr("simulation.void_function");
+      !sim::has<sim::metadata::Constructor>(function) &&
+      !sim::has<sim::metadata::StaticInitializer>(function) &&
+      !sim::has<sim::metadata::VoidFunction>(function);
   if (!hasPrimaryResult && explicitResult) {
     emitError(location) << "constructor or initializer cannot return a value";
     return failure();
@@ -2564,10 +2557,8 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
       builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
   Value item =
       sim::SimBytesConstantOp::create(builder, location, message).getResult();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-  StringAttr scope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+  StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
   sim::SimDisplayOp::create(builder, location, context, descriptor,
                             ValueRange{item}, true, sim::Radix::Decimal,
                             builder.getDenseI32ArrayAttr({0}), scope,
@@ -2613,10 +2604,8 @@ void UnitLowering::emitRuntimeWarning(Location location, StringRef detail) {
       builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
   Value item =
       sim::SimBytesConstantOp::create(builder, location, message).getResult();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-  StringAttr scope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+  StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
   sim::SimDisplayOp::create(builder, location, context, descriptor,
                             ValueRange{item}, true, sim::Radix::Decimal,
                             builder.getDenseI32ArrayAttr({0}), scope,
@@ -2681,13 +2670,12 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (!lvalue) {
     if (Value captured = expressionCaptures.lookup(op))
       return captured;
-    if (op->hasAttr(randomArithmeticOperandAttr)) {
+    if (sim::has<sim::metadata::RandomArithmeticOperand>(op)) {
       emitError(op->getLoc())
           << "random arithmetic formal operand was not bound before lowering";
       return failure();
     }
-    if (auto count =
-            op->getAttrOfType<IntegerAttr>(randomEvaluationInputsAttrName)) {
+    if (auto count = sim::get<sim::metadata::RandomEvaluationInputs>(op)) {
       // Constraint creation has already evaluated the retained input
       // inventory and checked its validity. Structural proposal definitions
       // consume the expanded return value, just as the residual encoder does.
@@ -2707,7 +2695,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
                      getSemanticLocation(op));
     }
   }
-  if (auto variable = op->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+  if (auto variable = sim::get<sim::metadata::RandomVariable>(op)) {
     const APInt &indexValue = variable.getValue();
     if (lvalue || indexValue.isNegative() || indexValue.getActiveBits() > 64 ||
         indexValue.getZExtValue() >= randomizeCandidateValues.size()) {
@@ -2739,7 +2727,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         << "lvalue-reference placeholder has no resolved value";
     return failure();
   }
-  if (op->hasAttr(staticNetConstantAttrName) &&
+  if (sim::has<sim::metadata::StaticNetConstant>(op) &&
       isa<semantic::SVNamedValueExpressionOp,
           semantic::SVHierarchicalValueExpressionOp>(op)) {
     if (lvalue) {
@@ -2852,9 +2840,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       return failure();
     }
     if (isa<semantic::SVTimeLiteralOp>(op)) {
-      auto scaleAttr = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-      auto quantumAttr =
-          function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
+      auto scaleAttr = sim::get<sim::metadata::DelayScale>(function);
+      auto quantumAttr = sim::get<sim::metadata::DelayQuantum>(function);
       if (!scaleAttr || !quantumAttr) {
         function.emitError("code unit has incomplete time-literal metadata");
         return failure();
@@ -2983,7 +2970,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       if (sim::getFixedBitStreamPlan(*target))
         return convertFixedBitstreamTarget(
             *input, *target, getSemanticLocation(op),
-            op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+            sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op));
       std::optional<BitStreamTargetShape> targetShape =
           getBitStreamTargetShape(*target);
       if (targetShape && targetShape->unboundedLeaves != 0) {
@@ -2994,8 +2981,8 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         // path packed lets class-to-container and class-to-greedy casts use one
         // recursive bulk export instead of the generic per-bit queue.
         if (!sourceWidth && isa<sim::ClassHandleType>(input->getType())) {
-          IntegerAttr width = children.front()->getAttrOfType<IntegerAttr>(
-              "simulation.class_bitstream_width");
+          IntegerAttr width =
+              sim::get<sim::metadata::ClassBitstreamWidth>(children.front());
           if (width && !width.getValue().isNegative() &&
               !width.getValue().isZero() &&
               width.getValue().getActiveBits() <= 64)
@@ -3011,7 +2998,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
                   : Type(IntegerType::get(function.getContext(), *sourceWidth));
           FailureOr<Value> packed = convertExplicitBitstreamToPacked(
               *input, scalar, location,
-              op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+              sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op));
           if (failed(packed))
             return failure();
           Value width = arith::ConstantOp::create(
@@ -3060,7 +3047,7 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
         if (isa<sim::ClassHandleType>(input->getType()))
           return convertRecursiveBitstream(
               *input, *target, targetScalar, getSemanticLocation(op),
-              op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+              sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op));
         if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(
                 input->getType())) {
           if (sim::getFixedBitStreamPlan(input->getType()))
@@ -3156,8 +3143,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                            Value previousUdpInputs,
                                            Value *nextUdpInputs) {
   Location location = function.getLoc();
-  if (auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
-          "simulation.mos_topology_ids")) {
+  if (auto ids = sim::get<sim::metadata::MosTopologyIds>(function)) {
     bool complementary = name == "cmos" || name == "rcmos";
     if (ids.empty() || operations.size() != (complementary ? 4u : 3u))
       return emitError(location)
@@ -3195,8 +3181,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
           sim::SimLogicUnaryOp::create(builder, location, activeHigh.getType(),
                                        sim::UnaryKind::BitNot, activeHigh);
     }
-    auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.propagation_delays");
+    auto delays = sim::get<sim::metadata::PropagationDelays>(function);
     bool delayed =
         delays && llvm::any_of(delays.asArrayRef(),
                                [](int64_t value) { return value != 0; });
@@ -3233,8 +3218,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     if (operations.size() != 3)
       return emitError(location) << "primitive '" << name
                                  << "' requires two terminals and one control";
-    auto ids = function->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.pass_switch_ids");
+    auto ids = sim::get<sim::metadata::PassSwitchIds>(function);
     if (!ids || ids.empty())
       return emitError(location)
              << "controlled pass primitive has no frozen topology IDs";
@@ -3257,8 +3241,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
     if (name.ends_with("0"))
       activeHigh = sim::SimLogicUnaryOp::create(
           builder, location, controlType, sim::UnaryKind::BitNot, activeHigh);
-    auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.propagation_delays");
+    auto delays = sim::get<sim::metadata::PropagationDelays>(function);
     if (delays && (delays.empty() || delays.size() > 2))
       return function.emitError(
           "controlled pass-switch delay must contain one or two values");
@@ -3350,7 +3333,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
 
   Value result;
   std::optional<std::array<Value, 2>> strengthResults;
-  if (auto udp = function->getAttrOfType<DictionaryAttr>(udpMetadataAttrName)) {
+  if (auto udp = sim::get<sim::metadata::UdpMetadata>(function)) {
     auto udpName = udp.getAs<StringAttr>("name");
     auto portNames = udp.getAs<ArrayAttr>("port_names");
     auto portDirections = udp.getAs<DenseI64ArrayAttr>("port_directions");
@@ -3475,8 +3458,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       auto initialize = sim::SimDriverDriveChangedOp::create(
           builder, location, output->reference, currentState);
       if (initialDriverX)
-        initialize->setAttr("simulation.initial_driver_x",
-                            builder.getUnitAttr());
+        sim::mark<sim::metadata::InitialDriverX>(initialize);
     }
 
     Value knownTrue = arith::ConstantOp::create(
@@ -3766,7 +3748,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
                                            row.output, result);
     // This compile-time inventory is deliberately absent from the finalized
     // hot function; only the compact lookup SSA above survives downstream.
-    function->removeAttr(udpMetadataAttrName);
+    sim::remove<sim::metadata::UdpMetadata>(function);
   } else if (name == "pullup" || name == "pulldown") {
     if (!inputs.empty())
       return emitError(location)
@@ -4015,8 +3997,7 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
       }
       return true;
     };
-    auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-        "simulation.propagation_delays");
+    auto delays = sim::get<sim::metadata::PropagationDelays>(function);
     bool hasMaskedStrengthPaths =
         timingPathMaskedPlan || !timingPathMaskedPlans.empty();
     if (hasMaskedStrengthPaths) {
@@ -4412,7 +4393,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
   // point in the semantic statement sequence. Clone this deliberately mixed
   // Simulation fragment into the CFG while remapping its event and field-ref
   // SSA values, then let erasure of the semantic root discard the originals.
-  if (op->hasAttr(preparedInitializerAttrName)) {
+  if (sim::has<sim::metadata::PreparedInitializer>(op)) {
     if (!isa<sim::SimEventCreateOp, sim::SimClassFieldRefOp,
              sim::SimManagedStoreOp>(op)) {
       emitError(location) << "unsupported prepared property initializer op: "
@@ -4434,14 +4415,13 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     // No operation in this straight-line fragment refers to another operation
     // symbolically; only SSA result mappings must survive to the next item.
     preparedInitializerMapping.erase(op);
-    cloned->removeAttr(preparedInitializerAttrName);
+    sim::remove<sim::metadata::PreparedInitializer>(cloned);
     if (isa<sim::SimManagedStoreOp>(op))
       preparedInitializerMapping.clear();
     return success();
   }
 
-  if (auto path =
-          op->getAttrOfType<StringAttr>("simulation.initialize_static")) {
+  if (auto path = sim::get<sim::metadata::InitializeStatic>(op)) {
     Value destination = lvalues.lookup(path.getValue());
     auto referenceType = destination
                              ? dyn_cast<sim::RefType>(destination.getType())
@@ -4452,8 +4432,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
           << path.getValue();
       return failure();
     }
-    if (auto ordinalAttr = op->getAttrOfType<IntegerAttr>(
-            "simulation.initialize_subelement")) {
+    if (auto ordinalAttr = sim::get<sim::metadata::InitializeSubelement>(op)) {
       int64_t ordinal = ordinalAttr.getInt();
       Type aggregateType = referenceType.getElementType();
       if (ordinal < 0 || static_cast<uint64_t>(ordinal) >=
@@ -4480,10 +4459,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     if (failed(converted))
       return failure();
     sim::SimRefStoreOp::create(builder, location, *converted, destination);
-    if (auto owner = op->getAttrOfType<SymbolRefAttr>(
-            coverageTypeOptionInitializerOwnerAttrName)) {
-      auto kind = op->getAttrOfType<sim::CovergroupInstanceOptionKindAttr>(
-          coverageTypeOptionInitializerKindAttrName);
+    if (auto owner = sim::get<sim::metadata::InitializeTypeOptionOwner>(op)) {
+      auto kind = sim::get<sim::metadata::InitializeTypeOptionKind>(op);
       auto module = function->getParentOfType<ModuleOp>();
       // Semantic declarations are siblings of the isolated simulation design.
       // Resolve its qualified reference through the shared module tables.
@@ -4507,14 +4484,13 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
                                              location)))
         return failure();
     }
-    if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
-            "simulation.initialize_sample_default")) {
+    if (auto snapshotID =
+            sim::get<sim::metadata::InitializeSampleDefault>(op)) {
       Value original = lvalues.lookup(path.getValue());
       Value snapshot = sim::SimContextStorageOp::create(
           builder, location, original.getType(),
           function.getBody().front().getArgument(0), snapshotID);
-      if (auto ordinal = op->getAttrOfType<IntegerAttr>(
-              "simulation.initialize_subelement"))
+      if (auto ordinal = sim::get<sim::metadata::InitializeSubelement>(op))
         snapshot = sim::SimRefSubelementOp::create(
             builder, location, destination.getType(), snapshot,
             builder.getDenseI64ArrayAttr({ordinal.getInt()}));
@@ -4522,7 +4498,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     }
     return success();
   }
-  if (auto path = op->getAttrOfType<StringAttr>("simulation.initialize_net")) {
+  if (auto path = sim::get<sim::metadata::InitializeNet>(op)) {
     Value destination = lvalues.lookup(path.getValue());
     auto driverType = destination
                           ? dyn_cast<sim::DriverType>(destination.getType())
@@ -4542,8 +4518,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     return writeCapturedLValue(captured, *value, isSignedNode(op), false,
                                location);
   }
-  if (auto field = op->getAttrOfType<FlatSymbolRefAttr>(
-          "simulation.initialize_field")) {
+  if (auto field = sim::get<sim::metadata::InitializeField>(op)) {
     if (!thisObject) {
       emitError(location) << "class property initializer has no this object";
       return failure();
@@ -4778,7 +4753,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     // reevaluation is driven by its exact static dependencies rather than by
     // scheduler polling. A dependency-free expression needs only the immediate
     // publication below.
-    if (!rhs->hasAttr("simulation.observer")) {
+    if (!sim::has<sim::metadata::Observer>(rhs)) {
       FailureOr<SmallVector<Value>> parts =
           splitOverrideValue(builder, *converted);
       if (failed(parts))
@@ -4801,7 +4776,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     if (!binding.getDependencies().empty()) {
       auto nodeID = override->getAttrOfType<IntegerAttr>("node_id");
       auto parentHierarchy =
-          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+          sim::get<sim::metadata::HierarchicalName>(function);
       if (!nodeID || !parentHierarchy)
         return emitError(location)
                    << "dynamic override has no stable source identity",
@@ -4854,8 +4829,8 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
           outlineBuilder.getNamedAttr("home_region",
                                       function.getHomeRegionAttr()),
           outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
-          outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                      outlineBuilder.getStringAttr(identity))};
+          sim::named<sim::metadata::HierarchicalName>(
+              outlineBuilder.getStringAttr(identity))};
       sim::SimFuncOp evaluator = sim::SimFuncOp::create(
           outlineBuilder, location, identity,
           FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Fork,
@@ -4941,7 +4916,7 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
             updateBuilder, location, localDependencies,
             updateBuilder.getDenseI32ArrayAttr(dependencyEdges),
             schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, update);
-      evaluator->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+      sim::mark<sim::metadata::Lowered>(evaluator);
 
       SmallVector<Value> spawnOperands{
           function.getBody().front().getArgument(0)};
@@ -5251,8 +5226,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   for (Operation *root : roots)
     root->walk([&](semantic::SVBlockStatementOp block) {
       auto path = block.getBlockPathAttr();
-      auto targetID =
-          block->getAttrOfType<IntegerAttr>("simulation.control_target_id");
+      auto targetID = sim::get<sim::metadata::ControlTargetId>(block);
       SmallVector<Operation *> contents = getChildren(block);
       if (path && targetID && contents.size() == 1 &&
           isa<semantic::SVImmediateAssertionStatementOp>(contents.front()))
@@ -5262,18 +5236,19 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   setCurrent(&function.getBody().front());
   // Preparation materializes an implicit base-constructor call ahead of the
   // derived constructor's roots. Like any call it may latch termination.
-  if (function->hasAttr("simulation.constructor") &&
-      llvm::any_of(function.getBody().front(), [](Operation &op) {
-        return isa<sim::SimCallOp, sim::SimClassDirectCallOp>(op);
-      }) &&
+  if (sim::has<sim::metadata::Constructor>(function) &&
+      llvm::any_of(function.getBody().front(),
+                   [](Operation &op) {
+                     return isa<sim::SimCallOp, sim::SimClassDirectCallOp>(op);
+                   }) &&
       failed(emitTerminationPoll(function.getLoc())))
     return failure();
   auto functionCoveragePoint = cov::get<cov::LinePointIndex>(function);
-  if (function->hasAttr("simulation.timing_check_coordinator"))
+  if (sim::has<sim::metadata::TimingCheckCoordinator>(function))
     return lowerSystemTimingCheck(roots);
-  if (function->hasAttr(sequenceEndpointMonitorAttrName))
+  if (sim::has<sim::metadata::SequenceEndpointMonitor>(function))
     return lowerSequenceEndpointMonitor(roots);
-  if (function->hasAttr(clockingEventMonitorAttrName))
+  if (sim::has<sim::metadata::ClockingEventMonitor>(function))
     return lowerClockingEventMonitor(roots);
   sim::EntryKind entryKind = function.getEntryKind();
   auto blockEventTargetID = cov::get<cov::BlockEventTargetId>(function);
@@ -5316,9 +5291,10 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     // Preponed plane once per time slot. Lower its observer evaluator with the
     // same sampled reads as a clocked assertion predicate; its private event
     // dependency controls when that evaluator is invoked.
-    sampleAssertionValues = roots.front()->hasAttr(sampledObserverAttrName);
-    if (auto monitorRules = function->getAttrOfType<ArrayAttr>(
-            "simulation.timing_path_monitor_rules")) {
+    sampleAssertionValues =
+        sim::has<sim::metadata::SampledObserver>(roots.front());
+    if (auto monitorRules =
+            sim::get<sim::metadata::TimingPathMonitorRules>(function)) {
       struct MonitorSource {
         Value input;
         Value snapshot;
@@ -5625,8 +5601,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     FailureOr<Value> result = lowerExpression(roots.front());
     if (failed(result))
       return failure();
-    auto resultKind =
-        function->getAttrOfType<IntegerAttr>(observerResultAttrName);
+    auto resultKind = sim::get<sim::metadata::ObserverResult>(function);
     if (!resultKind) {
       function.emitError("observer entry has no result-kind metadata");
       return failure();
@@ -5689,8 +5664,8 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
         if (failed(result))
           return failure();
       }
-    } else if (auto coerced = roots.front()->getAttrOfType<TypeAttr>(
-                   observerCoercedTypeAttrName)) {
+    } else if (auto coerced = sim::get<sim::metadata::ObserverCoercedType>(
+                   roots.front())) {
       if (isa<sim::ClassHandleType>((*result).getType()) &&
           coerced.getValue() == builder.getI64Type())
         result = sim::SimClassIdOp::create(builder, function.getLoc(),
@@ -5768,8 +5743,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     FailureOr<Value> scalar = toPackedScalar(current, function.getLoc());
     return succeeded(scalar) ? *scalar : Value{};
   };
-  if (auto rules =
-          function->getAttrOfType<ArrayAttr>("simulation.timing_path_rules")) {
+  if (auto rules = sim::get<sim::metadata::TimingPathRules>(function)) {
     bool proceduralActor = entryKind == sim::EntryKind::Always ||
                            entryKind == sim::EntryKind::AlwaysComb ||
                            entryKind == sim::EntryKind::AlwaysFF ||
@@ -6069,7 +6043,7 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   Value previousUdpInputs;
   if (loopsForever) {
     loopHeader = addBlock();
-    auto udp = function->getAttrOfType<DictionaryAttr>(udpMetadataAttrName);
+    auto udp = sim::get<sim::metadata::UdpMetadata>(function);
     auto sequentialUdp =
         udp ? udp.getAs<BoolAttr>("is_sequential") : BoolAttr{};
     if (sequentialUdp && sequentialUdp.getValue()) {
@@ -6949,7 +6923,7 @@ class ObeliskSimLowerUnitPass
 public:
   void runOnOperation() override {
     sim::SimFuncOp function = getOperation();
-    if (function->hasAttr(sim::metadata::lowered))
+    if (sim::has<sim::metadata::Lowered>(function))
       return;
     if (function.getEntryKind() == sim::EntryKind::RootInitializer)
       return;
@@ -6982,7 +6956,7 @@ public:
       if (isa<sim::SimReturnOp>(op))
         op.erase();
     for (Operation &op : llvm::make_early_inc_range(entry))
-      if (op.hasAttr(placeholderAttrName))
+      if (sim::has<sim::metadata::Placeholder>(&op))
         op.erase();
 
     simlowering::UnitLowering lowering(function, inputs->get());
@@ -6992,8 +6966,7 @@ public:
     if (failed(result))
       signalPassFailure();
     else
-      function->setAttr(sim::metadata::lowered,
-                        UnitAttr::get(function.getContext()));
+      sim::mark<sim::metadata::Lowered>(function);
   }
 };
 

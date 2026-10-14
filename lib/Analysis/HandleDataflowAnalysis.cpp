@@ -373,15 +373,16 @@ private:
     auto width = sim::getProvenanceSpan(argument.getType());
     if (resource == schedule::ComputeResourceKind::Unknown || !width ||
         (isa<sim::DriverType>(argument.getType()) &&
-         function.getArgAttr(index, "simulation.user_net_driver")))
+         function.getArgAttr(index,
+                             sim::metadata::UserNetDriver::getNameStr())))
       return propagateIfChanged(lattice, lattice->join(value));
     value.target = {resource, {}, {}, 0, *width, *width};
     auto rootType = function.getArgAttrOfType<TypeAttr>(
-        index, sim::metadata::descriptorRootType);
+        index, sim::metadata::DescriptorRootType::getNameStr());
     if (rootType) {
       auto root = sim::getProvenanceSpan(rootType.getValue());
       auto low = function.getArgAttrOfType<IntegerAttr>(
-          index, sim::metadata::descriptorLow);
+          index, sim::metadata::DescriptorLow::getNameStr());
       if (!root || !low || low.getValue().isNegative() ||
           low.getValue().getActiveBits() > 64 || low.getUInt() > *root ||
           *width > *root - low.getUInt())
@@ -391,9 +392,9 @@ private:
       value.target.rootWidth = *root;
     }
     auto capture = function.getArgAttrOfType<sim::CaptureKindAttr>(
-        index, sim::metadata::captureKind);
+        index, sim::metadata::CaptureKind::getNameStr());
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-        index, sim::metadata::descriptorId);
+        index, sim::metadata::DescriptorId::getNameStr());
     bool observer = function.getEntryKind() == sim::EntryKind::Observer &&
                     index != 0 && capture &&
                     capture.getValue() == sim::CaptureKind::Value;

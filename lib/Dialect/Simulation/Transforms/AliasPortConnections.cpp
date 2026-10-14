@@ -68,20 +68,25 @@ struct ResolvedView {
 };
 
 bool hasViewAttributes(sim::SimFuncOp function, unsigned index) {
-  return function.getArgAttr(index, sim::metadata::descriptorRootType) ||
-         function.getArgAttr(index, sim::metadata::descriptorLow) ||
-         function.getArgAttr(index, sim::metadata::descriptorIndices) ||
-         function.getArgAttr(index, sim::metadata::descriptorAggregateType) ||
-         function.getArgAttr(index, sim::metadata::descriptorPackedLow);
+  return function.getArgAttr(index,
+                             sim::metadata::DescriptorRootType::getNameStr()) ||
+         function.getArgAttr(index,
+                             sim::metadata::DescriptorLow::getNameStr()) ||
+         function.getArgAttr(index,
+                             sim::metadata::DescriptorIndices::getNameStr()) ||
+         function.getArgAttr(
+             index, sim::metadata::DescriptorAggregateType::getNameStr()) ||
+         function.getArgAttr(index,
+                             sim::metadata::DescriptorPackedLow::getNameStr());
 }
 
 /// Descriptor of a plain whole-storage capture, or nullopt.
 std::optional<uint64_t> plainStorageCapture(sim::SimFuncOp function,
                                             unsigned index) {
-  auto kind =
-      function.getArgAttrOfType<IntegerAttr>(index, sim::metadata::captureKind);
+  auto kind = function.getArgAttrOfType<IntegerAttr>(
+      index, sim::metadata::CaptureKind::getNameStr());
   auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-      index, sim::metadata::descriptorId);
+      index, sim::metadata::DescriptorId::getNameStr());
   if (!kind || kind.getInt() != int32_t(sim::CaptureKind::Storage) ||
       !descriptor || descriptor.getValue().isNegative() ||
       descriptor.getValue().getActiveBits() > 64 ||
@@ -399,9 +404,9 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
   for (auto function : designBlock.getOps<sim::SimFuncOp>())
     for (unsigned index = 0; index < function.getNumArguments(); ++index) {
       auto kind = function.getArgAttrOfType<IntegerAttr>(
-          index, sim::metadata::captureKind);
+          index, sim::metadata::CaptureKind::getNameStr());
       auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-          index, sim::metadata::descriptorId);
+          index, sim::metadata::DescriptorId::getNameStr());
       if (kind && kind.getInt() == int32_t(sim::CaptureKind::Storage) &&
           descriptor &&
           (hasViewAttributes(function, index) || function.isExternal()))
@@ -530,9 +535,9 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
           if (callee && !callee.isExternal() &&
               index < callee.getNumArguments()) {
             auto descriptor = callee.getArgAttrOfType<IntegerAttr>(
-                index, sim::metadata::descriptorId);
+                index, sim::metadata::DescriptorId::getNameStr());
             auto kind = callee.getArgAttrOfType<IntegerAttr>(
-                index, sim::metadata::captureKind);
+                index, sim::metadata::CaptureKind::getNameStr());
             if (kind && kind.getInt() == int32_t(sim::CaptureKind::Storage) &&
                 descriptor && descriptor.getUInt() == *span.descriptor)
               continue;
@@ -818,7 +823,7 @@ void ObeliskSimAliasPortConnectionsPass::runOnOperation() {
     OpBuilder builder = OpBuilder::atBlockBegin(&entry);
     for (auto [index, descriptor] : arguments) {
       const ResolvedView &view = resolved.find(descriptor)->second;
-      function.setArgAttr(index, sim::metadata::descriptorId,
+      function.setArgAttr(index, sim::metadata::DescriptorId::getNameStr(),
                           builder.getI64IntegerAttr(view.root));
       if (view.path.empty())
         continue;

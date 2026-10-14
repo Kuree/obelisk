@@ -52,7 +52,7 @@ IntegerAttr UnitLowering::designTimePrecisionExponent() {
 }
 
 FailureOr<Value> UnitLowering::currentTimeInUnits(Location location) {
-  auto scale = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  auto scale = sim::get<sim::metadata::DelayScale>(function);
   if (!scale || !scale.getValue().isStrictlyPositive()) {
     function.emitError("code unit has no valid frozen time scale");
     return failure();
@@ -88,8 +88,7 @@ LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
   if (isConstant && folded.isZero())
     return success();
 
-  StringAttr lexicalScope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  StringAttr lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
   if (!lexicalScope) {
     function.emitError("code unit has no lexical scope");
     return failure();
@@ -117,8 +116,7 @@ LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
   FailureOr<Value> time = currentTimeInUnits(location);
   if (failed(time))
     return failure();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
 
   std::string file = "<unknown>";
   unsigned line = 0;
@@ -157,10 +155,8 @@ FailureOr<Value>
 UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
   if (!isUnpackedAggregateType(value.getType()))
     return failure();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-  StringAttr lexicalScope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+  StringAttr lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
   if (!timeMultiplier || !lexicalScope)
     return failure();
 
@@ -270,10 +266,8 @@ UnitLowering::formatUnpackedAggregateRaw(Value value, Location location,
   Type rootType = value.getType();
   if (!isa<sim::UnpackedStructType, sim::UnpackedUnionType>(rootType))
     return failure();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-  StringAttr lexicalScope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+  StringAttr lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
   if (!timeMultiplier || !lexicalScope)
     return failure();
 
@@ -676,10 +670,10 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.items.push_back(*pattern);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else if (auto enumValues =
-                   child->getAttrOfType<ArrayAttr>(enumFormatValuesAttrName);
+                   sim::get<sim::metadata::EnumFormatValues>(child);
                enumValues &&
                (consumingSpecifier == 'p' || consumingSpecifier == '?')) {
-      auto enumNames = child->getAttrOfType<ArrayAttr>(enumFormatNamesAttrName);
+      auto enumNames = sim::get<sim::metadata::EnumFormatNames>(child);
       FailureOr<Value> scalar =
           toPackedScalar(*value, getSemanticLocation(child));
       FailureOr<Value> name =
@@ -742,16 +736,14 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
       ArrayRef(children).drop_front(formatIndex), false, 0);
   if (failed(output))
     return failure();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
   if (!timeMultiplier) {
     function.emitError("code unit has no frozen time scale");
     return failure();
   }
   StringAttr lexicalScope = op.getSystemScopePathAttr();
   if (!lexicalScope)
-    lexicalScope =
-        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
   if (!lexicalScope) {
     op.emitError("string formatting call has no elaborated lexical scope");
     return failure();
@@ -1083,8 +1075,7 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     SmallVector<int32_t> flags;
     StringAttr lexicalScope = op.getSystemScopePathAttr();
     if (!lexicalScope)
-      lexicalScope =
-          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+      lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
     if (!lexicalScope) {
       op.emitError("display call has no elaborated lexical scope");
       return failure();
@@ -1120,15 +1111,14 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
         lowerOutputListItems(ArrayRef(children).drop_front(firstItem), true);
     if (failed(output))
       return failure();
-    if (op->hasAttr("simulation.monitor_callback")) {
-      auto complete = op->getAttrOfType<BoolAttr>(
-          "simulation.monitor_observation_complete");
+    if (sim::has<sim::metadata::MonitorCallback>(op)) {
+      auto complete = sim::get<sim::metadata::MonitorObservationComplete>(op);
       monitorObservationComplete = complete && complete.getValue();
       if (monitorObservationComplete) {
         ArrayRef<Operation *> monitored =
             ArrayRef(children).drop_front(firstItem);
         for (auto [index, child] : llvm::enumerate(monitored)) {
-          if (!child->hasAttr("simulation.observer"))
+          if (!sim::has<sim::metadata::Observer>(child))
             continue;
           Value initial = output->sourceValues[index];
           if (!initial) {
@@ -1173,8 +1163,7 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
     }
     llvm::append_range(items, output->items);
     llvm::append_range(flags, output->flags);
-    auto timeMultiplier =
-        function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
     if (!timeMultiplier) {
       function.emitError("code unit has no frozen time scale");
       return failure();

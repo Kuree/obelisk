@@ -168,7 +168,7 @@ FailureOr<EncodedSimulationDesign> Encoder::encode() {
     return failure();
   ModuleOp module = design->getParentOfType<ModuleOp>();
   bool hasClassBitstreamSource =
-      module && module->hasAttr(sim::metadata::classBitstreamSource);
+      module && sim::has<sim::metadata::ClassBitstreamSource>(module);
   if (hasClassBitstreamSource &&
       failed(analysis::materializeClassBitstreamPlan(design, dataLayout)))
     return failure();

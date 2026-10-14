@@ -458,8 +458,8 @@ public:
                                                        rewriter.getI64Type(),
                                                        operation.getId())};
     StringRef runtimeFunction = "obelisk_rt_v1_deferred_enqueue";
-    if (auto assertionID = operation->getAttrOfType<IntegerAttr>(
-            "simulation.assertion_control_target_id")) {
+    if (auto assertionID =
+            sim::get<sim::metadata::AssertionControlTargetId>(operation)) {
       runtimeFunction = "obelisk_rt_v1_deferred_enqueue_for_assertion";
       arguments.push_back(llvmConstant(rewriter, location,
                                        rewriter.getI64Type(),

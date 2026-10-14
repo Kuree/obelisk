@@ -41,9 +41,9 @@ static bool isUserNetDriver(Value value) {
     if (auto argument = dyn_cast<BlockArgument>(value)) {
       auto function =
           dyn_cast<sim::SimFuncOp>(argument.getOwner()->getParentOp());
-      return function &&
-             static_cast<bool>(function.getArgAttr(
-                 argument.getArgNumber(), "simulation.user_net_driver"));
+      return function && static_cast<bool>(function.getArgAttr(
+                             argument.getArgNumber(),
+                             sim::metadata::UserNetDriver::getNameStr()));
     }
     Operation *definition = value.getDefiningOp();
     if (auto extract = dyn_cast_or_null<sim::SimDriverExtractOp>(definition))
@@ -63,9 +63,6 @@ static bool isUserNetDriver(Value value) {
   return false;
 }
 namespace {
-
-constexpr StringLiteral continuousStoreAttrName =
-    "simulation.continuous_store";
 
 Operation *getSingleRegionRoot(Region &region) {
   if (region.empty() || region.front().empty())
@@ -97,7 +94,8 @@ bool drivesDelayedNet(sim::SimFuncOp function, Value driver) {
     }
     auto argument = dyn_cast<BlockArgument>(driver);
     return argument && static_cast<bool>(function.getArgAttrOfType<UnitAttr>(
-                           argument.getArgNumber(), "simulation.delayed_net"));
+                           argument.getArgNumber(),
+                           sim::metadata::DelayedNet::getNameStr()));
   }
   return false;
 }
@@ -135,10 +133,10 @@ bool isClassPropertySubvalue(Operation *expression) {
   // which the frontend spells as a plain reference to the property rather
   // than as a member access. The storage it names is the same.
   if (isa<semantic::SVNamedValueExpressionOp>(expression))
-    return expression->hasAttr("simulation.class_field");
+    return sim::has<sim::metadata::ClassField>(expression);
   if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
       children.size() == 1) {
-    if (expression->hasAttr("simulation.class_field"))
+    if (sim::has<sim::metadata::ClassField>(expression))
       return true;
     return isClassPropertySubvalue(children.front());
   }
@@ -452,8 +450,8 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
                 receiverType.getValue());
   }
   if (isa<semantic::SVMemberAccessExpressionOp>(destination) &&
-      !destination->hasAttr("simulation.class_field") &&
-      !destination->hasAttr(staticClassPropertyAttrName) &&
+      !sim::has<sim::metadata::ClassField>(destination) &&
+      !sim::has<sim::metadata::StaticClassProperty>(destination) &&
       !virtualInterfaceMember) {
     ArrayRef<Operation *> members = memberChildren;
     auto ordinalAttr = destination->getAttrOfType<IntegerAttr>("field_ordinal");
@@ -1322,7 +1320,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         auto store = sim::SimRefStoreOp::create(builder, location, published,
                                                 destination.reference);
         if (continuousStore)
-          store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
+          sim::mark<sim::metadata::ContinuousStore>(store);
       }
     } else if (isa<sim::ArgumentRefType>(referenceType)) {
       if (nonblocking) {
@@ -1345,8 +1343,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         return failure();
       }
       bool userRaw = isUserNetDriver(destination.reference);
-      auto delays = function->getAttrOfType<DenseI64ArrayAttr>(
-          "simulation.propagation_delays");
+      auto delays = sim::get<sim::metadata::PropagationDelays>(function);
       TimingPathMaskedPlan *maskedPlan = nullptr;
       Operation *driverNode = destination.semanticNode;
       while (
@@ -1487,8 +1484,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 builder.getBoolAttr(group.pulseControlled &&
                                     group.pulseShowCancelled));
             if (userRaw)
-              drive->setAttr("simulation.user_net_raw_drive",
-                             builder.getUnitAttr());
+              sim::mark<sim::metadata::UserNetRawDrive>(drive);
           }
           return success();
         }
@@ -1579,8 +1575,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               builder.getBoolAttr(group.pulseControlled &&
                                   group.pulseShowCancelled));
           if (userRaw)
-            drive->setAttr("simulation.user_net_raw_drive",
-                           builder.getUnitAttr());
+            sim::mark<sim::metadata::UserNetRawDrive>(drive);
         }
         return success();
       }
@@ -1635,8 +1630,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             builder.getBoolAttr(vectorDelay),
             builder.getBoolAttr(deferDriverResolution || userRaw));
         if (userRaw)
-          drive->setAttr("simulation.user_net_raw_drive",
-                         builder.getUnitAttr());
+          sim::mark<sim::metadata::UserNetRawDrive>(drive);
         return success();
       }
       if (drivesDelayedNet(function, destination.reference)) {
@@ -1644,8 +1638,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             builder, location, destination.reference, published,
             builder.getBoolAttr(deferDriverResolution || userRaw));
         if (userRaw)
-          drive->setAttr("simulation.user_net_raw_drive",
-                         builder.getUnitAttr());
+          sim::mark<sim::metadata::UserNetRawDrive>(drive);
       } else {
         auto drive = sim::SimDriverDriveOp::create(
             builder, location, destination.reference, published);
@@ -1654,8 +1647,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
               ::obelisk::schedule::Field::DeferNetResolution>(
               drive, builder.getUnitAttr());
         if (userRaw)
-          drive->setAttr("simulation.user_net_raw_drive",
-                         builder.getUnitAttr());
+          sim::mark<sim::metadata::UserNetRawDrive>(drive);
       }
     } else {
       return failure();
@@ -3240,8 +3232,8 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
           "home_region",
           sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)),
       outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
-      outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                  outlineBuilder.getStringAttr(identity))};
+      sim::named<sim::metadata::HierarchicalName>(
+          outlineBuilder.getStringAttr(identity))};
   sim::SimFuncOp driver =
       sim::SimFuncOp::create(outlineBuilder, location, identity,
                              FunctionType::get(context, inputs, TypeRange{}),
@@ -3451,7 +3443,7 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
       schedule::NBASiteAttr{},
       driveBuilder.getI64IntegerAttr(clockingOutputID));
   sim::SimReturnOp::create(driveBuilder, location, ValueRange{});
-  driver->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+  sim::mark<sim::metadata::Lowered>(driver);
   Value processContext = function.getBody().front().getArgument(0);
   SmallVector<Value> spawnInputs{processContext, target, clock, value};
   if (synchronizationPredicate)
@@ -4174,9 +4166,10 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
       metadata = captureMetadata(builder, kind);
     if (retainReference && !isStaticallyAllocatedOverrideTarget(capture)) {
       SmallVector<NamedAttribute> entries(metadata.begin(), metadata.end());
-      if (!metadata.contains("simulation.automatic_reference_capture"))
-        entries.push_back(builder.getNamedAttr(
-            "simulation.automatic_reference_capture", builder.getUnitAttr()));
+      if (!metadata.contains(
+              sim::metadata::AutomaticReferenceCapture::getNameStr()))
+        entries.push_back(sim::named<sim::metadata::AutomaticReferenceCapture>(
+            builder.getUnitAttr()));
       metadata = builder.getDictionaryAttr(entries);
     }
     argumentAttrs.push_back(metadata);
@@ -4203,8 +4196,7 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
   Operation *eventTree = repeated ? controlChildren[1] : control;
   llvm::StringSet<> referencedPaths;
   bool eventUsesThis = false;
-  ArrayAttr parentBindings =
-      function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+  ArrayAttr parentBindings = sim::get<sim::metadata::Bindings>(function);
   llvm::StringSet<> thisBindingPaths;
   if (parentBindings && thisObject)
     for (Attribute attribute : parentBindings) {
@@ -4217,31 +4209,30 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
     StringRef path;
     if (auto named = dyn_cast<semantic::SVNamedValueExpressionOp>(nested)) {
       path = named.getReferencedPath();
-      eventUsesThis |= named->hasAttr("simulation.class_field");
+      eventUsesThis |= sim::has<sim::metadata::ClassField>(named);
     } else if (auto hierarchical =
                    dyn_cast<semantic::SVHierarchicalValueExpressionOp>(nested))
       path = hierarchical.getReferencedPath();
     else if (auto member =
                  dyn_cast<semantic::SVMemberAccessExpressionOp>(nested)) {
-      if (member->hasAttr(staticClassPropertyAttrName))
+      if (sim::has<sim::metadata::StaticClassProperty>(member))
         path = member.getReferencedPath();
-      eventUsesThis |= member->hasAttr("simulation.class_field");
+      eventUsesThis |= sim::has<sim::metadata::ClassField>(member);
     }
     if (!path.empty())
       referencedPaths.insert(path);
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested);
-        call && call->hasAttr("simulation.class_instance")) {
-      auto formals = call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
-      bool superCall = call->hasAttr("simulation.class_super");
+        call && sim::has<sim::metadata::ClassInstance>(call)) {
+      auto formals = sim::get<sim::metadata::CalleeFormals>(call);
+      bool superCall = sim::has<sim::metadata::ClassSuper>(call);
       eventUsesThis |=
           superCall || (formals && getChildren(call).size() == formals.size());
     }
-    if (auto callCaptures =
-            nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
       for (Attribute capture : callCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
     if (auto observerCaptures =
-            nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+            sim::get<sim::metadata::ObserverCaptures>(nested))
       for (Attribute capture : observerCaptures) {
         StringRef path = cast<StringAttr>(capture).getValue();
         referencedPaths.insert(path);
@@ -4297,10 +4288,8 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
   for (StringRef path : lexicalPaths)
     addPathCapture(path);
 
-  auto codeUnitIDAttr = assignment->getAttrOfType<IntegerAttr>(
-      "simulation.nba_event_code_unit_id");
-  auto hierarchyAttr =
-      assignment->getAttrOfType<StringAttr>("simulation.nba_event_hierarchy");
+  auto codeUnitIDAttr = sim::get<sim::metadata::NbaEventCodeUnitId>(assignment);
+  auto hierarchyAttr = sim::get<sim::metadata::NbaEventHierarchy>(assignment);
   if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive() ||
       !hierarchyAttr)
     return emitError(location)
@@ -4325,8 +4314,8 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
       hierarchyAttr, outlineBuilder.getStringAttr("deferred NBA event"),
       outlineBuilder.getUnitAttr());
   SmallVector<NamedAttribute> attributes{
-      outlineBuilder.getNamedAttr(bindingsAttrName,
-                                  outlineBuilder.getArrayAttr(bindings)),
+      sim::named<sim::metadata::Bindings>(
+          outlineBuilder.getArrayAttr(bindings)),
       outlineBuilder.getNamedAttr("code_unit_id",
                                   outlineBuilder.getI64IntegerAttr(codeUnitID)),
       outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -4334,15 +4323,14 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
           outlineBuilder.getUnitAttr()),
       ::obelisk::schedule::named<::obelisk::schedule::Field::PrimeOnSpawn>(
           outlineBuilder.getUnitAttr()),
-      outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                  hierarchyAttr),
+      sim::named<sim::metadata::HierarchicalName>(hierarchyAttr),
   };
   if (outlinedThisArgument)
-    attributes.push_back(outlineBuilder.getNamedAttr(
-        sim::metadata::thisArgument,
+    attributes.push_back(sim::named<sim::metadata::ThisArgument>(
         outlineBuilder.getI32IntegerAttr(*outlinedThisArgument)));
   const StringRef inheritedAttributes[] = {
-      delayScaleAttrName, delayQuantumAttrName, "home_region", "domain"};
+      sim::metadata::DelayScale::getNameStr(),
+      sim::metadata::DelayQuantum::getNameStr(), "home_region", "domain"};
   for (StringRef name : inheritedAttributes)
     if (Attribute attribute = function->getAttr(name))
       attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
@@ -4395,7 +4383,7 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
       !nested.current->back().hasTrait<OpTrait::IsTerminator>())
     sim::SimReturnOp::create(nested.builder, location, ValueRange{});
   clonedControl->erase();
-  deferred->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+  sim::mark<sim::metadata::Lowered>(deferred);
 
   auto spawn = [&]() {
     sim::SimSpawnOp::create(builder, location, deferred.getSymNameAttr(),
@@ -4685,14 +4673,14 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
       auto store = sim::SimRefStoreOp::create(builder, location, *converted,
                                               destination);
       if (continuousStore)
-        store->setAttr(continuousStoreAttrName, builder.getUnitAttr());
+        sim::mark<sim::metadata::ContinuousStore>(store);
     } else if (drivesDelayedNet(function, destination)) {
       bool userRaw = isUserNetDriver(destination);
       auto drive = sim::SimDriverDriveDelayedNetOp::create(
           builder, location, destination, *converted,
           builder.getBoolAttr(userRaw));
       if (userRaw)
-        drive->setAttr("simulation.user_net_raw_drive", builder.getUnitAttr());
+        sim::mark<sim::metadata::UserNetRawDrive>(drive);
     } else {
       auto drive = sim::SimDriverDriveOp::create(builder, location, destination,
                                                  *converted);
@@ -4700,7 +4688,7 @@ UnitLowering::lowerPortConnection(semantic::SVPortConnectionOp op) {
         ::obelisk::schedule::set<
             ::obelisk::schedule::Field::DeferNetResolution>(
             drive, builder.getUnitAttr());
-        drive->setAttr("simulation.user_net_raw_drive", builder.getUnitAttr());
+        sim::mark<sim::metadata::UserNetRawDrive>(drive);
       }
     }
     return success();

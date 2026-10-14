@@ -27,7 +27,7 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     unsupported(control) << " (delay inventory)";
     return failure();
   }
-  auto scaleAttr = function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  auto scaleAttr = sim::get<sim::metadata::DelayScale>(function);
   if (!scaleAttr) {
     function.emitError("code unit has no frozen delay scale");
     return failure();
@@ -60,8 +60,7 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     return getConstantSpelling(children.front());
   }();
   if (realConstantSpelling) {
-    auto quantumAttr =
-        function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
+    auto quantumAttr = sim::get<sim::metadata::DelayQuantum>(function);
     if (!quantumAttr) {
       function.emitError("code unit has incomplete real-delay metadata");
       return failure();
@@ -125,8 +124,7 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   if (failed(amount))
     return failure();
   if (isa<FloatType>((*amount).getType())) {
-    auto quantumAttr =
-        function->getAttrOfType<IntegerAttr>(delayQuantumAttrName);
+    auto quantumAttr = sim::get<sim::metadata::DelayQuantum>(function);
     if (!quantumAttr) {
       function.emitError("code unit has no frozen delay quantum");
       return failure();
@@ -309,10 +307,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         outlineBuilder.getNamedAttr("home_region",
                                     function.getHomeRegionAttr()),
         outlineBuilder.getNamedAttr("domain", function.getDomainAttr()),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(identity)),
-        outlineBuilder.getNamedAttr(
-            observerResultAttrName,
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(identity)),
+        sim::named<sim::metadata::ObserverResult>(
             outlineBuilder.getI32IntegerAttr(
                 static_cast<uint32_t>(ObserverResult::Event))),
         ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
@@ -335,7 +332,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         evaluatorBuilder, location, evaluatorBuilder.getI1Type(),
         evaluator.getBody().front().getArgument(1));
     sim::SimReturnOp::create(evaluatorBuilder, location, ValueRange{triggered});
-    evaluator->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+    sim::mark<sim::metadata::Lowered>(evaluator);
 
     auto binding = sim::SimObserverBindOp::create(
         builder, location, sim::ObserverType::get(context, builder.getI1Type()),
@@ -810,8 +807,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
 
 LogicalResult
 UnitLowering::lowerClockingEventMonitor(ArrayRef<Operation *> roots) {
-  auto path =
-      function->getAttrOfType<StringAttr>(clockingEventMonitorPathAttrName);
+  auto path = sim::get<sim::metadata::ClockingEventMonitorPath>(function);
   if (!path || roots.size() != 1 ||
       !isa<semantic::SVSignalEventControlOp, semantic::SVEventListControlOp>(
           roots.front()))
@@ -1512,7 +1508,7 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
       isa<sim::ManagedWatchType>(stableDependencies.front().getType()) ||
       !isAddressableExpression(children[0]) ||
       !storageDecidesTruth(children[0])) {
-    if (!children[0]->hasAttr("simulation.observer")) {
+    if (!sim::has<sim::metadata::Observer>(children[0])) {
       unsupported(op) << " (computed wait condition requires an observer)";
       return failure();
     }

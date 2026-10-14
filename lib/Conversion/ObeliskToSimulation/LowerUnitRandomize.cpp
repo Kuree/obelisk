@@ -38,7 +38,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                               Value receiverOverride) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
-  if (!receiverOverride && op->hasAttr(randomizeHelperReceiverAttrName)) {
+  if (!receiverOverride &&
+      sim::has<sim::metadata::RandomizeHelperReceiver>(op)) {
     Block &entry = function.getBody().front();
     if (entry.getNumArguments() < 2 ||
         !isa<sim::ClassHandleType>(entry.getArgument(1).getType())) {
@@ -51,15 +52,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto lowerSharedHelper = [&](semantic::SVCallExpressionOp alternative,
                                Value receiver,
                                Type resultType) -> FailureOr<Value> {
-    auto helper =
-        alternative->getAttrOfType<FlatSymbolRefAttr>(randomizeHelperAttrName);
-    auto planClass = alternative->getAttrOfType<FlatSymbolRefAttr>(
-        randomizePlanClassAttrName);
+    auto helper = sim::get<sim::metadata::RandomizeHelper>(alternative);
+    auto planClass = sim::get<sim::metadata::RandomizePlanClass>(alternative);
     if (!helper || !planClass)
       return failure();
     llvm::StringSet<> readCaptures;
-    if (auto reads = alternative->getAttrOfType<ArrayAttr>(
-            randomizeHelperReadCapturesAttrName))
+    if (auto reads =
+            sim::get<sim::metadata::RandomizeHelperReadCaptures>(alternative))
       for (Attribute read : reads)
         readCaptures.insert(cast<StringAttr>(read).getValue());
     for (const auto &read : readCaptures) {
@@ -70,8 +69,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         recordSensitivity(capture);
     }
     SmallVector<Value> arguments;
-    if (auto captures = alternative->getAttrOfType<ArrayAttr>(
-            randomizeHelperCapturesAttrName))
+    if (auto captures =
+            sim::get<sim::metadata::RandomizeHelperCaptures>(alternative))
       for (Attribute captureAttr : captures) {
         StringRef path = cast<StringAttr>(captureAttr).getValue();
         Value capture = values.lookup(path);
@@ -94,17 +93,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     return invocation.getResult(0);
   };
-  if (op->hasAttr(randomizeNestedDispatchAttrName)) {
-    auto receiverIndexAttr =
-        op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
-    auto field = op->getAttrOfType<FlatSymbolRefAttr>(
-        randomizeNestedDispatchFieldAttrName);
+  if (sim::has<sim::metadata::RandomizeNestedDispatch>(op)) {
+    auto receiverIndexAttr = sim::get<sim::metadata::RandomReceiverIndex>(op);
+    auto field = sim::get<sim::metadata::RandomizeNestedDispatchField>(op);
     auto storageTypeAttr =
-        op->getAttrOfType<TypeAttr>(randomizeNestedDispatchStorageAttrName);
+        sim::get<sim::metadata::RandomizeNestedDispatchStorageType>(op);
     auto dispatchPath =
-        op->getAttrOfType<ArrayAttr>(randomizeNestedDispatchPathAttrName);
-    auto dispatchSelectionPath = op->getAttrOfType<ArrayAttr>(
-        randomizeNestedDispatchSelectionPathAttrName);
+        sim::get<sim::metadata::RandomizeNestedDispatchPath>(op);
+    auto dispatchSelectionPath =
+        sim::get<sim::metadata::RandomizeNestedDispatchSelectionPath>(op);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (!receiverIndexAttr || !field || !storageTypeAttr ||
         failed(resultType) || receiverIndexAttr.getValue().isNegative() ||
@@ -129,8 +126,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           << "nested randomize dispatch receiver is not a class object";
       return failure();
     }
-    if (auto planClass =
-            op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName)) {
+    if (auto planClass = sim::get<sim::metadata::RandomizePlanClass>(op)) {
       Type targetType =
           sim::ClassHandleType::get(function.getContext(), planClass);
       if ((*loweredReceiver).getType() != targetType)
@@ -146,8 +142,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<semantic::SVCallExpressionOp> alternatives;
     semantic::SVCallExpressionOp nullAlternative;
     auto getSelectedPlan = [&](semantic::SVCallExpressionOp alternative) {
-      if (auto selectedPlans = alternative->getAttrOfType<ArrayAttr>(
-              randomizeNestedPlansAttrName))
+      if (auto selectedPlans =
+              sim::get<sim::metadata::RandomizeNestedPlans>(alternative))
         for (Attribute selectedAttr : selectedPlans)
           if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr)) {
             if (dispatchSelectionPath) {
@@ -163,8 +159,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     for (Operation *child : children) {
       auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
       if (!alternative ||
-          (!alternative->hasAttr(randomizeAttrName) &&
-           !alternative->hasAttr(randomizeNestedDispatchAttrName)))
+          (!sim::has<sim::metadata::Randomize>(alternative) &&
+           !sim::has<sim::metadata::RandomizeNestedDispatch>(alternative)))
         continue;
       DictionaryAttr selectedPlan = getSelectedPlan(alternative);
       if (!selectedPlan)
@@ -253,7 +249,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                              nonNullBlock, ValueRange{});
     setCurrent(nullBlock);
     FailureOr<Value> nullResult =
-        nullAlternative->hasAttr(randomizeHelperAttrName)
+        sim::has<sim::metadata::RandomizeHelper>(nullAlternative)
             ? lowerSharedHelper(nullAlternative, *loweredReceiver, *resultType)
             : lowerRandomize(nullAlternative, *loweredReceiver);
     if (failed(nullResult))
@@ -278,7 +274,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                ValueRange{}, next, ValueRange{});
       setCurrent(selected);
       FailureOr<Value> result =
-          alternative->hasAttr(randomizeHelperAttrName)
+          sim::has<sim::metadata::RandomizeHelper>(alternative)
               ? lowerSharedHelper(alternative, *loweredReceiver, *resultType)
               : lowerRandomize(alternative, *loweredReceiver);
       if (failed(result))
@@ -296,9 +292,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     setCurrent(done);
     return doneResult;
   }
-  if (op->hasAttr(randomizeDispatchAttrName)) {
-    auto receiverIndexAttr =
-        op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
+  if (sim::has<sim::metadata::RandomizeDispatch>(op)) {
+    auto receiverIndexAttr = sim::get<sim::metadata::RandomReceiverIndex>(op);
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     if (!receiverIndexAttr || failed(resultType) ||
         receiverIndexAttr.getValue().isNegative() ||
@@ -322,16 +317,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     SmallVector<semantic::SVCallExpressionOp> alternatives;
     for (Operation *child : children)
       if (auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
-          alternative && alternative->hasAttr(randomizePlanClassAttrName) &&
-          (alternative->hasAttr(randomizeAttrName) ||
-           alternative->hasAttr(randomizeNestedDispatchAttrName)))
+          alternative &&
+          sim::has<sim::metadata::RandomizePlanClass>(alternative) &&
+          (sim::has<sim::metadata::Randomize>(alternative) ||
+           sim::has<sim::metadata::RandomizeNestedDispatch>(alternative)))
         alternatives.push_back(alternative);
 
     Block *done = addBlock();
     Value doneResult = done->addArgument(*resultType, location);
     for (semantic::SVCallExpressionOp alternative : alternatives) {
-      auto planClass = alternative->getAttrOfType<FlatSymbolRefAttr>(
-          randomizePlanClassAttrName);
+      auto planClass = sim::get<sim::metadata::RandomizePlanClass>(alternative);
       if (!planClass) {
         emitError(location) << "randomize alternative has no target class";
         return failure();
@@ -344,7 +339,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                                ValueRange{}, next, ValueRange{});
       setCurrent(selected);
       FailureOr<Value> result =
-          alternative->hasAttr(randomizeHelperAttrName)
+          sim::has<sim::metadata::RandomizeHelper>(alternative)
               ? lowerSharedHelper(alternative, *loweredReceiver, *resultType)
               : lowerRandomize(alternative, *loweredReceiver);
       if (failed(result))
@@ -363,25 +358,22 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return doneResult;
   }
 
-  auto properties = op->getAttrOfType<ArrayAttr>(randomPropertiesAttrName);
+  auto properties = sim::get<sim::metadata::RandomProperties>(op);
   auto containerProperties =
-      op->getAttrOfType<ArrayAttr>(randomContainerPropertiesAttrName);
+      sim::get<sim::metadata::RandomContainerProperties>(op);
   auto nestedConstraintModes =
-      op->getAttrOfType<ArrayAttr>(randomNestedConstraintModesAttrName);
-  auto nestedHooks = op->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName);
+      sim::get<sim::metadata::RandomNestedConstraintModes>(op);
+  auto nestedHooks = sim::get<sim::metadata::RandomNestedHooks>(op);
   auto recursiveAliasGuards =
-      op->getAttrOfType<ArrayAttr>(randomRecursiveAliasGuardsAttrName);
-  auto totalWidthAttr =
-      op->getAttrOfType<IntegerAttr>(randomTotalWidthAttrName);
-  auto receiverIndexAttr =
-      op->getAttrOfType<IntegerAttr>(randomReceiverIndexAttrName);
-  auto constraintCountAttr =
-      op->getAttrOfType<IntegerAttr>(randomConstraintCountAttrName);
-  auto staticConstraintStorages = op->getAttrOfType<DenseI64ArrayAttr>(
-      constraintModeStaticStoragesAttrName);
+      sim::get<sim::metadata::RandomRecursiveAliasGuards>(op);
+  auto totalWidthAttr = sim::get<sim::metadata::RandomTotalWidth>(op);
+  auto receiverIndexAttr = sim::get<sim::metadata::RandomReceiverIndex>(op);
+  auto constraintCountAttr = sim::get<sim::metadata::RandomConstraintCount>(op);
+  auto staticConstraintStorages =
+      sim::get<sim::metadata::ConstraintModeStaticStorages>(op);
   auto constraintTemplateAttr =
-      op->getAttrOfType<FlatSymbolRefAttr>(randomizeConstraintTemplateAttrName);
-  bool scopeRandomize = op->hasAttr(randomizeScopeAttrName);
+      sim::get<sim::metadata::RandomizeConstraintTemplate>(op);
+  bool scopeRandomize = sim::has<sim::metadata::RandomizeScope>(op);
   if ((!scopeRandomize && children.empty()) || !properties ||
       !containerProperties || !nestedConstraintModes || !nestedHooks ||
       !recursiveAliasGuards || !totalWidthAttr ||
@@ -413,7 +405,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
   uint64_t totalWidth = totalWidthValue.getZExtValue();
   uint64_t constraintCount = constraintCountValue.getZExtValue();
-  bool checkerOnly = op->hasAttr(randomizeCheckerOnlyAttrName);
+  bool checkerOnly = sim::has<sim::metadata::RandomizeCheckerOnly>(op);
   if (totalWidth > UINT32_MAX || constraintCount > 64 ||
       (staticConstraintStorages &&
        static_cast<uint64_t>(staticConstraintStorages.size()) !=
@@ -440,8 +432,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         receiverOverride ? FailureOr<Value>(receiverOverride)
                          : lowerExpression(children[receiverIndex]);
     if (receiverOverride) {
-      auto planClass =
-          op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
+      auto planClass = sim::get<sim::metadata::RandomizePlanClass>(op);
       if (!planClass) {
         emitError(location)
             << "randomize receiver override has no target class";
@@ -468,8 +459,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     constraintTemplate =
         lookupNearestSymbolFrom<sim::SimRandomConstraintTemplateOp>(
             function, constraintTemplateAttr);
-    auto planClass =
-        op->getAttrOfType<FlatSymbolRefAttr>(randomizePlanClassAttrName);
+    auto planClass = sim::get<sim::metadata::RandomizePlanClass>(op);
     if (!constraintTemplate || !planClass ||
         constraintTemplate.getOwnerAttr() != planClass ||
         !staticConstraintStorages) {
@@ -552,8 +542,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     return emitTerminationPoll(location);
   };
   if (failed(callLifecycleHook(
-          randomPreHookAttrName, randomPreHookOwnerAttrName,
-          randomPreHookCapturesAttrName, randomPreHookReadCapturesAttrName)))
+          sim::metadata::RandomPreHook::getNameStr(),
+          sim::metadata::RandomPreHookOwner::getNameStr(),
+          sim::metadata::RandomPreHookCaptures::getNameStr(),
+          sim::metadata::RandomPreHookReadCaptures::getNameStr())))
     return failure();
 
   struct DomainPattern {
@@ -673,16 +665,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       auto declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, concreteType.getClassName());
       while (declaration &&
-             !declaration->hasAttr("simulation.random_mode_field")) {
+             !sim::has<sim::metadata::RandomModeField>(declaration)) {
         if (!declaration.getBaseAttr())
           break;
         declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, declaration.getBaseAttr());
       }
-      auto modeField = declaration
-                           ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                 "simulation.random_mode_field")
-                           : FlatSymbolRefAttr{};
+      auto modeField =
+          declaration ? sim::get<sim::metadata::RandomModeField>(declaration)
+                      : FlatSymbolRefAttr{};
       if (!modeField) {
         emitError(location)
             << "nested random-object path has no rand_mode field";
@@ -823,7 +814,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           function, cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
                         .getClassName());
       while (nestedDeclaration &&
-             !nestedDeclaration->hasAttr("simulation.random_mode_field")) {
+             !sim::has<sim::metadata::RandomModeField>(nestedDeclaration)) {
         if (!nestedDeclaration.getBaseAttr())
           break;
         nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -831,8 +822,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       nestedModeField =
           nestedDeclaration
-              ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "simulation.random_mode_field")
+              ? sim::get<sim::metadata::RandomModeField>(nestedDeclaration)
               : FlatSymbolRefAttr{};
       if (!nestedModeField) {
         emitError(location) << "nested rand object has no rand_mode field";
@@ -885,7 +875,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         emitError(location) << "randomize array element modes are malformed";
         return failure();
       }
-      if (!op->hasAttr(randomizeExplicitPropertiesAttrName)) {
+      if (!sim::has<sim::metadata::RandomizeExplicitProperties>(op)) {
         Type bitmapType = builder.getIntegerType(layout->elementCount);
         if (elementModeField)
           elementModeReference = sim::SimClassFieldRefOp::create(
@@ -900,7 +890,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
               function.getBody().front().getArgument(0), elementModeStorage);
       }
     }
-    if (referencePath && !op->hasAttr(randomizeExplicitPropertiesAttrName) &&
+    if (referencePath &&
+        !sim::has<sim::metadata::RandomizeExplicitProperties>(op) &&
         !randomModeStorage) {
       emitError(location)
           << "ordinary static random property has no shared rand_mode state";
@@ -1221,7 +1212,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           function, cast<sim::ClassHandleType>(nestedObjectTypeAttr.getValue())
                         .getClassName());
       while (nestedDeclaration &&
-             !nestedDeclaration->hasAttr("simulation.random_mode_field")) {
+             !sim::has<sim::metadata::RandomModeField>(nestedDeclaration)) {
         if (!nestedDeclaration.getBaseAttr())
           break;
         nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1229,8 +1220,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       nestedModeField =
           nestedDeclaration
-              ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "simulation.random_mode_field")
+              ? sim::get<sim::metadata::RandomModeField>(nestedDeclaration)
               : FlatSymbolRefAttr{};
       if (!nestedModeField) {
         emitError(location) << "nested rand object has no rand_mode field";
@@ -1338,27 +1328,23 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         lookupNearestSymbolFrom<sim::SimClassDeclOp>(function,
                                                      objectType.getClassName());
     while (declaration &&
-           !declaration->hasAttr("simulation.random_state_field")) {
+           !sim::has<sim::metadata::RandomStateField>(declaration)) {
       if (!declaration.getBaseAttr())
         break;
       declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, declaration.getBaseAttr());
     }
-    auto stateField = declaration
-                          ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                "simulation.random_state_field")
-                          : FlatSymbolRefAttr{};
-    auto incrementField = declaration
-                              ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                                    "simulation.random_increment_field")
-                              : FlatSymbolRefAttr{};
+    auto stateField =
+        declaration ? sim::get<sim::metadata::RandomStateField>(declaration)
+                    : FlatSymbolRefAttr{};
+    auto incrementField =
+        declaration ? sim::get<sim::metadata::RandomIncrementField>(declaration)
+                    : FlatSymbolRefAttr{};
     auto modeField = declaration
-                         ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                               "simulation.random_mode_field")
+                         ? sim::get<sim::metadata::RandomModeField>(declaration)
                          : FlatSymbolRefAttr{};
     auto constraintModeField =
-        declaration ? declaration->getAttrOfType<FlatSymbolRefAttr>(
-                          "simulation.constraint_mode_field")
+        declaration ? sim::get<sim::metadata::ConstraintModeField>(declaration)
                     : FlatSymbolRefAttr{};
     if (!declaration || !stateField || !incrementField || !modeField ||
         !constraintModeField) {
@@ -1446,16 +1432,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto rootDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
         function, rootConcreteType.getClassName());
     while (rootDeclaration &&
-           !rootDeclaration->hasAttr("simulation.random_mode_field")) {
+           !sim::has<sim::metadata::RandomModeField>(rootDeclaration)) {
       if (!rootDeclaration.getBaseAttr())
         break;
       rootDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, rootDeclaration.getBaseAttr());
     }
     auto rootModeField =
-        rootDeclaration ? rootDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                              "simulation.random_mode_field")
-                        : FlatSymbolRefAttr{};
+        rootDeclaration
+            ? sim::get<sim::metadata::RandomModeField>(rootDeclaration)
+            : FlatSymbolRefAttr{};
     if (!rootModeField) {
       emitError(location)
           << "recursive random-object root has no rand_mode field";
@@ -1685,7 +1671,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             lookupNearestSymbolFrom<sim::SimClassDeclOp>(
                 function, currentType.getClassName());
         while (currentDeclaration &&
-               !currentDeclaration->hasAttr("simulation.random_mode_field")) {
+               !sim::has<sim::metadata::RandomModeField>(currentDeclaration)) {
           if (!currentDeclaration.getBaseAttr())
             break;
           currentDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1693,8 +1679,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
         auto currentModeField =
             currentDeclaration
-                ? currentDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                      "simulation.random_mode_field")
+                ? sim::get<sim::metadata::RandomModeField>(currentDeclaration)
                 : FlatSymbolRefAttr{};
         if (!currentModeField) {
           emitError(location) << "nested hook path has no rand_mode field";
@@ -1858,7 +1843,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           lookupNearestSymbolFrom<sim::SimClassDeclOp>(
               function, concreteType.getClassName());
       while (currentDeclaration &&
-             !currentDeclaration->hasAttr("simulation.random_mode_field")) {
+             !sim::has<sim::metadata::RandomModeField>(currentDeclaration)) {
         if (!currentDeclaration.getBaseAttr())
           break;
         currentDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
@@ -1866,8 +1851,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       auto currentModeField =
           currentDeclaration
-              ? currentDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                    "simulation.random_mode_field")
+              ? sim::get<sim::metadata::RandomModeField>(currentDeclaration)
               : FlatSymbolRefAttr{};
       if (!currentModeField) {
         emitError(location) << "nested constraint path has no rand_mode field";
@@ -1911,16 +1895,16 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         lookupNearestSymbolFrom<sim::SimClassDeclOp>(
             function, concreteType.getClassName());
     while (nestedDeclaration &&
-           !nestedDeclaration->hasAttr("simulation.constraint_mode_field")) {
+           !sim::has<sim::metadata::ConstraintModeField>(nestedDeclaration)) {
       if (!nestedDeclaration.getBaseAttr())
         break;
       nestedDeclaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
           function, nestedDeclaration.getBaseAttr());
     }
     auto nestedModeField =
-        nestedDeclaration ? nestedDeclaration->getAttrOfType<FlatSymbolRefAttr>(
-                                "simulation.constraint_mode_field")
-                          : FlatSymbolRefAttr{};
+        nestedDeclaration
+            ? sim::get<sim::metadata::ConstraintModeField>(nestedDeclaration)
+            : FlatSymbolRefAttr{};
     if (!nestedModeField) {
       emitError(location) << "nested rand object has no constraint_mode field";
       return failure();
@@ -2015,12 +1999,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   Value relevantMode;
   if (checkerOnly)
     relevantMode = constant64(propertyModeMask);
-  else if (op->hasAttr(randomizeExplicitPropertiesAttrName))
+  else if (sim::has<sim::metadata::RandomizeExplicitProperties>(op))
     relevantMode = constant64(0);
   else
     relevantMode = arith::AndIOp::create(builder, location, mode,
                                          constant64(propertyModeMask));
-  if (!checkerOnly && !op->hasAttr(randomizeExplicitPropertiesAttrName)) {
+  if (!checkerOnly &&
+      !sim::has<sim::metadata::RandomizeExplicitProperties>(op)) {
     Value context = function.getBody().front().getArgument(0);
     Type referenceType = sim::RefType::get(function.getContext(), i64);
     for (const Property &property : planned) {
@@ -2987,8 +2972,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           << "solve before operands must be integral random values";
       return failure();
     }
-    if (auto offset = expression->getAttrOfType<IntegerAttr>(
-            randomVariableBitOffsetAttrName)) {
+    if (auto offset =
+            sim::get<sim::metadata::RandomVariableBitOffset>(expression)) {
       const APInt &value = offset.getValue();
       if (value.isNegative() || value.getActiveBits() > 32 ||
           value.getZExtValue() > totalWidth ||
@@ -3007,8 +2992,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
       return mask;
     }
-    auto indexAttr =
-        expression->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+    auto indexAttr = sim::get<sim::metadata::RandomVariable>(expression);
     if (!indexAttr || indexAttr.getValue().isNegative() ||
         indexAttr.getValue().getActiveBits() > 64 ||
         indexAttr.getValue().getZExtValue() >= planned.size()) {
@@ -3028,8 +3012,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (isReceiverChild(index))
       continue;
     uint32_t solveConstraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
-    if (auto block =
-            root->getAttrOfType<IntegerAttr>(randomConstraintBlockAttrName)) {
+    if (auto block = sim::get<sim::metadata::RandomConstraintBlock>(root)) {
       APInt value = block.getValue();
       if (value.isNegative() || value.getActiveBits() > 64 ||
           value.getZExtValue() >= constraintCount) {
@@ -3039,7 +3022,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       solveConstraintBlock = static_cast<uint32_t>(value.getZExtValue());
     }
-    if (Attribute order = root->getAttr(randomFunctionOrderAttrName)) {
+    if (Attribute order = sim::get<sim::metadata::RandomFunctionOrder>(root)) {
       hasSolveBefore = true;
       hasFunctionPriority = true;
       SmallVector<APInt> pairs;
@@ -3348,10 +3331,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         continue;
       }
       ExpressionDependencies dependencies{
-          node->hasAttr(randomVariableAttrName),
+          sim::has<sim::metadata::RandomVariable>(node),
           !getConstantSpelling(node) &&
-              !node->hasAttr(randomVariableAttrName) &&
-              !node->hasAttr(randomVariableBitOffsetAttrName) &&
+              !sim::has<sim::metadata::RandomVariable>(node) &&
+              !sim::has<sim::metadata::RandomVariableBitOffset>(node) &&
               isa<semantic::SVNamedValueExpressionOp,
                   semantic::SVHierarchicalValueExpressionOp,
                   semantic::SVMemberAccessExpressionOp,
@@ -3879,8 +3862,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     auto path = getRandomConstraintPath(
         expression, arithmeticPropertyWidths,
         [&](Operation *source) -> std::optional<unsigned> {
-          auto index =
-              source->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+          auto index = sim::get<sim::metadata::RandomVariable>(source);
           if (!index || index.getValue().isNegative() ||
               index.getValue().getActiveBits() > 64 ||
               index.getValue().getZExtValue() >= planned.size())
@@ -3972,7 +3954,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (failed(emitProgramNode(expression)))
       return failure();
     if (arithmetic.isNode(expression) && arithmetic.isShared(expression) &&
-        !expression->hasAttr(randomArithmeticPlaneAttr)) {
+        !sim::has<sim::metadata::RandomArithmeticPlane>(expression)) {
       auto width = expressionWidth(expression);
       if (failed(width))
         return failure();
@@ -3997,8 +3979,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       return emitProgramExpression(planes->value);
     }
-    if (auto inputs = expression->getAttrOfType<IntegerAttr>(
-            randomEvaluationInputsAttrName)) {
+    if (auto inputs =
+            sim::get<sim::metadata::RandomEvaluationInputs>(expression)) {
       auto nested = getChildren(expression);
       if (inputs.getValue().isNegative() ||
           inputs.getValue().getActiveBits() > 64 ||
@@ -4062,8 +4044,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Property selection{};
       DistTarget distTarget;
       distTarget.value = target;
-      auto variable =
-          target->getAttrOfType<IntegerAttr>(randomVariableAttrName);
+      auto variable = sim::get<sim::metadata::RandomVariable>(target);
       bool wholeProperty = variable && !variable.getValue().isNegative() &&
                            variable.getValue().getActiveBits() <= 64 &&
                            variable.getValue().getZExtValue() < planned.size();
@@ -4084,8 +4065,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         selection.width = *width;
         selection.isSigned = isSignedNode(target);
-        if (auto offset = target->getAttrOfType<IntegerAttr>(
-                randomVariableBitOffsetAttrName)) {
+        if (auto offset =
+                sim::get<sim::metadata::RandomVariableBitOffset>(target)) {
           distTarget.offset =
               static_cast<uint32_t>(offset.getValue().getZExtValue());
           APInt field = APInt::getBitsSet(assignmentWidth, distTarget.offset,
@@ -4914,7 +4895,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     FailureOr<unsigned> width = expressionWidth(expression);
     if (failed(width))
       return failure();
-    if (expression->hasAttr(randomEvaluationErrorAttrName)) {
+    if (sim::has<sim::metadata::RandomEvaluationError>(expression)) {
       // Creation validity carries ERROR separately. The solver must never
       // read an invalid slice, including one eliminated by a state guard.
       literalInstruction(*width, false, APInt::getZero(*width));
@@ -4958,8 +4939,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       instruction(OBELISK_RT_RANDOM_SELECT_V1, *width);
       return success();
     };
-    if (auto bitOffset = expression->getAttrOfType<IntegerAttr>(
-            randomVariableBitOffsetAttrName)) {
+    if (auto bitOffset =
+            sim::get<sim::metadata::RandomVariableBitOffset>(expression)) {
       const APInt &offsetValue = bitOffset.getValue();
       if (offsetValue.isNegative() || offsetValue.getActiveBits() > 64 ||
           offsetValue.getZExtValue() >= totalWidth ||
@@ -4979,8 +4960,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                   static_cast<uint32_t>(offsetValue.getZExtValue()));
       return success();
     }
-    if (auto variable =
-            expression->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+    if (auto variable = sim::get<sim::metadata::RandomVariable>(expression)) {
       APInt indexValue = variable.getValue();
       if (indexValue.isNegative() || indexValue.getActiveBits() > 64 ||
           indexValue.getZExtValue() >= planned.size()) {
@@ -5098,9 +5078,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     // Raw value/unknown projections are parameters even when their source
     // property participates in the solve. Frozen unknowns were masked with
     // the live active-bit inventory while materializing this capture.
-    if (expression->hasAttr(randomArithmeticPlaneAttr))
+    if (sim::has<sim::metadata::RandomArithmeticPlane>(expression))
       return captureExpression();
-    if (expression->hasAttr(randomArithmeticRealFiniteAttr)) {
+    if (sim::has<sim::metadata::RandomRealFinite>(expression)) {
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
         return failure();
       instruction(OBELISK_RT_RANDOM_REAL_IS_FINITE_V1, 1);
@@ -5113,8 +5093,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // capture endpoint to interval planning.
       auto dependencies = dependenciesForExpression(expression);
       if (!dependencies.candidate && dependencies.runtimeInput &&
-          (!expression->hasAttr(randomArithmeticNodeAttr) ||
-           expression->hasAttr(randomArithmeticPlaneAttr)))
+          (!sim::has<sim::metadata::RandomArithmeticNode>(expression) ||
+           sim::has<sim::metadata::RandomArithmeticPlane>(expression)))
         return captureExpression();
       if (nested.size() != 1 || failed(emitProgramExpression(nested.front())))
         return failure();
@@ -5132,7 +5112,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     // are constant or state-only. Only the original state leaves and raw
     // unknown-plane projections become parameters of the Z3 plan.
     if (!dependsOnCandidate(expression) &&
-        !expression->hasAttr(randomArithmeticNodeAttr))
+        !sim::has<sim::metadata::RandomArithmeticNode>(expression))
       return captureExpression();
 
     if (auto call = dyn_cast<semantic::SVCallExpressionOp>(expression);
@@ -5843,7 +5823,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto assignSoftPriorities = [&](bool inlineConstraints) {
     for (auto [index, root] : llvm::enumerate(children)) {
       if (isReceiverChild(index) ||
-          root->hasAttr(randomConstraintBlockAttrName) == inlineConstraints)
+          sim::has<sim::metadata::RandomConstraintBlock>(root) ==
+              inlineConstraints)
         continue;
       SmallVector<Operation *> items = isa<semantic::SVConstraintListOp>(root)
                                            ? getChildren(root)
@@ -5858,8 +5839,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             }
           } else if (isa<semantic::SVDisableSoftConstraintOp>(nested)) {
             uint32_t block = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
-            if (auto index = root->getAttrOfType<IntegerAttr>(
-                    randomConstraintBlockAttrName))
+            if (auto index =
+                    sim::get<sim::metadata::RandomConstraintBlock>(root))
               block = static_cast<uint32_t>(index.getInt());
             SoftDisable disable{nested, nextDeclarationOrder++, block, {}};
             for (Operation *child = nested; child != root;) {
@@ -5896,8 +5877,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   auto collectSoftReferences = [&](Operation *expression) {
     SmallVector<SoftReference> references;
     expression->walk<WalkOrder::PreOrder>([&](Operation *nested) -> WalkResult {
-      if (auto inputs =
-              nested->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName)) {
+      if (auto inputs = sim::get<sim::metadata::RandomGuardInputs>(nested)) {
         APInt mask = inputs.getValue().zextOrTrunc(assignmentWidth);
         while (!mask.isZero()) {
           unsigned offset = mask.countTrailingZeros();
@@ -5912,10 +5892,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       // Reads introduced by expanding a constraint function's body are
       // indirect references, not references written in the soft expression.
-      if (nested->hasAttr(randomFunctionStateAttrName))
+      if (sim::has<sim::metadata::RandomFunctionState>(nested))
         return WalkResult::skip();
-      if (auto offset = nested->getAttrOfType<IntegerAttr>(
-              randomVariableBitOffsetAttrName)) {
+      if (auto offset =
+              sim::get<sim::metadata::RandomVariableBitOffset>(nested)) {
         auto type = nested->getAttrOfType<TypeAttr>("semantic_type");
         std::optional<uint64_t> width =
             type ? getSemanticBitstreamWidth(type.getValue()) : std::nullopt;
@@ -5924,8 +5904,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return WalkResult::skip();
         }
       }
-      if (auto variable =
-              nested->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+      if (auto variable = sim::get<sim::metadata::RandomVariable>(nested)) {
         uint64_t index = variable.getValue().getZExtValue();
         if (index < planned.size()) {
           uint64_t offset = propertyOffsets[index];
@@ -5956,14 +5935,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return found->second;
     APInt inputs = APInt::getZero(assignmentWidth);
     bool descend = true;
-    if (auto mask =
-            source->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName))
+    if (auto mask = sim::get<sim::metadata::RandomGuardInputs>(source))
       inputs = mask.getValue().zextOrTrunc(assignmentWidth);
-    else if (source->hasAttr(randomFunctionStateAttrName))
+    else if (sim::has<sim::metadata::RandomFunctionState>(source))
       descend = false;
     else {
-      if (auto offset = source->getAttrOfType<IntegerAttr>(
-              randomVariableBitOffsetAttrName)) {
+      if (auto offset =
+              sim::get<sim::metadata::RandomVariableBitOffset>(source)) {
         auto type = source->getAttrOfType<TypeAttr>("semantic_type");
         auto width =
             type ? getSemanticBitstreamWidth(type.getValue()) : std::nullopt;
@@ -5974,8 +5952,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         }
       }
       if (descend)
-        if (auto variable =
-                source->getAttrOfType<IntegerAttr>(randomVariableAttrName)) {
+        if (auto variable = sim::get<sim::metadata::RandomVariable>(source)) {
           uint64_t index = variable.getValue().getZExtValue();
           if (index < planned.size()) {
             inputs |=
@@ -6000,10 +5977,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             found != argumentInventories.end())
           return found->second;
         APInt inputs = APInt::getZero(assignmentWidth);
-        if (auto mask =
-                source->getAttrOfType<IntegerAttr>(randomGuardInputsAttrName))
+        if (auto mask = sim::get<sim::metadata::RandomGuardInputs>(source))
           inputs = mask.getValue().zextOrTrunc(assignmentWidth);
-        else if (!source->hasAttr(randomFunctionStateAttrName))
+        else if (!sim::has<sim::metadata::RandomFunctionState>(source))
           for (Region &region : source->getRegions())
             for (Block &block : region)
               for (Operation &child : block)
@@ -6012,14 +5988,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return inputs;
       };
   auto priorityInputs = [&](Operation *source) {
-    if (auto inputs =
-            source->getAttrOfType<IntegerAttr>(randomPriorityInputsAttrName))
+    if (auto inputs = sim::get<sim::metadata::RandomPriorityInputs>(source))
       return inputs.getValue().zextOrTrunc(assignmentWidth);
     return sourceReferences(source);
   };
   auto priorityArguments = [&](Operation *source) {
-    if (auto inputs =
-            source->getAttrOfType<IntegerAttr>(randomPriorityArgumentsAttrName))
+    if (auto inputs = sim::get<sim::metadata::RandomPriorityArguments>(source))
       return inputs.getValue().zextOrTrunc(assignmentWidth);
     return APInt::getZero(assignmentWidth);
   };
@@ -6132,7 +6106,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return failure();
     SmallVector<Operation *> operands = arithmetic.operands(expression);
     if (auto plane =
-            expression->getAttrOfType<IntegerAttr>(randomArithmeticPlaneAttr)) {
+            sim::get<sim::metadata::RandomArithmeticPlane>(expression)) {
       if (operands.size() != 1 || plane.getInt() < 0 ||
           plane.getInt() >
               static_cast<int32_t>(RandomArithmeticPlane::FrozenHighImpedance))
@@ -6329,8 +6303,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     } else if (llvm::any_of(
                    values,
                    [](const auto &value) { return value.dynamicInputs; }) &&
-               !expression->hasAttr(randomVariableAttrName) &&
-               !expression->hasAttr(randomVariableBitOffsetAttrName)) {
+               !sim::has<sim::metadata::RandomVariable>(expression) &&
+               !sim::has<sim::metadata::RandomVariableBitOffset>(expression)) {
       dynamicInputs = true;
       APInt remainingInputs = inputMask;
       APInt remainingArguments = sourceFunctionArguments(expression);
@@ -6372,7 +6346,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         sim::getPackedScalarType(values[0].value.getType())) {
       if (values.size() != 3)
         return failure();
-      if (expression->hasAttr(randomFunctionConditionalAttrName) &&
+      if (sim::has<sim::metadata::RandomFunctionConditional>(expression) &&
           !matchPattern(values[0].random, m_Zero()) &&
           (!matchPattern(values[1].errors, m_One()) ||
            !matchPattern(values[2].errors, m_One()))) {
@@ -6411,9 +6385,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     Value result;
     auto binary = dyn_cast<semantic::SVBinaryExpressionOp>(expression);
     auto unary = dyn_cast<semantic::SVUnaryExpressionOp>(expression);
-    if (expression->hasAttr(randomEvaluationInputsAttrName)) {
-      auto count = expression->getAttrOfType<IntegerAttr>(
-          randomEvaluationInputsAttrName);
+    if (sim::has<sim::metadata::RandomEvaluationInputs>(expression)) {
+      auto count = sim::get<sim::metadata::RandomEvaluationInputs>(expression);
       if (count.getValue().isNegative() ||
           count.getValue().getActiveBits() > 64 ||
           count.getValue().getZExtValue() + 1 != values.size())
@@ -6427,7 +6400,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       // Expanded function evaluation retains errors in every executed input.
       // An unused four-state value does not taint a known function result.
       valid = guardAnd(errors, values.back().valid);
-    } else if (expression->hasAttr(randomArithmeticRealFiniteAttr)) {
+    } else if (sim::has<sim::metadata::RandomRealFinite>(expression)) {
       if (values.size() != 1 || !isa<FloatType>(values.front().value.getType()))
         return failure();
       unsigned precision =
@@ -6528,12 +6501,12 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         valid = guardAnd(valid, condition);
         errors = guardAnd(errors, condition);
       };
-      if (expression->hasAttr(randomEvaluationErrorAttrName)) {
+      if (sim::has<sim::metadata::RandomEvaluationError>(expression)) {
         valid = guardConstant(false);
         errors = guardConstant(false);
       }
       if (isa<semantic::SVMemberAccessExpressionOp>(expression) &&
-          !values.empty() && expression->hasAttr("simulation.class_field") &&
+          !values.empty() && sim::has<sim::metadata::ClassField>(expression) &&
           isa<sim::ClassHandleType>(values.front().value.getType()) &&
           !nonNullReceivers.contains(values.front().value)) {
         Value isNull = sim::SimManagedIsNullOp::create(
@@ -6648,7 +6621,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       }
       if (isa<semantic::SVRangeSelectExpressionOp>(expression) &&
           values.size() == 3 &&
-          !expression->hasAttr(randomEvaluationErrorAttrName)) {
+          !sim::has<sim::metadata::RandomEvaluationError>(expression)) {
         auto sourceWidth = sim::getPackedWidth(values[0].value.getType());
         auto selectedWidth = sim::getPackedWidth(*resultType);
         if (sourceWidth && selectedWidth) {
@@ -6789,7 +6762,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     // An X/Z value is an evaluation error while forming constraints. An active
     // random input is a relation to be solved; its current stored X bits do not
     // participate in creation. Frozen random fields follow state semantics.
-    if (!expression->hasAttr(randomArithmeticNodeAttr))
+    if (!sim::has<sim::metadata::RandomArithmeticNode>(expression))
       if (auto logic = dyn_cast<sim::LogicType>(result.getType())) {
         Type bitsType = builder.getIntegerType(logic.getWidth());
         Value bits =
@@ -7064,8 +7037,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (isReceiverChild(index))
       continue;
     uint32_t constraintBlock = OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1;
-    if (auto block =
-            root->getAttrOfType<IntegerAttr>(randomConstraintBlockAttrName)) {
+    if (auto block = sim::get<sim::metadata::RandomConstraintBlock>(root)) {
       APInt value = block.getValue();
       if (value.isNegative() || value.getActiveBits() > 64 ||
           value.getZExtValue() >= constraintCount) {
@@ -10269,8 +10241,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           return failure();
         softValues.push_back(*value);
       }
-      if (auto block = constraint->getAttrOfType<IntegerAttr>(
-              randomConstraintBlockAttrName)) {
+      if (auto block =
+              sim::get<sim::metadata::RandomConstraintBlock>(constraint)) {
         APInt blockIndex = block.getValue();
         if (blockIndex.isNegative() || blockIndex.getActiveBits() > 64 ||
             blockIndex.getZExtValue() >= constraintCount) {
@@ -11256,8 +11228,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
   setCurrent(postBlock);
   if (failed(callLifecycleHook(
-          randomPostHookAttrName, randomPostHookOwnerAttrName,
-          randomPostHookCapturesAttrName, randomPostHookReadCapturesAttrName)))
+          sim::metadata::RandomPostHook::getNameStr(),
+          sim::metadata::RandomPostHookOwner::getNameStr(),
+          sim::metadata::RandomPostHookCaptures::getNameStr(),
+          sim::metadata::RandomPostHookReadCaptures::getNameStr())))
     return failure();
   for (const NestedHookRuntime &runtime : nestedHookRuntimes) {
     if (!runtime.plan.getAs<FlatSymbolRefAttr>("post_callee"))

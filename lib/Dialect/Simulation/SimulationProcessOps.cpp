@@ -90,13 +90,10 @@ void SimFuncOp::print(OpAsmPrinter &printer) {
 }
 
 LogicalResult verifyUnitBindings(SimFuncOp function) {
-  Attribute raw = function->getAttr(metadata::bindings);
-  if (!raw)
-    return success();
-  auto bindings = dyn_cast<ArrayAttr>(raw);
+  // The simulation dialect verifies that the bindings are an array.
+  ArrayAttr bindings = sim::get<sim::metadata::Bindings>(function);
   if (!bindings)
-    return function.emitOpError()
-           << "has malformed " << metadata::bindings << ": expected an array";
+    return success();
 
   FunctionType type = function.getFunctionType();
   enum class ProviderKind { Direct, Descriptor, FormalLocal, Local, Constant };
@@ -127,8 +124,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
         return success();
       }
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entries #"
-             << *state.provider << " and #" << index
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entries #" << *state.provider << " and #" << index
              << ": both provide the source value for path '" << path << "'";
     }
     state.provider = index;
@@ -140,7 +137,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     if (auto descriptor = dyn_cast<DescriptorBindingAttr>(binding)) {
       if (!isa<RefType>(descriptor.getType()))
         return function.emitOpError()
-               << "has malformed " << metadata::bindings << " entry #" << index
+               << "has malformed " << sim::metadata::Bindings::getNameStr()
+               << " entry #" << index
                << ": descriptor binding requires a storage type";
       if (failed(claimProvider(descriptor.getPath().getValue(), index,
                                ProviderKind::Descriptor)))
@@ -154,13 +152,13 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
       if (local.getIsReturn()) {
         if (function.getEntryKind() != EntryKind::Function)
           return function.emitOpError()
-                 << "has malformed " << metadata::bindings << " entry #"
-                 << index
+                 << "has malformed " << sim::metadata::Bindings::getNameStr()
+                 << " entry #" << index
                  << ": only a function may have a return-local binding";
         if (returnBinding)
           return function.emitOpError()
-                 << "has malformed " << metadata::bindings << " entries #"
-                 << *returnBinding << " and #" << index
+                 << "has malformed " << sim::metadata::Bindings::getNameStr()
+                 << " entries #" << *returnBinding << " and #" << index
                  << ": multiple local bindings are marked as the function "
                     "return";
         returnBinding = index;
@@ -176,25 +174,27 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     auto argument = dyn_cast<ArgumentBindingAttr>(binding);
     if (!argument)
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #" << index
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << index
              << ": expected an argument, descriptor, local, or constant "
                 "binding";
     if (argument.getArgument() >= type.getNumInputs())
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #" << index
-             << ": argument index " << argument.getArgument()
-             << " is outside the function signature";
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << index << ": argument index "
+             << argument.getArgument() << " is outside the function signature";
     if (argument.getArgument() == 0)
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #" << index
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << index
              << ": context argument cannot carry a source binding";
 
     unsigned argumentIndex = argument.getArgument();
     if (argumentBindings[argumentIndex])
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entries #"
-             << *argumentBindings[argumentIndex] << " and #" << index
-             << ": both bind function argument #" << argumentIndex;
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entries #" << *argumentBindings[argumentIndex] << " and #"
+             << index << ": both bind function argument #" << argumentIndex;
     argumentBindings[argumentIndex] = index;
 
     Type argumentType = type.getInput(argument.getArgument());
@@ -204,7 +204,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     case UnitArgumentKind::Direct:
       if (isa<ContextType>(argumentType))
         return function.emitOpError()
-               << "has malformed " << metadata::bindings << " entry #" << index
+               << "has malformed " << sim::metadata::Bindings::getNameStr()
+               << " entry #" << index
                << ": direct binding cannot target a context argument";
       if (failed(claimProvider(path, index, ProviderKind::Direct)))
         return failure();
@@ -212,7 +213,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     case UnitArgumentKind::LValueOnly:
       if (!isa<RefType, ArgumentRefType, NetType, DriverType>(argumentType))
         return function.emitOpError()
-               << "has malformed " << metadata::bindings << " entry #" << index
+               << "has malformed " << sim::metadata::Bindings::getNameStr()
+               << " entry #" << index
                << ": lvalue-only binding requires a storage, net, or driver "
                   "argument";
       state.lvalueOnly = index;
@@ -220,7 +222,8 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     case UnitArgumentKind::FormalLocal:
       if (!isNormalizedValueType(argumentType))
         return function.emitOpError()
-               << "has malformed " << metadata::bindings << " entry #" << index
+               << "has malformed " << sim::metadata::Bindings::getNameStr()
+               << " entry #" << index
                << ": formal-local binding requires a normalized value "
                   "argument";
       if (failed(claimProvider(path, index, ProviderKind::FormalLocal)))
@@ -230,12 +233,13 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     case UnitArgumentKind::CopyOutDestination:
       if (!isa<RefType>(argumentType))
         return function.emitOpError()
-               << "has malformed " << metadata::bindings << " entry #" << index
+               << "has malformed " << sim::metadata::Bindings::getNameStr()
+               << " entry #" << index
                << ": copy-out destination requires a storage argument";
       if (state.copyOutDestination)
         return function.emitOpError()
-               << "has malformed " << metadata::bindings << " entries #"
-               << *state.copyOutDestination << " and #" << index
+               << "has malformed " << sim::metadata::Bindings::getNameStr()
+               << " entries #" << *state.copyOutDestination << " and #" << index
                << ": multiple copy-out destinations bind path '" << path << "'";
       state.copyOutDestination = index;
       break;
@@ -248,28 +252,29 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     if (state.lvalueOnly && state.providerKind &&
         *state.providerKind != ProviderKind::Direct)
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #"
-             << *state.lvalueOnly << ": lvalue-only path '" << path
-             << "' conflicts with a non-direct value binding";
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << *state.lvalueOnly << ": lvalue-only path '"
+             << path << "' conflicts with a non-direct value binding";
     if (state.copyOutDestination &&
         (!state.providerKind ||
          *state.providerKind != ProviderKind::FormalLocal ||
          !state.formalCopiesOut))
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #"
-             << *state.copyOutDestination << ": copy-out destination path '"
-             << path << "' requires a copy-out formal-local binding";
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << *state.copyOutDestination
+             << ": copy-out destination path '" << path
+             << "' requires a copy-out formal-local binding";
     if (state.copyOutDestination && function.getEntryKind() != EntryKind::Task)
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #"
-             << *state.copyOutDestination
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << *state.copyOutDestination
              << ": copy-out destination bindings are valid only on tasks";
     if (function.getEntryKind() == EntryKind::Task && state.formalCopiesOut &&
         !state.copyOutDestination)
       return function.emitOpError()
-             << "has malformed " << metadata::bindings << " entry #"
-             << *state.provider << ": task copy-out formal path '" << path
-             << "' requires a destination binding";
+             << "has malformed " << sim::metadata::Bindings::getNameStr()
+             << " entry #" << *state.provider << ": task copy-out formal path '"
+             << path << "' requires a destination binding";
   }
   return success();
 }
@@ -399,7 +404,8 @@ LogicalResult SimFuncOp::verify() {
     bool needsDescriptor =
         *kind == CaptureKind::Storage || *kind == CaptureKind::Net ||
         *kind == CaptureKind::Driver || *kind == CaptureKind::Event;
-    auto descriptor = dictionary.getAs<IntegerAttr>(metadata::descriptorId);
+    auto descriptor = dictionary.getAs<IntegerAttr>(
+        sim::metadata::DescriptorId::getNameStr());
     if (needsDescriptor && !descriptor)
       return emitOpError() << "argument #" << index
                            << " requires simulation.descriptor_id metadata";
@@ -1027,8 +1033,8 @@ LogicalResult SimStochasticQueueOp::verify() {
 LogicalResult SimDeferredEnqueueOp::verify() {
   if (failed(verifyPositive(*this, getIdAttr(), "deferred assertion site ID")))
     return failure();
-  if (auto assertionID = getOperation()->getAttrOfType<IntegerAttr>(
-          "simulation.assertion_control_target_id"))
+  if (auto assertionID =
+          sim::get<sim::metadata::AssertionControlTargetId>(getOperation()))
     return verifyPositive(*this, assertionID,
                           "deferred assertion control target ID");
   return success();

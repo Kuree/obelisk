@@ -344,11 +344,11 @@ void ObeliskSimInlinePass::runOnOperation() {
     // remains unknown to optional inlining so existing optimization choices
     // stay stable, but it must not block the mandatory nonlocal-exit closure.
     if (controlFunctions.contains(function))
-      function->removeAttr("simulation.void_function");
+      sim::remove<sim::metadata::VoidFunction>(function);
     sim::InlineLegality legality = sim::getInlineCalleeLegality(
         function, recursiveFunctions.contains(function), designHasLateMetadata);
     calleeLegalities[function] = legality;
-    sim::set<sim::InlineLegalityCache>(
+    sim::set<sim::metadata::InlineLegalityCache>(
         function, IntegerAttr::get(IntegerType::get(function.getContext(), 32),
                                    static_cast<uint32_t>(legality)));
   }
@@ -588,7 +588,7 @@ void ObeliskSimInlinePass::runOnOperation() {
   LogicalResult result = inliner.doInlining();
   for (sim::SimFuncOp function :
        design.getBody().front().getOps<sim::SimFuncOp>())
-    sim::remove<sim::InlineLegalityCache>(function);
+    sim::remove<sim::metadata::InlineLegalityCache>(function);
   llvm::DenseSet<uint64_t> remainingSelections;
   design.walk([&](sim::SimCallOp call) {
     if (auto selection = call->getAttrOfType<IntegerAttr>(selectedInlineAttr)) {

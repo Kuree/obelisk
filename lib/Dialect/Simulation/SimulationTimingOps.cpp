@@ -136,11 +136,11 @@ LogicalResult SimCovergroupClockEventRegisterOp::verify() {
   if (!evaluator || evaluator.getEntryKind() != EntryKind::Observer ||
       SymbolTable::getSymbolVisibility(evaluator) !=
           SymbolTable::Visibility::Private ||
-      !evaluator->hasAttr("simulation.covergroup_event_sample_evaluator"))
+      !sim::has<sim::metadata::CovergroupEventSampleEvaluator>(evaluator))
     return emitOpError(
         "sampler must name a private covergroup event sample evaluator");
   if (getStrobe() !=
-      evaluator->hasAttr("simulation.covergroup_strobe_sample_evaluator"))
+      sim::has<sim::metadata::CovergroupStrobeSampleEvaluator>(evaluator))
     return emitOpError(
         "strobe policy must match the covergroup sample evaluator");
   if (getStrobe() && failed(verifyPostponedReadOnly(evaluator)))
@@ -157,8 +157,8 @@ LogicalResult SimCovergroupClockEventRegisterOp::verify() {
           function) ||
       !::obelisk::schedule::has<
           ::obelisk::schedule::Field::CovergroupClockingSampler>(function) ||
-      function->hasAttr("simulation.multiclock_sequence_coordinator") ||
-      function->hasAttr("simulation.timing_check_coordinator"))
+      sim::has<sim::metadata::MulticlockSequenceCoordinator>(function) ||
+      sim::has<sim::metadata::TimingCheckCoordinator>(function))
     return emitOpError(
         "requires a private detached primed covergroup clocking owner");
   unsigned registrations = 0;
@@ -195,8 +195,7 @@ LogicalResult SimCovergroupBlockEventRegisterOp::verify() {
   if (!evaluator || evaluator.getEntryKind() != EntryKind::Observer ||
       SymbolTable::getSymbolVisibility(evaluator) !=
           SymbolTable::Visibility::Private ||
-      !evaluator->hasAttr(
-          "simulation.covergroup_block_event_sample_evaluator"))
+      !sim::has<sim::metadata::CovergroupBlockEventSampleEvaluator>(evaluator))
     return emitOpError(
         "sampler must name a private covergroup block-event sample evaluator");
   return success();
@@ -544,10 +543,10 @@ LogicalResult SimSuspendClockSetOp::verify() {
   auto function = (*this)->getParentOfType<SimFuncOp>();
   bool assertionCoordinator =
       function &&
-      function->hasAttr("simulation.multiclock_sequence_coordinator") &&
+      sim::has<sim::metadata::MulticlockSequenceCoordinator>(function) &&
       function.getHomeRegion() == EventRegion::Observed;
   bool timingCheckCoordinator =
-      function && function->hasAttr("simulation.timing_check_coordinator") &&
+      function && sim::has<sim::metadata::TimingCheckCoordinator>(function) &&
       function.getHomeRegion() == EventRegion::Observed;
   if (getSlotFinalAttr() && !timingCheckCoordinator)
     return emitOpError("slot_final is reserved for a timing-check coordinator");

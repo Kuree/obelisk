@@ -140,12 +140,10 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
 
-    auto timeMultiplier =
-        function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+    auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
     StringAttr lexicalScope = op.getSystemScopePathAttr();
     if (!lexicalScope)
-      lexicalScope =
-          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+      lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
     if (!timeMultiplier || !lexicalScope) {
       op.emitError("memory write has no elaborated lexical timing scope");
       return failure();
@@ -871,10 +869,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
       Value item = sim::SimBytesConstantOp::create(
           builder, location,
           (Twine(severity) + ": " + name + ": " + detail).str());
-      auto timeMultiplier =
-          function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-      StringAttr scope =
-          function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+      auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+      StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
       sim::SimDisplayOp::create(builder, location, context, standardError,
                                 ValueRange{item}, true, sim::Radix::Decimal,
                                 builder.getDenseI32ArrayAttr({0}), scope,

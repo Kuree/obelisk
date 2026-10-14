@@ -186,14 +186,14 @@ void ObeliskSimExtractPeriodicClocksPass::runOnOperation() {
     std::string name = "__obelisk_periodic_tick_" + std::to_string(codeUnit);
     SmallVector<NamedAttribute> attrs{builder.getNamedAttr(
         "code_unit_id", builder.getI64IntegerAttr(codeUnit))};
-    DictionaryAttr contextAttrs =
-        builder.getDictionaryAttr({builder.getNamedAttr(
-            sim::metadata::captureKind, builder.getI32IntegerAttr(0))});
+    DictionaryAttr contextAttrs = builder.getDictionaryAttr(
+        {sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+            builder.getContext(), sim::CaptureKind::Context))});
     DictionaryAttr refAttrs = builder.getDictionaryAttr(
-        {builder.getNamedAttr(sim::metadata::captureKind,
-                              builder.getI32IntegerAttr(3)),
-         builder.getNamedAttr(sim::metadata::descriptorId,
-                              builder.getI64IntegerAttr(storage))});
+        {sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+             builder.getContext(), sim::CaptureKind::Storage)),
+         sim::named<sim::metadata::DescriptorId>(
+             builder.getI64IntegerAttr(storage))});
     auto tick = sim::SimFuncOp::create(
         builder, loc, name,
         builder.getFunctionType({entry.getArgument(0).getType(), referenceType},

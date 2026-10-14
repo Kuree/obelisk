@@ -99,7 +99,7 @@ void fuseWideDynamicRefCopies(
     if (!destination || !function ||
         destination.getOwner() != &function.getBody().front() ||
         function.getArgAttr(destination.getArgNumber(),
-                            sim::metadata::descriptorId))
+                            sim::metadata::DescriptorId::getNameStr()))
       return;
     // Use the same closed-reference proof as lifetime and stack lowering,
     // including references forwarded through CFG arguments. A private source
@@ -294,7 +294,7 @@ LogicalResult lowerPackedSimulationOperations(
   DenseSet<Value> nativeTwoStateValues;
   DenseSet<Operation *> nativeTwoStateOperations;
   module.walk([&](Operation *operation) {
-    if (sim::has<sim::KnownLogicResult>(operation) &&
+    if (sim::has<sim::metadata::KnownLogicResult>(operation) &&
         operation->getNumResults() == 1 &&
         isa<sim::LogicType>(operation->getResult(0).getType()))
       nativeTwoStateValues.insert(operation->getResult(0));
@@ -1412,12 +1412,13 @@ LogicalResult lowerPackedSimulationOperations(
   // conversion has changed their ABI and indices; no later pass may reuse
   // them as facts about the physical planes.
   module.walk([&](Operation *operation) {
-    sim::remove<sim::ResultRanges>(operation);
-    sim::remove<sim::ResultExprs>(operation);
-    sim::remove<sim::KnownLogicResult>(operation);
+    sim::remove<sim::metadata::ResultRanges>(operation);
+    sim::remove<sim::metadata::ResultExprs>(operation);
+    sim::remove<sim::metadata::KnownLogicResult>(operation);
     if (auto function = dyn_cast<sim::SimFuncOp>(operation))
       for (unsigned index = 0; index < function.getNumArguments(); ++index)
-        function.removeArgAttr(index, sim::IntegerRange::getNameStr());
+        function.removeArgAttr(index,
+                               sim::metadata::IntegerRange::getNameStr());
   });
   markTiming("two-state block specialization");
   SmallVector<runtime::RTScratchOp> scratchBuffers;

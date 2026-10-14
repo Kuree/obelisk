@@ -42,10 +42,8 @@ void UnitLowering::emitDefaultAssertionFailure(Location location,
       builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
   Value item =
       sim::SimBytesConstantOp::create(builder, location, message).getResult();
-  auto timeMultiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
-  StringAttr scope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+  auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
+  StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
   sim::SimDisplayOp::create(builder, location, context, descriptor,
                             ValueRange{item}, true, sim::Radix::Decimal,
                             builder.getDenseI32ArrayAttr({0}), scope,
@@ -55,7 +53,7 @@ void UnitLowering::emitDefaultAssertionFailure(Location location,
 LogicalResult UnitLowering::lowerImmediateAssertion(
     semantic::SVImmediateAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
-  if (op->hasAttr("simulation.default_assertion_failure")) {
+  if (sim::has<sim::metadata::DefaultAssertionFailure>(op)) {
     emitDefaultAssertionFailure(location);
     return success();
   }
@@ -69,16 +67,15 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
 
   Block *controlMerge = nullptr;
   Value actionState;
-  bool deferredEvaluator = op->hasAttr("simulation.deferred_evaluator");
+  bool deferredEvaluator = sim::has<sim::metadata::DeferredEvaluator>(op);
   bool attemptControlled =
-      !deferredEvaluator && op->hasAttr("simulation.assertion_controlled");
+      !deferredEvaluator && sim::has<sim::metadata::AssertionControlled>(op);
   bool actionControlled =
       !deferredEvaluator &&
-      op->hasAttr("simulation.assertion_action_controlled");
+      sim::has<sim::metadata::AssertionActionControlled>(op);
   IntegerAttr assertionID;
   if (attemptControlled || actionControlled) {
-    assertionID = op->getAttrOfType<IntegerAttr>(
-        "simulation.assertion_control_target_id");
+    assertionID = sim::get<sim::metadata::AssertionControlTargetId>(op);
     if (!assertionID || !assertionID.getValue().isStrictlyPositive()) {
       emitError(location) << "immediate assertion has no prepared control ID";
       return failure();
@@ -137,9 +134,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     auto scheduleReport = [&](bool passed) -> LogicalResult {
       auto enqueue = sim::SimDeferredEnqueueOp::create(
           builder, location, builder.getI64IntegerAttr(siteID));
-      if (auto targetID = op->getAttrOfType<IntegerAttr>(
-              "simulation.assertion_control_target_id"))
-        enqueue->setAttr("simulation.assertion_control_target_id", targetID);
+      if (auto targetID = sim::get<sim::metadata::AssertionControlTargetId>(op))
+        sim::set<sim::metadata::AssertionControlTargetId>(enqueue, targetID);
       Value ticket = enqueue;
 
       llvm::StringMap<Value> previousValues;
@@ -178,8 +174,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
                 ancestor->getParentOp());
             if (!call || !call.getHasOutputArguments())
               continue;
-            auto formals =
-                call->getAttrOfType<ArrayAttr>(calleeFormalsAttrName);
+            auto formals = sim::get<sim::metadata::CalleeFormals>(call);
             if (!formals)
               return;
             SmallVector<Operation *> arguments = getChildren(call);
@@ -219,23 +214,23 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
 
       std::string identity =
           (Twine(siteIdentity) + (passed ? ".pass" : ".fail")).str();
-      Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
+      auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(op);
       BoolAttr previousDeferred = op.getIsDeferredAttr();
-      op->setAttr("simulation.deferred_evaluator", builder.getUnitAttr());
-      op->setAttr("simulation.deferred_result", builder.getBoolAttr(passed));
-      op->setAttr("simulation.fork_code_unit_id",
-                  builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+      sim::mark<sim::metadata::DeferredEvaluator>(op);
+      sim::set<sim::metadata::DeferredResult>(op, builder.getBoolAttr(passed));
+      sim::set<sim::metadata::ForkCodeUnitId>(
+          op, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
       op->setAttr("is_deferred", builder.getBoolAttr(false));
       FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
           outlineForkBranch(op, node, passed ? 0 : 1,
                             /*captureReferences=*/false);
       op->setAttr("is_deferred", previousDeferred);
-      op->removeAttr("simulation.deferred_evaluator");
-      op->removeAttr("simulation.deferred_result");
+      sim::remove<sim::metadata::DeferredEvaluator>(op);
+      sim::remove<sim::metadata::DeferredResult>(op);
       if (previousCodeUnit)
-        op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+        sim::set<sim::metadata::ForkCodeUnitId>(op, previousCodeUnit);
       else
-        op->removeAttr("simulation.fork_code_unit_id");
+        sim::remove<sim::metadata::ForkCodeUnitId>(op);
       for (const auto &entry : newlyBoundValues)
         values.erase(entry.getKey());
       for (const auto &entry : previousValues)
@@ -264,10 +259,9 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
         llvm::append_range(argumentAttrs, attrs);
       while (argumentAttrs.size() < originalInputCount)
         argumentAttrs.push_back(builder.getDictionaryAttr({}));
-      DictionaryAttr formal = builder.getDictionaryAttr({builder.getNamedAttr(
-          "simulation.capture_kind",
-          sim::CaptureKindAttr::get(function.getContext(),
-                                    sim::CaptureKind::Formal))});
+      DictionaryAttr formal = builder.getDictionaryAttr(
+          {sim::named<sim::metadata::CaptureKind>(sim::CaptureKindAttr::get(
+              function.getContext(), sim::CaptureKind::Formal))});
       while (argumentAttrs.size() < inputTypes.size())
         argumentAttrs.push_back(formal);
       evaluator.setArgAttrsAttr(builder.getArrayAttr(argumentAttrs));
@@ -321,7 +315,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   }
 
   FailureOr<Value> condition;
-  if (auto result = op->getAttrOfType<BoolAttr>("simulation.deferred_result"))
+  if (auto result = sim::get<sim::metadata::DeferredResult>(op))
     condition = arith::ConstantOp::create(
                     builder, location, builder.getBoolAttr(result.getValue()))
                     .getResult();
@@ -335,7 +329,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   }
 
   bool reactiveActions =
-      op->hasAttr("simulation.deferred_evaluator") && !op.getIsFinal();
+      sim::has<sim::metadata::DeferredEvaluator>(op) && !op.getIsFinal();
   auto lowerAction = [&](Operation *action, unsigned branch) -> LogicalResult {
     if (!reactiveActions)
       return lowerStatement(action);
@@ -345,16 +339,15 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
         (function.getSymName() + ".$reactive_assert_action." + Twine(node) +
          "." + Twine(branch))
             .str();
-    Attribute previousCodeUnit =
-        action->getAttr("simulation.fork_code_unit_id");
-    action->setAttr("simulation.fork_code_unit_id",
-                    builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(action);
+    sim::set<sim::metadata::ForkCodeUnitId>(
+        action, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
         outlineForkBranch(action, node, branch, /*captureReferences=*/true);
     if (previousCodeUnit)
-      action->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+      sim::set<sim::metadata::ForkCodeUnitId>(action, previousCodeUnit);
     else
-      action->removeAttr("simulation.fork_code_unit_id");
+      sim::remove<sim::metadata::ForkCodeUnitId>(action);
     if (failed(callback))
       return failure();
     callback->first->setAttr(
@@ -375,17 +368,17 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     std::string identity =
         (function.getSymName() + ".$reactive_assert_default." + Twine(node))
             .str();
-    Attribute previousCodeUnit = op->getAttr("simulation.fork_code_unit_id");
-    op->setAttr("simulation.default_assertion_failure", builder.getUnitAttr());
-    op->setAttr("simulation.fork_code_unit_id",
-                builder.getI64IntegerAttr(stableCodeUnitID(identity)));
+    auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(op);
+    sim::mark<sim::metadata::DefaultAssertionFailure>(op);
+    sim::set<sim::metadata::ForkCodeUnitId>(
+        op, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
         outlineForkBranch(op, node, 3, /*captureReferences=*/true);
-    op->removeAttr("simulation.default_assertion_failure");
+    sim::remove<sim::metadata::DefaultAssertionFailure>(op);
     if (previousCodeUnit)
-      op->setAttr("simulation.fork_code_unit_id", previousCodeUnit);
+      sim::set<sim::metadata::ForkCodeUnitId>(op, previousCodeUnit);
     else
-      op->removeAttr("simulation.fork_code_unit_id");
+      sim::remove<sim::metadata::ForkCodeUnitId>(op);
     if (failed(callback))
       return failure();
     callback->first->setAttr(
@@ -938,9 +931,9 @@ void UnitLowering::emitQualifierWarning(
     return;
   }
   Block *controlResume = nullptr;
-  if (statement->hasAttr("simulation.assertion_controlled")) {
-    IntegerAttr assertionID = statement->getAttrOfType<IntegerAttr>(
-        "simulation.assertion_control_target_id");
+  if (sim::has<sim::metadata::AssertionControlled>(statement)) {
+    IntegerAttr assertionID =
+        sim::get<sim::metadata::AssertionControlTargetId>(statement);
     assert(assertionID && assertionID.getValue().isStrictlyPositive() &&
            "controlled qualifier report must have a prepared identity");
     Value context = function.getBody().front().getArgument(0);
@@ -969,10 +962,8 @@ void UnitLowering::emitQualifierWarning(
   Value descriptor = arith::ConstantOp::create(
       builder, location, builder.getI32Type(),
       builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
-  StringAttr scope =
-      function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
-  IntegerAttr multiplier =
-      function->getAttrOfType<IntegerAttr>(delayScaleAttrName);
+  StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
+  IntegerAttr multiplier = sim::get<sim::metadata::DelayScale>(function);
   sim::SimDisplayOp::create(
       builder, location, function.getBody().front().getArgument(0), descriptor,
       ValueRange{text}, true, sim::Radix::Decimal, ArrayRef<int32_t>{0}, scope,

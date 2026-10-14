@@ -209,7 +209,7 @@ static void freezeVirtualInterfaceReceiverMembers(
     Operation *expression, Operation *receiver, SymbolRefAttr reference,
     const llvm::StringMap<Operation *> &semanticSymbols, Builder &builder) {
   if (!expression || !receiver || !reference ||
-      expression->hasAttr(virtualInterfaceReceiverMembersAttrName))
+      sim::has<sim::metadata::VirtualInterfaceReceiverMembers>(expression))
     return;
   auto typeAttr = receiver->getAttrOfType<TypeAttr>("semantic_type");
   auto receiverType =
@@ -257,8 +257,8 @@ static void freezeVirtualInterfaceReceiverMembers(
         builder.getNamedAttr("member", member),
         builder.getNamedAttr("interface", identity),
     }));
-  expression->setAttr(virtualInterfaceReceiverMembersAttrName,
-                      builder.getArrayAttr(members));
+  sim::set<sim::metadata::VirtualInterfaceReceiverMembers>(
+      expression, builder.getArrayAttr(members));
 }
 
 static bool containsResolutionOperation(Operation *root, Operation *nested) {
@@ -648,8 +648,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (definition &&
           definition.getDefinitionKind() == semantic::SVDefinitionKind::Module)
-        selection->setAttr("simulation.dumpports_scope",
-                           UnitAttr::get(context));
+        sim::mark<sim::metadata::DumpportsScope>(selection);
     }
   });
 
@@ -689,8 +688,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    bool firstEndpointUse = !sequence->hasAttr(sequenceEndpointEventAttrName);
-    sequence->setAttr(sequenceEndpointEventAttrName, UnitAttr::get(context));
+    bool firstEndpointUse =
+        !sim::has<sim::metadata::SequenceEndpointEvent>(sequence);
+    sim::mark<sim::metadata::SequenceEndpointEvent>(sequence);
     if (!firstEndpointUse)
       return;
 
@@ -737,8 +737,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     OpBuilder endpointBuilder(context);
     endpointBuilder.setInsertionPointToEnd(&sequence->getRegion(0).front());
     Operation *resolvedClock = endpointBuilder.clone(**clockEvent);
-    resolvedClock->setAttr(sequenceEndpointDefaultClockAttrName,
-                           UnitAttr::get(context));
+    sim::mark<sim::metadata::SequenceEndpointDefaultClock>(resolvedClock);
   });
 
   // Freeze the normalized storage type of every assertion local on its
@@ -771,8 +770,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       types.push_back(TypeAttr::get(*type));
     }
-    instance->setAttr(assertionLocalTypesAttrName,
-                      ArrayAttr::get(context, types));
+    sim::set<sim::metadata::AssertionLocalTypes>(
+        instance, ArrayAttr::get(context, types));
   });
 
   // IEEE 1800-2017 23.2.2.4 allows a default value only on an input port, so an
@@ -833,7 +832,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         (isa<semantic::SVSystemTimingCheckSymbolOp>(op) &&
          op->hasAttr("obelisk.basic_timing_check")) ||
         staticInitializer || initializedStaticLocal || designInitializer ||
-        netInitializer || op->hasAttr(sequenceEndpointEventAttrName) ||
+        netInitializer || sim::has<sim::metadata::SequenceEndpointEvent>(op) ||
         (isa<semantic::SVClockingBlockSymbolOp>(op) &&
          (op->hasAttr(clockingEventMonitorRequiredAttrName) ||
           op->hasAttr(clockingEventListAttrName))))
@@ -993,9 +992,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           continue;
         }
-        argument->setAttr(enumFormatValuesAttrName, *values);
-        argument->setAttr(enumFormatNamesAttrName,
-                          ArrayAttr::get(context, names));
+        sim::set<sim::metadata::EnumFormatValues>(argument, *values);
+        sim::set<sim::metadata::EnumFormatNames>(
+            argument, ArrayAttr::get(context, names));
       }
     }
     ArrayAttr spellings = call.getEnumMethodValuesAttr();
@@ -1024,7 +1023,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return;
       }
-      call->setAttr(enumMethodValuesAttrName, *values);
+      sim::set<sim::metadata::EnumMethodValues>(call, *values);
       if (call.getCalleeName() == "name") {
         ArrayAttr names = call.getEnumMethodNamesAttr();
         if (!names || names.empty() || names.size() != spellings.size()) {
@@ -1033,7 +1032,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return;
         }
-        call->setAttr(enumMethodNamesAttrName, names);
+        sim::set<sim::metadata::EnumMethodNames>(call, names);
       }
       return;
     }
@@ -1056,7 +1055,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // take the task form's error path.
     if (isa<semantic::SVExpressionStatementOp>(call->getParentOp()) &&
         !call.getIsVoidCasted())
-      call->setAttr(dynamicCastTaskAttrName, UnitAttr::get(context));
+      sim::mark<sim::metadata::DynamicCastTask>(call);
     if (*kind != semantic::SVDynamicCastKind::EnumMembership)
       return;
     Operation *destination = arguments.front();
@@ -1080,7 +1079,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return;
     }
-    call->setAttr(dynamicCastEnumValuesAttrName, *values);
+    sim::set<sim::metadata::DynamicCastEnumValues>(call, *values);
   });
 
   // Assign compact, collision-free IDs from sorted elaborated paths. These
@@ -1106,8 +1105,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   semanticRoot->walk([&](semantic::SVBlockStatementOp block) {
     if (auto path = block.getBlockPathAttr();
         path && resumableControlPaths.contains(path.getValue()))
-      block->setAttr("simulation.resumable_control_target",
-                     UnitAttr::get(context));
+      sim::mark<sim::metadata::ResumableControlTarget>(block);
   });
   auto assignPathIDs = [&](llvm::StringSet<> &paths, StringRef attrName) {
     SmallVector<StringRef> ordered;
@@ -1120,7 +1118,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       ids[path] = index + 1;
     semanticRoot->walk([&](Operation *op) {
       StringAttr path;
-      if (attrName == "simulation.control_target_id") {
+      if (attrName == sim::metadata::ControlTargetId::getNameStr()) {
         if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op))
           path = block.getBlockPathAttr();
         else if (auto disable = dyn_cast<semantic::SVDisableStatementOp>(op))
@@ -1138,8 +1136,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                ids.lookup(path.getValue())));
     });
   };
-  assignPathIDs(controlPaths, "simulation.control_target_id");
-  assignPathIDs(staticPaths, "simulation.static_site_id");
+  assignPathIDs(controlPaths, sim::metadata::ControlTargetId::getNameStr());
+  assignPathIDs(staticPaths, sim::metadata::StaticSiteId::getNameStr());
 
   // IEEE 1800-2017 19.3 (and IEEE 1800-2023 19.3) permits @@ sampling at
   // the begin or end of a named block, task, function, or class method.  The
@@ -1462,8 +1460,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       continue;
     if (auto block = dyn_cast_or_null<semantic::SVBlockStatementOp>(
             entry.operation->getParentOp()))
-      if (auto target = block->getAttrOfType<IntegerAttr>(
-              "simulation.control_target_id"))
+      if (auto target = sim::get<sim::metadata::ControlTargetId>(block))
         entry.id = target.getValue().getZExtValue();
     if (entry.id == 0)
       entry.id = nextAssertionID++;
@@ -1757,47 +1754,44 @@ void ObeliskSimPreparePass::runOnOperation() {
         appendTarget(id, depth, 0, 0);
     }
     if (dynamicAction)
-      call->setAttr(
-          "simulation.assertion_control_action_argument",
+      sim::set<sim::metadata::AssertionControlActionArgument>(
+          call,
           IntegerAttr::get(IntegerType::get(context, 64), actionArgument));
     else
-      call->setAttr("simulation.assertion_control_action",
-                    IntegerAttr::get(IntegerType::get(context, 32), action));
-    call->setAttr("simulation.assertion_control_ids",
-                  DenseI64ArrayAttr::get(context, selectedIDs));
+      sim::set<sim::metadata::AssertionControlAction>(
+          call, IntegerAttr::get(IntegerType::get(context, 32), action));
+    sim::set<sim::metadata::AssertionControlIds>(
+        call, DenseI64ArrayAttr::get(context, selectedIDs));
     if (dynamicLevels) {
-      call->setAttr(
-          "simulation.assertion_control_levels_argument",
+      sim::set<sim::metadata::AssertionControlLevelsArgument>(
+          call,
           IntegerAttr::get(IntegerType::get(context, 64), levelsArgument));
-      call->setAttr("simulation.assertion_control_depths",
-                    DenseI64ArrayAttr::get(context, selectedDepths));
+      sim::set<sim::metadata::AssertionControlDepths>(
+          call, DenseI64ArrayAttr::get(context, selectedDepths));
     }
     if (dynamicAssertionTypes) {
-      call->setAttr("simulation.assertion_control_assertion_types_argument",
-                    IntegerAttr::get(IntegerType::get(context, 64),
-                                     assertionTypesArgument));
-      call->setAttr("simulation.assertion_control_assertion_types",
-                    DenseI64ArrayAttr::get(context, selectedAssertionTypes));
+      sim::set<sim::metadata::AssertionControlAssertionTypesArgument>(
+          call, IntegerAttr::get(IntegerType::get(context, 64),
+                                 assertionTypesArgument));
+      sim::set<sim::metadata::AssertionControlAssertionTypes>(
+          call, DenseI64ArrayAttr::get(context, selectedAssertionTypes));
     }
     if (dynamicDirectiveTypes) {
-      call->setAttr("simulation.assertion_control_directive_types_argument",
-                    IntegerAttr::get(IntegerType::get(context, 64),
-                                     directiveTypesArgument));
-      call->setAttr("simulation.assertion_control_directive_types",
-                    DenseI64ArrayAttr::get(context, selectedDirectiveTypes));
+      sim::set<sim::metadata::AssertionControlDirectiveTypesArgument>(
+          call, IntegerAttr::get(IntegerType::get(context, 64),
+                                 directiveTypesArgument));
+      sim::set<sim::metadata::AssertionControlDirectiveTypes>(
+          call, DenseI64ArrayAttr::get(context, selectedDirectiveTypes));
     }
     for (auto [target, id] : selectedAssertions) {
-      target->setAttr("simulation.assertion_control_target_id",
-                      IntegerAttr::get(IntegerType::get(context, 64), id));
+      sim::set<sim::metadata::AssertionControlTargetId>(
+          target, IntegerAttr::get(IntegerType::get(context, 64), id));
       if (dynamicAction || (action >= 3 && action <= 5))
-        target->setAttr("simulation.assertion_controlled",
-                        UnitAttr::get(context));
+        sim::mark<sim::metadata::AssertionControlled>(target);
       if (dynamicAction || action == 5)
-        target->setAttr("simulation.assertion_kill_controlled",
-                        UnitAttr::get(context));
+        sim::mark<sim::metadata::AssertionKillControlled>(target);
       if (dynamicAction || (action >= 6 && action <= 11))
-        target->setAttr("simulation.assertion_action_controlled",
-                        UnitAttr::get(context));
+        sim::mark<sim::metadata::AssertionActionControlled>(target);
     }
   });
 
@@ -1959,7 +1953,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           property.getLifetime() == semantic::SVVariableLifetime::Static)
         return;
       if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property)) {
-        nested->setAttr("simulation.class_field", field);
+        sim::set<sim::metadata::ClassField>(nested, field);
         if (Type storageType =
                 classes->covergroupFieldStorageTypes.lookup(property))
           cov::set<cov::FieldStorageType>(nested, TypeAttr::get(storageType));
@@ -2396,11 +2390,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (ids.size() == 1 && leaves[ids.front()].indices.empty()) {
         net->setAttr("semantic_type",
                      TypeAttr::get(leaves[ids.front()].candidate));
-        net->setAttr(interconnectVPITypeAttrName,
-                     leaves[ids.front()].candidateVPIType);
+        sim::set<sim::metadata::InterconnectVpiType>(
+            net, leaves[ids.front()].candidateVPIType);
         if (leaves[ids.front()].candidateNettype)
-          net->setAttr(interconnectNettypeAttrName,
-                       leaves[ids.front()].candidateNettype);
+          sim::set<sim::metadata::InterconnectNettype>(
+              net, leaves[ids.front()].candidateNettype);
         if (leaves[ids.front()].candidateTypeIdentity)
           net->setAttr(vpiSourceTypeIdentityAttrName,
                        leaves[ids.front()].candidateTypeIdentity);
@@ -2421,8 +2415,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           definition.set("type_identity", leaves[id].candidateTypeIdentity);
         definitions.push_back(builder.getDictionaryAttr(definition));
       }
-      net->setAttr(interconnectLeavesAttrName,
-                   builder.getArrayAttr(definitions));
+      sim::set<sim::metadata::InterconnectLeaves>(
+          net, builder.getArrayAttr(definitions));
     }
 
     // Freeze a direct descriptor identity and executable type on every fully
@@ -2435,8 +2429,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               getInterconnectReference(select)->indices.size())
         return;
       InterconnectLeaf &leaf = leaves[ids.front()];
-      select->setAttr(interconnectLeafPathAttrName,
-                      builder.getStringAttr(leaf.path));
+      sim::set<sim::metadata::InterconnectLeafPath>(
+          select, builder.getStringAttr(leaf.path));
       select->setAttr("semantic_type", TypeAttr::get(leaf.candidate));
     });
     for (semantic::SVPortConnectionOp connection : portConnections) {
@@ -2616,8 +2610,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!property ||
           property.getLifetime() != semantic::SVVariableLifetime::Static)
         continue;
-      auto members =
-          property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName);
+      auto members = sim::get<sim::metadata::RandomStructMembers>(property);
       if (!members)
         continue;
       auto source = descriptors.find(getHierarchyName(property));
@@ -2668,8 +2661,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
         updated.push_back(attributes.getDictionary(context));
       }
-      property->setAttr(randomStructMembersAttrName,
-                        builder.getArrayAttr(updated));
+      sim::set<sim::metadata::RandomStructMembers>(
+          property, builder.getArrayAttr(updated));
     }
 
   FailureOr<ContinuousDriverMap> preparedNetTopology =
@@ -2890,8 +2883,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     bool full = connectionFull.getValue();
     SmallVector<int64_t, 12> normalizedDelays(delays.asArrayRef());
-    auto globalReject = sim::get<sim::PulseRejectPercent>(module);
-    auto globalError = sim::get<sim::PulseErrorPercent>(module);
+    auto globalReject = sim::get<sim::metadata::PulseRejectPercent>(module);
+    auto globalError = sim::get<sim::metadata::PulseErrorPercent>(module);
     auto percentLimits = [&](IntegerAttr percent) {
       SmallVector<int64_t, 12> result;
       result.reserve(normalizedDelays.size());
@@ -2967,9 +2960,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       // IEEE 1800-2017 30.7.4.1-.2 gives invocation controls precedence over
       // specify-block declarations. Preserve that precedence after range
       // splitting so it cannot vary accidentally across packed output bits.
-      if (auto global = sim::get<sim::PulseOnDetect>(module))
+      if (auto global = sim::get<sim::metadata::PulseOnDetect>(module))
         pulseOnDetect = global.getValue();
-      if (auto global = sim::get<sim::PulseShowCancelled>(module))
+      if (auto global = sim::get<sim::metadata::PulseShowCancelled>(module))
         pulseShowCancelled = global.getValue();
       TimingTerminal segment = *outputTerminal;
       segment.low = segmentLow;
@@ -3345,14 +3338,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           adjusted0 = std::max<__int128>(adjusted0, 0);
           adjusted1 = std::max<__int128>(adjusted1, 0);
         }
-        check.check->setAttr(
-            "simulation.timing_adjusted_ticks",
+        sim::set<sim::metadata::TimingAdjustedTicks>(
+            check.check,
             builder.getDenseI64ArrayAttr({static_cast<int64_t>(adjusted0),
                                           static_cast<int64_t>(adjusted1)}));
-        check.check->setAttr("simulation.negative_timing_adjusted",
-                             builder.getUnitAttr());
-        check.check->setAttr(
-            "simulation.timing_delayed_terminal_indices",
+        sim::mark<sim::metadata::NegativeTimingAdjusted>(check.check);
+        sim::set<sim::metadata::TimingDelayedTerminalIndices>(
+            check.check,
             builder.getDenseI64ArrayAttr({static_cast<int64_t>(check.reference),
                                           static_cast<int64_t>(check.data)}));
       }
@@ -3394,23 +3386,22 @@ void ObeliskSimPreparePass::runOnOperation() {
           sim::VPITypeSemanticsAttr{});
     }
     for (NegativeTimingCheckPlan &check : negativeChecks) {
-      auto indices = check.check->getAttrOfType<DenseI64ArrayAttr>(
-          "simulation.timing_delayed_terminal_indices");
+      auto indices =
+          sim::get<sim::metadata::TimingDelayedTerminalIndices>(check.check);
       if (!indices || indices.size() != 2)
         continue;
-      check.check->setAttr(
-          "simulation.timing_delayed_storage_ids",
+      sim::set<sim::metadata::TimingDelayedStorageIds>(
+          check.check,
           builder.getDenseI64ArrayAttr(
               {static_cast<int64_t>(
                    negativeTimingTerminals[indices[0]].delayedStorage),
                static_cast<int64_t>(
                    negativeTimingTerminals[indices[1]].delayedStorage)}));
-      check.check->setAttr(
-          "simulation.timing_delayed_source_delays",
-          builder.getDenseI64ArrayAttr(
-              {negativeTimingTerminals[indices[0]].delayTicks,
-               negativeTimingTerminals[indices[1]].delayTicks}));
-      check.check->removeAttr("simulation.timing_delayed_terminal_indices");
+      sim::set<sim::metadata::TimingDelayedSourceDelays>(
+          check.check, builder.getDenseI64ArrayAttr(
+                           {negativeTimingTerminals[indices[0]].delayTicks,
+                            negativeTimingTerminals[indices[1]].delayTicks}));
+      sim::remove<sim::metadata::TimingDelayedTerminalIndices>(check.check);
     }
   }
   if (invalid)
@@ -4437,8 +4428,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             : sim::EntryKind::Function;
     if (unit.entryKind != expectedKind)
       continue;
-    auto anchorRef =
-        unit.source->getAttrOfType<FlatSymbolRefAttr>("simulation.vpi_anchor");
+    auto anchorRef = sim::get<sim::metadata::VpiAnchor>(unit.source);
     if (!anchorRef)
       continue;
     auto anchor = dyn_cast_or_null<sim::SimVPIObjectAnchorOp>(
@@ -4610,8 +4600,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         storages.push_back(-1);
         continue;
       }
-      auto storage = constraint->getAttrOfType<IntegerAttr>(
-          staticConstraintStorageAttrName);
+      auto storage =
+          sim::get<sim::metadata::StaticConstraintStorage>(constraint);
       if (!storage || storage.getValue().isNegative() ||
           storage.getValue().getActiveBits() > 63) {
         emitError(location)
@@ -5209,16 +5199,16 @@ void ObeliskSimPreparePass::runOnOperation() {
           return;
         auto random = randomIndices.find(symbol->second);
         if (random != randomIndices.end() &&
-            !nested->hasAttr(randomFunctionStateAttrName)) {
-          nested->setAttr(randomVariableAttrName,
-                          builder.getI32IntegerAttr(random->second));
+            !sim::has<sim::metadata::RandomFunctionState>(nested)) {
+          sim::set<sim::metadata::RandomVariable>(
+              nested, builder.getI32IntegerAttr(random->second));
           return;
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
           if (auto constant =
                   symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            nested->setAttr("simulation.constant_value", constant);
+            sim::set<sim::metadata::ConstantValue>(nested, constant);
       });
       root->walk([&](Operation *nested) {
         if (!isa<semantic::SVMemberAccessExpressionOp,
@@ -5231,8 +5221,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           return;
         }
         if (*path && (**path).precise && !(**path).isState)
-          nested->setAttr(
-              randomVariableBitOffsetAttrName,
+          sim::set<sim::metadata::RandomVariableBitOffset>(
+              nested,
               builder.getI64IntegerAttr(propertyOffsets[(**path).property] +
                                         (**path).offset));
       });
@@ -5286,23 +5276,26 @@ void ObeliskSimPreparePass::runOnOperation() {
       propertyAttrs.push_back(builder.getDictionaryAttr(attributes));
     }
 
-    call->setAttr(randomizeAttrName, builder.getUnitAttr());
-    call->setAttr(randomizeScopeAttrName, builder.getUnitAttr());
-    call->setAttr(randomizeExplicitPropertiesAttrName, builder.getUnitAttr());
+    sim::mark<sim::metadata::Randomize>(call);
+    sim::mark<sim::metadata::RandomizeScope>(call);
+    sim::mark<sim::metadata::RandomizeExplicitProperties>(call);
     if (properties.empty())
-      call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
-    call->setAttr(randomPropertiesAttrName,
-                  builder.getArrayAttr(propertyAttrs));
-    call->setAttr(randomContainerPropertiesAttrName, builder.getArrayAttr({}));
-    call->setAttr(randomNestedConstraintModesAttrName,
-                  builder.getArrayAttr({}));
-    call->setAttr(randomNestedHooksAttrName, builder.getArrayAttr({}));
-    call->setAttr(randomRecursiveAliasGuardsAttrName, builder.getArrayAttr({}));
-    call->setAttr(randomTotalWidthAttrName,
-                  builder.getI64IntegerAttr(totalWidth));
-    call->setAttr(randomConstraintCountAttrName, builder.getI32IntegerAttr(0));
-    call->setAttr(constraintModeStaticStoragesAttrName,
-                  builder.getDenseI64ArrayAttr({}));
+      sim::mark<sim::metadata::RandomizeCheckerOnly>(call);
+    sim::set<sim::metadata::RandomProperties>(
+        call, builder.getArrayAttr(propertyAttrs));
+    sim::set<sim::metadata::RandomContainerProperties>(
+        call, builder.getArrayAttr({}));
+    sim::set<sim::metadata::RandomNestedConstraintModes>(
+        call, builder.getArrayAttr({}));
+    sim::set<sim::metadata::RandomNestedHooks>(call, builder.getArrayAttr({}));
+    sim::set<sim::metadata::RandomRecursiveAliasGuards>(
+        call, builder.getArrayAttr({}));
+    sim::set<sim::metadata::RandomTotalWidth>(
+        call, builder.getI64IntegerAttr(totalWidth));
+    sim::set<sim::metadata::RandomConstraintCount>(
+        call, builder.getI32IntegerAttr(0));
+    sim::set<sim::metadata::ConstraintModeStaticStorages>(
+        call, builder.getDenseI64ArrayAttr({}));
 
     for (Operation *argument : argumentNodes)
       argument->erase();
@@ -5315,9 +5308,9 @@ void ObeliskSimPreparePass::runOnOperation() {
   freezeRandomizeContract = [&](semantic::SVCallExpressionOp call) -> bool {
     if (!call.getIsSystemCall() || call.getCalleeName() != "randomize")
       return false;
-    if (call->hasAttr(randomizeAttrName) ||
-        call->hasAttr(randomizeDispatchAttrName) ||
-        call->hasAttr(randomizeNestedDispatchAttrName))
+    if (sim::has<sim::metadata::Randomize>(call) ||
+        sim::has<sim::metadata::RandomizeDispatch>(call) ||
+        sim::has<sim::metadata::RandomizeNestedDispatch>(call))
       return true;
     SmallVector<Operation *> callChildren = getChildren(call);
     uint64_t argumentCount = call.getArgumentCount();
@@ -5379,7 +5372,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // never mistaken for class_handle_variable.randomize().
     if (isa<semantic::SVAssignmentExpressionOp>(callChildren[receiverIndex]))
       return freezeScopeRandomizeContract(call, std::move(callChildren));
-    bool frozenChecker = call->hasAttr(randomizeCheckerOnlyAttrName);
+    bool frozenChecker = sim::has<sim::metadata::RandomizeCheckerOnly>(call);
     bool checkerOnly =
         frozenChecker || (argumentCount == 2 &&
                           isa<semantic::SVNullLiteralOp>(callChildren.back()));
@@ -5397,7 +5390,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       return freezeScopeRandomizeContract(call, std::move(callChildren));
     }
     if (checkerOnly)
-      call->setAttr(randomizeCheckerOnlyAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::RandomizeCheckerOnly>(call);
     if (explicitPropertyList) {
       for (uint64_t index = 1; index != argumentCount; ++index) {
         Operation *argument = callChildren[receiverIndex + index];
@@ -5427,13 +5420,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         explicitPropertyArguments.push_back(argument);
         explicitPropertySymbols.push_back(property);
       }
-      call->setAttr(randomizeExplicitPropertiesAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::RandomizeExplicitProperties>(call);
     }
 
     auto foundClass =
         semanticClasses.find(receiverType.getClassName().getLeafReference());
-    if (auto plannedClass = call->getAttrOfType<FlatSymbolRefAttr>(
-            randomizePlanClassAttrName)) {
+    if (auto plannedClass = sim::get<sim::metadata::RandomizePlanClass>(call)) {
       foundClass = semanticClasses.end();
       for (semantic::SVClassTypeOp candidate : classSources)
         if (classSymbols.lookup(candidate).getValue() ==
@@ -5476,7 +5468,7 @@ void ObeliskSimPreparePass::runOnOperation() {
 
     // A randomize call uses the dynamic object's complete property and
     // constraint set even though randomize itself is a builtin.
-    if (!call->hasAttr(randomizePlanClassAttrName)) {
+    if (!sim::has<sim::metadata::RandomizePlanClass>(call)) {
       FailureOr<SmallVector<CompatibleConcreteClass>> dynamicPlans =
           getCompatibleConcreteClasses(foundClass->second,
                                        "randomization dispatch");
@@ -5517,8 +5509,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                    builder.getDenseI64ArrayAttr({0}));
             }
           }
-          alternative->setAttr(
-              randomizePlanClassAttrName,
+          sim::set<sim::metadata::RandomizePlanClass>(
+              alternative,
               FlatSymbolRefAttr::get(
                   context, classSymbols.lookup(plan.classType).getValue()));
           alternatives.push_back(alternative);
@@ -5529,9 +5521,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           alternativeBuilder.insert(alternative);
           freezeRandomizeContract(alternative);
         }
-        call->setAttr(randomizeDispatchAttrName, builder.getUnitAttr());
-        call->setAttr(randomReceiverIndexAttrName,
-                      builder.getI32IntegerAttr(receiverIndex));
+        sim::mark<sim::metadata::RandomizeDispatch>(call);
+        sim::set<sim::metadata::RandomReceiverIndex>(
+            call, builder.getI32IntegerAttr(receiverIndex));
         if (explicitPropertyList) {
           for (Operation *argument : explicitPropertyArguments)
             argument->erase();
@@ -5706,7 +5698,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 dyn_cast<semantic::SVClassPropertySymbolOp>(member)) {
           unsigned modeIndex = randomPropertyIndex;
           auto structMembers =
-              property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName);
+              sim::get<sim::metadata::RandomStructMembers>(property);
           if (property.getRandMode() != semantic::SVRandMode::None) {
             ++randomPropertyIndex;
             if (structMembers)
@@ -5751,8 +5743,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             IntegerAttr modeStorage;
             if (isStatic &&
                 property.getRandMode() != semantic::SVRandMode::None)
-              modeStorage = property->getAttrOfType<IntegerAttr>(
-                  staticRandomModeStorageAttrName);
+              modeStorage =
+                  sim::get<sim::metadata::StaticRandomModeStorage>(property);
             for (auto [index, attribute] : llvm::enumerate(structMembers)) {
               auto member = cast<DictionaryAttr>(attribute);
               Type memberType = member.getAs<TypeAttr>("type").getValue();
@@ -5933,8 +5925,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             if (concreteClasses.empty())
               continue;
             DictionaryAttr selectedPlan;
-            if (auto selectedPlans = call->getAttrOfType<ArrayAttr>(
-                    randomizeNestedPlansAttrName))
+            if (auto selectedPlans =
+                    sim::get<sim::metadata::RandomizeNestedPlans>(call))
               for (Attribute selectedAttr : selectedPlans)
                 if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
                     selected && !selected.get("path") &&
@@ -5973,8 +5965,9 @@ void ObeliskSimPreparePass::runOnOperation() {
               auto addSelection = [&](semantic::SVCallExpressionOp alternative,
                                       Attribute dynamicClass) {
                 SmallVector<Attribute> selections;
-                if (auto existing = alternative->getAttrOfType<ArrayAttr>(
-                        randomizeNestedPlansAttrName))
+                if (auto existing =
+                        sim::get<sim::metadata::RandomizeNestedPlans>(
+                            alternative))
                   llvm::append_range(selections, existing);
                 SmallVector<NamedAttribute> attributes{
                     builder.getNamedAttr("field", field)};
@@ -5985,8 +5978,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                   attributes.push_back(
                       builder.getNamedAttr("null", builder.getUnitAttr()));
                 selections.push_back(builder.getDictionaryAttr(attributes));
-                alternative->setAttr(randomizeNestedPlansAttrName,
-                                     builder.getArrayAttr(selections));
+                sim::set<sim::metadata::RandomizeNestedPlans>(
+                    alternative, builder.getArrayAttr(selections));
               };
               for (const NestedDynamicPlan &plan : dynamicPlans) {
                 auto alternative =
@@ -6008,13 +6001,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                 alternativeBuilder.insert(alternative);
                 freezeRandomizeContract(alternative);
               }
-              call->setAttr(randomizeNestedDispatchAttrName,
-                            builder.getUnitAttr());
-              call->setAttr(randomizeNestedDispatchFieldAttrName, field);
-              call->setAttr(randomizeNestedDispatchStorageAttrName,
-                            TypeAttr::get(objectType));
-              call->setAttr(randomReceiverIndexAttrName,
-                            builder.getI32IntegerAttr(receiverIndex));
+              sim::mark<sim::metadata::RandomizeNestedDispatch>(call);
+              sim::set<sim::metadata::RandomizeNestedDispatchField>(call,
+                                                                    field);
+              sim::set<sim::metadata::RandomizeNestedDispatchStorageType>(
+                  call, TypeAttr::get(objectType));
+              sim::set<sim::metadata::RandomReceiverIndex>(
+                  call, builder.getI32IntegerAttr(receiverIndex));
               if (explicitPropertyList) {
                 for (Operation *argument : explicitPropertyArguments)
                   argument->erase();
@@ -6115,8 +6108,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               selectionPath.push_back(edgeField);
               ArrayAttr selectionPathAttr = builder.getArrayAttr(selectionPath);
               DictionaryAttr selectedPlan;
-              if (auto selectedPlans = call->getAttrOfType<ArrayAttr>(
-                      randomizeNestedPlansAttrName))
+              if (auto selectedPlans =
+                      sim::get<sim::metadata::RandomizeNestedPlans>(call))
                 for (Attribute selectedAttr : selectedPlans)
                   if (auto selected = dyn_cast<DictionaryAttr>(selectedAttr);
                       selected &&
@@ -6169,8 +6162,9 @@ void ObeliskSimPreparePass::runOnOperation() {
                     [&](semantic::SVCallExpressionOp alternative,
                         Attribute dynamicClass) {
                       SmallVector<Attribute> selections;
-                      if (auto existing = alternative->getAttrOfType<ArrayAttr>(
-                              randomizeNestedPlansAttrName))
+                      if (auto existing =
+                              sim::get<sim::metadata::RandomizeNestedPlans>(
+                                  alternative))
                         llvm::append_range(selections, existing);
                       SmallVector<NamedAttribute> attributes{
                           builder.getNamedAttr("field", field),
@@ -6184,8 +6178,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                             "null", builder.getUnitAttr()));
                       selections.push_back(
                           builder.getDictionaryAttr(attributes));
-                      alternative->setAttr(randomizeNestedPlansAttrName,
-                                           builder.getArrayAttr(selections));
+                      sim::set<sim::metadata::RandomizeNestedPlans>(
+                          alternative, builder.getArrayAttr(selections));
                     };
                 for (const RecursiveDynamicPlan &plan : dynamicPlans) {
                   auto alternative =
@@ -6228,17 +6222,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                     builder.getNamedAttr("storage_type",
                                          TypeAttr::get(edgeStorageType)),
                 }));
-                call->setAttr(randomizeNestedDispatchAttrName,
-                              builder.getUnitAttr());
-                call->setAttr(randomizeNestedDispatchFieldAttrName, field);
-                call->setAttr(randomizeNestedDispatchStorageAttrName,
-                              TypeAttr::get(objectType));
-                call->setAttr(randomizeNestedDispatchPathAttrName,
-                              builder.getArrayAttr(dispatchPath));
-                call->setAttr(randomizeNestedDispatchSelectionPathAttrName,
-                              selectionPathAttr);
-                call->setAttr(randomReceiverIndexAttrName,
-                              builder.getI32IntegerAttr(receiverIndex));
+                sim::mark<sim::metadata::RandomizeNestedDispatch>(call);
+                sim::set<sim::metadata::RandomizeNestedDispatchField>(call,
+                                                                      field);
+                sim::set<sim::metadata::RandomizeNestedDispatchStorageType>(
+                    call, TypeAttr::get(objectType));
+                sim::set<sim::metadata::RandomizeNestedDispatchPath>(
+                    call, builder.getArrayAttr(dispatchPath));
+                sim::set<sim::metadata::RandomizeNestedDispatchSelectionPath>(
+                    call, selectionPathAttr);
+                sim::set<sim::metadata::RandomReceiverIndex>(
+                    call, builder.getI32IntegerAttr(receiverIndex));
                 if (explicitPropertyList) {
                   for (Operation *argument : explicitPropertyArguments)
                     argument->erase();
@@ -6743,8 +6737,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           IntegerAttr randomModeStorage;
           if (isStatic &&
               property.getRandMode() != semantic::SVRandMode::None) {
-            randomModeStorage = property->getAttrOfType<IntegerAttr>(
-                staticRandomModeStorageAttrName);
+            randomModeStorage =
+                sim::get<sim::metadata::StaticRandomModeStorage>(property);
             if (!randomModeStorage ||
                 randomModeStorage.getValue().isNegative() ||
                 randomModeStorage.getValue().getActiveBits() > 63) {
@@ -6843,12 +6837,14 @@ void ObeliskSimPreparePass::runOnOperation() {
                     FlatSymbolRefAttr::get(context, hook.getSymName()));
       return success();
     };
-    if (failed(freezeHook(preRandomizeHook, randomPreHookAttrName,
-                          randomPreHookOwnerAttrName,
-                          randomPreHookSourceAttrName)) ||
-        failed(freezeHook(postRandomizeHook, randomPostHookAttrName,
-                          randomPostHookOwnerAttrName,
-                          randomPostHookSourceAttrName)))
+    if (failed(freezeHook(preRandomizeHook,
+                          sim::metadata::RandomPreHook::getNameStr(),
+                          sim::metadata::RandomPreHookOwner::getNameStr(),
+                          sim::metadata::RandomPreHookSource::getNameStr())) ||
+        failed(freezeHook(postRandomizeHook,
+                          sim::metadata::RandomPostHook::getNameStr(),
+                          sim::metadata::RandomPostHookOwner::getNameStr(),
+                          sim::metadata::RandomPostHookSource::getNameStr())))
       invalid = true;
     collectEffectiveConstraints(hierarchy, constraintGroups);
     unsigned containerGroupCount = constraintGroups.size();
@@ -7075,7 +7071,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                  !property.storagePath && !isa<FloatType>(property.type);
         });
     if (templateEligible) {
-      call->setAttr(randomizeConstraintTemplateAttrName, constraintTemplate);
+      sim::set<sim::metadata::RandomizeConstraintTemplate>(call,
+                                                           constraintTemplate);
       // The template contains the complete effective class constraint set.
       // Clearing the borrowed declaration roots prevents the clone/expand and
       // annotation stages below from manufacturing a call-local copy.
@@ -7103,8 +7100,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return true;
         }
-        cloned->setAttr(randomConstraintBlockAttrName,
-                        builder.getI32IntegerAttr(indices->second[next++]));
+        sim::set<sim::metadata::RandomConstraintBlock>(
+            cloned, builder.getI32IntegerAttr(indices->second[next++]));
       }
       root = cloned;
     }
@@ -7118,8 +7115,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
 
     auto getNestedConstraintOwner = [&](Operation *root) -> NestedObjectPlan * {
-      auto index =
-          root->getAttrOfType<IntegerAttr>(randomConstraintBlockAttrName);
+      auto index = sim::get<sim::metadata::RandomConstraintBlock>(root);
       if (!index || index.getValue().isNegative() ||
           index.getValue().getActiveBits() > 32)
         return nullptr;
@@ -7713,8 +7709,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                   getFixedRandomArrayLayout(property.type)->elementWidth)));
         }
       }
-      if (auto bitmap = property.source->getAttrOfType<FlatSymbolRefAttr>(
-              randomArrayModeFieldAttrName)) {
+      if (auto bitmap =
+              sim::get<sim::metadata::RandomArrayModeField>(property.source)) {
         if (auto layout = getFixedRandomArrayLayout(property.type)) {
           attributes.push_back(
               builder.getNamedAttr("element_mode_field", bitmap));
@@ -7723,8 +7719,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               builder.getI32IntegerAttr(layout->elementWidth)));
         }
       }
-      if (auto storage = property.source->getAttrOfType<IntegerAttr>(
-              staticRandomArrayModeStorageAttrName)) {
+      if (auto storage = sim::get<sim::metadata::StaticRandomArrayModeStorage>(
+              property.source)) {
         if (auto layout = getFixedRandomArrayLayout(property.type)) {
           attributes.push_back(
               builder.getNamedAttr("element_mode_storage", storage));
@@ -7791,11 +7787,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       propertyAttrs.push_back(builder.getDictionaryAttr(attributes));
     }
-    call->setAttr(randomizeAttrName, builder.getUnitAttr());
-    call->setAttr(randomReceiverIndexAttrName,
-                  builder.getI32IntegerAttr(receiverIndex));
-    call->setAttr(randomPropertiesAttrName,
-                  builder.getArrayAttr(propertyAttrs));
+    sim::mark<sim::metadata::Randomize>(call);
+    sim::set<sim::metadata::RandomReceiverIndex>(
+        call, builder.getI32IntegerAttr(receiverIndex));
+    sim::set<sim::metadata::RandomProperties>(
+        call, builder.getArrayAttr(propertyAttrs));
     SmallVector<Attribute> containerPropertyAttrs;
     for (const RandomContainerProperty &property : containerProperties) {
       SmallVector<NamedAttribute> attributes{
@@ -7843,8 +7839,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       containerPropertyAttrs.push_back(builder.getDictionaryAttr(attributes));
     }
-    call->setAttr(randomContainerPropertiesAttrName,
-                  builder.getArrayAttr(containerPropertyAttrs));
+    sim::set<sim::metadata::RandomContainerProperties>(
+        call, builder.getArrayAttr(containerPropertyAttrs));
     SmallVector<Attribute> nestedConstraintModeAttrs;
     for (const NestedObjectPlan &plan : nestedObjectPlans) {
       if (plan.globalConstraintIndices.empty())
@@ -7881,8 +7877,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       nestedConstraintModeAttrs.push_back(
           builder.getDictionaryAttr(attributes));
     }
-    call->setAttr(randomNestedConstraintModesAttrName,
-                  builder.getArrayAttr(nestedConstraintModeAttrs));
+    sim::set<sim::metadata::RandomNestedConstraintModes>(
+        call, builder.getArrayAttr(nestedConstraintModeAttrs));
     SmallVector<Attribute> nestedHookAttrs;
     SmallVector<const NestedObjectPlan *> hookPlans;
     for (const NestedObjectPlan &plan : nestedObjectPlans)
@@ -7945,8 +7941,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       addHook(plan.postHook, "post");
       nestedHookAttrs.push_back(builder.getDictionaryAttr(attributes));
     }
-    call->setAttr(randomNestedHooksAttrName,
-                  builder.getArrayAttr(nestedHookAttrs));
+    sim::set<sim::metadata::RandomNestedHooks>(
+        call, builder.getArrayAttr(nestedHookAttrs));
     SmallVector<Attribute> recursiveAliasGuardAttrs;
     for (const RecursiveAliasGuard &guard : recursiveAliasGuards) {
       SmallVector<Attribute> path;
@@ -7973,14 +7969,14 @@ void ObeliskSimPreparePass::runOnOperation() {
                                builder.getI32IntegerAttr(guard.aliasDepth)),
       }));
     }
-    call->setAttr(randomRecursiveAliasGuardsAttrName,
-                  builder.getArrayAttr(recursiveAliasGuardAttrs));
-    call->setAttr(randomTotalWidthAttrName,
-                  builder.getI64IntegerAttr(totalWidth));
-    call->setAttr(randomConstraintCountAttrName,
-                  builder.getI32IntegerAttr(constraintGroups.size()));
-    call->setAttr(constraintModeStaticStoragesAttrName,
-                  builder.getDenseI64ArrayAttr(*staticConstraintStorages));
+    sim::set<sim::metadata::RandomRecursiveAliasGuards>(
+        call, builder.getArrayAttr(recursiveAliasGuardAttrs));
+    sim::set<sim::metadata::RandomTotalWidth>(
+        call, builder.getI64IntegerAttr(totalWidth));
+    sim::set<sim::metadata::RandomConstraintCount>(
+        call, builder.getI32IntegerAttr(constraintGroups.size()));
+    sim::set<sim::metadata::ConstraintModeStaticStorages>(
+        call, builder.getDenseI64ArrayAttr(*staticConstraintStorages));
 
     // Property arguments name object fields; they are compile-time controls,
     // not expressions evaluated by the randomize call. Once their exact set
@@ -8011,7 +8007,7 @@ void ObeliskSimPreparePass::runOnOperation() {
              property.getLifetime() != semantic::SVVariableLifetime::Static))
           if (auto field = classFieldSymbols.find(symbol->second);
               field != classFieldSymbols.end()) {
-            nested->setAttr("simulation.class_field", field->second);
+            sim::set<sim::metadata::ClassField>(nested, field->second);
             if (Type storageType =
                     classes->covergroupFieldStorageTypes.lookup(symbol->second))
               cov::set<cov::FieldStorageType>(nested,
@@ -8021,7 +8017,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             isa<semantic::SVMemberAccessExpressionOp>(nested)
                 ? getNestedMemberIndex(nested)
                 : getRandomPropertyIndex(symbol->second);
-        if (index && !nested->hasAttr(randomFunctionStateAttrName)) {
+        if (index && !sim::has<sim::metadata::RandomFunctionState>(nested)) {
           if (properties[*index].isContainerSize) {
             auto sizeCall = dyn_cast_or_null<semantic::SVCallExpressionOp>(
                 nested->getParentOp());
@@ -8031,24 +8027,24 @@ void ObeliskSimPreparePass::runOnOperation() {
                      "through its size() value";
               invalid = true;
             } else {
-              sizeCall->setAttr(randomVariableAttrName,
-                                builder.getI32IntegerAttr(*index));
+              sim::set<sim::metadata::RandomVariable>(
+                  sizeCall, builder.getI32IntegerAttr(*index));
             }
           } else {
-            nested->setAttr(randomVariableAttrName,
-                            builder.getI32IntegerAttr(*index));
+            sim::set<sim::metadata::RandomVariable>(
+                nested, builder.getI32IntegerAttr(*index));
           }
         } else if (property && frozenNestedOwner &&
                    property.getLifetime() !=
                        semantic::SVVariableLifetime::Static &&
                    llvm::is_contained(frozenNestedOwner->hierarchy,
                                       getOwningClass(property))) {
-          nested->setAttr(randomNestedStateFieldAttrName,
-                          frozenNestedOwner->field);
-          nested->setAttr(randomNestedStateConcreteTypeAttrName,
-                          TypeAttr::get(frozenNestedOwner->concreteType));
-          nested->setAttr(randomNestedStateStorageTypeAttrName,
-                          TypeAttr::get(frozenNestedOwner->storageType));
+          sim::set<sim::metadata::RandomNestedStateField>(
+              nested, frozenNestedOwner->field);
+          sim::set<sim::metadata::RandomNestedStateConcreteType>(
+              nested, TypeAttr::get(frozenNestedOwner->concreteType));
+          sim::set<sim::metadata::RandomNestedStateStorageType>(
+              nested, TypeAttr::get(frozenNestedOwner->storageType));
           if (!frozenNestedOwner->nestedObjectPath.empty()) {
             SmallVector<Attribute> path;
             for (const RandomObjectPathElement &element :
@@ -8060,22 +8056,22 @@ void ObeliskSimPreparePass::runOnOperation() {
                   builder.getNamedAttr("storage_type",
                                        TypeAttr::get(element.storageType)),
               }));
-            nested->setAttr(randomNestedStatePathAttrName,
-                            builder.getArrayAttr(path));
+            sim::set<sim::metadata::RandomNestedStatePath>(
+                nested, builder.getArrayAttr(path));
           }
         }
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
           if (auto constant =
                   symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            nested->setAttr("simulation.constant_value", constant);
+            sim::set<sim::metadata::ConstantValue>(nested, constant);
       });
       constraint->walk([&](Operation *nested) {
-        if (!nested->hasAttr(randomFunctionStateAttrName))
+        if (!sim::has<sim::metadata::RandomFunctionState>(nested))
           if (auto index = getStructureMemberIndex(nested))
-            nested->setAttr(randomVariableAttrName,
-                            builder.getI32IntegerAttr(*index));
-        if (nested->hasAttr(randomVariableAttrName))
+            sim::set<sim::metadata::RandomVariable>(
+                nested, builder.getI32IntegerAttr(*index));
+        if (sim::has<sim::metadata::RandomVariable>(nested))
           return;
         if (!isa<semantic::SVMemberAccessExpressionOp,
                  semantic::SVElementSelectExpressionOp,
@@ -8096,8 +8092,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           invalid = true;
           return;
         }
-        nested->setAttr(randomVariableBitOffsetAttrName,
-                        builder.getI64IntegerAttr(globalOffset));
+        sim::set<sim::metadata::RandomVariableBitOffset>(
+            nested, builder.getI64IntegerAttr(globalOffset));
       });
       randomValueOwner = nullptr;
     };
@@ -8113,7 +8109,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   auto freezeRandModeContract = [&](semantic::SVCallExpressionOp call) -> bool {
     if (call.getCalleeName() != "rand_mode")
       return false;
-    if (call->hasAttr(randomModeAttrName))
+    if (sim::has<sim::metadata::RandMode>(call))
       return true;
 
     SmallVector<Operation *> callChildren = getChildren(call);
@@ -8132,7 +8128,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           target.getName().value_or("") != "rand_mode" ||
           !getOwningClass(target))
         return false;
-      call->setAttr(randomModeAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::RandMode>(call);
 
       semantic::SVClassTypeOp owner = getOwningClass(target);
       struct DynamicClass {
@@ -8165,10 +8161,10 @@ void ObeliskSimPreparePass::runOnOperation() {
             auto layout = succeeded(propertyType)
                               ? getFixedRandomArrayLayout(*propertyType)
                               : std::nullopt;
-            auto bitmap = property->getAttrOfType<FlatSymbolRefAttr>(
-                randomArrayModeFieldAttrName);
-            auto elementStorage = property->getAttrOfType<IntegerAttr>(
-                staticRandomArrayModeStorageAttrName);
+            auto bitmap =
+                sim::get<sim::metadata::RandomArrayModeField>(property);
+            auto elementStorage =
+                sim::get<sim::metadata::StaticRandomArrayModeStorage>(property);
             if (layout && (bitmap || elementStorage)) {
               SmallVector<NamedAttribute> fields{builder.getNamedAttr(
                   "width", builder.getI32IntegerAttr(layout->elementCount))};
@@ -8177,8 +8173,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                          : builder.getNamedAttr("storage", elementStorage));
               elementFields.push_back(builder.getDictionaryAttr(fields));
             }
-            if (auto members = property->getAttrOfType<ArrayAttr>(
-                    randomStructMembersAttrName))
+            if (auto members =
+                    sim::get<sim::metadata::RandomStructMembers>(property))
               for (Attribute attribute : members) {
                 auto member = cast<DictionaryAttr>(attribute);
                 auto memberLayout = getFixedRandomArrayLayout(
@@ -8200,8 +8196,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               }
             if (property.getLifetime() != semantic::SVVariableLifetime::Static)
               continue;
-            auto storage = property->getAttrOfType<IntegerAttr>(
-                staticRandomModeStorageAttrName);
+            auto storage =
+                sim::get<sim::metadata::StaticRandomModeStorage>(property);
             if (!storage || storage.getValue().isNegative() ||
                 storage.getValue().getActiveBits() > 63) {
               emitError(getSemanticLocation(property))
@@ -8246,8 +8242,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                    builder.getArrayAttr(entry.elementFields)),
           }));
         }
-        call->setAttr(randomModeStaticDispatchAttrName,
-                      builder.getArrayAttr(dispatch));
+        sim::set<sim::metadata::RandModeStaticDispatch>(
+            call, builder.getArrayAttr(dispatch));
       }
       return true;
     }
@@ -8331,8 +8327,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           break;
         }
         ++propertyIndex;
-        if (auto members = candidate->getAttrOfType<ArrayAttr>(
-                randomStructMembersAttrName))
+        if (auto members =
+                sim::get<sim::metadata::RandomStructMembers>(candidate))
           propertyIndex += members.size();
       }
       if (found)
@@ -8344,12 +8340,11 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return true;
     }
-    call->setAttr(randomModeAttrName, builder.getUnitAttr());
+    sim::mark<sim::metadata::RandMode>(call);
     FailureOr<Type> propertyType = getNormalizedSemanticType(property);
     FlatSymbolRefAttr selectedBitmap;
     IntegerAttr selectedStorage;
-    if (auto members =
-            property->getAttrOfType<ArrayAttr>(randomStructMembersAttrName)) {
+    if (auto members = sim::get<sim::metadata::RandomStructMembers>(property)) {
       bool isStatic =
           property.getLifetime() == semantic::SVVariableLifetime::Static;
       uint64_t rootBit = uint64_t{1} << (isStatic ? 0 : propertyIndex);
@@ -8407,21 +8402,21 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
-      call->setAttr(randomModeStructDepthAttrName,
-                    builder.getI32IntegerAttr(structurePath.size()));
-      call->setAttr(randomModeSelectionMaskAttrName,
-                    builder.getIntegerAttr(builder.getI64Type(),
-                                           APInt(64, selectionMask)));
-      call->setAttr(randomModeAncestorMaskAttrName,
-                    builder.getIntegerAttr(
-                        builder.getI64Type(),
-                        APInt(64, structurePath.empty() ? 0 : rootBit)));
-      call->setAttr(
-          randomModeFamilyMaskAttrName,
+      sim::set<sim::metadata::RandModeStructDepth>(
+          call, builder.getI32IntegerAttr(structurePath.size()));
+      sim::set<sim::metadata::RandModeSelectionMask>(
+          call, builder.getIntegerAttr(builder.getI64Type(),
+                                       APInt(64, selectionMask)));
+      sim::set<sim::metadata::RandModeAncestorMask>(
+          call, builder.getIntegerAttr(
+                    builder.getI64Type(),
+                    APInt(64, structurePath.empty() ? 0 : rootBit)));
+      sim::set<sim::metadata::RandModeFamilyMask>(
+          call,
           builder.getIntegerAttr(builder.getI64Type(), APInt(64, familyMask)));
       if (!elementFields.empty())
-        call->setAttr(randomModeStructElementFieldsAttrName,
-                      builder.getArrayAttr(elementFields));
+        sim::set<sim::metadata::RandModeStructElementFields>(
+            call, builder.getArrayAttr(elementFields));
     } else if (!structurePath.empty()) {
       emitError(getSemanticLocation(call))
           << "rand_mode structure has no qualified member inventory";
@@ -8441,13 +8436,14 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
-      auto bitmap = selectedBitmap ? selectedBitmap
-                                   : property->getAttrOfType<FlatSymbolRefAttr>(
-                                         randomArrayModeFieldAttrName);
-      auto storage = selectedStorage
-                         ? selectedStorage
-                         : property->getAttrOfType<IntegerAttr>(
-                               staticRandomArrayModeStorageAttrName);
+      auto bitmap =
+          selectedBitmap
+              ? selectedBitmap
+              : sim::get<sim::metadata::RandomArrayModeField>(property);
+      auto storage =
+          selectedStorage
+              ? selectedStorage
+              : sim::get<sim::metadata::StaticRandomArrayModeStorage>(property);
       if (!bitmap && !storage) {
         emitError(getSemanticLocation(call))
             << "array rand_mode has no integral element mode inventory";
@@ -8455,10 +8451,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         return true;
       }
       if (bitmap)
-        call->setAttr(randomModeArrayFieldAttrName, bitmap);
+        sim::set<sim::metadata::RandModeArrayField>(call, bitmap);
       else
-        call->setAttr(randomModeArrayStorageAttrName, storage);
-      call->setAttr(randomModeArrayTypeAttrName, TypeAttr::get(*propertyType));
+        sim::set<sim::metadata::RandModeArrayStorage>(call, storage);
+      sim::set<sim::metadata::RandModeArrayType>(call,
+                                                 TypeAttr::get(*propertyType));
     } else if (selectionCount) {
       emitError(getSemanticLocation(call))
           << "selected rand_mode requires a fixed unpacked integral array";
@@ -8466,8 +8463,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
     if (property.getLifetime() == semantic::SVVariableLifetime::Static) {
-      auto storage =
-          property->getAttrOfType<IntegerAttr>(staticRandomModeStorageAttrName);
+      auto storage = sim::get<sim::metadata::StaticRandomModeStorage>(property);
       if (!storage || storage.getValue().isNegative() ||
           storage.getValue().getActiveBits() > 63) {
         emitError(getSemanticLocation(call))
@@ -8475,10 +8471,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
-      call->setAttr(randomModeStaticStorageAttrName, storage);
+      sim::set<sim::metadata::RandModeStaticStorage>(call, storage);
     } else {
-      call->setAttr(randomModePropertyAttrName,
-                    builder.getI32IntegerAttr(propertyIndex));
+      sim::set<sim::metadata::RandModeProperty>(
+          call, builder.getI32IntegerAttr(propertyIndex));
     }
     return true;
   };
@@ -8491,7 +8487,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       [&](semantic::SVCallExpressionOp call) -> bool {
     if (call.getCalleeName() != "constraint_mode")
       return false;
-    if (call->hasAttr(constraintModeAttrName))
+    if (sim::has<sim::metadata::ConstraintMode>(call))
       return true;
 
     SmallVector<Operation *> callChildren = getChildren(call);
@@ -8530,9 +8526,9 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
-      call->setAttr(constraintModeAttrName, builder.getUnitAttr());
-      call->setAttr(constraintModeStaticStoragesAttrName,
-                    builder.getDenseI64ArrayAttr(*staticStorages));
+      sim::mark<sim::metadata::ConstraintMode>(call);
+      sim::set<sim::metadata::ConstraintModeStaticStorages>(
+          call, builder.getDenseI64ArrayAttr(*staticStorages));
       return true;
     }
 
@@ -8592,9 +8588,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       return true;
     }
-    call->setAttr(constraintModeAttrName, builder.getUnitAttr());
-    call->setAttr(constraintModeBlockAttrName,
-                  builder.getI32IntegerAttr(*constraintIndex));
+    sim::mark<sim::metadata::ConstraintMode>(call);
+    sim::set<sim::metadata::ConstraintModeBlock>(
+        call, builder.getI32IntegerAttr(*constraintIndex));
     FailureOr<SmallVector<int64_t>> staticStorages =
         collectStaticConstraintStorages(groups, getSemanticLocation(call));
     if (failed(staticStorages)) {
@@ -8602,9 +8598,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       return true;
     }
     if ((*staticStorages)[*constraintIndex] >= 0)
-      call->setAttr(
-          constraintModeStaticStorageAttrName,
-          builder.getI64IntegerAttr((*staticStorages)[*constraintIndex]));
+      sim::set<sim::metadata::ConstraintModeStaticStorage>(
+          call, builder.getI64IntegerAttr((*staticStorages)[*constraintIndex]));
     return true;
   };
 
@@ -8613,7 +8608,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     StringRef name = call.getCalleeName();
     if (name != "get_randstate" && name != "set_randstate" && name != "srandom")
       return false;
-    if (call->hasAttr(objectRandomDispatchClassesAttrName))
+    if (sim::has<sim::metadata::ObjectRandomDispatchClasses>(call))
       return true;
     SmallVector<Operation *> children = getChildren(call);
     if (children.empty())
@@ -8648,8 +8643,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     for (const CompatibleConcreteClass &entry : *compatible)
       classes.push_back(FlatSymbolRefAttr::get(
           context, classSymbols.lookup(entry.classType).getValue()));
-    call->setAttr(objectRandomDispatchClassesAttrName,
-                  builder.getArrayAttr(classes));
+    sim::set<sim::metadata::ObjectRandomDispatchClasses>(
+        call, builder.getArrayAttr(classes));
     return true;
   };
 
@@ -8686,7 +8681,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             : semantic::SVClassPropertySymbolOp{};
     if (property &&
         property.getLifetime() == semantic::SVVariableLifetime::Static)
-      member->setAttr(staticClassPropertyAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::StaticClassProperty>(member);
   });
 
   // A randsequence's production declarations are symbols owned by the
@@ -8935,7 +8930,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   llvm::DenseMap<uint64_t, Operation *> timingConditions;
   semanticRoot->walk([&](Operation *nested) {
     auto nodeID = nested->getAttrOfType<IntegerAttr>("node_id");
-    if (nodeID && nested->hasAttr("simulation.observer"))
+    if (nodeID && sim::has<sim::metadata::Observer>(nested))
       timingConditions.try_emplace(nodeID.getValue().getZExtValue(), nested);
   });
 
@@ -9160,10 +9155,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
     for (const PreparedLocal &value : observerValueCaptures[unit.source])
       captures.push_back(builder.getStringAttr(value.path));
-    unit.source->setAttr(observerCapturesAttrName,
-                         builder.getArrayAttr(captures));
-    unit.source->setAttr(observerDependenciesAttrName,
-                         builder.getArrayAttr(dependencies));
+    sim::set<sim::metadata::ObserverCaptures>(unit.source,
+                                              builder.getArrayAttr(captures));
+    sim::set<sim::metadata::ObserverDependencies>(
+        unit.source, builder.getArrayAttr(dependencies));
   }
 
   // Resolve the condition-node identities only after capture analysis has
@@ -9188,12 +9183,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto evaluator =
             condition == timingConditions.end()
                 ? FlatSymbolRefAttr{}
-                : condition->second->getAttrOfType<FlatSymbolRefAttr>(
-                      "simulation.observer");
-        auto captures = condition == timingConditions.end()
-                            ? ArrayAttr{}
-                            : condition->second->getAttrOfType<ArrayAttr>(
-                                  observerCapturesAttrName);
+                : sim::get<sim::metadata::Observer>(condition->second);
+        auto captures =
+            condition == timingConditions.end()
+                ? ArrayAttr{}
+                : sim::get<sim::metadata::ObserverCaptures>(condition->second);
         if (!evaluator || !captures) {
           emitError(getSemanticLocation(unit.source))
               << "timing path condition has no frozen evaluator ABI";
@@ -9228,12 +9222,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         auto evaluator =
             condition == timingConditions.end()
                 ? FlatSymbolRefAttr{}
-                : condition->second->getAttrOfType<FlatSymbolRefAttr>(
-                      "simulation.observer");
-        auto captures = condition == timingConditions.end()
-                            ? ArrayAttr{}
-                            : condition->second->getAttrOfType<ArrayAttr>(
-                                  observerCapturesAttrName);
+                : sim::get<sim::metadata::Observer>(condition->second);
+        auto captures =
+            condition == timingConditions.end()
+                ? ArrayAttr{}
+                : sim::get<sim::metadata::ObserverCaptures>(condition->second);
         if (!evaluator || !captures) {
           emitError(getSemanticLocation(unit.source))
               << "derived procedural path condition has no frozen evaluator "
@@ -9277,15 +9270,15 @@ void ObeliskSimPreparePass::runOnOperation() {
       call->setAttr(readsAttr, builder.getArrayAttr(reads));
       return success();
     };
-    if (failed(freeze(randomPreHookSourceAttrName,
-                      randomPreHookCapturesAttrName,
-                      randomPreHookReadCapturesAttrName)) ||
-        failed(freeze(randomPostHookSourceAttrName,
-                      randomPostHookCapturesAttrName,
-                      randomPostHookReadCapturesAttrName)))
+    if (failed(
+            freeze(sim::metadata::RandomPreHookSource::getNameStr(),
+                   sim::metadata::RandomPreHookCaptures::getNameStr(),
+                   sim::metadata::RandomPreHookReadCaptures::getNameStr())) ||
+        failed(freeze(sim::metadata::RandomPostHookSource::getNameStr(),
+                      sim::metadata::RandomPostHookCaptures::getNameStr(),
+                      sim::metadata::RandomPostHookReadCaptures::getNameStr())))
       return failure();
-    auto nestedHooks =
-        call->getAttrOfType<ArrayAttr>(randomNestedHooksAttrName);
+    auto nestedHooks = sim::get<sim::metadata::RandomNestedHooks>(call);
     if (!nestedHooks)
       return success();
     SmallVector<Attribute> frozenHooks;
@@ -9318,7 +9311,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       frozenHooks.push_back(builder.getDictionaryAttr(attributes));
     }
-    call->setAttr(randomNestedHooksAttrName, builder.getArrayAttr(frozenHooks));
+    sim::set<sim::metadata::RandomNestedHooks>(
+        call, builder.getArrayAttr(frozenHooks));
     return success();
   };
 
@@ -9327,7 +9321,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     // Virtual-interface calls are frozen while the original semantic tree is
     // still intact.  Clones inherit this contract and must not try to resolve
     // the (by then potentially erased) semantic callees again.
-    if (call->hasAttr("simulation.virtual_interface_callees"))
+    if (sim::has<sim::metadata::VirtualInterfaceCallees>(call))
       return;
     if (freezeRandModeContract(call))
       return;
@@ -9356,8 +9350,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     auto target = directCalleeNames.find(targetSource);
     assert(target != directCalleeNames.end() &&
            "resolved direct callee has no frozen symbol");
-    call->setAttr(calleeAttrName,
-                  FlatSymbolRefAttr::get(context, target->second));
+    sim::set<sim::metadata::Callee>(
+        call, FlatSymbolRefAttr::get(context, target->second));
     // Calls nested in a covergroup plan are not executable until constructor
     // and sample helpers are materialized by LowerUnit. Keep their code units
     // visible to the early SymbolDCE through a normal symbol-use attribute on
@@ -9373,29 +9367,29 @@ void ObeliskSimPreparePass::runOnOperation() {
             dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
         targetSubroutine && getOwningClass(targetSubroutine) &&
         !targetSubroutine.getIsStatic().value_or(false)) {
-      call->setAttr("simulation.class_instance", builder.getUnitAttr());
+      sim::mark<sim::metadata::ClassInstance>(call);
       // In `super.member.method()`, Slang carries the super qualifier onto
       // the outer call even though the selected member is the receiver. Only
       // a call without an explicit receiver is a direct super-method call.
       bool directSuperDispatch =
           call.getIsSuperClass() && !call.getHasThisClass();
       if (directSuperDispatch)
-        call->setAttr("simulation.class_super", builder.getUnitAttr());
+        sim::mark<sim::metadata::ClassSuper>(call);
       if (targetSubroutine.getIsVirtual().value_or(false) &&
           !directSuperDispatch)
-        call->setAttr("simulation.class_virtual", builder.getUnitAttr());
+        sim::mark<sim::metadata::ClassVirtual>(call);
       if (FlatSymbolRefAttr method =
               classMethodSymbols.lookup(targetSubroutine)) {
-        call->setAttr("simulation.class_method", method);
+        sim::set<sim::metadata::ClassMethod>(call, method);
         if (coverageCall)
           retainedCoverageSymbols.insert(method);
         if (targetSubroutine.getIsVirtual().value_or(false)) {
-          call->setAttr("simulation.class_slot",
-                        builder.getI64IntegerAttr(
-                            virtualMethodSlots.lookup(targetSubroutine)));
-          call->setAttr("simulation.class_signature",
-                        builder.getI64IntegerAttr(
-                            virtualMethodSignatures.lookup(targetSubroutine)));
+          sim::set<sim::metadata::ClassSlot>(
+              call, builder.getI64IntegerAttr(
+                        virtualMethodSlots.lookup(targetSubroutine)));
+          sim::set<sim::metadata::ClassSignature>(
+              call, builder.getI64IntegerAttr(
+                        virtualMethodSignatures.lookup(targetSubroutine)));
         }
       }
     } else if (auto targetSubroutine =
@@ -9403,7 +9397,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                targetSubroutine && getOwningClass(targetSubroutine) &&
                targetSubroutine.getIsStatic().value_or(false) &&
                call.getHasThisClass()) {
-      call->setAttr(staticClassReceiverAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::StaticClassReceiver>(call);
     }
     SmallVector<Attribute> capturePaths;
     bool dpiTarget = false;
@@ -9428,7 +9422,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             dyn_cast<semantic::SVSubroutineSymbolOp>(targetSource);
         subroutine && !subroutine.getIsDpiImport().value_or(false) &&
         subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task)
-      call->setAttr("simulation.is_task", builder.getUnitAttr());
+      sim::mark<sim::metadata::IsTask>(call);
     SmallVector<Attribute> readCapturePaths =
         readCaptureAttributes(targetSource);
     for (auto &capture : unitCaptures[targetSource]) {
@@ -9436,11 +9430,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       capturePaths.push_back(builder.getStringAttr(capture.first));
     }
-    call->setAttr(calleeCapturesAttrName, builder.getArrayAttr(capturePaths));
-    call->setAttr(calleeReadCapturesAttrName,
-                  builder.getArrayAttr(readCapturePaths));
-    call->setAttr(calleeWrittenCapturesAttrName,
-                  builder.getArrayAttr(writtenCaptureAttributes(targetSource)));
+    sim::set<sim::metadata::CalleeCaptures>(call,
+                                            builder.getArrayAttr(capturePaths));
+    sim::set<sim::metadata::CalleeReadCaptures>(
+        call, builder.getArrayAttr(readCapturePaths));
+    sim::set<sim::metadata::CalleeWrittenCaptures>(
+        call, builder.getArrayAttr(writtenCaptureAttributes(targetSource)));
     if (!virtualTargets.empty()) {
       SmallVector<Attribute> candidates;
       for (const PreparedVirtualInterfaceCallee *record : virtualTargets) {
@@ -9468,8 +9463,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                                  builder.getArrayAttr(writtenCaptures)),
         }));
       }
-      call->setAttr("simulation.virtual_interface_callees",
-                    builder.getArrayAttr(candidates));
+      sim::set<sim::metadata::VirtualInterfaceCallees>(
+          call, builder.getArrayAttr(candidates));
     }
     // One dictionary per callee formal keeps the direction, normalized type,
     // and signedness of the frozen signature together.
@@ -9516,7 +9511,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       formals.push_back(builder.getDictionaryAttr(formalAttrs));
     }
-    call->setAttr(calleeFormalsAttrName, builder.getArrayAttr(formals));
+    sim::set<sim::metadata::CalleeFormals>(call, builder.getArrayAttr(formals));
   };
 
   // Freeze virtual dispatch before materializing code units can erase their
@@ -9543,8 +9538,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   // the actual observer.bind operations.
   semanticRoot->walk([&](semantic::SVCovergroupTypeOp covergroup) {
     covergroup->walk([&](Operation *nested) {
-      auto evaluator =
-          nested->getAttrOfType<FlatSymbolRefAttr>("simulation.observer");
+      auto evaluator = sim::get<sim::metadata::Observer>(nested);
       if (evaluator)
         retainedCoverageSymbols.insert(evaluator);
     });
@@ -9615,9 +9609,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     for (const auto &capture : unitCaptures[source])
       if (!usesContextStorage(source, capture))
         captures.push_back(builder.getStringAttr(capture.first));
-    construct->setAttr(calleeCapturesAttrName, builder.getArrayAttr(captures));
-    construct->setAttr(calleeReadCapturesAttrName,
-                       builder.getArrayAttr(readCaptureAttributes(source)));
+    sim::set<sim::metadata::CalleeCaptures>(construct,
+                                            builder.getArrayAttr(captures));
+    sim::set<sim::metadata::CalleeReadCaptures>(
+        construct, builder.getArrayAttr(readCaptureAttributes(source)));
   });
 
   // Most executable subroutines have exactly one frozen implementation. Move
@@ -9741,35 +9736,31 @@ void ObeliskSimPreparePass::runOnOperation() {
               planned != found->second.end())
             plannedDriver = &*planned;
       if (plannedDriver && plannedDriver->strengthBank)
-        metadataAttrs.push_back(builder.getNamedAttr(
-            "simulation.strength_driver_bank",
+        metadataAttrs.push_back(sim::named<sim::metadata::StrengthDriverBank>(
             builder.getI32IntegerAttr(*plannedDriver->strengthBank)));
       if (capture.second.kind == DescriptorInfo::Kind::Driver &&
           capture.second.delayedNet)
-        metadataAttrs.push_back(builder.getNamedAttr("simulation.delayed_net",
-                                                     builder.getUnitAttr()));
+        metadataAttrs.push_back(
+            sim::named<sim::metadata::DelayedNet>(builder.getUnitAttr()));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
-        metadataAttrs.push_back(
-            builder.getNamedAttr(sim::metadata::descriptorRootType,
-                                 TypeAttr::get(capture.second.rootType)));
-        metadataAttrs.push_back(builder.getNamedAttr(
-            sim::metadata::descriptorLow,
+        metadataAttrs.push_back(sim::named<sim::metadata::DescriptorRootType>(
+            TypeAttr::get(capture.second.rootType)));
+        metadataAttrs.push_back(sim::named<sim::metadata::DescriptorLow>(
             builder.getI64IntegerAttr(capture.second.viewOffset)));
         if (!capture.second.viewIndices.empty())
-          metadataAttrs.push_back(builder.getNamedAttr(
-              sim::metadata::descriptorIndices,
+          metadataAttrs.push_back(sim::named<sim::metadata::DescriptorIndices>(
               builder.getDenseI64ArrayAttr(capture.second.viewIndices)));
         if (capture.second.aggregateViewType)
-          metadataAttrs.push_back(builder.getNamedAttr(
-              sim::metadata::descriptorAggregateType,
-              TypeAttr::get(capture.second.aggregateViewType)));
+          metadataAttrs.push_back(
+              sim::named<sim::metadata::DescriptorAggregateType>(
+                  TypeAttr::get(capture.second.aggregateViewType)));
         if (capture.second.packedViewOffset != 0 ||
             capture.second.aggregateViewType != capture.second.type)
-          metadataAttrs.push_back(builder.getNamedAttr(
-              sim::metadata::descriptorPackedLow,
-              builder.getI64IntegerAttr(capture.second.packedViewOffset)));
+          metadataAttrs.push_back(
+              sim::named<sim::metadata::DescriptorPackedLow>(
+                  builder.getI64IntegerAttr(capture.second.packedViewOffset)));
       }
       argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
       IntegerAttr lvalueNode =
@@ -10028,8 +10019,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (unit.observerResult == ObserverResult::Truth ||
           unit.observerResult == ObserverResult::Event) {
         resultType = builder.getI1Type();
-      } else if (auto coerced = unit.source->getAttrOfType<TypeAttr>(
-                     observerCoercedTypeAttrName)) {
+      } else if (auto coerced = sim::get<sim::metadata::ObserverCoercedType>(
+                     unit.source)) {
         resultType = coerced.getValue();
       } else {
         FailureOr<Type> normalized = getNormalizedSemanticType(unit.source);
@@ -10052,7 +10043,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::append_range(results, copyOutResultTypes);
     FunctionType type = FunctionType::get(context, inputs, results);
     NamedAttribute bindingAttr =
-        builder.getNamedAttr(bindingsAttrName, builder.getArrayAttr(bindings));
+        sim::named<sim::metadata::Bindings>(builder.getArrayAttr(bindings));
     uint64_t timeUnitFs = designPrecisionFs;
     uint64_t timePrecisionFs = designPrecisionFs;
     uint64_t scopeID = getScopeId(unit.source);
@@ -10094,11 +10085,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       invalid = true;
       continue;
     }
-    NamedAttribute delayScaleAttr = builder.getNamedAttr(
-        delayScaleAttrName,
+    NamedAttribute delayScaleAttr = sim::named<sim::metadata::DelayScale>(
         builder.getI64IntegerAttr(timeUnitFs / designPrecisionFs));
-    NamedAttribute delayQuantumAttr = builder.getNamedAttr(
-        delayQuantumAttrName,
+    NamedAttribute delayQuantumAttr = sim::named<sim::metadata::DelayQuantum>(
         builder.getI64IntegerAttr(timePrecisionFs / designPrecisionFs));
     SmallVector<NamedAttribute> functionAttrs{
         bindingAttr, delayScaleAttr, delayQuantumAttr,
@@ -10116,8 +10105,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       }
       SmallVector<int64_t> ticks;
-      if (auto adjusted = unit.source->getAttrOfType<DenseI64ArrayAttr>(
-              "simulation.timing_adjusted_ticks")) {
+      if (auto adjusted =
+              sim::get<sim::metadata::TimingAdjustedTicks>(unit.source)) {
         ticks.assign(times.size(), 0);
         if (adjusted.size() != 2 || ticks.size() <= 3) {
           emitError(getSemanticLocation(unit.source))
@@ -10144,11 +10133,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (invalid)
         continue;
-      functionAttrs.push_back(
-          builder.getNamedAttr("simulation.timing_check_arg_ticks",
-                               builder.getDenseI64ArrayAttr(ticks)));
-      functionAttrs.push_back(builder.getNamedAttr(
-          "simulation.timing_check_coordinator", builder.getUnitAttr()));
+      functionAttrs.push_back(sim::named<sim::metadata::TimingCheckArgTicks>(
+          builder.getDenseI64ArrayAttr(ticks)));
+      functionAttrs.push_back(sim::named<sim::metadata::TimingCheckCoordinator>(
+          builder.getUnitAttr()));
       for (StringRef name :
            {"timing_check_kind", "timing_check_arg_expression_children",
             "timing_check_arg_condition_children",
@@ -10164,12 +10152,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (invalid)
         continue;
-      for (StringRef name :
-           {"timing_check_arg_condition_predicates", "timing_check_event_based",
-            "timing_check_remain_active",
-            "simulation.timing_delayed_storage_ids",
-            "simulation.timing_delayed_source_delays",
-            "simulation.negative_timing_adjusted"})
+      for (StringRef name : std::initializer_list<StringRef>{
+               "timing_check_arg_condition_predicates",
+               "timing_check_event_based", "timing_check_remain_active",
+               sim::metadata::TimingDelayedStorageIds::getNameStr(),
+               sim::metadata::TimingDelayedSourceDelays::getNameStr(),
+               sim::metadata::NegativeTimingAdjusted::getNameStr()})
         if (Attribute value = unit.source->getAttr(name))
           functionAttrs.push_back(builder.getNamedAttr(name, value));
       auto timingKind =
@@ -10199,9 +10187,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             builder.getStringAttr("timing-check timer deadline"),
             schedule::ComputeObservabilityKindAttr{},
             sim::VPITypeSemanticsAttr{});
-        functionAttrs.push_back(
-            builder.getNamedAttr("simulation.timing_timer_storage",
-                                 builder.getI64IntegerAttr(timerStorageID)));
+        functionAttrs.push_back(sim::named<sim::metadata::TimingTimerStorage>(
+            builder.getI64IntegerAttr(timerStorageID)));
       }
     }
     if (auto delays =
@@ -10228,13 +10215,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       if (delayInvalid)
         continue;
-      functionAttrs.push_back(
-          builder.getNamedAttr("simulation.propagation_delays",
-                               builder.getDenseI64ArrayAttr(ticks)));
+      functionAttrs.push_back(sim::named<sim::metadata::PropagationDelays>(
+          builder.getDenseI64ArrayAttr(ticks)));
     }
     if (auto udp = unit.source->getAttrOfType<DictionaryAttr>(
             udpSemanticMetadataAttrName))
-      functionAttrs.push_back(builder.getNamedAttr(udpMetadataAttrName, udp));
+      functionAttrs.push_back(sim::named<sim::metadata::UdpMetadata>(udp));
     if (auto rules = unit.source->getAttrOfType<ArrayAttr>(
             "obelisk.timing_path_rules")) {
       SmallVector<Attribute> tickRules;
@@ -10433,41 +10419,39 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         continue;
       }
-      functionAttrs.push_back(builder.getNamedAttr(
-          "simulation.timing_path_rules", builder.getArrayAttr(tickRules)));
+      functionAttrs.push_back(sim::named<sim::metadata::TimingPathRules>(
+          builder.getArrayAttr(tickRules)));
     }
     if (auto monitorRules = unit.source->getAttrOfType<ArrayAttr>(
             "obelisk.timing_path_monitor_rules"))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "simulation.timing_path_monitor_rules", monitorRules));
+      functionAttrs.push_back(
+          sim::named<sim::metadata::TimingPathMonitorRules>(monitorRules));
     if (instanceClassMethod)
-      functionAttrs.push_back(builder.getNamedAttr(
-          sim::metadata::thisArgument, builder.getI32IntegerAttr(1)));
+      functionAttrs.push_back(sim::named<sim::metadata::ThisArgument>(
+          builder.getI32IntegerAttr(1)));
     else if (observerThisArgument)
-      functionAttrs.push_back(builder.getNamedAttr(
-          sim::metadata::thisArgument,
+      functionAttrs.push_back(sim::named<sim::metadata::ThisArgument>(
           builder.getI32IntegerAttr(*observerThisArgument)));
     if (isVoidFunction)
-      functionAttrs.push_back(builder.getNamedAttr("simulation.void_function",
-                                                   builder.getUnitAttr()));
+      functionAttrs.push_back(
+          sim::named<sim::metadata::VoidFunction>(builder.getUnitAttr()));
     // A static function's return variable is captured as design storage rather
     // than bound as an activation-local, so name it for the return lowering.
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source))
       if (std::optional<StringRef> path = subroutine.getReturnVariablePath())
-        functionAttrs.push_back(builder.getNamedAttr(
-            sim::metadata::returnVariablePath, builder.getStringAttr(*path)));
+        functionAttrs.push_back(sim::named<sim::metadata::ReturnVariablePath>(
+            builder.getStringAttr(*path)));
     if (isa<semantic::SVClassPropertySymbolOp>(unit.source))
-      functionAttrs.push_back(builder.getNamedAttr(
-          "simulation.static_initializer", builder.getUnitAttr()));
+      functionAttrs.push_back(
+          sim::named<sim::metadata::StaticInitializer>(builder.getUnitAttr()));
     if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
         subroutine && subroutine.getIsConstructor().value_or(false))
-      functionAttrs.push_back(builder.getNamedAttr("simulation.constructor",
-                                                   builder.getUnitAttr()));
+      functionAttrs.push_back(
+          sim::named<sim::metadata::Constructor>(builder.getUnitAttr()));
     if (unit.entryKind == sim::EntryKind::Observer)
       functionAttrs.push_back(
-          builder.getNamedAttr(observerResultAttrName,
-                               builder.getI32IntegerAttr(static_cast<uint32_t>(
-                                   unit.observerResult))));
+          sim::named<sim::metadata::ObserverResult>(builder.getI32IntegerAttr(
+              static_cast<uint32_t>(unit.observerResult))));
     if (::obelisk::schedule::has<::obelisk::schedule::Field::OverrideEvaluator>(
             unit.source))
       functionAttrs.push_back(::obelisk::schedule::named<
@@ -10560,19 +10544,19 @@ void ObeliskSimPreparePass::runOnOperation() {
       functionAttrs.push_back(
           ::obelisk::schedule::named<::obelisk::schedule::Field::PrimitiveName>(
               primitive));
-    if (auto passSwitchIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
-            "simulation.pass_switch_ids"))
+    if (auto passSwitchIds =
+            sim::get<sim::metadata::PassSwitchIds>(unit.source))
       functionAttrs.push_back(
-          builder.getNamedAttr("simulation.pass_switch_ids", passSwitchIds));
-    if (auto mosTopologyIds = unit.source->getAttrOfType<DenseI64ArrayAttr>(
-            "simulation.mos_topology_ids"))
+          sim::named<sim::metadata::PassSwitchIds>(passSwitchIds));
+    if (auto mosTopologyIds =
+            sim::get<sim::metadata::MosTopologyIds>(unit.source))
       functionAttrs.push_back(
-          builder.getNamedAttr("simulation.mos_topology_ids", mosTopologyIds));
-    if (unit.source->hasAttr(sequenceEndpointEventAttrName)) {
-      functionAttrs.push_back(builder.getNamedAttr(
-          sequenceEndpointMonitorAttrName, builder.getUnitAttr()));
-      functionAttrs.push_back(builder.getNamedAttr(
-          sequenceEndpointPathAttrName,
+          sim::named<sim::metadata::MosTopologyIds>(mosTopologyIds));
+    if (sim::has<sim::metadata::SequenceEndpointEvent>(unit.source)) {
+      functionAttrs.push_back(
+          sim::named<sim::metadata::SequenceEndpointMonitor>(
+              builder.getUnitAttr()));
+      functionAttrs.push_back(sim::named<sim::metadata::SequenceEndpointPath>(
           builder.getStringAttr(getHierarchyName(unit.source))));
     }
     bool clockingEventMonitor =
@@ -10582,23 +10566,22 @@ void ObeliskSimPreparePass::runOnOperation() {
     bool timingCheckCoordinator =
         isa<semantic::SVSystemTimingCheckSymbolOp>(unit.source);
     if (clockingEventMonitor) {
-      functionAttrs.push_back(builder.getNamedAttr(clockingEventMonitorAttrName,
-                                                   builder.getUnitAttr()));
-      functionAttrs.push_back(builder.getNamedAttr(
-          clockingEventMonitorPathAttrName,
-          builder.getStringAttr(getHierarchyName(unit.source))));
+      functionAttrs.push_back(sim::named<sim::metadata::ClockingEventMonitor>(
+          builder.getUnitAttr()));
+      functionAttrs.push_back(
+          sim::named<sim::metadata::ClockingEventMonitorPath>(
+              builder.getStringAttr(getHierarchyName(unit.source))));
     }
     StringRef hierarchy = isa<semantic::SVPortConnectionOp>(unit.source)
                               ? getHierarchyName(unit.source->getParentOp())
                               : getHierarchyName(unit.source);
     if (!hierarchy.empty())
-      functionAttrs.push_back(builder.getNamedAttr(
-          sim::metadata::hierarchicalName, builder.getStringAttr(hierarchy)));
+      functionAttrs.push_back(sim::named<sim::metadata::HierarchicalName>(
+          builder.getStringAttr(hierarchy)));
     if (unit.entryKind == sim::EntryKind::Task)
-      if (auto targetID = unit.source->getAttrOfType<IntegerAttr>(
-              "simulation.control_target_id"))
+      if (auto targetID = sim::get<sim::metadata::ControlTargetId>(unit.source))
         functionAttrs.push_back(
-            builder.getNamedAttr("simulation.control_target_id", targetID));
+            sim::named<sim::metadata::ControlTargetId>(targetID));
     if (auto targetID = cov::get<cov::BlockEventTargetId>(unit.source))
       functionAttrs.push_back(cov::named<cov::BlockEventTargetId>(targetID));
     // Clocking inputs must be sampled before program-domain Reactive work.
@@ -10670,8 +10653,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     OpBuilder bodyBuilder =
         OpBuilder::atBlockEnd(&unit.function.getBody().front());
     auto lookupCaptureArgument = [&](StringRef path) -> Value {
-      auto frozenBindings =
-          unit.function->getAttrOfType<ArrayAttr>(bindingsAttrName);
+      auto frozenBindings = sim::get<sim::metadata::Bindings>(unit.function);
       if (!frozenBindings)
         return {};
       for (Attribute attribute : frozenBindings) {
@@ -10702,10 +10684,10 @@ void ObeliskSimPreparePass::runOnOperation() {
         for (auto [expression, ordinal] :
              llvm::zip_equal(initializer, memberOrdinals.asArrayRef())) {
           Operation *cloned = bodyBuilder.clone(*expression);
-          cloned->setAttr("simulation.initialize_static",
-                          builder.getStringAttr(getHierarchyName(unit.source)));
-          cloned->setAttr("simulation.initialize_subelement",
-                          builder.getI64IntegerAttr(ordinal));
+          sim::set<sim::metadata::InitializeStatic>(
+              cloned, builder.getStringAttr(getHierarchyName(unit.source)));
+          sim::set<sim::metadata::InitializeSubelement>(
+              cloned, builder.getI64IntegerAttr(ordinal));
         }
       } else if (initializer.size() != 1) {
         emitError(getSemanticLocation(unit.source))
@@ -10713,8 +10695,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       } else {
         Operation *cloned = bodyBuilder.clone(*initializer.front());
-        cloned->setAttr("simulation.initialize_static",
-                        builder.getStringAttr(getHierarchyName(unit.source)));
+        sim::set<sim::metadata::InitializeStatic>(
+            cloned, builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else if (isa<semantic::SVNetSymbolOp>(unit.source)) {
       SmallVector<Operation *> initializer =
@@ -10725,8 +10707,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
       } else {
         Operation *cloned = bodyBuilder.clone(*initializer.front());
-        cloned->setAttr("simulation.initialize_net",
-                        builder.getStringAttr(getHierarchyName(unit.source)));
+        sim::set<sim::metadata::InitializeNet>(
+            cloned, builder.getStringAttr(getHierarchyName(unit.source)));
       }
     } else {
       auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
@@ -10761,16 +10743,16 @@ void ObeliskSimPreparePass::runOnOperation() {
                   reference);
               if (nestedAfterSuper) {
                 UnitAttr marker = builder.getUnitAttr();
-                event->setAttr(preparedInitializerAttrName, marker);
-                reference->setAttr(preparedInitializerAttrName, marker);
-                store->setAttr(preparedInitializerAttrName, marker);
+                sim::set<sim::metadata::PreparedInitializer>(event, marker);
+                sim::set<sim::metadata::PreparedInitializer>(reference, marker);
+                sim::set<sim::metadata::PreparedInitializer>(store, marker);
               }
             }
             continue;
           }
           Operation *cloned = initializerBuilder.clone(*initializer.front());
           if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
-            cloned->setAttr("simulation.initialize_field", field);
+            sim::set<sim::metadata::InitializeField>(cloned, field);
         }
       };
       bool constructor =
@@ -10817,7 +10799,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             // direct child of the class rather than of the explicit
             // constructor. Execute it with the current object as the base
             // receiver before initializing the derived fields.
-            cloned->setAttr("simulation.class_super", builder.getUnitAttr());
+            sim::mark<sim::metadata::ClassSuper>(cloned);
           } else if (semantic::SVSubroutineSymbolOp baseConstructor =
                          constructorSourceFor(base->second)) {
             SmallVector<Operation *> defaults;
@@ -10931,7 +10913,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         // it below an operation without the SymbolTable trait.
         if (isa<SymbolOpInterface>(child))
           continue;
-        if (unit.function->hasAttr("simulation.propagation_delays") &&
+        if (sim::has<sim::metadata::PropagationDelays>(unit.function) &&
             isa<semantic::SVDelayControlOp, semantic::SVDelay3ControlOp>(child))
           continue;
         Operation *clonedChild = child;
@@ -11005,13 +10987,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return;
       }
-      declaration->setAttr("simulation.aggregate_member_initializers",
-                           builder.getUnitAttr());
+      sim::mark<sim::metadata::AggregateMemberInitializers>(declaration);
       for (auto [expression, ordinal] :
            llvm::zip_equal(initializer, memberOrdinals.asArrayRef())) {
         Operation *cloned = declarationBuilder.clone(*expression);
-        cloned->setAttr("simulation.initialize_subelement",
-                        builder.getI64IntegerAttr(ordinal));
+        sim::set<sim::metadata::InitializeSubelement>(
+            cloned, builder.getI64IntegerAttr(ordinal));
       }
     });
     auto propertyInitializer =
@@ -11021,11 +11002,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         (propertyInitializer && propertyInitializer.getLifetime() ==
                                     semantic::SVVariableLifetime::Static);
     unit.function.walk([&](Operation *nested) {
-      if (nested->hasAttr("simulation.initialize_static"))
+      if (sim::has<sim::metadata::InitializeStatic>(nested))
         if (auto snapshot = sampleDefaultSnapshots.find(unit.source);
             snapshot != sampleDefaultSnapshots.end())
-          nested->setAttr("simulation.initialize_sample_default",
-                          builder.getI64IntegerAttr(snapshot->second));
+          sim::set<sim::metadata::InitializeSampleDefault>(
+              nested, builder.getI64IntegerAttr(snapshot->second));
       if (auto call = dyn_cast<semantic::SVCallExpressionOp>(nested)) {
         freezeCallContract(call);
         return;
@@ -11039,8 +11020,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         // History underflow must not use the variable's later current value.
         if (auto snapshot = sampleDefaultSnapshots.find(symbol->second);
             snapshot != sampleDefaultSnapshots.end())
-          named->setAttr("simulation.sample_default_snapshot",
-                         builder.getI64IntegerAttr(snapshot->second));
+          sim::set<sim::metadata::SampleDefaultSnapshot>(
+              named, builder.getI64IntegerAttr(snapshot->second));
         auto sampledVariable =
             dyn_cast<semantic::SVVariableSymbolOp>(symbol->second);
         auto sampledProperty =
@@ -11050,37 +11031,35 @@ void ObeliskSimPreparePass::runOnOperation() {
                                     semantic::SVVariableLifetime::Static)) {
           if (sampledVariable && sampledVariable.getLifetime() ==
                                      semantic::SVVariableLifetime::Automatic) {
-            named->setAttr("simulation.sample_default_current",
-                           builder.getUnitAttr());
+            sim::mark<sim::metadata::SampleDefaultCurrent>(named);
           } else {
             auto initializer = getChildren(symbol->second);
             if (initializer.size() == 1 &&
-                !named->hasAttr("simulation.sample_default_snapshot")) {
+                !sim::has<sim::metadata::SampleDefaultSnapshot>(named)) {
               if (auto spelling = getConstantSpelling(initializer.front()))
-                named->setAttr("simulation.sample_default_constant",
-                               builder.getStringAttr(*spelling));
+                sim::set<sim::metadata::SampleDefaultConstant>(
+                    named, builder.getStringAttr(*spelling));
               else
-                named->setAttr("simulation.sample_default_dynamic",
-                               builder.getUnitAttr());
+                sim::mark<sim::metadata::SampleDefaultDynamic>(named);
             }
           }
         }
         if (staticInitializer)
           if (auto constant = staticLiteralNets.find(symbol->second);
               constant != staticLiteralNets.end())
-            named->setAttr(staticNetConstantAttrName, constant->second);
+            sim::set<sim::metadata::StaticNetConstant>(named, constant->second);
         if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                 semantic::SVSpecparamSymbolOp>(symbol->second))
           if (auto constant =
                   symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            named->setAttr("simulation.constant_value", constant);
+            sim::set<sim::metadata::ConstantValue>(named, constant);
         auto field = classFieldSymbols.find(symbol->second);
         auto property =
             dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second);
         if (field != classFieldSymbols.end() &&
             (!property ||
              property.getLifetime() != semantic::SVVariableLifetime::Static)) {
-          named->setAttr("simulation.class_field", field->second);
+          sim::set<sim::metadata::ClassField>(named, field->second);
           if (Type storageType =
                   classes->covergroupFieldStorageTypes.lookup(symbol->second))
             cov::set<cov::FieldStorageType>(named, TypeAttr::get(storageType));
@@ -11095,13 +11074,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           if (staticInitializer)
             if (auto constant = staticLiteralNets.find(symbol->second);
                 constant != staticLiteralNets.end())
-              hierarchical->setAttr(staticNetConstantAttrName,
-                                    constant->second);
+              sim::set<sim::metadata::StaticNetConstant>(hierarchical,
+                                                         constant->second);
           if (isa<semantic::SVParameterSymbolOp, semantic::SVEnumValueSymbolOp,
                   semantic::SVSpecparamSymbolOp>(symbol->second))
             if (auto constant =
                     symbol->second->getAttrOfType<StringAttr>("constant_value"))
-              hierarchical->setAttr("simulation.constant_value", constant);
+              sim::set<sim::metadata::ConstantValue>(hierarchical, constant);
         }
         return;
       }
@@ -11115,7 +11094,7 @@ void ObeliskSimPreparePass::runOnOperation() {
                 semantic::SVSpecparamSymbolOp>(symbol->second)) {
           if (auto constant =
                   symbol->second->getAttrOfType<StringAttr>("constant_value"))
-            member->setAttr("simulation.constant_value", constant);
+            sim::set<sim::metadata::ConstantValue>(member, constant);
           return;
         }
         auto field = classFieldSymbols.find(symbol->second);
@@ -11124,7 +11103,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (field != classFieldSymbols.end() &&
             (!property ||
              property.getLifetime() != semantic::SVVariableLifetime::Static)) {
-          member->setAttr("simulation.class_field", field->second);
+          sim::set<sim::metadata::ClassField>(member, field->second);
           if (Type storageType =
                   classes->covergroupFieldStorageTypes.lookup(symbol->second))
             cov::set<cov::FieldStorageType>(member, TypeAttr::get(storageType));
@@ -11140,7 +11119,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       auto placeholder = UnrealizedConversionCastOp::create(
           bodyBuilder, getSemanticLocation(unit.source), type.getResults(),
           ValueRange{});
-      placeholder->setAttr(placeholderAttrName, builder.getUnitAttr());
+      sim::mark<sim::metadata::Placeholder>(placeholder);
       sim::SimReturnOp::create(bodyBuilder, getSemanticLocation(unit.source),
                                placeholder.getResults());
     } else {
@@ -11211,8 +11190,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         }
 
         llvm::StringMap<unsigned> aggregateCaptures;
-        if (ArrayAttr bindings =
-                aggregate->getAttrOfType<ArrayAttr>(bindingsAttrName)) {
+        if (ArrayAttr bindings = sim::get<sim::metadata::Bindings>(aggregate)) {
           for (Attribute attribute : bindings) {
             auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
             if (!binding || binding.getArgument() < publicArguments)
@@ -11271,8 +11249,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
 
           llvm::DenseMap<unsigned, StringRef> providerCapturePaths;
-          if (ArrayAttr bindings =
-                  provider->getAttrOfType<ArrayAttr>(bindingsAttrName))
+          if (ArrayAttr bindings = sim::get<sim::metadata::Bindings>(provider))
             for (Attribute attribute : bindings)
               if (auto binding = dyn_cast<sim::ArgumentBindingAttr>(attribute);
                   binding && binding.getArgument() >= publicArguments)
@@ -11339,12 +11316,12 @@ void ObeliskSimPreparePass::runOnOperation() {
                   aggregateBuilder.getI64IntegerAttr(codeUnitID)),
               aggregateBuilder.getNamedAttr("internal",
                                             aggregateBuilder.getUnitAttr()),
-              aggregateBuilder.getNamedAttr(
-                  sim::metadata::hierarchicalName,
+              sim::named<sim::metadata::HierarchicalName>(
                   aggregateBuilder.getStringAttr(hierarchy))};
-          const StringRef inheritedAttributes[] = {delayScaleAttrName,
-                                                   delayQuantumAttrName,
-                                                   "home_region", "domain"};
+          const StringRef inheritedAttributes[] = {
+              sim::metadata::DelayScale::getNameStr(),
+              sim::metadata::DelayQuantum::getNameStr(), "home_region",
+              "domain"};
           for (StringRef name : inheritedAttributes)
             if (Attribute attribute = aggregate->getAttr(name))
               attributes.push_back(
@@ -11356,8 +11333,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           SymbolTable::setSymbolVisibility(branch,
                                            SymbolTable::Visibility::Private);
           Block &entry = branch.getBody().front();
-          auto aggregateControlID = aggregate->getAttrOfType<IntegerAttr>(
-              "simulation.control_target_id");
+          auto aggregateControlID =
+              sim::get<sim::metadata::ControlTargetId>(aggregate);
           Block *controlExit = nullptr;
           Block *callBlock = &entry;
           Value controlActivation;
@@ -11396,8 +11373,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             sim::SimReturnOp::create(continuationBuilder, location,
                                      ValueRange{});
           }
-          branch->setAttr(sim::metadata::lowered,
-                          aggregateBuilder.getUnitAttr());
+          sim::mark<sim::metadata::Lowered>(branch);
           branches.push_back(branch);
           branchArguments.push_back(std::move(providerOperandArguments));
         }
@@ -11425,10 +11401,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               bodyBuilder, location, contextValue, descriptor,
               ValueRange{message}, true, sim::Radix::Decimal,
               bodyBuilder.getDenseI32ArrayAttr({0}),
-              aggregate->getAttrOfType<StringAttr>(
-                  sim::metadata::hierarchicalName),
-              StringAttr{},
-              aggregate->getAttrOfType<IntegerAttr>(delayScaleAttrName),
+              sim::get<sim::metadata::HierarchicalName>(aggregate),
+              StringAttr{}, sim::get<sim::metadata::DelayScale>(aggregate),
               IntegerAttr{});
           sim::SimErrorOp::create(bodyBuilder, location, contextValue);
           sim::SimReturnOp::create(bodyBuilder, location, ValueRange{});
@@ -11455,8 +11429,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           OpBuilder continuationBuilder = OpBuilder::atBlockEnd(continuation);
           sim::SimReturnOp::create(continuationBuilder, location, ValueRange{});
         }
-        aggregate->setAttr(sim::metadata::lowered,
-                           aggregateBuilder.getUnitAttr());
+        sim::mark<sim::metadata::Lowered>(aggregate);
       }
     }();
   }
@@ -11480,12 +11453,13 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!unit.function)
       continue;
     unit.function.walk([&](semantic::SVCallExpressionOp call) {
-      bool classDispatch = call->hasAttr(randomizeDispatchAttrName);
-      bool nestedDispatch = call->hasAttr(randomizeNestedDispatchAttrName);
+      bool classDispatch = sim::has<sim::metadata::RandomizeDispatch>(call);
+      bool nestedDispatch =
+          sim::has<sim::metadata::RandomizeNestedDispatch>(call);
       if ((!classDispatch && !nestedDispatch) ||
           call.getHasInlineConstraints() || call.getArgumentCount() != 1 ||
-          call->hasAttr(randomizeCheckerOnlyAttrName) ||
-          call->hasAttr(randomizeExplicitPropertiesAttrName))
+          sim::has<sim::metadata::RandomizeCheckerOnly>(call) ||
+          sim::has<sim::metadata::RandomizeExplicitProperties>(call))
         return;
       auto restrictions = call.getConstraintRestrictions();
       if (restrictions && !restrictions.empty())
@@ -11497,13 +11471,13 @@ void ObeliskSimPreparePass::runOnOperation() {
         depth += isa<semantic::SVCallExpressionOp>(ancestor);
       for (Operation *child : getChildren(call)) {
         auto alternative = dyn_cast<semantic::SVCallExpressionOp>(child);
-        auto planClass = alternative
-                             ? alternative->getAttrOfType<FlatSymbolRefAttr>(
-                                   randomizePlanClassAttrName)
-                             : FlatSymbolRefAttr{};
+        auto planClass =
+            alternative
+                ? sim::get<sim::metadata::RandomizePlanClass>(alternative)
+                : FlatSymbolRefAttr{};
         if (!planClass ||
-            (!alternative->hasAttr(randomizeAttrName) &&
-             !alternative->hasAttr(randomizeNestedDispatchAttrName)))
+            (!sim::has<sim::metadata::Randomize>(alternative) &&
+             !sim::has<sim::metadata::RandomizeNestedDispatch>(alternative)))
           continue;
         std::string key =
             (Twine(classDispatch ? "class|" : "nested|") + planClass.getValue())
@@ -11512,14 +11486,15 @@ void ObeliskSimPreparePass::runOnOperation() {
           llvm::raw_string_ostream stream(key);
           stream << '|';
           if (Attribute field =
-                  call->getAttr(randomizeNestedDispatchFieldAttrName))
+                  sim::get<sim::metadata::RandomizeNestedDispatchField>(call))
             field.print(stream);
-          if (Attribute path =
-                  call->getAttr(randomizeNestedDispatchSelectionPathAttrName))
+          if (Attribute path = call->getAttr(
+                  sim::metadata::RandomizeNestedDispatchSelectionPath::
+                      getNameStr()))
             path.print(stream);
           stream << '|';
           if (Attribute selections =
-                  alternative->getAttr(randomizeNestedPlansAttrName))
+                  sim::get<sim::metadata::RandomizeNestedPlans>(alternative))
             selections.print(stream);
         }
         sharedPlans[key].push_back({alternative, unit.function, depth});
@@ -11536,7 +11511,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   };
   auto bindingMap = [&](sim::SimFuncOp function) {
     llvm::StringMap<Attribute> result;
-    if (auto bindings = function->getAttrOfType<ArrayAttr>(bindingsAttrName))
+    if (auto bindings = sim::get<sim::metadata::Bindings>(function))
       for (Attribute binding : bindings)
         if (StringRef path = bindingPath(binding); !path.empty())
           result[path] = binding;
@@ -11597,8 +11572,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     llvm::StringSet<> requiredPaths;
     llvm::StringSet<> readPaths;
     SmallVector<Operation *> children = getChildren(representative.call);
-    auto receiverIndex = representative.call->getAttrOfType<IntegerAttr>(
-        randomReceiverIndexAttrName);
+    auto receiverIndex =
+        sim::get<sim::metadata::RandomReceiverIndex>(representative.call);
     if (!receiverIndex || receiverIndex.getValue().isNegative() ||
         receiverIndex.getValue().getActiveBits() > 64 ||
         receiverIndex.getValue().getZExtValue() >= children.size())
@@ -11682,8 +11657,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (!supported)
       continue;
 
-    auto planClass = representative.call->getAttrOfType<FlatSymbolRefAttr>(
-        randomizePlanClassAttrName);
+    auto planClass =
+        sim::get<sim::metadata::RandomizePlanClass>(representative.call);
     FailureOr<Type> resultType = getNormalizedSemanticType(representative.call);
     if (!planClass || failed(resultType)) {
       invalid = true;
@@ -11737,20 +11712,20 @@ void ObeliskSimPreparePass::runOnOperation() {
         helperBuilder.getStringAttr("shared object randomization plan"),
         UnitAttr{});
     SmallVector<NamedAttribute> attrs{
-        helperBuilder.getNamedAttr(bindingsAttrName,
-                                   helperBuilder.getArrayAttr(helperBindings)),
+        sim::named<sim::metadata::Bindings>(
+            helperBuilder.getArrayAttr(helperBindings)),
         helperBuilder.getNamedAttr("code_unit_id",
                                    helperBuilder.getI64IntegerAttr(codeUnitID)),
-        helperBuilder.getNamedAttr(sim::metadata::thisArgument,
-                                   helperBuilder.getI32IntegerAttr(1)),
+        sim::named<sim::metadata::ThisArgument>(
+            helperBuilder.getI32IntegerAttr(1)),
         helperBuilder.getNamedAttr(
             "home_region",
             sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
         helperBuilder.getNamedAttr("domain",
                                    sim::ExecutionDomainAttr::get(
                                        context, sim::ExecutionDomain::Design)),
-        helperBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                   helperBuilder.getStringAttr(hierarchy))};
+        sim::named<sim::metadata::HierarchicalName>(
+            helperBuilder.getStringAttr(hierarchy))};
     auto helper = sim::SimFuncOp::create(
         helperBuilder, getSemanticLocation(representative.call), symbol,
         FunctionType::get(context, inputs, {*resultType}),
@@ -11769,12 +11744,11 @@ void ObeliskSimPreparePass::runOnOperation() {
         OpBuilder::atBlockEnd(&returnOp->getRegion(0).front());
     auto cloned = cast<semantic::SVCallExpressionOp>(
         returnBuilder.clone(*representative.call));
-    cloned->setAttr(randomizeHelperReceiverAttrName,
-                    helperBuilder.getUnitAttr());
+    sim::mark<sim::metadata::RandomizeHelperReceiver>(cloned);
     auto placeholder = UnrealizedConversionCastOp::create(
         bodyBuilder, getSemanticLocation(representative.call),
         TypeRange{*resultType}, ValueRange{});
-    placeholder->setAttr(placeholderAttrName, helperBuilder.getUnitAttr());
+    sim::mark<sim::metadata::Placeholder>(placeholder);
     sim::SimReturnOp::create(bodyBuilder,
                              getSemanticLocation(representative.call),
                              placeholder.getResults());
@@ -11784,9 +11758,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     ArrayAttr captures = helperBuilder.getArrayAttr(capturePaths);
     ArrayAttr reads = helperBuilder.getArrayAttr(readCapturePaths);
     for (SharedRandomizeAlternative &candidate : entry.second) {
-      candidate.call->setAttr(randomizeHelperAttrName, helperRef);
-      candidate.call->setAttr(randomizeHelperCapturesAttrName, captures);
-      candidate.call->setAttr(randomizeHelperReadCapturesAttrName, reads);
+      sim::set<sim::metadata::RandomizeHelper>(candidate.call, helperRef);
+      sim::set<sim::metadata::RandomizeHelperCaptures>(candidate.call,
+                                                       captures);
+      sim::set<sim::metadata::RandomizeHelperReadCaptures>(candidate.call,
+                                                           reads);
     }
   }
   if (invalid)
@@ -11849,30 +11825,27 @@ void ObeliskSimPreparePass::runOnOperation() {
                                                 metadata.end());
       if (capture.second.kind == DescriptorInfo::Kind::Driver &&
           capture.second.delayedNet)
-        metadataAttrs.push_back(builder.getNamedAttr("simulation.delayed_net",
-                                                     builder.getUnitAttr()));
+        metadataAttrs.push_back(
+            sim::named<sim::metadata::DelayedNet>(builder.getUnitAttr()));
       if (capture.second.rootType &&
           (capture.second.viewOffset != 0 ||
            capture.second.rootType != capture.second.type)) {
-        metadataAttrs.push_back(
-            builder.getNamedAttr(sim::metadata::descriptorRootType,
-                                 TypeAttr::get(capture.second.rootType)));
-        metadataAttrs.push_back(builder.getNamedAttr(
-            sim::metadata::descriptorLow,
+        metadataAttrs.push_back(sim::named<sim::metadata::DescriptorRootType>(
+            TypeAttr::get(capture.second.rootType)));
+        metadataAttrs.push_back(sim::named<sim::metadata::DescriptorLow>(
             builder.getI64IntegerAttr(capture.second.viewOffset)));
         if (!capture.second.viewIndices.empty())
-          metadataAttrs.push_back(builder.getNamedAttr(
-              sim::metadata::descriptorIndices,
+          metadataAttrs.push_back(sim::named<sim::metadata::DescriptorIndices>(
               builder.getDenseI64ArrayAttr(capture.second.viewIndices)));
         if (capture.second.aggregateViewType)
-          metadataAttrs.push_back(builder.getNamedAttr(
-              sim::metadata::descriptorAggregateType,
-              TypeAttr::get(capture.second.aggregateViewType)));
+          metadataAttrs.push_back(
+              sim::named<sim::metadata::DescriptorAggregateType>(
+                  TypeAttr::get(capture.second.aggregateViewType)));
         if (capture.second.packedViewOffset != 0 ||
             capture.second.aggregateViewType != capture.second.type)
-          metadataAttrs.push_back(builder.getNamedAttr(
-              sim::metadata::descriptorPackedLow,
-              builder.getI64IntegerAttr(capture.second.packedViewOffset)));
+          metadataAttrs.push_back(
+              sim::named<sim::metadata::DescriptorPackedLow>(
+                  builder.getI64IntegerAttr(capture.second.packedViewOffset)));
       }
       argAttrs.push_back(builder.getDictionaryAttr(metadataAttrs));
       bindings.push_back(sim::ArgumentBindingAttr::get(
@@ -11894,18 +11867,17 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<NamedAttribute> attrs{
         builder.getNamedAttr("code_unit_id",
                              builder.getI64IntegerAttr(codeUnitID)),
-        builder.getNamedAttr(sim::metadata::thisArgument,
-                             builder.getI32IntegerAttr(1)),
-        builder.getNamedAttr("simulation.constructor", builder.getUnitAttr()),
-        builder.getNamedAttr(bindingsAttrName, builder.getArrayAttr(bindings)),
+        sim::named<sim::metadata::ThisArgument>(builder.getI32IntegerAttr(1)),
+        sim::named<sim::metadata::Constructor>(builder.getUnitAttr()),
+        sim::named<sim::metadata::Bindings>(builder.getArrayAttr(bindings)),
         builder.getNamedAttr(
             "home_region",
             sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
         builder.getNamedAttr("domain",
                              sim::ExecutionDomainAttr::get(
                                  context, sim::ExecutionDomain::Design)),
-        builder.getNamedAttr(sim::metadata::hierarchicalName,
-                             builder.getStringAttr(hierarchy))};
+        sim::named<sim::metadata::HierarchicalName>(
+            builder.getStringAttr(hierarchy))};
     sim::SimFuncOp function = sim::SimFuncOp::create(
         builder, getSemanticLocation(classType), constructor.getValue(), type,
         sim::EntryKind::Function, attrs, argAttrs);
@@ -11957,7 +11929,7 @@ void ObeliskSimPreparePass::runOnOperation() {
           // An extends-clause constructor call is represented as an ordinary
           // semantic call. It still uses the current object as the base-class
           // receiver, just like an explicit super.new call.
-          cloned->setAttr("simulation.class_super", builder.getUnitAttr());
+          sim::mark<sim::metadata::ClassSuper>(cloned);
         } else if (semantic::SVSubroutineSymbolOp baseConstructorSource =
                        constructorSourceFor(base->second)) {
           SmallVector<Operation *> defaults;
@@ -12021,7 +11993,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             for (Operation *argument : defaults)
               argumentBuilder.clone(*argument);
             freezeCallContract(call);
-            call->setAttr("simulation.class_super", builder.getUnitAttr());
+            sim::mark<sim::metadata::ClassSuper>(call);
           }
         } else {
           Value baseReceiver = sim::SimClassCastOp::create(
@@ -12075,7 +12047,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       }
       Operation *cloned = bodyBuilder.clone(*initializer.front());
       if (FlatSymbolRefAttr field = classFieldSymbols.lookup(property))
-        cloned->setAttr("simulation.initialize_field", field);
+        sim::set<sim::metadata::InitializeField>(cloned, field);
     }
     function.walk(
         [&](semantic::SVCallExpressionOp call) { freezeCallContract(call); });
@@ -12213,7 +12185,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         if (!isa<sim::DriverType>(unit.function.getArgumentTypes()[index]))
           continue;
         auto descriptor = unit.function.getArgAttrOfType<IntegerAttr>(
-            index, sim::metadata::descriptorId);
+            index, sim::metadata::DescriptorId::getNameStr());
         if (descriptor)
           reactiveDriverIDs.insert(descriptor.getValue().getZExtValue());
       }
@@ -12225,7 +12197,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       sim::SimNetDeclOp net;
       for (uint64_t member : members) {
         sim::SimNetDeclOp candidate = netDeclarations.lookup(member);
-        if (candidate->hasAttr("simulation.user_defined_net")) {
+        if (sim::has<sim::metadata::UserDefinedNet>(candidate)) {
           net = candidate;
           break;
         }
@@ -12250,10 +12222,10 @@ void ObeliskSimPreparePass::runOnOperation() {
       sim::EventRegion primaryRegion = hasActiveDriver
                                            ? sim::EventRegion::Active
                                            : sim::EventRegion::Reactive;
-      auto resolutionPath = net->getAttrOfType<StringAttr>(
-          "simulation.resolution_function_path");
-      auto resolutionSymbol = net->getAttrOfType<SymbolRefAttr>(
-          "simulation.resolution_function_symbol");
+      auto resolutionPath =
+          sim::get<sim::metadata::ResolutionFunctionPath>(net);
+      auto resolutionSymbol =
+          sim::get<sim::metadata::ResolutionFunctionSymbol>(net);
       sim::SimFuncOp resolutionFunction;
       Operation *resolutionSource = nullptr;
       if (resolutionPath) {
@@ -12388,8 +12360,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (!resolutionFunction && drivers.empty())
         continue;
       for (uint64_t member : members)
-        netDeclarations.lookup(member)->removeAttr(
-            "simulation.resolution_function_symbol");
+        sim::remove<sim::metadata::ResolutionFunctionSymbol>(
+            netDeclarations.lookup(member));
 
       llvm::DenseSet<uint64_t> rawDriverIDs;
       for (sim::SimDriverDeclOp driver : drivers)
@@ -12398,11 +12370,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         for (unsigned index = 1; index < unit.function.getNumArguments();
              ++index) {
           auto descriptor = unit.function.getArgAttrOfType<IntegerAttr>(
-              index, sim::metadata::descriptorId);
+              index, sim::metadata::DescriptorId::getNameStr());
           if (isa<sim::DriverType>(unit.function.getArgumentTypes()[index]) &&
               descriptor &&
               rawDriverIDs.contains(descriptor.getValue().getZExtValue()))
-            unit.function.setArgAttr(index, "simulation.user_net_driver",
+            unit.function.setArgAttr(index,
+                                     sim::metadata::UserNetDriver::getNameStr(),
                                      builder.getUnitAttr());
         }
 
@@ -12452,7 +12425,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         inputTypes.push_back(sim::DriverType::get(context, net.getType()));
         NamedAttrList attrs(
             captureMetadata(builder, sim::CaptureKind::Driver, driver.getId()));
-        attrs.set("simulation.user_net_driver", builder.getUnitAttr());
+        attrs.set(sim::metadata::UserNetDriver::getNameStr(),
+                  builder.getUnitAttr());
         argumentAttrs.push_back(attrs.getDictionary(context));
       }
       SmallVector<NamedAttribute> functionAttrs{
@@ -12463,9 +12437,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           builder.getNamedAttr("domain",
                                sim::ExecutionDomainAttr::get(
                                    context, sim::ExecutionDomain::Design)),
-          builder.getNamedAttr(sim::metadata::hierarchicalName,
-                               builder.getStringAttr(hierarchy)),
-          builder.getNamedAttr(sim::metadata::lowered, builder.getUnitAttr())};
+          sim::named<sim::metadata::HierarchicalName>(
+              builder.getStringAttr(hierarchy)),
+          sim::named<sim::metadata::Lowered>(builder.getUnitAttr())};
       auto resolver = sim::SimFuncOp::create(
           builder, net.getLoc(), symbol,
           FunctionType::get(context, inputTypes, TypeRange{}),
@@ -12536,9 +12510,11 @@ void ObeliskSimPreparePass::runOnOperation() {
              ++index) {
           DictionaryAttr attrs = resolutionFunction.getArgAttrDict(index);
           auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
-              attrs ? attrs.get(sim::metadata::captureKind) : Attribute{});
+              attrs ? attrs.get(sim::metadata::CaptureKind::getNameStr())
+                    : Attribute{});
           auto descriptorID =
-              attrs ? attrs.getAs<IntegerAttr>(sim::metadata::descriptorId)
+              attrs ? attrs.getAs<IntegerAttr>(
+                          sim::metadata::DescriptorId::getNameStr())
                     : IntegerAttr{};
           if (!kind || !descriptorID) {
             resolutionFunction.emitError()
@@ -12644,8 +12620,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         reactiveResolver->setAttr(
             "home_region",
             sim::EventRegionAttr::get(context, sim::EventRegion::Reactive));
-        reactiveResolver->setAttr(sim::metadata::hierarchicalName,
-                                  builder.getStringAttr(reactiveHierarchy));
+        sim::set<sim::metadata::HierarchicalName>(
+            reactiveResolver, builder.getStringAttr(reactiveHierarchy));
         sim::SimCodeUnitDeclOp::create(
             builder, net.getLoc(), reactiveCodeUnitID, net.getScopeId(),
             sim::EntryKind::Continuous,
@@ -12728,7 +12704,7 @@ void ObeliskSimPreparePass::runOnOperation() {
     for (PreparedUnit &unit : units) {
       sim::SimFuncOp coordinator = unit.function;
       if (!coordinator ||
-          !coordinator->hasAttr("simulation.timing_timer_storage"))
+          !sim::has<sim::metadata::TimingTimerStorage>(coordinator))
         continue;
       Location location = getSemanticLocation(unit.source);
       std::string helperSymbol =
@@ -12771,14 +12747,13 @@ void ObeliskSimPreparePass::runOnOperation() {
           helperBuilder.getNamedAttr(
               "code_unit_id", helperBuilder.getI64IntegerAttr(helperCodeUnit)),
           helperBuilder.getNamedAttr("internal", helperBuilder.getUnitAttr()),
-          helperBuilder.getNamedAttr("simulation.skew_deadline_helper",
-                                     helperBuilder.getUnitAttr()),
+          sim::named<sim::metadata::SkewDeadlineHelper>(
+              helperBuilder.getUnitAttr()),
           helperBuilder.getNamedAttr(
               "home_region",
               sim::EventRegionAttr::get(context, sim::EventRegion::Reactive)),
           helperBuilder.getNamedAttr("domain", coordinator.getDomainAttr()),
-          helperBuilder.getNamedAttr(
-              sim::metadata::hierarchicalName,
+          sim::named<sim::metadata::HierarchicalName>(
               helperBuilder.getStringAttr(helperHierarchy))};
       sim::SimFuncOp helper = sim::SimFuncOp::create(
           helperBuilder, location, helperSymbol,
@@ -12815,10 +12790,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       sim::SimRefStoreOp::create(publishBuilder, location, nextSignal,
                                  entry.getArgument(2));
       cf::BranchOp::create(publishBuilder, location, wait);
-      helper->setAttr(sim::metadata::lowered, helperBuilder.getUnitAttr());
-      coordinator->setAttr(
-          "simulation.timing_timer_helper",
-          FlatSymbolRefAttr::get(context, helper.getSymName()));
+      sim::mark<sim::metadata::Lowered>(helper);
+      sim::set<sim::metadata::TimingTimerHelper>(
+          coordinator, FlatSymbolRefAttr::get(context, helper.getSymName()));
     }
 
     for (auto &terminal : negativeTimingTerminals) {
@@ -12875,13 +12849,12 @@ void ObeliskSimPreparePass::runOnOperation() {
       sim::SimFuncOp commit;
       if (terminal.delayTicks > 0) {
         SmallVector<NamedAttribute> commitAttrs(commonAttrs);
-        commitAttrs.push_back(helperBuilder.getNamedAttr(
-            "simulation.negative_timing_delay_commit",
-            helperBuilder.getUnitAttr()));
+        commitAttrs.push_back(
+            sim::named<sim::metadata::NegativeTimingDelayCommit>(
+                helperBuilder.getUnitAttr()));
         commitAttrs.push_back(helperBuilder.getNamedAttr(
             "code_unit_id", helperBuilder.getI64IntegerAttr(commitID)));
-        commitAttrs.push_back(helperBuilder.getNamedAttr(
-            sim::metadata::hierarchicalName,
+        commitAttrs.push_back(sim::named<sim::metadata::HierarchicalName>(
             helperBuilder.getStringAttr(commitSymbol)));
         SmallVector<DictionaryAttr> commitArgAttrs{
             captureMetadata(helperBuilder, sim::CaptureKind::Context),
@@ -12915,17 +12888,16 @@ void ObeliskSimPreparePass::runOnOperation() {
         sim::SimRefStoreOp::create(publishBuilder, location,
                                    publish->getArgument(0), delayed);
         sim::SimReturnOp::create(publishBuilder, location, ValueRange{});
-        commit->setAttr(sim::metadata::lowered, helperBuilder.getUnitAttr());
+        sim::mark<sim::metadata::Lowered>(commit);
       }
 
       SmallVector<NamedAttribute> monitorAttrs(commonAttrs);
-      monitorAttrs.push_back(helperBuilder.getNamedAttr(
-          "simulation.negative_timing_delay_monitor",
-          helperBuilder.getUnitAttr()));
+      monitorAttrs.push_back(
+          sim::named<sim::metadata::NegativeTimingDelayMonitor>(
+              helperBuilder.getUnitAttr()));
       monitorAttrs.push_back(helperBuilder.getNamedAttr(
           "code_unit_id", helperBuilder.getI64IntegerAttr(monitorID)));
-      monitorAttrs.push_back(helperBuilder.getNamedAttr(
-          sim::metadata::hierarchicalName,
+      monitorAttrs.push_back(sim::named<sim::metadata::HierarchicalName>(
           helperBuilder.getStringAttr(monitorSymbol)));
       Type sourceHandleType = terminal.source.kind == DescriptorInfo::Kind::Net
                                   ? Type(sim::NetType::get(context, valueType))
@@ -12967,9 +12939,8 @@ void ObeliskSimPreparePass::runOnOperation() {
             changedBuilder, location, commit.getSymNameAttr(),
             ValueRange{monitorEntry.getArgument(0), current}, ArrayAttr{},
             ArrayAttr{});
-        transportSpawn->setAttr(
-            "simulation.negative_timing_transport_activation",
-            changedBuilder.getUnitAttr());
+        sim::mark<sim::metadata::NegativeTimingTransportActivation>(
+            transportSpawn);
       } else {
         // IEEE 1800-2017 31.9.1: a zero transport delay is part of the same
         // Active-region fixpoint.  Publishing directly avoids an artificial
@@ -12981,7 +12952,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         sim::SimRefStoreOp::create(changedBuilder, location, current, delayed);
       }
       cf::BranchOp::create(changedBuilder, location, wait);
-      monitor->setAttr(sim::metadata::lowered, helperBuilder.getUnitAttr());
+      sim::mark<sim::metadata::Lowered>(monitor);
     }
   }
   if (invalid)
@@ -13036,7 +13007,7 @@ void ObeliskSimPreparePass::runOnOperation() {
       // does not create a fresh synchronization object first (6.17), and the
       // marked initializer function runs below before any process is spawned.
       if (isa<sim::EventType>(type) &&
-          declaration->hasAttr(eventExplicitInitializerAttrName))
+          sim::has<sim::metadata::EventExplicitInitializer>(declaration))
         continue;
       Value storage = sim::SimContextStorageOp::create(
           rootBuilder, rootInitializer.getLoc(),
@@ -13052,8 +13023,10 @@ void ObeliskSimPreparePass::runOnOperation() {
     for (unsigned index = 1; index < unit.function.getNumArguments(); ++index) {
       DictionaryAttr attrs = unit.function.getArgAttrDict(index);
       auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
-          attrs ? attrs.get(captureKindAttrName) : Attribute{});
-      auto descriptor = attrs ? attrs.getAs<IntegerAttr>(descriptorIdAttrName)
+          attrs ? attrs.get(sim::metadata::CaptureKind::getNameStr())
+                : Attribute{});
+      auto descriptor = attrs ? attrs.getAs<IntegerAttr>(
+                                    sim::metadata::DescriptorId::getNameStr())
                               : IntegerAttr{};
       if (!kind || !descriptor) {
         unit.function.emitError() << "root-invoked argument #" << index
@@ -13065,8 +13038,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       Location loc = unit.function.getLoc();
       switch (kind.getValue()) {
       case sim::CaptureKind::Storage: {
-        auto rootTypeAttr =
-            attrs.getAs<TypeAttr>(sim::metadata::descriptorRootType);
+        auto rootTypeAttr = attrs.getAs<TypeAttr>(
+            sim::metadata::DescriptorRootType::getNameStr());
         Type contextType =
             rootTypeAttr
                 ? Type(sim::RefType::get(context, rootTypeAttr.getValue()))
@@ -13076,16 +13049,17 @@ void ObeliskSimPreparePass::runOnOperation() {
                             rootBuilder.getI64IntegerAttr(id))
                             .getResult();
         if (rootTypeAttr) {
-          auto low = attrs.getAs<IntegerAttr>(sim::metadata::descriptorLow);
+          auto low = attrs.getAs<IntegerAttr>(
+              sim::metadata::DescriptorLow::getNameStr());
           if (!low) {
             unit.function.emitError()
                 << "view capture is missing its descriptor offset";
             return failure();
           }
           if (auto indices = attrs.getAs<DenseI64ArrayAttr>(
-                  sim::metadata::descriptorIndices)) {
-            auto aggregateType =
-                attrs.getAs<TypeAttr>(sim::metadata::descriptorAggregateType);
+                  sim::metadata::DescriptorIndices::getNameStr())) {
+            auto aggregateType = attrs.getAs<TypeAttr>(
+                sim::metadata::DescriptorAggregateType::getNameStr());
             if (!aggregateType) {
               unit.function.emitError()
                   << "aggregate view capture is missing its result type";
@@ -13098,8 +13072,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                           .getResult();
           }
           if (storage.getType() != type) {
-            auto packedLow =
-                attrs.getAs<IntegerAttr>(sim::metadata::descriptorPackedLow);
+            auto packedLow = attrs.getAs<IntegerAttr>(
+                sim::metadata::DescriptorPackedLow::getNameStr());
             if (!packedLow) {
               unit.function.emitError()
                   << "packed view capture is missing its bit offset";
@@ -13759,13 +13733,11 @@ void ObeliskSimPreparePass::runOnOperation() {
     // materializes sample helpers. Their virtual/interface calls are outside
     // the design body but require the same compatible implementation roots.
     module.walk([&](semantic::SVCallExpressionOp call) {
-      if (!call->hasAttr("simulation.class_virtual"))
+      if (!sim::has<sim::metadata::ClassVirtual>(call))
         return;
-      auto reference =
-          call->getAttrOfType<FlatSymbolRefAttr>("simulation.class_method");
-      auto slot = call->getAttrOfType<IntegerAttr>("simulation.class_slot");
-      auto signature =
-          call->getAttrOfType<IntegerAttr>("simulation.class_signature");
+      auto reference = sim::get<sim::metadata::ClassMethod>(call);
+      auto slot = sim::get<sim::metadata::ClassSlot>(call);
+      auto signature = sim::get<sim::metadata::ClassSignature>(call);
       auto found =
           reference ? methods.find(reference.getValue()) : methods.end();
       if (found == methods.end() || !slot || !signature)

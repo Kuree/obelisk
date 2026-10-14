@@ -43,7 +43,7 @@ bool containsFourStateLogic(Type type) {
 }
 
 uint64_t getSimulationOperationCost(Operation &operation) {
-  if (operation.hasAttr("simulation.rematerialized") &&
+  if (sim::has<sim::metadata::Rematerialized>(&operation) &&
       operation.hasTrait<OpTrait::ConstantLike>())
     return 0;
   if (isa<sim::SimRefLoadOp, sim::SimRefStoreOp, sim::SimNetReadOp,

@@ -43,15 +43,14 @@ public:
           return;
         if (collections.getCallSummary(operation) &
             analysis::ManagedCollectionAnalysis::Polls) {
-          operation->removeAttr(analysis::gcPollFreeAttrName);
+          sim::remove<sim::metadata::GcPollFree>(operation);
           return;
         }
-        operation->setAttr(analysis::gcPollFreeAttrName,
-                           builder.getUnitAttr());
+        sim::mark<sim::metadata::GcPollFree>(operation);
         ++numPollFreeCalls;
       });
     });
-    sim::mark<sim::GCPolled>(module);
+    sim::mark<sim::metadata::GCPolled>(module);
   }
 };
 

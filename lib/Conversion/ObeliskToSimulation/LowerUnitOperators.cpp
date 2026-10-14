@@ -910,8 +910,8 @@ FailureOr<Value> UnitLowering::lowerBinary(semantic::SVBinaryExpressionOp op) {
       // Expanded constraint cases retain their 12.5.1 comparison semantics
       // while safe captures inspect the original symbols before plane
       // normalization. This also applies beneath a symbol-consuming parent.
-      if (auto condition = op->getAttrOfType<IntegerAttr>(
-              randomFunctionCaseConditionAttrName)) {
+      if (auto condition =
+              sim::get<sim::metadata::RandomFunctionCaseCondition>(op)) {
         auto kind = static_cast<semantic::SVCaseCondition>(condition.getInt());
         if (kind == semantic::SVCaseCondition::WildcardXOrZ)
           compare = sim::CompareKind::CaseXZEq;

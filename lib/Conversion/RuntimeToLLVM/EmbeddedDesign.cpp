@@ -968,7 +968,7 @@ materializeEmbeddedSimulationDesign(ModuleOp module,
     executionFlags = executionFlags | runtime::ExecutionFlags::ClassBitstream;
   if (coverageSchema)
     executionFlags = executionFlags | runtime::ExecutionFlags::CoverageSchema;
-  if (sim::has<sim::GCPolled>(module))
+  if (sim::has<sim::metadata::GCPolled>(module))
     executionFlags = executionFlags | runtime::ExecutionFlags::PolledCollection;
   // IEEE 1800-2023 35.7: exporting a function preserves its SV semantics.
   // Native scheduling must see the same capabilities as the runtime descriptor

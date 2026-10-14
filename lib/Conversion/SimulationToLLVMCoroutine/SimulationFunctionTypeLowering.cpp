@@ -84,9 +84,9 @@ public:
     for (auto [index, type] : llvm::enumerate(entry.getConvertedTypes())) {
       auto kind =
           index == 0 ? sim::CaptureKind::Context : sim::CaptureKind::Value;
-      argAttrs[index] = rewriter.getDictionaryAttr({rewriter.getNamedAttr(
-          sim::metadata::captureKind,
-          sim::CaptureKindAttr::get(rewriter.getContext(), kind))});
+      argAttrs[index] =
+          rewriter.getDictionaryAttr({sim::named<sim::metadata::CaptureKind>(
+              sim::CaptureKindAttr::get(rewriter.getContext(), kind))});
     }
     SmallVector<Attribute> resultAttrs(results.size(),
                                        rewriter.getDictionaryAttr({}));
@@ -96,7 +96,7 @@ public:
       function.setArgAttrsAttr(rewriter.getArrayAttr(argAttrs));
       // Binding providers describe semantic descriptors, consumed by packed
       // conversion. They do not describe the resulting physical arguments.
-      function->removeAttr(sim::metadata::bindings);
+      sim::remove<sim::metadata::Bindings>(function);
       if (!resultAttrs.empty())
         function.setResAttrsAttr(rewriter.getArrayAttr(resultAttrs));
       native::set<native::TwoStateBlockUnknowns>(

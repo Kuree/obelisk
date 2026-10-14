@@ -30,7 +30,7 @@ analyzeTableProcess(sim::SimFuncOp function,
     Type type = argument.getType();
     if (isa<sim::RefType>(type)) {
       auto kind = function.getArgAttrOfType<IntegerAttr>(
-          argument.getArgNumber(), sim::metadata::captureKind);
+          argument.getArgNumber(), sim::metadata::CaptureKind::getNameStr());
       if (!kind ||
           kind.getInt() != static_cast<int32_t>(sim::CaptureKind::Storage))
         return std::nullopt;
@@ -117,7 +117,7 @@ analyzeTableProcess(sim::SimFuncOp function,
               reference.getElementType()))
         return std::nullopt;
       auto kind = function.getArgAttrOfType<IntegerAttr>(
-          argument.getArgNumber(), sim::metadata::captureKind);
+          argument.getArgNumber(), sim::metadata::CaptureKind::getNameStr());
       if (!kind ||
           kind.getInt() != static_cast<int32_t>(sim::CaptureKind::Storage))
         return std::nullopt;

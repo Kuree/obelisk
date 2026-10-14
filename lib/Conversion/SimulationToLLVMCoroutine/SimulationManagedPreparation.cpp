@@ -179,8 +179,7 @@ prepareManagedClassInventory(ModuleOp module,
             "random property exceeds the 64-property rand_mode boundary");
         return failure();
       }
-      auto modeField = hierarchyRoot->getAttrOfType<FlatSymbolRefAttr>(
-          sim::metadata::randomModeField);
+      auto modeField = sim::get<sim::metadata::RandomModeField>(hierarchyRoot);
       auto modeOffset = modeField ? fieldOffsets.find(modeField.getValue())
                                   : fieldOffsets.end();
       if (!modeField || modeOffset == fieldOffsets.end()) {
@@ -203,9 +202,8 @@ prepareManagedClassInventory(ModuleOp module,
             {sharedField.offset + rootOffset,
              isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak(),
              slotKind});
-      if (field->hasAttr(sim::metadata::randomObjectEdge)) {
-        auto modeIndex =
-            field->getAttrOfType<IntegerAttr>(sim::metadata::randomModeIndex);
+      if (sim::has<sim::metadata::RandomObjectEdge>(field)) {
+        auto modeIndex = sim::get<sim::metadata::RandomModeIndex>(field);
         FailureOr<std::pair<uint64_t, uint64_t>> mode =
             getModeOffset(field, modeIndex);
         if (failed(mode))
@@ -213,15 +211,12 @@ prepareManagedClassInventory(ModuleOp module,
         layout.randomEdges.push_back(
             {sharedField.offset, mode->first, mode->second});
       }
-      if (auto kind = field->getAttrOfType<sim::RandomVariableKindAttr>(
-              sim::metadata::randomVariableKind)) {
-        auto modeIndex =
-            field->getAttrOfType<IntegerAttr>(sim::metadata::randomModeIndex);
+      if (auto kind = sim::get<sim::metadata::RandomVariableKind>(field)) {
+        auto modeIndex = sim::get<sim::metadata::RandomModeIndex>(field);
         FailureOr<std::pair<uint64_t, uint64_t>> mode =
             getModeOffset(field, modeIndex);
         std::optional<unsigned> width = sim::getPackedWidth(field.getType());
-        auto signedness =
-            field->getAttrOfType<BoolAttr>(sim::metadata::randomVariableSigned);
+        auto signedness = sim::get<sim::metadata::RandomVariableSigned>(field);
         if (failed(mode))
           return failure();
         if (!width || !signedness)
@@ -238,10 +233,9 @@ prepareManagedClassInventory(ModuleOp module,
           variable.flags |= OBELISK_RT_RANDOM_VARIABLE_SIGNED;
         if (kind.getValue() == sim::RandomVariableKind::RandC) {
           variable.flags |= OBELISK_RT_RANDOM_VARIABLE_RANDC;
-          auto key = field->getAttrOfType<FlatSymbolRefAttr>(
-              sim::metadata::randomCycleKeyField);
-          auto position = field->getAttrOfType<FlatSymbolRefAttr>(
-              sim::metadata::randomCyclePositionField);
+          auto key = sim::get<sim::metadata::RandomCycleKeyField>(field);
+          auto position =
+              sim::get<sim::metadata::RandomCyclePositionField>(field);
           auto keyOffset =
               key ? fieldOffsets.find(key.getValue()) : fieldOffsets.end();
           auto positionOffset = position

@@ -245,12 +245,12 @@ public:
       SmallVector<Value> operands{context};
       for (unsigned index = 1; index < sampler.getNumArguments(); ++index) {
         DictionaryAttr attrs = sampler.getArgAttrDict(index);
-        auto kind = attrs ? dyn_cast_or_null<sim::CaptureKindAttr>(
-                                attrs.get(simlowering::captureKindAttrName))
+        auto kind = attrs ? dyn_cast_or_null<sim::CaptureKindAttr>(attrs.get(
+                                sim::metadata::CaptureKind::getNameStr()))
                           : sim::CaptureKindAttr{};
-        auto descriptor =
-            attrs ? attrs.getAs<IntegerAttr>(simlowering::descriptorIdAttrName)
-                  : IntegerAttr{};
+        auto descriptor = attrs ? attrs.getAs<IntegerAttr>(
+                                      sim::metadata::DescriptorId::getNameStr())
+                                : IntegerAttr{};
         Type type = sampler.getArgumentTypes()[index];
         Value value;
         if (kind && descriptor && kind.getValue() == sim::CaptureKind::Storage)

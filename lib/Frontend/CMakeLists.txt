@@ -6,6 +6,10 @@ add_mlir_library(ObeliskFrontend
   Tokens.cpp
 
   DEPENDS
+  ObeliskSimulationAttrsIncGen
+  ObeliskSimulationDialectIncGen
+  ObeliskSimulationEnumsIncGen
+  ObeliskSimulationTypesIncGen
   SlangEnumsIncGen
   SlangOpsIncGen
   ObeliskVPIObjectModelIncGen

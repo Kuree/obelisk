@@ -128,7 +128,7 @@ UnitLowering::lowerDumpSystemCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     for (Operation *scope : scopes) {
-      if (!scope->hasAttr("simulation.dumpports_scope")) {
+      if (!sim::has<sim::metadata::DumpportsScope>(scope)) {
         emitError(getSemanticLocation(scope))
             << "$dumpports selection must name a module instance";
         return failure();

@@ -5,6 +5,7 @@
 #include "SDF.h"
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
+#include "obelisk/Dialect/Simulation/SimulationDialect.h"
 #include "obelisk/Dialect/Slang/SlangOps.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 
@@ -3164,14 +3165,14 @@ private:
                       node, *node.parentInstance));
       if (node.parentInstance) {
         const slang::ast::DefinitionSymbol &definition = node.getDefinition();
-        attrs.set("simulation.vpi_definition_name",
+        attrs.set(sim::metadata::VpiDefinitionName::getNameStr(),
                   builder.getStringAttr(definition.name));
-        attrs.set("simulation.vpi_top",
+        attrs.set(sim::metadata::VpiTop::getNameStr(),
                   builder.getBoolAttr(node.parentInstance->isTopLevel()));
-        attrs.set("simulation.vpi_automatic",
+        attrs.set(sim::metadata::VpiAutomatic::getNameStr(),
                   builder.getBoolAttr(definition.defaultLifetime ==
                                       slang::ast::VariableLifetime::Automatic));
-        attrs.set("simulation.vpi_cell_instance",
+        attrs.set(sim::metadata::VpiCellInstance::getNameStr(),
                   builder.getBoolAttr(definition.cellDefine));
         using VPIKind = reflection::VPIObjectKind;
         VPIKind scopeKind = VPIKind::Module;
@@ -3200,15 +3201,15 @@ private:
     }
 
     if constexpr (std::same_as<T, slang::ast::PackageSymbol>) {
-      attrs.set("simulation.vpi_definition_name",
+      attrs.set(sim::metadata::VpiDefinitionName::getNameStr(),
                 builder.getStringAttr(node.name));
-      attrs.set("simulation.vpi_automatic",
+      attrs.set(sim::metadata::VpiAutomatic::getNameStr(),
                 builder.getBoolAttr(node.defaultLifetime ==
                                     slang::ast::VariableLifetime::Automatic));
     }
 
     if constexpr (std::same_as<T, slang::ast::CompilationUnitSymbol>)
-      attrs.set("simulation.vpi_definition_name",
+      attrs.set(sim::metadata::VpiDefinitionName::getNameStr(),
                 builder.getStringAttr("$unit"));
 
     if constexpr (std::same_as<T, slang::ast::InstanceArraySymbol>) {

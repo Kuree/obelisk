@@ -41,7 +41,7 @@ bool managedOperationMayCollect(Operation *operation, bool polled) {
   // execute one.
   if (polled)
     return isa<sim::SimGCSafepointOp>(operation) ||
-           (call && !operation->hasAttr(analysis::gcPollFreeAttrName));
+           (call && !sim::has<sim::metadata::GcPollFree>(operation));
   return call || analysis::mayAllocateManagedStorage(operation) ||
          isa<sim::SimGCSafepointOp, sim::SimClassVirtualTaskCallOp>(operation);
 }

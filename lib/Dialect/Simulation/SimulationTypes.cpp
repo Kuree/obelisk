@@ -782,8 +782,8 @@ LogicalResult verifyPositive(Operation *op, IntegerAttr attr, StringRef name) {
 std::optional<CaptureKind> getCaptureKind(DictionaryAttr attrs) {
   if (!attrs)
     return std::nullopt;
-  auto value =
-      dyn_cast_or_null<CaptureKindAttr>(attrs.get(metadata::captureKind));
+  auto value = dyn_cast_or_null<CaptureKindAttr>(
+      attrs.get(sim::metadata::CaptureKind::getNameStr()));
   if (!value)
     return std::nullopt;
   return value.getValue();

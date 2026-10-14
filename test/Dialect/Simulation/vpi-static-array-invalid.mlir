@@ -256,7 +256,7 @@ module {
 module {
   simulation.design @invalid_delegated_vpi_identity {
     simulation.scope.decl 0
-    // expected-error @+1 {{delegated VPI identity must name its owning object anchor}}
+    // expected-error @+1 {{'simulation.vpi_identity_delegated' has the wrong payload kind}}
     simulation.storage.decl 0 in 0 : i8 design hierarchy "value" {
       simulation.vpi_identity_delegated
     }

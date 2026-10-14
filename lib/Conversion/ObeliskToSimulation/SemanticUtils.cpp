@@ -284,11 +284,9 @@ std::optional<StringRef> getConstantSpelling(Operation *operation) {
   if (auto literal =
           dyn_cast<semantic::SVUnbasedUnsizedIntegerLiteralOp>(operation))
     return literal.getConstantValue();
-  if (auto constant =
-          operation->getAttrOfType<StringAttr>("simulation.constant_value"))
+  if (auto constant = sim::get<sim::metadata::ConstantValue>(operation))
     return constant.getValue();
-  if (auto constant =
-          operation->getAttrOfType<StringAttr>(staticNetConstantAttrName))
+  if (auto constant = sim::get<sim::metadata::StaticNetConstant>(operation))
     return constant.getValue();
   // Elaboration folded this expression to a constant. A bound or a count
   // written as parameter arithmetic is as constant as a literal is. This comes
@@ -521,8 +519,9 @@ bool isStaticallyAllocatedOverrideTarget(Value value) {
       auto function =
           dyn_cast_or_null<sim::SimFuncOp>(argument.getOwner()->getParentOp());
       return function &&
-             !function.getArgAttr(argument.getArgNumber(),
-                                  "simulation.automatic_reference_capture");
+             !function.getArgAttr(
+                 argument.getArgNumber(),
+                 sim::metadata::AutomaticReferenceCapture::getNameStr());
     }
     return true;
   }
@@ -2871,12 +2870,11 @@ Value createDefaultValue(OpBuilder &builder, Location location, Type type) {
 DictionaryAttr captureMetadata(OpBuilder &builder, sim::CaptureKind kind,
                                std::optional<uint64_t> descriptorId) {
   SmallVector<NamedAttribute> values;
-  values.push_back(builder.getNamedAttr(
-      captureKindAttrName,
+  values.push_back(sim::named<sim::metadata::CaptureKind>(
       sim::CaptureKindAttr::get(builder.getContext(), kind)));
   if (descriptorId)
-    values.push_back(builder.getNamedAttr(
-        descriptorIdAttrName, builder.getI64IntegerAttr(*descriptorId)));
+    values.push_back(sim::named<sim::metadata::DescriptorId>(
+        builder.getI64IntegerAttr(*descriptorId)));
   return builder.getDictionaryAttr(values);
 }
 

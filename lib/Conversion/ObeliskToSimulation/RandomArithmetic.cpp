@@ -125,11 +125,12 @@ struct RandomArithmetic::Impl {
       state.addAttribute("node_id", operand->getAttr("node_id"));
       state.addAttribute("semantic_type", operand->getAttr("semantic_type"));
       state.addAttribute("is_signed", builder.getBoolAttr(sign(operand)));
-      state.addAttribute(randomArithmeticOperandAttr, builder.getUnitAttr());
+      state.addAttribute(sim::metadata::RandomArithmeticOperand::getNameStr(),
+                         builder.getUnitAttr());
       // Replication and other structural lowerers inspect the spelling of a
       // constant operand before reading its captured SSA value.
       if (auto spelling = getConstantSpelling(operand))
-        state.addAttribute("simulation.constant_value",
+        state.addAttribute(sim::metadata::ConstantValue::getNameStr(),
                            builder.getStringAttr(*spelling));
       block->push_back(Operation::create(state));
       ++uses[operand];
@@ -142,9 +143,10 @@ struct RandomArithmetic::Impl {
     state.addAttribute("node_id", source->getAttr("node_id"));
     state.addAttribute("semantic_type",
                        TypeAttr::get(type(precision, isSigned)));
-    state.addAttribute(randomArithmeticNodeAttr, builder.getUnitAttr());
+    state.addAttribute(sim::metadata::RandomArithmeticNode::getNameStr(),
+                       builder.getUnitAttr());
     if (expressionIsFunction(source))
-      state.addAttribute(randomFunctionExpressionAttrName,
+      state.addAttribute(sim::metadata::RandomFunctionExpression::getNameStr(),
                          builder.getUnitAttr());
     state.addAttributes(attributes);
     state.addRegion();
@@ -158,7 +160,7 @@ struct RandomArithmetic::Impl {
     return node;
   }
   bool expressionIsFunction(Operation *source) const {
-    return source->hasAttr(randomFunctionExpressionAttrName);
+    return sim::has<sim::metadata::RandomFunctionExpression>(source);
   }
   Operation *literal(Operation *source, const APInt &bits,
                      bool isSigned = false) {
@@ -341,8 +343,7 @@ struct RandomArithmetic::Impl {
     return make(source, semantic::SVConversionExpressionOp::getOperationName(),
                 precision, plane == Plane::Value && sign(source),
                 {builder.getNamedAttr("is_implicit", builder.getBoolAttr(true)),
-                 builder.getNamedAttr(
-                     randomArithmeticPlaneAttr,
+                 sim::named<sim::metadata::RandomArithmeticPlane>(
                      builder.getI32IntegerAttr(static_cast<int32_t>(plane)))},
                 {source});
   }
@@ -351,7 +352,7 @@ struct RandomArithmetic::Impl {
     Operation *node = source->cloneWithoutRegions();
     expressions->getBody()->push_back(node);
     nodes.push_back(node);
-    node->setAttr(randomArithmeticNodeAttr, builder.getUnitAttr());
+    sim::mark<sim::metadata::RandomArithmeticNode>(node);
     node->setAttr("semantic_type", TypeAttr::get(type(precision, isSigned)));
     node->setAttr("callee_name", builder.getStringAttr(name));
     node->setAttr("argument_count", builder.getI64IntegerAttr(1));
@@ -360,7 +361,7 @@ struct RandomArithmetic::Impl {
     return node;
   }
   bool needed(Operation *expression) {
-    if (expression->hasAttr(randomArithmeticNodeAttr))
+    if (sim::has<sim::metadata::RandomArithmeticNode>(expression))
       return false;
     auto semanticType = expression->getAttrOfType<TypeAttr>("semantic_type");
     if (!semanticType || !getSemanticPackedWidth(semanticType.getValue()))
@@ -368,17 +369,18 @@ struct RandomArithmetic::Impl {
     Operation *key = canonical(expression);
     if (auto found = needs.find(key); found != needs.end())
       return found->second;
-    bool result = expression->hasAttr(randomFunctionCaseConditionAttrName) ||
-                  (frozenVariables && fourState(expression) &&
-                   (expression->hasAttr(randomVariableAttrName) ||
-                    expression->hasAttr(randomVariableBitOffsetAttrName)));
+    bool result =
+        sim::has<sim::metadata::RandomFunctionCaseCondition>(expression) ||
+        (frozenVariables && fourState(expression) &&
+         (sim::has<sim::metadata::RandomVariable>(expression) ||
+          sim::has<sim::metadata::RandomVariableBitOffset>(expression)));
     // State-selected integral paths must remain symbolic instead of capturing
     // their current element before randomization. Their finite selection is a
     // compiler expression, including when the selected data is two-state.
     if (candidate(expression) &&
         isa<semantic::SVElementSelectExpressionOp,
             semantic::SVRangeSelectExpressionOp>(expression) &&
-        !expression->hasAttr(randomVariableBitOffsetAttrName))
+        !sim::has<sim::metadata::RandomVariableBitOffset>(expression))
       result = true;
     if (auto op = dyn_cast<semantic::SVBinaryExpressionOp>(expression)) {
       auto children = getChildren(expression);
@@ -459,8 +461,8 @@ struct RandomArithmetic::Impl {
   FailureOr<std::optional<RandomArithmeticPlanes>>
   fixedSelection(Operation *expression, unsigned precision) {
     Operation *root = expression;
-    while (!root->hasAttr(randomVariableAttrName) &&
-           !root->hasAttr(randomVariableBitOffsetAttrName)) {
+    while (!sim::has<sim::metadata::RandomVariable>(root) &&
+           !sim::has<sim::metadata::RandomVariableBitOffset>(root)) {
       auto operands = getChildren(root);
       if (!isa<semantic::SVElementSelectExpressionOp,
                semantic::SVRangeSelectExpressionOp,
@@ -541,8 +543,8 @@ struct RandomArithmetic::Impl {
         if (failed(offset))
           return failure();
         if (*offset)
-          boundPath->setAttr(randomVariableBitOffsetAttrName,
-                             builder.getI64IntegerAttr(**offset));
+          sim::set<sim::metadata::RandomVariableBitOffset>(
+              boundPath, builder.getI64IntegerAttr(**offset));
         auto operands = getChildren(boundPath);
         if (!isa<semantic::SVElementSelectExpressionOp,
                  semantic::SVRangeSelectExpressionOp,
@@ -778,8 +780,8 @@ struct RandomArithmetic::Impl {
                 binary(expression, Binary::BinaryXor, plane(left.highImpedance),
                        plane(right.highImpedance), operationWidth),
                 operationWidth);
-      if (auto condition = expression->getAttrOfType<IntegerAttr>(
-              randomFunctionCaseConditionAttrName)) {
+      if (auto condition = sim::get<sim::metadata::RandomFunctionCaseCondition>(
+              expression)) {
         auto kind = static_cast<semantic::SVCaseCondition>(condition.getInt());
         if (kind == semantic::SVCaseCondition::WildcardXOrZ)
           different = mask(
@@ -912,7 +914,7 @@ struct RandomArithmetic::Impl {
     unsigned precision = *precisionResult;
     bool signedResult = sign(expression);
     auto children = getChildren(expression);
-    if (expression->hasAttr(randomEvaluationErrorAttrName))
+    if (sim::has<sim::metadata::RandomEvaluationError>(expression))
       return RandomArithmeticPlanes{zero(expression, precision), nullptr};
     if (auto spelling = getConstantSpelling(expression)) {
       auto bits = parseSVInteger(*spelling, precision, expression->getLoc());
@@ -930,8 +932,8 @@ struct RandomArithmetic::Impl {
               ? nullptr
               : literal(expression, bits->value & bits->unknown)};
     }
-    if (expression->hasAttr(randomVariableAttrName) ||
-        expression->hasAttr(randomVariableBitOffsetAttrName)) {
+    if (sim::has<sim::metadata::RandomVariable>(expression) ||
+        sim::has<sim::metadata::RandomVariableBitOffset>(expression)) {
       // Random candidates are two-state. Disabled property bits are state,
       // and their pre-solve unknown symbols survive until consumed by an
       // admitted conversion or absorbing operator. FrozenUnknown masks stored
@@ -948,7 +950,7 @@ struct RandomArithmetic::Impl {
       // binding, but prevent the emitted value cast from normalizing the
       // reference again and recursively rebuilding its unknown mask.
       Operation *reference = expression->clone();
-      reference->setAttr(randomArithmeticNodeAttr, builder.getUnitAttr());
+      sim::mark<sim::metadata::RandomArithmeticNode>(reference);
       expressions->getBody()->push_back(reference);
       nodes.push_back(reference);
       return RandomArithmeticPlanes{
@@ -989,8 +991,8 @@ struct RandomArithmetic::Impl {
           fourState(expression)
               ? projection(expression, precision, Plane::HighImpedance)
               : nullptr};
-    if (auto count = expression->getAttrOfType<IntegerAttr>(
-            randomEvaluationInputsAttrName)) {
+    if (auto count =
+            sim::get<sim::metadata::RandomEvaluationInputs>(expression)) {
       if (count.getValue().isNegative() ||
           count.getValue().getActiveBits() > 64 ||
           count.getValue().getZExtValue() + 1 != children.size())
@@ -1103,8 +1105,8 @@ struct RandomArithmetic::Impl {
               expression,
               semantic::SVConversionExpressionOp::getOperationName(), 1, false,
               {builder.getNamedAttr("is_implicit", builder.getBoolAttr(false)),
-               builder.getNamedAttr(randomArithmeticRealFiniteAttr,
-                                    builder.getUnitAttr())},
+               sim::named<sim::metadata::RandomRealFinite>(
+                   builder.getUnitAttr())},
               {children.front()});
           unknown =
               unknownMask(expression, notBool(expression, finite), precision);

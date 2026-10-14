@@ -52,7 +52,7 @@ UnitLowering::findSemanticCovergroup(Operation *operation) {
   // covergroup actual. Its prepared callee identifies the function; the
   // argument's type must not redirect it to a built-in coverage method.
   if (isa<semantic::SVCallExpressionOp>(operation) &&
-      operation->hasAttr(calleeAttrName))
+      sim::has<sim::metadata::Callee>(operation))
     return {};
   auto fromType = [&](Operation *node) {
     auto type = node->getAttrOfType<TypeAttr>("semantic_type");
@@ -1378,12 +1378,11 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
     if (auto path = nested->getAttrOfType<StringAttr>("referenced_path");
         path && !path.getValue().empty())
       referencedPaths.insert(path.getValue());
-    if (auto callCaptures =
-            nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
       for (Attribute capture : callCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
     if (auto observerCaptures =
-            nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+            sim::get<sim::metadata::ObserverCaptures>(nested))
       for (Attribute capture : observerCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
   });
@@ -1423,8 +1422,7 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
           /*copyIn=*/true));
     }
   }
-  if (ArrayAttr parentBindings =
-          function->getAttrOfType<ArrayAttr>(bindingsAttrName))
+  if (ArrayAttr parentBindings = sim::get<sim::metadata::Bindings>(function))
     for (Attribute binding : parentBindings) {
       StringRef path = sim::getUnitBindingPath(binding);
       if (path.empty() || !referencedPaths.contains(path) ||
@@ -1456,10 +1454,12 @@ LogicalResult UnitLowering::deferCovergroupBlockEventSampler(
         if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
                 sim::DriverType>(value.getType()) &&
             !isStaticallyAllocatedOverrideTarget(value) &&
-            !attrs.contains("simulation.automatic_reference_capture")) {
+            !attrs.contains(
+                sim::metadata::AutomaticReferenceCapture::getNameStr())) {
           SmallVector<NamedAttribute> entries(attrs.begin(), attrs.end());
-          entries.push_back(builder.getNamedAttr(
-              "simulation.automatic_reference_capture", builder.getUnitAttr()));
+          entries.push_back(
+              sim::named<sim::metadata::AutomaticReferenceCapture>(
+                  builder.getUnitAttr()));
           attrs = builder.getDictionaryAttr(entries);
         }
         argumentAttrs.push_back(attrs);
@@ -1539,12 +1539,11 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
     if (auto path = nested->getAttrOfType<StringAttr>("referenced_path");
         path && !path.getValue().empty())
       referencedPaths.insert(path.getValue());
-    if (auto callCaptures =
-            nested->getAttrOfType<ArrayAttr>(calleeCapturesAttrName))
+    if (auto callCaptures = sim::get<sim::metadata::CalleeCaptures>(nested))
       for (Attribute capture : callCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
     if (auto observerCaptures =
-            nested->getAttrOfType<ArrayAttr>(observerCapturesAttrName))
+            sim::get<sim::metadata::ObserverCaptures>(nested))
       for (Attribute capture : observerCaptures)
         referencedPaths.insert(cast<StringAttr>(capture).getValue());
   });
@@ -1562,7 +1561,7 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
         continue;
       Operation *primary = expressions.front();
       if (auto dependencies =
-              primary->getAttrOfType<ArrayAttr>(observerDependenciesAttrName))
+              sim::get<sim::metadata::ObserverDependencies>(primary))
         for (Attribute dependency : dependencies)
           primaryDependencyPaths.insert(
               cast<StringAttr>(dependency).getValue());
@@ -1632,8 +1631,7 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
           /*copyIn=*/true));
     }
   }
-  if (ArrayAttr parentBindings =
-          function->getAttrOfType<ArrayAttr>(bindingsAttrName))
+  if (ArrayAttr parentBindings = sim::get<sim::metadata::Bindings>(function))
     for (Attribute binding : parentBindings) {
       StringRef path = sim::getUnitBindingPath(binding);
       if (path.empty() || !referencedPaths.contains(path) ||
@@ -1664,11 +1662,12 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
           if (isa<sim::RefType, sim::ArgumentRefType, sim::NetType,
                   sim::DriverType>(value.getType()) &&
               !isStaticallyAllocatedOverrideTarget(value) &&
-              !attrs.contains("simulation.automatic_reference_capture")) {
+              !attrs.contains(
+                  sim::metadata::AutomaticReferenceCapture::getNameStr())) {
             SmallVector<NamedAttribute> entries(attrs.begin(), attrs.end());
             entries.push_back(
-                builder.getNamedAttr("simulation.automatic_reference_capture",
-                                     builder.getUnitAttr()));
+                sim::named<sim::metadata::AutomaticReferenceCapture>(
+                    builder.getUnitAttr()));
             attrs = builder.getDictionaryAttr(entries);
           }
           argumentAttrs.push_back(attrs);
@@ -1697,7 +1696,7 @@ LogicalResult UnitLowering::deferCovergroupClockingSampler(
     for (Operation *control : controls) {
       SmallVector<Operation *> expressions = getChildren(control);
       for (Operation *expression : expressions)
-        if (auto evaluator = expression->getAttr("simulation.observer"))
+        if (auto evaluator = sim::get<sim::metadata::Observer>(expression))
           eventObservers.push_back(evaluator);
     }
     break;
@@ -1858,7 +1857,8 @@ LogicalResult materializeCovergroupClockingSamplers(
       return failure();
     }
     for (DictionaryAttr attrs : ArrayRef(argumentAttrs).drop_front(2))
-      if (attrs.contains("simulation.automatic_reference_capture")) {
+      if (attrs.contains(
+              sim::metadata::AutomaticReferenceCapture::getNameStr())) {
         plan.emitError(
             "clocking-event covergroup sample captures automatic state; "
             "this exact event-instant slice requires static captures");
@@ -1867,7 +1867,7 @@ LogicalResult materializeCovergroupClockingSamplers(
 
     OpBuilder outlineBuilder(parent);
     SmallVector<NamedAttribute> attributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName, plan.getBindings()),
+        sim::named<sim::metadata::Bindings>(plan.getBindings()),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
@@ -1879,30 +1879,26 @@ LogicalResult materializeCovergroupClockingSamplers(
         ::obelisk::schedule::named<
             ::obelisk::schedule::Field::CovergroupClockingSampler>(
             outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy))};
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy))};
     if (classOwnerCapture >= 0)
-      attributes.push_back(outlineBuilder.getNamedAttr(
-          sim::metadata::thisArgument,
+      attributes.push_back(sim::named<sim::metadata::ThisArgument>(
           outlineBuilder.getI32IntegerAttr(2 + classOwnerCapture)));
     for (StringRef name : {StringRef("home_region"), StringRef("domain")})
       if (Attribute attribute = parent->getAttr(name))
         attributes.push_back(outlineBuilder.getNamedAttr(name, attribute));
 
     SmallVector<NamedAttribute> evaluatorAttributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName, plan.getBindings()),
+        sim::named<sim::metadata::Bindings>(plan.getBindings()),
         outlineBuilder.getNamedAttr(
             "code_unit_id",
             outlineBuilder.getI64IntegerAttr(evaluatorCodeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr(
-            "simulation.covergroup_event_sample_evaluator",
+        sim::named<sim::metadata::CovergroupEventSampleEvaluator>(
             outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr(
-            sim::metadata::hierarchicalName,
+        sim::named<sim::metadata::HierarchicalName>(
             outlineBuilder.getStringAttr(evaluatorHierarchy)),
-        outlineBuilder.getNamedAttr(
-            observerResultAttrName,
+        sim::named<sim::metadata::ObserverResult>(
             outlineBuilder.getI32IntegerAttr(
                 static_cast<uint32_t>(ObserverResult::Truth))),
         ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
@@ -1911,13 +1907,12 @@ LogicalResult materializeCovergroupClockingSamplers(
             ::obelisk::schedule::Field::ObserverFourState>(
             outlineBuilder.getBoolAttr(false))};
     if (classOwnerCapture >= 0)
-      evaluatorAttributes.push_back(outlineBuilder.getNamedAttr(
-          sim::metadata::thisArgument,
+      evaluatorAttributes.push_back(sim::named<sim::metadata::ThisArgument>(
           outlineBuilder.getI32IntegerAttr(2 + classOwnerCapture)));
     if (strobe)
-      evaluatorAttributes.push_back(outlineBuilder.getNamedAttr(
-          "simulation.covergroup_strobe_sample_evaluator",
-          outlineBuilder.getUnitAttr()));
+      evaluatorAttributes.push_back(
+          sim::named<sim::metadata::CovergroupStrobeSampleEvaluator>(
+              outlineBuilder.getUnitAttr()));
     for (StringRef name : {StringRef("home_region"), StringRef("domain")})
       if (Attribute attribute = parent->getAttr(name))
         evaluatorAttributes.push_back(
@@ -1946,7 +1941,7 @@ LogicalResult materializeCovergroupClockingSamplers(
                                   evaluatorLowering.builder.getBoolAttr(true));
     sim::SimReturnOp::create(evaluatorLowering.builder, plan.getLoc(),
                              ValueRange{evaluatorSucceeded});
-    evaluator->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+    sim::mark<sim::metadata::Lowered>(evaluator);
 
     sim::SimFuncOp sampler = sim::SimFuncOp::create(
         outlineBuilder, plan.getLoc(), identity,
@@ -2027,7 +2022,7 @@ LogicalResult materializeCovergroupClockingSamplers(
         schedule::ContinuationSiteAttr{}, sim::EventRegionAttr{}, parked);
     nested.setCurrent(parked);
     sim::SimReturnOp::create(nested.builder, plan.getLoc(), ValueRange{});
-    sampler->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+    sim::mark<sim::metadata::Lowered>(sampler);
 
     OpBuilder declarationBuilder(sampler);
     sim::SimCodeUnitDeclOp::create(
@@ -2134,17 +2129,15 @@ LogicalResult materializeCovergroupClockingSamplers(
 
     OpBuilder outlineBuilder(parent);
     SmallVector<NamedAttribute> attributes{
-        outlineBuilder.getNamedAttr(bindingsAttrName, plan.getBindings()),
+        sim::named<sim::metadata::Bindings>(plan.getBindings()),
         outlineBuilder.getNamedAttr(
             "code_unit_id", outlineBuilder.getI64IntegerAttr(codeUnitID)),
         outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr(
-            "simulation.covergroup_block_event_sample_evaluator",
+        sim::named<sim::metadata::CovergroupBlockEventSampleEvaluator>(
             outlineBuilder.getUnitAttr()),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy)),
-        outlineBuilder.getNamedAttr(
-            observerResultAttrName,
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy)),
+        sim::named<sim::metadata::ObserverResult>(
             outlineBuilder.getI32IntegerAttr(
                 static_cast<uint32_t>(ObserverResult::Truth))),
         ::obelisk::schedule::named<::obelisk::schedule::Field::ObserverWidth>(
@@ -2153,8 +2146,7 @@ LogicalResult materializeCovergroupClockingSamplers(
             ::obelisk::schedule::Field::ObserverFourState>(
             outlineBuilder.getBoolAttr(false))};
     if (classOwnerCapture >= 0)
-      attributes.push_back(outlineBuilder.getNamedAttr(
-          sim::metadata::thisArgument,
+      attributes.push_back(sim::named<sim::metadata::ThisArgument>(
           outlineBuilder.getI32IntegerAttr(2 + classOwnerCapture)));
     for (StringRef name : {StringRef("home_region"), StringRef("domain")})
       if (Attribute attribute = parent->getAttr(name))
@@ -2183,7 +2175,7 @@ LogicalResult materializeCovergroupClockingSamplers(
                                   evaluatorLowering.builder.getBoolAttr(true));
     sim::SimReturnOp::create(evaluatorLowering.builder, plan.getLoc(),
                              ValueRange{evaluatorSucceeded});
-    evaluator->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+    sim::mark<sim::metadata::Lowered>(evaluator);
 
     OpBuilder declarationBuilder(evaluator);
     sim::SimCodeUnitDeclOp::create(
@@ -2813,8 +2805,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
       if (auto member =
               dyn_cast<semantic::SVMemberAccessExpressionOp>(receiver)) {
         SmallVector<Operation *> memberChildren = getChildren(member);
-        auto field =
-            member->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field");
+        auto field = sim::get<sim::metadata::ClassField>(member);
         FailureOr<Type> handleType = getNormalizedSemanticType(member);
         FailureOr<Value> owner = memberChildren.size() == 1
                                      ? lowerExpression(memberChildren.front())
@@ -2845,7 +2836,7 @@ UnitLowering::lowerCovergroupCall(semantic::SVCallExpressionOp op,
         handle = *converted;
         classOwner = *owner;
       } else if (isa<semantic::SVNamedValueExpressionOp>(receiver) &&
-                 receiver->hasAttr("simulation.class_field") && thisObject) {
+                 sim::has<sim::metadata::ClassField>(receiver) && thisObject) {
         FailureOr<Value> lowered = lowerExpression(receiver);
         if (failed(lowered))
           return failure();

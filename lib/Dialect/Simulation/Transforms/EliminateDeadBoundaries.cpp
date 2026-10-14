@@ -121,8 +121,8 @@ getDPIOutputArguments(sim::SimFuncOp function) {
     dpi::ABIAttr input = entries[index];
     if (input.getDirection() == dpi::ArgumentDirection::Result)
       return std::nullopt;
-    auto capture = dyn_cast_or_null<sim::CaptureKindAttr>(
-        function.getArgAttr(index + 1, sim::metadata::captureKind));
+    auto capture = dyn_cast_or_null<sim::CaptureKindAttr>(function.getArgAttr(
+        index + 1, sim::metadata::CaptureKind::getNameStr()));
     if (!capture || capture.getValue() != sim::CaptureKind::Formal)
       return std::nullopt;
     if (input.getDirection() == dpi::ArgumentDirection::Input)
@@ -131,8 +131,9 @@ getDPIOutputArguments(sim::SimFuncOp function) {
         !isa<sim::RefType>(type.getInput(destination)))
       return std::nullopt;
     dpi::ABIAttr output = entries[copyOut++];
-    auto destinationCapture = dyn_cast_or_null<sim::CaptureKindAttr>(
-        function.getArgAttr(destination, sim::metadata::captureKind));
+    auto destinationCapture =
+        dyn_cast_or_null<sim::CaptureKindAttr>(function.getArgAttr(
+            destination, sim::metadata::CaptureKind::getNameStr()));
     if (!destinationCapture ||
         destinationCapture.getValue() != sim::CaptureKind::Formal ||
         output.getDirection() != dpi::ArgumentDirection::Output ||
@@ -222,7 +223,7 @@ static SmallVector<Type> filterTypes(TypeRange types,
 
 static void updateBindings(sim::SimFuncOp function,
                            const llvm::BitVector &erase) {
-  auto bindings = function->getAttrOfType<ArrayAttr>(sim::metadata::bindings);
+  auto bindings = sim::get<sim::metadata::Bindings>(function);
   if (!bindings)
     return;
   llvm::DenseSet<StringAttr> deadCopyOutPaths;
@@ -254,8 +255,8 @@ static void updateBindings(sim::SimFuncOp function,
         function.getContext(), argument.getPath(), newIndex, argument.getKind(),
         argument.getCopyOut(), argument.getLvalueNode(), argument.getCopyIn()));
   }
-  function->setAttr(sim::metadata::bindings,
-                    ArrayAttr::get(function.getContext(), updated));
+  sim::set<sim::metadata::Bindings>(
+      function, ArrayAttr::get(function.getContext(), updated));
 }
 
 /// Return whether an operation is allowed inside a discardable zero-time

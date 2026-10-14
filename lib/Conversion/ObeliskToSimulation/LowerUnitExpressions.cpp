@@ -364,10 +364,9 @@ FailureOr<Value>
 UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                               bool lvalue) {
   if (sampleAssertionDefaults && !lvalue &&
-      !op->hasAttr("simulation.sample_default_current") &&
+      !sim::has<sim::metadata::SampleDefaultCurrent>(op) &&
       !getConstantSpelling(op)) {
-    if (auto snapshotID = op->getAttrOfType<IntegerAttr>(
-            "simulation.sample_default_snapshot")) {
+    if (auto snapshotID = sim::get<sim::metadata::SampleDefaultSnapshot>(op)) {
       FailureOr<Type> type = getNormalizedSemanticType(op);
       if (failed(type))
         return failure();
@@ -379,7 +378,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
                                        snapshot)
           .getResult();
     }
-    if (op->hasAttr("simulation.sample_default_dynamic"))
+    if (sim::has<sim::metadata::SampleDefaultDynamic>(op))
       return emitError(getSemanticLocation(op))
                  << "sampled history default requires preservation of a "
                     "nonconstant declaration initializer",
@@ -387,8 +386,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     FailureOr<Type> type = getNormalizedSemanticType(op);
     if (failed(type))
       return failure();
-    auto spelling =
-        op->getAttrOfType<StringAttr>("simulation.sample_default_constant");
+    auto spelling = sim::get<sim::metadata::SampleDefaultConstant>(op);
     if (!spelling)
       return createDefaultValue(builder, getSemanticLocation(op), *type);
     Type scalarType = sim::getPackedScalarType(*type);
@@ -415,15 +413,13 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     }
     return convert(value, *type, isSignedNode(op), getSemanticLocation(op));
   }
-  if (auto objectField = op->getAttrOfType<FlatSymbolRefAttr>(
-          randomNestedStateFieldAttrName)) {
+  if (auto objectField = sim::get<sim::metadata::RandomNestedStateField>(op)) {
     auto concreteTypeAttr =
-        op->getAttrOfType<TypeAttr>(randomNestedStateConcreteTypeAttrName);
+        sim::get<sim::metadata::RandomNestedStateConcreteType>(op);
     auto storageTypeAttr =
-        op->getAttrOfType<TypeAttr>(randomNestedStateStorageTypeAttrName);
-    auto pathAttr = op->getAttrOfType<ArrayAttr>(randomNestedStatePathAttrName);
-    auto childField =
-        op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field");
+        sim::get<sim::metadata::RandomNestedStateStorageType>(op);
+    auto pathAttr = sim::get<sim::metadata::RandomNestedStatePath>(op);
+    auto childField = sim::get<sim::metadata::ClassField>(op);
     auto parentType = thisObject
                           ? dyn_cast<sim::ClassHandleType>(thisObject.getType())
                           : sim::ClassHandleType{};
@@ -527,8 +523,7 @@ UnitLowering::lowerNamedValue(semantic::SVNamedValueExpressionOp op,
     setCurrent(resume);
     return resume->getArgument(0);
   }
-  if (auto field =
-          op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field")) {
+  if (auto field = sim::get<sim::metadata::ClassField>(op)) {
     if (!thisObject) {
       emitError(getSemanticLocation(op))
           << "instance property reference has no this object";
@@ -1968,7 +1963,7 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
             sim::LogicType::get(function.getContext(), fixedTargetWidth);
         FailureOr<Value> packed = convertRecursiveBitstream(
             streamedValue, packedType, packedType, getSemanticLocation(child),
-            op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+            sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op));
         if (failed(packed))
           return failure();
         streamedValue = *packed;
@@ -2077,8 +2072,7 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
     if (failed(value))
       return failure();
     if (isa<sim::ClassHandleType>((*value).getType())) {
-      auto width = child->getAttrOfType<IntegerAttr>(
-          "simulation.class_bitstream_width");
+      auto width = sim::get<sim::metadata::ClassBitstreamWidth>(child);
       if (!width || width.getValue().isZero() ||
           width.getValue().isNegative() ||
           width.getValue().getActiveBits() > 32)
@@ -2093,7 +2087,7 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       Type scalar = sim::LogicType::get(function.getContext(), classWidth);
       FailureOr<Value> packed = convertRecursiveBitstream(
           *value, scalar, scalar, getSemanticLocation(child),
-          op->hasAttr(sim::metadata::classBitstreamAllowHiddenRoot));
+          sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op));
       if (failed(packed))
         return failure();
       totalWidth += classWidth;
@@ -2528,10 +2522,8 @@ FailureOr<Value> UnitLowering::bindVirtualClockingObserver(
                << "virtual clocking observer path has no interface prefix",
            failure();
   StringRef interfacePath = accessPath.take_front(markerOffset);
-  auto captures =
-      expression->getAttrOfType<ArrayAttr>(observerCapturesAttrName);
-  auto dependencies =
-      expression->getAttrOfType<ArrayAttr>(observerDependenciesAttrName);
+  auto captures = sim::get<sim::metadata::ObserverCaptures>(expression);
+  auto dependencies = sim::get<sim::metadata::ObserverDependencies>(expression);
   if (!captures || !dependencies)
     return emitError(location)
                << "virtual clocking expression has no observer inventory",
@@ -2633,10 +2625,12 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
       return failure();
     DictionaryAttr attrs = function.getArgAttrDict(argument.getArgNumber());
     auto kind = attrs ? dyn_cast_or_null<sim::CaptureKindAttr>(
-                            attrs.get(captureKindAttrName))
+                            attrs.get(sim::metadata::CaptureKind::getNameStr()))
                       : sim::CaptureKindAttr{};
     IntegerAttr descriptor =
-        attrs ? attrs.getAs<IntegerAttr>(descriptorIdAttrName) : IntegerAttr{};
+        attrs ? attrs.getAs<IntegerAttr>(
+                    sim::metadata::DescriptorId::getNameStr())
+              : IntegerAttr{};
     if (!kind || !descriptor ||
         (kind.getValue() != sim::CaptureKind::Storage &&
          kind.getValue() != sim::CaptureKind::Net &&
@@ -2696,8 +2690,10 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
   }
 
   auto captureKey = [&](DictionaryAttr attrs) {
-    auto kind = cast<sim::CaptureKindAttr>(attrs.get(captureKindAttrName));
-    auto descriptor = attrs.getAs<IntegerAttr>(descriptorIdAttrName);
+    auto kind = cast<sim::CaptureKindAttr>(
+        attrs.get(sim::metadata::CaptureKind::getNameStr()));
+    auto descriptor =
+        attrs.getAs<IntegerAttr>(sim::metadata::DescriptorId::getNameStr());
     return (Twine(static_cast<uint32_t>(kind.getValue())) + ":" +
             Twine(descriptor.getValue().getZExtValue()))
         .str();
@@ -2750,8 +2746,7 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
           outlineBuilder.getNamedAttr(
               "domain", sim::ExecutionDomainAttr::get(
                             context, sim::ExecutionDomain::Design)),
-          outlineBuilder.getNamedAttr(
-              sim::metadata::hierarchicalName,
+          sim::named<sim::metadata::HierarchicalName>(
               outlineBuilder.getStringAttr(commitSymbol))};
       sim::SimFuncOp commit = sim::SimFuncOp::create(
           outlineBuilder, location, commitSymbol,
@@ -2786,7 +2781,7 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
               publishPath)))
         return failure();
       sim::SimReturnOp::create(publishBuilder, location, ValueRange{});
-      commit->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+      sim::mark<sim::metadata::Lowered>(commit);
 
       SmallVector<Type> monitorInputs{sim::ContextType::get(context)};
       SmallVector<DictionaryAttr> monitorArgAttrs{
@@ -2828,8 +2823,7 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                   outlineBuilder.getStringAttr(delayKey),
                   outlineBuilder.getI64IntegerAttr(delayedSiteID),
                   outlineBuilder.getStringAttr(monitorHierarchy))),
-          outlineBuilder.getNamedAttr(
-              sim::metadata::hierarchicalName,
+          sim::named<sim::metadata::HierarchicalName>(
               outlineBuilder.getStringAttr(monitorHierarchy))};
       sim::SimFuncOp monitor = sim::SimFuncOp::create(
           outlineBuilder, location, monitorSymbol,
@@ -2911,7 +2905,7 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                               ValueRange{monitorEntry.getArgument(0), current},
                               ArrayAttr{}, ArrayAttr{});
       cf::BranchOp::create(changedBuilder, location, wait);
-      monitor->setAttr(sim::metadata::lowered, outlineBuilder.getUnitAttr());
+      sim::mark<sim::metadata::Lowered>(monitor);
     }
   }
   std::string samplingKey = oneStep ? "1step"
@@ -2939,8 +2933,7 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     MLIRContext *context = function.getContext();
     std::string symbol =
         (function.getSymName() + ".$clocking_input." + Twine(siteID)).str();
-    auto parentHierarchy =
-        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName);
+    auto parentHierarchy = sim::get<sim::metadata::HierarchicalName>(function);
     StringRef parentName =
         parentHierarchy ? parentHierarchy.getValue() : function.getSymName();
     std::string hierarchy =
@@ -2998,8 +2991,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                 outlineBuilder.getContext(), outlineBuilder.getStringAttr(key),
                 outlineBuilder.getI64IntegerAttr(siteID),
                 outlineBuilder.getStringAttr(hierarchy))),
-        outlineBuilder.getNamedAttr(sim::metadata::hierarchicalName,
-                                    outlineBuilder.getStringAttr(hierarchy))};
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy))};
     sim::SimFuncOp sampler = sim::SimFuncOp::create(
         outlineBuilder, location, symbol,
         FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Always,
@@ -3122,7 +3115,7 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                                        siteID, 1, sampleUpdatePath)))
       return failure();
     cf::BranchOp::create(sampleBuilder, location, wait);
-    sampler->setAttr(sim::metadata::lowered, builder.getUnitAttr());
+    sim::mark<sim::metadata::Lowered>(sampler);
   }
   SmallVector<unsigned> resultPath;
   return emitClockedSampleRead(builder, location,
@@ -3181,8 +3174,8 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceInstanceMember(
 
 FailureOr<Value> UnitLowering::lowerVirtualInterfaceReceiverMembers(
     Operation *expression, Value interface, Location location) {
-  auto members = expression->getAttrOfType<ArrayAttr>(
-      virtualInterfaceReceiverMembersAttrName);
+  auto members =
+      sim::get<sim::metadata::VirtualInterfaceReceiverMembers>(expression);
   if (!members)
     return interface;
   for (Attribute memberAttr : members) {
@@ -3601,12 +3594,12 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
     unsupported(op) << " (member access arity)";
     return failure();
   }
-  if (op->hasAttr(staticClassPropertyAttrName)) {
+  if (sim::has<sim::metadata::StaticClassProperty>(op)) {
     // SystemVerilog permits static properties to be selected through an
     // object expression. Evaluate that expression for its side effects, but
     // address the class-wide design storage rather than the object layout.
     Operation *qualifier = children.front();
-    if (op->hasAttr(coverageTypeOptionItemQualifierAttrName)) {
+    if (sim::has<sim::metadata::TypeOptionItemQualifier>(op)) {
       auto itemChildren = getChildren(qualifier);
       if (!isa<semantic::SVMemberAccessExpressionOp>(qualifier) ||
           itemChildren.size() != 1)
@@ -3618,8 +3611,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
       return failure();
     return lowerReferencedValue(op, op.getReferencedPath(), lvalue);
   }
-  if (auto field =
-          op->getAttrOfType<FlatSymbolRefAttr>("simulation.class_field")) {
+  if (auto field = sim::get<sim::metadata::ClassField>(op)) {
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
     FailureOr<Value> object = lowerExpression(children.front());
     auto objectType = succeeded(object)
@@ -5117,8 +5109,7 @@ FailureOr<Value> UnitLowering::lowerSequentialContainerIndex(
 
 FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
   Location location = getSemanticLocation(op);
-  if (auto leafPath =
-          op->getAttrOfType<StringAttr>(interconnectLeafPathAttrName))
+  if (auto leafPath = sim::get<sim::metadata::InterconnectLeafPath>(op))
     return lowerReferencedValue(op, leafPath.getValue(), lvalue);
   SmallVector<Operation *> children = getChildren(op);
   bool element = isa<semantic::SVElementSelectExpressionOp>(op);

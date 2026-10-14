@@ -93,8 +93,7 @@ findOverlap(ArrayRef<DescriptorWrite> candidates,
 /// metadata is absent, which also keeps hand-authored validation IR useful.
 static bool isContinuousTarget(sim::SimFuncOp function,
                                schedule::ComputeEffectAttr effect) {
-  ArrayAttr bindings =
-      function->getAttrOfType<ArrayAttr>(sim::metadata::bindings);
+  ArrayAttr bindings = sim::get<sim::metadata::Bindings>(function);
   if (!bindings)
     return true;
   for (Attribute attribute : bindings) {
@@ -103,7 +102,7 @@ static bool isContinuousTarget(sim::SimFuncOp function,
         binding.getArgument() >= function.getNumArguments())
       continue;
     auto descriptor = function.getArgAttrOfType<IntegerAttr>(
-        binding.getArgument(), sim::metadata::descriptorId);
+        binding.getArgument(), sim::metadata::DescriptorId::getNameStr());
     if (descriptor &&
         descriptor.getValue().getZExtValue() == effect.getDescriptor())
       return true;
@@ -154,7 +153,7 @@ verifyVariableWriters(sim::SimDesignOp design,
     // A subroutine's own storage is written by whichever processes call it,
     // and those calls are not drivers of a design variable.
     if (sim::SimStorageDeclOp storage = storageByID.lookup(descriptor);
-        storage && storage->hasAttr(sim::metadata::subroutineStorage))
+        storage && sim::has<sim::metadata::SubroutineStorage>(storage))
       continue;
     for (auto [index, write] : llvm::enumerate(continuous)) {
       std::optional<DescriptorWrite> earlier =

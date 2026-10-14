@@ -1375,7 +1375,7 @@ LogicalResult SimRecursiveExportBitstreamOp::verify() {
                     OBELISK_RT_RECURSIVE_BITSTREAM_PLAN_OBJECT_VERSION;
   if (objectPlan) {
     ModuleOp module = (*this)->getParentOfType<ModuleOp>();
-    if (!module || !module->hasAttr(sim::metadata::classBitstreamSource))
+    if (!module || !sim::has<sim::metadata::ClassBitstreamSource>(module))
       return emitOpError(
           "object plan requires the class bit-stream source feature marker");
   }

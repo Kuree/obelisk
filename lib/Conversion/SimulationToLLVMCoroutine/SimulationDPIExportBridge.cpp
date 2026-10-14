@@ -42,10 +42,12 @@ FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,
                                               DictionaryAttr attrs,
                                               Operation *diagnostic) {
   auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
-      attrs ? attrs.get(sim::metadata::captureKind) : Attribute{});
-  auto descriptor = attrs
-                        ? attrs.getAs<IntegerAttr>(sim::metadata::descriptorId)
-                        : IntegerAttr{};
+      attrs ? attrs.get(sim::metadata::CaptureKind::getNameStr())
+            : Attribute{});
+  auto descriptor =
+      attrs
+          ? attrs.getAs<IntegerAttr>(sim::metadata::DescriptorId::getNameStr())
+          : IntegerAttr{};
   if (!kind || !descriptor)
     return diagnostic->emitError(
                "DPI export capture has no descriptor metadata"),
@@ -54,7 +56,8 @@ FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,
   Value result;
   switch (kind.getValue()) {
   case sim::CaptureKind::Storage: {
-    auto rootType = attrs.getAs<TypeAttr>(sim::metadata::descriptorRootType);
+    auto rootType =
+        attrs.getAs<TypeAttr>(sim::metadata::DescriptorRootType::getNameStr());
     Type contextType =
         rootType
             ? Type(sim::RefType::get(builder.getContext(), rootType.getValue()))
@@ -63,15 +66,16 @@ FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,
         builder, loc, contextType, context, builder.getI64IntegerAttr(id));
     if (!rootType)
       break;
-    auto low = attrs.getAs<IntegerAttr>(sim::metadata::descriptorLow);
+    auto low =
+        attrs.getAs<IntegerAttr>(sim::metadata::DescriptorLow::getNameStr());
     if (!low)
       return diagnostic->emitError(
                  "DPI export storage view has no descriptor offset"),
              failure();
-    if (auto indices =
-            attrs.getAs<DenseI64ArrayAttr>(sim::metadata::descriptorIndices)) {
-      auto aggregate =
-          attrs.getAs<TypeAttr>(sim::metadata::descriptorAggregateType);
+    if (auto indices = attrs.getAs<DenseI64ArrayAttr>(
+            sim::metadata::DescriptorIndices::getNameStr())) {
+      auto aggregate = attrs.getAs<TypeAttr>(
+          sim::metadata::DescriptorAggregateType::getNameStr());
       if (!aggregate)
         return diagnostic->emitError(
                    "DPI export aggregate view has no result type"),
@@ -82,8 +86,8 @@ FailureOr<Value> materializeDescriptorCapture(OpBuilder &builder, Location loc,
           indices);
     }
     if (result.getType() != type) {
-      auto packedLow =
-          attrs.getAs<IntegerAttr>(sim::metadata::descriptorPackedLow);
+      auto packedLow = attrs.getAs<IntegerAttr>(
+          sim::metadata::DescriptorPackedLow::getNameStr());
       if (!packedLow)
         return diagnostic->emitError(
                    "DPI export packed view has no bit offset"),
@@ -219,8 +223,8 @@ LogicalResult materializeDPIExportBridges(ModuleOp module) {
       // only scope descriptors are reconstructed below.
       bridgeInputs = 0;
       for (unsigned index = 0; index != function.getNumArguments(); ++index) {
-        auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(
-            function.getArgAttr(index, sim::metadata::captureKind));
+        auto kind = dyn_cast_or_null<sim::CaptureKindAttr>(function.getArgAttr(
+            index, sim::metadata::CaptureKind::getNameStr()));
         if (!kind || (kind.getValue() != sim::CaptureKind::Context &&
                       kind.getValue() != sim::CaptureKind::Formal))
           break;

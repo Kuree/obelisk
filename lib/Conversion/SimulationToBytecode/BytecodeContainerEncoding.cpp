@@ -140,12 +140,11 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
         return emitted;
       if (options.requireBytecode) {
         requiresContainerBitstreamFeature = true;
-        op->setAttr(sim::metadata::classBitstreamBytecodeFunction,
-                    IntegerAttr::get(IntegerType::get(op.getContext(), 32),
-                                     plan.index));
-        op->setAttr(
-            sim::metadata::classBitstreamBytecodeSite,
-            IntegerAttr::get(IntegerType::get(op.getContext(), 32), site));
+        sim::set<sim::metadata::ClassBitstreamBytecodeFunction>(
+            op, IntegerAttr::get(IntegerType::get(op.getContext(), 32),
+                                 plan.index));
+        sim::set<sim::metadata::ClassBitstreamBytecodeSite>(
+            op, IntegerAttr::get(IntegerType::get(op.getContext(), 32), site));
       }
       return success();
     }

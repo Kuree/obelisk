@@ -136,8 +136,8 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
     // Bytecode bindings are compiler-produced authority, never input IR.
     // Clear stale or hand-authored values before building the trusted image;
     // the encoder patches exact function/site pairs only after emission.
-    operation->removeAttr(sim::metadata::classBitstreamBytecodeFunction);
-    operation->removeAttr(sim::metadata::classBitstreamBytecodeSite);
+    sim::remove<sim::metadata::ClassBitstreamBytecodeFunction>(operation);
+    sim::remove<sim::metadata::ClassBitstreamBytecodeSite>(operation);
     SmallVector<uint64_t> words;
     words.reserve(operation.getPlan().size());
     for (int64_t word : operation.getPlan())
@@ -399,10 +399,10 @@ materializeClassBitstreamPlan(sim::SimDesignOp design,
   blob.reserve(static_cast<size_t>(*planOffset));
   auto appendSite = [&](const Site &site) {
     append64(blob, site.id);
-    auto function = site.operation->getAttrOfType<IntegerAttr>(
-        sim::metadata::classBitstreamBytecodeFunction);
-    auto bytecodeSite = site.operation->getAttrOfType<IntegerAttr>(
-        sim::metadata::classBitstreamBytecodeSite);
+    auto function =
+        sim::get<sim::metadata::ClassBitstreamBytecodeFunction>(site.operation);
+    auto bytecodeSite =
+        sim::get<sim::metadata::ClassBitstreamBytecodeSite>(site.operation);
     append32(blob,
              function ? static_cast<uint32_t>(function.getInt()) : kNoBytecode);
     append32(blob, bytecodeSite ? static_cast<uint32_t>(bytecodeSite.getInt())
@@ -511,10 +511,10 @@ LogicalResult bindClassBitstreamBytecodeSites(sim::SimDesignOp design) {
     if (!site)
       return;
     uint64_t id = site.getValue().getZExtValue();
-    auto function = operation->getAttrOfType<IntegerAttr>(
-        sim::metadata::classBitstreamBytecodeFunction);
-    auto bytecodeSite = operation->getAttrOfType<IntegerAttr>(
-        sim::metadata::classBitstreamBytecodeSite);
+    auto function =
+        sim::get<sim::metadata::ClassBitstreamBytecodeFunction>(operation);
+    auto bytecodeSite =
+        sim::get<sim::metadata::ClassBitstreamBytecodeSite>(operation);
     if (id == 0 || id > siteCount || seen[id - 1] || !function ||
         !bytecodeSite || function.getValue().isNegative() ||
         bytecodeSite.getValue().isNegative() ||

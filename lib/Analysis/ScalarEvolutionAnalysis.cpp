@@ -146,7 +146,7 @@ struct ScalarEvolutionAnalysis::Impl {
         if (!function ||
             !decodeIntegerRange(
                 function.getArgAttr(argument.getArgNumber(),
-                                    sim::IntegerRange::getNameStr()),
+                                    sim::metadata::IntegerRange::getNameStr()),
                 integerWidth(value)))
           unknownLogic.insert(value);
       }
@@ -458,12 +458,12 @@ struct ScalarEvolutionAnalysis::Impl {
           values[arg] = input;
           auto source = dyn_cast<sim::SimFuncOp>(region.getParentOp());
           if (auto cap =
-                  source
-                      ? decodeIntegerRange(
-                            source.getArgAttr(arg.getArgNumber(),
-                                              sim::IntegerRange::getNameStr()),
-                            integerWidth(arg))
-                      : std::nullopt) {
+                  source ? decodeIntegerRange(
+                               source.getArgAttr(
+                                   arg.getArgNumber(),
+                                   sim::metadata::IntegerRange::getNameStr()),
+                               integerWidth(arg))
+                         : std::nullopt) {
             unsigned width = *integerWidth(arg);
             auto unsignedRange =
                 cap->umin().isZero() && cap->umax().isMaxValue()

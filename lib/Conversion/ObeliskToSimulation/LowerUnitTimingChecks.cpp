@@ -22,8 +22,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       "timing_check_arg_condition_predicates");
   auto edges = function->getAttrOfType<DenseI32ArrayAttr>(
       "timing_check_arg_effective_edges");
-  auto ticks = function->getAttrOfType<DenseI64ArrayAttr>(
-      "simulation.timing_check_arg_ticks");
+  auto ticks = sim::get<sim::metadata::TimingCheckArgTicks>(function);
   if (!kindAttr || !expressionChildren || !conditionChildren || !edges ||
       !ticks || expressionChildren.size() != conditionChildren.size() ||
       static_cast<size_t>(expressionChildren.size()) !=
@@ -115,8 +114,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
   bool emitEventMode = skewWithMode && (!eventMode || *eventMode);
   bool emitTimerMode = skewWithMode && (!eventMode || !*eventMode);
   Value context = function.getBody().front().getArgument(0);
-  auto delayedStorageIDs = function->getAttrOfType<DenseI64ArrayAttr>(
-      "simulation.timing_delayed_storage_ids");
+  auto delayedStorageIDs =
+      sim::get<sim::metadata::TimingDelayedStorageIds>(function);
   if (delayedStorageIDs && delayedStorageIDs.size() != 2)
     return function.emitError(
         "negative timing check has a malformed delayed-terminal ABI");
@@ -178,7 +177,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
       return function.emitError(
           "basic timing-check condition has no normalized operand");
     FailureOr<Value> condition = failure();
-    if (conditionOperand->hasAttr("simulation.observer"))
+    if (sim::has<sim::metadata::Observer>(conditionOperand))
       condition = bindObserver(conditionOperand);
     else
       condition = lowerExpression(conditionOperand, true);
@@ -398,15 +397,13 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         builder, location, sim::RefType::get(function.getContext(), i1),
         falseValue);
 
-    auto timerStorage = function->getAttrOfType<IntegerAttr>(
-        "simulation.timing_timer_storage");
-    auto helperSymbol = function->getAttrOfType<FlatSymbolRefAttr>(
-        "simulation.timing_timer_helper");
+    auto timerStorage = sim::get<sim::metadata::TimingTimerStorage>(function);
+    auto helperSymbol = sim::get<sim::metadata::TimingTimerHelper>(function);
     if (!timerStorage || !helperSymbol)
       return function.emitError(
           "timer timing check has no serial helper inventory");
-    function->removeAttr("simulation.timing_timer_storage");
-    function->removeAttr("simulation.timing_timer_helper");
+    sim::remove<sim::metadata::TimingTimerStorage>(function);
+    sim::remove<sim::metadata::TimingTimerHelper>(function);
     timerSignal = sim::SimContextStorageOp::create(
         builder, location, sim::RefType::get(function.getContext(), i1),
         context, timerStorage);
@@ -923,7 +920,7 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
         builder, location, arith::CmpIPredicate::ne, baseReportCount, zero64);
   } else if (combined) {
     bool negativeAdjusted =
-        function->hasAttr("simulation.negative_timing_adjusted");
+        sim::has<sim::metadata::NegativeTimingAdjusted>(function);
     bool sharedTimestampIsInterior = ticks[2] > 0 && ticks[3] > 0;
     Value previous1 =
         sim::SimRefLoadOp::create(builder, location, i64, oppositeTimestamp);
@@ -1343,9 +1340,8 @@ UnitLowering::lowerSystemTimingCheck(ArrayRef<Operation *> roots) {
     sim::SimDisplayOp::create(
         builder, location, context, descriptor, ValueRange{message}, true,
         sim::Radix::Decimal, builder.getDenseI32ArrayAttr({0}),
-        function->getAttrOfType<StringAttr>(sim::metadata::hierarchicalName),
-        StringAttr{}, function->getAttrOfType<IntegerAttr>(delayScaleAttrName),
-        IntegerAttr{});
+        sim::get<sim::metadata::HierarchicalName>(function), StringAttr{},
+        sim::get<sim::metadata::DelayScale>(function), IntegerAttr{});
   }
   Value nextReports =
       arith::SubIOp::create(builder, location, remainingReports, one64);

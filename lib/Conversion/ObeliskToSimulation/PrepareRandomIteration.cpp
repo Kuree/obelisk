@@ -412,9 +412,10 @@ expandStaticRandomInsideExpressions(MutableArrayRef<Operation *> roots,
             selection.addAttribute("node_id", inside->getAttr("node_id"));
             selection.addAttribute("semantic_type",
                                    TypeAttr::get(dimension.element));
-            if (inside->hasAttr(randomFunctionExpressionAttrName))
-              selection.addAttribute(randomFunctionExpressionAttrName,
-                                     builder.getUnitAttr());
+            if (sim::has<sim::metadata::RandomFunctionExpression>(inside))
+              selection.addAttribute(
+                  sim::metadata::RandomFunctionExpression::getNameStr(),
+                  builder.getUnitAttr());
             Block *selectionBody = new Block();
             selection.addRegion()->push_back(selectionBody);
             selectionBody->push_back(selected);

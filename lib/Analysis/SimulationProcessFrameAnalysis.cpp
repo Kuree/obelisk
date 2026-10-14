@@ -125,7 +125,8 @@ SimulationProcessFrameAnalysis::create(sim::SimFuncOp function,
     return failure();
   }
   auto result = std::make_unique<SimulationProcessFrameAnalysis>();
-  result->bytecodeReadOnly = function->hasAttr(sim::metadata::bytecodeReadOnly);
+  result->bytecodeReadOnly =
+      sim::has<sim::metadata::BytecodeReadOnly>(function);
   // Do not leave cached layouts for types owned by this temporary context in
   // a DataLayout that is subsequently reused by another analysis.
   llvm::DataLayout analysisLayout(dataLayout.getStringRepresentation());
