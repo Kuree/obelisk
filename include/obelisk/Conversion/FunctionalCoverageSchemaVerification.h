@@ -531,11 +531,13 @@ verifyFunctionalCoverageSchemaBeforeBackend(mlir::ModuleOp module) {
       } else {
         for (auto [index, rawID] : llvm::enumerate(create.getFormalIds())) {
           const coverage::FunctionalFormal *formal = expectedFormals[index];
+          // A ref formal's payload must be a reference to the formal's type.
           Type argumentType =
               formal->direction == coverage::FunctionalFormalDirection::Ref
                   ? referenceElement(arguments[index].getType())
                   : arguments[index].getType();
-          if ((formal->resultKind ==
+          if (!argumentType ||
+              (formal->resultKind ==
                    coverage::FunctionalExpressionResultKind::Aggregate &&
                formal->direction ==
                    coverage::FunctionalFormalDirection::Input &&
