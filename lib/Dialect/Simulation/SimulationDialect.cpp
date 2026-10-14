@@ -791,6 +791,14 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == VirtualInterfaceReceiverMembers::getNameStr() &&
+      !allOf(llvm::IsaPred<VirtualInterfaceMemberAttr>))
+    return error()
+           << "must contain #simulation.virtual_interface_member entries";
+  if (name == VirtualInterfaceClockEvents::getNameStr() &&
+      !allOf(llvm::IsaPred<VirtualInterfaceEventAttr>))
+    return error()
+           << "must contain #simulation.virtual_interface_event entries";
   if (name == RandModeStaticDispatch::getNameStr() &&
       !allOf(llvm::IsaPred<RandModeDispatchAttr>))
     return error() << "must contain #simulation.rand_mode_dispatch entries";

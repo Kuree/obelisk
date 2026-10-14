@@ -94,8 +94,8 @@ module {
 }
 
 // Every concrete interface owns an independent event descriptor and monitor.
-// CHECK-DAG: simulation.scope.decl 2 {{.*}}hierarchy "top.b"{{.*}}simulation.virtual_interface_clock_events = [{descriptor = 0 : i64, member = "cb"}]
-// CHECK-DAG: simulation.scope.decl 3 {{.*}}hierarchy "top.other"{{.*}}simulation.virtual_interface_clock_events = [{descriptor = 1 : i64, member = "cb"}]
+// CHECK-DAG: simulation.scope.decl 2 {{.*}}hierarchy "top.b"{{.*}}simulation.virtual_interface_clock_events = [#simulation.virtual_interface_event<member = "cb", descriptor = 0>]
+// CHECK-DAG: simulation.scope.decl 3 {{.*}}hierarchy "top.other"{{.*}}simulation.virtual_interface_clock_events = [#simulation.virtual_interface_event<member = "cb", descriptor = 1>]
 // CHECK: simulation.func private @unit_0({{.*}}simulation.clocking_event_monitor_path = "top.b.cb"
 // CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [1, 2] indices [0, -1]
 // CHECK: simulation.event.trigger %{{.*}} nonblocking = false

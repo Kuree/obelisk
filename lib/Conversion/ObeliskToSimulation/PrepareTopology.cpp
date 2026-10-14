@@ -2650,11 +2650,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         if (auto existing =
                 sim::get<sim::metadata::VirtualInterfaceClockEvents>(scope))
           llvm::append_range(members, existing);
-        members.push_back(builder.getDictionaryAttr(
-            {builder.getNamedAttr("member",
-                                  builder.getStringAttr(getDebugName(op))),
-             builder.getNamedAttr("descriptor",
-                                  builder.getI64IntegerAttr(id))}));
+        members.push_back(sim::VirtualInterfaceEventAttr::get(
+            builder.getContext(), builder.getStringAttr(getDebugName(op)), id));
         sim::set<sim::metadata::VirtualInterfaceClockEvents>(
             scope, builder.getArrayAttr(members));
         break;

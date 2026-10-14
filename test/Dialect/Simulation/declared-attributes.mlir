@@ -153,4 +153,14 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
       target = @Derived, storages = [4],
       elements = [#simulation.random_element_modes<width = 8, field = @modes>,
                   #simulation.random_element_modes<width = 2, storage = 5>]>]}
+
+  // CHECK-LABEL: func.func private @virtual_interface
+  // CHECK-SAME: simulation.virtual_interface_clock_events = [#simulation.virtual_interface_event<member = "cb", descriptor = 3>]
+  // CHECK-SAME: simulation.virtual_interface_receiver_members = [#simulation.virtual_interface_member<member = "child", interface = @Child>]
+  func.func private @virtual_interface() attributes {
+    simulation.virtual_interface_clock_events = [
+      #simulation.virtual_interface_event<member = "cb", descriptor = 3>],
+    simulation.virtual_interface_receiver_members = [
+      #simulation.virtual_interface_member<member = "child",
+                                           interface = @Child>]}
 }

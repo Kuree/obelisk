@@ -3163,17 +3163,10 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceReceiverMembers(
       sim::get<sim::metadata::VirtualInterfaceReceiverMembers>(expression);
   if (!members)
     return interface;
-  for (Attribute memberAttr : members) {
-    auto projection = dyn_cast<DictionaryAttr>(memberAttr);
-    auto member =
-        projection ? projection.getAs<StringAttr>("member") : StringAttr{};
-    auto identity = projection ? projection.getAs<SymbolRefAttr>("interface")
-                               : SymbolRefAttr{};
-    if (!member || !identity) {
-      emitError(location)
-          << "virtual-interface expression has malformed receiver members";
-      return failure();
-    }
+  for (auto projection :
+       members.getAsRange<sim::VirtualInterfaceMemberAttr>()) {
+    StringAttr member = projection.getMember();
+    SymbolRefAttr identity = projection.getInterface();
     Type semanticType = semantic::VirtualInterfaceType::get(
         builder.getContext(), identity, builder.getStringAttr(""));
     FailureOr<Type> normalized =

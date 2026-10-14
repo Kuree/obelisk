@@ -175,10 +175,9 @@ PreparedUnits::resolveVirtualInterfaceCallees(
   if (auto receiverMembers =
           sim::get<sim::metadata::VirtualInterfaceReceiverMembers>(call);
       receiverMembers && !receiverMembers.empty())
-    if (auto member = dyn_cast<DictionaryAttr>(
-            receiverMembers[receiverMembers.size() - 1]))
-      if (auto nested = member.getAs<SymbolRefAttr>("interface"))
-        identity = nested;
+    identity = cast<sim::VirtualInterfaceMemberAttr>(
+                   receiverMembers[receiverMembers.size() - 1])
+                   .getInterface();
   StringRef selectedModport = interface.getModport().getValue();
   auto topInstance = [](Operation *operation) {
     semantic::SVInstanceSymbolOp result;

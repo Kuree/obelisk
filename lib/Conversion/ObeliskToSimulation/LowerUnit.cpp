@@ -554,16 +554,10 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
       auto events = sim::get<sim::metadata::VirtualInterfaceClockEvents>(scope);
       if (!identity || !events)
         continue;
-      for (Attribute attribute : events) {
-        auto member = dyn_cast<DictionaryAttr>(attribute);
-        auto name = member ? member.getAs<StringAttr>("member") : StringAttr{};
-        auto descriptor =
-            member ? member.getAs<IntegerAttr>("descriptor") : IntegerAttr{};
-        if (name && descriptor)
-          virtualInterfaceEventMembers[memberKey(identity.getValue(),
-                                                 name.getValue())]
-              .push_back({scope.getId(), descriptor.getValue().getZExtValue()});
-      }
+      for (auto event : events.getAsRange<sim::VirtualInterfaceEventAttr>())
+        virtualInterfaceEventMembers[memberKey(identity.getValue(),
+                                               event.getMember().getValue())]
+            .push_back({scope.getId(), event.getDescriptor()});
       continue;
     }
     if (auto storage = dyn_cast<sim::SimStorageDeclOp>(operation)) {

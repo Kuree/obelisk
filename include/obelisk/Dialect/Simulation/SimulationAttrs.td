@@ -793,6 +793,29 @@ def SimRandModeDispatchAttr
   let genVerifyDecl = 1;
 }
 
+def SimVirtualInterfaceMemberAttr
+    : SimAttr<"VirtualInterfaceMember", "virtual_interface_member"> {
+  let summary = "a nested interface instance selected through a virtual one";
+  let description = [{
+    Selects the interface instance `member`, whose interface is `interface`,
+    from the previously selected instance.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$member,
+      "::mlir::SymbolRefAttr":$interface);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def SimVirtualInterfaceEventAttr
+    : SimAttr<"VirtualInterfaceEvent", "virtual_interface_event"> {
+  let summary = "a clocking event an interface instance owns";
+  let description = [{
+    The event `member` of the interface instance has event descriptor
+    `descriptor`.
+  }];
+  let parameters = (ins "::mlir::StringAttr":$member, "uint64_t":$descriptor);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

@@ -485,6 +485,7 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::UnitAttr":$type_option_item_qualifier,
     // `#simulation.virtual_interface_callee` entries.
     "::mlir::ArrayAttr":$virtual_interface_callees,
+    // `#simulation.virtual_interface_event` entries of an interface scope.
     "::mlir::ArrayAttr":$virtual_interface_clock_events,
     "::mlir::StringAttr":$virtual_interface_clocking_output,
     "::mlir::StringAttr":$virtual_interface_member,
@@ -493,8 +494,7 @@ def ObeliskSimulationDialect : Dialect {
     // when a virtual-interface member selects another interface instance.
     "::mlir::StringAttr":$virtual_interface_parent_member,
     // Ordered nested-interface selections omitted from a flattened semantic
-    // call receiver. Each entry records the member name and child interface
-    // identity.
+    // call receiver, as `#simulation.virtual_interface_member` entries.
     "::mlir::ArrayAttr":$virtual_interface_receiver_members,
     "::mlir::UnitAttr":$void_function,
 

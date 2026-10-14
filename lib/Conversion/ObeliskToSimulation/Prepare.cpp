@@ -296,10 +296,8 @@ static void freezeVirtualInterfaceReceiverMembers(
   SmallVector<Attribute> members;
   members.reserve(reversedMembers.size());
   for (auto [member, identity] : llvm::reverse(reversedMembers))
-    members.push_back(builder.getDictionaryAttr({
-        builder.getNamedAttr("member", member),
-        builder.getNamedAttr("interface", identity),
-    }));
+    members.push_back(sim::VirtualInterfaceMemberAttr::get(builder.getContext(),
+                                                           member, identity));
   sim::set<sim::metadata::VirtualInterfaceReceiverMembers>(
       expression, builder.getArrayAttr(members));
 }
