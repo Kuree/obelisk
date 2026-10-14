@@ -36,7 +36,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -51,10 +51,10 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
         ]
       }
@@ -91,7 +91,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -106,10 +106,10 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
         ]
       }
@@ -163,7 +163,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -178,40 +178,40 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.mlir",
-          "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.sv",
+          "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.sv",
           "test/Runtime/random-sampler-plan-validation.mlir",
           "test/Build/runtime-compiled-sampler.test",
           "test/Conversion/obelisk-to-simulation-random-wide-enum-domains.mlir",
           "test/Runtime/random-wide-domain-plan-validation.mlir",
-          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
-          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.sv",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.sv",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-source-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-real-source-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-domain-overlap.mlir"
         ]
       }
@@ -290,50 +290,49 @@
           "lib/Solver/RandomRealZ3.h",
           "lib/Conversion/ObeliskToSimulation/LowerUnitRealConversionSystemCalls.cpp",
           "runtime/lib/RandModelCount.h",
-          "cmake/PatchZ3FpaParams.cmake",
           "include/obelisk/Solver/ConstraintSolver.h",
           "lib/Solver/SolverHeuristic.cpp"
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
           "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir",
-          "test/Conversion/obelisk-to-simulation-random-struct-diagnostics.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-struct-diagnostics.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-wide-enum-domains.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.sv",
           "test/Runtime/random-wide-domain-plan-validation.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.sv",
           "test/Runtime/random-real-rank-sampling.mlir",
           "test/Dialect/Simulation/Transforms/simulation-compile-random-real-plans-invalid.mlir",
           "test/Runtime/simulation-random-real-plan-runtime.mlir",
           "test/Runtime/random-real-plan-validation.mlir",
           "test/Dialect/Simulation/random-real-rank-invalid.mlir",
           "test/Runtime/simulation-random-real-coordinate-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-source-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir",
-          "test/Runtime/simulation-random-real-integer-plan-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-integer-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-computed-integer-runtime.mlir",
-          "test/Runtime/simulation-random-real-computed-integer-plan-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-real-source-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.sv",
+          "test/Runtime/simulation-random-real-integer-plan-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-real-integer-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-real-computed-integer-runtime.sv",
+          "test/Runtime/simulation-random-real-computed-integer-plan-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-fixed-randc-plan-size.mlir",
           "test/Conversion/obelisk-to-simulation-random-domain-overlap.mlir"
         ]
@@ -368,7 +367,7 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
-          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-packed-enum-domains-runtime.sv"
         ]
       }
     },
@@ -415,14 +414,14 @@
           "lib/Conversion/ObeliskToSimulation/LowerUnit.cpp"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
-          "test/Runtime/simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-dist-randc.sv",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.sv",
+          "test/Runtime/simulation-random-cyclic-domain-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-fixed-randc-plan-size.mlir"
         ]
       }
@@ -478,7 +477,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -493,45 +492,45 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.sv",
           "test/Runtime/random-sampler-plan-validation.mlir",
           "test/Build/runtime-compiled-sampler.test",
-          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
-          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.sv",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.sv",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
-          "test/Runtime/simulation-random-shared-template-runtime.mlir",
-          "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.sv",
+          "test/Runtime/simulation-random-shared-template-runtime.sv",
+          "test/Runtime/simulation-random-shared-wide-template-runtime.sv",
           "test/Runtime/random-program-temporaries-validation.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.sv"
         ]
       }
     },
@@ -568,7 +567,7 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Conversion/obelisk-to-simulation-extern-constraint-invalid.mlir"
         ]
       }
@@ -610,7 +609,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -625,10 +624,10 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
         ]
       }
@@ -689,18 +688,18 @@
           "runtime/include/obelisk/Runtime/Runtime.h"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-dist-randc.mlir",
+          "test/Conversion/obelisk-to-simulation-dist-randc.sv",
           "test/Conversion/obelisk-to-simulation-random-domains.mlir",
-          "test/Runtime/obelisk-to-simulation-random-weighted-z3-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-weighted-z3-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-weighted-diagnostics.mlir",
           "runtime/unittests/RandSolveTest.cpp",
           "runtime/unittests/RandSolveWideTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-dynamic-dist-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-weighted-scope-z3-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-dist-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-candidate-weights-invalid.mlir",
-          "test/Runtime/obelisk-to-simulation-random-candidate-weights-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-candidate-weights-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-candidate-weights-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-candidate-weights-scope-runtime.sv"
         ]
       }
     },
@@ -737,7 +736,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -752,12 +751,12 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-unique-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-fixed-unique-runtime.sv"
         ]
       }
     },
@@ -793,7 +792,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -808,10 +807,10 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
         ]
       }
@@ -848,7 +847,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -863,10 +862,10 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir"
         ]
       }
@@ -898,10 +897,10 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
           "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
-          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.sv"
         ]
       }
     },
@@ -944,13 +943,13 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-foreach.mlir",
           "test/Conversion/obelisk-to-simulation-random-reduction-xor.mlir",
-          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.sv"
         ]
       }
     },
@@ -1014,7 +1013,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -1029,12 +1028,12 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.sv"
         ]
       }
     },
@@ -1078,30 +1077,30 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-residual-wide.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before.mlir",
-          "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-uniform-residual-runtime.sv",
           "test/Runtime/obelisk-to-simulation-random-ordered-z3-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-order-latest-layer-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-ordered-wide-z3-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-ordered-wide-table-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-ordered-wide-table-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-array-order-runtime.sv",
           "test/Conversion/obelisk-to-simulation-random-fixed-array-diagnostics.mlir",
-          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-compiled-sampling-plan-runtime.sv",
           "test/Runtime/random-sampler-plan-validation.mlir",
           "test/Build/runtime-compiled-sampler.test",
-          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.sv",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-order-overlap-graph.sv",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.sv"
         ]
       }
     },
@@ -1130,8 +1129,8 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
           "test/Conversion/obelisk-to-simulation-static-rand-checker.mlir",
-          "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir",
-          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir"
+          "test/Conversion/obelisk-to-simulation-static-rand-mode.sv",
+          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.sv"
         ]
       }
     },
@@ -1187,8 +1186,8 @@
           "lib/Conversion/ObeliskToSimulation/LowerUnitConditionals.cpp"
         ],
         "tests": [
-          "test/Conversion/obelisk-to-simulation-random-functions.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-functions.sv",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-runtime.sv",
           "test/Runtime/obelisk-to-simulation-random-system-functions-wide-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-priority-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-function-priority-wide-runtime.mlir",
@@ -1199,42 +1198,42 @@
           "test/Runtime/obelisk-to-simulation-random-scope-functions-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-scope-functions-wide-runtime.mlir",
           "test/Runtime/obelisk-to-simulation-random-scope-function-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-procedural-function-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-runtime.sv",
           "test/Runtime/obelisk-to-simulation-random-procedural-scope-function-wide-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-procedural-function-diagnostics.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-count-ones-loop-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-repeat-loop-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-count-ones-loop-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-repeat-loop-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-function-loop-diagnostics.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-guards-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-random-procedural-function-diagnostics.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-count-ones-loop-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-repeat-loop-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-count-ones-loop-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-repeat-loop-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-function-loop-diagnostics.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-case-guards-runtime.sv",
           "test/Runtime/obelisk-to-simulation-random-scope-function-case-wide-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-function-case-diagnostics.mlir",
-          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
-          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir"
+          "test/Conversion/obelisk-to-simulation-random-function-case-diagnostics.sv",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.sv",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.sv"
         ]
       }
     },
@@ -1283,7 +1282,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -1298,34 +1297,34 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.mlir",
-          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-procedural-function-guards-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-arithmetic-z3.sv",
+          "test/Runtime/obelisk-to-simulation-random-dynamic-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-signed-exponent-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-arithmetic-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-wide-division-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-real-aggregate-source-runtime.sv"
         ]
       }
     },
@@ -1359,8 +1358,8 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.mlir"
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.sv"
         ]
       }
     },
@@ -1396,9 +1395,9 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-constrained-random-solve-before-soft.mlir",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.mlir",
-          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-compiled-plan-completion.sv",
+          "test/Runtime/obelisk-to-simulation-random-static-foreach-runtime.sv"
         ]
       }
     },
@@ -1441,8 +1440,8 @@
           "runtime/include/obelisk/Runtime/RandomSamplerPlan.h"
         ],
         "tests": [
-          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-guards-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-disable-soft-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-guards-runtime.sv"
         ]
       }
     },
@@ -1504,7 +1503,7 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-recursive-hooks.mlir",
           "test/Conversion/obelisk-to-simulation-randomize-lifecycle.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.sv"
         ]
       }
     },
@@ -1674,41 +1673,41 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-random-array-modes-diagnostics.mlir",
-          "test/Conversion/obelisk-to-simulation-random-struct-diagnostics.mlir",
-          "test/Conversion/obelisk-to-simulation-static-rand-mode.mlir",
-          "test/Runtime/obelisk-to-simulation-random-array-modes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Conversion/obelisk-to-simulation-random-struct-diagnostics.sv",
+          "test/Conversion/obelisk-to-simulation-static-rand-mode.sv",
+          "test/Runtime/obelisk-to-simulation-random-array-modes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-struct-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-unpacked-struct-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-frozen-aggregate-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-system-functions-four-state-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-symbol-counts-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.sv",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/simulation-random-shared-template-runtime.mlir",
-          "test/Runtime/simulation-random-shared-wide-template-runtime.mlir",
+          "test/Runtime/simulation-random-shared-template-runtime.sv",
+          "test/Runtime/simulation-random-shared-wide-template-runtime.sv",
           "test/Runtime/random-program-temporaries-validation.mlir",
-          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-shared-arithmetic-planes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-count-plans-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-finite-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-aggregate-runtime.sv"
         ]
       }
     },
@@ -1742,12 +1741,12 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-constraint-mode-implicit-this.mlir",
-          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.mlir",
-          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.mlir",
+          "test/Runtime/obelisk-to-simulation-static-constraint-mode-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-proposal-graph-runtime.sv",
+          "test/Conversion/obelisk-to-simulation-random-overlapping-proposal-budget.sv",
           "test/Runtime/simulation-bytecode-integer-minmax.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-linear-lowering-runtime.sv"
         ]
       }
     },
@@ -1788,7 +1787,7 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-components-correlated.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components-partial.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-components.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-definition.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-definition.sv",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-bounded.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain-residual.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-domain.mlir",
@@ -1803,17 +1802,17 @@
           "test/Conversion/obelisk-to-simulation-constrained-random-table.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsat.mlir",
           "test/Conversion/obelisk-to-simulation-constrained-random-unsupported.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random-wide.mlir",
-          "test/Conversion/obelisk-to-simulation-constrained-random.mlir",
+          "test/Conversion/obelisk-to-simulation-constrained-random-wide.sv",
+          "test/Conversion/obelisk-to-simulation-constrained-random.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-conditional-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-constrained-random-inheritance-runtime.sv",
           "test/Runtime/obelisk-to-simulation-constrained-random-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-dist-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-members-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-fixed-randc-static-runtime.sv"
         ]
       }
     },
@@ -1847,8 +1846,8 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randomize-properties.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-joint-randc-runtime.sv"
         ]
       }
     },
@@ -1877,7 +1876,7 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randomize-properties.mlir",
-          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-frozen-unknown-runtime.sv"
         ]
       }
     },
@@ -1924,23 +1923,23 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
           "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
-          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-wide-enum-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-variable-range-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-selection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-bit-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-computed-constant-select-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-wildcard-case-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-scope-function-wildcard-wide-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-projection-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-nested-wildcard-guards-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-symbol-membership-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-linear-plan-generation-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-function-case-inside-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-fixed-arrays-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-inside-array-symbols-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.sv"
         ]
       }
     },
@@ -1981,9 +1980,9 @@
         "tests": [
           "test/Conversion/obelisk-to-simulation-std-randomize-initializer.mlir",
           "test/Conversion/obelisk-to-simulation-std-randomize.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-state-index-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-state-index-scope-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-foreach-scope-runtime.sv"
         ]
       }
     },
@@ -2032,7 +2031,7 @@
           "test/Conversion/simulation-lower-random-seed.mlir",
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-manual-seed-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-manual-seed-runtime.sv"
         ]
       }
     },
@@ -2150,7 +2149,7 @@
         "tests": [
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.sv"
         ]
       }
     },
@@ -2181,7 +2180,7 @@
         "tests": [
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.sv"
         ]
       }
     },
@@ -2212,8 +2211,8 @@
         "tests": [
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-manual-seed-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-manual-seed-runtime.sv"
         ]
       }
     },
@@ -2245,8 +2244,8 @@
         "tests": [
           "test/Conversion/simulation-process-random-state.mlir",
           "runtime/unittests/InitializationRandomTest.cpp",
-          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.mlir",
-          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-random-initialization-scopes-runtime.sv",
+          "test/Runtime/obelisk-to-simulation-random-cyclic-domain-runtime.sv"
         ]
       }
     },
@@ -2300,9 +2299,9 @@
         ],
         "tests": [
           "test/Conversion/obelisk-to-simulation-randcase.mlir",
-          "test/Runtime/obelisk-to-simulation-randcase-weight-precision-runtime.mlir",
+          "test/Conversion/obelisk-to-simulation-randcase-weight-precision.sv",
           "test/Conversion/obelisk-to-simulation-randcase-wide.mlir",
-          "test/Runtime/obelisk-to-simulation-randcase-wide-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randcase-wide-runtime.sv"
         ]
       }
     },
@@ -2328,7 +2327,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     },
@@ -2359,9 +2358,9 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir",
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv",
           "test/Conversion/obelisk-to-simulation-randsequence-wide-weights.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-wide-weights-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-wide-weights-runtime.sv"
         ]
       }
     },
@@ -2387,7 +2386,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     },
@@ -2413,7 +2412,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     },
@@ -2439,7 +2438,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     },
@@ -2465,7 +2464,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     },
@@ -2491,7 +2490,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     },
@@ -2517,7 +2516,7 @@
           "test/Conversion/obelisk-to-simulation-randsequence-freeze.mlir",
           "test/Conversion/simulation-lower-randsequence-invalid.mlir",
           "test/Conversion/simulation-lower-randsequence.mlir",
-          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.mlir"
+          "test/Runtime/obelisk-to-simulation-randsequence-values-runtime.sv"
         ]
       }
     }
