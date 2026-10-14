@@ -673,7 +673,11 @@ private:
           pending.push_back({frame.remaining});
           continue;
         }
-        circuits.emplace(id, conjunction(reduced->second, frame.literals));
+        ID conjoined = conjunction(reduced->second, frame.literals);
+        // An exhausted product returns a placeholder; never memoize it.
+        if (constructionExhausted)
+          return false;
+        circuits.emplace(id, conjoined);
         pending.pop_back();
         continue;
       }
@@ -717,10 +721,13 @@ private:
         pending.push_back({high});
         continue;
       }
-      circuits.emplace(
-          id, keep && !(*keep)[variable]
-                  ? disjunction(circuits.at(low), circuits.at(high))
-                  : makeNode(variable, circuits.at(low), circuits.at(high)));
+      ID expanded =
+          keep && !(*keep)[variable]
+              ? disjunction(circuits.at(low), circuits.at(high))
+              : makeNode(variable, circuits.at(low), circuits.at(high));
+      if (constructionExhausted)
+        return false;
+      circuits.emplace(id, expanded);
       pending.pop_back();
     }
     result = circuits.at(predicate);
