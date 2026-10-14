@@ -743,6 +743,16 @@ RandomStructMemberAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+LogicalResult VirtualInterfaceCalleeAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, uint64_t, FlatSymbolRefAttr,
+    ArrayAttr captures, ArrayAttr reads, ArrayAttr writes) {
+  for (ArrayAttr paths : {captures, reads, writes})
+    if (!llvm::all_of(paths, llvm::IsaPred<StringAttr>))
+      return emitError()
+             << "virtual interface callee captures must be string paths";
+  return success();
+}
+
 LogicalResult
 verifyVPITypeSemantics(llvm::function_ref<InFlightDiagnostic()> emitError,
                        Type executableType, VPITypeSemanticsAttr semantics) {

@@ -187,10 +187,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
             size_t index = static_cast<size_t>(found - arguments.begin());
             if (index >= formals.size())
               return;
-            auto formal = cast<DictionaryAttr>(formals[index]);
-            auto direction = static_cast<semantic::SVArgumentDirection>(
-                formal.getAs<IntegerAttr>("direction").getInt());
-            if (direction != semantic::SVArgumentDirection::In)
+            auto formal = cast<sim::CalleeFormalAttr>(formals[index]);
+            if (formal.getDirection() != sim::FormalDirection::In)
               return;
             break;
           }

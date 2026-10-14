@@ -71,6 +71,22 @@ inline constexpr auto concurrentCancelObserverRequestAttrName =
 inline constexpr auto concurrentAbortObserverRequestAttrName =
     ::obelisk::schedule::Field::ConcurrentAbortObserverRequest;
 
+/// The frozen direction of a semantic formal argument.
+inline sim::FormalDirection
+getFormalDirection(semantic::SVArgumentDirection direction) {
+  switch (direction) {
+  case semantic::SVArgumentDirection::In:
+    return sim::FormalDirection::In;
+  case semantic::SVArgumentDirection::Out:
+    return sim::FormalDirection::Out;
+  case semantic::SVArgumentDirection::InOut:
+    return sim::FormalDirection::InOut;
+  case semantic::SVArgumentDirection::Ref:
+    return sim::FormalDirection::Ref;
+  }
+  llvm_unreachable("unknown argument direction");
+}
+
 /// Total, side-effect-free integral system functions encoded by the random
 /// program. Unlike user functions, these do not introduce implicit solve
 /// priority (IEEE 1800-2023 18.5.11).

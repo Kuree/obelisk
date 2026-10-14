@@ -791,6 +791,13 @@ static LogicalResult verifyDeclaredAttribute(Operation *operation,
   if (name == BooleanMinimizations::getNameStr() &&
       !allOf(llvm::IsaPred<BooleanMinimizationAttr>))
     return error() << "must contain #simulation.boolean_minimization entries";
+  if (name == CalleeFormals::getNameStr() &&
+      !allOf(llvm::IsaPred<CalleeFormalAttr>))
+    return error() << "must contain #simulation.callee_formal entries";
+  if (name == VirtualInterfaceCallees::getNameStr() &&
+      !allOf(llvm::IsaPred<VirtualInterfaceCalleeAttr>))
+    return error()
+           << "must contain #simulation.virtual_interface_callee entries";
   if (name == RandomProperties::getNameStr() &&
       !allOf(llvm::IsaPred<RandomPropertyAttr>))
     return error() << "must contain #simulation.random_property entries";

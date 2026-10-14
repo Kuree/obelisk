@@ -212,6 +212,18 @@ def SimVPITypeKind : I32EnumAttr<
   let cppNamespace = "::obelisk::sim";
 }
 
+// Direction of a subroutine formal argument (IEEE 1800-2023 13.5).
+def SimFormalIn : I32EnumAttrCase<"In", 0, "in">;
+def SimFormalOut : I32EnumAttrCase<"Out", 1, "out">;
+def SimFormalInOut : I32EnumAttrCase<"InOut", 2, "inout">;
+def SimFormalRef : I32EnumAttrCase<"Ref", 3, "ref">;
+def SimFormalDirection
+    : I32EnumAttr<"FormalDirection", "subroutine formal argument direction", [
+        SimFormalIn, SimFormalOut, SimFormalInOut, SimFormalRef
+      ]> {
+  let cppNamespace = "::obelisk::sim";
+}
+
 def SimPortInput : I32EnumAttrCase<"Input", 0, "input">;
 def SimPortOutput : I32EnumAttrCase<"Output", 1, "output">;
 def SimPortInOut : I32EnumAttrCase<"InOut", 2, "inout">;

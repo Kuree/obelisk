@@ -1983,12 +1983,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (usesDefault)
         thisObject = *receiver;
       llvm::scope_exit restoreThisObject([&] { thisObject = savedThisObject; });
-      auto formal = cast<DictionaryAttr>(formalAttr);
-      auto direction = static_cast<semantic::SVArgumentDirection>(
-          formal.getAs<IntegerAttr>("direction").getInt());
-      Type formalType = formal.getAs<TypeAttr>("type").getValue();
-      bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
-      if (direction == semantic::SVArgumentDirection::In) {
+      auto formal = cast<sim::CalleeFormalAttr>(formalAttr);
+      sim::FormalDirection direction = formal.getDirection();
+      Type formalType = formal.getType();
+      bool formalSigned = formal.getIsSigned();
+      if (direction == sim::FormalDirection::In) {
         FailureOr<Value> argument = lowerExpression(actual);
         if (failed(argument))
           return failure();
@@ -2038,7 +2037,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                "references";
         return failure();
       }
-      if (direction == semantic::SVArgumentDirection::Ref) {
+      if (direction == sim::FormalDirection::Ref) {
         FailureOr<Value> argument =
             toArgumentReference(*destinationRef, formalType, location);
         if (failed(argument)) {
@@ -2052,9 +2051,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       }
 
       Value initial;
-      if (direction == semantic::SVArgumentDirection::Out) {
-        auto staticAttr = formal.getAs<BoolAttr>("static");
-        bool staticFormal = staticAttr && staticAttr.getValue();
+      if (direction == sim::FormalDirection::Out) {
+        bool staticFormal = formal.getIsStatic();
         initial =
             staticFormal && isa<sim::EventType>(formalType)
                 ? sim::SimEventNullOp::create(builder, location, formalType)
@@ -2524,11 +2522,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   };
   for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
     Operation *actual = child;
-    auto direction = static_cast<semantic::SVArgumentDirection>(
-        cast<DictionaryAttr>(formalAttr)
-            .getAs<IntegerAttr>("direction")
-            .getInt());
-    bool isInput = direction == semantic::SVArgumentDirection::In;
+    auto formal = cast<sim::CalleeFormalAttr>(formalAttr);
+    sim::FormalDirection direction = formal.getDirection();
+    bool isInput = direction == sim::FormalDirection::In;
     if (!isInput)
       if (auto assignment =
               dyn_cast<semantic::SVAssignmentExpressionOp>(child)) {
@@ -2545,17 +2541,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             actual = outputChildren.front();
         }
       }
-    auto formal = cast<DictionaryAttr>(formalAttr);
-    Type formalType = formal.getAs<TypeAttr>("type").getValue();
-    bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
-    auto dpiCategoryAttr = formal.getAs<IntegerAttr>("dpi_category");
-    uint32_t dpiCategory =
-        dpiCategoryAttr ? static_cast<uint32_t>(dpiCategoryAttr.getInt()) : 0;
+    Type formalType = formal.getType();
+    bool formalSigned = formal.getIsSigned();
+    Type formalSemantic = formal.getSemanticType();
+    uint32_t dpiCategory = 0;
+    if (formalSemantic) {
+      FailureOr<DPIABIKind> category = getDPIABIKind(formalSemantic, location);
+      if (failed(category))
+        return failure();
+      dpiCategory = static_cast<uint32_t>(*category);
+    }
     bool dpiImport = dpi::has<dpi::ImportId>(op);
-    auto formalSemantic = formal.getAs<TypeAttr>("semantic_type");
     bool openFormal =
         dpiImport && formalSemantic &&
-        llvm::any_of(getSemanticDimensions(formalSemantic.getValue()),
+        llvm::any_of(getSemanticDimensions(formalSemantic),
                      [](const SemanticDimension &dimension) {
                        return dimension.kind ==
                               SemanticDimensionKind::OpenArray;
@@ -2582,11 +2581,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
       if (aggregateFormal) {
-        TypeAttr formalSemantic = formal.getAs<TypeAttr>("semantic_type");
         if (!formalSemantic)
           return failure();
         FailureOr<dpi::AggregateABIAttr> layout =
-            makeAggregateLayout(formalSemantic.getValue(), formalType);
+            makeAggregateLayout(formalSemantic, formalType);
         if (failed(layout))
           return failure();
         formalAggregateLayout = *layout;
@@ -2609,14 +2607,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       if (dpiImport && openFormal) {
         auto semanticType = actual->getAttrOfType<TypeAttr>("semantic_type");
-        TypeAttr formalSemantic = formal.getAs<TypeAttr>("semantic_type");
         if (!semanticType || !formalSemantic)
           return emitError(location)
                      << "DPI open-array binding has no semantic shape",
                  failure();
-        FailureOr<dpi::OpenArrayABIAttr> layout =
-            makeOpenArrayLayout(formalSemantic.getValue(),
-                                semanticType.getValue(), (*argument).getType());
+        FailureOr<dpi::OpenArrayABIAttr> layout = makeOpenArrayLayout(
+            formalSemantic, semanticType.getValue(), (*argument).getType());
         if (failed(layout))
           return failure();
         FailureOr<Value> transport = layout->getStorage() == 0
@@ -2650,9 +2646,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           << "output, inout, and ref actuals must be variable references";
       return failure();
     }
-    if (direction == semantic::SVArgumentDirection::Ref) {
-      auto argumentRef = formal.getAs<BoolAttr>("argument_ref");
-      if (directTask && (!argumentRef || !argumentRef.getValue())) {
+    if (direction == sim::FormalDirection::Ref) {
+      bool argumentRef = formal.getArgumentRef();
+      if (directTask && !argumentRef) {
         if (!isa<sim::RefType>((*destination).getType())) {
           emitError(location) << "task ref actual must be directly addressable";
           return failure();
@@ -2680,13 +2676,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return emitError(location)
                    << "DPI open-array binding has no semantic shape",
                failure();
-      FailureOr<dpi::OpenArrayABIAttr> layout =
-          makeOpenArrayLayout(formalSemantic.getValue(),
-                              semanticType.getValue(), (*loaded).getType());
+      FailureOr<dpi::OpenArrayABIAttr> layout = makeOpenArrayLayout(
+          formalSemantic, semanticType.getValue(), (*loaded).getType());
       if (failed(layout))
         return failure();
-      if (layout->getStorage() != 0 &&
-          direction == semantic::SVArgumentDirection::Out)
+      if (layout->getStorage() != 0 && direction == sim::FormalDirection::Out)
         return emitError(location)
                    << "dynamic-array and queue actuals cannot be passed to "
                       "an output DPI open-array formal with unsized "
@@ -2719,9 +2713,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
 
     Value initial;
-    if (direction == semantic::SVArgumentDirection::Out) {
-      auto staticAttr = formal.getAs<BoolAttr>("static");
-      bool staticFormal = staticAttr && staticAttr.getValue();
+    if (direction == sim::FormalDirection::Out) {
+      bool staticFormal = formal.getIsStatic();
       initial = staticFormal && isa<sim::EventType>(formalType)
                     ? sim::SimEventNullOp::create(builder, location, formalType)
                           .getResult()
@@ -2916,13 +2909,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       Block *merge = addBlock();
       for (Type type : callResultTypes)
         merge->addArgument(type, location);
-      for (Attribute candidateAttr : virtualCallees) {
-        auto candidate = cast<DictionaryAttr>(candidateAttr);
+      for (auto candidate :
+           virtualCallees.getAsRange<sim::VirtualInterfaceCalleeAttr>()) {
         Block *matched = addBlock();
         Block *next = addBlock();
-        Value expected =
-            arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                      candidate.getAs<IntegerAttr>("scope"));
+        Value expected = arith::ConstantOp::create(
+            builder, location, builder.getI64Type(),
+            builder.getI64IntegerAttr(candidate.getScope()));
         Value equal =
             arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                                   virtualScope, expected);
@@ -2930,7 +2923,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                  ValueRange{}, next, ValueRange{});
         setCurrent(matched);
         SmallVector<Value> candidateOperands(operands);
-        for (Attribute captureAttr : candidate.getAs<ArrayAttr>("captures")) {
+        for (Attribute captureAttr : candidate.getCaptures()) {
           StringRef path = cast<StringAttr>(captureAttr).getValue();
           Value capture = values.lookup(path);
           if (!capture)
@@ -2941,10 +2934,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           candidateOperands.push_back(capture);
         }
         llvm::StringSet<> candidateWrites;
-        if (auto writes = candidate.getAs<ArrayAttr>("written_captures"))
+        if (ArrayAttr writes = candidate.getWrites())
           for (Attribute writeAttr : writes)
             candidateWrites.insert(cast<StringAttr>(writeAttr).getValue());
-        for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
+        for (Attribute readAttr : candidate.getReads()) {
           StringRef path = cast<StringAttr>(readAttr).getValue();
           if (!includeCalleeReadSensitivity ||
               (excludeWrittenSensitivity && candidateWrites.contains(path)))
@@ -2953,10 +2946,9 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           if (capture)
             recordSensitivity(capture);
         }
-        auto selected =
-            sim::SimCallOp::create(builder, location, callResultTypes,
-                                   candidate.getAs<FlatSymbolRefAttr>("callee"),
-                                   candidateOperands, ArrayAttr{}, ArrayAttr{});
+        auto selected = sim::SimCallOp::create(
+            builder, location, callResultTypes, candidate.getCallee(),
+            candidateOperands, ArrayAttr{}, ArrayAttr{});
         cf::BranchOp::create(builder, location, merge, selected.getResults());
         setCurrent(next);
       }
@@ -2975,13 +2967,13 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                  schedule::ContinuationSiteAttr{},
                                  continuation);
     } else {
-      for (Attribute candidateAttr : virtualCallees) {
-        auto candidate = cast<DictionaryAttr>(candidateAttr);
+      for (auto candidate :
+           virtualCallees.getAsRange<sim::VirtualInterfaceCalleeAttr>()) {
         Block *matched = addBlock();
         Block *next = addBlock();
-        Value expected =
-            arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                      candidate.getAs<IntegerAttr>("scope"));
+        Value expected = arith::ConstantOp::create(
+            builder, location, builder.getI64Type(),
+            builder.getI64IntegerAttr(candidate.getScope()));
         Value equal =
             arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
                                   virtualScope, expected);
@@ -2989,7 +2981,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                                  ValueRange{}, next, ValueRange{});
         setCurrent(matched);
         SmallVector<Value> candidateOperands(operands);
-        for (Attribute captureAttr : candidate.getAs<ArrayAttr>("captures")) {
+        for (Attribute captureAttr : candidate.getCaptures()) {
           StringRef path = cast<StringAttr>(captureAttr).getValue();
           Value capture = values.lookup(path);
           if (!capture)
@@ -3000,10 +2992,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           candidateOperands.push_back(capture);
         }
         llvm::StringSet<> candidateWrites;
-        if (auto writes = candidate.getAs<ArrayAttr>("written_captures"))
+        if (ArrayAttr writes = candidate.getWrites())
           for (Attribute writeAttr : writes)
             candidateWrites.insert(cast<StringAttr>(writeAttr).getValue());
-        for (Attribute readAttr : candidate.getAs<ArrayAttr>("read_captures")) {
+        for (Attribute readAttr : candidate.getReads()) {
           StringRef path = cast<StringAttr>(readAttr).getValue();
           if (!includeCalleeReadSensitivity ||
               (excludeWrittenSensitivity && candidateWrites.contains(path)))
@@ -3013,8 +3005,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
             recordSensitivity(capture);
         }
         sim::SimTaskCallOp::create(
-            builder, location, candidate.getAs<FlatSymbolRefAttr>("callee"),
-            candidateOperands,
+            builder, location, candidate.getCallee(), candidateOperands,
             builder.getI64IntegerAttr(candidateOperands.size()),
             schedule::ContinuationSiteAttr{}, continuation);
         setCurrent(next);
@@ -3279,12 +3270,11 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     if (usesDefault)
       thisObject = receiver;
     llvm::scope_exit restoreThisObject([&] { thisObject = savedThisObject; });
-    auto formal = cast<DictionaryAttr>(formalAttr);
-    auto direction = static_cast<semantic::SVArgumentDirection>(
-        formal.getAs<IntegerAttr>("direction").getInt());
-    Type formalType = formal.getAs<TypeAttr>("type").getValue();
-    bool formalSigned = formal.getAs<BoolAttr>("is_signed").getValue();
-    if (direction == semantic::SVArgumentDirection::In) {
+    auto formal = cast<sim::CalleeFormalAttr>(formalAttr);
+    sim::FormalDirection direction = formal.getDirection();
+    Type formalType = formal.getType();
+    bool formalSigned = formal.getIsSigned();
+    if (direction == sim::FormalDirection::In) {
       FailureOr<Value> argument = lowerExpression(actual);
       if (failed(argument))
         return failure();
@@ -3333,7 +3323,7 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
                     "variable references",
              failure();
 
-    if (direction == semantic::SVArgumentDirection::Ref) {
+    if (direction == sim::FormalDirection::Ref) {
       FailureOr<Value> argument =
           toArgumentReference(*destinationRef, formalType, location);
       if (failed(argument))
@@ -3346,9 +3336,8 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
     }
 
     Value initial;
-    if (direction == semantic::SVArgumentDirection::Out) {
-      auto staticAttr = formal.getAs<BoolAttr>("static");
-      bool staticFormal = staticAttr && staticAttr.getValue();
+    if (direction == sim::FormalDirection::Out) {
+      bool staticFormal = formal.getIsStatic();
       initial = staticFormal && isa<sim::EventType>(formalType)
                     ? sim::SimEventNullOp::create(builder, location, formalType)
                           .getResult()

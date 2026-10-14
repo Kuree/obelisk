@@ -557,6 +557,38 @@ def SimRandomStructMemberAttr
   let genVerifyDecl = 1;
 }
 
+// Call contracts frozen onto semantic calls by preparation.
+
+def SimCalleeFormalAttr : SimAttr<"CalleeFormal", "callee_formal"> {
+  let summary = "one formal argument of a call's frozen callee signature";
+  let description = [{
+    The formal's `direction`, normalized `type` and signedness. `argumentRef`
+    marks a ref formal of a task whose actuals are passed as argument
+    references; `isStatic` a formal of a static subroutine, which lives in
+    design storage. Formals of DPI imports keep their source `semanticType`
+    for the C ABI.
+  }];
+  let parameters = (ins EnumParameter<SimFormalDirection>:$direction,
+      "::mlir::Type":$type, "bool":$isSigned, "bool":$argumentRef,
+      "bool":$isStatic, OptionalParameter<"::mlir::Type">:$semanticType);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
+def SimVirtualInterfaceCalleeAttr
+    : SimAttr<"VirtualInterfaceCallee", "virtual_interface_callee"> {
+  let summary = "one candidate of a call through a virtual interface";
+  let description = [{
+    Calls `callee` when the virtual interface selects the instance with
+    scope `scope`. `captures` lists the unit-local paths passed as arguments,
+    `reads` and `writes` the paths the callee reads and writes.
+  }];
+  let parameters = (ins "uint64_t":$scope, "::mlir::FlatSymbolRefAttr":$callee,
+      "::mlir::ArrayAttr":$captures, "::mlir::ArrayAttr":$reads,
+      "::mlir::ArrayAttr":$writes);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 // Symbolic attributes for closed executable classifications.
 class SimEnumAttr<EnumAttrInfo info, string mnemonic>
     : EnumAttr<ObeliskSimulationDialect, info, mnemonic> {

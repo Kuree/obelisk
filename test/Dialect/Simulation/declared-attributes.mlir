@@ -88,4 +88,18 @@ module attributes {simulation.gc_polled, simulation.pulse_on_detect = true,
                                              position = "top.p",
                                              domain = "top.d">,
       elementModeStorage = 7>]}
+
+  // CHECK-LABEL: func.func private @call_contract
+  // CHECK-SAME: simulation.callee_formals = [#simulation.callee_formal<direction = in, type = i32, isSigned = true, argumentRef = false, isStatic = false>, #simulation.callee_formal<direction = ref, type = i8, isSigned = false, argumentRef = true, isStatic = false, semanticType = i8>]
+  // CHECK-SAME: simulation.virtual_interface_callees = [#simulation.virtual_interface_callee<scope = 4, callee = @unit_3, captures = ["top.a"], reads = ["top.b"], writes = []>]
+  func.func private @call_contract() attributes {
+    simulation.callee_formals = [
+      #simulation.callee_formal<direction = in, type = i32, isSigned = true,
+                                argumentRef = false, isStatic = false>,
+      #simulation.callee_formal<direction = ref, type = i8, isSigned = false,
+                                argumentRef = true, isStatic = false,
+                                semanticType = i8>],
+    simulation.virtual_interface_callees = [
+      #simulation.virtual_interface_callee<scope = 4, callee = @unit_3,
+        captures = ["top.a"], reads = ["top.b"], writes = []>]}
 }

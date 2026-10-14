@@ -9198,27 +9198,18 @@ void ObeliskSimPreparePass::runOnOperation() {
         for (const auto &capture : unitCaptures[candidate])
           if (!usesContextStorage(candidate, capture))
             captures.push_back(builder.getStringAttr(capture.first));
-        candidates.push_back(builder.getDictionaryAttr({
-            builder.getNamedAttr(
-                "scope",
-                builder.getI64IntegerAttr(
-                    preparedUnits->declarations.lookup(record->dispatchSource)
-                        .getScopeId())),
-            builder.getNamedAttr(
-                "callee", FlatSymbolRefAttr::get(
-                              context, directCalleeNames.lookup(candidate))),
-            builder.getNamedAttr("captures", builder.getArrayAttr(captures)),
-            builder.getNamedAttr("read_captures",
-                                 builder.getArrayAttr(readCaptures)),
-            builder.getNamedAttr("written_captures",
-                                 builder.getArrayAttr(writtenCaptures)),
-        }));
+        candidates.push_back(sim::VirtualInterfaceCalleeAttr::get(
+            context,
+            preparedUnits->declarations.lookup(record->dispatchSource)
+                .getScopeId(),
+            FlatSymbolRefAttr::get(context,
+                                   directCalleeNames.lookup(candidate)),
+            builder.getArrayAttr(captures), builder.getArrayAttr(readCaptures),
+            builder.getArrayAttr(writtenCaptures)));
       }
       sim::set<sim::metadata::VirtualInterfaceCallees>(
           call, builder.getArrayAttr(candidates));
     }
-    // One dictionary per callee formal keeps the direction, normalized type,
-    // and signedness of the frozen signature together.
     SmallVector<Attribute> formals;
     for (Operation *targetChild : getChildren(targetSource)) {
       auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(targetChild);
@@ -9230,37 +9221,21 @@ void ObeliskSimPreparePass::runOnOperation() {
         continue;
       }
       std::optional<Type> semanticType = formal.getSemanticType();
-      SmallVector<NamedAttribute> formalAttrs{
-          builder.getNamedAttr(
-              "direction", builder.getI64IntegerAttr(
-                               static_cast<int64_t>(formal.getDirection()))),
-          builder.getNamedAttr("type", TypeAttr::get(*formalType)),
-          builder.getNamedAttr(
-              "is_signed",
-              builder.getBoolAttr(semanticType &&
-                                  isSignedSemanticType(*semanticType))),
-          builder.getNamedAttr(
-              "argument_ref",
-              builder.getBoolAttr(formal.getDirection() ==
-                                      semantic::SVArgumentDirection::Ref &&
-                                  indirectRefTasks.contains(targetSource))),
-          builder.getNamedAttr("static",
-                               builder.getBoolAttr(isStaticFormal(formal))),
-      };
+      Type dpiSemanticType;
       if (dpiTarget && semanticType) {
-        formalAttrs.push_back(builder.getNamedAttr(
-            "semantic_type", TypeAttr::get(*semanticType)));
-        FailureOr<DPIABIKind> category =
-            getDPIABIKind(*semanticType, getSemanticLocation(formal));
-        if (failed(category)) {
+        // Validate the C ABI here; unit lowering derives it from the type.
+        if (failed(getDPIABIKind(*semanticType, getSemanticLocation(formal)))) {
           invalid = true;
           continue;
         }
-        formalAttrs.push_back(builder.getNamedAttr(
-            "dpi_category",
-            builder.getI32IntegerAttr(static_cast<uint32_t>(*category))));
+        dpiSemanticType = *semanticType;
       }
-      formals.push_back(builder.getDictionaryAttr(formalAttrs));
+      formals.push_back(sim::CalleeFormalAttr::get(
+          context, getFormalDirection(formal.getDirection()), *formalType,
+          semanticType && isSignedSemanticType(*semanticType),
+          formal.getDirection() == semantic::SVArgumentDirection::Ref &&
+              indirectRefTasks.contains(targetSource),
+          isStaticFormal(formal), dpiSemanticType));
     }
     sim::set<sim::metadata::CalleeFormals>(call, builder.getArrayAttr(formals));
   };
@@ -11289,6 +11264,15 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (ArrayAttr hookReads = hook.getReads())
         collectPlanStrings(hookReads, /*readContext=*/true, required, reads,
                            bindings);
+      return;
+    }
+    if (auto callee = dyn_cast<sim::VirtualInterfaceCalleeAttr>(attribute)) {
+      collectPlanStrings(callee.getCaptures(), readContext, required, reads,
+                         bindings);
+      collectPlanStrings(callee.getWrites(), readContext, required, reads,
+                         bindings);
+      collectPlanStrings(callee.getReads(), /*readContext=*/true, required,
+                         reads, bindings);
       return;
     }
     if (auto dictionary = dyn_cast<DictionaryAttr>(attribute)) {

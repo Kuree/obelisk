@@ -390,6 +390,7 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::ArrayAttr":$bindings,
     "::mlir::FlatSymbolRefAttr":$callee,
     "::mlir::ArrayAttr":$callee_captures,
+    // `#simulation.callee_formal` entries, one per callee formal.
     "::mlir::ArrayAttr":$callee_formals,
     "::mlir::ArrayAttr":$callee_read_captures,
     "::mlir::ArrayAttr":$callee_written_captures,
@@ -475,6 +476,7 @@ def ObeliskSimulationDialect : Dialect {
     // A point/cross selection qualifies static storage; it is not a value
     // field.
     "::mlir::UnitAttr":$type_option_item_qualifier,
+    // `#simulation.virtual_interface_callee` entries.
     "::mlir::ArrayAttr":$virtual_interface_callees,
     "::mlir::ArrayAttr":$virtual_interface_clock_events,
     "::mlir::StringAttr":$virtual_interface_clocking_output,
