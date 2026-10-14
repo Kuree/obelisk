@@ -3,8 +3,10 @@
 // RUN: %t --seed=13 | FileCheck %s
 // REQUIRES: compiled-sampler
 
-// IEEE 1800-2023 18.4.2 and 18.10: persistent domains restart live cyclic
-// permutations when bounds, blocks or inline constraints change. Scalar fields
+// IEEE 1800-2023 18.4.2 and 18.10: a randc iteration returns each value once
+// and ends when no unreturned value satisfies the constraints. A live bound
+// changes the legal domain within the iteration; a changed constraint set
+// (constraint_mode or an inline constraint) starts a new one. Scalar fields
 // span the full 32-bit range while small legal sets are sampled directly.
 // Checker calls and inactive fields preserve histories. Failed solves publish
 // neither fields, histories nor RNG. Static histories are shared by instances.
@@ -14,7 +16,7 @@
 // Every cyclic sampling operation carries a compiled SAMP plan.
 // PLAN-COUNT-5: simulation.random.cycle_sample {{.*}}SAMP
 // CHECK: source randc complete sparse cycles 1
-// CHECK: source randc changed bound restart 1
+// CHECK: source randc changed bound continues 1
 // CHECK: source randc copied history and failed solve 1
 // CHECK: source randc checker modes and live blocks 1
 // CHECK: source randc inline and unconstrained domains 1
@@ -55,14 +57,12 @@ module top;
   int i;
 
   initial begin
-    c = new;
-    d = new;
-    c.srandom(99);
-    d.srandom(99);
     ok = 1;
-    // Bounds 2..7 have sparse 32-bit domains and every value is visited once
-    // per cycle of the live domain length.
+    // Bounds 2..7 have sparse 32-bit domains and a fresh object visits every
+    // value once per cycle of the live domain length.
     for (int n = 2; n <= 7; n++) begin
+      c = new;
+      c.srandom(99);
       c.limit = n;
       seen = 0;
       for (i = 0; i < n; i++) begin
@@ -74,22 +74,26 @@ module top;
     end
     $display("source randc complete sparse cycles %0d", ok);
 
-    // A changed bound restarts the cycle in both objects identically.
+    // A changed bound continues the iteration: the two values returned under
+    // bound 3 are not repeated until the other three values below 5 are.
+    c = new;
+    c.srandom(99);
     c.limit = 3;
-    void'(c.randomize());
+    seen = 0;
+    ok = 1;
+    for (i = 0; i < 2; i++) begin
+      ok &= c.randomize() && !seen[c.x];
+      seen[c.x] = 1;
+    end
     c.limit = 5;
-    d.limit = 5;
-    d.set_randstate(c.get_randstate());
-    ok = c.randomize() && d.randomize();
-    ok &= c.x == d.x && c.y == d.y && c.get_randstate() == d.get_randstate();
-    seen = 1 << c.x;
-    for (i = 1; i < 5; i++) begin
+    for (i = 0; i < 3; i++) begin
       ok &= c.randomize();
       ok &= c.x < 5 && !seen[c.x];
       seen[c.x] = 1;
     end
     ok &= seen == 31;
-    $display("source randc changed bound restart %0d", ok);
+    $display("source randc changed bound continues %0d", ok);
+    d = new;
 
     c.limit = 1;
     ok = c.randomize() && c.x == 0 && c.y == 0;
@@ -173,10 +177,11 @@ module top;
     ok &= p.randomize() && p.x < 3 && !seen[p.x];
     seen[p.x] = 1;
     ok &= seen == 7;
+    // The shared iteration has returned 0..2, so under bound 5 it returns 3
+    // and 4 before it ends.
     p.limit = 5;
     q.limit = 5;
-    seen = 0;
-    for (i = 0; i < 5; i++) begin
+    for (i = 0; i < 2; i++) begin
       if (i & 1) ok &= p.randomize();
       else ok &= q.randomize();
       ok &= p.x < 5 && !seen[p.x];

@@ -6,7 +6,7 @@
 // IEEE 1800-2023 18.4.2 and 18.5.3: ordinary dist contributes positive
 // hard support to cyclic projection, then ordinary preferences are resolved
 // with the cyclic value frozen. Wide captured weights retain their high words.
-// Changing positive support restarts the persistent cycle; zero total support
+// Support shrunk to returned values starts a new iteration; zero total support
 // fails without publishing a field, history or RNG update.
 // Every cyclic sampling operation carries a compiled SAMP plan.
 // PLAN-COUNT-1: simulation.random.cycle_sample {{.*}}SAMP
@@ -53,7 +53,8 @@ module top;
     end
     $display("source randc weighted support cycles %0d", ok);
 
-    // Zeroing a live weight shrinks the support and restarts the cycle.
+    // Zeroing a live weight shrinks the support to values the iteration has
+    // already returned, so a new iteration starts as in a fresh object.
     c.middle = 0;
     d.middle = 0;
     d.set_randstate(c.get_randstate());

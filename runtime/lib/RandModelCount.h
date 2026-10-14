@@ -329,6 +329,15 @@ public:
     return counts[viewRoot].shifted(levels[nodes[viewRoot].variable]);
   }
 
+  /// Whether the projected relation contains a complete assignment.
+  bool contains(const std::vector<bool> &value) const {
+    ID current = viewRoot;
+    while (current > 1)
+      current = value[nodes[current].variable] ? nodes[current].high
+                                               : nodes[current].low;
+    return current == 1;
+  }
+
   /// Existentially remove other fields before counting a solve-order layer.
   /// A legal projected value contributes one choice regardless of how many
   /// completions it has. Previous choices remain fixed in the original graph.

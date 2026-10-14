@@ -11,9 +11,10 @@
 // Bounds 1..7 have sparse 32-bit domains and non-power-of-two cycle lengths.
 // A full 32-bit cyclic domain with wide inequality completions also retains
 // identical histories; projection must not enumerate all those completions.
-// Changed bounds restart; plans with more ordinary completions preserve
-// projected histories. Failed stages preserve all outputs, and sparse enum
-// domain masks are exact.
+// A changed bound continues the iteration; a changed constraint set starts a
+// new one, and a plan with more ordinary completions projects to the same
+// cyclic domain. Failed stages preserve all outputs, and sparse enum domain
+// masks are exact.
 // Every cyclic sampling operation carries a compiled SAMP plan.
 // PLAN-COUNT-4: simulation.random.cycle_sample {{.*}}SAMP
 // Hard dist on ordinary fields contributes only positive support to a cycle;
@@ -107,33 +108,38 @@ module top;
     end
     $display("cyclic bounds valid %0d", ok);
 
-    // A changed bound restarts the history exactly like a fresh object.
+    // A changed bound continues the iteration: after one value under bound 3,
+    // the next four calls under bound 5 return the other values below 5.
     ok = 1;
     o = new;
     o.srandom(13);
     o.limit = 3;
     ok &= o.randomize();
+    seen = 1 << o.x;
+    o.limit = 5;
+    repeat (4) begin
+      ok &= o.randomize() && o.x < 5 && !seen[o.x];
+      seen[o.x] = 1;
+    end
+    ok &= seen == 31;
+
+    // A changed constraint set starts a new iteration exactly like a fresh
+    // object with that set. The inexact plan has more ordinary completions
+    // but projects to the same cyclic domain.
     st_a = o.get_randstate();
+    g = new o;
+    g.use_inexact();
     fresh = new;
     fresh.set_randstate(st_a);
     fresh.limit = 5;
-    o.limit = 5;
-    ok &= o.randomize() && fresh.randomize();
-    ok &= o.x == fresh.x && o.payload == fresh.payload;
-    ok &= o.get_randstate() == fresh.get_randstate();
-
-    // A plan with more ordinary completions keeps the projected history: the
-    // rest of the cycle visits the same values.
-    f = new o;
-    g = new o;
-    g.use_inexact();
+    fresh.use_inexact();
     repeat (4) begin
-      ok &= f.randomize() && g.randomize();
-      ok &= f.x == g.x && f.x < 5;
+      ok &= g.randomize() && fresh.randomize();
+      ok &= g.x == fresh.x && g.x < 5;
     end
 
-    // Without a bound the domain is the full 32 bits; restart equals fresh, and
-    // the wide inequality plan retains the same history.
+    // Without a bound the domain is the full 32 bits, and the wide inequality
+    // plan samples it without enumerating its completions.
     st_b = o.get_randstate();
     h = new o;
     h.bounds.constraint_mode(0);
@@ -145,7 +151,10 @@ module top;
     ok &= h.get_randstate() == fresh.get_randstate();
     other = new h;
     other.use_inexact();
-    twin = new h;
+    twin = new;
+    twin.set_randstate(h.get_randstate());
+    twin.bounds.constraint_mode(0);
+    twin.use_inexact();
     repeat (3) begin
       ok &= twin.randomize() && other.randomize();
       ok &= twin.x == other.x;

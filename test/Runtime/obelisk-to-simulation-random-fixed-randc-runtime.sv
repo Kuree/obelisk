@@ -14,8 +14,9 @@
 // Every leaf visits each of its `bound` legal values exactly once per cycle
 // and the wide relation follows the drawn leaves.
 // RUNTIME: fixed randc wide multidimensional cycles 1
-// A changed bound restarts the cycle exactly like a fresh object.
-// RUNTIME: fixed randc changed bounds restart 1
+// A changed bound continues each leaf's iteration: after one value under
+// bound 3, the next four draws under bound 5 return each leaf's other values.
+// RUNTIME: fixed randc changed bounds continue 1
 // A copy keeps the history; a failed randomize leaves history and RNG state.
 // RUNTIME: fixed randc copied histories and failure 1
 // Disabling one element's rand_mode neither advances nor discards its history.
@@ -37,7 +38,7 @@ class Fixed;
 endclass
 
 module top;
-  Fixed c, d, fresh;
+  Fixed c, d;
   int seen [2:1][-1:0];
   int old_value;
   bit ok;
@@ -56,9 +57,9 @@ module top;
 
   initial begin
     ok = 1;
-    c = new;
-    c.srandom(13);
     for (int bound = 2; bound <= 5; ++bound) begin
+      c = new;
+      c.srandom(13);
       c.limit = bound;
       repeat (2) begin
         foreach (seen[i, j]) seen[i][j] = 0;
@@ -76,22 +77,21 @@ module top;
     $display("fixed randc wide multidimensional cycles %0d", ok);
 
     ok = 1;
+    c = new;
+    c.srandom(17);
     c.limit = 3;
     if (!c.randomize()) ok = 0;
+    foreach (seen[i, j]) seen[i][j] = 1 << c.values[i][j];
     c.limit = 5;
-    fresh = new;
-    fresh.limit = 5;
-    c.srandom(17);
-    fresh.srandom(17);
-    foreach (seen[i, j]) seen[i][j] = 0;
-    repeat (5) begin
-      if (!c.randomize() || !fresh.randomize()) ok = 0;
-      foreach (seen[i, j]) seen[i][j] |= 1 << c.values[i][j];
-      if (!same_values(c, fresh) || c.wide != fresh.wide ||
-          c.get_randstate() != fresh.get_randstate()) ok = 0;
+    repeat (4) begin
+      if (!c.randomize()) ok = 0;
+      foreach (seen[i, j]) begin
+        if (seen[i][j][c.values[i][j]]) ok = 0;
+        seen[i][j] |= 1 << c.values[i][j];
+      end
     end
     foreach (seen[i, j]) if (seen[i][j] != 31) ok = 0;
-    $display("fixed randc changed bounds restart %0d", ok);
+    $display("fixed randc changed bounds continue %0d", ok);
 
     ok = 1;
     c.limit = 3;

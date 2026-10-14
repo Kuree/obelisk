@@ -32,6 +32,152 @@ uint16_t read16(const uint8_t *p) {
 uint32_t read32(const uint8_t *p) { return random::planRead32(p); }
 uint64_t read64(const uint8_t *p) { return random::planRead64(p); }
 
+/// Bits needed to index a permutation of `cardinality` ranks.
+unsigned permutationWidth(uint64_t cardinality) {
+  unsigned width = 0;
+  for (uint64_t remaining = cardinality - 1; remaining; remaining >>= 1)
+    ++width;
+  return width;
+}
+
+uint64_t fieldValue(const std::vector<bool> &bits) {
+  uint64_t value = 0;
+  for (size_t bit = 0; bit != bits.size(); ++bit)
+    value |= uint64_t(bits[bit]) << bit;
+  return value;
+}
+
+/// The constraint set a cyclic history belongs to: the compiled program and
+/// its constraint_mode mask. State values are not part of it; their effect is
+/// the legal domain, which changes within one iteration.
+uint64_t cyclicIdentity(const uint8_t *program, size_t size,
+                        uint64_t constraintMask) {
+  uint64_t hash = 0xcbf29ce484222325ull;
+  auto mix = [&](uint8_t byte) {
+    hash ^= byte;
+    hash *= 0x100000001b3ull;
+  };
+  for (size_t index = 0; index != size; ++index)
+    mix(program[index]);
+  for (unsigned byte = 0; byte != 8; ++byte)
+    mix(static_cast<uint8_t>(constraintMask >> (byte * 8)));
+  return hash;
+}
+
+/// Persistent randc state between calls, opaque to the caller. The current
+/// domain's permutation is (key, position) in the request; this holds the
+/// domain it permutes, whether its pass completed, and the values returned
+/// in this iteration under earlier domains.
+struct CyclicHistory {
+  bool present = false;
+  bool complete = false;
+  uint64_t identity = 0;
+  std::vector<uint8_t> segment;
+  std::vector<uint32_t> returned;
+
+  static constexpr uint64_t version = 2;
+
+  bool contains(uint64_t value) const {
+    return std::binary_search(returned.begin(), returned.end(),
+                              static_cast<uint32_t>(value));
+  }
+
+  void insert(uint64_t value) {
+    auto at = std::lower_bound(returned.begin(), returned.end(),
+                               static_cast<uint32_t>(value));
+    if (at == returned.end() || *at != value)
+      returned.insert(at, static_cast<uint32_t>(value));
+  }
+
+  bool read(const uint8_t *bytes, size_t size) {
+    *this = CyclicHistory();
+    if (size == 0)
+      return true;
+    size_t offset = 0;
+    auto take = [&](uint64_t &value, unsigned width) {
+      if (size - offset < width)
+        return false;
+      value = 0;
+      for (unsigned byte = 0; byte != width; ++byte)
+        value |= uint64_t(bytes[offset + byte]) << (byte * 8);
+      offset += width;
+      return true;
+    };
+    uint64_t tag, flag, segmentSize, count;
+    if (!take(tag, 8) || tag != version || !take(identity, 8) ||
+        !take(flag, 8) || flag > 1 || !take(segmentSize, 8) ||
+        segmentSize > size - offset)
+      return false;
+    complete = flag;
+    segment.assign(bytes + offset, bytes + offset + segmentSize);
+    offset += segmentSize;
+    if (!take(count, 8) || count > (size - offset) / 4)
+      return false;
+    returned.resize(count);
+    for (uint32_t &value : returned) {
+      uint64_t word = 0;
+      take(word, 4);
+      value = static_cast<uint32_t>(word);
+    }
+    present = true;
+    return offset == size && std::is_sorted(returned.begin(), returned.end()) &&
+           std::adjacent_find(returned.begin(), returned.end()) ==
+               returned.end();
+  }
+
+  std::vector<uint8_t> write() const {
+    std::vector<uint8_t> bytes;
+    auto put = [&](uint64_t value, unsigned width) {
+      for (unsigned byte = 0; byte != width; ++byte)
+        bytes.push_back(static_cast<uint8_t>(value >> (byte * 8)));
+    };
+    put(version, 8);
+    put(identity, 8);
+    put(complete, 8);
+    put(segment.size(), 8);
+    bytes.insert(bytes.end(), segment.begin(), segment.end());
+    put(returned.size(), 8);
+    for (uint32_t value : returned)
+      put(value, 4);
+    return bytes;
+  }
+
+  /// Rebuild the stored domain's diagram from its ModelCounter snapshot.
+  bool rebuild(BooleanCircuit &circuit, Bits &inputs, ID &root,
+               unsigned width) const {
+    size_t offset = 0;
+    auto take = [&](uint64_t &value) {
+      if (segment.size() - offset < 8)
+        return false;
+      value = 0;
+      for (unsigned byte = 0; byte != 8; ++byte)
+        value |= uint64_t(segment[offset + byte]) << (byte * 8);
+      offset += 8;
+      return true;
+    };
+    uint64_t tag, variables, rootName, count;
+    if (!take(tag) || tag != 1 || !take(variables) || variables != width ||
+        !take(rootName) || !take(count) || count > segment.size() / 24)
+      return false;
+    inputs.clear();
+    for (unsigned bit = 0; bit != width; ++bit)
+      inputs.push_back(circuit.input(PlanOpcode::RandomBit, bit, bit));
+    std::vector<ID> names{0, 1};
+    for (uint64_t node = 0; node != count; ++node) {
+      uint64_t variable, low, high;
+      if (!take(variable) || !take(low) || !take(high) || variable >= width ||
+          low >= names.size() || high >= names.size())
+        return false;
+      names.push_back(
+          circuit.conditional(inputs[variable], names[high], names[low]));
+    }
+    if (rootName >= names.size() || offset != segment.size())
+      return false;
+    root = names[rootName];
+    return true;
+  }
+};
+
 /// Exact weights enumerate the item combinations of coupled distributions.
 /// Beyond this many combinations a solve reports exhausted resources.
 constexpr size_t maxDistributionTerms = size_t{1} << 16;
@@ -212,8 +358,18 @@ public:
       output[words - 1] &= (uint64_t{1} << (width % 64)) - 1;
   }
 
-  SamplerResult cyclic(CyclicSampleRequest &request, unsigned width,
-                       const uint64_t *start, const uint64_t *mutableMask,
+  /// Cyclic sampling (IEEE 1800-2023 18.4.2). An iteration returns each
+  /// legal value at most once and ends when none of the values it has not
+  /// returned satisfies the constraints; a different constraint set (program
+  /// or constraint_mode mask) starts a new one. While the legal domain is
+  /// unchanged, values follow a keyed permutation of its ranks, so the
+  /// history is constant size. When the domain changes, for example because
+  /// a state variable or an earlier cyclic field changed, the values the
+  /// permutation returned move to an explicit list and a new permutation of
+  /// the new domain skips them.
+  SamplerResult cyclic(CyclicSampleRequest &request, uint64_t identity,
+                       unsigned width, const uint64_t *start,
+                       const uint64_t *mutableMask,
                        obelisk_rt_random_state_v1 &state, uint64_t *output) {
     if (request.width == 0 || request.width > 32 || request.offset > width ||
         request.width > width - request.offset)
@@ -240,8 +396,8 @@ public:
       return SamplerResult::Unsatisfiable;
 
     // Rebuild only the projected field in a fixed physical-bit order. The
-    // compiler may choose a different input order for another inline plan;
-    // equal legal domains must still have identical histories and rank maps.
+    // compiler may choose a different input order for another plan; equal
+    // legal domains must still have identical snapshots and rank maps.
     BooleanCircuit domainCircuit;
     Bits domainBits;
     for (unsigned bit = 0; bit != request.width; ++bit)
@@ -258,40 +414,110 @@ public:
     uint64_t cardinality = domain.count().word(0);
     if (!cardinality || cardinality > (uint64_t{1} << request.width))
       return SamplerResult::Invalid;
+    CyclicHistory history;
+    if (!history.read(request.previousDomain, request.previousDomainSize))
+      return SamplerResult::Invalid;
     std::vector<uint8_t> snapshot = domain.domainSnapshot();
-    bool changed =
-        snapshot.size() != request.previousDomainSize ||
-        !std::equal(snapshot.begin(), snapshot.end(), request.previousDomain);
-    uint64_t key = request.key, position = changed ? 0 : request.position;
-    uint64_t rank = 0;
+    uint64_t key = request.key, position = request.position;
     obelisk_rt_random_state_v1 nextState = state;
-    if (cardinality != 1) {
-      unsigned permutationWidth = 0;
-      for (uint64_t remaining = cardinality - 1; remaining; remaining >>= 1)
-        ++permutationWidth;
-      if (position >= (uint64_t{1} << permutationWidth))
-        return SamplerResult::Invalid;
-      do {
-        if (position == 0)
-          key = obelisk_rt_v1_random_state_next64(&nextState);
-        if (obelisk_rt_v1_random_cycle_next(key, position, permutationWidth,
-                                            &position, &rank) != OBELISK_RT_OK)
-          return SamplerResult::Invalid;
-      } while (rank >= cardinality);
-    } else
+    if (!history.present || history.identity != identity) {
+      history = CyclicHistory();
       position = 0;
-    auto value = domain.assignment(ModelCount(rank));
+    } else if (history.segment != snapshot) {
+      // Retire the values the previous domain's permutation returned: its
+      // prefix, or all of its values once a pass completed.
+      BooleanCircuit previousCircuit;
+      Bits previousBits;
+      ID previousRoot;
+      if (!history.rebuild(previousCircuit, previousBits, previousRoot,
+                           request.width))
+        return SamplerResult::Invalid;
+      ModelCounter previous(previousCircuit, previousBits);
+      if (!previous.build(previousRoot))
+        return SamplerResult::Invalid;
+      uint64_t previousCardinality = previous.count().word(0);
+      unsigned previousWidth = permutationWidth(previousCardinality);
+      if (!previousCardinality || (position >> previousWidth) ||
+          (history.complete && position))
+        return SamplerResult::Invalid;
+      uint64_t steps =
+          history.complete ? uint64_t{1} << previousWidth : position;
+      for (uint64_t step = 0; step != steps; ++step) {
+        uint64_t next, rank = 0;
+        if (previousWidth &&
+            obelisk_rt_v1_random_cycle_next(key, step, previousWidth, &next,
+                                            &rank) != OBELISK_RT_OK)
+          return SamplerResult::Invalid;
+        if (rank < previousCardinality)
+          history.insert(fieldValue(previous.assignment(ModelCount(rank))));
+      }
+      position = 0;
+      history.complete = false;
+    } else if (history.complete) {
+      // Every legal value of the unchanged domain was returned.
+      history.returned.clear();
+      history.complete = false;
+    }
+    history.present = true;
+    history.identity = identity;
+    // The iteration ends when every legal value has been returned.
+    if (!history.returned.empty()) {
+      uint64_t returnedLegal = 0;
+      std::vector<bool> bits(request.width);
+      for (uint32_t value : history.returned) {
+        for (unsigned bit = 0; bit != request.width; ++bit)
+          bits[bit] = (value >> bit) & 1;
+        returnedLegal += domain.contains(bits);
+      }
+      if (returnedLegal == cardinality)
+        history.returned.clear();
+    }
+    unsigned permutation = permutationWidth(cardinality);
+    if (position >> permutation)
+      return SamplerResult::Invalid;
+    // Continue the domain's permutation to the next value this iteration has
+    // not returned. A pass that wraps without one ends the iteration.
+    uint64_t value = 0;
+    auto advance = [&](bool &found) {
+      found = false;
+      do {
+        uint64_t rank = 0;
+        if (permutation) {
+          if (position == 0)
+            key = obelisk_rt_v1_random_state_next64(&nextState);
+          if (obelisk_rt_v1_random_cycle_next(key, position, permutation,
+                                              &position,
+                                              &rank) != OBELISK_RT_OK)
+            return false;
+          if (rank >= cardinality)
+            continue;
+        }
+        value = fieldValue(domain.assignment(ModelCount(rank)));
+        found = !history.contains(value);
+      } while (!found && position != 0);
+      return true;
+    };
+    bool found;
+    if (!advance(found))
+      return SamplerResult::Invalid;
+    if (!found) {
+      history.returned.clear();
+      if (!advance(found) || !found)
+        return SamplerResult::Invalid;
+    }
+    history.complete = position == 0;
     size_t words = (uint64_t(width) + 63) / 64;
     std::copy_n(start, words, output);
     for (unsigned bit = 0; bit != request.width; ++bit) {
       unsigned physical = request.offset + bit;
       uint64_t mask = uint64_t{1} << (physical % 64);
       output[physical / 64] =
-          (output[physical / 64] & ~mask) | (value[bit] ? mask : 0);
+          (output[physical / 64] & ~mask) | (((value >> bit) & 1) ? mask : 0);
     }
+    history.segment = std::move(snapshot);
     request.key = key;
     request.position = position;
-    request.domain = std::move(snapshot);
+    request.domain = history.write();
     state = nextState;
     return SamplerResult::Satisfiable;
   }
@@ -868,6 +1094,7 @@ SamplerResult sampleRandomPlan(
   random::SamplerPlanView plan;
   if (!random::readSamplerPlan(program, programSize, captureWidths, plan))
     return SamplerResult::Invalid;
+  size_t fullProgramSize = programSize;
   programSize = plan.coreSize;
   bool wide = read16(program + 4) == OBELISK_RT_RANDOM_PROGRAM_VERSION_V2;
   unsigned header = wide ? OBELISK_RT_RANDOM_PROGRAM_HEADER_SIZE_V2
@@ -1188,8 +1415,9 @@ SamplerResult sampleRandomPlan(
                      : distributionGuards[groupIndex];
       f.require(circuit.disjunction(guard ^ 1, support));
     }
-    return f.cyclic(*cyclic, width, start, mutableMask, *randomState,
-                    assignment);
+    return f.cyclic(*cyclic,
+                    cyclicIdentity(program, fullProgramSize, constraintMask),
+                    width, start, mutableMask, *randomState, assignment);
   }
   if (functionPriority) {
     size_t offset = literals + (wide ? size_t(read32(program + 24)) * 8 : 0);

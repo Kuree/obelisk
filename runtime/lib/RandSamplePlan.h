@@ -21,6 +21,8 @@ enum class SamplerResult {
 
 /// Tentative history for one cyclic stage. The caller owns persistence and
 /// publishes the next history only after every randomization stage succeeds.
+/// `key` and `position` index the current domain's permutation; the opaque
+/// `domain` bytes record that domain and the iteration's earlier values.
 struct CyclicSampleRequest {
   uint32_t offset, width;
   uint64_t key, position;
