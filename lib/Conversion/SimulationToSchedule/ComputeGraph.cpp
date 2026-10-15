@@ -375,6 +375,13 @@ SmallVector<ComputeEffect> collectDirectEffects(const FunctionInfo &info,
           appendEffect(info, schedule::ComputeEffectKind::Read, op.getNet(),
                        effects);
         })
+        .Case<sim::SimSampledReadOp>([&](auto op) {
+          // IEEE 1800-2023 16.5.1: a sampled value is the source's published
+          // state at the start of the time slot, so the source stays a read
+          // root even though the read itself consults the Preponed snapshot.
+          appendEffect(info, schedule::ComputeEffectKind::Read, op.getSource(),
+                       effects);
+        })
         .Case<sim::SimDriverDriveOp>([&](auto op) {
           appendEffect(info, schedule::ComputeEffectKind::Drive, op.getDriver(),
                        effects);

@@ -36,6 +36,7 @@ module {
     simulation.code_unit.decl 9000012 in 0 observer hierarchy "test.graph.observer_primary.9000012"
     simulation.code_unit.decl 9000013 in 0 observer hierarchy "test.graph.observer_condition_effect.9000013"
     simulation.code_unit.decl 9000014 in 0 initial hierarchy "test.graph.observer_effect_waiter.9000014"
+    simulation.code_unit.decl 9000015 in 0 initial hierarchy "test.graph.z_sampled_reader.9000015"
     simulation.scope.decl 0
     simulation.storage.decl 0 in 0 : !simulation.logic<16> design
     simulation.storage.decl 1 in 0 : !simulation.logic<8> design
@@ -255,6 +256,18 @@ module {
       // CHECK-SAME: site = #schedule.nba_site<id = 5, commit = [[COMMIT]], storage = dynamic_frontier, timing = <id = 3, kind = delayed_nba>>
       simulation.nba.enqueue %value to %result after %delay : (!simulation.logic<8>, !simulation.ref<!simulation.logic<8>>, !simulation.time) -> ()
       simulation.suspend.delay %tick to ^loop
+    }
+
+    // IEEE 1800-2023 16.5.1: a sampled read consults the Preponed snapshot of
+    // its source, which keeps the source a read root of the reader.
+    // CHECK-LABEL: simulation.func @z_sampled_reader
+    // CHECK-SAME: effect_summary = [#schedule.effect<effect = read, resource = storage, target = descriptor, descriptor = 2, formal = 0, low = 0, width = 1
+    simulation.func @z_sampled_reader(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %bit: !simulation.ref<!simulation.logic<1>> {simulation.capture_kind = 3 : i32, simulation.descriptor_id = 2 : i64})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9000015 : i64} {
+      %sampled = simulation.assert.sampled_read %ctx from %bit : (!simulation.context, !simulation.ref<!simulation.logic<1>>) -> !simulation.logic<1>
+      simulation.return
     }
   }
 }
