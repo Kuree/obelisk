@@ -83,7 +83,9 @@ module native_associative_array_core;
   // CHECK-NEXT: default-eq=1 reads=1/2
   // CHECK-NEXT: key-delete='{-4:
   // CHECK-SAME: missing=7
-  // CHECK-NEXT: whole-delete='{} missing=x
+  // IEEE 1800-2023 7.9.2, 7.9.11: delete() removes the elements, not the
+  // default.
+  // CHECK-NEXT: whole-delete='{} missing=7
   // CHECK-NEXT: nba='{-1:
   // CHECK-SAME: caseeq=1
   // SLANG: slang.expression.structured_assignment_pattern

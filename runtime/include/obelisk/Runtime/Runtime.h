@@ -3044,6 +3044,8 @@ obelisk_rt_status obelisk_rt_v2_recursive_export_bitstream(
     void *out_unknown, uint64_t output_plane_size, uint64_t output_bit_width,
     uint32_t output_four_state, uint32_t observe, uint32_t *out_matched,
     uint64_t *out_watch);
+// Remove every element. An associative array keeps its user-specified
+// default (IEEE 1800-2023 7.9.11).
 obelisk_rt_status
 obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container);
 obelisk_rt_status obelisk_rt_v1_queue_push(obelisk_rt_gc_lane_v1 *lane,

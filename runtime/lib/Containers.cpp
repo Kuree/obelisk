@@ -5533,10 +5533,11 @@ obelisk_rt_v1_container_delete(obelisk_rt_object_v1 *container) {
                       SequentialReferenceMutation::Clear, 0);
         if (references != OBELISK_RT_OK)
           return references;
+        // IEEE 1800-2023 7.9.2 and 7.9.11: delete() removes every element,
+        // but an associative array's default is not an element and keeps
+        // supplying nonexistent-element reads.
         header->buffer = nullptr;
         header->ordered = nullptr;
-        header->defaultValue = nullptr;
-        header->hasDefault = 0;
         header->size = 0;
         header->capacity = 0;
         header->head = 0;

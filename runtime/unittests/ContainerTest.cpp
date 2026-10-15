@@ -1853,11 +1853,16 @@ TEST_F(ManagedValueTest,
   ASSERT_EQ(obelisk_rt_v1_assoc_read(copy, &missing, &value, nullptr, &present),
             OBELISK_RT_OK);
   EXPECT_EQ(value, fallback);
+  // IEEE 1800-2023 7.9.2 and 7.9.11: delete() removes the elements but not
+  // the default.
   ASSERT_EQ(obelisk_rt_v1_container_delete(copy), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(copy), 0u);
   value = UINT64_MAX;
-  ASSERT_EQ(obelisk_rt_v1_assoc_read(copy, &missing, &value, nullptr, &present),
-            OBELISK_RT_OK);
-  EXPECT_EQ(value, 0u);
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(copy, &explicitKey, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
+  EXPECT_EQ(value, fallback);
 
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
