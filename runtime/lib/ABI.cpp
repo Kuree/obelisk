@@ -1763,6 +1763,10 @@ ABI_FUNCTION(obelisk_rt_v1_scheduler_managed_nba,
              obelisk_rt_status (*)(obelisk_rt_context *, obelisk_rt_object_v1 *,
                                    uint64_t, const void *, const void *,
                                    uint64_t, uint64_t));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_managed_nba_masked,
+             obelisk_rt_status (*)(obelisk_rt_context *, obelisk_rt_object_v1 *,
+                                   uint64_t, const void *, const void *,
+                                   const void *, uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_signal,
              void (*)(obelisk_rt_context *, uint64_t, uint64_t, uint32_t));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_signal_transition,

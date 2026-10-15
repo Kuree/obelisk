@@ -3976,10 +3976,11 @@ obelisk_rt_v1_object_release_override(obelisk_rt_object_v1 *object,
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
-extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
-    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
-    uint64_t offset, const void *value, const void *unknown, uint64_t planeSize,
-    uint64_t delay) {
+static obelisk_rt_status
+scheduleManagedNBA(obelisk_rt_context *context,
+                   obelisk_rt_object_v1 *destination, uint64_t offset,
+                   const void *value, const void *unknown, const void *mask,
+                   uint64_t planeSize, uint64_t delay) {
   ManagedHeap *heap = heapFor(context);
   ObjectMetadata *destinationMetadata = metadataFor(destination);
   bool referencePath =
@@ -4006,8 +4007,17 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
         referenceElement->kind == OBELISK_RT_ELEMENT_STRING ||
         referenceElement->kind == OBELISK_RT_ELEMENT_CLASS_HANDLE ||
         referenceElement->kind == OBELISK_RT_ELEMENT_CONTAINER_HANDLE;
+    // The NBA carries whole planes; a packed element's exact width occupies
+    // the low bits of its value size.
+    uint64_t bitWidth =
+        referenceElement->kind == OBELISK_RT_ELEMENT_BITS ||
+                referenceElement->kind == OBELISK_RT_ELEMENT_LOGIC
+            ? referenceElement->bit_width
+            : planeSize * 8;
+    if (mask && managed)
+      return OBELISK_RT_INVALID_ARGUMENT;
     obelisk_rt_status shape = obelisk_rt_reference_path_shape(
-        destination, planeSize, planeSize * 8, unknown != nullptr, managed);
+        destination, planeSize, bitWidth, unknown != nullptr, managed);
     if (shape != OBELISK_RT_OK)
       return shape;
   }
@@ -4073,6 +4083,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
       update.unknown.assign(static_cast<const uint8_t *>(unknown),
                             static_cast<const uint8_t *>(unknown) +
                                 static_cast<size_t>(planeSize));
+    if (mask)
+      update.mask.assign(static_cast<const uint8_t *>(mask),
+                         static_cast<const uint8_t *>(mask) +
+                             static_cast<size_t>(planeSize));
     // Keep `referents` intact until publication succeeds so exception
     // rollback can release every scheduled root.
     update.managedValues = referents;
@@ -4116,6 +4130,24 @@ extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
   }
 }
 
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
+    uint64_t offset, const void *value, const void *unknown, uint64_t planeSize,
+    uint64_t delay) {
+  return scheduleManagedNBA(context, destination, offset, value, unknown,
+                            nullptr, planeSize, delay);
+}
+
+extern "C" obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba_masked(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
+    uint64_t offset, const void *value, const void *unknown, const void *mask,
+    uint64_t planeSize, uint64_t delay) {
+  if (!mask)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  return scheduleManagedNBA(context, destination, offset, value, unknown, mask,
+                            planeSize, delay);
+}
+
 obelisk_rt_status
 obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
                              const ScheduledManagedNBA &update) {
@@ -4132,32 +4164,69 @@ obelisk_rt_apply_managed_nba(obelisk_rt_context *context,
            ? destination->kind != OBELISK_RT_MANAGED_REFERENCE_PATH
            : destination->kind != OBELISK_RT_MANAGED_CLASS) ||
       destination->heap != heap || update.value.size() != update.planeSize ||
-      (!update.unknown.empty() && update.unknown.size() != update.planeSize)) {
+      (!update.unknown.empty() && update.unknown.size() != update.planeSize) ||
+      (!update.mask.empty() && update.mask.size() != update.planeSize)) {
     status = OBELISK_RT_INVALID_HANDLE;
   } else if (update.referencePath) {
     obelisk_rt_gc_lane_v1 *lane = managedExecution.getLane();
-    status = lane
-                 ? obelisk_rt_v1_reference_path_store(
-                       lane, update.destination, update.value.data(),
-                       update.unknown.empty() ? nullptr : update.unknown.data())
-                 : OBELISK_RT_INVALID_LIFECYCLE;
+    const uint8_t *value = update.value.data();
+    const uint8_t *unknown =
+        update.unknown.empty() ? nullptr : update.unknown.data();
+    // IEEE 1800-2023 10.4.2: a partial update of the element merges into its
+    // value at commit; an absent element contributes its default.
+    std::vector<uint8_t> merged;
+    if (!update.mask.empty() && lane) {
+      OBELISK_RT_TRY {
+        merged.assign(update.value.size() + update.unknown.size(), 0);
+        uint32_t present = 0;
+        status = obelisk_rt_v1_reference_path_load(
+            update.destination, merged.data(),
+            unknown ? merged.data() + update.planeSize : nullptr, &present);
+        auto mergePlane = [&](uint8_t *plane, const uint8_t *next) {
+          for (size_t index = 0; index != update.planeSize; ++index)
+            plane[index] =
+                static_cast<uint8_t>((plane[index] & ~update.mask[index]) |
+                                     (next[index] & update.mask[index]));
+        };
+        mergePlane(merged.data(), value);
+        if (unknown)
+          mergePlane(merged.data() + update.planeSize, unknown);
+        value = merged.data();
+        if (unknown)
+          unknown = merged.data() + update.planeSize;
+      }
+      OBELISK_RT_CATCH(const std::bad_alloc &) {
+        status = OBELISK_RT_OUT_OF_MEMORY;
+      }
+    }
+    if (status == OBELISK_RT_OK)
+      status = lane ? obelisk_rt_v1_reference_path_store(
+                          lane, update.destination, value, unknown)
+                    : OBELISK_RT_INVALID_LIFECYCLE;
   } else {
     bool changed = false;
     {
       ObjectLock lock(destination);
       uint8_t *base = reinterpret_cast<uint8_t *>(update.destination);
-      changed = std::memcmp(base + update.offset, update.value.data(),
-                            static_cast<size_t>(update.planeSize)) != 0;
+      // IEEE 1800-2023 10.4.2: a partial update merges its bits into the
+      // property's value at commit, so other updates in the slot survive.
+      auto commitPlane = [&](uint8_t *plane, const std::vector<uint8_t> &next) {
+        if (update.mask.empty()) {
+          changed |= std::memcmp(plane, next.data(), next.size()) != 0;
+          std::memcpy(plane, next.data(), next.size());
+          return;
+        }
+        for (size_t index = 0; index != next.size(); ++index) {
+          uint8_t byte =
+              static_cast<uint8_t>((plane[index] & ~update.mask[index]) |
+                                   (next[index] & update.mask[index]));
+          changed |= plane[index] != byte;
+          plane[index] = byte;
+        }
+      };
+      commitPlane(base + update.offset, update.value);
       if (!update.unknown.empty())
-        changed |= std::memcmp(base + update.offset + update.planeSize,
-                               update.unknown.data(),
-                               static_cast<size_t>(update.planeSize)) != 0;
-      std::memcpy(base + update.offset, update.value.data(),
-                  static_cast<size_t>(update.planeSize));
-      if (!update.unknown.empty())
-        std::memcpy(base + update.offset + update.planeSize,
-                    update.unknown.data(),
-                    static_cast<size_t>(update.planeSize));
+        commitPlane(base + update.offset + update.planeSize, update.unknown);
     }
     if (changed)
       obelisk_rt_notify_managed_watch(

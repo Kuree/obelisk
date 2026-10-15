@@ -1385,6 +1385,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK = UINT32_C(0x00010485),
   OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE = UINT32_C(0x00010486),
   OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT = UINT32_C(0x00010487),
+  OBELISK_RT_INTRINSIC_V1_MANAGED_NBA_MASKED = UINT32_C(0x00010488),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -4218,6 +4219,14 @@ obelisk_rt_status obelisk_rt_v1_scheduler_string_nba(
 obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba(
     obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
     uint64_t offset, const void *value, const void *unknown,
+    uint64_t plane_size, uint64_t delay);
+// Schedule a partial update of a class property, or of a reference-path
+// element when `offset` is UINT64_MAX: at commit, only the bits set in the
+// `plane_size` byte `mask` take their values (and unknown bits) from `value`
+// and `unknown`; the others keep the destination's value then.
+obelisk_rt_status obelisk_rt_v1_scheduler_managed_nba_masked(
+    obelisk_rt_context *context, obelisk_rt_object_v1 *destination,
+    uint64_t offset, const void *value, const void *unknown, const void *mask,
     uint64_t plane_size, uint64_t delay);
 // Record a changed native-state range. `edges` is a bitmask of the edge kinds
 // observed on the range's least-significant bit. Signal-width wait records use

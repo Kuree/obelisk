@@ -414,6 +414,29 @@ private:
   insertCapturedPackedSlice(const CapturedLValue &selection, ::mlir::Value base,
                             ::mlir::Value replacement,
                             ::mlir::Location location);
+  /// Zero or all-ones (in known bits) value of a fixed-bit-layout type.
+  ::mlir::FailureOr<::mlir::Value>
+  createFixedBitConstant(::mlir::Type type, bool ones,
+                         ::mlir::Location location);
+  /// Reference path to the element of the unpacked-array storage `base` at
+  /// source index `index`.
+  ::mlir::FailureOr<::mlir::Value>
+  createAggregateElementPath(const CapturedLValue &base, ::mlir::Value index,
+                             ::mlir::Location location);
+  /// The class property, or the element of an unpacked-array property, under
+  /// a chain of fixed selections ending at `destination`; `levels` collects
+  /// the selections from `destination` upward. Null for any other target.
+  static const CapturedLValue *getClassBackedSelectionRoot(
+      const CapturedLValue &destination,
+      ::llvm::SmallVectorImpl<const CapturedLValue *> &levels);
+  /// Whether `destination` is a fixed selection of class-backed storage.
+  static bool isClassBackedSelection(const CapturedLValue &destination);
+  /// Enqueue a nonblocking update of a fixed selection of class-backed storage
+  /// as a masked merge at commit.
+  ::mlir::LogicalResult
+  enqueueClassBackedSelectionNBA(const CapturedLValue &destination,
+                                 ::mlir::Value value, ::mlir::Location location,
+                                 ::mlir::Value delay);
   struct CovergroupOptionOwner {
     ::mlir::Operation *receiver;
     ::mlir::Operation *item = nullptr;

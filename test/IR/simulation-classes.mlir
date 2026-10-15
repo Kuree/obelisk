@@ -179,6 +179,8 @@ module {
       %delay = simulation.time.constant 2
       simulation.managed.nba.enqueue %one to %field after %delay :
         (i64, !simulation.managed_ref<i64, @Base>, !simulation.time) -> ()
+      simulation.managed.nba.enqueue_masked %one to %field mask %one :
+        (i64, !simulation.managed_ref<i64, @Base>, i64) -> ()
       %direct = simulation.class.direct_call @base_get %base() :
         (!simulation.class_handle<@Base>) -> i64
       %virtual = simulation.class.virtual_call
@@ -220,6 +222,7 @@ module {
 // CHECK: simulation.class.method @Base_get of @Base slot 0
 // CHECK: !simulation.class_handle<@Derived>
 // CHECK: simulation.managed.nba.enqueue
+// CHECK: simulation.managed.nba.enqueue_masked %{{.*}} to %{{.*}} mask %{{.*}} :
 // CHECK: simulation.class.virtual_call
 // CHECK: simulation.gc.safepoint
 // CHECK: simulation.class.virtual_task_call

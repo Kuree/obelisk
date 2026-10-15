@@ -879,6 +879,13 @@ bool validIntrinsic(const Image &image, const Function &function,
            (managedRef(input(0)) || managed(input(0))) &&
            managedValue(input(1)) && twoStateBits(input(2), 64) &&
            (site.inputCount == 3 || twoStateBits(input(3), 64));
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA_MASKED:
+    // Destination, positioned value, plane size, positioned mask, delay.
+    return signature.flags == 0 && site.inputCount == 5 &&
+           site.outputCount == 0 &&
+           (managedRef(input(0)) || managed(input(0))) && numeric(input(1)) &&
+           twoStateBits(input(2), 64) && numeric(input(3)) &&
+           input(3)->width == input(1)->width && twoStateBits(input(4), 64);
   case OBELISK_RT_INTRINSIC_V1_ARGUMENT_REF_FROM_REF:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && handle(input(0)) && argumentRef(output(0));

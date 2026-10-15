@@ -1147,6 +1147,7 @@ NativeAOTAnalysis NativeAOTAnalysis::compute(ModuleOp module) {
       requireBytecodeFragment(operation, "force/release state is present");
       excludeBytecodeActor(operation);
     } else if (isa<sim::SimManagedNBAEnqueueOp,
+                   sim::SimManagedNBAEnqueueMaskedOp,
                    sim::SimReferencePathNBAEnqueueOp>(operation)) {
       requireBytecodeFragment(operation,
                               "managed or automatic NBA destination");

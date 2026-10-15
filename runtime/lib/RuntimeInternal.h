@@ -933,6 +933,8 @@ struct ScheduledManagedNBA {
   bool referencePath = false;
   std::vector<uint8_t> value;
   std::vector<uint8_t> unknown;
+  // Empty for a whole-property update; otherwise the bits it replaces.
+  std::vector<uint8_t> mask;
   std::vector<obelisk_rt_object_v1 *> managedValues;
 };
 

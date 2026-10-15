@@ -3255,6 +3255,34 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_scheduler_managed_nba(context, object, offset, value,
                                                unknown, *planeSize, delay);
   }
+  case OBELISK_RT_INTRINSIC_V1_MANAGED_NBA_MASKED: {
+    obelisk_rt_object_v1 *object = nullptr;
+    uint64_t offset = 0;
+    auto planeSize = scalar(2);
+    auto delay = scalar(4);
+    // A reference-path destination names its element without a field offset.
+    if (layoutAt(image, frame.function, inputRegister(0)).kind ==
+        OBELISK_RT_DBREG_MANAGED) {
+      object = readManaged(inputRegister(0));
+      offset = UINT64_MAX;
+    } else if (!readManagedRef(inputRegister(0), object, offset)) {
+      return OBELISK_RT_INVALID_BYTECODE;
+    }
+    if (!planeSize || *planeSize == 0 || !delay)
+      return OBELISK_RT_INVALID_BYTECODE;
+    Layout input = layoutAt(image, frame.function, inputRegister(1));
+    Layout mask = layoutAt(image, frame.function, inputRegister(3));
+    uint64_t scratchPlaneSize = ((uint64_t{input.width} + 63) / 64) * 8;
+    bool fourState = input.kind == OBELISK_RT_DBREG_LOGIC;
+    if (*planeSize > scratchPlaneSize ||
+        input.size != scratchPlaneSize * (fourState ? 2 : 1) ||
+        mask.width != input.width)
+      return OBELISK_RT_INVALID_BYTECODE;
+    return obelisk_rt_v1_scheduler_managed_nba_masked(
+        context, object, offset, frame.data + input.offset,
+        fourState ? frame.data + input.offset + scratchPlaneSize : nullptr,
+        frame.data + mask.offset, *planeSize, *delay);
+  }
   case OBELISK_RT_INTRINSIC_V1_WEAK_CREATE: {
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)

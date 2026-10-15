@@ -2447,6 +2447,35 @@ LogicalResult SimManagedNBAEnqueueOp::verify() {
   return success();
 }
 
+// Packed and real values, and unpacked structs and arrays of them, which a
+// mask covers.
+static bool hasFixedBitLayout(Type type) {
+  if (getPackedWidth(type) || isa<Float32Type, Float64Type>(type))
+    return true;
+  if (auto array = dyn_cast<UnpackedArrayType>(type))
+    return hasFixedBitLayout(array.getElementType());
+  if (!isa<UnpackedStructType>(type))
+    return false;
+  for (unsigned index = 0, count = getAggregateNumElements(type);
+       index != count; ++index)
+    if (!hasFixedBitLayout(getAggregateElementType(type, index)))
+      return false;
+  return true;
+}
+
+LogicalResult SimManagedNBAEnqueueMaskedOp::verify() {
+  Type element = TypeSwitch<Type, Type>(getDestination().getType())
+                     .Case<ManagedRefType, ReferencePathType>(
+                         [](auto type) { return type.getElementType(); })
+                     .Default([](Type) { return Type{}; });
+  if (element != getValue().getType())
+    return emitOpError("value type must match the referenced element");
+  if (getMask().getType() != getValue().getType() ||
+      !hasFixedBitLayout(getValue().getType()))
+    return emitOpError("mask must have the value's fixed-layout type");
+  return success();
+}
+
 LogicalResult SimReferencePathNBAEnqueueOp::verify() {
   if (getDestination().getType().getElementType() != getValue().getType())
     return emitOpError("value type must match the referenced element");

@@ -385,6 +385,13 @@ void declareNativeRuntimeABI(ModuleOp module) {
        LLVM::LLVMPointerType::get(context), IntegerType::get(context, 64),
        IntegerType::get(context, 64)});
   getOrDeclareLLVMFunction(
+      module, "obelisk_rt_v1_scheduler_managed_nba_masked",
+      IntegerType::get(context, 32),
+      {LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       IntegerType::get(context, 64), LLVM::LLVMPointerType::get(context),
+       LLVM::LLVMPointerType::get(context), LLVM::LLVMPointerType::get(context),
+       IntegerType::get(context, 64), IntegerType::get(context, 64)});
+  getOrDeclareLLVMFunction(
       module, "obelisk_rt_v1_scheduler_fail", LLVM::LLVMVoidType::get(context),
       {LLVM::LLVMPointerType::get(context), IntegerType::get(context, 32)});
   getOrDeclareLLVMFunction(

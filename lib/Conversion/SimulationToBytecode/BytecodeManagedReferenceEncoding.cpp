@@ -213,6 +213,18 @@ Encoder::encodeManagedReferenceOperation(FunctionPlan &plan,
       inputs.push_back(reg(plan, op.getDelay()));
     return emitIntrinsicRegisters(plan, kIntrinsicManagedNBA, inputs, {});
   }
+  if (auto op = dyn_cast<sim::SimManagedNBAEnqueueMaskedOp>(operation)) {
+    FailureOr<ManagedValueStorage> storage =
+        getManagedValueStorage(op.getValue().getType(), dataLayout);
+    if (failed(storage))
+      return op.emitOpError("managed NBA value has no bytecode field layout");
+    return emitIntrinsicRegisters(
+        plan, kIntrinsicManagedNBAMasked,
+        {reg(plan, op.getDestination()), reg(plan, op.getValue()),
+         emitU64Constant(plan, storage->planeSize), reg(plan, op.getMask()),
+         op.getDelay() ? reg(plan, op.getDelay()) : emitU64Constant(plan, 0)},
+        {});
+  }
   if (auto op = dyn_cast<sim::SimReferencePathNBAEnqueueOp>(operation)) {
     FailureOr<ManagedValueStorage> storage =
         getManagedValueStorage(op.getValue().getType(), dataLayout);

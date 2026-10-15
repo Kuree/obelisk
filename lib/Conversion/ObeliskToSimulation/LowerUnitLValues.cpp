@@ -36,6 +36,23 @@ static bool containsSequentialContainer(Type type) {
   return false;
 }
 
+// Whether `type` has a fixed bit layout whose zero and all-ones values are
+// constructible: packed and real values, and unpacked structs and arrays of
+// them.
+static bool hasFixedBitLayout(Type type) {
+  if (sim::getPackedWidth(type) || isa<Float32Type, Float64Type>(type))
+    return true;
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    return hasFixedBitLayout(array.getElementType());
+  if (!isa<sim::UnpackedStructType>(type))
+    return false;
+  for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+       index != count; ++index)
+    if (!hasFixedBitLayout(sim::getAggregateElementType(type, index)))
+      return false;
+  return true;
+}
+
 static bool isUserNetDriver(Value value) {
   while (value) {
     if (auto argument = dyn_cast<BlockArgument>(value)) {
@@ -1046,6 +1063,189 @@ UnitLowering::insertCapturedPackedSlice(const CapturedLValue &selection,
   return updated;
 }
 
+const UnitLowering::CapturedLValue *UnitLowering::getClassBackedSelectionRoot(
+    const CapturedLValue &destination,
+    SmallVectorImpl<const CapturedLValue *> &levels) {
+  auto isManagedField = [](const CapturedLValue &node) {
+    return node.kind == CapturedLValue::Kind::Reference &&
+           isa<sim::ManagedRefType>(node.reference.getType());
+  };
+  const CapturedLValue *root = &destination;
+  while (!isManagedField(*root)) {
+    if (root->children.size() != 1)
+      return nullptr;
+    const CapturedLValue &parent = root->children.front();
+    if ((root->kind == CapturedLValue::Kind::AggregateElement ||
+         root->kind == CapturedLValue::Kind::AggregateDynamicElement) &&
+        isa<sim::UnpackedArrayType>(parent.type))
+      return isManagedField(parent) ? root : nullptr;
+    bool selection = root->kind == CapturedLValue::Kind::PackedValueSlice &&
+                     sim::getPackedWidth(parent.type);
+    bool member = root->kind == CapturedLValue::Kind::AggregateElement &&
+                  hasFixedBitLayout(parent.type);
+    if (!selection && !member)
+      return nullptr;
+    levels.push_back(root);
+    root = &parent;
+  }
+  return root;
+}
+
+bool UnitLowering::isClassBackedSelection(const CapturedLValue &destination) {
+  SmallVector<const CapturedLValue *> levels;
+  return hasFixedBitLayout(destination.type) &&
+         getClassBackedSelectionRoot(destination, levels) && !levels.empty();
+}
+
+FailureOr<Value> UnitLowering::createFixedBitConstant(Type type, bool ones,
+                                                      Location location) {
+  if (Type scalar = sim::getPackedScalarType(type)) {
+    unsigned width = *sim::getPackedWidth(scalar);
+    APInt bits = ones ? APInt::getAllOnes(width) : APInt(width, 0);
+    Value value;
+    if (auto integer = dyn_cast<IntegerType>(scalar)) {
+      value = arith::ConstantOp::create(builder, location, integer,
+                                        builder.getIntegerAttr(integer, bits));
+    } else if (auto logic = dyn_cast<sim::LogicType>(scalar)) {
+      Type plane = builder.getIntegerType(width);
+      value = sim::SimLogicConstantOp::create(
+          builder, location, logic, builder.getIntegerAttr(plane, bits),
+          builder.getIntegerAttr(plane, APInt(width, 0)));
+    } else {
+      return failure();
+    }
+    if (scalar == type)
+      return value;
+    return convert(value, type, false, location);
+  }
+  if (auto real = dyn_cast<FloatType>(type)) {
+    unsigned width = real.getWidth();
+    APFloat bits(real.getFloatSemantics(),
+                 ones ? APInt::getAllOnes(width) : APInt(width, 0));
+    return Value(arith::ConstantOp::create(builder, location, real,
+                                           builder.getFloatAttr(real, bits)));
+  }
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+    FailureOr<Value> element =
+        createFixedBitConstant(array.getElementType(), ones, location);
+    if (failed(element))
+      return failure();
+    return Value(
+        sim::SimAggregateSplatOp::create(builder, location, type, *element));
+  }
+  if (!isa<sim::UnpackedStructType>(type))
+    return failure();
+  SmallVector<Value> elements;
+  for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+       index != count; ++index) {
+    FailureOr<Value> element = createFixedBitConstant(
+        sim::getAggregateElementType(type, index), ones, location);
+    if (failed(element))
+      return failure();
+    elements.push_back(*element);
+  }
+  return Value(
+      sim::SimAggregateConstructOp::create(builder, location, type, elements));
+}
+
+FailureOr<Value>
+UnitLowering::createAggregateElementPath(const CapturedLValue &base,
+                                         Value index, Location location) {
+  auto array = dyn_cast<sim::UnpackedArrayType>(base.type);
+  if (!array || base.kind != CapturedLValue::Kind::Reference)
+    return failure();
+  FailureOr<Value> owner =
+      toArgumentReference(base.reference, base.type, location);
+  FailureOr<ContainerElementDescriptor> descriptor =
+      describeContainerElement(array.getElementType(), location);
+  std::optional<uint64_t> span = sim::getArrayElementStorageStride(array);
+  if (failed(owner) || failed(descriptor) || !span || *span == 0)
+    return failure();
+  FailureOr<Value> position =
+      convert(index, builder.getI64Type(), true, location, true);
+  if (failed(position))
+    return failure();
+  Type pathType = sim::ReferencePathType::get(function.getContext(),
+                                              array.getElementType());
+  return Value(sim::SimReferencePathAggregateElementOp::create(
+      builder, location, pathType, function.getBody().front().getArgument(0),
+      *owner, *position, array.getLeft(), array.getRight(), *span,
+      descriptor->typeID, descriptor->kind, descriptor->flags,
+      descriptor->valueSize, descriptor->alignment, descriptor->bitWidth,
+      builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+      builder.getDenseI32ArrayAttr(descriptor->traceKinds)));
+}
+
+LogicalResult
+UnitLowering::enqueueClassBackedSelectionNBA(const CapturedLValue &destination,
+                                             Value value, Location location,
+                                             Value delay) {
+  // IEEE 1800-2023 10.4.2: a nonblocking assignment updates only its selected
+  // target when it commits. Class-backed storage has no interior reference, so
+  // position the value and the bits it covers in the class property, or in an
+  // element of an unpacked-array property, and merge them at commit.
+  SmallVector<const CapturedLValue *> levels;
+  const CapturedLValue *root = getClassBackedSelectionRoot(destination, levels);
+  if (!root || levels.empty())
+    return failure();
+
+  Value patch = value;
+  FailureOr<Value> mask =
+      createFixedBitConstant(patch.getType(), true, location);
+  if (failed(mask))
+    return failure();
+  for (const CapturedLValue *level : levels) {
+    Type parentType = level->children.front().type;
+    FailureOr<Value> zero = createFixedBitConstant(parentType, false, location);
+    if (failed(zero))
+      return failure();
+    if (level->kind == CapturedLValue::Kind::AggregateElement) {
+      patch = sim::SimAggregateInsertOp::create(builder, location, parentType,
+                                                *zero, patch, level->ordinal);
+      mask = Value(sim::SimAggregateInsertOp::create(
+          builder, location, parentType, *zero, *mask, level->ordinal));
+      continue;
+    }
+    FailureOr<Value> base = toPackedScalar(*zero, location);
+    FailureOr<Value> patchBits = toPackedScalar(patch, location);
+    FailureOr<Value> maskBits = toPackedScalar(*mask, location);
+    if (failed(base) || failed(patchBits) || failed(maskBits))
+      return failure();
+    FailureOr<Value> positioned =
+        insertCapturedPackedSlice(*level, *base, *patchBits, location);
+    FailureOr<Value> positionedMask =
+        insertCapturedPackedSlice(*level, *base, *maskBits, location);
+    if (failed(positioned) || failed(positionedMask))
+      return failure();
+    FailureOr<Value> typed = convert(*positioned, parentType, false, location);
+    mask = convert(*positionedMask, parentType, false, location);
+    if (failed(typed) || failed(mask))
+      return failure();
+    patch = *typed;
+  }
+
+  Value target = root->reference;
+  if (root->kind != CapturedLValue::Kind::Reference) {
+    Value index = root->index;
+    if (root->kind == CapturedLValue::Kind::AggregateElement) {
+      auto array = cast<sim::UnpackedArrayType>(root->children.front().type);
+      int64_t sourceIndex = array.getLeft() <= array.getRight()
+                                ? array.getLeft() + root->ordinal
+                                : array.getLeft() - root->ordinal;
+      index = arith::ConstantOp::create(builder, location, builder.getI64Type(),
+                                        builder.getI64IntegerAttr(sourceIndex));
+    }
+    FailureOr<Value> path =
+        createAggregateElementPath(root->children.front(), index, location);
+    if (failed(path))
+      return failure();
+    target = *path;
+  }
+  sim::SimManagedNBAEnqueueMaskedOp::create(builder, location, patch, target,
+                                            *mask, delay);
+  return success();
+}
+
 LogicalResult UnitLowering::writeCapturedLValue(
     CapturedLValue &destination, Value value, bool sourceSigned,
     bool nonblocking, Location location, Value delay, StoredValue stored) {
@@ -1890,6 +2090,9 @@ LogicalResult UnitLowering::writeCapturedLValue(
     if (failed(replacement))
       return failure();
 
+    if (nonblocking && isClassBackedSelection(destination))
+      return enqueueClassBackedSelectionNBA(destination, *converted, location,
+                                            delay);
     if (nonblocking) {
       // Position both patch bits and their write mask through the captured
       // selection chain. No option read belongs to the enqueueing region:
@@ -2330,6 +2533,15 @@ LogicalResult UnitLowering::writeCapturedLValue(
                                    location, delay, stored);
       }
     }
+    if (nonblocking && isClassBackedSelection(destination)) {
+      FailureOr<Value> member =
+          convert(value, destination.type, sourceSigned, location,
+                  isSignedNode(destination.semanticNode));
+      if (failed(member))
+        return failure();
+      return enqueueClassBackedSelectionNBA(destination, *member, location,
+                                            delay);
+    }
     FailureOr<Value> aggregate = loadCapturedLValue(base, location);
     FailureOr<Value> replacement =
         convert(value, destination.type, sourceSigned, location,
@@ -2358,35 +2570,12 @@ LogicalResult UnitLowering::writeCapturedLValue(
     if (stored == StoredValue::Borrowed)
       replacement = cloneSequentialValue(*replacement, location);
     if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
-      auto array = dyn_cast<sim::UnpackedArrayType>(base.type);
-      if (!array)
+      FailureOr<Value> path =
+          createAggregateElementPath(base, destination.index, location);
+      if (failed(path))
         return failure();
-      FailureOr<Value> owner =
-          toArgumentReference(base.reference, base.type, location);
-      FailureOr<ContainerElementDescriptor> descriptor =
-          describeContainerElement(array.getElementType(), location);
-      std::optional<uint64_t> span = sim::getArrayElementStorageStride(array);
-      if (failed(owner) || failed(descriptor) || !span)
-        return failure();
-      uint64_t elementSpan = *span;
-      if (elementSpan == 0)
-        return failure();
-      FailureOr<Value> index = convert(destination.index, builder.getI64Type(),
-                                       true, location, true);
-      if (failed(index))
-        return failure();
-      Type pathType =
-          sim::ReferencePathType::get(function.getContext(), destination.type);
-      Value path = sim::SimReferencePathAggregateElementOp::create(
-          builder, location, pathType,
-          function.getBody().front().getArgument(0), *owner, *index,
-          array.getLeft(), array.getRight(), elementSpan, descriptor->typeID,
-          descriptor->kind, descriptor->flags, descriptor->valueSize,
-          descriptor->alignment, descriptor->bitWidth,
-          builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
-          builder.getDenseI32ArrayAttr(descriptor->traceKinds));
       sim::SimReferencePathNBAEnqueueOp::create(builder, location, *replacement,
-                                                path, delay);
+                                                *path, delay);
       return success();
     }
     FailureOr<Value> aggregate = loadCapturedLValue(base, location);

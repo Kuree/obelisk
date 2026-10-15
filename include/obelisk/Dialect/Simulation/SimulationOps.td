@@ -2631,6 +2631,30 @@ def SimManagedNBAEnqueueOp : SimOp<"managed.nba.enqueue", [
   let hasVerifier = 1;
 }
 
+def SimManagedNBAEnqueueMaskedOp : SimOp<"managed.nba.enqueue_masked", [
+    MemoryEffects<[
+      MemRead<SimHeapResource>, MemWrite<SimHeapResource>,
+      MemWrite<SimSchedulerResource>
+    ]>
+  ]> {
+  let summary = "schedule a nonblocking partial update of class-backed storage";
+  let description = [{
+    IEEE 1800-2023 10.4.2: a nonblocking assignment to a fixed selection of a
+    class property, or of an element of an unpacked-array property reached
+    through a reference path. `mask` has the destination's type; the storage
+    bits under its known bits take their values (and unknown bits) from
+    `value` when the update commits, and the others keep the destination's
+    value at that time, so other updates in the slot survive.
+  }];
+  let arguments = (ins AnyType:$value,
+                       AnyTypeOf<[SimManagedRefType, SimReferencePathType]>:
+                         $destination,
+                       AnyType:$mask, Optional<SimTimeType>:$delay);
+  let assemblyFormat = [{$value `to` $destination `mask` $mask
+    (`after` $delay^)? attr-dict `:` functional-type(operands, results)}];
+  let hasVerifier = 1;
+}
+
 def SimReferencePathNBAEnqueueOp : SimOp<"reference_path.nba.enqueue", [
     SimAllocatesManagedStorage,
     MemoryEffects<[

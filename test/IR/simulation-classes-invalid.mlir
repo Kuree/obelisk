@@ -467,6 +467,36 @@ module {
 // -----
 
 module {
+  simulation.design @bad_managed_nba_mask {
+    simulation.scope.decl 0
+    simulation.code_unit.decl 1 in 0 function hierarchy "C.f"
+    simulation.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    simulation.class.field @C_value of @C at 0 offset 8 : i64 {
+      is_static = false, is_weak = false
+    }
+    simulation.func @f(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %this: !simulation.class_handle<@C>
+          {simulation.capture_kind = 1 : i32})
+        attributes {code_unit_id = 1 : i64, entry_kind = 8 : i32} {
+      %field = simulation.class.field_ref %this[@C_value] :
+        !simulation.class_handle<@C> ->
+        !simulation.managed_ref<i64, @C>
+      %value = arith.constant 1 : i64
+      %mask = arith.constant 1 : i32
+      // expected-error @below {{mask must have the value's fixed-layout type}}
+      simulation.managed.nba.enqueue_masked %value to %field mask %mask :
+        (i64, !simulation.managed_ref<i64, @C>, i32) -> ()
+      simulation.return
+    }
+  }
+}
+
+// -----
+
+module {
   simulation.design @bad_field_watch {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 function hierarchy "C.f"

@@ -896,17 +896,24 @@ private:
   const llvm::DataLayout &dataLayout;
 };
 
-class ManagedNBAConversion final
-    : public OpConversionPattern<sim::SimManagedNBAEnqueueOp> {
+template <typename EnqueueOp>
+class ManagedNBAConversion final : public OpConversionPattern<EnqueueOp> {
 public:
+  using OneToNOpAdaptor =
+      typename OpConversionPattern<EnqueueOp>::OneToNOpAdaptor;
+
   ManagedNBAConversion(const TypeConverter &converter, MLIRContext *context,
                        const llvm::DataLayout &dataLayout)
-      : OpConversionPattern(converter, context), dataLayout(dataLayout) {}
+      : OpConversionPattern<EnqueueOp>(converter, context),
+        dataLayout(dataLayout) {}
 
   LogicalResult
-  matchAndRewrite(sim::SimManagedNBAEnqueueOp op, OneToNOpAdaptor adaptor,
+  matchAndRewrite(EnqueueOp op, OneToNOpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    if (adaptor.getDestination().size() != 2 || adaptor.getValue().empty())
+    // A reference-path destination names its element without a field offset.
+    bool path = isa<sim::ReferencePathType>(op.getDestination().getType());
+    if (adaptor.getDestination().size() != (path ? 1u : 2u) ||
+        adaptor.getValue().empty())
       return failure();
     llvm::DataLayout local(dataLayout.getStringRepresentation());
     llvm::LLVMContext llvmContext;
@@ -943,17 +950,27 @@ public:
                       : adaptor.getDelay().front();
     auto [context, lane] = managedContextAndLane(rewriter, location);
     (void)lane;
+    Value object =
+        managedObjectPointer(rewriter, location, adaptor.getDestination()[0]);
+    Value offset = path ? llvmConstant(rewriter, location, i64, UINT64_MAX)
+                        : adaptor.getDestination()[1];
+    Value size = llvmConstant(rewriter, location, i64, storage->size);
+    SmallVector<Value, 8> operands{context, object, offset, value, unknown};
+    StringRef callee = "obelisk_rt_v1_scheduler_managed_nba";
+    // A partial update carries the value plane of its mask.
+    if constexpr (std::is_same_v<EnqueueOp,
+                                 sim::SimManagedNBAEnqueueMaskedOp>) {
+      if (adaptor.getMask().empty())
+        return failure();
+      operands.push_back(
+          savePlane(adaptor.getMask().front(), storage->alignment));
+      callee = "obelisk_rt_v1_scheduler_managed_nba_masked";
+    }
+    operands.append({size, delay});
     Value status =
         LLVM::CallOp::create(
             rewriter, location, TypeRange{rewriter.getI32Type()},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_scheduler_managed_nba"),
-            ValueRange{context,
-                       managedObjectPointer(rewriter, location,
-                                            adaptor.getDestination()[0]),
-                       adaptor.getDestination()[1], value, unknown,
-                       llvmConstant(rewriter, location, i64, storage->size),
-                       delay})
+            SymbolRefAttr::get(rewriter.getContext(), callee), operands)
             .getResult();
     reportManagedStatus(rewriter, location, context, status);
     rewriter.eraseOp(op);
@@ -1061,8 +1078,9 @@ void populateManagedReferenceToLLVMConversionPatterns(
       converter, context, dataLayout, stateBitCount);
   patterns.add<ManagedBitsDynStoreConversion>(converter, context);
   patterns.add<ManagedLoadConversion, ManagedStoreConversion,
-               ManagedNBAConversion, ReferencePathNBAConversion>(
-      converter, context, dataLayout);
+               ManagedNBAConversion<sim::SimManagedNBAEnqueueOp>,
+               ManagedNBAConversion<sim::SimManagedNBAEnqueueMaskedOp>,
+               ReferencePathNBAConversion>(converter, context, dataLayout);
 }
 
 } // namespace obelisk::detail
