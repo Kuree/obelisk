@@ -1059,6 +1059,23 @@ UnitLowering::outlineForkBranch(
     }
     if (!path.empty())
       referencedPaths.insert(path);
+    // A clocking variable also reads its clock, source, and published sample,
+    // and a cycle delay or clocking-block event waits on its clock; capture
+    // them as preparation does for the parent unit.
+    if (nested->hasAttr(clockingVariableAttrName)) {
+      for (StringLiteral name :
+           {clockingSourcePathAttrName, clockingEventPathAttrName,
+            clockingEventRawPathAttrName})
+        if (auto clockingPath = nested->getAttrOfType<StringAttr>(name))
+          referencedPaths.insert(clockingPath.getValue());
+      if (!path.empty())
+        referencedPaths.insert(getClockingSamplePath(path));
+    } else if (isa<semantic::SVCycleDelayControlOp>(nested) ||
+               nested->hasAttr(clockingBlockEventAttrName)) {
+      if (auto clockingPath =
+              nested->getAttrOfType<StringAttr>(clockingEventPathAttrName))
+        referencedPaths.insert(clockingPath.getValue());
+    }
     if (auto construct =
             dyn_cast<semantic::SVNewCovergroupExpressionOp>(nested))
       if (semantic::SVCovergroupTypeOp covergroup =
