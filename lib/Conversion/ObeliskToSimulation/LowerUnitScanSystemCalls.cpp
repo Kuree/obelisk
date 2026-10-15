@@ -173,7 +173,54 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     return arith::ConstantOp::create(builder, location, i32,
                                      builder.getIntegerAttr(i32, value));
   };
+  // IEEE 1800-2023 21.3.4.3: an unknown bit in the str argument or in the
+  // format string makes $sscanf return EOF without scanning.
+  Block *unknownExit = nullptr;
+  auto hasUnknownBits = [&](Value value) -> Value {
+    if (!sim::getPackedWidth(value.getType()))
+      return {};
+    FailureOr<Value> scalar = toPackedScalar(value, location);
+    if (failed(scalar) || !isa<sim::LogicType>((*scalar).getType()))
+      return {};
+    // X has value plane 0 and Z value plane 1; both have the unknown plane.
+    auto unknownState = [&](bool highImpedance) {
+      Type plane = builder.getI1Type();
+      return sim::SimLogicConstantOp::create(
+                 builder, location,
+                 sim::LogicType::get(builder.getContext(), 1),
+                 builder.getIntegerAttr(plane, highImpedance ? 1 : 0),
+                 builder.getIntegerAttr(plane, 1))
+          .getResult();
+    };
+    Value count = sim::SimLogicCountBitsOp::create(
+        builder, location, i32, *scalar,
+        ValueRange{unknownState(false), unknownState(true)});
+    return arith::CmpIOp::create(builder, location, arith::CmpIPredicate::ne,
+                                 count, constant(0));
+  };
+  auto exitOnUnknown = [&](ArrayRef<Value> conditions) {
+    Value unknown;
+    for (Value condition : conditions)
+      if (condition)
+        unknown = unknown ? arith::OrIOp::create(builder, location, unknown,
+                                                 condition)
+                                .getResult()
+                          : condition;
+    if (!unknown)
+      return;
+    unknownExit = addBlock();
+    unknownExit->addArgument(i32, location);
+    Block *scan = addBlock();
+    cf::CondBranchOp::create(builder, location, unknown, unknownExit,
+                             ValueRange{constant(-1)}, scan, ValueRange{});
+    setCurrent(scan);
+  };
   auto convertResult = [&](Value value) -> FailureOr<Value> {
+    if (unknownExit) {
+      cf::BranchOp::create(builder, location, unknownExit, ValueRange{value});
+      setCurrent(unknownExit);
+      value = unknownExit->getArgument(0);
+    }
     FailureOr<Type> type = getNormalizedSemanticType(op);
     if (failed(type))
       return failure();
@@ -190,11 +237,13 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
   // reading a whole line here would incorrectly discard unconverted text
   // between separate calls (IEEE 1800-2017 21.3.4.3).
   Value text;
+  Value textUnknown;
   Value fileDescriptor;
   if (name == "$sscanf") {
     FailureOr<Value> source = lowerExpression(children[0]);
     if (failed(source))
       return failure();
+    textUnknown = hasUnknownBits(*source);
     FailureOr<Value> converted =
         convert(*source, stringType, isSignedNode(children[0]), location);
     if (failed(converted))
@@ -223,6 +272,8 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     FailureOr<Value> loweredFormat = lowerExpression(children[1]);
     if (failed(loweredFormat))
       return failure();
+    if (name == "$sscanf")
+      exitOnUnknown({textUnknown, hasUnknownBits(*loweredFormat)});
     FailureOr<Value> dynamicFormat = convert(
         *loweredFormat, stringType, isSignedNode(children[1]), location);
     if (failed(dynamicFormat))
@@ -568,6 +619,7 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     }
     return convertResult(assigned);
   }
+  exitOnUnknown({textUnknown});
   std::string unsupported;
   std::optional<SmallVector<ScanConversion>> conversions =
       splitScanFormat(literal.getConstantValue(), unsupported);
