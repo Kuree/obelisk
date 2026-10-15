@@ -3367,6 +3367,22 @@ std::string hostErrorMessage(int error);
 // logical process. The caller must hold the context mutex.
 void obelisk_rt_flush_deferred_immediate_reports_unlocked(
     obelisk_rt_context *context, uint64_t logicalProcess);
+// IEEE 1800-2023 16.4.2: a process resuming from an event control or a wait
+// statement reaches a deferred assertion flush point. Resuming from a delay,
+// a fork join, or a built-in blocking method does not.
+inline bool obelisk_rt_resume_flushes_deferred_reports(uint32_t suspendKind) {
+  switch (suspendKind) {
+  case OBELISK_RT_SUSPEND_CHANGE:
+  case OBELISK_RT_SUSPEND_EDGE:
+  case OBELISK_RT_SUSPEND_EVENT:
+  case OBELISK_RT_SUSPEND_EVENT_ORDER:
+  case OBELISK_RT_SUSPEND_CHILDREN:
+  case OBELISK_RT_SUSPEND_OBSERVER:
+    return true;
+  default:
+    return false;
+  }
+}
 bool obelisk_rt_cancel_deferred_immediate_assertion_unlocked(
     obelisk_rt_context *context, uint64_t assertion,
     uint64_t logicalProcess = 0);

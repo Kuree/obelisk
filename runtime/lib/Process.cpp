@@ -5582,7 +5582,9 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               OBELISK_RT_SUSPEND_EVENT_ORDER &&
           context->scheduledProcesses[selectedIndex].waitOrderReady &&
           context->scheduledProcesses[selectedIndex].waitOrderFailed;
-      if (selectedResuming)
+      if (selectedResuming &&
+          obelisk_rt_resume_flushes_deferred_reports(
+              context->scheduledProcesses[selectedIndex].suspendKind))
         obelisk_rt_flush_deferred_immediate_reports_unlocked(
             context, context->activeLogicalProcessToken);
       context->activeControls =

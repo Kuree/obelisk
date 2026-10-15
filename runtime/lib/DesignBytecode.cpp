@@ -5439,7 +5439,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
       context->activeWaitOrderFailed =
           resuming && task.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
           task.waitOrderReady && task.waitOrderFailed;
-      if (resuming)
+      if (resuming &&
+          obelisk_rt_resume_flushes_deferred_reports(task.suspendKind))
         obelisk_rt_flush_deferred_immediate_reports_unlocked(context, task.id);
       context->activeControls = std::move(task.controls);
     }

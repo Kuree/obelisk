@@ -947,7 +947,8 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
     context->activeWaitOrderFailed =
         resuming && scheduled.suspendKind == OBELISK_RT_SUSPEND_EVENT_ORDER &&
         scheduled.waitOrderReady && scheduled.waitOrderFailed;
-    if (resuming)
+    if (resuming &&
+        obelisk_rt_resume_flushes_deferred_reports(scheduled.suspendKind))
       obelisk_rt_flush_deferred_immediate_reports_unlocked(
           context, context->activeLogicalProcessToken);
     context->activeControls = std::move(scheduled.controls);
