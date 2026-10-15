@@ -69,6 +69,11 @@ mlir::Operation *getSingleRegionRoot(mlir::Region &region);
 /// Resolve an input/output port actual to its assignment lvalue.
 mlir::Operation *getPortActualLValue(ir::SVPortConnectionOp connection);
 
+/// IEEE 1800-2023 25.5.4: replace each use of a modport expression port that
+/// is not a single storage view by the expression itself, selected through
+/// the use's virtual-interface receiver when it has one.
+mlir::LogicalResult expandModportExpressions(mlir::ModuleOp module);
+
 /// Analyze ref/interface aliases without materializing target descriptors.
 mlir::FailureOr<PreparedPortAliases>
 analyzePortAliases(ir::SVRootSymbolOp semanticRoot);

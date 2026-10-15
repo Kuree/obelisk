@@ -145,33 +145,6 @@ SymbolRefAttr getSemanticSymbolPath(Operation *operation) {
   return SymbolRefAttr::get(names.front(), nested);
 }
 
-/// Creates semantic operations with fresh node IDs.
-class SemanticOpFactory {
-public:
-  explicit SemanticOpFactory(ModuleOp module) : builder(module.getContext()) {
-    module.walk([&](Operation *operation) {
-      if (auto node = operation->getAttrOfType<IntegerAttr>("node_id"))
-        nextNode = std::max(nextNode, node.getInt() + 1);
-    });
-  }
-
-  Operation *create(OpBuilder &at, Location location, StringRef name,
-                    ArrayRef<NamedAttribute> attributes) {
-    OperationState state(location, name);
-    state.addAttributes(attributes);
-    state.addAttribute("node_id", builder.getI64IntegerAttr(nextNode++));
-    state.addRegion();
-    Operation *operation = at.create(state);
-    operation->getRegion(0).push_back(new Block);
-    return operation;
-  }
-
-  Builder builder;
-
-private:
-  int64_t nextNode = 0;
-};
-
 } // namespace
 
 LogicalResult normalizeDefaultedConstructors(ModuleOp module) {

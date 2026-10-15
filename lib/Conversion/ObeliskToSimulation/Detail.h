@@ -18,6 +18,7 @@
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Support/LLVM.h"
@@ -447,6 +448,44 @@ getSimulationCovergroupSymbol(::mlir::SymbolRefAttr semanticCovergroup);
 
 /// Declared name of a semantic symbol, for diagnostics and debug info.
 ::mlir::StringRef getDebugName(::mlir::Operation *op);
+
+/// Creates semantic operations with fresh node IDs.
+class SemanticOpFactory {
+public:
+  explicit SemanticOpFactory(::mlir::ModuleOp module)
+      : builder(module.getContext()) {
+    module.walk([&](::mlir::Operation *operation) {
+      if (auto node = operation->getAttrOfType<::mlir::IntegerAttr>("node_id"))
+        nextNode = std::max(nextNode, node.getInt() + 1);
+    });
+  }
+
+  ::mlir::Operation *
+  create(::mlir::OpBuilder &at, ::mlir::Location location,
+         ::llvm::StringRef name,
+         ::llvm::ArrayRef<::mlir::NamedAttribute> attributes) {
+    ::mlir::OperationState state(location, name);
+    state.addAttributes(attributes);
+    state.addAttribute("node_id", builder.getI64IntegerAttr(nextNode++));
+    state.addRegion();
+    ::mlir::Operation *operation = at.create(state);
+    operation->getRegion(0).push_back(new ::mlir::Block);
+    return operation;
+  }
+
+  /// Gives every node of a cloned semantic tree a fresh identity.
+  void renumber(::mlir::Operation *root) {
+    root->walk([&](::mlir::Operation *operation) {
+      if (operation->hasAttr("node_id"))
+        operation->setAttr("node_id", builder.getI64IntegerAttr(nextNode++));
+    });
+  }
+
+  ::mlir::Builder builder;
+
+private:
+  int64_t nextNode = 0;
+};
 
 /// Value and unknown planes of a parsed SystemVerilog integer literal.
 struct ParsedConstant {

@@ -242,6 +242,95 @@ Operation *getPortActualLValue(semantic::SVPortConnectionOp connection) {
   return actual;
 }
 
+LogicalResult expandModportExpressions(ModuleOp module) {
+  // IEEE 1800-2023 25.5.4: a modport expression names an expression of the
+  // interface's items, and a use through an interface port or a virtual
+  // interface denotes that expression in the selected instance. A single
+  // storage view becomes an alias; any other expression, such as a
+  // concatenation, is expanded at each use so reads and writes reach every
+  // item it spans.
+  llvm::DenseMap<StringAttr, semantic::SVModportPortSymbolOp> expressionPorts;
+  llvm::DenseMap<StringAttr, Operation *> symbols;
+  module.walk([&](Operation *operation) {
+    if (auto name = operation->getAttrOfType<StringAttr>(
+            SymbolTable::getSymbolAttrName()))
+      symbols[name] = operation;
+    auto port = dyn_cast<semantic::SVModportPortSymbolOp>(operation);
+    Operation *expression =
+        port ? getSingleRegionRoot(port.getBody()) : nullptr;
+    if (expression && failed(getStaticStorageView(expression)))
+      expressionPorts[port.getSymNameAttr()] = port;
+  });
+  if (expressionPorts.empty())
+    return success();
+  auto referencedPort = [&](Operation *operation) {
+    auto reference =
+        operation->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+    return reference ? expressionPorts.lookup(reference.getLeafReference())
+                     : semantic::SVModportPortSymbolOp{};
+  };
+  SmallVector<Operation *> uses;
+  module.walk([&](Operation *operation) {
+    if (isa<semantic::SVNamedValueExpressionOp,
+            semantic::SVHierarchicalValueExpressionOp,
+            semantic::SVMemberAccessExpressionOp>(operation) &&
+        !operation->getParentOfType<semantic::SVModportPortSymbolOp>() &&
+        referencedPort(operation))
+      uses.push_back(operation);
+  });
+
+  SemanticOpFactory factory(module);
+  for (Operation *use : uses) {
+    semantic::SVModportPortSymbolOp port = referencedPort(use);
+    Operation *interfaceBody = port->getParentOp()->getParentOp();
+    OpBuilder builder(use);
+    Operation *expanded = builder.clone(*getSingleRegionRoot(port.getBody()));
+    factory.renumber(expanded);
+    // Through a virtual interface the expression names the items of the
+    // interface definition; each is selected from the same receiver.
+    auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(use);
+    SmallVector<Operation *> receiverChildren =
+        member ? getChildren(member) : SmallVector<Operation *>{};
+    if (member && receiverChildren.size() != 1)
+      return use->emitError("virtual interface modport expression access has "
+                            "no single receiver");
+    SmallVector<Operation *> items;
+    if (member)
+      expanded->walk([&](Operation *nested) {
+        if (isa<semantic::SVNamedValueExpressionOp,
+                semantic::SVHierarchicalValueExpressionOp>(nested))
+          items.push_back(nested);
+      });
+    for (Operation *item : items) {
+      auto reference = item->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      Operation *symbol =
+          reference ? symbols.lookup(reference.getLeafReference()) : nullptr;
+      if (!symbol || !interfaceBody->isProperAncestor(symbol))
+        continue;
+      auto name = symbol->getAttrOfType<StringAttr>("name");
+      if (symbol->getParentOp() != interfaceBody || !name)
+        return use->emitError("virtual interface modport expression may only "
+                              "name items declared directly in the interface");
+      OpBuilder itemBuilder(item);
+      SmallVector<NamedAttribute> attributes{
+          itemBuilder.getNamedAttr("member_name", name)};
+      for (StringRef attribute : {"is_signed", "referenced_path",
+                                  "referenced_symbol", "semantic_type"})
+        if (Attribute value = item->getAttr(attribute))
+          attributes.push_back(itemBuilder.getNamedAttr(attribute, value));
+      Operation *access = factory.create(
+          itemBuilder, item->getLoc(),
+          semantic::SVMemberAccessExpressionOp::getOperationName(), attributes);
+      OpBuilder receiverBuilder =
+          OpBuilder::atBlockEnd(&access->getRegion(0).front());
+      factory.renumber(receiverBuilder.clone(*receiverChildren.front()));
+      item->erase();
+    }
+    use->erase();
+  }
+  return success();
+}
+
 FailureOr<PreparedPortAliases>
 analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   PreparedPortAliases result;
@@ -728,11 +817,7 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
           result.interfaceViews[path] = *view;
         return;
       }
-      emitError(getSemanticLocation(port))
-          << "interface modport expression requires executable rather than "
-             "static-view lowering: "
-          << path;
-      invalid = true;
+      // expandModportExpressions replaced each use of this expression.
       return;
     }
     // Older serialized semantic IR did not carry the resolved connection.
