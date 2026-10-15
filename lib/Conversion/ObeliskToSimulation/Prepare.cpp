@@ -535,6 +535,10 @@ public:
 
 void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
+  if (failed(rewriteBuiltinBaseClasses(module))) {
+    signalPassFailure();
+    return;
+  }
   simlowering::SemanticTypeIndex semanticTypes(module);
   simlowering::ScopedSemanticTypeIndex semanticTypeScope(semanticTypes);
   MLIRContext *context = &getContext();

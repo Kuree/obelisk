@@ -54,6 +54,14 @@ struct PreparedScopeDeclarations {
 /// Return the executable method behind either a direct method or prototype.
 ir::SVSubroutineSymbolOp getClassMethod(mlir::Operation *member);
 
+/// IEEE 1800-2023 15.2: semaphore and mailbox are built-in classes that can
+/// be base classes. Their objects are runtime handles rather than class
+/// objects, so rewrite each class derived from one to hold its built-in base
+/// object in a private `$base` property: super.new creates it (an implicit
+/// super.new() is the property initializer), and an inherited built-in method
+/// call or an upcast to the built-in type selects it from the receiver.
+mlir::LogicalResult rewriteBuiltinBaseClasses(mlir::ModuleOp module);
+
 /// Materialize each inherited embedded covergroup's effective semantic plan.
 mlir::LogicalResult
 materializeInheritedCovergroupPlans(ir::SVRootSymbolOp semanticRoot,

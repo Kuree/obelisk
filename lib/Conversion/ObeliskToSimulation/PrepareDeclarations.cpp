@@ -110,7 +110,282 @@ uint64_t getVirtualMethodSignatureID(semantic::SVSubroutineSymbolOp method) {
   return stableCodeUnitID(key);
 }
 
+StringRef getSourceSymbolName(StringRef symbol) {
+  size_t separator = symbol.find('.');
+  return separator == StringRef::npos ? symbol
+                                      : symbol.drop_front(separator + 1);
+}
+
+bool isBuiltinBaseClass(semantic::ClassHandleType handle) {
+  SymbolRefAttr name = handle.getClassName();
+  if (name.getNestedReferences().size() != 1 ||
+      getSourceSymbolName(name.getRootReference().getValue()) != "std")
+    return false;
+  StringRef leaf = getSourceSymbolName(name.getLeafReference().getValue());
+  return leaf == "semaphore" || leaf == "mailbox";
+}
+
+bool isBuiltinBaseMethodPath(StringRef path) {
+  return path.starts_with("std::semaphore::") ||
+         path.starts_with("std::mailbox#(");
+}
+
 } // namespace
+
+LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
+  MLIRContext *context = module.getContext();
+  llvm::StringMap<semantic::SVClassTypeOp> classes;
+  SmallVector<semantic::SVClassTypeOp> derived;
+  module.walk([&](semantic::SVClassTypeOp classType) {
+    classes[classType.getSymName()] = classType;
+    if (std::optional<Type> base = classType.getBaseClass())
+      if (auto handle = dyn_cast<semantic::ClassHandleType>(*base);
+          handle && isBuiltinBaseClass(handle))
+        derived.push_back(classType);
+  });
+  if (derived.empty())
+    return success();
+
+  int64_t nextNode = 0;
+  module.walk([&](Operation *operation) {
+    if (auto node = operation->getAttrOfType<IntegerAttr>("node_id"))
+      nextNode = std::max(nextNode, node.getInt() + 1);
+  });
+  Builder builder(context);
+  auto create = [&](OpBuilder &at, Location location, StringRef name,
+                    ArrayRef<NamedAttribute> attributes) {
+    OperationState state(location, name);
+    state.addAttributes(attributes);
+    state.addAttribute("node_id", builder.getI64IntegerAttr(nextNode++));
+    state.addRegion();
+    Operation *operation = at.create(state);
+    operation->getRegion(0).push_back(new Block);
+    return operation;
+  };
+  auto symbolPath = [](Operation *operation) {
+    SmallVector<StringAttr> names;
+    for (Operation *current = operation; current && !isa<ModuleOp>(current);
+         current = current->getParentOp())
+      if (auto symbol = current->getAttrOfType<StringAttr>(
+              SymbolTable::getSymbolAttrName()))
+        names.push_back(symbol);
+    std::reverse(names.begin(), names.end());
+    SmallVector<FlatSymbolRefAttr> nested;
+    for (StringAttr name : ArrayRef(names).drop_front())
+      nested.push_back(FlatSymbolRefAttr::get(name));
+    return SymbolRefAttr::get(names.front(), nested);
+  };
+
+  // The `$base` property of each derived class, keyed by class symbol.
+  struct BuiltinBase {
+    semantic::ClassHandleType type;
+    std::string path;
+    SymbolRefAttr symbol;
+  };
+  llvm::StringMap<BuiltinBase> bases;
+  auto selectBase = [&](OpBuilder &at, Location location,
+                        const BuiltinBase &base) {
+    return create(
+        at, location, semantic::SVNamedValueExpressionOp::getOperationName(),
+        {builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+         builder.getNamedAttr("referenced_path",
+                              builder.getStringAttr(base.path)),
+         builder.getNamedAttr("referenced_symbol", base.symbol),
+         builder.getNamedAttr("semantic_type", TypeAttr::get(base.type))});
+  };
+  for (semantic::SVClassTypeOp classType : derived) {
+    auto type = cast<semantic::ClassHandleType>(*classType.getBaseClass());
+    auto baseClass = classes.lookup(type.getClassName().getLeafReference());
+    auto constructorPath =
+        baseClass ? baseClass->getAttrOfType<StringAttr>("constructor_path")
+                  : StringAttr{};
+    auto constructorSymbol =
+        baseClass
+            ? baseClass->getAttrOfType<SymbolRefAttr>("constructor_symbol")
+            : SymbolRefAttr{};
+    auto hierarchy = classType->getAttrOfType<StringAttr>("hierarchical_name");
+    if (!constructorPath || !constructorSymbol || !hierarchy)
+      return classType.emitError("built-in base class has no constructor");
+    Location location = classType.getLoc();
+    Block &body = classType->getRegion(0).front();
+    OpBuilder at(context);
+    at.setInsertionPointToStart(&body);
+    std::string path = (hierarchy.getValue() + "::$base").str();
+    Operation *property = create(
+        at, location, semantic::SVClassPropertySymbolOp::getOperationName(),
+        {builder.getNamedAttr(
+             SymbolTable::getSymbolAttrName(),
+             builder.getStringAttr(classType.getSymName() + ".$base")),
+         builder.getNamedAttr("hierarchical_name", builder.getStringAttr(path)),
+         builder.getNamedAttr("name", builder.getStringAttr("$base")),
+         builder.getNamedAttr("semantic_type", TypeAttr::get(type))});
+    BuiltinBase base{type, path, symbolPath(property)};
+    bases[classType.getSymName()] = base;
+    classType->removeAttr("base_class");
+    // super.new(...) creates the built-in base object.
+    SmallVector<semantic::SVNewClassExpressionOp> superCalls;
+    classType->walk([&](semantic::SVNewClassExpressionOp construct) {
+      if (construct.getIsSuperClass() &&
+          construct->getParentOfType<semantic::SVClassTypeOp>() == classType)
+        superCalls.push_back(construct);
+    });
+    for (semantic::SVNewClassExpressionOp construct : superCalls) {
+      OpBuilder before(construct);
+      Operation *assignment =
+          create(before, construct.getLoc(),
+                 semantic::SVAssignmentExpressionOp::getOperationName(),
+                 {builder.getNamedAttr("assignment_kind",
+                                       builder.getI32IntegerAttr(0)),
+                  builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+                  builder.getNamedAttr("semantic_type", TypeAttr::get(type))});
+      OpBuilder inside =
+          OpBuilder::atBlockEnd(&assignment->getRegion(0).front());
+      selectBase(inside, construct.getLoc(), base);
+      construct->moveAfter(&assignment->getRegion(0).front().back());
+      construct->setAttr("is_super_class", builder.getBoolAttr(false));
+      construct->setAttr("semantic_type", TypeAttr::get(type));
+      for (Operation *child : getChildren(construct))
+        if (isa<semantic::SVCallExpressionOp>(child))
+          child->setAttr("is_super_class", builder.getBoolAttr(false));
+    }
+    if (!superCalls.empty())
+      continue;
+    // Without an explicit super.new, the implicit super.new() constructs the
+    // base with its default argument: no keys, or an unbounded mailbox.
+    OpBuilder initializer =
+        OpBuilder::atBlockEnd(&property->getRegion(0).front());
+    Operation *construct = create(
+        initializer, location,
+        semantic::SVNewClassExpressionOp::getOperationName(),
+        {builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+         builder.getNamedAttr("is_super_class", builder.getBoolAttr(false)),
+         builder.getNamedAttr("semantic_type", TypeAttr::get(type))});
+    OpBuilder callBuilder =
+        OpBuilder::atBlockEnd(&construct->getRegion(0).front());
+    Operation *call = create(
+        callBuilder, location, semantic::SVCallExpressionOp::getOperationName(),
+        {builder.getNamedAttr("argument_count", builder.getI64IntegerAttr(1)),
+         builder.getNamedAttr("callee_name", builder.getStringAttr("new")),
+         builder.getNamedAttr("constraint_restrictions",
+                              builder.getArrayAttr({})),
+         builder.getNamedAttr("defaulted_arguments",
+                              builder.getDenseI64ArrayAttr({1})),
+         builder.getNamedAttr("has_inline_constraints",
+                              builder.getBoolAttr(false)),
+         builder.getNamedAttr("has_iterator_expression",
+                              builder.getBoolAttr(false)),
+         builder.getNamedAttr("has_output_arguments",
+                              builder.getBoolAttr(false)),
+         builder.getNamedAttr("has_this_class", builder.getBoolAttr(false)),
+         builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+         builder.getNamedAttr("is_super_class", builder.getBoolAttr(false)),
+         builder.getNamedAttr("is_system_call", builder.getBoolAttr(false)),
+         builder.getNamedAttr("referenced_path", constructorPath),
+         builder.getNamedAttr("referenced_symbol", constructorSymbol),
+         builder.getNamedAttr("semantic_type",
+                              TypeAttr::get(semantic::VoidType::get(context))),
+         builder.getNamedAttr("subroutine_kind",
+                              builder.getI32IntegerAttr(0))});
+    OpBuilder argument = OpBuilder::atBlockEnd(&call->getRegion(0).front());
+    create(
+        argument, location, semantic::SVIntegerLiteralOp::getOperationName(),
+        {builder.getNamedAttr("constant_value", builder.getStringAttr("0")),
+         builder.getNamedAttr("is_declared_unsized", builder.getBoolAttr(true)),
+         builder.getNamedAttr("is_signed", builder.getBoolAttr(true)),
+         builder.getNamedAttr("semantic_type",
+                              TypeAttr::get(semantic::IntegralType::get(
+                                  context, 32, true, false, 31, 0,
+                                  semantic::SVIntegralFlavor::Int)))});
+  }
+
+  // The built-in base held by a class or the nearest of its ancestors.
+  auto findClassBase = [&](StringRef symbol) -> const BuiltinBase * {
+    while (!symbol.empty()) {
+      if (auto found = bases.find(symbol); found != bases.end())
+        return &found->second;
+      semantic::SVClassTypeOp classType = classes.lookup(symbol);
+      std::optional<Type> base =
+          classType ? classType.getBaseClass() : std::nullopt;
+      auto handle = base ? dyn_cast<semantic::ClassHandleType>(*base) : nullptr;
+      symbol = handle ? handle.getClassName().getLeafReference().getValue()
+                      : StringRef{};
+    }
+    return nullptr;
+  };
+  auto findBase = [&](Type type) -> const BuiltinBase * {
+    auto handle = dyn_cast_or_null<semantic::ClassHandleType>(type);
+    return handle ? findClassBase(
+                        handle.getClassName().getLeafReference().getValue())
+                  : nullptr;
+  };
+  auto semanticType = [](Operation *operation) -> Type {
+    auto type = operation->getAttrOfType<TypeAttr>("semantic_type");
+    return type ? type.getValue() : Type{};
+  };
+  auto wrapInBase = [&](Operation *receiver, const BuiltinBase &base,
+                        bool upcast) {
+    OpBuilder before(receiver);
+    Operation *access = create(
+        before, receiver->getLoc(),
+        semantic::SVMemberAccessExpressionOp::getOperationName(),
+        {builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+         builder.getNamedAttr("member_name", builder.getStringAttr("$base")),
+         builder.getNamedAttr("referenced_path",
+                              builder.getStringAttr(base.path)),
+         builder.getNamedAttr("referenced_symbol", base.symbol),
+         builder.getNamedAttr("semantic_type", TypeAttr::get(base.type))});
+    receiver->moveBefore(&access->getRegion(0).front(),
+                         access->getRegion(0).front().end());
+    if (upcast)
+      access->setAttr(builtinBaseUpcastAttrName, builder.getUnitAttr());
+  };
+
+  // An inherited built-in method acts on the receiver's base object, and an
+  // upcast to the built-in type selects that object.
+  SmallVector<Operation *> rewrites;
+  module.walk([&](Operation *operation) {
+    if (auto call = dyn_cast<semantic::SVCallExpressionOp>(operation)) {
+      auto path = call->getAttrOfType<StringAttr>("referenced_path");
+      if (path && isBuiltinBaseMethodPath(path.getValue()) &&
+          call.getCalleeName() != "new")
+        rewrites.push_back(call);
+    } else if (isa<semantic::SVConversionExpressionOp>(operation)) {
+      auto handle =
+          dyn_cast_or_null<semantic::ClassHandleType>(semanticType(operation));
+      if (handle && isBuiltinBaseClass(handle))
+        rewrites.push_back(operation);
+    }
+  });
+  for (Operation *operation : rewrites) {
+    SmallVector<Operation *> children = getChildren(operation);
+    if (auto conversion =
+            dyn_cast<semantic::SVConversionExpressionOp>(operation)) {
+      if (children.size() != 1)
+        continue;
+      if (const BuiltinBase *base = findBase(semanticType(children.front())))
+        wrapInBase(children.front(), *base, /*upcast=*/true);
+      continue;
+    }
+    auto hasThis = operation->getAttrOfType<BoolAttr>("has_this_class");
+    if (hasThis && hasThis.getValue()) {
+      if (!children.empty())
+        if (const BuiltinBase *base = findBase(semanticType(children.front())))
+          wrapInBase(children.front(), *base, /*upcast=*/false);
+      continue;
+    }
+    // An implicit `this` (or `super`) receiver selects the enclosing class's
+    // base object.
+    auto owner = operation->getParentOfType<semantic::SVClassTypeOp>();
+    const BuiltinBase *base =
+        owner ? findClassBase(owner.getSymName()) : nullptr;
+    if (!base)
+      continue;
+    OpBuilder at = OpBuilder::atBlockBegin(&operation->getRegion(0).front());
+    selectBase(at, operation->getLoc(), *base);
+    operation->setAttr("has_this_class", builder.getBoolAttr(true));
+  }
+  return success();
+}
 
 semantic::SVSubroutineSymbolOp getClassMethod(Operation *member) {
   if (auto method = dyn_cast<semantic::SVSubroutineSymbolOp>(member))
