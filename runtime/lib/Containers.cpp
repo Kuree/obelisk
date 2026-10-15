@@ -2395,20 +2395,10 @@ obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
   obelisk_rt_status status = readString(string, view);
   if (status != OBELISK_RT_OK)
     return status;
-  uint64_t index = 0;
-  while (index < view.size &&
-         (view.bytes[index] == ' ' || view.bytes[index] == '\t' ||
-          view.bytes[index] == '\n' || view.bytes[index] == '\r' ||
-          view.bytes[index] == '\f' || view.bytes[index] == '\v'))
-    ++index;
-  bool negative = false;
-  if (index < view.size &&
-      (view.bytes[index] == '+' || view.bytes[index] == '-')) {
-    negative = view.bytes[index] == '-';
-    ++index;
-  }
+  // IEEE 1800-2023 6.16.9: the scan accepts only leading digits and
+  // underscores. It does not skip white space or parse a sign.
   uint64_t value = 0;
-  for (; index < view.size; ++index) {
+  for (uint64_t index = 0; index < view.size; ++index) {
     unsigned char character = static_cast<unsigned char>(view.bytes[index]);
     if (character == '_')
       continue;
@@ -2421,7 +2411,7 @@ obelisk_rt_v1_string_parse_integer(obelisk_rt_string_v1 string, uint32_t radix,
       break;
     value = value * radix + digit;
   }
-  *outValue = negative ? uint64_t{0} - value : value;
+  *outValue = value;
   return OBELISK_RT_OK;
 }
 

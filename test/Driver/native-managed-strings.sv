@@ -66,7 +66,7 @@ module native_managed_strings;
     format = "dynamic=%s";
     $display(format, text);
 
-    numeric = " -1_23";
+    numeric = "1_23tail";
     parsed_decimal = numeric.atoi();
     numeric = "3.25";
     parsed_real = numeric.atoreal();
@@ -103,6 +103,6 @@ endmodule
 // CHECK-NEXT: ambiguous-packed-len=4
 // CHECK-NEXT: ambiguous-string-len=0
 // CHECK-NEXT: dynamic=Hello
-// CHECK-NEXT: atoi=-123 real=3.25
+// CHECK-NEXT: atoi=123 real=3.25
 // CHECK-NEXT: hex=255 oct=15 bin=5
 // CHECK-NEXT: itoa=-42 hex=ff oct=11 bin=101 real=3.25

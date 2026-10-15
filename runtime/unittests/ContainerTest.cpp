@@ -9,6 +9,7 @@
 #include <array>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -316,12 +317,24 @@ TEST_F(ManagedValueTest, RepeatsAndConvertsPackedByteSequences) {
 
 TEST_F(ManagedValueTest, ParsesAndFormatsStringNumbers) {
   obelisk_rt_string_v1 input = 0;
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, " -1_23tail", 10, &input),
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "1_23tail", 8, &input),
             OBELISK_RT_OK);
   uint64_t integer = 0;
   ASSERT_EQ(obelisk_rt_v1_string_parse_integer(input, 10, &integer),
             OBELISK_RT_OK);
-  EXPECT_EQ(static_cast<int64_t>(integer), -123);
+  EXPECT_EQ(integer, 123u);
+
+  // IEEE 1800-2023 6.16.9: the scan accepts neither a sign nor leading white
+  // space, so both stop before the first digit and return zero.
+  for (std::string_view text : {"-1", "+1", " 1"}) {
+    ASSERT_EQ(obelisk_rt_v1_string_create(lane, text.data(), text.size(),
+                                          &input),
+              OBELISK_RT_OK);
+    integer = UINT64_MAX;
+    ASSERT_EQ(obelisk_rt_v1_string_parse_integer(input, 10, &integer),
+              OBELISK_RT_OK);
+    EXPECT_EQ(integer, 0u) << text;
+  }
 
   ASSERT_EQ(obelisk_rt_v1_string_create(nullptr, "f_f", 3, &input),
             OBELISK_RT_OK);
