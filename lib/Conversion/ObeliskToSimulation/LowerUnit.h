@@ -560,6 +560,17 @@ private:
   emitRepeatedEventSuspend(::mlir::Operation *control,
                            ::mlir::Block *continuation,
                            ::mlir::ValueRange continuationOperands = {});
+  /// Collects an event list's members; true when any needs a computed
+  /// observer rather than a direct signal-edge wait.
+  ::mlir::FailureOr<bool> classifyEventList(
+      semantic::SVEventListControlOp list,
+      ::llvm::SmallVectorImpl<semantic::SVSignalEventControlOp> &events);
+  /// Waits for `count` occurrences of OR'd direct signal events, counting
+  /// every event that occurred by each resumption.
+  ::mlir::LogicalResult emitCountedEventListSuspend(
+      ::llvm::ArrayRef<semantic::SVSignalEventControlOp> events,
+      ::mlir::Value count, ::mlir::Location location,
+      ::mlir::Block *continuation, ::mlir::ValueRange continuationOperands);
   ::mlir::FailureOr<::mlir::Value>
   lowerRepeatedEventCount(::mlir::Operation *control);
   ::mlir::LogicalResult
