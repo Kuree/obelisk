@@ -19,6 +19,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallBitVector.h"
@@ -2797,7 +2798,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (result.wasInterrupted())
       return failure();
   }
-  if (hasSolveBefore) {
+  // Orders the variables of `orderEdges` into layers, or fails on a cycle.
+  auto computeSolveLayers = [&](ArrayRef<SolveBeforeEdge> orderEdges)
+      -> std::optional<SmallVector<APInt>> {
     // 18.5.9 defers partially ordered variables to their latest legal layer.
     // Overlapping selected bit paths cannot be sampled independently: keep
     // each transitive overlap class together so an edge to one part of a
@@ -2811,7 +2814,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       return found->second;
     };
     SmallVector<std::pair<unsigned, unsigned>> edges;
-    for (const SolveBeforeEdge &edge : solveBeforeEdges) {
+    for (const SolveBeforeEdge &edge : orderEdges) {
       unsigned before = addNode(edge.beforeMask);
       unsigned after = addNode(edge.afterMask);
       edges.emplace_back(before, after);
@@ -2887,25 +2890,61 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           worklist.push_back(predecessor);
       }
     }
-    if (worklist.size() != componentMasks.size()) {
-      emitError(location) << "solve before ordering contains a cycle";
-      return failure();
-    }
+    if (worklist.size() != componentMasks.size())
+      return std::nullopt;
+    SmallVector<APInt> layers;
     if (!componentMasks.empty()) {
-      solveBeforeLayerMasks.assign(maxDistance + 1,
-                                   APInt::getZero(assignmentWidth));
+      layers.assign(maxDistance + 1, APInt::getZero(assignmentWidth));
       for (unsigned component = 0; component != componentMasks.size();
            ++component)
-        solveBeforeLayerMasks[maxDistance - distance[component]] |=
-            componentMasks[component];
+        layers[maxDistance - distance[component]] |= componentMasks[component];
     }
     // Unspecified fields join the final ordered group.
-    if (!solveBeforeLayerMasks.empty()) {
+    if (!layers.empty()) {
       APInt orderedMask = APInt::getZero(assignmentWidth);
-      for (const APInt &layer : solveBeforeLayerMasks)
+      for (const APInt &layer : layers)
         orderedMask |= layer;
-      solveBeforeLayerMasks.back() |= randomAssignmentMask & ~orderedMask;
+      layers.back() |= randomAssignmentMask & ~orderedMask;
     }
+    return layers;
+  };
+  // Whether the active ordering can contain a cycle that disabling constraint
+  // blocks removes. The runtime solver then orders the active edges.
+  bool modeDependentSolveCycle = false;
+  if (hasSolveBefore) {
+    std::optional<SmallVector<APInt>> layers =
+        computeSolveLayers(solveBeforeEdges);
+    if (!layers) {
+      // IEEE 1800-2023 18.9: randomize() considers only active constraint
+      // blocks, so a cycle is an error only when every edge on it is active.
+      // A cycle declared within one constraint block, or among the inline
+      // constraints and the blocks no constraint_mode() call can disable, is
+      // reported here. Any other cycle depends on constraint_mode() and is
+      // left to the runtime solver, which orders only the active edges and
+      // reports an active cycle.
+      auto fixedModesAttr =
+          sim::get<sim::metadata::RandomFixedConstraintModes>(op);
+      uint64_t fixedModes =
+          fixedModesAttr ? fixedModesAttr.getValue().getZExtValue() : 0;
+      SmallVector<SolveBeforeEdge> alwaysActiveEdges;
+      llvm::MapVector<uint32_t, SmallVector<SolveBeforeEdge>> blockEdges;
+      for (const SolveBeforeEdge &edge : solveBeforeEdges) {
+        if (edge.constraintBlock == OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1 ||
+            ((fixedModes >> edge.constraintBlock) & 1) != 0)
+          alwaysActiveEdges.push_back(edge);
+        else
+          blockEdges[edge.constraintBlock].push_back(edge);
+      }
+      layers = computeSolveLayers(alwaysActiveEdges);
+      if (!layers || llvm::any_of(blockEdges, [&](const auto &entry) {
+            return !computeSolveLayers(entry.second);
+          })) {
+        emitError(location) << "solve before ordering contains a cycle";
+        return failure();
+      }
+      modeDependentSolveCycle = true;
+    }
+    solveBeforeLayerMasks = std::move(*layers);
   }
 #ifndef OBELISK_ENABLE_Z3
   if (hasFunctionPriority) {
@@ -8585,9 +8624,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
   };
 
   bool weightedRequiresRuntime = rawDistWeights && !distPlans.empty();
-  bool solveBeforeRequiresRuntime = hasRealProgram || weightedRequiresRuntime ||
-                                    hasFunctionPriority ||
-                                    (hasSolveBefore && !softProposalExact);
+  bool solveBeforeRequiresRuntime =
+      modeDependentSolveCycle || hasRealProgram || weightedRequiresRuntime ||
+      hasFunctionPriority || (hasSolveBefore && !softProposalExact);
   if (hasSolveBefore && !solveBeforeTableRoot &&
       analysis.satisfiability != solver::Satisfiability::Unsatisfiable) {
     APInt orderedPropertyMask = APInt::getZero(assignmentWidth);

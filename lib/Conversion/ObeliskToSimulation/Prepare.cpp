@@ -4664,6 +4664,31 @@ void ObeliskSimPreparePass::runOnOperation() {
           }
         }
       };
+  // IEEE 1800-2023 18.9: every constraint block starts enabled and only
+  // constraint_mode() can disable it. A named-block call reaches the effective
+  // block of that name. A class-wide call reaches every block of an object
+  // whose class derives from the receiver's static class: the blocks declared
+  // in that class, its ancestors and its descendants.
+  llvm::StringSet<> modeControlledBlockNames;
+  llvm::SmallPtrSet<Operation *, 8> modeControlledClasses;
+  llvm::SmallPtrSet<Operation *, 8> modeControlledAncestors;
+  auto isConstraintModeFixed = [&](const EffectiveConstraintGroup &group) {
+    return llvm::all_of(group, [&](semantic::SVConstraintBlockSymbolOp block) {
+      std::optional<StringRef> name = block.getName();
+      if (!name || modeControlledBlockNames.contains(*name))
+        return false;
+      auto owner =
+          dyn_cast_or_null<semantic::SVClassTypeOp>(block->getParentOp());
+      auto hierarchy =
+          owner ? classHierarchyCache.find(owner) : classHierarchyCache.end();
+      return hierarchy != classHierarchyCache.end() &&
+             !modeControlledAncestors.contains(owner) &&
+             llvm::none_of(hierarchy->second,
+                           [&](semantic::SVClassTypeOp ancestor) {
+                             return modeControlledClasses.contains(ancestor);
+                           });
+    });
+  };
   auto collectStaticConstraintStorages =
       [&](ArrayRef<EffectiveConstraintGroup> groups,
           Location location) -> FailureOr<SmallVector<int64_t>> {
@@ -7823,6 +7848,12 @@ void ObeliskSimPreparePass::runOnOperation() {
         call, builder.getI64IntegerAttr(totalWidth));
     sim::set<sim::metadata::RandomConstraintCount>(
         call, builder.getI32IntegerAttr(constraintGroups.size()));
+    uint64_t fixedConstraintModes = 0;
+    for (auto [index, group] : llvm::enumerate(constraintGroups))
+      if (isConstraintModeFixed(group))
+        fixedConstraintModes |= uint64_t{1} << index;
+    sim::set<sim::metadata::RandomFixedConstraintModes>(
+        call, builder.getI64IntegerAttr(fixedConstraintModes));
     sim::set<sim::metadata::ConstraintModeStaticStorages>(
         call, builder.getDenseI64ArrayAttr(*staticConstraintStorages));
 
@@ -8350,6 +8381,8 @@ void ObeliskSimPreparePass::runOnOperation() {
         invalid = true;
         return true;
       }
+      modeControlledClasses.insert(owner);
+      modeControlledAncestors.insert(hierarchy.begin(), hierarchy.end());
       SmallVector<EffectiveConstraintGroup> groups;
       collectEffectiveConstraints(hierarchy, groups);
       if (groups.size() > 64) {
@@ -8410,6 +8443,8 @@ void ObeliskSimPreparePass::runOnOperation() {
     }
 
     std::optional<StringRef> targetName = constraint.getName();
+    if (targetName)
+      modeControlledBlockNames.insert(*targetName);
     std::optional<unsigned> constraintIndex;
     for (auto [index, group] : llvm::enumerate(groups)) {
       bool matches = llvm::is_contained(group, constraint);
@@ -8497,6 +8532,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                                             call.getReferencedSymbolAttr(),
                                             semanticSymbols, builder);
   });
+  // Randomize plans record which constraint blocks no constraint_mode() call
+  // can disable, so resolve every such call first.
+  for (semantic::SVCallExpressionOp call : semanticCalls)
+    freezeConstraintModeContract(call);
   for (semantic::SVCallExpressionOp call : semanticCalls)
     if (!freezeRandModeContract(call) && !freezeConstraintModeContract(call) &&
         !freezeObjectRandomDispatch(call))

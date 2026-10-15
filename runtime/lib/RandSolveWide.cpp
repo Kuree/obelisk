@@ -370,16 +370,22 @@ bool intersects(const WideValue &left, const WideValue &right) {
   return false;
 }
 
-bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
-                            const WideValue &mutableMask,
-                            uint64_t constraintMask,
-                            std::vector<WideValue> &layers) {
+std::vector<obelisk::runtime::SolveOrderEdge>
+toSolveOrderEdges(const std::vector<SolveBeforeEdge> &edges) {
   std::vector<obelisk::runtime::SolveOrderEdge> orderEdges;
   for (const SolveBeforeEdge &edge : edges)
     orderEdges.push_back({edge.beforeMask.words, edge.afterMask.words,
                           edge.constraintBlock, edge.functionPriority});
+  return orderEdges;
+}
+
+bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
+                            const WideValue &mutableMask,
+                            uint64_t constraintMask,
+                            std::vector<WideValue> &layers) {
   std::vector<obelisk::runtime::OrderMask> masks;
-  if (!obelisk::runtime::buildSolveOrderLayers(orderEdges, mutableMask.words,
+  if (!obelisk::runtime::buildSolveOrderLayers(toSolveOrderEdges(edges),
+                                               mutableMask.words,
                                                constraintMask, false, masks))
     return false;
   layers.clear();
@@ -755,9 +761,9 @@ bool parseWideProgram(const uint8_t *bytes, size_t size, WideProgram &result,
     WideValue all(result.aggregateWidth);
     std::fill(all.words.begin(), all.words.end(), UINT64_MAX);
     normalize(all);
-    std::vector<WideValue> validationLayers;
     if ((encodedPriority && !sawFunctionEdge && !sourceFunctionArguments) ||
-        !buildSolveBeforeLayers(result.solveEdges, all, 0, validationLayers))
+        !obelisk::runtime::validateSolveOrderDeclarations(
+            toSolveOrderEdges(result.solveEdges), all.words))
       return false;
   }
 
@@ -1334,8 +1340,10 @@ extern "C" obelisk_rt_status obelisk_rt_v1_random_solve_wide_modes_state(
         return OBELISK_RT_OK;
       std::vector<WideValue> solveLayers;
       if (!buildSolveBeforeLayers(program.solveEdges, mutableMask,
-                                  constraintMask, solveLayers))
-        return OBELISK_RT_INVALID_ARGUMENT;
+                                  constraintMask, solveLayers)) {
+        obelisk::runtime::reportActiveSolveOrderCycle(context);
+        return OBELISK_RT_OK;
+      }
       std::vector<uint64_t> orderedMasks;
       for (const WideValue &layer : solveLayers)
         orderedMasks.insert(orderedMasks.end(), layer.words.begin(),

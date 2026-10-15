@@ -95,6 +95,10 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::FlatSymbolRefAttr":$random_cycle_position_field,
     "::mlir::UnitAttr":$random_evaluation_error,
     "::mlir::IntegerAttr":$random_evaluation_inputs,
+    // Bits of a randomize call's effective constraint blocks that no
+    // constraint_mode() call in the design can disable, so they are always
+    // enabled (IEEE 1800-2023 18.9).
+    "::mlir::IntegerAttr":$random_fixed_constraint_modes,
     "::mlir::IntegerAttr":$random_function_case_condition,
     "::mlir::UnitAttr":$random_function_conditional,
     "::mlir::UnitAttr":$random_function_expression,

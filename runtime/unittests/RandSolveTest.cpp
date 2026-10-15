@@ -1,3 +1,4 @@
+#include "../lib/RuntimeInternal.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
@@ -293,6 +294,35 @@ TEST_F(RandSolveTest, TraversesCartesianProductOfFiniteSubdomains) {
             OBELISK_RT_OK);
   EXPECT_EQ(success, 1u);
   EXPECT_EQ(assignment, 30u);
+}
+
+TEST_F(RandSolveTest, ReportsSolveOrderCycleOnlyAmongActiveBlocks) {
+  // IEEE 1800-2023 18.9: blocks 0 (x before y) and 1 (y before x) only form
+  // a cycle while both are enabled. With block 1 disabled the ordering is
+  // legal; with both enabled randomize() fails and records an error.
+  std::vector<uint8_t> bytes =
+      program(2, 0,
+              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 1},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1}},
+              false, {{0b01, 0b10, 0}, {0b10, 0b01, 1}});
+  obelisk_rt_random_state_v1 state;
+  obelisk_rt_v1_random_state_seed(&state, 7, 11);
+  uint64_t assignment = 0;
+  uint64_t nextState = 0;
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, 3, 0b10, 4, state.state,
+                state.increment, nullptr, 0, &assignment, &success, &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_random_solve_modes_state(
+                context, bytes.data(), bytes.size(), 0, 3, 0, 4, state.state,
+                state.increment, nullptr, 0, &assignment, &success, &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_FATAL);
 }
 
 TEST_F(RandSolveTest, SamplesDistAcrossSparseFiniteDomain) {

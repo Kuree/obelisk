@@ -85,6 +85,8 @@ using RandomEvaluationError =
     ObeliskSimulationDialect::RandomEvaluationErrorAttrHelper;
 using RandomEvaluationInputs =
     ObeliskSimulationDialect::RandomEvaluationInputsAttrHelper;
+using RandomFixedConstraintModes =
+    ObeliskSimulationDialect::RandomFixedConstraintModesAttrHelper;
 using RandomFunctionCaseCondition =
     ObeliskSimulationDialect::RandomFunctionCaseConditionAttrHelper;
 using RandomFunctionConditional =

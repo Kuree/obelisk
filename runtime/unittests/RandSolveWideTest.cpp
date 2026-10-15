@@ -1,5 +1,6 @@
 //===- RandSolveWideTest.cpp - Wide residual solver tests ----------------===//
 
+#include "../lib/RuntimeInternal.h"
 #include "obelisk/Runtime/Runtime.h"
 
 #include "gtest/gtest.h"
@@ -519,8 +520,10 @@ TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
   rejects(encode({{{0, 2}, {1, 0}}}));
   rejects(encode({{{1, 0}, {1, 1}}}));
   rejects(encode({{{1, 0}, {0, 1}, 64}}));
-  // Declaration cycles remain invalid even when their blocks are disabled.
-  rejects(encode({{{1, 0}, {0, 1}, 0}, {{0, 1}, {1, 0}, 1}}));
+  // A cycle within one block or within the unmaskable edges is invalid even
+  // while that block is disabled.
+  rejects(encode({{{1, 0}, {0, 1}, 0}, {{0, 1}, {1, 0}, 0}}));
+  rejects(encode({{{1, 0}, {0, 1}}, {{0, 1}, {1, 0}}}));
   auto bytes = encode({{{1, 0}, {0, 1}}});
   bytes.back() = 1;
   rejects(bytes);
@@ -530,6 +533,38 @@ TEST_F(RandSolveWideTest, RejectsMalformedWideSolveOrderMetadata) {
   bytes = encode({{{1, 0}, {0, 1}}});
   bytes[20] &= ~OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM;
   rejects(bytes);
+}
+
+TEST_F(RandSolveWideTest, ReportsSolveOrderCycleOnlyAmongActiveBlocks) {
+  // IEEE 1800-2023 18.9: blocks 0 and 1 order the two words in opposite
+  // directions. Disabling either leaves a legal order; enabling both makes
+  // randomize() fail and records an error.
+  std::vector<uint8_t> bytes =
+      program(65, 0,
+              {{OBELISK_RT_RANDOM_PUSH_LITERAL_V1, 1, 0, 0, 0, {1}},
+               {OBELISK_RT_RANDOM_END_HARD_V1, 1, 0,
+                OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1}},
+              OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM |
+                  OBELISK_RT_RANDOM_PROGRAM_HAS_SOLVE_BEFORE,
+              {}, {{{1, 0}, {0, 1}, 0}, {{0, 1}, {1, 0}, 1}});
+  uint64_t start[] = {0, 0}, mutableMask[] = {UINT64_MAX, 1};
+  uint64_t assignment[] = {0, 0}, nextState = 0;
+  uint32_t success = 0;
+  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mutableMask, 2,
+                0b10, 4, 83, 21, nullptr, 0, nullptr, 0, assignment, &success,
+                &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 1u);
+  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_OK);
+
+  EXPECT_EQ(obelisk_rt_v1_random_solve_wide_modes_state(
+                context, bytes.data(), bytes.size(), start, mutableMask, 2, 0,
+                4, 83, 21, nullptr, 0, nullptr, 0, assignment, &success,
+                &nextState),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_FATAL);
 }
 
 TEST_F(RandSolveWideTest, HonorsConstraintModeMask) {

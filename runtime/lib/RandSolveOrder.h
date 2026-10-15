@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <unordered_map>
 #include <vector>
@@ -236,6 +237,40 @@ buildSolveOrderLayers(const std::vector<SolveOrderEdge> &edges,
     layers.push_back(mutableMask);
   }
   return true;
+}
+
+/// IEEE 1800-2023 18.9: the edges of a constraint block are active only while
+/// it is enabled, so declared metadata is invalid only for a cycle within one
+/// block or within the unmaskable inline edges. A cycle spanning blocks is an
+/// error only once all of them are enabled, and is reported at solve time.
+inline bool
+validateSolveOrderDeclarations(const std::vector<SolveOrderEdge> &edges,
+                               const OrderMask &mutableMask) {
+  std::vector<uint32_t> blocks;
+  for (const SolveOrderEdge &edge : edges)
+    if (std::find(blocks.begin(), blocks.end(), edge.block) == blocks.end())
+      blocks.push_back(edge.block);
+  std::vector<SolveOrderEdge> declared;
+  std::vector<OrderMask> layers;
+  for (uint32_t block : blocks) {
+    declared.clear();
+    for (const SolveOrderEdge &edge : edges)
+      if (edge.block == block)
+        declared.push_back(edge);
+    if (!buildSolveOrderLayers(declared, mutableMask, 0, false, layers))
+      return false;
+  }
+  return true;
+}
+
+// IEEE 1800-2023 18.5.9: a cycle among the solve before edges of the active
+// constraint blocks is an error, and randomize() then fails (18.6.3). Declared
+// metadata is validated per block, so a layering failure at solve time is
+// such a cycle.
+inline void reportActiveSolveOrderCycle(obelisk_rt_context *context) {
+  std::fprintf(stderr, "error: solve before ordering of the active "
+                       "constraint blocks contains a cycle\n");
+  obelisk_rt_v1_scheduler_error(context);
 }
 
 } // namespace obelisk::runtime

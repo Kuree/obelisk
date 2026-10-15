@@ -135,18 +135,24 @@ bool constraintEnabled(uint32_t constraintBlock, uint64_t constraintMask) {
          ((constraintMask >> constraintBlock) & 1) == 0;
 }
 
-bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
-                            uint64_t mutableMask, uint64_t constraintMask,
-                            std::vector<uint64_t> &layers) {
+std::vector<obelisk::runtime::SolveOrderEdge>
+toSolveOrderEdges(const std::vector<SolveBeforeEdge> &edges) {
   std::vector<obelisk::runtime::SolveOrderEdge> orderEdges;
   for (const SolveBeforeEdge &edge : edges)
     orderEdges.push_back({{edge.beforeMask},
                           {edge.afterMask},
                           edge.constraintBlock,
                           edge.functionPriority});
+  return orderEdges;
+}
+
+bool buildSolveBeforeLayers(const std::vector<SolveBeforeEdge> &edges,
+                            uint64_t mutableMask, uint64_t constraintMask,
+                            std::vector<uint64_t> &layers) {
   std::vector<obelisk::runtime::OrderMask> masks;
-  if (!obelisk::runtime::buildSolveOrderLayers(orderEdges, {mutableMask},
-                                               constraintMask, false, masks))
+  if (!obelisk::runtime::buildSolveOrderLayers(toSolveOrderEdges(edges),
+                                               {mutableMask}, constraintMask,
+                                               false, masks))
     return false;
   layers.clear();
   for (const auto &mask : masks)
@@ -771,11 +777,10 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
           return OBELISK_RT_INVALID_ARGUMENT;
         solveEdges.push_back(edge);
       }
-      std::vector<uint64_t> validationLayers;
       if ((!encodedPriority && solveEdges.empty()) ||
           (encodedPriority && !sawFunctionEdge && !sourceFunctionArguments) ||
-          !buildSolveBeforeLayers(solveEdges, aggregateMask, 0,
-                                  validationLayers))
+          !obelisk::runtime::validateSolveOrderDeclarations(
+              toSolveOrderEdges(solveEdges), {aggregateMask}))
         return OBELISK_RT_INVALID_ARGUMENT;
     }
 
@@ -934,8 +939,10 @@ randomSolveModesImpl(obelisk_rt_context *context, const uint8_t *program,
     bool activeSolveBefore = false;
     if (encodedSolveBefore) {
       if (!buildSolveBeforeLayers(solveEdges, mutableMask, constraintMask,
-                                  solveLayers))
-        return OBELISK_RT_INVALID_ARGUMENT;
+                                  solveLayers)) {
+        obelisk::runtime::reportActiveSolveOrderCycle(context);
+        return OBELISK_RT_OK;
+      }
       activeSolveBefore = !solveLayers.empty();
       // A stateless entry point cannot make exact non-power-of-two choices
       // for the conditional solve-order distribution. Compiler-generated
