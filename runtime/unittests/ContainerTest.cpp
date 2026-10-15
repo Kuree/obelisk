@@ -460,6 +460,47 @@ TEST_F(ManagedValueTest, FormatsManagedStringArguments) {
   obelisk_rt_v1_buffer_release(&output);
 }
 
+TEST_F(ManagedValueTest, FormatsByteContainersAsStrings) {
+  // IEEE 1800-2023 21.2.1.7: %s also takes an unpacked array of byte, in
+  // index order. As in a string assigned from the array, NUL is dropped.
+  obelisk_rt_object_v1 *bytes = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 778,
+                OBELISK_RT_ELEMENT_BITS, OBELISK_RT_ELEMENT_SIGNED, 1, 1, 8,
+                nullptr, 0, 3, 0, &bytes),
+            OBELISK_RT_OK);
+  const uint8_t text[] = {'h', 0, 'i'};
+  for (int64_t index = 0; index != 3; ++index)
+    ASSERT_EQ(obelisk_rt_v1_container_write(lane, bytes, index, &text[index],
+                                            nullptr),
+              OBELISK_RT_OK);
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &bytes,
+                             nullptr};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  obelisk_rt_buffer_v1 output{};
+  ASSERT_EQ(obelisk_rt_v1_format(context, "[%4s]", 5, &argument, 1,
+                                 &environment, &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(output.data), output.size),
+      "[  hi]");
+  obelisk_rt_v1_buffer_release(&output);
+
+  // Wider elements are not characters.
+  obelisk_rt_object_v1 *words = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 779,
+                OBELISK_RT_ELEMENT_BITS, 0, sizeof(uint32_t), 1, 32, nullptr, 0,
+                1, 0, &words),
+            OBELISK_RT_OK);
+  argument.data = &words;
+  EXPECT_EQ(obelisk_rt_v1_format(context, "%s", 2, &argument, 1, &environment,
+                                 &output),
+            OBELISK_RT_ARGUMENT_MISMATCH);
+  obelisk_rt_v1_buffer_release(&output);
+}
+
 TEST_F(ManagedValueTest, CreatesTypedContainersAndFormatsPatterns) {
   obelisk_rt_object_v1 *array = nullptr;
   ASSERT_EQ(obelisk_rt_v1_container_create_typed(

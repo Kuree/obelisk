@@ -499,6 +499,18 @@ private:
                       ::mlir::ArrayAttr names, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerStringFormatSystemCall(semantic::SVCallExpressionOp op);
+  /// Whether `type` is a dynamic array or queue of byte, which formatted
+  /// output reads and writes as text (IEEE 1800-2023 21.2.1.7, 21.3.3).
+  static bool isByteContainerType(::mlir::Type type);
+  /// The text of a dynamic array or queue of byte, in index order. Like a
+  /// fixed byte array's, it omits NUL characters.
+  ::mlir::FailureOr<::mlir::Value>
+  lowerByteContainerString(::mlir::Value container, ::mlir::Location location);
+  /// Convert formatted text to an $sformat or $swrite destination of type
+  /// `destinationType` by string literal assignment rules (5.9).
+  ::mlir::FailureOr<::mlir::Value>
+  lowerFormattedResult(::mlir::Value text, ::mlir::Type destinationType,
+                       ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerDumpSystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>

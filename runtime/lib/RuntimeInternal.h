@@ -232,6 +232,13 @@ obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
                                                std::string &output,
                                                unsigned depth);
 
+// Append the characters of a managed dynamic array or queue of 8-bit
+// integral elements, as %s formats an unpacked array of byte (IEEE 1800-2023
+// 21.2.1.7). Any other container is an argument mismatch.
+obelisk_rt_status
+obelisk_rt_container_byte_text(obelisk_rt_object_v1 *container,
+                               std::string &output);
+
 struct CoverageTupleQueueSnapshot {
   uint64_t count = 0;
   uint64_t valueSize = 0;

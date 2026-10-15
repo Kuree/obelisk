@@ -4106,6 +4106,46 @@ obelisk_rt_clone_traced_containers(obelisk_rt_gc_lane_v1 *lane, uint8_t *image,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status
+obelisk_rt_container_byte_text(obelisk_rt_object_v1 *container,
+                               std::string &output) {
+  if (!container)
+    return OBELISK_RT_OK;
+  ContainerHeader snapshot;
+  obelisk_rt_status status = snapshotHeader(container, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  // Characters run from the left bound to the right bound, which an
+  // associative array does not have.
+  const obelisk_rt_element_type_v1 *element = snapshot.element;
+  if (snapshot.kind == OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY || !element ||
+      (element->kind != OBELISK_RT_ELEMENT_BITS &&
+       element->kind != OBELISK_RT_ELEMENT_LOGIC) ||
+      element->bit_width != 8)
+    return OBELISK_RT_ARGUMENT_MISMATCH;
+  if (element->value_size != 1)
+    return OBELISK_RT_INVALID_DESIGN;
+  bool fourState = element->flags & OBELISK_RT_ELEMENT_FOUR_STATE;
+  OBELISK_RT_TRY {
+    output.reserve(output.size() + static_cast<size_t>(snapshot.size));
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  for (uint64_t index = 0; index != snapshot.size; ++index) {
+    uint8_t value = 0;
+    uint8_t unknown = 0;
+    status =
+        obelisk_rt_v1_container_read(container, static_cast<int64_t>(index),
+                                     &value, fourState ? &unknown : nullptr);
+    if (status != OBELISK_RT_OK)
+      return status;
+    // As in a string assigned from the array (6.16), unknown bits read as 0
+    // and a NUL character is dropped.
+    if (uint8_t character = value & static_cast<uint8_t>(~unknown))
+      output.push_back(static_cast<char>(character));
+  }
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
                                                std::string &output,
                                                unsigned depth) {

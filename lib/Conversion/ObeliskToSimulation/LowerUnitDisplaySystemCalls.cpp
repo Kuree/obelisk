@@ -1,5 +1,6 @@
 //===- LowerUnitDisplaySystemCalls.cpp - Lower display semantics --------===//
 
+#include "ContainerElementDescriptor.h"
 #include "LowerUnit.h"
 
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
@@ -832,7 +833,10 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
     if (isFormat) {
       Value format = *value;
       if (!isa<sim::StringType>(format.getType())) {
-        FailureOr<Value> bytes = lowerByteArray(child, format);
+        FailureOr<Value> bytes =
+            isByteContainerType(format.getType())
+                ? lowerByteContainerString(format, getSemanticLocation(child))
+                : lowerByteArray(child, format);
         if (succeeded(bytes))
           format = *bytes;
         else {
@@ -1113,7 +1117,7 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
   bool integral =
       isa<IntegerType, sim::LogicType, sim::PackedArrayType,
           sim::PackedStructType, sim::PackedUnionType>(destinationType);
-  bool byteArray = false;
+  bool byteArray = isByteContainerType(destinationType);
   if (auto array = dyn_cast<sim::UnpackedArrayType>(destinationType))
     if (auto element = dyn_cast<IntegerType>(array.getElementType()))
       byteArray = element.getWidth() == 8;
@@ -1123,35 +1127,144 @@ UnitLowering::lowerStringFormatSystemCall(semantic::SVCallExpressionOp op) {
            "string type";
     return failure();
   }
-  FailureOr<Value> converted = failure();
-  if (byteArray) {
-    // IEEE 1800-2017 5.9 and 21.3.3: string assignment to an unpacked
-    // byte array is left-justified, in left-bound-to-right-bound order.
-    // getc returns zero beyond the string, providing the required fill.
-    SmallVector<Value> bytes;
-    unsigned count = sim::getAggregateNumElements(destinationType);
-    Type elementType =
-        cast<sim::UnpackedArrayType>(destinationType).getElementType();
-    bytes.reserve(count);
-    for (unsigned index = 0; index != count; ++index) {
-      Value position =
-          arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                    builder.getI64IntegerAttr(index));
-      bytes.push_back(sim::SimStringGetcOp::create(
-          builder, location, elementType, result, position));
-    }
-    converted = sim::SimAggregateConstructOp::create(builder, location,
-                                                     destinationType, bytes)
-                    .getResult();
-  } else {
-    converted = convert(result, destinationType, false, location);
-  }
+  FailureOr<Value> converted =
+      lowerFormattedResult(result, destinationType, location);
   if (failed(converted) ||
       failed(storeReference(*destination, *converted, location)))
     return failure();
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                    builder.getBoolAttr(false))
       .getResult();
+}
+
+bool UnitLowering::isByteContainerType(Type type) {
+  Type element;
+  if (auto array = dyn_cast<sim::DynamicArrayType>(type))
+    element = array.getElementType();
+  else if (auto queue = dyn_cast<sim::QueueType>(type))
+    element = queue.getElementType();
+  auto integer = dyn_cast_or_null<IntegerType>(element);
+  return integer && integer.getWidth() == 8;
+}
+
+FailureOr<Value> UnitLowering::lowerByteContainerString(Value container,
+                                                        Location location) {
+  Type stringType = sim::StringType::get(function.getContext());
+  Type i64 = builder.getI64Type();
+  Value size =
+      sim::SimContainerSizeOp::create(builder, location, i64, container);
+  Value zero = arith::ConstantOp::create(builder, location, i64,
+                                         builder.getI64IntegerAttr(0));
+  Value empty =
+      sim::SimStringLiteralOp::create(builder, location, stringType, "");
+  Block *header = addBlock();
+  header->addArgument(i64, location);
+  header->addArgument(stringType, location);
+  Block *body = addBlock();
+  Block *exit = addBlock();
+  exit->addArgument(stringType, location);
+  cf::BranchOp::create(builder, location, header, ValueRange{zero, empty});
+  setCurrent(header);
+  Value index = header->getArgument(0);
+  Value text = header->getArgument(1);
+  Value more = arith::CmpIOp::create(builder, location,
+                                     arith::CmpIPredicate::ult, index, size);
+  cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
+                           ValueRange{text});
+  setCurrent(body);
+  Value character = sim::SimContainerReadOp::create(
+      builder, location, builder.getI8Type(), container, index);
+  // A string from a zero byte is empty, which drops NUL characters.
+  Value piece = sim::SimStringFromPackedOp::create(builder, location,
+                                                   stringType, character);
+  Value joined = sim::SimStringConcatOp::create(builder, location, stringType,
+                                                ValueRange{text, piece});
+  Value one = arith::ConstantOp::create(builder, location, i64,
+                                        builder.getI64IntegerAttr(1));
+  Value next = arith::AddIOp::create(builder, location, index, one);
+  cf::BranchOp::create(builder, location, header, ValueRange{next, joined});
+  setCurrent(exit);
+  return exit->getArgument(0);
+}
+
+FailureOr<Value> UnitLowering::lowerFormattedResult(Value text,
+                                                    Type destinationType,
+                                                    Location location) {
+  Type i64 = builder.getI64Type();
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(destinationType)) {
+    // IEEE 1800-2023 5.9 and 21.3.3: string assignment to an unpacked byte
+    // array is left-justified, in left-bound-to-right-bound order. getc
+    // returns zero beyond the string, providing the required fill.
+    SmallVector<Value> bytes;
+    unsigned count = sim::getAggregateNumElements(destinationType);
+    bytes.reserve(count);
+    for (unsigned index = 0; index != count; ++index) {
+      Value position = arith::ConstantOp::create(
+          builder, location, i64, builder.getI64IntegerAttr(index));
+      bytes.push_back(sim::SimStringGetcOp::create(
+          builder, location, array.getElementType(), text, position));
+    }
+    return sim::SimAggregateConstructOp::create(builder, location,
+                                                destinationType, bytes)
+        .getResult();
+  }
+  if (!isByteContainerType(destinationType))
+    return convert(text, destinationType, false, location);
+
+  // A dynamic array or queue takes the size of the text, except that a
+  // bounded queue keeps only its first bound + 1 characters (7.10.5).
+  auto queue = dyn_cast<sim::QueueType>(destinationType);
+  Type element =
+      queue ? queue.getElementType()
+            : cast<sim::DynamicArrayType>(destinationType).getElementType();
+  FailureOr<ContainerElementDescriptor> descriptor =
+      describeContainerElement(element, location);
+  if (failed(descriptor))
+    return failure();
+  Value zero = arith::ConstantOp::create(builder, location, i64,
+                                         builder.getI64IntegerAttr(0));
+  Value size = sim::SimStringLengthOp::create(builder, location, i64, text);
+  if (queue && queue.getBound())
+    size = arith::MinUIOp::create(
+        builder, location, size,
+        arith::ConstantOp::create(
+            builder, location, i64,
+            builder.getI64IntegerAttr(queue.getBound() + 1)));
+  // A queue starts empty and grows by insertion.
+  Value container = sim::SimContainerCreateOp::create(
+      builder, location, destinationType, queue ? zero : size,
+      descriptor->typeID, descriptor->kind, descriptor->flags,
+      descriptor->valueSize, descriptor->alignment, descriptor->bitWidth,
+      builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+      builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+      queue ? sim::ContainerKind::Queue : sim::ContainerKind::DynamicArray,
+      queue ? (queue.getBound() ? queue.getBound() : UINT64_MAX) : 0);
+  Block *header = addBlock();
+  header->addArgument(i64, location);
+  Block *body = addBlock();
+  Block *exit = addBlock();
+  cf::BranchOp::create(builder, location, header, ValueRange{zero});
+  setCurrent(header);
+  Value index = header->getArgument(0);
+  Value more = arith::CmpIOp::create(builder, location,
+                                     arith::CmpIPredicate::ult, index, size);
+  cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
+                           ValueRange{});
+  setCurrent(body);
+  Value character =
+      sim::SimStringGetcOp::create(builder, location, element, text, index);
+  if (queue)
+    sim::SimQueueInsertOp::create(builder, location, container, index,
+                                  character);
+  else
+    sim::SimContainerWriteOp::create(builder, location, container, index,
+                                     character);
+  Value one = arith::ConstantOp::create(builder, location, i64,
+                                        builder.getI64IntegerAttr(1));
+  Value next = arith::AddIOp::create(builder, location, index, one);
+  cf::BranchOp::create(builder, location, header, ValueRange{next});
+  setCurrent(exit);
+  return container;
 }
 
 FailureOr<Value>
@@ -1545,7 +1658,7 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
       bool integral =
           isa<IntegerType, sim::LogicType, sim::PackedArrayType,
               sim::PackedStructType, sim::PackedUnionType>(destinationType);
-      bool byteArray = false;
+      bool byteArray = isByteContainerType(destinationType);
       if (auto array = dyn_cast<sim::UnpackedArrayType>(destinationType))
         if (auto element = dyn_cast<IntegerType>(array.getElementType()))
           byteArray = element.getWidth() == 8;
@@ -1561,29 +1674,8 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
           context, items, static_cast<sim::Radix>(display->radix), flags,
           lexicalScope, op.getSystemLibraryCellAttr(), timeMultiplier,
           timePrecision);
-      FailureOr<Value> converted = failure();
-      if (byteArray) {
-        // IEEE 1800-2017 5.9 and 21.3.3: string assignment to an unpacked
-        // byte array is left-justified, in left-bound-to-right-bound order.
-        // getc returns zero beyond the string, providing the required fill.
-        SmallVector<Value> bytes;
-        unsigned count = sim::getAggregateNumElements(destinationType);
-        Type elementType =
-            cast<sim::UnpackedArrayType>(destinationType).getElementType();
-        bytes.reserve(count);
-        for (unsigned index = 0; index != count; ++index) {
-          Value position =
-              arith::ConstantOp::create(builder, location, builder.getI64Type(),
-                                        builder.getI64IntegerAttr(index));
-          bytes.push_back(sim::SimStringGetcOp::create(
-              builder, location, elementType, result, position));
-        }
-        converted = sim::SimAggregateConstructOp::create(builder, location,
-                                                         destinationType, bytes)
-                        .getResult();
-      } else {
-        converted = convert(result, destinationType, false, location);
-      }
+      FailureOr<Value> converted =
+          lowerFormattedResult(result, destinationType, location);
       if (failed(converted) ||
           failed(storeReference(*destination, *converted, location)))
         return failure();

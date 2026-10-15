@@ -590,6 +590,18 @@ obelisk_rt_status formatOverriddenTime(std::string &output, long double ticks,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status getManagedContainer(const obelisk_rt_arg_v1 &argument,
+                                      obelisk_rt_object_v1 *&container) {
+  if (argument.size != 0 || !argument.data || argument.unknown)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  obelisk_rt_managed_word_v1 word = 0;
+  std::memcpy(&word, argument.data, sizeof(word));
+  container = obelisk_rt_object_from_managed_word(word);
+  if (word != obelisk_rt_managed_word_from_object(container))
+    return OBELISK_RT_INVALID_HANDLE;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status formatArgument(obelisk_rt_context *context,
                                  std::string &output,
                                  const obelisk_rt_arg_v1 &argument,
@@ -730,6 +742,20 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
         numeric = knownDecimal(view);
       return formatStringValue(output, std::move(numeric), options);
     }
+    // IEEE 1800-2023 21.2.1.7 also takes an unpacked array of byte, such as
+    // a dynamic array or queue.
+    if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
+      obelisk_rt_object_v1 *container = nullptr;
+      if (obelisk_rt_status status = getManagedContainer(argument, container);
+          status != OBELISK_RT_OK)
+        return status;
+      std::string text;
+      if (obelisk_rt_status status =
+              obelisk_rt_container_byte_text(container, text);
+          status != OBELISK_RT_OK)
+        return status;
+      return formatStringValue(output, std::move(text), options);
+    }
     if (argument.kind == OBELISK_RT_ARG_STRING ||
         argument.kind == OBELISK_RT_ARG_MANAGED_STRING) {
       char scratch[8];
@@ -837,14 +863,10 @@ obelisk_rt_status formatArgument(obelisk_rt_context *context,
             output, std::string(bytes, static_cast<size_t>(size)), options);
     }
     if (argument.kind == OBELISK_RT_ARG_MANAGED_CONTAINER) {
-      if (argument.size != 0 || !argument.data || argument.unknown)
-        return OBELISK_RT_INVALID_ARGUMENT;
-      obelisk_rt_managed_word_v1 word = 0;
-      std::memcpy(&word, argument.data, sizeof(word));
-      obelisk_rt_object_v1 *container =
-          obelisk_rt_object_from_managed_word(word);
-      if (word != obelisk_rt_managed_word_from_object(container))
-        return OBELISK_RT_INVALID_HANDLE;
+      obelisk_rt_object_v1 *container = nullptr;
+      if (obelisk_rt_status status = getManagedContainer(argument, container);
+          status != OBELISK_RT_OK)
+        return status;
       std::string value;
       obelisk_rt_status status =
           obelisk_rt_container_pattern(container, value, 0);
