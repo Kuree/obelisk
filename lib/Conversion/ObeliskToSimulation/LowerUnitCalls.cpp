@@ -1021,20 +1021,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
                 << "rand_mode selection is not an unpacked array element";
             return failure();
           }
-          Value known =
-              arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                        builder.getBoolAttr(true));
-          if (auto logic = dyn_cast<sim::LogicType>(index.getType())) {
-            Value bits = sim::SimLogicToBitsOp::create(
-                builder, location, builder.getIntegerType(logic.getWidth()),
-                index);
-            Value roundTrip =
-                sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
-            known = sim::SimLogicCompareOp::create(
-                builder, location, builder.getI1Type(),
-                sim::CompareKind::CaseEq, index, roundTrip);
-            index = bits;
-          }
+          Value known;
+          std::tie(index, known) = splitKnownBits(index, location);
           auto indexType = cast<IntegerType>(index.getType());
           auto indexConstant = [&](int64_t value) -> Value {
             return arith::ConstantOp::create(

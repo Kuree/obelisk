@@ -5085,20 +5085,7 @@ UnitLowering::lowerQueueSliceAddress(semantic::SVRangeSelectExpressionOp range,
         toPackedScalar(*value, getSemanticLocation(bound));
     if (failed(scalar))
       return failure();
-    Value normalized = *scalar;
-    Value known = arith::ConstantOp::create(
-        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    if (auto logic = dyn_cast<sim::LogicType>(normalized.getType())) {
-      auto bitsType = builder.getIntegerType(logic.getWidth());
-      Value bits = sim::SimLogicToBitsOp::create(builder, location, bitsType,
-                                                 normalized);
-      Value roundTrip =
-          sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
-      known = sim::SimLogicCompareOp::create(
-          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
-          normalized, roundTrip);
-      normalized = bits;
-    }
+    auto [normalized, known] = splitKnownBits(*scalar, location);
     FailureOr<Value> converted = convert(normalized, i64, isSignedNode(bound),
                                          getSemanticLocation(bound));
     if (failed(converted))

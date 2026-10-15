@@ -2085,6 +2085,23 @@ FailureOr<Value> UnitLowering::toPackedScalar(Value value, Location location) {
       .getResult();
 }
 
+std::pair<Value, Value> UnitLowering::splitKnownBits(Value scalar,
+                                                     Location location) {
+  auto logic = dyn_cast<sim::LogicType>(scalar.getType());
+  if (!logic)
+    return {scalar,
+            arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                      builder.getBoolAttr(true))};
+  Value bits = sim::SimLogicToBitsOp::create(
+      builder, location, builder.getIntegerType(logic.getWidth()), scalar);
+  Value roundTrip =
+      sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
+  Value known = sim::SimLogicCompareOp::create(
+      builder, location, builder.getI1Type(), sim::CompareKind::CaseEq, scalar,
+      roundTrip);
+  return {bits, known};
+}
+
 FailureOr<Value> UnitLowering::toContainerIndex(Value value, bool sourceSigned,
                                                 Location location) {
   FailureOr<Value> scalar = toPackedScalar(value, location);
@@ -2093,17 +2110,8 @@ FailureOr<Value> UnitLowering::toContainerIndex(Value value, bool sourceSigned,
 
   Value index = *scalar;
   Value known;
-  if (auto logic = dyn_cast<sim::LogicType>(index.getType())) {
-    auto bitsType = builder.getIntegerType(logic.getWidth());
-    Value bits =
-        sim::SimLogicToBitsOp::create(builder, location, bitsType, index);
-    Value roundTrip =
-        sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
-    known = sim::SimLogicCompareOp::create(
-        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq, index,
-        roundTrip);
-    index = bits;
-  }
+  if (isa<sim::LogicType>(index.getType()))
+    std::tie(index, known) = splitKnownBits(index, location);
 
   FailureOr<Value> converted =
       convert(index, builder.getI64Type(), sourceSigned, location);

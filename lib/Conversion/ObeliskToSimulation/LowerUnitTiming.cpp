@@ -142,15 +142,9 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   if (failed(scalar))
     return failure();
   Value normalized = *scalar;
-  if (auto logic = dyn_cast<sim::LogicType>(normalized.getType())) {
-    Type bitsType = IntegerType::get(function.getContext(), logic.getWidth());
-    Value bits =
-        sim::SimLogicToBitsOp::create(builder, location, bitsType, normalized);
-    Value roundTrip =
-        sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
-    Value known = sim::SimLogicCompareOp::create(
-        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
-        normalized, roundTrip);
+  if (isa<sim::LogicType>(normalized.getType())) {
+    auto [bits, known] = splitKnownBits(normalized, location);
+    Type bitsType = bits.getType();
     Value zero = arith::ConstantOp::create(builder, location, bitsType,
                                            builder.getIntegerAttr(bitsType, 0));
     normalized = arith::SelectOp::create(builder, location, known, bits, zero);
@@ -1097,18 +1091,41 @@ UnitLowering::emitRepeatedEventSuspend(Operation *control, Block *continuation,
 }
 
 FailureOr<Value> UnitLowering::lowerRepeatedEventCount(Operation *control) {
-  Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
   if (!isa<semantic::SVRepeatedEventControlOp>(control) ||
       children.size() != 2) {
     unsupported(control) << " (repeated-event inventory)";
     return failure();
   }
-  FailureOr<Value> count = lowerExpression(children[0]);
-  if (failed(count))
+  return lowerRepeatCount(children[0]);
+}
+
+FailureOr<Value> UnitLowering::lowerRepeatCount(Operation *count) {
+  // A negative count is also zero; every consumer only repeats while the
+  // count is positive.
+  Location location = getSemanticLocation(count);
+  FailureOr<Value> value = lowerExpression(count);
+  if (failed(value))
     return failure();
-  return convert(*count, builder.getI64Type(), isSignedNode(children[0]),
-                 location);
+  Value bits = *value;
+  Value known;
+  if (sim::getPackedScalarType(bits.getType())) {
+    FailureOr<Value> scalar = toPackedScalar(bits, location);
+    if (failed(scalar))
+      return failure();
+    bits = *scalar;
+    if (isa<sim::LogicType>(bits.getType()))
+      std::tie(bits, known) = splitKnownBits(bits, location);
+  }
+  Type i64 = builder.getI64Type();
+  FailureOr<Value> normalized =
+      convert(bits, i64, isSignedNode(count), location);
+  if (failed(normalized) || !known)
+    return normalized;
+  Value zero = arith::ConstantOp::create(builder, location, i64,
+                                         builder.getI64IntegerAttr(0));
+  return arith::SelectOp::create(builder, location, known, *normalized, zero)
+      .getResult();
 }
 
 LogicalResult

@@ -1743,20 +1743,7 @@ LogicalResult UnitLowering::writeCapturedLValue(
     // low bits of the replacement, matching indexed part-select assignment
     // behavior at either declaration boundary. Sliced NBAs remain narrow and
     // therefore compose with other sliced NBAs.
-    Value low = destination.index;
-    Value known = arith::ConstantOp::create(
-        builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-    if (auto logic = dyn_cast<sim::LogicType>(low.getType())) {
-      auto bitsType = builder.getIntegerType(logic.getWidth());
-      Value bits =
-          sim::SimLogicToBitsOp::create(builder, location, bitsType, low);
-      Value roundTrip =
-          sim::SimLogicFromBitsOp::create(builder, location, logic, bits);
-      known = sim::SimLogicCompareOp::create(
-          builder, location, builder.getI1Type(), sim::CompareKind::CaseEq, low,
-          roundTrip);
-      low = bits;
-    }
+    auto [low, known] = splitKnownBits(destination.index, location);
     auto lowType = dyn_cast<IntegerType>(low.getType());
     if (!lowType)
       return failure();

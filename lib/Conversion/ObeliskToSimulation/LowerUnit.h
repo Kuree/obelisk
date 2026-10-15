@@ -584,6 +584,9 @@ private:
       ::mlir::Block *continuation, ::mlir::ValueRange continuationOperands);
   ::mlir::FailureOr<::mlir::Value>
   lowerRepeatedEventCount(::mlir::Operation *control);
+  /// Lowers a repeat count to i64, mapping an unknown or high-impedance count
+  /// to zero (IEEE 1800-2023 12.7.2, 9.4.5).
+  ::mlir::FailureOr<::mlir::Value> lowerRepeatCount(::mlir::Operation *count);
   ::mlir::LogicalResult
   emitDeferredNBAEvent(semantic::SVAssignmentExpressionOp assignment,
                        ::mlir::Operation *control, CapturedLValue target,
@@ -644,6 +647,10 @@ private:
   /// Rounds an f64 toward zero, keeping NaN and infinities, with operations
   /// both execution tiers share.
   ::mlir::Value truncateReal(::mlir::Value real, ::mlir::Location location);
+  /// The two-state bits of a packed scalar and whether it has no X or Z bit;
+  /// a two-state scalar is returned unchanged and is always known.
+  std::pair<::mlir::Value, ::mlir::Value>
+  splitKnownBits(::mlir::Value scalar, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
   /// Compare a floating-point selector against one `case` label or `inside`

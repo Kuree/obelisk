@@ -712,14 +712,10 @@ LogicalResult UnitLowering::lowerRepeat(Operation *op) {
     unsupported(op) << " (repeat loop inventory)";
     return failure();
   }
-  FailureOr<Value> count = lowerExpression(children[0]);
-  if (failed(count))
-    return failure();
-  Type countType = builder.getI64Type();
-  FailureOr<Value> normalized =
-      convert(*count, countType, isSignedNode(children[0]), location);
+  FailureOr<Value> normalized = lowerRepeatCount(children[0]);
   if (failed(normalized))
     return failure();
+  Type countType = builder.getI64Type();
 
   Block *header = addBlock();
   header->addArgument(countType, location);

@@ -2093,14 +2093,7 @@ UnitLowering::lowerConditionalExpression(semantic::SVConditionalExpressionOp op,
     if (failed(predicate))
       return failure();
 
-    Type bitsType = builder.getI1Type();
-    Value bits =
-        sim::SimLogicToBitsOp::create(builder, location, bitsType, *predicate);
-    Value roundTrip =
-        sim::SimLogicFromBitsOp::create(builder, location, predicateType, bits);
-    Value known = sim::SimLogicCompareOp::create(
-        builder, location, builder.getI1Type(), sim::CompareKind::CaseEq,
-        *predicate, roundTrip);
+    Value known = splitKnownBits(*predicate, location).second;
     Value isTrue =
         sim::SimLogicIsTrueOp::create(builder, getSemanticLocation(expression),
                                       builder.getI1Type(), *predicate);
