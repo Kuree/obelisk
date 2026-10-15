@@ -104,7 +104,7 @@ module {
 // CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
 // Virtual selection multiplexes the two event handles by interface scope and
-// waits for the selected occurrence in Reactive.
+// waits for the selected occurrence, resuming after Observed.
 // The use-site iff gets a compact primary evaluator for the selected event.
 // CHECK: observer hierarchy "unit_2.$clocking_event_primary.52"
 // CHECK: simulation.event.triggered
@@ -113,11 +113,11 @@ module {
 // CHECK-DAG: %[[EVENT0:.*]] = simulation.context.event %{{.*}}[0]
 // CHECK: %[[SCOPE:.*]] = simulation.virtual_interface.scope
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT0]] : !simulation.event), ^{{.*}}
-// CHECK: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
+// CHECK: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 9 : i32
 // CHECK: cf.cond_br %{{.*}}, ^{{.*}}(%[[EVENT1]] : !simulation.event), ^{{.*}}
 // The additional iff remains a separate observer over the selected virtual
 // interface and gates the published clocking event.
 // CHECK: simulation.observer.bind {{.*}}schedule.event_primary
 // CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.

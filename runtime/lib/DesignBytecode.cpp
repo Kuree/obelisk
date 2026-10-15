@@ -2854,7 +2854,7 @@ OBELISK_RT_FEATURE_HELPER bool classifyDirectDesignReadyCohortMember(
     return false;
   entry.id = task.id;
   entry.region = designTaskOrderingRegion(task, signalTriggered);
-  entry.rank = task.scheduleRank;
+  entry.rank = obelisk_rt_scheduler_rank(task);
   entry.insertionSequence = task.insertionSequence;
   return true;
 }
@@ -4985,6 +4985,30 @@ inspectDesignTaskReadiness(obelisk_rt_context *context,
   return OBELISK_RT_OK;
 }
 
+PostObservedPromotion obelisk_rt_promote_post_observed_design_task_unlocked(
+    obelisk_rt_context *context, uint64_t taskID) {
+  auto indexed = context->scheduledDesignTaskIndices.find(taskID);
+  if (indexed == context->scheduledDesignTaskIndices.end() ||
+      indexed->second >= context->scheduledDesignTasks.size())
+    return PostObservedPromotion::Stale;
+  ScheduledDesignTask &task = context->scheduledDesignTasks[indexed->second];
+  if (task.id != taskID || task.terminated || !task.postObserved ||
+      task.queuedRegion != OBELISK_RT_REGION_OBSERVED)
+    return PostObservedPromotion::Stale;
+  uint32_t activePhase = context->schedulerRunningFinals ? 1u : 0u;
+  DesignTaskReadiness readiness;
+  if (inspectDesignTaskReadiness(
+          context, task, activePhase,
+          obelisk_rt_peek_unstarted_actor_region(context, activePhase), false,
+          readiness) != OBELISK_RT_OK ||
+      !readiness.runnable)
+    return PostObservedPromotion::Waiting;
+  task.queuedRegion = task.homeRegion;
+  task.postObserved = false;
+  context->designPollCandidates.insert(taskID);
+  return PostObservedPromotion::Promoted;
+}
+
 bool obelisk_rt_design_task_pending_before_read_only_unlocked(
     obelisk_rt_context *context) {
   if (!context || context->designTaskExecuting)
@@ -5170,7 +5194,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               designTaskOrderingRegion(*iterator, signalTriggered);
           auto key = iterator->prioritySignal && signalTriggered
                          ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
-                         : std::tuple{orderingRegion, iterator->scheduleRank,
+                         : std::tuple{orderingRegion,
+                                      obelisk_rt_scheduler_rank(*iterator),
                                       iterator->insertionSequence};
           auto selectedKey = std::tuple{selectedRegion, selectedRank,
                                         selectedInsertionSequence};
@@ -5260,7 +5285,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
               designTaskOrderingRegion(*iterator, signalTriggered);
           auto key = iterator->prioritySignal && signalTriggered
                          ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
-                         : std::tuple{orderingRegion, iterator->scheduleRank,
+                         : std::tuple{orderingRegion,
+                                      obelisk_rt_scheduler_rank(*iterator),
                                       iterator->insertionSequence};
           auto selectedKey = std::tuple{selectedRegion, selectedRank,
                                         selectedInsertionSequence};
@@ -5368,6 +5394,9 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         else
           readyCohort->valid = false;
       }
+      if (found->postObserved &&
+          found->queuedRegion == OBELISK_RT_REGION_OBSERVED)
+        obelisk_rt_promote_post_observed_resumptions_unlocked(context);
       task = std::move(context->scheduledDesignTasks[selectedIndex]);
       if (!context->schedulerRunningFinals &&
           isReactiveSchedulerRegion(task.queuedRegion))
@@ -5504,10 +5533,7 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         break;
       case OBELISK_RT_FRAGMENT_SUSPEND: {
         if (action.suspend_kind == OBELISK_RT_SUSPEND_OBSERVER) {
-          constexpr uint32_t resumeFlags =
-              OBELISK_RT_ACTION_RESUME_REGION_VALID |
-              OBELISK_RT_ACTION_RESUME_REGION_MASK;
-          if ((action.flags & ~resumeFlags) != 0 ||
+          if ((action.flags & ~kResumeActionFlags) != 0 ||
               action.payload % alignof(obelisk_rt_computed_wait_record_v1) !=
                   0 ||
               action.payload > task.scratchOffset ||
@@ -5532,12 +5558,14 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
           task.signalTriggered = false;
           task.startupProcess = false;
           task.urgent = false;
-          if (!obelisk_rt_next_queued_region(task.homeRegion,
-                                             action.suspend_kind, 1,
-                                             action.flags, task.queuedRegion)) {
+          if (!obelisk_rt_next_queued_region(
+                  task.homeRegion, action.suspend_kind, 1, action.flags,
+                  task.queuedRegion, task.postObserved)) {
             finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
             break;
           }
+          if (task.postObserved)
+            context->postObservedResumptions.push_back(task.id);
           if (!task.signalSubscriptions.empty() ||
               task.computedObserverWaitRegistered)
             obelisk_rt_unregister_signal_wait_unlocked(
@@ -5742,12 +5770,14 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         task.signalTriggered = false;
         task.startupProcess = false;
         task.urgent = false;
-        if (!obelisk_rt_next_queued_region(task.homeRegion, action.suspend_kind,
-                                           wait->payload, action.flags,
-                                           task.queuedRegion)) {
+        if (!obelisk_rt_next_queued_region(
+                task.homeRegion, action.suspend_kind, wait->payload,
+                action.flags, task.queuedRegion, task.postObserved)) {
           finalizeStatus = OBELISK_RT_INVALID_BYTECODE;
           break;
         }
+        if (task.postObserved)
+          context->postObservedResumptions.push_back(task.id);
         if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT) {
           task.waitGenerations.reserve(wait->count);
           for (uint32_t index = 0; index != wait->count; ++index) {

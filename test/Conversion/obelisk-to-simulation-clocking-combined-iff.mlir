@@ -53,14 +53,14 @@ module {
 // CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
 // The use-site iff observes the published event and applies its independent
-// condition before resuming in Reactive.
+// condition before resuming after Observed.
 // CHECK: observer hierarchy "unit_1.$clocking_event_primary.14"
 // CHECK: simulation.event.triggered
 // CHECK-LABEL: simulation.func private @unit_1(
 // CHECK: simulation.observer.bind {{.*}}schedule.event_primary
 // CHECK: simulation.observer.bind
 // CHECK: simulation.suspend.observe %{{.*}} conditions 1 edges [0] indices [0]
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 
 // An asynchronous distinct-edge output first waits for the qualified clocking
 // occurrence, then waits for the selected raw-signal edge before driving.

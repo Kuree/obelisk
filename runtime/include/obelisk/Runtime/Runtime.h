@@ -1874,6 +1874,12 @@ typedef struct obelisk_rt_fragment_action_v1 {
 #define OBELISK_RT_ACTION_RESUME_REGION(region)                                \
   (OBELISK_RT_ACTION_RESUME_REGION_VALID |                                     \
    ((uint32_t)(region) << OBELISK_RT_ACTION_RESUME_REGION_SHIFT))
+// IEEE 1800-2023 9.4.2.4, 14.10: resume in the first iteration of the
+// process's home region set that follows the Observed region -- an Active-home
+// process after all Observed work and before Reactive, a Reactive-home process
+// in Reactive. The region is relative to the running process, so a task
+// resumes in its caller's region. Exclusive with RESUME_REGION_VALID.
+#define OBELISK_RT_ACTION_RESUME_POST_OBSERVED (UINT32_C(1) << 5)
 
 typedef obelisk_rt_status (*obelisk_rt_native_fragment_v1)(
     obelisk_rt_context *context, void *frame, uint64_t frame_size,

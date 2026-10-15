@@ -288,12 +288,17 @@ LogicalResult verifyContinuation(Operation *op, ValueRange continuationOperands,
     bool inactive =
         (region == EventRegion::Inactive && home == EventRegion::Active) ||
         (region == EventRegion::ReInactive && home == EventRegion::Reactive);
-    if (!inactive && region != EventRegion::Active &&
+    // IEEE 1800-2023 9.4.2.4, 14.10: Post-Observed names the first iteration
+    // of the running process's home region set after the Observed region.
+    bool postObserved =
+        region == EventRegion::PostObserved &&
+        (home == EventRegion::Active || home == EventRegion::Reactive);
+    if (!inactive && !postObserved && region != EventRegion::Active &&
         region != EventRegion::Observed && region != EventRegion::Reactive &&
         region != EventRegion::Postponed)
       return op->emitOpError(
-          "resume region must be an executable process home region or the "
-          "Inactive region of the process home");
+          "resume region must be an executable process home region, the "
+          "Inactive region of the process home, or Post-Observed");
   }
   return success();
 }

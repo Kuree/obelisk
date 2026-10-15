@@ -3186,7 +3186,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                     .getOperation();
     }
     // Clocking inputs are latched in Observed. Clocking-block waiters resume
-    // in Reactive, so both #1step and #0 sampling are complete first.
+    // after every Observed sample, so both #1step and #0 sampling are complete
+    // first.
     suspend->setAttr("resume_region", sim::EventRegionAttr::get(
                                           context, sim::EventRegion::Observed));
     OpBuilder sampleBuilder = OpBuilder::atBlockEnd(sample);

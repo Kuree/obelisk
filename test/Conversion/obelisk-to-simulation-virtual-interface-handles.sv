@@ -55,7 +55,7 @@
 // CHECK: simulation.assert.clocked_sample_read
 // CHECK: simulation.assert.clocked_sample_read
 // CHECK: simulation.virtual_interface.scope
-// CHECK: simulation.suspend.edge posedge {{.*}}resume_region = 10 : i32
+// CHECK: simulation.suspend.edge posedge {{.*}}resume_region = 9 : i32
 // CHECK: simulation.spawn @unit_0.$clocking_output.
 // CHECK-NOT: obelisk.sv.
 

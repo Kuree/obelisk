@@ -71,7 +71,7 @@ module {
 // CHECK: simulation.event.trigger [[MON_EVENT]] nonblocking = false
 
 // Inputs sample the published occurrence in Observed. Procedural @(cb) and ##
-// consume the same event in Reactive.
+// consume the same event after Observed.
 // CHECK-LABEL: simulation.func private @{{.*}}$clocking_input.{{.*}}(
 // CHECK: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 8 : i32
 
@@ -81,5 +81,5 @@ module {
 // CHECK-NOT: simulation.suspend
 // CHECK: simulation.nba.enqueue
 // CHECK-LABEL: simulation.func private @unit_1(
-// CHECK-COUNT-2: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
+// CHECK-COUNT-2: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.

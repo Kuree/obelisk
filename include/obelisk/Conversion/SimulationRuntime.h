@@ -40,6 +40,8 @@ inline uint32_t getRuntimeResumeActionFlags(mlir::Operation *operation) {
   auto region = operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
   if (!region)
     return 0;
+  if (region.getValue() == sim::EventRegion::PostObserved)
+    return OBELISK_RT_ACTION_RESUME_POST_OBSERVED;
   uint32_t ordinal = getRuntimeEventRegion(region.getValue());
   return ordinal == std::numeric_limits<uint32_t>::max()
              ? ordinal

@@ -73,7 +73,7 @@ module {
 
 // IEEE 1800-2017 14.11: the leading zero count has no clocking event behind
 // it, so it waits for one; one, constant-many, and dynamic-many each need only
-// one static suspension site, all resuming in Reactive.
+// one static suspension site, all resuming after Observed.
 // CHECK-LABEL: simulation.func private @unit_0.$clocking_output.31
 // CHECK-SAME: %arg3: i1
 // CHECK-SAME: home_region = 10 : i32
@@ -82,7 +82,7 @@ module {
 // CHECK: simulation.nba.enqueue
 
 // CHECK-LABEL: simulation.func private @unit_0(
-// CHECK-COUNT-4: simulation.suspend.edge posedge {{.*}}resume_region = 10 : i32
+// CHECK-COUNT-4: simulation.suspend.edge posedge {{.*}}resume_region = 9 : i32
 
 // STRUCT-LABEL: simulation.func private @unit_0(
 // The constant three-cycle delay is a counter loop, not three unrolled waits.

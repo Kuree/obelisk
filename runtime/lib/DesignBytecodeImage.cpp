@@ -3383,23 +3383,12 @@ bool validateImage(const Image &image) {
                         functionIndex, pc, instruction.opcode);
         break;
       case OBELISK_RT_DB_SUSPEND: {
-        constexpr uint32_t resumeFlags = OBELISK_RT_ACTION_RESUME_REGION_VALID |
-                                         OBELISK_RT_ACTION_RESUME_REGION_MASK;
-        uint32_t resumeRegion =
-            (instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
-            OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
         if (instruction.flags < OBELISK_RT_SUSPEND_DELAY ||
             instruction.flags > OBELISK_RT_SUSPEND_EVENT_ORDER ||
             instruction.destination || instruction.source1 ||
             instruction.source2 ||
-            (instruction.auxiliary & ~resumeFlags) != 0 ||
-            ((instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_MASK) !=
-                 0 &&
-             (instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_VALID) ==
-                 0) ||
-            ((instruction.auxiliary & OBELISK_RT_ACTION_RESUME_REGION_VALID) !=
-                 0 &&
-             !obelisk_rt_is_process_resume_region(resumeRegion)) ||
+            (instruction.auxiliary & ~kResumeActionFlags) != 0 ||
+            !obelisk_rt_valid_resume_action_flags(instruction.auxiliary) ||
             !numeric(instruction.source0) ||
             layoutAt(image, function, instruction.source0).width != 64 ||
             (function.flags & OBELISK_RT_DESIGN_FUNCTION_PROCESS) == 0 ||

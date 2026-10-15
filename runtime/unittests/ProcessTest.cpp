@@ -733,6 +733,55 @@ cachedSignalCohortExecute(obelisk_rt_process_instance_v1 *instance) {
   return OBELISK_RT_OK;
 }
 
+constexpr uint64_t postObservedSignal = 730;
+bool postObservedDelayed;
+
+// Process 1 and 2 wait for a post-Observed resumption, process 3 resumes in
+// Observed like a clocking-input sample, and process 4 is a Reactive-home
+// post-Observed waiter. After its resumption, process 1 takes a `#0`.
+obelisk_rt_status
+postObservedExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  uint64_t id = instance->descriptor->handle.id;
+  auto *wait = reinterpret_cast<obelisk_rt_wait_record_v1 *>(instance->frame);
+  if (instance->continuation != 0) {
+    if (id == 1 && postObservedDelayed) {
+      schedulerOrder.push_back(11);
+    } else {
+      schedulerOrder.push_back(id);
+      if (id == 1) {
+        postObservedDelayed = true;
+        *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_DELAY, 0, 0, 0, 0};
+        *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                             OBELISK_RT_SUSPEND_DELAY,
+                             1,
+                             OBELISK_RT_ACTION_FRAME_WAIT_RECORD,
+                             0,
+                             48};
+        return OBELISK_RT_OK;
+      }
+    }
+    *instance->action = {
+        OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+    return OBELISK_RT_OK;
+  }
+  auto *entry = reinterpret_cast<obelisk_rt_wait_entry_v1 *>(wait + 1);
+  *wait = {OBELISK_RT_VERSION, OBELISK_RT_SUSPEND_CHANGE, 0, 1, 0, 0};
+  *entry = {postObservedSignal, OBELISK_RT_WAIT_EDGE_CHANGE, 1};
+  uint32_t resume =
+      id == 3 ? OBELISK_RT_ACTION_RESUME_REGION(OBELISK_RT_REGION_OBSERVED)
+              : OBELISK_RT_ACTION_RESUME_POST_OBSERVED;
+  *instance->action = {OBELISK_RT_FRAGMENT_SUSPEND,
+                       OBELISK_RT_SUSPEND_CHANGE,
+                       1,
+                       OBELISK_RT_ACTION_FRAME_WAIT_RECORD | resume,
+                       0,
+                       48};
+  return OBELISK_RT_OK;
+}
+
 constexpr uint64_t incrementalCohortSize = 256;
 constexpr uint64_t incrementalCohortSignal = 8000;
 bool incrementalCohortDisturbRank = false;
@@ -1465,20 +1514,53 @@ TEST(RuntimeInternals, TerminatedTokenRangesMatchReferenceSet) {
 
 TEST(RuntimeInternals, ResumeOverridesRequireExecutableHomeRegions) {
   uint32_t queuedRegion = UINT32_MAX;
+  bool postObserved = true;
   uint32_t postponed =
       OBELISK_RT_ACTION_RESUME_REGION_VALID |
       (OBELISK_RT_REGION_POSTPONED << OBELISK_RT_ACTION_RESUME_REGION_SHIFT);
-  EXPECT_TRUE(obelisk_rt_next_queued_region(OBELISK_RT_REGION_ACTIVE,
-                                            OBELISK_RT_SUSPEND_CHANGE, 1,
-                                            postponed, queuedRegion));
+  EXPECT_TRUE(obelisk_rt_next_queued_region(
+      OBELISK_RT_REGION_ACTIVE, OBELISK_RT_SUSPEND_CHANGE, 1, postponed,
+      queuedRegion, postObserved));
   EXPECT_EQ(queuedRegion, OBELISK_RT_REGION_POSTPONED);
+  EXPECT_FALSE(postObserved);
 
   uint32_t nba =
       OBELISK_RT_ACTION_RESUME_REGION_VALID |
       (OBELISK_RT_REGION_NBA << OBELISK_RT_ACTION_RESUME_REGION_SHIFT);
   EXPECT_FALSE(obelisk_rt_next_queued_region(OBELISK_RT_REGION_ACTIVE,
                                              OBELISK_RT_SUSPEND_CHANGE, 1, nba,
-                                             queuedRegion));
+                                             queuedRegion, postObserved));
+}
+
+TEST(RuntimeInternals, PostObservedResumesTheHomeIterationAfterObserved) {
+  // IEEE 1800-2023 9.4.2.4, 14.10: an Active-home process queues with
+  // Observed, after its other work; a Reactive home resumes in Reactive.
+  uint32_t queuedRegion = UINT32_MAX;
+  bool postObserved = false;
+  EXPECT_TRUE(obelisk_rt_next_queued_region(
+      OBELISK_RT_REGION_ACTIVE, OBELISK_RT_SUSPEND_CHANGE, 1,
+      OBELISK_RT_ACTION_RESUME_POST_OBSERVED, queuedRegion, postObserved));
+  EXPECT_EQ(queuedRegion, OBELISK_RT_REGION_OBSERVED);
+  EXPECT_TRUE(postObserved);
+  EXPECT_TRUE(obelisk_rt_next_queued_region(
+      OBELISK_RT_REGION_REACTIVE, OBELISK_RT_SUSPEND_CHANGE, 1,
+      OBELISK_RT_ACTION_RESUME_POST_OBSERVED, queuedRegion, postObserved));
+  EXPECT_EQ(queuedRegion, OBELISK_RT_REGION_REACTIVE);
+  EXPECT_FALSE(postObserved);
+  EXPECT_FALSE(obelisk_rt_next_queued_region(
+      OBELISK_RT_REGION_OBSERVED, OBELISK_RT_SUSPEND_CHANGE, 1,
+      OBELISK_RT_ACTION_RESUME_POST_OBSERVED, queuedRegion, postObserved));
+  EXPECT_FALSE(obelisk_rt_valid_resume_action_flags(
+      OBELISK_RT_ACTION_RESUME_POST_OBSERVED |
+      OBELISK_RT_ACTION_RESUME_REGION(OBELISK_RT_REGION_REACTIVE)));
+
+  ScheduledProcess process;
+  process.scheduleRank = 3;
+  process.postObserved = true;
+  process.queuedRegion = OBELISK_RT_REGION_OBSERVED;
+  EXPECT_EQ(obelisk_rt_scheduler_rank(process), UINT32_MAX);
+  process.queuedRegion = OBELISK_RT_REGION_ACTIVE;
+  EXPECT_EQ(obelisk_rt_scheduler_rank(process), 3u);
 }
 
 TEST(RuntimeInternals, MonitorRepeatsOnlyWhenItsDisplayedValuesChange) {
@@ -3061,6 +3143,41 @@ TEST(Scheduler, CachedSignalCohortInvalidatesForNewPriorityPublication) {
     expected.push_back(id);
   EXPECT_EQ(schedulerOrder, expected);
   EXPECT_TRUE(context->scheduledProcesses.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, PostObservedResumptionsRunTogetherAfterObserved) {
+  // IEEE 1800-2023 4.5, 14.10: a clocking block event triggers in Observed. A
+  // module process waiting on it runs in the next Active iteration, after the
+  // Observed samples whatever their rank, and alongside every other such
+  // waiter before the Inactive `#0` of any of them. A program process runs in
+  // Reactive.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  schedulerOrder.clear();
+  postObservedDelayed = false;
+  std::vector<std::unique_ptr<SchedulerFixture>> fixtures;
+  for (auto [id, flags, rank] :
+       {std::tuple{uint64_t{4},
+                   OBELISK_RT_SCHEDULE_HOME(OBELISK_RT_REGION_REACTIVE), 0u},
+        std::tuple{uint64_t{1}, 0u, 0u}, std::tuple{uint64_t{2}, 0u, 1u},
+        std::tuple{uint64_t{3}, 0u, 5u}}) {
+    fixtures.push_back(std::make_unique<SchedulerFixture>(id));
+    fixtures.back()->descriptor.native_execute = postObservedExecute;
+    ASSERT_EQ(
+        obelisk_rt_v1_scheduler_add_ranked(
+            context, makeSchedulerInstance(*fixtures.back()), flags, rank),
+        OBELISK_RT_OK);
+  }
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_TRUE(schedulerOrder.empty());
+
+  obelisk_rt_v1_scheduler_signal(context, postObservedSignal, 1,
+                                 OBELISK_RT_SIGNAL_CHANGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerOrder, (std::vector<uint64_t>{3, 1, 2, 11, 4}));
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  EXPECT_TRUE(context->postObservedResumptions.empty());
   obelisk_rt_v1_context_destroy(context);
 }
 

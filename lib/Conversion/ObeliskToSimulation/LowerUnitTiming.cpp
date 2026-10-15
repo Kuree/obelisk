@@ -21,6 +21,21 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
+/// IEEE 1800-2023 9.4.2.4, 14.10, 14.11: a clocking block event and a sequence
+/// end point occur in the Observed region, and a procedure waiting on either
+/// executes after it -- a module process in the next Active iteration, a
+/// program process in Reactive. The region is the running process's, so a
+/// task resumes in its caller's. An assertion monitor sharing this lowering
+/// keeps its Reactive resumption.
+static sim::EventRegionAttr getPostObservedResume(sim::SimFuncOp function) {
+  sim::EventRegion home = function.getHomeRegion();
+  bool procedure =
+      home == sim::EventRegion::Active || home == sim::EventRegion::Reactive;
+  return sim::EventRegionAttr::get(function.getContext(),
+                                   procedure ? sim::EventRegion::PostObserved
+                                             : sim::EventRegion::Reactive);
+}
+
 FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
   Location location = getSemanticLocation(control);
   SmallVector<Operation *> children = getChildren(control);
@@ -455,11 +470,10 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       if (failed(sequenceEndpoint))
         return failure();
       if (Value endpoint = *sequenceEndpoint) {
-        auto reactive = sim::EventRegionAttr::get(function.getContext(),
-                                                  sim::EventRegion::Reactive);
+        sim::EventRegionAttr resume = getPostObservedResume(function);
         if (!event.getHasIff()) {
           emitDirect(endpoint, sim::EdgeKind::Change, continuation,
-                     continuationOperands, reactive);
+                     continuationOperands, resume);
           return success();
         }
         // IEEE 1800-2023 9.4.2.3: the event occurs at an endpoint at which
@@ -475,7 +489,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
         cf::BranchOp::create(builder, location, wait, continuationOperands);
         setCurrent(wait);
         emitDirect(endpoint, sim::EdgeKind::Change, check, wait->getArguments(),
-                   reactive);
+                   resume);
         setCurrent(check);
         FailureOr<Value> condition = [&]() -> FailureOr<Value> {
           llvm::SaveAndRestore<llvm::SetVector<Value> *> dependencies(
@@ -553,9 +567,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
           ArrayRef<int32_t>{0}, schedule::ContinuationSiteAttr{},
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Reactive),
-          continuation);
+          getPostObservedResume(function), continuation);
       clockingEventContinuations[continuation] = {*handle, {}};
       return success();
     }
@@ -657,9 +669,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          schedule::ContinuationSiteAttr{},
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Reactive),
+          schedule::ContinuationSiteAttr{}, getPostObservedResume(function),
           continuation);
       clockingEventContinuations[continuation] = {*handle, {}};
       return success();
@@ -685,9 +695,7 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       sim::SimSuspendObserveOp::create(
           builder, location, observerValues, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          schedule::ContinuationSiteAttr{},
-          sim::EventRegionAttr::get(function.getContext(),
-                                    sim::EventRegion::Reactive),
+          schedule::ContinuationSiteAttr{}, getPostObservedResume(function),
           continuation);
       clockingEventContinuations[continuation] = {*handle, {}};
       return success();
@@ -726,11 +734,9 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       return success();
     }
     if (!event.getHasIff()) {
-      sim::EventRegionAttr resume =
-          clockingBlockEvent
-              ? sim::EventRegionAttr::get(function.getContext(),
-                                          sim::EventRegion::Reactive)
-              : sim::EventRegionAttr{};
+      sim::EventRegionAttr resume = clockingBlockEvent
+                                        ? getPostObservedResume(function)
+                                        : sim::EventRegionAttr{};
       emitDirect(*handle, edge, continuation, continuationOperands, resume);
       if (clockingBlockEvent)
         clockingEventContinuations[continuation] = {*handle, {}};
@@ -1227,8 +1233,7 @@ UnitLowering::emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
 
   auto emitClockWait = [&](OpBuilder &waitBuilder, Block *successor,
                            ValueRange operands) -> LogicalResult {
-    sim::EventRegionAttr reactive = sim::EventRegionAttr::get(
-        function.getContext(), sim::EventRegion::Reactive);
+    sim::EventRegionAttr resume = getPostObservedResume(function);
     sim::EdgeKind edge = static_cast<sim::EdgeKind>(eventEdge.getValue());
     if (hasIff) {
       auto primaryType = cast<sim::ObserverType>(primaryObserver.getType());
@@ -1251,21 +1256,21 @@ UnitLowering::emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
       sim::SimSuspendObserveOp::create(
           waitBuilder, location, values, 1,
           ArrayRef<int32_t>{static_cast<int32_t>(edge)}, ArrayRef<int32_t>{0},
-          schedule::ContinuationSiteAttr{}, reactive, successor);
+          schedule::ContinuationSiteAttr{}, resume, successor);
       return success();
     }
     if (isa<sim::EventType>((*clock).getType()))
       sim::SimSuspendEventOp::create(waitBuilder, location, *clock, operands,
-                                     schedule::ContinuationSiteAttr{}, reactive,
+                                     schedule::ContinuationSiteAttr{}, resume,
                                      successor);
     else if (edge == sim::EdgeKind::Change)
       sim::SimSuspendChangeOp::create(waitBuilder, location, *clock, operands,
-                                      schedule::ContinuationSiteAttr{},
-                                      reactive, successor);
+                                      schedule::ContinuationSiteAttr{}, resume,
+                                      successor);
     else
       sim::SimSuspendEdgeOp::create(waitBuilder, location, edge, *clock,
                                     operands, schedule::ContinuationSiteAttr{},
-                                    reactive, successor);
+                                    resume, successor);
     return success();
   };
 

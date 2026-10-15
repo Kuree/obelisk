@@ -149,7 +149,7 @@ module {
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK: simulation.spawn @unit_0.$clocking_output.25
 // CHECK: simulation.suspend.edge posedge
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK: simulation.spawn @unit_0.$clocking_output.35
 // CHECK: simulation.spawn @unit_0.$clocking_output.41
 // CHECK: simulation.spawn @unit_0.$clocking_output.47

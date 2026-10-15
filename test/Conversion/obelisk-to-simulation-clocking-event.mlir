@@ -30,23 +30,24 @@ module {
 
 // The void-typed clocking-block surface resolves to the captured clock
 // storage, uses the edge declared by the clocking block, and resumes in the
-// clocking event's Reactive synchronization region.
+// first iteration of its home region after Observed (Post-Observed).
 // CHECK: simulation.context.storage
 // CHECK: simulation.suspend.edge posedge
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.
 
 // -----
 
 // The declared iff condition is evaluated only on the primary edge. Arbitrary
-// conditions use the observer path and still resume the waiter in Reactive.
+// conditions use the observer path and still resume the waiter after
+// Observed.
 // CHECK-LABEL: // {{-----}}
 // CHECK-DAG: observer hierarchy "top.$code_unit_7.$observer.13.clocking_primary"
 // CHECK-DAG: observer hierarchy "top.$code_unit_7.$observer.14.clocking_iff"
 // CHECK-COUNT-2: simulation.observer.bind
 // CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.
 
 module {
@@ -79,7 +80,8 @@ module {
 
 // The void-typed clocking-block surface resolves to the captured clock
 // storage, uses the edge declared by the clocking block, and resumes in the
-// clocking event's Reactive synchronization region.
+// first iteration of its home region after Observed (Post-Observed).
 
 // The declared iff condition is evaluated only on the primary edge. Arbitrary
-// conditions use the observer path and still resume the waiter in Reactive.
+// conditions use the observer path and still resume the waiter after
+// Observed.

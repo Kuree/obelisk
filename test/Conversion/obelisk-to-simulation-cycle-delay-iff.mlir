@@ -28,14 +28,15 @@ module {
 }
 
 // The two observer closures are bound once. The counter loop reloads the
-// primary value and waits for two qualified posedges, resuming in Reactive.
+// primary value and waits for two qualified posedges, resuming after
+// Observed.
 // CHECK-LABEL: simulation.func private @unit_0(
 // CHECK-COUNT-2: simulation.observer.bind
 // CHECK: ^[[WAIT:bb[0-9]+]]
 // CHECK: simulation.ref.load
 // CHECK: simulation.suspend.observe
 // CHECK-SAME: conditions 1 edges [1] indices [0]
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK: arith.subi
 // CHECK: cf.cond_br {{.*}}, ^[[WAIT]]
 // CHECK-NOT: obelisk.sv.

@@ -1091,8 +1091,11 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         scheduled.urgent = false;
         if (!obelisk_rt_next_queued_region(
                 scheduled.homeRegion, action.suspend_kind, delay, action.flags,
-                scheduled.queuedRegion))
+                scheduled.queuedRegion, scheduled.postObserved))
           return OBELISK_RT_INVALID_ARGUMENT;
+        if (scheduled.postObserved)
+          context->postObservedResumptions.push_back(kNativeLogicalProcessTag |
+                                                     scheduled.token);
         if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY) {
           scheduled.wakeTime = delay > UINT64_MAX - context->schedulerTime
                                    ? UINT64_MAX
@@ -1250,10 +1253,13 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           static_cast<const uint8_t *>(selected->frame) + action.payload);
       uint64_t delayPayload =
           action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ? wait->payload : 1;
-      if (!obelisk_rt_next_queued_region(scheduled.homeRegion,
-                                         action.suspend_kind, delayPayload,
-                                         action.flags, scheduled.queuedRegion))
+      if (!obelisk_rt_next_queued_region(
+              scheduled.homeRegion, action.suspend_kind, delayPayload,
+              action.flags, scheduled.queuedRegion, scheduled.postObserved))
         return OBELISK_RT_INVALID_ARGUMENT;
+      if (scheduled.postObserved)
+        context->postObservedResumptions.push_back(kNativeLogicalProcessTag |
+                                                   scheduled.token);
       if (action.suspend_kind == OBELISK_RT_SUSPEND_DELAY) {
         if (!scheduled.signalSubscriptions.empty() ||
             scheduled.computedObserverWaitRegistered)

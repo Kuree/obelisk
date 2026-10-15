@@ -30,18 +30,10 @@ validateTableProcess(const obelisk_rt_process_descriptor_v1 &descriptor) {
     const auto &wait = plan->waits[i];
     const auto &record = wait.record;
     const auto *field = findWaitField(layout, wait.frame_offset);
-    constexpr uint32_t resumeFlags = OBELISK_RT_ACTION_RESUME_REGION_VALID |
-                                     OBELISK_RT_ACTION_RESUME_REGION_MASK;
-    uint32_t region =
-        (wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
-        OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
     if (!field || field->size != wait.frame_size ||
         !validContinuation(layout, wait.continuation) ||
-        (wait.action_flags & ~resumeFlags) ||
-        ((wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) &&
-         !(wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_VALID)) ||
-        ((wait.action_flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) &&
-         !obelisk_rt_is_process_resume_region(region)) ||
+        (wait.action_flags & ~kResumeActionFlags) ||
+        !obelisk_rt_valid_resume_action_flags(wait.action_flags) ||
         record.version != OBELISK_RT_VERSION ||
         (record.kind != OBELISK_RT_SUSPEND_CHANGE &&
          record.kind != OBELISK_RT_SUSPEND_EDGE) ||

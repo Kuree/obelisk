@@ -72,9 +72,9 @@ module {
 // CHECK: simulation.event.trigger [[ENDPOINT]] nonblocking = false
 
 // The procedural control waits on that endpoint, independently of sequence
-// start time, and resumes in Reactive after endpoint detection in Observed.
+// start time, and resumes after the Observed region that detects the endpoint.
 // CHECK-LABEL: simulation.func private @unit_1(
 // CHECK-SAME: [[WAIT_ENDPOINT:%arg[0-9]+]]: !simulation.event
 // CHECK: simulation.suspend.event [[WAIT_ENDPOINT]]
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.

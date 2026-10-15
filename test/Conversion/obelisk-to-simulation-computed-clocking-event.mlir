@@ -67,5 +67,5 @@ module {
 // CHECK: simulation.event.trigger %{{.*}} nonblocking = false
 
 // CHECK-LABEL: simulation.func private @unit_2(
-// CHECK-COUNT-3: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 10 : i32
+// CHECK-COUNT-3: simulation.suspend.event %{{[^ ]+}} {{.*}}resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.

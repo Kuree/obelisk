@@ -290,21 +290,14 @@ obelisk_rt_status validateWait(obelisk_rt_process_instance_v1 &instance,
       findWaitField(layout, action.payload);
   if (!field)
     return OBELISK_RT_INVALID_FRAME;
-  constexpr uint32_t resumeFlags = OBELISK_RT_ACTION_RESUME_REGION_VALID |
-                                   OBELISK_RT_ACTION_RESUME_REGION_MASK;
-  if (allowLegacyBytecode && (action.flags & ~resumeFlags) == 0) {
+  if (allowLegacyBytecode && (action.flags & ~kResumeActionFlags) == 0) {
     action.flags |= OBELISK_RT_ACTION_FRAME_WAIT_RECORD;
     action.auxiliary = field->size;
   }
-  uint32_t resumeRegion =
-      (action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
-      OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
   uint64_t end;
-  if ((action.flags & ~resumeFlags) != OBELISK_RT_ACTION_FRAME_WAIT_RECORD ||
-      ((action.flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0 &&
-       (action.flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) == 0) ||
-      ((action.flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0 &&
-       !obelisk_rt_is_process_resume_region(resumeRegion)) ||
+  if ((action.flags & ~kResumeActionFlags) !=
+          OBELISK_RT_ACTION_FRAME_WAIT_RECORD ||
+      !obelisk_rt_valid_resume_action_flags(action.flags) ||
       action.auxiliary != field->size ||
       addOverflow(action.payload, action.auxiliary, end) ||
       end > instance.frame_size || action.payload % field->alignment != 0)

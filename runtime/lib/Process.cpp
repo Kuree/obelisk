@@ -510,6 +510,41 @@ bool nativeProcessReady(obelisk_rt_context &context,
   return nativeProcessReadyImpl<true>(context, process);
 }
 
+static PostObservedPromotion
+promotePostObservedProcess(obelisk_rt_context &context, uint64_t token) {
+  ScheduledProcess *process = findScheduledProcess(&context, token);
+  if (!process || !process->instance || !process->postObserved ||
+      process->queuedRegion != OBELISK_RT_REGION_OBSERVED)
+    return PostObservedPromotion::Stale;
+  if (!nativeProcessReadyImpl<false>(context, *process))
+    return PostObservedPromotion::Waiting;
+  process->queuedRegion = process->homeRegion;
+  process->postObserved = false;
+  context.nativePollCandidates.insert(token);
+  return PostObservedPromotion::Promoted;
+}
+
+void obelisk_rt_promote_post_observed_resumptions_unlocked(
+    obelisk_rt_context *context) {
+  std::vector<uint64_t> &pending = context->postObservedResumptions;
+  size_t kept = 0;
+  bool promoted = false;
+  for (uint64_t logical : pending) {
+    PostObservedPromotion result =
+        (logical & kNativeLogicalProcessTag) != 0
+            ? promotePostObservedProcess(*context,
+                                         logical & ~kNativeLogicalProcessTag)
+            : obelisk_rt_promote_post_observed_design_task_unlocked(context,
+                                                                    logical);
+    if (result == PostObservedPromotion::Waiting)
+      pending[kept++] = logical;
+    promoted |= result == PostObservedPromotion::Promoted;
+  }
+  pending.resize(kept);
+  if (promoted && ++context->schedulerSelectionGeneration == 0)
+    context->schedulerSelectionGeneration = 1;
+}
+
 /// Whether an exact index publishes the process's readiness, so the poll
 /// candidates need not hold it: a signal subscription latches its trigger, and
 /// the delay calendar admits a future delay when that time slot begins (see
@@ -3081,10 +3116,13 @@ adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
         context, scheduled.signalSubscriptions, scheduled.token, false);
   uint64_t delayPayload =
       action.suspend_kind == OBELISK_RT_SUSPEND_DELAY ? wait->payload : 1;
-  if (!obelisk_rt_next_queued_region(scheduled.homeRegion, action.suspend_kind,
-                                     delayPayload, action.flags,
-                                     scheduled.queuedRegion))
+  if (!obelisk_rt_next_queued_region(
+          scheduled.homeRegion, action.suspend_kind, delayPayload, action.flags,
+          scheduled.queuedRegion, scheduled.postObserved))
     return OBELISK_RT_INVALID_ARGUMENT;
+  if (scheduled.postObserved)
+    context->postObservedResumptions.push_back(kNativeLogicalProcessTag |
+                                               scheduled.token);
   if (action.suspend_kind == OBELISK_RT_SUSPEND_EVENT) {
     const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
     scheduled.waitGenerations.reserve(wait->count);
@@ -3306,7 +3344,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             ready.rank = 0;
             ready.insertionSequence = 0;
           } else {
-            ready.rank = scheduled.scheduleRank;
+            ready.rank = obelisk_rt_scheduler_rank(scheduled);
             ready.insertionSequence = scheduled.insertionSequence;
           }
           pushCachedNativeReady(ready);
@@ -3541,7 +3579,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         } else {
           ready.region =
               schedulerOrderingRegion(*context, candidate, signalResume);
-          ready.rank = candidate.scheduleRank;
+          ready.rank = obelisk_rt_scheduler_rank(candidate);
           ready.insertionSequence = candidate.insertionSequence;
         }
         return ready;
@@ -4073,7 +4111,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
             schedulerOrderingRegion(*context, candidate, signalResume);
         auto key = candidate.prioritySignal && signalResume
                        ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
-                       : std::tuple{orderingRegion, candidate.scheduleRank,
+                       : std::tuple{orderingRegion,
+                                    obelisk_rt_scheduler_rank(candidate),
                                     candidate.insertionSequence};
         if (runnable &&
             (candidate.urgent ||
@@ -4117,7 +4156,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               schedulerOrderingRegion(*context, candidate, signalResume);
           auto key = candidate.prioritySignal && signalResume
                          ? std::tuple{orderingRegion, uint32_t{0}, uint64_t{0}}
-                         : std::tuple{orderingRegion, candidate.scheduleRank,
+                         : std::tuple{orderingRegion,
+                                      obelisk_rt_scheduler_rank(candidate),
                                       candidate.insertionSequence};
           if (!(key < std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}}))
             continue;
@@ -4189,6 +4229,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         if (cachedNativeSelection &&
             candidate.token != cachedNativeSelection->token)
           clearCachedNativeReady();
+        if (candidate.postObserved &&
+            candidate.queuedRegion == OBELISK_RT_REGION_OBSERVED) {
+          obelisk_rt_promote_post_observed_resumptions_unlocked(context);
+          clearCachedNativeReady();
+        }
         if (!context->schedulerRunningFinals &&
             isReactiveSchedulerRegion(candidate.queuedRegion))
           setSchedulerDrainingReactive(context, true);

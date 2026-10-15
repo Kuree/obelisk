@@ -539,6 +539,23 @@ inline bool obelisk_rt_is_process_resume_region(uint32_t region) {
          region == OBELISK_RT_REGION_RE_INACTIVE;
 }
 
+/// The action flag bits that describe where a suspension resumes.
+inline constexpr uint32_t kResumeActionFlags =
+    OBELISK_RT_ACTION_RESUME_REGION_VALID |
+    OBELISK_RT_ACTION_RESUME_REGION_MASK |
+    OBELISK_RT_ACTION_RESUME_POST_OBSERVED;
+
+/// Whether the resume bits of `flags` are well formed: no override, one
+/// explicit resume region, or the post-Observed iteration of the home region.
+inline bool obelisk_rt_valid_resume_action_flags(uint32_t flags) {
+  uint32_t region = (flags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
+                    OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
+  if ((flags & OBELISK_RT_ACTION_RESUME_REGION_VALID) == 0)
+    return region == 0;
+  return (flags & OBELISK_RT_ACTION_RESUME_POST_OBSERVED) == 0 &&
+         obelisk_rt_is_process_resume_region(region);
+}
+
 inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
                                              uint32_t &homeRegion) {
   constexpr uint32_t known =
@@ -555,16 +572,27 @@ inline bool obelisk_rt_decode_schedule_flags(uint32_t flags, uint32_t &phase,
          (phase == 0 || homeRegion == OBELISK_RT_REGION_ACTIVE);
 }
 
-inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
-                                          uint32_t suspendKind,
-                                          uint64_t delayPayload,
-                                          uint32_t actionFlags,
-                                          uint32_t &queuedRegion) {
-  constexpr uint32_t known = OBELISK_RT_ACTION_FRAME_WAIT_RECORD |
-                             OBELISK_RT_ACTION_RESUME_REGION_VALID |
-                             OBELISK_RT_ACTION_RESUME_REGION_MASK;
-  if ((actionFlags & ~known) != 0)
+/// Computes the region a suspension queues its resumption in. A post-Observed
+/// resumption of an Active-home process queues with Observed and sets
+/// `postObserved`, which orders it after all other work there.
+inline bool
+obelisk_rt_next_queued_region(uint32_t homeRegion, uint32_t suspendKind,
+                              uint64_t delayPayload, uint32_t actionFlags,
+                              uint32_t &queuedRegion, bool &postObserved) {
+  if ((actionFlags &
+       ~(OBELISK_RT_ACTION_FRAME_WAIT_RECORD | kResumeActionFlags)) != 0 ||
+      !obelisk_rt_valid_resume_action_flags(actionFlags))
     return false;
+  postObserved = false;
+  if ((actionFlags & OBELISK_RT_ACTION_RESUME_POST_OBSERVED) != 0) {
+    // IEEE 1800-2023 9.4.2.4, 14.10: the process executes in the first
+    // iteration of its home region set after the Observed region.
+    if (!obelisk_rt_is_mutable_home_region(homeRegion))
+      return false;
+    postObserved = homeRegion == OBELISK_RT_REGION_ACTIVE;
+    queuedRegion = postObserved ? OBELISK_RT_REGION_OBSERVED : homeRegion;
+    return true;
+  }
   if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_VALID) != 0) {
     queuedRegion = (actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) >>
                    OBELISK_RT_ACTION_RESUME_REGION_SHIFT;
@@ -575,8 +603,6 @@ inline bool obelisk_rt_next_queued_region(uint32_t homeRegion,
       return true;
     return obelisk_rt_is_process_home_region(queuedRegion);
   }
-  if ((actionFlags & OBELISK_RT_ACTION_RESUME_REGION_MASK) != 0)
-    return false;
   if (suspendKind == OBELISK_RT_SUSPEND_DELAY && delayPayload == 0) {
     if (!obelisk_rt_is_mutable_home_region(homeRegion))
       return false;
@@ -642,6 +668,9 @@ struct ScheduledProcess {
   // Executable event-region ordinal. Normally the immutable home region,
   // temporarily an inactive region after #0 or an explicit resume override.
   uint32_t queuedRegion = 0;
+  // Set with a post-Observed resumption queued in Observed; meaningful only
+  // while queuedRegion is Observed (see obelisk_rt_scheduler_rank).
+  bool postObserved = false;
   bool started = false;
   bool urgent = false;
   bool prioritySignal = false;
@@ -990,6 +1019,8 @@ struct ScheduledDesignTask {
   uint32_t homeRegion = OBELISK_RT_REGION_ACTIVE;
   uint32_t scheduleRank = UINT32_MAX;
   uint32_t queuedRegion = 0;
+  // See ScheduledProcess::postObserved.
+  bool postObserved = false;
   uint64_t insertionSequence = 0;
   uint64_t waitSequence = 0;
   obelisk_rt_random_state_v1 random{};
@@ -1004,6 +1035,18 @@ struct ScheduledDesignTask {
   bool explicitlySuspended = false;
   bool computedObserverWaitRegistered = false;
 };
+
+/// The scheduler rank that orders a queued process or design task within its
+/// region. IEEE 1800-2023 9.4.2.4, 14.10: a post-Observed resumption executes
+/// in the first Active iteration after the Observed region, so it follows the
+/// other work queued with Observed, such as clocking-block input samples.
+template <typename Process>
+inline uint32_t obelisk_rt_scheduler_rank(const Process &process) {
+  return process.postObserved &&
+                 process.queuedRegion == OBELISK_RT_REGION_OBSERVED
+             ? UINT32_MAX
+             : process.scheduleRank;
+}
 
 // IEEE 18.14.1 startup streams, allocated only when a compiled lexical scope
 // is entered. The synthetic root process retains its separate legacy stream.
@@ -2343,6 +2386,10 @@ struct obelisk_rt_context {
   std::vector<ScheduledDesignTask> scheduledDesignTasks;
   std::unordered_map<uint64_t, size_t> scheduledDesignTaskIndices;
   std::unordered_set<uint64_t> designPollCandidates;
+  // Logical processes that suspended for a post-Observed resumption, native
+  // tokens tagged with OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG. Promotion keeps
+  // the entries still waiting and drops the rest.
+  std::vector<uint64_t> postObservedResumptions;
   ReusableByteBufferPool designTaskFrames;
   uint64_t nextSchedulerSequence = 1;
   uint64_t nextDynamicEventID = 1;
@@ -3391,6 +3438,16 @@ obelisk_rt_status obelisk_rt_run_one_design_task(
     obelisk_rt_context *context, uint32_t maximumRegion, uint32_t maximumRank,
     uint64_t maximumInsertionSequence, bool *outProgress,
     bool stopBeforeExecution = false) noexcept;
+// IEEE 1800-2023 4.5, 9.4.2.4, 14.10: once a post-Observed resumption is the
+// next work to run, nothing else remains before the Reactive region set, so
+// every ready post-Observed resumption moves to its Active home together. The
+// Inactive and NBA work any of them schedules then follows all of them; those
+// not yet ready wait for a later Observed region.
+void obelisk_rt_promote_post_observed_resumptions_unlocked(
+    obelisk_rt_context *context);
+enum class PostObservedPromotion { Stale, Waiting, Promoted };
+PostObservedPromotion obelisk_rt_promote_post_observed_design_task_unlocked(
+    obelisk_rt_context *context, uint64_t taskID);
 obelisk_rt_status obelisk_rt_prime_design_task(obelisk_rt_context *context,
                                                uint64_t taskID) noexcept;
 obelisk_rt_status

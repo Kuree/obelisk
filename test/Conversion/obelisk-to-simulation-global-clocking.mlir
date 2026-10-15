@@ -27,9 +27,9 @@ module attributes {
 }
 
 // A $global_clock use has the same event behavior as its resolved clocking
-// declaration: the declared edge and Reactive resumption region win over the
+// declaration: the declared edge and post-Observed resumption win over the
 // call expression's surface event type and the enclosing event's change edge.
 // CHECK: simulation.context.storage
 // CHECK: simulation.suspend.edge posedge
-// CHECK-SAME: resume_region = 10 : i32
+// CHECK-SAME: resume_region = 9 : i32
 // CHECK-NOT: obelisk.sv.
