@@ -8080,7 +8080,34 @@ void ObeliskSimPreparePass::runOnOperation() {
     SmallVector<Operation *> callChildren = getChildren(call);
     if (callChildren.empty())
       return false;
-    if (!call.getIsSystemCall()) {
+    // IEEE 1800-2023 18.8: when the receiver names a rand class handle,
+    // object.random_variable.rand_mode(bit) changes only that variable's
+    // mode, not the modes inside the object it refers to. Slang binds such a
+    // call to the referenced class's object-wide builtin.
+    auto namesRandomVariable = [&](Operation *receiver) {
+      while (isa<semantic::SVElementSelectExpressionOp>(receiver)) {
+        SmallVector<Operation *> operands = getChildren(receiver);
+        if (operands.size() != 2)
+          return false;
+        receiver = operands.front();
+      }
+      if (!isa<semantic::SVMemberAccessExpressionOp,
+               semantic::SVNamedValueExpressionOp>(receiver))
+        return false;
+      auto reference =
+          receiver->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      auto symbol = reference
+                        ? semanticSymbols.find(reference.getLeafReference())
+                        : semanticSymbols.end();
+      auto property =
+          symbol != semanticSymbols.end()
+              ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
+              : semantic::SVClassPropertySymbolOp{};
+      return property && property.getRandMode() != semantic::SVRandMode::None;
+    };
+    if (!call.getIsSystemCall() &&
+        !(call.getHasThisClass() &&
+          namesRandomVariable(callChildren.front()))) {
       auto reference = call->getAttrOfType<SymbolRefAttr>("referenced_symbol");
       auto symbol = reference
                         ? semanticSymbols.find(reference.getLeafReference())
