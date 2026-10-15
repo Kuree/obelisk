@@ -10,7 +10,7 @@ nonblocking assignment before this lowering boundary.
 
 | Form | Current boundary |
 | --- | --- |
-| Integral `#delay` | Executable for constant and dynamic packed integral expressions up to 64 bits; X/Z and negative values normalize to zero. Static overflow is diagnosed and dynamic scaling is range-checked identically in native and bytecode. |
+| Integral `#delay` | Executable for constant and dynamic packed integral and real expressions. X/Z values normalize to zero; a negative value is the unsigned value of its 64-bit two's complement (IEEE 1800-2023 9.4.1). A delay past the simulation time range, including every negative one, saturates and never matures, identically in native and bytecode. |
 | Real/realtime delay | Executable for literals and dynamic binary32/binary64 expressions, including unary sign; values round at lexical `timeprecision` before design-precision scaling. |
 | Min/typ/max expression (11.11) | Executable for constant and dynamic selected expressions. The public `--timing=min\|typ\|max` option selects one branch during frontend lowering (default `typ`), and only that branch reaches executable IR; this applies uniformly to delay expressions and ordinary expression contexts. |
 | `#0` | Executable in Inactive for design-domain processes and Re-Inactive for program-domain processes. Native and design-bytecode work share the same region/rank/insertion ordering key. |

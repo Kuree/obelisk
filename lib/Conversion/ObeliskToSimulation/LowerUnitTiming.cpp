@@ -73,8 +73,6 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     }
     if (negateRealLiteral)
       amount = -amount;
-    if (amount < 0)
-      amount = 0;
     uint64_t scale = scaleAttr.getValue().getZExtValue();
     uint64_t quantum = quantumAttr.getValue().getZExtValue();
     if (scale == 0 || quantum == 0 || scale % quantum != 0) {
@@ -84,15 +82,15 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     // Slang has already expressed a time literal in the lexical timeunit.
     // Round the real value to the lexical timeprecision before converting to
     // the design-wide precision, matching TimeScale::apply's std::round rule.
+    // IEEE 1800-2023 9.4.1: a negative delay is a two's-complement unsigned
+    // time, which lies beyond every reachable time, as does an overflow.
+    constexpr long double maximumTicks =
+        static_cast<long double>(std::numeric_limits<int64_t>::max());
     double precisionSteps = amount * static_cast<double>(scale / quantum);
     double roundedSteps = std::round(precisionSteps);
     long double ticks = static_cast<long double>(roundedSteps) * quantum;
-    if (!std::isfinite(roundedSteps) || ticks < 0 ||
-        ticks > static_cast<long double>(std::numeric_limits<int64_t>::max())) {
-      emitError(location)
-          << "scaled real delay exceeds the simulation time range";
-      return failure();
-    }
+    if (amount < 0 || !std::isfinite(roundedSteps) || ticks > maximumTicks)
+      ticks = maximumTicks;
     return sim::SimTimeConstantOp::create(
                builder, location, sim::TimeType::get(function.getContext()),
                builder.getI64IntegerAttr(static_cast<uint64_t>(ticks)))
@@ -104,17 +102,18 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
         parseSVInteger(*getConstantSpelling(children.front()), 64, location);
     if (failed(parsed))
       return failure();
-    // An X/Z or negative delay is treated as zero. This normalization happens
-    // before scaling so native and bytecode tiers see the same time value.
-    bool zero = !parsed->unknown.isZero() ||
-                (isSignedNode(children.front()) && parsed->value.isNegative());
-    APInt amount(128, zero ? 0 : parsed->value.getZExtValue());
+    // IEEE 1800-2023 9.4.1: an X/Z delay is zero, and a negative one is the
+    // unsigned value of its 64-bit two's complement. A delay past the time
+    // range never matures, so it saturates. This happens before scaling so
+    // native and bytecode tiers see the same time value.
+    APInt amount(128, parsed->unknown.isZero()
+                          ? parsed->value.sextOrTrunc(64).getZExtValue()
+                          : 0);
     APInt scaled = amount * APInt(128, scaleAttr.getValue().getZExtValue());
-    if (scaled.ugt(APInt(
-            128, static_cast<uint64_t>(std::numeric_limits<int64_t>::max())))) {
-      emitError(location) << "scaled delay exceeds the simulation time range";
-      return failure();
-    }
+    APInt maximum(128,
+                  static_cast<uint64_t>(std::numeric_limits<int64_t>::max()));
+    if (scaled.ugt(maximum))
+      scaled = maximum;
     return sim::SimTimeConstantOp::create(
                builder, location, sim::TimeType::get(function.getContext()),
                builder.getI64IntegerAttr(scaled.getZExtValue()))
@@ -134,9 +133,19 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
         convert(*amount, builder.getF64Type(), false, location);
     if (failed(real))
       return failure();
+    // A negative delay saturates like an unsigned two's-complement time.
+    Value zero = arith::ConstantOp::create(builder, location,
+                                           builder.getF64FloatAttr(0.0));
+    Value infinity = arith::ConstantOp::create(
+        builder, location,
+        builder.getF64FloatAttr(std::numeric_limits<double>::infinity()));
+    Value negative = arith::CmpFOp::create(
+        builder, location, arith::CmpFPredicate::OLT, *real, zero);
+    Value delay =
+        arith::SelectOp::create(builder, location, negative, infinity, *real);
     return sim::SimTimeFromRealOp::create(
                builder, location, sim::TimeType::get(function.getContext()),
-               *real, scaleAttr, quantumAttr)
+               delay, scaleAttr, quantumAttr)
         .getResult();
   }
   FailureOr<Value> scalar = toPackedScalar(*amount, location);
@@ -155,14 +164,6 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     emitError(location) << "dynamic delay is not an integral packed value";
     return failure();
   }
-  if (isSignedNode(children.front())) {
-    Value zero = arith::ConstantOp::create(builder, location, integer,
-                                           builder.getIntegerAttr(integer, 0));
-    Value nonnegative = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::sge, normalized, zero);
-    normalized = arith::SelectOp::create(builder, location, nonnegative,
-                                         normalized, zero);
-  }
   uint64_t scale = scaleAttr.getValue().getZExtValue();
   uint64_t maximumInput =
       static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) / scale;
@@ -176,14 +177,16 @@ FailureOr<Value> UnitLowering::lowerDelayValue(Operation *control) {
     normalized = arith::SelectOp::create(builder, location, inRange, normalized,
                                          maximumWide);
   }
+  // IEEE 1800-2023 9.4.1: a negative delay is the unsigned value of its
+  // 64-bit two's complement, so a signed delay sign-extends to a time.
   FailureOr<Value> normalized64 =
-      convert(normalized, builder.getI64Type(), false, location);
+      convert(normalized, builder.getI64Type(), isSignedNode(children.front()),
+              location);
   if (failed(normalized64))
     return failure();
 
   // Keep the multiplication in the supported nonnegative signed-time range
-  // on every backend. The source language's X/Z and negative rules have
-  // already mapped those values to zero above.
+  // on every backend; a later time never matures, so it saturates.
   Value maximum =
       arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                 builder.getI64IntegerAttr(maximumInput));

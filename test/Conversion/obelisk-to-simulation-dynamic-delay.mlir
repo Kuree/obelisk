@@ -37,12 +37,11 @@ module {
   }
 }
 
+// IEEE 1800-2023 9.4.1: a negative delay is the unsigned value of its 64-bit
+// two's complement, so the signed amount sign-extends and then saturates.
 // CHECK-DAG: %[[MAX:.*]] = arith.constant 9223372036854775807 : i64
-// CHECK-DAG: %[[ZERO:.*]] = arith.constant 0 : i32
 // CHECK: %[[AMOUNT:.*]] = simulation.ref.load {{.*}} -> i32
-// CHECK: %[[NONNEGATIVE:.*]] = arith.cmpi sge, %[[AMOUNT]], %[[ZERO]] : i32
-// CHECK: %[[CLAMPED_LOW:.*]] = arith.select %[[NONNEGATIVE]], %[[AMOUNT]], %[[ZERO]] : i32
-// CHECK: %[[WIDENED:.*]] = arith.extui %[[CLAMPED_LOW]] : i32 to i64
+// CHECK: %[[WIDENED:.*]] = arith.extsi %[[AMOUNT]] : i32 to i64
 // CHECK: %[[IN_RANGE:.*]] = arith.cmpi ule, %[[WIDENED]], %[[MAX]] : i64
 // CHECK: %[[CLAMPED_HIGH:.*]] = arith.select %[[IN_RANGE]], %[[WIDENED]], %[[MAX]] : i64
 // CHECK: %[[DELAY:.*]] = simulation.time.scale %[[CLAMPED_HIGH]] by 1 signed = false : i64

@@ -40,8 +40,10 @@ module {
     // CHECK: arith.constant 31 : i64
     // CHECK: %[[FIFTEEN:.*]] = simulation.time.constant 15
     // CHECK: simulation.suspend.delay %[[FIFTEEN]]
-    // CHECK: %[[ZERO:.*]] = simulation.time.constant 0
-    // CHECK: simulation.suspend.delay %[[ZERO]]
+    // IEEE 1800-2023 9.4.1: the signed delay 4'sh1f is -1, an unsigned
+    // two's-complement time past the simulation range.
+    // CHECK: %[[NEVER:.*]] = simulation.time.constant 9223372036854775807
+    // CHECK: simulation.suspend.delay %[[NEVER]]
     // CHECK: simulation.return
     simulation.func @process(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})

@@ -76,13 +76,14 @@ module {
 
 // Real delays are rounded to the lexical 100 ps precision before they become
 // design ticks: 0.14 ns -> 1 tick, 0.15 ns -> 2 ticks, 1 ns -> 10 ticks,
-// a negative delay -> 0 ticks, and a typed real parameter of 1.55 ns -> 16
-// ticks. Constant parameters stay on the same compile-time path as literals.
+// a negative delay -> the saturated time that never matures (IEEE 1800-2023
+// 9.4.1), and a typed real parameter of 1.55 ns -> 16 ticks. Constant
+// parameters stay on the same compile-time path as literals.
 // CHECK: simulation.design @design attributes {{.*}}time_precision_fs = 100000
 // CHECK-DAG: simulation.time.constant 1{{$}}
 // CHECK-DAG: simulation.time.constant 2{{$}}
 // CHECK-DAG: simulation.time.constant 10{{$}}
-// CHECK-DAG: simulation.time.constant 0{{$}}
+// CHECK-DAG: simulation.time.constant 9223372036854775807{{$}}
 // CHECK-DAG: simulation.time.constant 16{{$}}
 // CHECK-COUNT-5: simulation.suspend.delay
 // CHECK-NOT: obelisk.sv.
