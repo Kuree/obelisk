@@ -3357,37 +3357,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                               builder.getI64Type(), reference);
     proceduralEpochCurrent = arith::CmpIOp::create(
         builder, location, arith::CmpIPredicate::eq, current, expected);
+    // A labeled assertion's pending instances are also cleared by disabling
+    // its label.
+    Value labelReference =
+        lvalues.lookup((referencePath.getValue() + ".label").str());
+    Value labelExpected =
+        values.lookup((valuePath.getValue() + ".label").str());
+    if (labelReference && labelExpected) {
+      Value labelCurrent = sim::SimRefLoadOp::create(
+          builder, location, builder.getI64Type(), labelReference);
+      Value labelUnchanged =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                labelCurrent, labelExpected);
+      proceduralEpochCurrent = arith::AndIOp::create(
+          builder, location, proceduralEpochCurrent, labelUnchanged);
+    }
   }
   if (proceduralStatement && !proceduralAttempt) {
-    if (!op.getStartsOnCurrentClock().value_or(false))
-      return emitError(location)
-                 << "procedural concurrent assertions whose leading clock "
-                    "differs from the current procedural event are not "
-                    "executable yet",
-             failure();
-
-    if (op->hasAttr("outer_process_scope_named"))
-      return emitError(location)
-                 << "procedural concurrent assertions in named process "
-                    "scopes are not executable yet because an outermost "
-                    "disable must flush their pending queue",
-             failure();
-
+    // The queue epoch advances at every flush point once the whole process
+    // is lowered (materializeProceduralAssertionFlushPoints).
     if (!proceduralAssertionEpoch) {
-      llvm::SmallPtrSet<Block *, 2> flushTargets;
-      function.walk([&](Operation *operation) {
-        if (!::obelisk::schedule::has<schedule::metadata::proceduralEventWait>(
-                operation) ||
-            operation->getNumSuccessors() != 1)
-          return;
-        flushTargets.insert(operation->getSuccessor(0));
-      });
-      if (flushTargets.size() != 1)
-        return emitError(location)
-                   << "procedural assertion queue lowering requires exactly "
-                      "one process-resume flush point",
-               failure();
-
       Block &entry = function.getBody().front();
       OpBuilder entryBuilder = OpBuilder::atBlockBegin(&entry);
       Value zero = arith::ConstantOp::create(entryBuilder, location,
@@ -3397,17 +3386,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           entryBuilder, location,
           sim::RefType::get(function.getContext(), entryBuilder.getI64Type()),
           zero);
-
-      OpBuilder flushBuilder = OpBuilder::atBlockBegin(*flushTargets.begin());
-      Value current = sim::SimRefLoadOp::create(flushBuilder, location,
-                                                flushBuilder.getI64Type(),
-                                                proceduralAssertionEpoch);
-      Value one = arith::ConstantOp::create(flushBuilder, location,
-                                            flushBuilder.getI64Type(),
-                                            flushBuilder.getI64IntegerAttr(1));
-      Value next = arith::AddIOp::create(flushBuilder, location, current, one);
-      sim::SimRefStoreOp::create(flushBuilder, location, next,
-                                 proceduralAssertionEpoch);
     }
     Value queuedEpoch = sim::SimRefLoadOp::create(
         builder, location, builder.getI64Type(), proceduralAssertionEpoch);
@@ -3509,6 +3487,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         {epochReferencePath, proceduralAssertionEpoch},
         {epochValuePath, queuedEpoch},
     };
+    std::string labelReferencePath = epochReferencePath + ".label";
+    std::string labelValuePath = epochValuePath + ".label";
+    if (auto label = proceduralAssertionLabels.find(op);
+        label != proceduralAssertionLabels.end()) {
+      Value labelEpoch =
+          getProceduralAssertionLabelEpoch(label->second, location);
+      epochCaptures.emplace_back(labelReferencePath, labelEpoch);
+      epochCaptures.emplace_back(labelValuePath,
+                                 sim::SimRefLoadOp::create(builder, location,
+                                                           builder.getI64Type(),
+                                                           labelEpoch));
+    }
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> attempt =
         outlineForkBranch(op, node, /*branchIndex=*/48,
                           /*captureReferences=*/true, frozenExpressions,
@@ -3536,6 +3526,11 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     attempt->first->setAttr(
         "domain", sim::ExecutionDomainAttr::get(function.getContext(),
                                                 sim::ExecutionDomain::Design));
+    // IEEE 1800-2023 16.14.6.4: once matured, an attempt is not affected by
+    // any disable, and it is no child of the queuing process for wait fork.
+    // A pending instance is flushed through its queue epoch instead.
+    ::obelisk::schedule::set<::obelisk::schedule::Field::DetachedControls>(
+        attempt->first, builder.getUnitAttr());
     sim::SimSpawnOp::create(builder, location, attempt->first.getSymNameAttr(),
                             attempt->second, ArrayAttr{}, ArrayAttr{});
     return success();
@@ -3617,12 +3612,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                             monitor->second, ArrayAttr{}, ArrayAttr{});
 
     Block *completedBlock = addBlock();
-    sim::SimSuspendEventOp::create(
+    auto completion = sim::SimSuspendEventOp::create(
         builder, location, completed, ValueRange{},
         schedule::ContinuationSiteAttr{},
         sim::EventRegionAttr::get(function.getContext(),
                                   sim::EventRegion::Reactive),
         completedBlock);
+    nonFlushingSuspensions.insert(completion);
     setCurrent(completedBlock);
     Value passed = sim::SimRefLoadOp::create(
         builder, location, builder.getI1Type(), resultStorage);
@@ -4637,14 +4633,15 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::any_of(*rhs, [](const FixedSequence &alternative) {
             return alternative.ages.size() > 1;
           })));
-    // An expect statement evaluates exactly one attempt, so it walks one
-    // deterministic antecedent directly instead of coalescing source ages.
-    bool useSourceAgeCoalescer = lhs->size() == 1 &&
-                                 sourceAttemptCanRemainPending &&
-                                 (antecedentAlternativeAdmissionCount > 1 ||
-                                  lhs->front().ages.size() > 1) &&
-                                 !localMonitor && !expectMonitor &&
-                                 !ordinaryBranchingConsequentAfterMinimization;
+    // An expect statement or a procedural attempt evaluates exactly one
+    // attempt, so it walks one deterministic antecedent directly instead of
+    // coalescing source ages.
+    bool useSourceAgeCoalescer =
+        lhs->size() == 1 && sourceAttemptCanRemainPending &&
+        (antecedentAlternativeAdmissionCount > 1 ||
+         lhs->front().ages.size() > 1) &&
+        !localMonitor && !expectMonitor && !proceduralAttempt &&
+        !ordinaryBranchingConsequentAfterMinimization;
     if (lhs->size() == 1 && !useSourceAgeCoalescer)
       antecedentSequence = std::move(lhs->front());
     else
@@ -5734,26 +5731,35 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                     sim::EventRegionAttr::get(function.getContext(),
                                               sim::EventRegion::Observed));
 
-  auto isOneCycleProceduralAge = [](const FixedSequenceAge &age) {
+  auto isProceduralAge = [](const FixedSequenceAge &age) {
     return age.caseGuards.empty() && age.matchItems.empty();
   };
+  // A matured attempt that spans several clock ticks completes weakly when
+  // the simulation ends first, and does not observe a disable condition
+  // between its ticks.
+  bool proceduralMultiCycle =
+      sequence.ages.size() != 1 || nonoverlapped ||
+      (implication && antecedentSequence.ages.size() != 1);
   if (proceduralAttempt &&
       (expectMonitor || multiClockAttempt || localMonitor || firstMatch ||
        temporalNegation || abort || attemptControlled || killControlled ||
-       actionControlled || nonoverlapped || branchingSequence ||
-       branchingAntecedent || branchingConsequent || hasPersistentDelay ||
-       hasPersistentUnary || hasPersistentUntil || hasPersistentRepetition ||
+       actionControlled || branchingSequence || branchingAntecedent ||
+       branchingConsequent || hasPersistentDelay || hasPersistentUnary ||
+       hasPersistentUntil || hasPersistentRepetition ||
        !sequenceAlternatives.empty() || !antecedentAlternatives.empty() ||
-       !consequentAlternatives.empty() || sequence.ages.size() != 1 ||
-       !isOneCycleProceduralAge(sequence.ages.front()) ||
+       !consequentAlternatives.empty() || sequence.ages.empty() ||
+       !llvm::all_of(sequence.ages, isProceduralAge) ||
        (implication &&
-        (antecedentSequence.ages.size() != 1 ||
-         !isOneCycleProceduralAge(antecedentSequence.ages.front())))))
+        (antecedentSequence.ages.empty() ||
+         !llvm::all_of(antecedentSequence.ages, isProceduralAge))) ||
+       (proceduralMultiCycle &&
+        (disable || (!cover && !usesWeakSequenceCompletion())))))
     return emitError(location)
                << "procedural concurrent assertion attempts currently "
-                  "require one same-clock Boolean property or overlapped "
-                  "implication without locals, match items, abort, or "
-                  "assertion control",
+                  "require one same-clock deterministic sequence, "
+                  "implication, or followed-by without locals, match items, "
+                  "abort, or assertion control; one spanning several clock "
+                  "ticks also requires weak completion and no disable iff",
            failure();
 
   Type stateType = builder.getI64Type();
@@ -6262,6 +6268,64 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     cf::CondBranchOp::create(builder, location, proceduralEpochCurrent,
                              currentAttempt, ValueRange{}, done, ValueRange{});
     setCurrent(currentAttempt);
+
+    // Waits for the next leading clock event and continues in `sample`.
+    // Sampled predicates are evaluated in Observed.
+    auto waitForClock = [&](Block *sample) -> LogicalResult {
+      llvm::SmallPtrSet<Block *, 16> existing;
+      for (Block &block : function.getBody())
+        existing.insert(&block);
+      Block *waitBlock = builder.getInsertionBlock();
+      if (failed(emitEventSuspend(clock, sample)))
+        return failure();
+      auto observed = sim::EventRegionAttr::get(function.getContext(),
+                                                sim::EventRegion::Observed);
+      for (Block &block : function.getBody())
+        if ((&block == waitBlock || !existing.contains(&block)) &&
+            !block.empty() && sim::isSuspensionOp(&block.back()))
+          block.back().setAttr("resume_region", observed);
+      setCurrent(sample);
+      return success();
+    };
+
+    // IEEE 1800-2023 16.14.6: a matured instance begins its attempt at once
+    // when its leading clock occurred in this time step, and otherwise at the
+    // next occurrence. A procedure whose own event is that clock reaches the
+    // assertion only in such a time step.
+    if (!op.getStartsOnCurrentClock().value_or(false)) {
+      Operation *source = clockChildren.front();
+      auto path = source->getAttrOfType<StringAttr>("referenced_path");
+      auto descriptor =
+          path ? descriptorIDs.find(path.getValue()) : descriptorIDs.end();
+      FailureOr<Value> clockReference = lowerExpression(source, true);
+      if (failed(clockReference))
+        return failure();
+      Type element;
+      if (auto reference = dyn_cast<sim::RefType>(clockReference->getType()))
+        element = reference.getElementType();
+      else if (auto net = dyn_cast<sim::NetType>(clockReference->getType()))
+        element = net.getElementType();
+      std::optional<unsigned> width =
+          element ? sim::getPackedWidth(element) : std::nullopt;
+      if (clockEvent.getHasIff() || descriptor == descriptorIDs.end() ||
+          !width || *width == 0)
+        return emitError(getSemanticLocation(clock))
+                   << "a procedural concurrent assertion whose leading clock "
+                      "differs from the current procedural event requires a "
+                      "static signal clock without iff",
+               failure();
+      Value current = sim::SimClockingOutputCurrentOp::create(
+          builder, location, *clockReference,
+          static_cast<sim::EdgeKind>(clockEvent.getEdgeKind()), *width,
+          descriptor->second);
+      Block *wait = addBlock();
+      Block *start = addBlock();
+      cf::CondBranchOp::create(builder, location, current, start, ValueRange{},
+                               wait, ValueRange{});
+      setCurrent(wait);
+      if (failed(waitForClock(start)))
+        return failure();
+    }
     if (disable) {
       FailureOr<Value> currentDisable = lowerExpression(disable);
       if (failed(currentDisable))
@@ -6322,44 +6386,47 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return result;
     };
 
-    Value result;
-    if (implication) {
-      FailureOr<Value> antecedent =
-          evaluateAge(antecedentSequence.ages.front());
-      if (failed(antecedent))
+    // IEEE 1800-2023 16.14.6: a matured attempt evaluates as a concurrent
+    // attempt started on this clock tick, one sampled tick per sequence age.
+    // An implication (16.12.7) or followed-by (16.12.9) walks its antecedent
+    // first: a mismatch there is vacuous success for implication and failure
+    // for followed-by. The consequent starts on the antecedent's last tick,
+    // or one tick later for |=> and #=#.
+    struct AttemptStep {
+      const FixedSequenceAge *age;
+      bool antecedent;
+      bool waitsForClock;
+    };
+    SmallVector<AttemptStep> steps;
+    if (implication)
+      for (auto [index, age] : llvm::enumerate(antecedentSequence.ages))
+        steps.push_back({&age, true, index != 0});
+    for (auto [index, age] : llvm::enumerate(sequence.ages))
+      steps.push_back(
+          {&age, false, index != 0 || (implication && nonoverlapped)});
+    Block *passedBlock = addBlock();
+    Block *failedBlock = addBlock();
+    Block *vacuous = followedBy ? failedBlock : passedBlock;
+    for (auto [index, step] : llvm::enumerate(steps)) {
+      if (step.waitsForClock) {
+        predicateCache.clear();
+        if (failed(waitForClock(addBlock())))
+          return failure();
+      }
+      FailureOr<Value> matches = evaluateAge(*step.age);
+      if (failed(matches))
         return failure();
-      Block *evaluateConsequent = addBlock();
-      Block *resolved = addBlock();
-      resolved->addArgument(builder.getI1Type(), location);
-      Value vacuousResult =
-          arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                    builder.getBoolAttr(!followedBy));
-      cf::CondBranchOp::create(builder, location, *antecedent,
-                               evaluateConsequent, ValueRange{}, resolved,
-                               ValueRange{vacuousResult});
-      setCurrent(evaluateConsequent);
-      FailureOr<Value> consequent = evaluateAge(sequence.ages.front());
-      if (failed(consequent))
-        return failure();
-      cf::BranchOp::create(builder, location, resolved,
-                           ValueRange{*consequent});
-      setCurrent(resolved);
-      result = resolved->getArgument(0);
-    } else {
-      FailureOr<Value> evaluated = evaluateAge(sequence.ages.front());
-      if (failed(evaluated))
-        return failure();
-      result = *evaluated;
+      Block *next = index + 1 == steps.size() ? passedBlock : addBlock();
+      cf::CondBranchOp::create(builder, location, *matches, next, ValueRange{},
+                               step.antecedent ? vacuous : failedBlock,
+                               ValueRange{});
+      if (next != passedBlock)
+        setCurrent(next);
     }
-
-    Block *passed = addBlock();
-    Block *failed = addBlock();
-    cf::CondBranchOp::create(builder, location, result, passed, ValueRange{},
-                             failed, ValueRange{});
-    setCurrent(passed);
+    setCurrent(passedBlock);
     scheduleResult(true);
     cf::BranchOp::create(builder, location, done);
-    setCurrent(failed);
+    setCurrent(failedBlock);
     scheduleResult(false);
     cf::BranchOp::create(builder, location, done);
     setCurrent(done);

@@ -1710,6 +1710,14 @@ LogicalResult UnitLowering::lowerBlock(semantic::SVBlockStatementOp op) {
   Value activation = sim::SimControlEnterOp::create(
       builder, location, builder.getI64IntegerAttr(targetID));
   Block *exit = addBlock();
+  Operation *parent = op->getParentOp();
+  if (isa_and_nonnull<semantic::SVTimedStatementOp>(parent))
+    parent = parent->getParentOp();
+  bool outermost = parent == function.getOperation();
+  if (outermost)
+    outermostScopeExit = exit;
+  if (outermost && sim::has<sim::metadata::ExternalControlTarget>(op))
+    externallyDisabledOutermostScope = op;
   bool resumable = sim::has<sim::metadata::ResumableControlTarget>(op) &&
                    function.getEntryKind() != sim::EntryKind::Function &&
                    function.getEntryKind() != sim::EntryKind::Observer;
@@ -1751,6 +1759,19 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
   }
   uint64_t targetID = targetIDAttr.getValue().getZExtValue();
   bool hierarchical = op.getIsHierarchical();
+  // IEEE 1800-2023 16.14.6.4: disabling a procedural concurrent assertion
+  // clears its pending instances; its matured attempts are unaffected.
+  if (llvm::is_contained(llvm::make_second_range(proceduralAssertionLabels),
+                         path.getValue())) {
+    Value epoch = getProceduralAssertionLabelEpoch(path.getValue(), location);
+    Value current = sim::SimRefLoadOp::create(builder, location,
+                                              builder.getI64Type(), epoch);
+    Value one = arith::ConstantOp::create(
+        builder, location, builder.getI64Type(), builder.getI64IntegerAttr(1));
+    Value next = arith::AddIOp::create(builder, location, current, one);
+    sim::SimRefStoreOp::create(builder, location, next, epoch);
+    return success();
+  }
   auto assertion = assertionControlIDs.find(path.getValue());
   if (assertion != assertionControlIDs.end() && assertion->second == targetID) {
     sim::SimControlDisableOp::create(
@@ -1764,7 +1785,9 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
           builder, location, builder.getI64IntegerAttr(targetID),
           hierarchical ? Value{} : scope.activation,
           builder.getBoolAttr(hierarchical));
-      cf::BranchOp::create(builder, location, scope.exit);
+      auto branch = cf::BranchOp::create(builder, location, scope.exit);
+      if (scope.exit == outermostScopeExit)
+        outermostScopeDisables.push_back(branch);
       setCurrent(addBlock());
       return success();
     }

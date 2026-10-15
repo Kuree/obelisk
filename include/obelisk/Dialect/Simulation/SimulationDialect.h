@@ -641,6 +641,8 @@ using PreparedInitializer =
     ObeliskSimulationDialect::PreparedInitializerAttrHelper;
 using ResumableControlTarget =
     ObeliskSimulationDialect::ResumableControlTargetAttrHelper;
+using ExternalControlTarget =
+    ObeliskSimulationDialect::ExternalControlTargetAttrHelper;
 using ReturnVariablePath =
     ObeliskSimulationDialect::ReturnVariablePathAttrHelper;
 using SampledObserver = ObeliskSimulationDialect::SampledObserverAttrHelper;

@@ -1271,7 +1271,25 @@ void ObeliskSimPreparePass::runOnOperation() {
   // are not acceptable.
   llvm::StringSet<> controlPaths;
   llvm::StringSet<> resumableControlPaths;
+  llvm::StringSet<> externalControlPaths;
   llvm::StringSet<> staticPaths;
+  // Whether `disable` lies in the block it targets, in the same process: no
+  // fork branch separates the two.
+  auto disablesOwnBlock = [](semantic::SVDisableStatementOp disable,
+                             StringRef path) {
+    for (Operation *parent = disable->getParentOp(); parent;
+         parent = parent->getParentOp()) {
+      auto block = dyn_cast<semantic::SVBlockStatementOp>(parent);
+      if (!block)
+        continue;
+      if (auto blockPath = block.getBlockPathAttr();
+          blockPath && blockPath.getValue() == path)
+        return true;
+      if (block.getBlockKind() != semantic::SVStatementBlockKind::Sequential)
+        return false;
+    }
+    return false;
+  };
   semanticRoot->walk([&](Operation *op) {
     if (auto block = dyn_cast<semantic::SVBlockStatementOp>(op)) {
       if (auto path = block.getBlockPathAttr())
@@ -1280,6 +1298,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       if (auto path = disable.getTargetPathAttr()) {
         controlPaths.insert(path.getValue());
         resumableControlPaths.insert(path.getValue());
+        if (!disablesOwnBlock(disable, path.getValue()))
+          externalControlPaths.insert(path.getValue());
       }
     } else if (auto declaration =
                    dyn_cast<semantic::SVVariableDeclStatementOp>(op)) {
@@ -1290,6 +1310,9 @@ void ObeliskSimPreparePass::runOnOperation() {
     if (auto path = block.getBlockPathAttr();
         path && resumableControlPaths.contains(path.getValue()))
       sim::mark<sim::metadata::ResumableControlTarget>(block);
+    if (auto path = block.getBlockPathAttr();
+        path && externalControlPaths.contains(path.getValue()))
+      sim::mark<sim::metadata::ExternalControlTarget>(block);
   });
   auto assignPathIDs = [&](llvm::StringSet<> &paths, StringRef attrName) {
     SmallVector<StringRef> ordered;

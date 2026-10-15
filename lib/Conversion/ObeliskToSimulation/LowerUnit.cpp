@@ -5309,6 +5309,86 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
 }
 
 LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
+  if (failed(lowerRoots(roots)))
+    return failure();
+  return materializeProceduralAssertionFlushPoints();
+}
+
+/// IEEE 1800-2023 16.14.6.2: a process reaches a procedural assertion flush
+/// point when it resumes from an event control or wait statement, when an
+/// always_comb or always_latch resumes on a dependency, and when its
+/// outermost scope is disabled (16.14.6.4). Advance the queue epoch on every
+/// such edge, so a pending instance queued before it does not mature. A
+/// delay, a join, and a blocking task call do not flush the queue.
+LogicalResult UnitLowering::materializeProceduralAssertionFlushPoints() {
+  if (!proceduralAssertionEpoch)
+    return success();
+  auto emitFlush = [&](OpBuilder &flushBuilder, Location location,
+                       Value queue) {
+    Value epoch = sim::SimRefLoadOp::create(flushBuilder, location,
+                                            flushBuilder.getI64Type(), queue);
+    Value one = arith::ConstantOp::create(flushBuilder, location,
+                                          flushBuilder.getI64Type(),
+                                          flushBuilder.getI64IntegerAttr(1));
+    Value next = arith::AddIOp::create(flushBuilder, location, epoch, one);
+    sim::SimRefStoreOp::create(flushBuilder, location, next, queue);
+  };
+  // Flushes on the edge to `successor` alone; its block may have other
+  // predecessors.
+  auto flushEdge = [&](Operation *terminator, unsigned successor) {
+    Location location = terminator->getLoc();
+    Block *target = terminator->getSuccessor(successor);
+    Block *flush = new Block;
+    function.getBody().getBlocks().insert(target->getIterator(), flush);
+    for (BlockArgument argument : target->getArguments())
+      flush->addArgument(argument.getType(), argument.getLoc());
+    OpBuilder flushBuilder = OpBuilder::atBlockEnd(flush);
+    emitFlush(flushBuilder, location, proceduralAssertionEpoch);
+    cf::BranchOp::create(flushBuilder, location, target, flush->getArguments());
+    terminator->setSuccessor(flush, successor);
+  };
+  SmallVector<Operation *> resumptions;
+  function.walk([&](Operation *operation) {
+    if (isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp,
+            sim::SimSuspendEdgeIffOp, sim::SimSuspendLevelOp,
+            sim::SimSuspendAnyOp, sim::SimSuspendEventOp,
+            sim::SimSuspendEventOrderOp, sim::SimSuspendObserveOp>(operation) &&
+        !nonFlushingSuspensions.contains(operation))
+      resumptions.push_back(operation);
+  });
+  for (Operation *suspension : resumptions)
+    flushEdge(suspension, 0);
+  // The queue would have to outlive every suspension of the activation for
+  // its resumption after another process disables it.
+  if (externallyDisabledOutermostScope)
+    return emitError(getSemanticLocation(externallyDisabledOutermostScope))
+           << "procedural concurrent assertions are not executable yet in an "
+              "outermost named block that another process disables";
+  for (Operation *disable : outermostScopeDisables) {
+    OpBuilder flushBuilder(disable);
+    emitFlush(flushBuilder, disable->getLoc(), proceduralAssertionEpoch);
+  }
+  return success();
+}
+
+Value UnitLowering::getProceduralAssertionLabelEpoch(StringRef path,
+                                                     Location location) {
+  Value &epoch = proceduralAssertionLabelEpochs[path];
+  if (!epoch) {
+    OpBuilder entryBuilder =
+        OpBuilder::atBlockBegin(&function.getBody().front());
+    Value zero = arith::ConstantOp::create(entryBuilder, location,
+                                           entryBuilder.getI64Type(),
+                                           entryBuilder.getI64IntegerAttr(0));
+    epoch = sim::SimRefAllocOp::create(
+        entryBuilder, location,
+        sim::RefType::get(function.getContext(), entryBuilder.getI64Type()),
+        zero);
+  }
+  return epoch;
+}
+
+LogicalResult UnitLowering::lowerRoots(ArrayRef<Operation *> roots) {
   if (invalidBindings)
     return failure();
   for (Operation *root : roots)
@@ -5320,6 +5400,13 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
           isa<semantic::SVImmediateAssertionStatementOp>(contents.front()))
         assertionControlIDs[path.getValue()] =
             targetID.getValue().getZExtValue();
+      auto concurrent =
+          contents.size() == 1
+              ? dyn_cast<semantic::SVConcurrentAssertionStatementOp>(
+                    contents.front())
+              : semantic::SVConcurrentAssertionStatementOp{};
+      if (path && concurrent && concurrent.getIsProcedural().value_or(false))
+        proceduralAssertionLabels[concurrent] = path.getValue();
     });
   setCurrent(&function.getBody().front());
   // Preparation materializes an implicit base-constructor call ahead of the

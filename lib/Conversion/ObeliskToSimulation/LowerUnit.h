@@ -47,6 +47,9 @@ public:
       sim::SimDesignOp design, const UnitLoweringInputs &loweringInputs);
 
 private:
+  ::mlir::LogicalResult lowerRoots(::mlir::ArrayRef<::mlir::Operation *> roots);
+  ::mlir::LogicalResult materializeProceduralAssertionFlushPoints();
+
   template <typename T>
   T lookupNearestSymbolFrom(::mlir::Operation *from,
                             ::mlir::SymbolRefAttr symbol) {
@@ -937,7 +940,28 @@ private:
   /// cloned expression. This is used when an expression's source-region value
   /// must not be recomputed in the callback's later scheduling region.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value> expressionCaptures;
+  /// The procedural assertion queue epoch of this process (IEEE 1800-2023
+  /// 16.14.6); pending instances queued under an older epoch do not mature.
   ::mlir::Value proceduralAssertionEpoch;
+  /// Suspensions whose resumption is no procedural assertion flush point,
+  /// although they wait on an event: an expect statement's completion.
+  ::llvm::SmallPtrSet<::mlir::Operation *, 2> nonFlushingSuspensions;
+  /// The label path of each labeled procedural concurrent assertion in this
+  /// unit.
+  /// Disabling a label clears only that assertion's pending instances
+  /// (IEEE 1800-2023 16.14.6.4), through a per-label epoch.
+  ::llvm::DenseMap<::mlir::Operation *, ::llvm::StringRef>
+      proceduralAssertionLabels;
+  ::llvm::StringMap<::mlir::Value> proceduralAssertionLabelEpochs;
+  /// The exit of this process's outermost named block, and the local
+  /// disable branches that reach it. Each is a procedural assertion flush
+  /// point (IEEE 1800-2023 16.14.6.4). Another process may disable the block
+  /// only when it is an external control target.
+  ::mlir::Block *outermostScopeExit = nullptr;
+  ::llvm::SmallVector<::mlir::Operation *, 2> outermostScopeDisables;
+  ::mlir::Operation *externallyDisabledOutermostScope = nullptr;
+  ::mlir::Value getProceduralAssertionLabelEpoch(::llvm::StringRef path,
+                                                 ::mlir::Location location);
   /// Current-endpoint values paired with cloned global-future calls. The
   /// detached resolver compares these values with the next global tick.
   ::llvm::DenseMap<::mlir::Operation *, ::mlir::Value>

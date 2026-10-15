@@ -479,6 +479,9 @@ def ObeliskSimulationDialect : Dialect {
     // position immediately after an explicit super.new call.
     "::mlir::UnitAttr":$prepared_initializer,
     "::mlir::UnitAttr":$resumable_control_target,
+    // A resumable named block that a disable may target from another process:
+    // from outside the block, or from a fork child within it.
+    "::mlir::UnitAttr":$external_control_target,
     // Hierarchical path of the variable that holds a function's return value.
     "::mlir::StringAttr":$return_variable_path,
     "::mlir::UnitAttr":$sampled_observer,
