@@ -3049,21 +3049,13 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
   std::optional<ObserverPlan> cycleConditionObserver;
   bool cycleMatchesOutput = false;
   if (cycleDelay) {
+    // IEEE 1800-2023 14.16: the cycle delay of a synchronous drive counts
+    // cycles of the target clockvar's own clocking block, never default
+    // clocking, so it shares the output's clock, edge, and iff.
     SmallVector<Operation *> cycleChildren = getChildren(cycleDelay);
-    cycleHasIff = cycleDelay->hasAttr(clockingEventHasIffAttrName);
-    size_t expectedChildren = cycleHasIff ? 3 : 1;
-    if (cycleChildren.size() != expectedChildren)
+    if (cycleChildren.size() != 1)
       return emitError(location)
-             << "clocking output cycle delay has no frozen event";
-    auto cyclePath =
-        cycleDelay->getAttrOfType<StringAttr>(clockingEventPathAttrName);
-    auto cycleEventEdge = cycleDelay->getAttrOfType<semantic::EdgeKindAttr>(
-        clockingEventEdgeAttrName);
-    if (!cyclePath || !cycleEventEdge)
-      return emitError(location)
-             << "clocking output cycle delay has no supported event";
-    FailureOr<Value> loweredClock =
-        lowerReferencedValue(cycleDelay, cyclePath.getValue(), /*lvalue=*/true);
+             << "clocking output cycle delay has no frozen count";
     FailureOr<Value> loweredCount = lowerExpression(cycleChildren.front());
     FailureOr<Value> scalarCount = succeeded(loweredCount)
                                        ? toPackedScalar(*loweredCount, location)
@@ -3071,29 +3063,21 @@ LogicalResult UnitLowering::emitClockingOutputDrive(
     std::optional<unsigned> countWidth =
         succeeded(scalarCount) ? sim::getPackedWidth((*scalarCount).getType())
                                : std::nullopt;
-    if (failed(loweredClock) || failed(scalarCount) || !countWidth ||
-        *countWidth == 0)
+    if (failed(scalarCount) || !countWidth || *countWidth == 0)
       return failure();
     Type countType = builder.getIntegerType(*countWidth);
     FailureOr<Value> normalizedCount = convert(
         *scalarCount, countType, isSignedNode(cycleChildren.front()), location);
     if (failed(normalizedCount))
       return failure();
-    cycleClock = *loweredClock;
+    cycleClock = clock;
     cycleCount = *normalizedCount;
     cycleCountSigned = isSignedNode(cycleChildren.front());
-    cycleEdge = cycleEventEdge.getValue();
-    if (cycleHasIff) {
-      FailureOr<Value> primary = bindObserver(cycleChildren[1]);
-      FailureOr<Value> condition = bindObserver(cycleChildren[2]);
-      if (failed(primary) || failed(condition))
-        return failure();
-      cyclePrimaryObserver = saveObserverPlan(*primary);
-      cycleConditionObserver = saveObserverPlan(*condition);
-    }
-    cycleMatchesOutput = cycleClock == clock &&
-                         cycleEdge == eventEdge.getValue() &&
-                         cycleHasIff == hasIff;
+    cycleEdge = eventEdge.getValue();
+    cycleHasIff = hasIff;
+    cyclePrimaryObserver = primaryObserver;
+    cycleConditionObserver = conditionObserver;
+    cycleMatchesOutput = true;
   }
 
   uint64_t delayTicks = 0;

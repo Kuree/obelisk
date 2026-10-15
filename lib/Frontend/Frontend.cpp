@@ -4233,6 +4233,12 @@ private:
                                           : slangir::AssignmentKind::Blocking));
       SET_OP_ATTR(HasTimingControl,
                   builder.getBoolAttr(node.timingControl != nullptr));
+      // IEEE 1800-2023 14.16: the cycle delay of a synchronous drive counts
+      // cycles of the target clockvar's own clocking block, never default
+      // clocking. Lowering takes that block from the target.
+      if (node.timingControl &&
+          node.timingControl->kind == slang::ast::TimingControlKind::CycleDelay)
+        synchronousDriveCycles.insert(node.timingControl);
     } else if constexpr (std::same_as<T, slang::ast::BlockStatement>) {
       SET_OP_ATTR(BlockKind,
                   slangir::StatementBlockKindAttr::get(
@@ -5143,7 +5149,8 @@ private:
       int64_t delayCount = node.expr3 ? 3 : node.expr2 ? 2 : 1;
       SET_OP_ATTR(DelayCount, builder.getI64IntegerAttr(delayCount));
     } else if constexpr (std::same_as<T, slang::ast::CycleDelayControl>) {
-      if (const slang::ast::Scope *scope = getCurrentScope())
+      if (const slang::ast::Scope *scope = getCurrentScope();
+          scope && !synchronousDriveCycles.contains(&node))
         if (const slang::ast::Symbol *clocking =
                 compilation.getDefaultClocking(*scope))
           addStaticClockingEventDescriptor(
@@ -5712,7 +5719,8 @@ private:
       }
     } else if constexpr (std::same_as<T, slang::ast::CycleDelayControl>) {
       this->visitDefault(node);
-      if (const slang::ast::Scope *scope = getCurrentScope())
+      if (const slang::ast::Scope *scope = getCurrentScope();
+          scope && !synchronousDriveCycles.contains(&node))
         if (const slang::ast::Symbol *clocking =
                 compilation.getDefaultClocking(*scope))
           if (const auto *event =
@@ -6231,6 +6239,8 @@ private:
   SmallVector<std::string, 8> currentSymbolPath;
   SmallVector<const slang::ast::Scope *, 8> currentScopes;
   SmallVector<const slang::ast::Symbol *, 4> currentProcedures;
+  llvm::SmallPtrSet<const slang::ast::TimingControl *, 4>
+      synchronousDriveCycles;
   SmallVector<PendingReference, 0> pendingReferences;
   SmallVector<PendingReferenceArray, 0> pendingReferenceArrays;
   SmallVector<const slang::ast::Symbol *, 0> semanticDependencies;
