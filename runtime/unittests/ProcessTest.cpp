@@ -4236,6 +4236,38 @@ TEST(Scheduler, SharedDriverArbitratesPlanAndDescriptorContinuations) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, SynchronousDrivesKeepOnlyTheLastValue) {
+  // IEEE 1800-2023 14.16.2: of several synchronous drives of one clocking
+  // output maturing in the same region, only the last value is driven. A
+  // whole-vector drive followed by a drive of bits [2, 4) leaves the first
+  // drive's low bits and the second drive's high bits, and the first drive
+  // already carries the second's bits so its commit cannot glitch.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  uint8_t plane = 0b1111;
+  uint8_t whole = 0b0000, high = 0b01;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_clocking_nba(context, &plane, nullptr, 8, 0,
+                                                 4, 0, &whole, nullptr, 7),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_clocking_nba(context, &plane, nullptr, 8, 2,
+                                                 2, 0, &high, nullptr, 7),
+            OBELISK_RT_OK);
+  ASSERT_EQ(context->scheduledNBAs.size(), 2u);
+  uint32_t region = context->scheduledNBAs.front().execRegion;
+  ASSERT_EQ(resolveClockingDriveConflictsUnlocked(context, region),
+            OBELISK_RT_OK);
+  const ScheduledNBA &first = context->scheduledNBAs.front();
+  uint8_t firstValue = first.inlinePacked
+                           ? static_cast<uint8_t>(first.inlineValue)
+                           : first.value.front();
+  EXPECT_EQ(firstValue & 0b1111, 0b0100);
+
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(plane, 0b0100);
+  EXPECT_EQ(context->schedulerFinishStatus, OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, SharedDriverReactivatesPlanAfterEachSameSlotNBA) {
   obelisk_rt_execution_descriptor_v1 execution{};
   execution.version = OBELISK_RT_VERSION;

@@ -3929,21 +3929,29 @@ resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
     const std::vector<uint8_t> &plane = unknown ? update.unknown : update.value;
     return bit / 8 < plane.size() && byteBit(plane.data(), bit);
   };
-  auto writeConflict = [&](ScheduledNBA &update, uint64_t bit) {
-    bool unknown = fourState(update);
+  auto writeBit = [&](ScheduledNBA &update, uint64_t bit, bool value,
+                      bool unknown) {
+    bool hasUnknown = fourState(update);
     if (update.inlinePacked) {
       uint64_t mask = uint64_t{1} << bit;
-      update.inlineValue &= ~mask;
-      if (unknown)
-        update.inlineUnknown |= mask;
+      update.inlineValue =
+          value ? update.inlineValue | mask : update.inlineValue & ~mask;
+      if (hasUnknown)
+        update.inlineUnknown = unknown ? update.inlineUnknown | mask
+                                       : update.inlineUnknown & ~mask;
       return;
     }
-    setByteBit(update.value.data(), bit, false);
-    if (unknown)
-      setByteBit(update.unknown.data(), bit, true);
+    setByteBit(update.value.data(), bit, value);
+    if (hasUnknown)
+      setByteBit(update.unknown.data(), bit, unknown);
   };
 
-  bool conflict = false;
+  // IEEE 1800-2023 14.16.2: when several synchronous drives of one clocking
+  // output mature in the same Re-NBA region, the last value is the only
+  // value driven. Give every earlier drive the last value of the bits a later
+  // drive overlaps, so committing them in order never exposes an earlier
+  // value, even transiently. Updates are kept in scheduling order, so the
+  // last drive overlapping a bit is the last one copied into it.
   for (size_t lhsIndex = 0; lhsIndex != context->scheduledNBAs.size();
        ++lhsIndex) {
     ScheduledNBA &lhs = context->scheduledNBAs[lhsIndex];
@@ -3973,24 +3981,10 @@ resolveClockingDriveConflictsUnlocked(obelisk_rt_context *context,
       for (__int128 rootBit = begin; rootBit < end; ++rootBit) {
         uint64_t lhsBit = static_cast<uint64_t>(rootBit - lhsPosition.offset);
         uint64_t rhsBit = static_cast<uint64_t>(rootBit - rhsPosition.offset);
-        bool lhsValue = readBit(lhs, lhsBit, false);
-        bool rhsValue = readBit(rhs, rhsBit, false);
-        bool lhsUnknown = readBit(lhs, lhsBit, true);
-        bool rhsUnknown = readBit(rhs, rhsBit, true);
-        if (lhsValue == rhsValue && lhsUnknown == rhsUnknown)
-          continue;
-        conflict = true;
-        writeConflict(lhs, lhsBit);
-        writeConflict(rhs, rhsBit);
+        writeBit(lhs, lhsBit, readBit(rhs, rhsBit, false),
+                 readBit(rhs, rhsBit, true));
       }
     }
-  }
-  if (conflict) {
-    std::fprintf(stderr,
-                 "error: conflicting synchronous clocking drives at time "
-                 "%llu\n",
-                 static_cast<unsigned long long>(context->schedulerTime));
-    context->schedulerFinishStatus = OBELISK_RT_FATAL;
   }
   return OBELISK_RT_OK;
 }
