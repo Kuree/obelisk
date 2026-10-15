@@ -586,6 +586,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     uint64_t staticModeMask = UINT64_MAX;
     Value randcDomainReference{};
     Value nextRandcDomain{};
+    /// A fixed shadow of the leading elements of the container whose size
+    /// is the property at `sizePropertyIndex`.
+    bool isContainerElements = false;
+    unsigned sizePropertyIndex = 0;
   };
   SmallVector<Property, 0> planned;
   uint64_t plannedWidth = 0;
@@ -656,6 +660,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     StringAttr referencePath = property.getPath();
     sim::RandomContainerSizeAttr containerSize = property.getContainerSize();
     bool isContainerSize = static_cast<bool>(containerSize);
+    sim::RandomContainerElementsAttr containerElements =
+        property.getContainerElements();
     sim::RandomNestedObjectAttr nested = property.getNested();
     bool isNestedObject = static_cast<bool>(nested);
     FlatSymbolRefAttr nestedObjectField =
@@ -721,9 +727,10 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         return failure();
       }
     } else if (field) {
-      Type referencedType = isContainerSize ? containerSize.getType()
-                            : storagePath   ? storageType
-                                            : type;
+      Type referencedType = isContainerSize     ? containerSize.getType()
+                            : containerElements ? containerElements.getType()
+                            : storagePath       ? storageType
+                                                : type;
       Type referenceType = sim::ManagedRefType::get(
           function.getContext(), referencedType, objectType.getClassName());
       reference = sim::SimClassFieldRefOp::create(
@@ -935,6 +942,19 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     planned.back().staticModeMask =
         member ? member.getStaticModeMask() : UINT64_MAX;
     planned.back().elementWidth = elementWidth.value_or(0);
+    if (containerElements) {
+      if (containerElements.getSizeProperty() >= planned.size() - 1 ||
+          !planned[containerElements.getSizeProperty()].isContainerSize ||
+          planned[containerElements.getSizeProperty()].containerType !=
+              containerElements.getType()) {
+        emitError(location)
+            << "random container elements have no preceding size property";
+        return failure();
+      }
+      planned.back().isContainerElements = true;
+      planned.back().sizePropertyIndex = containerElements.getSizeProperty();
+      planned.back().containerType = containerElements.getType();
+    }
     plannedWidth += width;
   }
   if (plannedWidth != totalWidth) {
@@ -2033,6 +2053,68 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
                       : Type(builder.getIntegerType(*width));
     return convertFixedAggregateBitstream(value, scalar, scalar, valueLocation);
   };
+  // Visit the leading elements of a container that its fixed shadow holds,
+  // carrying `initial` through `visit`.
+  auto forEachLeadingElement =
+      [&](const Property &property, Value container, Value initial,
+          function_ref<Value(Value ordinal, Value carried)> visit) {
+        uint64_t count = sim::getAggregateNumElements(property.type);
+        Value size =
+            sim::SimContainerSizeOp::create(builder, location, i64, container);
+        Value limit =
+            arith::MinUIOp::create(builder, location, size, constant64(count));
+        Block *header = addBlock();
+        header->addArgument(i64, location);
+        header->addArgument(initial.getType(), location);
+        Block *body = addBlock();
+        Block *done = addBlock();
+        done->addArgument(initial.getType(), location);
+        cf::BranchOp::create(builder, location, header,
+                             ValueRange{constant64(0), initial});
+        setCurrent(header);
+        Value ordinal = header->getArgument(0);
+        Value more = arith::CmpIOp::create(
+            builder, location, arith::CmpIPredicate::ult, ordinal, limit);
+        cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                                 done, ValueRange{header->getArgument(1)});
+        setCurrent(body);
+        Value carried = visit(ordinal, header->getArgument(1));
+        cf::BranchOp::create(
+            builder, location, header,
+            ValueRange{arith::AddIOp::create(builder, location, ordinal,
+                                             constant64(1)),
+                       carried});
+        setCurrent(done);
+        return done->getArgument(0);
+      };
+  // The shadow reads the container's leading elements; the rest keep the
+  // default value no constraint can observe.
+  auto loadContainerElements = [&](const Property &property, Value container) {
+    auto array = cast<sim::UnpackedArrayType>(property.type);
+    return forEachLeadingElement(
+        property, container,
+        sim::SimAggregateDefaultOp::create(builder, location, array),
+        [&](Value ordinal, Value elements) -> Value {
+          Value element = sim::SimContainerReadOp::create(
+              builder, location, array.getElementType(), container, ordinal);
+          return sim::SimArrayDynInsertOp::create(builder, location, array,
+                                                  elements, element, ordinal);
+        });
+  };
+  // The size property has already resized the container.
+  auto storeContainerElements = [&](const Property &property, Value container,
+                                    Value elements) {
+    auto array = cast<sim::UnpackedArrayType>(property.type);
+    forEachLeadingElement(property, container, constant64(0),
+                          [&](Value ordinal, Value carried) -> Value {
+                            Value element = sim::SimArrayDynExtractOp::create(
+                                builder, location, array.getElementType(),
+                                elements, ordinal);
+                            sim::SimContainerWriteOp::create(
+                                builder, location, container, ordinal, element);
+                            return carried;
+                          });
+  };
   Value zeroAssignment = constantAssignment64(0);
   Value currentAssignment = zeroAssignment;
   Value mutableMask = zeroAssignment;
@@ -2121,7 +2203,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           objectModeField = element.modeField;
         }
         Type nestedFieldType =
-            property.isContainerSize ? property.containerType : property.type;
+            property.isContainerSize || property.isContainerElements
+                ? property.containerType
+                : property.type;
         Type fieldReferenceType =
             sim::ManagedRefType::get(function.getContext(), nestedFieldType,
                                      concreteType.getClassName());
@@ -2149,6 +2233,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           value =
               arith::TruncIOp::create(builder, location, property.type, size)
                   .getResult();
+        } else if (property.isContainerElements) {
+          value = loadContainerElements(property, *value);
         }
         cf::BranchOp::create(
             builder, location, mergeBlock,
@@ -2159,11 +2245,13 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         property.nestedObjectID = mergeBlock->getArgument(2);
         return mergeBlock->getArgument(0);
       }
-      if (!property.isContainerSize)
+      if (!property.isContainerSize && !property.isContainerElements)
         return loadProperty(property);
       FailureOr<Value> container = loadReference(property.reference, location);
       if (failed(container))
         return failure();
+      if (property.isContainerElements)
+        return loadContainerElements(property, *container);
       Value size =
           sim::SimContainerSizeOp::create(builder, location, i64, *container);
       return arith::TruncIOp::create(builder, location, property.type, size)
@@ -2798,6 +2886,15 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     if (result.wasInterrupted())
       return failure();
   }
+  // IEEE 1800-2023 18.5.7.1 solves the size of a dynamic array or queue
+  // before the constraints on its elements.
+  for (auto [index, property] : llvm::enumerate(planned))
+    if (property.isContainerElements) {
+      hasSolveBefore = true;
+      appendSolveBeforeEdge({propertyMasks[property.sizePropertyIndex],
+                             propertyMasks[index],
+                             OBELISK_RT_RANDOM_UNMASKED_CONSTRAINT_V1});
+    }
   // Orders the variables of `orderEdges` into layers, or fails on a cycle.
   auto computeSolveLayers = [&](ArrayRef<SolveBeforeEdge> orderEdges)
       -> std::optional<SmallVector<APInt>> {
@@ -10646,7 +10743,9 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
         concreteType = cast<sim::ClassHandleType>(element.concreteType);
       }
       Type nestedFieldType =
-          property.isContainerSize ? property.containerType : property.type;
+          property.isContainerSize || property.isContainerElements
+              ? property.containerType
+              : property.type;
       Type fieldReferenceType = sim::ManagedRefType::get(
           function.getContext(), nestedFieldType, concreteType.getClassName());
       Value fieldReference = sim::SimClassFieldRefOp::create(
@@ -10669,6 +10768,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
             *oldContainer, *size);
         sim::SimManagedStoreOp::create(builder, location, resized,
                                        fieldReference);
+      } else if (property.isContainerElements) {
+        FailureOr<Value> container = loadReference(fieldReference, location);
+        if (failed(container))
+          return failure();
+        storeContainerElements(property, *container, candidate);
       } else if (failed(storeReference(fieldReference, candidate, location))) {
         return failure();
       }
@@ -10689,6 +10793,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
           *oldContainer, *size);
       sim::SimManagedStoreOp::create(builder, location, resized,
                                      property.reference);
+    } else if (property.isContainerElements) {
+      FailureOr<Value> container = loadReference(property.reference, location);
+      if (failed(container))
+        return failure();
+      storeContainerElements(property, *container, candidate);
     } else if (failed(storeProperty(property, candidate)))
       return failure();
     if (property.isRandC) {

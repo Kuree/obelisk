@@ -493,6 +493,18 @@ def SimRandomContainerSizeAttr
   let assemblyFormat = "`<` struct(params) `>`";
 }
 
+def SimRandomContainerElementsAttr
+    : SimAttr<"RandomContainerElements", "random_container_elements"> {
+  let summary = "the leading elements of a random dynamic container";
+  let description = [{
+    The property is a fixed unpacked array holding the leading elements of a
+    container of type `type`, whose size is the property at index
+    `sizeProperty`. Elements at or beyond the solved size are not stored.
+  }];
+  let parameters = (ins "::mlir::Type":$type, "uint32_t":$sizeProperty);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 def SimRandomMemberStorageAttr
     : SimAttr<"RandomMemberStorage", "random_member_storage"> {
   let summary = "a random member of an unpacked structure property";
@@ -517,7 +529,8 @@ def SimRandomPropertyAttr : SimAttr<"RandomProperty", "random_property"> {
     properties keep their rand_mode() bit in storage `modeStorage`.
 
     The variable may be the size of a random dynamic container
-    (`containerSize`), a property of a nested random object (`nested`, whose
+    (`containerSize`) or its leading elements (`containerElements`), a
+    property of a nested random object (`nested`, whose
     `field` names the property within that object), or a member of an
     unpacked structure (`member`). Fixed arrays carry per-element rand_mode()
     bits in `elementModeField` or `elementModeStorage`, `elementWidth` bits
@@ -538,7 +551,9 @@ def SimRandomPropertyAttr : SimAttr<"RandomProperty", "random_property"> {
       OptionalParameter<"std::optional<uint64_t>">:$elementModeStorage,
       OptionalParameter<"std::optional<uint32_t>">:$elementWidth,
       OptionalParameter<"::obelisk::sim::RandomCycleStateAttr">:$cycle,
-      OptionalParameter<"::mlir::ArrayAttr">:$domains);
+      OptionalParameter<"::mlir::ArrayAttr">:$domains,
+      OptionalParameter<"::obelisk::sim::RandomContainerElementsAttr">:
+          $containerElements);
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
   let extraClassDeclaration = [{

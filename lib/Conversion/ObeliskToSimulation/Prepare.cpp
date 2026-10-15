@@ -5467,7 +5467,8 @@ void ObeliskSimPreparePass::runOnOperation() {
           /*modeStorage=*/std::nullopt, /*containerSize=*/{}, /*nested=*/{},
           /*member=*/{}, /*elementModeField=*/{},
           /*elementModeStorage=*/std::nullopt, /*elementWidth=*/std::nullopt,
-          /*cycle=*/{}, randomDomains(property.domains)));
+          /*cycle=*/{}, randomDomains(property.domains),
+          /*containerElements=*/{}));
 
     sim::mark<sim::metadata::Randomize>(call);
     sim::mark<sim::metadata::RandomizeScope>(call);
@@ -5770,6 +5771,8 @@ void ObeliskSimPreparePass::runOnOperation() {
       uint64_t parentModeMask = 0;
       sim::RandomStructMemberAttr structMember;
       uint64_t staticModeMask = UINT64_MAX;
+      /// The size property whose container's leading elements this is.
+      std::optional<unsigned> containerElementsOf;
     };
     struct RandomContainerProperty {
       Operation *source;
@@ -7187,15 +7190,23 @@ void ObeliskSimPreparePass::runOnOperation() {
           else
             constraintMask |= uint64_t{1} << index->second;
         }
+        // Soft element reads only prefer valid indices; a soft size()
+        // constraint would decide whether the container is resized.
         bool softReference =
             llvm::any_of(constraintRoots, [&](Operation *root) {
               bool found = false;
               root->walk([&](semantic::SVExpressionConstraintOp expression) {
                 if (!expression.getIsSoft())
                   return;
-                expression->walk([&](Operation *nested) {
+                expression->walk([&](semantic::SVCallExpressionOp call) {
+                  SmallVector<Operation *> operands = getChildren(call);
                   auto reference =
-                      nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+                      call.getIsSystemCall() &&
+                              call.getCalleeName() == "size" &&
+                              operands.size() == 1
+                          ? operands.front()->getAttrOfType<SymbolRefAttr>(
+                                "referenced_symbol")
+                          : SymbolRefAttr{};
                   if (reference &&
                       reference.getLeafReference() ==
                           property.source->getAttrOfType<StringAttr>(
@@ -7302,14 +7313,6 @@ void ObeliskSimPreparePass::runOnOperation() {
       root = cloned;
     }
 
-    if (failed(
-            expandStaticRandomForeachConstraints(constraintRoots, builder)) ||
-        failed(expandStaticRandomUniquenessConstraints(constraintRoots,
-                                                       builder))) {
-      invalid = true;
-      return true;
-    }
-
     auto getNestedConstraintOwner = [&](Operation *root) -> NestedObjectPlan * {
       auto index = sim::get<sim::metadata::RandomConstraintBlock>(root);
       if (!index || index.getValue().isNegative() ||
@@ -7332,6 +7335,291 @@ void ObeliskSimPreparePass::runOnOperation() {
                                   left.storageType == right.storageType;
                          });
     };
+
+    // IEEE 1800-2023 18.5.7.1 solves the size of a random dynamic array or
+    // queue before the constraints on its elements. Those constraints
+    // instead read a fixed shadow of its leading elements, solved after the
+    // size and sized by the constant bound of an always-active hard size
+    // constraint, so the solver keeps a fixed set of variables.
+    llvm::DenseMap<unsigned, unsigned> containerElementIndices;
+    llvm::DenseSet<unsigned> diagnosedContainers;
+    llvm::DenseSet<StringAttr> shadowedContainers;
+    llvm::DenseMap<Operation *, RandomContainerShadow> containerShadows;
+    auto evaluateConstant = [&](Operation *expression) {
+      return evaluateRandomConstantOperand(
+          expression, [&](Operation *value) -> std::optional<StringRef> {
+            auto reference =
+                value->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+            auto symbol =
+                reference ? semanticSymbols.find(reference.getLeafReference())
+                          : semanticSymbols.end();
+            if (symbol == semanticSymbols.end() ||
+                !isa<semantic::SVParameterSymbolOp,
+                     semantic::SVEnumValueSymbolOp,
+                     semantic::SVSpecparamSymbolOp>(symbol->second))
+              return std::nullopt;
+            auto constant =
+                symbol->second->getAttrOfType<StringAttr>("constant_value");
+            return constant ? std::optional<StringRef>(constant.getValue())
+                            : std::nullopt;
+          });
+    };
+    for (unsigned sizeIndex = 0, sizeCount = properties.size();
+         sizeIndex != sizeCount; ++sizeIndex) {
+      if (!properties[sizeIndex].isContainerSize ||
+          !isa<sim::DynamicArrayType, sim::QueueType>(
+              properties[sizeIndex].containerType))
+        continue;
+      RandomProperty size = properties[sizeIndex];
+      auto symbol = size.source->getAttrOfType<StringAttr>(
+          SymbolTable::getSymbolAttrName());
+      auto ownsRoot = [&](Operation *root) {
+        NestedObjectPlan *owner = getNestedConstraintOwner(root);
+        return owner ? owner->field == size.nestedObjectField &&
+                           objectPathsEqual(owner->nestedObjectPath,
+                                            size.nestedObjectPath)
+                     : !size.nestedObjectField;
+      };
+      auto isSizeCall = [&](Operation *expression) {
+        auto call = dyn_cast_or_null<semantic::SVCallExpressionOp>(expression);
+        if (!call || !call.getIsSystemCall() || call.getCalleeName() != "size")
+          return false;
+        SmallVector<Operation *> operands = getChildren(call);
+        auto reference = operands.size() == 1
+                             ? operands.front()->getAttrOfType<SymbolRefAttr>(
+                                   "referenced_symbol")
+                             : SymbolRefAttr{};
+        return reference && reference.getLeafReference() == symbol;
+      };
+      SmallVector<Operation *> elementReferences;
+      SmallVector<Operation *> activeRoots;
+      Operation *sizeCall = nullptr;
+      bool unsupported = false;
+      for (Operation *root : constraintRoots) {
+        if (!ownsRoot(root))
+          continue;
+        root->walk([&](semantic::SVNamedValueExpressionOp reference) {
+          auto referenced =
+              reference->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+          if (!referenced || referenced.getLeafReference() != symbol)
+            return;
+          Operation *parent = reference->getParentOp();
+          if (isSizeCall(parent)) {
+            if (!sizeCall)
+              sizeCall = parent;
+            return;
+          }
+          if (!isa<semantic::SVUniquenessConstraintOp>(parent) &&
+              (!isa<semantic::SVElementSelectExpressionOp,
+                    semantic::SVForeachConstraintOp>(parent) ||
+               getChildren(parent).front() != reference.getOperation())) {
+            emitError(getSemanticLocation(reference))
+                << "constraints read a random dynamic array or queue only "
+                   "through size(), element selects, foreach, and unique";
+            unsupported = true;
+            return;
+          }
+          elementReferences.push_back(reference);
+        });
+        auto block = sim::get<sim::metadata::RandomConstraintBlock>(root);
+        if (!block ||
+            (block.getValue().getActiveBits() <= 32 &&
+             block.getValue().getZExtValue() < constraintGroups.size() &&
+             isConstraintModeFixed(
+                 constraintGroups[block.getValue().getZExtValue()])))
+          activeRoots.push_back(root);
+      }
+      if (unsupported) {
+        diagnosedContainers.insert(sizeIndex);
+        invalid = true;
+        continue;
+      }
+      if (elementReferences.empty())
+        continue;
+      Location location = getSemanticLocation(elementReferences.front());
+      // The largest value of a constant operand, or of an integral variable:
+      // its type's largest value, refined by constant bounds that active
+      // constraints place on it.
+      auto upperBound = [&](Operation *operand) -> std::optional<APSInt> {
+        if (std::optional<APSInt> value = evaluateConstant(operand))
+          return value;
+        auto reference = dyn_cast<semantic::SVNamedValueExpressionOp>(
+            peelValuePreservingConversions(operand));
+        auto variable =
+            reference
+                ? reference->getAttrOfType<SymbolRefAttr>("referenced_symbol")
+                : SymbolRefAttr{};
+        auto type = reference
+                        ? reference->getAttrOfType<TypeAttr>("semantic_type")
+                        : TypeAttr{};
+        std::optional<uint64_t> width =
+            type ? getSemanticPackedWidth(type.getValue()) : std::nullopt;
+        if (!variable || !width || *width == 0 || *width > 64)
+          return std::nullopt;
+        APSInt bound(
+            isSignedSemanticType(type.getValue())
+                ? APInt::getSignedMaxValue(*width).sext(randomConstantWidth)
+                : APInt::getMaxValue(*width).zext(randomConstantWidth),
+            /*isUnsigned=*/false);
+        auto isVariable = [&](Operation *candidate) {
+          candidate = peelValuePreservingConversions(candidate);
+          auto referenced =
+              isa<semantic::SVNamedValueExpressionOp>(candidate)
+                  ? candidate->getAttrOfType<SymbolRefAttr>("referenced_symbol")
+                  : SymbolRefAttr{};
+          return referenced &&
+                 referenced.getLeafReference() == variable.getLeafReference();
+        };
+        for (Operation *root : activeRoots)
+          if (std::optional<APSInt> rootBound =
+                  getRandomUpperBound(root, isVariable, evaluateConstant);
+              rootBound && *rootBound < bound)
+            bound = *rootBound;
+        return bound;
+      };
+      // size() is never negative, so it keeps its value through any
+      // conversion at least as wide.
+      auto isSizeOperand = [&](Operation *operand) {
+        return isSizeCall(
+            peelValuePreservingConversions(operand, /*nonnegative=*/true));
+      };
+      std::optional<APSInt> bound;
+      for (Operation *root : activeRoots)
+        if (std::optional<APSInt> rootBound =
+                getRandomUpperBound(root, isSizeOperand, upperBound);
+            rootBound && (!bound || *rootBound < *bound))
+          bound = rootBound;
+      if (!bound || !sizeCall) {
+        emitError(location)
+            << "constraints on the elements of a random dynamic array or "
+               "queue require an always-active hard constraint that bounds "
+               "its size() by a constant";
+        diagnosedContainers.insert(sizeIndex);
+        invalid = true;
+        continue;
+      }
+      if (*bound > maxRandomContainerShadowElements) {
+        emitError(location)
+            << "the size() bound " << llvm::toString(*bound, 10)
+            << " of a random dynamic array or queue with constrained "
+               "elements exceeds the "
+            << maxRandomContainerShadowElements
+            << " elements an executable randomization plan supports";
+        diagnosedContainers.insert(sizeIndex);
+        invalid = true;
+        continue;
+      }
+      // A container that cannot hold an element still needs a nonempty
+      // shadow; every read of it is invalid.
+      uint64_t count =
+          bound->isStrictlyPositive() ? bound->getZExtValue() : uint64_t{1};
+      auto containerType =
+          elementReferences.front()->getAttrOfType<TypeAttr>("semantic_type");
+      Type semanticElement =
+          containerType
+              ? TypeSwitch<Type, Type>(containerType.getValue())
+                    .Case<semantic::DynArrayType, semantic::QueueType>(
+                        [](auto container) {
+                          return container.getElementType();
+                        })
+                    .Default(Type{})
+              : Type{};
+      if (!semanticElement) {
+        emitError(location) << "random container reference has no element type";
+        diagnosedContainers.insert(sizeIndex);
+        invalid = true;
+        continue;
+      }
+      auto shadowType = TypeAttr::get(semantic::RangedUnpackedArrayType::get(
+          context, semanticElement, 0, static_cast<int64_t>(count) - 1));
+      for (Operation *reference : elementReferences) {
+        reference->setAttr("semantic_type", shadowType);
+        containerShadows[reference] = {count, sizeCall};
+      }
+      shadowedContainers.insert(symbol);
+      FailureOr<Type> type =
+          getNormalizedSemanticType(elementReferences.front());
+      auto array = succeeded(type) ? dyn_cast<sim::UnpackedArrayType>(*type)
+                                   : sim::UnpackedArrayType{};
+      std::optional<unsigned> width =
+          array ? getRandomPropertyWidth(array) : std::nullopt;
+      SmallVector<RandomSubdomain> domains;
+      if (!array || !width ||
+          array.getElementType() !=
+              randomContainerElementType(size.containerType) ||
+          failed(collectRandomSubdomains(shadowType.getValue(), 0, domains,
+                                         location))) {
+        emitError(location)
+            << "the elements of a random dynamic array or queue have no "
+               "fixed integral representation";
+        diagnosedContainers.insert(sizeIndex);
+        invalid = true;
+        continue;
+      }
+      RandomProperty elements = std::move(size);
+      elements.referencePath = {};
+      elements.type = array;
+      elements.width = *width;
+      elements.isContainerSize = false;
+      elements.sizeConstraintMask = 0;
+      elements.hasUnconditionalSizeConstraint = false;
+      elements.isSigned = isSignedSemanticType(shadowType.getValue());
+      elements.domains = std::move(domains);
+      elements.containerElementsOf = sizeIndex;
+      containerElementIndices[sizeIndex] = properties.size();
+      // The shadow writes every element the size keeps.
+      llvm::erase_if(
+          containerProperties, [&](const RandomContainerProperty &container) {
+            return container.source == elements.source &&
+                   container.nestedObjectField == elements.nestedObjectField &&
+                   objectPathsEqual(container.nestedObjectPath,
+                                    elements.nestedObjectPath);
+          });
+      properties.push_back(std::move(elements));
+    }
+    if (!containerShadows.empty())
+      for (Operation *&root : constraintRoots)
+        if (failed(guardRandomContainerElements(root, containerShadows,
+                                                builder))) {
+          invalid = true;
+          return true;
+        }
+    // A reference to a container with a shadow reads the shadow, except as
+    // the operand of size().
+    auto resolveContainerElements =
+        [&](Operation *reference,
+            std::optional<unsigned> index) -> std::optional<unsigned> {
+      if (!index)
+        return index;
+      auto elements = containerElementIndices.find(*index);
+      auto call = dyn_cast_or_null<semantic::SVCallExpressionOp>(
+          reference->getParentOp());
+      if (elements == containerElementIndices.end() ||
+          (call && call.getIsSystemCall() && call.getCalleeName() == "size"))
+        return index;
+      return elements->second;
+    };
+
+    if (failed(
+            expandStaticRandomForeachConstraints(constraintRoots, builder)) ||
+        failed(expandStaticRandomUniquenessConstraints(constraintRoots,
+                                                       builder))) {
+      invalid = true;
+      return true;
+    }
+    if (!containerShadows.empty())
+      replaceInvalidRandomContainerReads(
+          constraintRoots,
+          [&](Operation *reference) {
+            auto referenced =
+                reference->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+            auto type = reference->getAttrOfType<TypeAttr>("semantic_type");
+            return isa<semantic::SVNamedValueExpressionOp>(reference) &&
+                   referenced && type &&
+                   isa<semantic::RangedUnpackedArrayType>(type.getValue()) &&
+                   shadowedContainers.contains(referenced.getLeafReference());
+          },
+          evaluateConstant, builder);
     NestedObjectPlan *randomValueOwner = nullptr;
     auto getObjectFieldPath = [&](FlatSymbolRefAttr field,
                                   ArrayRef<RandomObjectPathElement> path) {
@@ -7351,7 +7639,7 @@ void ObeliskSimPreparePass::runOnOperation() {
         randomValueIndices;
     llvm::SmallPtrSet<Operation *, 16> nestedRandomSources;
     for (auto [index, property] : llvm::enumerate(properties)) {
-      if (!property.storagePath)
+      if (!property.storagePath && !property.containerElementsOf)
         randomValueIndices[{property.source,
                             getObjectFieldPath(property.nestedObjectField,
                                                property.nestedObjectPath)}] =
@@ -7542,7 +7830,8 @@ void ObeliskSimPreparePass::runOnOperation() {
               return std::nullopt;
             return symbol == semanticSymbols.end()
                        ? std::nullopt
-                       : getRandomPropertyIndex(symbol->second);
+                       : resolveContainerElements(
+                             value, getRandomPropertyIndex(symbol->second));
           });
     };
 
@@ -7872,13 +8161,17 @@ void ObeliskSimPreparePass::runOnOperation() {
       std::optional<uint64_t> modeStorage;
       if (property.randomModeStorage)
         modeStorage = property.randomModeStorage.getValue().getZExtValue();
+      sim::RandomContainerElementsAttr containerElements;
+      if (property.containerElementsOf)
+        containerElements = sim::RandomContainerElementsAttr::get(
+            context, property.containerType, *property.containerElementsOf);
       propertyAttrs.push_back(sim::RandomPropertyAttr::get(
           context, property.field,
           property.field ? StringAttr{} : property.referencePath,
           /*symbol=*/{}, property.type, property.width, property.modeIndex,
           property.isSigned, property.isRandC, modeStorage, containerSize,
           nested, member, elementModeField, elementModeStorage, elementWidth,
-          cycle, randomDomains(property.domains)));
+          cycle, randomDomains(property.domains), containerElements));
     }
     sim::mark<sim::metadata::Randomize>(call);
     sim::set<sim::metadata::RandomReceiverIndex>(
@@ -8002,19 +8295,19 @@ void ObeliskSimPreparePass::runOnOperation() {
         std::optional<unsigned> index =
             isa<semantic::SVMemberAccessExpressionOp>(nested)
                 ? getNestedMemberIndex(nested)
-                : getRandomPropertyIndex(symbol->second);
+                : resolveContainerElements(
+                      nested, getRandomPropertyIndex(symbol->second));
         if (index && !sim::has<sim::metadata::RandomFunctionState>(nested)) {
           if (properties[*index].isContainerSize) {
             auto sizeCall = dyn_cast_or_null<semantic::SVCallExpressionOp>(
                 nested->getParentOp());
             if (!sizeCall || sizeCall.getCalleeName() != "size") {
-              // IEEE 1800-2023 18.5.7.1 solves size constraints first and
-              // element constraints next; the planned solver has only the
-              // size as a variable, so element constraints remain a boundary.
-              emitError(getSemanticLocation(nested))
-                  << "constraints on the elements of a random dynamic array "
-                     "or queue are not executable yet; only its size() can "
-                     "be constrained";
+              // Shadow planning diagnosed the element reads it saw; a
+              // member-access path to a container has no shadow.
+              if (!diagnosedContainers.contains(*index))
+                emitError(getSemanticLocation(nested))
+                    << "constraints read the elements of a random dynamic "
+                       "array or queue only through its own name";
               invalid = true;
             } else {
               sim::set<sim::metadata::RandomVariable>(

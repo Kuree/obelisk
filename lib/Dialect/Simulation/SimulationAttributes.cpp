@@ -672,13 +672,13 @@ verifyElementModes(function_ref<InFlightDiagnostic()> emitError, bool instance,
 
 LogicalResult RandomPropertyAttr::verify(
     function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr field,
-    StringAttr path, SymbolRefAttr, Type, uint64_t width, uint32_t modeIndex,
-    bool, bool isRandC, std::optional<uint64_t> modeStorage,
+    StringAttr path, SymbolRefAttr, Type type, uint64_t width,
+    uint32_t modeIndex, bool, bool isRandC, std::optional<uint64_t> modeStorage,
     RandomContainerSizeAttr containerSize, RandomNestedObjectAttr nested,
     RandomMemberStorageAttr member, FlatSymbolRefAttr elementModeField,
     std::optional<uint64_t> elementModeStorage,
     std::optional<uint32_t> elementWidth, RandomCycleStateAttr cycle,
-    ArrayAttr domains) {
+    ArrayAttr domains, RandomContainerElementsAttr containerElements) {
   if (static_cast<bool>(field) == static_cast<bool>(path))
     return emitError() << "random property must name exactly one field or path";
   if (width == 0 || modeIndex >= kRandomModeBits)
@@ -688,12 +688,18 @@ LogicalResult RandomPropertyAttr::verify(
                           "class fields";
   if (member && (containerSize || nested))
     return emitError() << "random structure members are direct properties";
+  if (containerElements &&
+      (!field || containerSize || member || isRandC ||
+       !isa<UnpackedArrayType>(type) ||
+       !isa<DynamicArrayType, QueueType>(containerElements.getType())))
+    return emitError() << "random container elements are a fixed array of a "
+                          "dynamic array or queue class field";
   if (modeStorage && field)
     return emitError() << "only static random properties keep rand_mode() "
                           "storage";
   bool elementModes = elementModeField || elementModeStorage;
   if (elementModes != elementWidth.has_value() ||
-      (elementModes && (containerSize || nested)))
+      (elementModes && (containerSize || nested || containerElements)))
     return emitError() << "random element modes are malformed";
   if (failed(verifyElementModes(emitError, static_cast<bool>(field),
                                 elementModeField, elementModeStorage)))
@@ -712,7 +718,7 @@ RandomPropertyAttr RandomPropertyAttr::withPath(StringAttr path) const {
              getModeIndex(), getIsSigned(), getIsRandC(), getModeStorage(),
              getContainerSize(), getNested(), getMember(),
              getElementModeField(), getElementModeStorage(), getElementWidth(),
-             getCycle(), getDomains());
+             getCycle(), getDomains(), getContainerElements());
 }
 
 LogicalResult
