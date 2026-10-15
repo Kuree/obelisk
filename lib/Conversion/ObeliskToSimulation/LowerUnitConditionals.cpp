@@ -1,14 +1,20 @@
 #include "obelisk/Dialect/Schedule/ScheduleFields.h"
 //===- LowerUnitConditionals.cpp - Lower assertions and conditionals ---===//
 
+#include "ContainerElementDescriptor.h"
 #include "LowerUnit.h"
 
+#include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SaveAndRestore.h"
@@ -1682,29 +1688,14 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
     return failure();
   }
 
-  // Recursive productions are legal in 18.17 and require activation-owned
-  // frames. Do not approximate them by a depth cutoff or static unrolling;
-  // reject the currently unoutlined boundary before emitting any CFG.
-  llvm::StringMap<int> visitState;
-  std::function<LogicalResult(StringRef)> visit = [&](StringRef identity) {
-    int &state = visitState[identity];
-    if (state == 1) {
-      emitError(location)
-          << "recursive randsequence production requires activation-frame "
-             "lowering";
-      return failure();
-    }
-    if (state == 2)
-      return success();
-    auto found = context.productions.find(identity);
-    if (found == context.productions.end()) {
-      emitError(location) << "randsequence references unknown production "
-                          << identity;
-      return failure();
-    }
-    state = 1;
+  // Resolve every production reference before emitting any CFG, and find
+  // the productions on a cycle. 18.17 permits recursion; those productions
+  // get a single body with activation frames instead of being expanded.
+  llvm::StringMap<SmallVector<StringRef>> successors;
+  for (auto &entry : context.productions) {
     SmallVector<semantic::SVProdItemOp> items;
-    collectRandSequenceItems(found->second, items);
+    collectRandSequenceItems(entry.second, items);
+    SmallVector<StringRef> &targets = successors[entry.getKey()];
     for (semantic::SVProdItemOp item : items) {
       auto reference = item->getAttrOfType<SymbolRefAttr>("target");
       if (!reference) {
@@ -1719,12 +1710,33 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
             << "randsequence references unknown production " << reference;
         return failure();
       }
-      if (failed(visit(target->getKey())))
-        return failure();
+      targets.push_back(target->getKey());
     }
-    state = 2;
-    return success();
-  };
+  }
+  llvm::StringMap<llvm::StringSet<>> reachable;
+  for (auto &entry : context.productions) {
+    llvm::StringSet<> &seen = reachable[entry.getKey()];
+    SmallVector<StringRef> worklist(successors[entry.getKey()]);
+    while (!worklist.empty()) {
+      StringRef next = worklist.pop_back_val();
+      if (seen.insert(next).second)
+        llvm::append_range(worklist, successors[next]);
+    }
+  }
+  SmallVector<StringRef> identities;
+  for (auto &entry : context.productions)
+    identities.push_back(entry.getKey());
+  llvm::sort(identities);
+  for (StringRef identity : identities) {
+    if (!reachable[identity].contains(identity) ||
+        context.recursiveComponents.count(identity))
+      continue;
+    unsigned component = context.recursiveComponents.size() + 1;
+    for (StringRef other : identities)
+      if (reachable[identity].contains(other) &&
+          reachable[other].contains(identity))
+        context.recursiveComponents[other] = component;
+  }
   auto first = op->getAttrOfType<SymbolRefAttr>("first_production");
   if (!first) {
     emitError(location) << "randsequence has no first production";
@@ -1734,27 +1746,92 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
     emitError(location) << "randsequence cannot resolve its first production";
     return failure();
   }
-  if (failed(visit(first.getLeafReference())))
-    return failure();
 
+  bool recursive = !context.recursiveComponents.empty();
+  Block *firstBlock = nullptr;
+  context.frames.push_back({0, {}});
+  if (recursive) {
+    firstBlock = addBlock();
+    context.slotBlock = firstBlock;
+    cf::BranchOp::create(builder, location, firstBlock);
+    setCurrent(firstBlock);
+    Block *start = addBlock();
+    cf::BranchOp::create(builder, location, start);
+    setCurrent(start);
+  }
   randSequenceContexts.push_back(std::move(context));
+  llvm::scope_exit popContext([&] { randSequenceContexts.pop_back(); });
+  if (recursive)
+    randSequenceContexts.back().returnStack =
+        createRandSequenceStack(builder.getI64Type(), location);
   auto initial =
       randSequenceContexts.back().productions.find(first.getLeafReference());
-  if (failed(lowerRandSequenceProduction(initial->second, {}))) {
-    randSequenceContexts.pop_back();
+  if (failed(lowerRandSequenceProduction(initial->second, {})))
     return failure();
-  }
   Block *exit = randSequenceContexts.back().breakTarget;
   emitBranch(exit);
+
+  if (recursive) {
+    // Emit each recursive body once, in the statement's own scope; a body
+    // may call productions whose bodies are not emitted yet.
+    while (!randSequenceContexts.back().pendingBodies.empty()) {
+      std::string identity =
+          randSequenceContexts.back().pendingBodies.pop_back_val();
+      RecursiveProductionBody &body =
+          randSequenceContexts.back().recursiveBodies.find(identity)->second;
+      Block *last = &function.getBody().back();
+      randSequenceContexts.back().currentFrame = body.frame;
+      setCurrent(body.entry);
+      LogicalResult lowered =
+          lowerRandSequenceProduction(body.production, {}, {}, &body);
+      randSequenceContexts.back().currentFrame = 0;
+      if (failed(lowered))
+        return failure();
+      for (Block &block : llvm::make_range(std::next(last->getIterator()),
+                                           function.getBody().end()))
+        randSequenceContexts.back().blockFrames[&block] = body.frame;
+    }
+    RandSequenceContext &context = randSequenceContexts.back();
+    Type i64 = builder.getI64Type();
+    for (auto &entry : context.recursiveBodies) {
+      RecursiveProductionBody &body = entry.second;
+      context.blockFrames[body.entry] = body.frame;
+      context.blockFrames[body.exit] = body.frame;
+      // The exit pops its caller's resume index and returns there.
+      setCurrent(body.exit);
+      Value size = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                   context.returnStack);
+      Value one = arith::ConstantOp::create(builder, location, i64,
+                                            builder.getI64IntegerAttr(1));
+      Value last = arith::SubIOp::create(builder, location, size, one);
+      Value index = sim::SimContainerReadOp::create(builder, location, i64,
+                                                    context.returnStack, last);
+      sim::SimQueueDeleteOp::create(builder, location, context.returnStack,
+                                    last);
+      SmallVector<APInt> cases;
+      SmallVector<ValueRange> operands;
+      for (size_t ordinal = 0; ordinal < body.resumes.size(); ++ordinal) {
+        cases.push_back(APInt(64, ordinal));
+        operands.push_back(ValueRange{});
+      }
+      cf::SwitchOp::create(builder, location, index, body.resumes.front(),
+                           ValueRange{}, cases, body.resumes, operands);
+    }
+    if (failed(repairRecursiveRandSequence(firstBlock, location)))
+      return failure();
+  }
   setCurrent(exit);
-  randSequenceContexts.pop_back();
   return success();
 }
 
 LogicalResult UnitLowering::lowerRandSequenceProduction(
     semantic::SVFrozenRandSeqProductionOp production,
-    ArrayRef<Operation *> actuals, Value resultReference) {
+    ArrayRef<Operation *> actuals, Value resultReference,
+    RecursiveProductionBody *body) {
   Location location = getSemanticLocation(production);
+  if (!body && randSequenceContexts.back().recursiveComponents.count(
+                   production.getReferencedSymbol().getLeafReference()))
+    return lowerRecursiveProductionCall(production, actuals, resultReference);
   auto productionType = production->getAttrOfType<TypeAttr>("semantic_type");
   if (!productionType) {
     emitError(location) << "randsequence production has no semantic type";
@@ -1825,9 +1902,23 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   };
   SmallVector<Actual> explicitValues;
   SmallVector<RandSequenceProductionReturn::CopyOut> copyOuts;
+  // A recursive body binds its formals to its slots; each call stores the
+  // actuals there and copies results back on return.
+  if (body)
+    for (auto [index, attribute] : llvm::enumerate(formals)) {
+      auto path =
+          cast<DictionaryAttr>(attribute).getAs<StringAttr>("referenced_path");
+      std::string bindingPath = path.getValue().str();
+      savedBindings.push_back(
+          {bindingPath, values.lookup(bindingPath), lvalues.lookup(bindingPath),
+           values.count(bindingPath) != 0, lvalues.count(bindingPath) != 0});
+      values[bindingPath] = body->formalSlots[index];
+      lvalues[bindingPath] = body->formalSlots[index];
+    }
   // Evaluate actual values and capture actual addresses in the caller's
   // scope before binding any callee formal. Outputs do not read the actual.
-  for (auto [index, attribute] : llvm::enumerate(formals)) {
+  for (auto [index, attribute] :
+       llvm::enumerate(body ? ArrayRef<Attribute>{} : formals.getValue())) {
     auto formal = dyn_cast<DictionaryAttr>(attribute);
     auto direction =
         formal ? formal.getAs<IntegerAttr>("direction") : IntegerAttr{};
@@ -1879,7 +1970,8 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     }
     explicitValues.push_back(std::move(argument));
   }
-  for (auto [index, attribute] : llvm::enumerate(formals)) {
+  for (auto [index, attribute] :
+       llvm::enumerate(body ? ArrayRef<Attribute>{} : formals.getValue())) {
     auto formal = cast<DictionaryAttr>(attribute);
     auto direction = formal.getAs<IntegerAttr>("direction");
     auto path = formal.getAs<StringAttr>("referenced_path");
@@ -1951,11 +2043,15 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
                           argument.sourceSigned});
   }
 
+  if (body)
+    resultReference = body->resultSlot;
   if (returnsValue) {
     Value undefined = createDefaultValue(builder, location, resultType);
     if (!undefined)
       return emitError(location) << "unsupported randsequence return type";
-    if (!resultReference) {
+    if (body) {
+      sim::SimRefStoreOp::create(builder, location, undefined, resultReference);
+    } else if (!resultReference) {
       resultReference = sim::SimRefAllocOp::create(
           builder, location,
           sim::RefType::get(function.getContext(), resultType), undefined);
@@ -2037,7 +2133,7 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     return failure();
   }
 
-  Block *productionReturn = addBlock();
+  Block *productionReturn = body ? body->exit : addBlock();
   randSequenceProductionReturns.push_back(
       {productionReturn, controlScopes.size(), resultReference,
        std::move(copyOuts)});
@@ -2296,9 +2392,21 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       Value undefined = createDefaultValue(builder, location, *type);
       if (!undefined)
         return emitError(location) << "unsupported rule return-variable type";
-      Value reference = sim::SimRefAllocOp::create(
-          builder, location, sim::RefType::get(function.getContext(), *type),
-          undefined);
+      // A recursive body keeps the variable in a slot of its frame, which a
+      // reentering call saves; its value restarts at each rule execution.
+      Value reference;
+      if (body) {
+        reference = allocateRandSequenceSlot(*type, location);
+        if (!reference)
+          return emitError(location) << "unsupported rule return-variable type";
+        RandSequenceContext &context = randSequenceContexts.back();
+        context.frames[context.currentFrame].slots.push_back(reference);
+        sim::SimRefStoreOp::create(builder, location, undefined, reference);
+      } else {
+        reference = sim::SimRefAllocOp::create(
+            builder, location, sim::RefType::get(function.getContext(), *type),
+            undefined);
+      }
       std::string bindingPath = path.getValue().str();
       savedRuleBindings.push_back(
           {bindingPath, values.lookup(bindingPath), lvalues.lookup(bindingPath),
@@ -2455,6 +2563,9 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     if (failed(lowerRule(rules.back())))
       return failure();
   }
+  // Every path of a recursive body has branched to its exit.
+  if (body)
+    return success();
   setCurrent(productionReturn);
   return copyRandSequenceOutputs(randSequenceProductionReturns.back(),
                                  location);
@@ -2489,6 +2600,396 @@ UnitLowering::lowerRandSequenceProductionItem(semantic::SVProdItemOp item) {
     return emitError(getSemanticLocation(item))
            << "returning production item has no rule variable";
   return lowerRandSequenceProduction(found->second, actuals, resultReference);
+}
+
+Value UnitLowering::allocateRandSequenceSlot(Type type, Location location) {
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(
+      randSequenceContexts.back().slotBlock->getTerminator());
+  Value initial = createDefaultValue(builder, location, type);
+  if (!initial)
+    return {};
+  return sim::SimRefAllocOp::create(
+      builder, location, sim::RefType::get(builder.getContext(), type),
+      initial);
+}
+
+Value UnitLowering::createRandSequenceStack(Type element, Location location) {
+  FailureOr<ContainerElementDescriptor> descriptor =
+      describeContainerElement(element, location);
+  if (failed(descriptor))
+    return {};
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(
+      randSequenceContexts.back().slotBlock->getTerminator());
+  Value zero = arith::ConstantOp::create(
+      builder, location, builder.getI64Type(), builder.getI64IntegerAttr(0));
+  return sim::SimContainerCreateOp::create(
+      builder, location, sim::QueueType::get(builder.getContext(), element, 0),
+      zero, descriptor->typeID, descriptor->kind, descriptor->flags,
+      descriptor->valueSize, descriptor->alignment, descriptor->bitWidth,
+      builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
+      builder.getDenseI32ArrayAttr(descriptor->traceKinds),
+      sim::ContainerKind::Queue, UINT64_MAX);
+}
+
+FailureOr<UnitLowering::RecursiveProductionBody *>
+UnitLowering::getRecursiveProductionBody(
+    semantic::SVFrozenRandSeqProductionOp production, Location location) {
+  RandSequenceContext &context = randSequenceContexts.back();
+  StringRef identity = production.getReferencedSymbol().getLeafReference();
+  auto [found, inserted] = context.recursiveBodies.try_emplace(identity);
+  RecursiveProductionBody &body = found->second;
+  if (!inserted)
+    return &body;
+  body.production = production;
+  body.entry = addBlock();
+  body.exit = addBlock();
+  body.frame = context.frames.size();
+  context.frames.push_back({context.recursiveComponents.lookup(identity), {}});
+  for (Attribute attribute : production.getFormalArguments()) {
+    auto formal = dyn_cast<DictionaryAttr>(attribute);
+    auto direction =
+        formal ? formal.getAs<IntegerAttr>("direction") : IntegerAttr{};
+    auto semanticType =
+        formal ? formal.getAs<TypeAttr>("semantic_type") : TypeAttr{};
+    if (!direction || !semanticType)
+      return emitError(location)
+                 << "randsequence requires typed formal arguments",
+             failure();
+    // A ref formal aliases a different actual in each activation, which a
+    // slot of the single body cannot name.
+    if (direction.getInt() ==
+        static_cast<int64_t>(semantic::SVArgumentDirection::Ref))
+      return emitError(location) << "a recursive randsequence production "
+                                    "cannot have a ref argument",
+             failure();
+    FailureOr<Type> type =
+        normalizeSemanticType(semanticType.getValue(), location, function);
+    if (failed(type))
+      return failure();
+    Value slot = allocateRandSequenceSlot(*type, location);
+    if (!slot)
+      return emitError(location)
+                 << "unsupported recursive randsequence argument type "
+                 << *type,
+             failure();
+    body.formalSlots.push_back(slot);
+  }
+  auto productionType = production->getAttrOfType<TypeAttr>("semantic_type");
+  if (productionType && !isa<semantic::VoidType>(productionType.getValue())) {
+    FailureOr<Type> type =
+        normalizeSemanticType(productionType.getValue(), location, function);
+    if (failed(type))
+      return failure();
+    body.resultSlot = allocateRandSequenceSlot(*type, location);
+    if (!body.resultSlot)
+      return emitError(location)
+                 << "unsupported recursive randsequence return type " << *type,
+             failure();
+  }
+  SmallVector<Value> &slots = context.frames[body.frame].slots;
+  llvm::append_range(slots, body.formalSlots);
+  if (body.resultSlot)
+    slots.push_back(body.resultSlot);
+  context.pendingBodies.push_back(identity.str());
+  return &body;
+}
+
+LogicalResult UnitLowering::lowerRecursiveProductionCall(
+    semantic::SVFrozenRandSeqProductionOp production,
+    ArrayRef<Operation *> actuals, Value resultReference) {
+  Location location = getSemanticLocation(production);
+  FailureOr<RecursiveProductionBody *> found =
+      getRecursiveProductionBody(production, location);
+  if (failed(found))
+    return failure();
+  RecursiveProductionBody *body = *found;
+  ArrayAttr formals = production.getFormalArguments();
+  SmallVector<Operation *> children = getChildren(production);
+  if (formals.size() != production.getArgumentCount() ||
+      actuals.size() > formals.size())
+    return emitError(location) << "malformed randsequence formal inventory";
+  SmallVector<Operation *> defaultExpressions(formals.size(), nullptr);
+  size_t nextChild = 0;
+  for (auto [index, attribute] : llvm::enumerate(formals)) {
+    auto defaultCount = cast<DictionaryAttr>(attribute).getAs<IntegerAttr>(
+        "default_operand_count");
+    if (!defaultCount || defaultCount.getInt() < 0 ||
+        defaultCount.getInt() > 1 ||
+        nextChild + defaultCount.getInt() > children.size())
+      return emitError(location)
+             << "malformed randsequence formal default inventory";
+    if (defaultCount.getInt() == 1)
+      defaultExpressions[index] = children[nextChild++];
+  }
+
+  // Evaluate the actuals in the caller's activation. Output actuals are
+  // written when the call returns.
+  struct Output {
+    Operation *actual;
+    unsigned formal;
+    bool formalSigned;
+  };
+  SmallVector<Value> initial;
+  SmallVector<Output> outputs;
+  for (auto [index, attribute] : llvm::enumerate(formals)) {
+    auto formal = cast<DictionaryAttr>(attribute);
+    auto direction = formal.getAs<IntegerAttr>("direction");
+    auto semanticType = formal.getAs<TypeAttr>("semantic_type");
+    Type type = getReferenceElementType(body->formalSlots[index]);
+    Operation *actual = index < actuals.size() ? actuals[index] : nullptr;
+    if (!actual || isa<semantic::SVEmptyArgumentExpressionOp>(actual))
+      actual = defaultExpressions[index];
+    if (!actual)
+      return emitError(location) << "randsequence production argument " << index
+                                 << " has no actual or default value";
+    bool input = direction.getInt() ==
+                 static_cast<int64_t>(semantic::SVArgumentDirection::In);
+    bool output = direction.getInt() ==
+                  static_cast<int64_t>(semantic::SVArgumentDirection::Out);
+    if (!input && isa<semantic::SVAssignmentExpressionOp>(actual)) {
+      SmallVector<Operation *> assignment = getChildren(actual);
+      if (assignment.size() == 2 &&
+          isa<semantic::SVEmptyArgumentExpressionOp>(assignment.back()))
+        actual = assignment.front();
+    }
+    if (!input)
+      outputs.push_back({actual, static_cast<unsigned>(index),
+                         isSignedSemanticType(semanticType.getValue())});
+    if (output) {
+      initial.push_back(createDefaultValue(builder, location, type));
+      continue;
+    }
+    FailureOr<Value> value = lowerExpression(actual);
+    if (failed(value))
+      return failure();
+    FailureOr<Value> converted =
+        convert(*value, type, isSignedNode(actual), location);
+    if (failed(converted))
+      return failure();
+    initial.push_back(cloneSequentialValue(*converted, location));
+  }
+
+  // Save the caller's frame if this call can reenter it, then store the
+  // actuals and enter the body.
+  RandSequenceContext &context = randSequenceContexts.back();
+  unsigned callerFrame = context.currentFrame;
+  unsigned component = context.recursiveComponents.lookup(
+      production.getReferencedSymbol().getLeafReference());
+  Block *save = addBlock();
+  cf::BranchOp::create(builder, location, save);
+  setCurrent(save);
+  Block *call = addBlock();
+  cf::BranchOp::create(builder, location, call);
+  setCurrent(call);
+  for (auto [slot, value] : llvm::zip_equal(body->formalSlots, initial))
+    sim::SimRefStoreOp::create(builder, location, value, slot);
+  Type i64 = builder.getI64Type();
+  Value resumeIndex = arith::ConstantOp::create(
+      builder, location, i64, builder.getI64IntegerAttr(body->resumes.size()));
+  Value depth = sim::SimContainerSizeOp::create(builder, location, i64,
+                                                context.returnStack);
+  sim::SimQueueInsertOp::create(builder, location, context.returnStack, depth,
+                                resumeIndex);
+  cf::BranchOp::create(builder, location, body->entry);
+
+  // Read the callee's results before restoring the caller's frame, which
+  // may share the callee's slots.
+  Block *resume = addBlock();
+  body->resumes.push_back(resume);
+  setCurrent(resume);
+  Value result;
+  if (body->resultSlot && resultReference)
+    result = sim::SimRefLoadOp::create(
+        builder, location, getReferenceElementType(body->resultSlot),
+        body->resultSlot);
+  SmallVector<Value> outputValues;
+  for (const Output &output : outputs) {
+    Value slot = body->formalSlots[output.formal];
+    outputValues.push_back(sim::SimRefLoadOp::create(
+        builder, location, getReferenceElementType(slot), slot));
+  }
+  Block *restore = addBlock();
+  cf::BranchOp::create(builder, location, restore);
+  setCurrent(restore);
+  Block *after = addBlock();
+  cf::BranchOp::create(builder, location, after);
+  setCurrent(after);
+  context.recursiveCalls.push_back(
+      {callerFrame, component, save, resume, restore});
+  if (result && failed(storeReference(resultReference, result, location)))
+    return failure();
+  // Output actuals are addressed when the call returns.
+  for (auto [output, value] : llvm::zip_equal(outputs, outputValues)) {
+    FailureOr<CapturedLValue> destination =
+        captureLValue(output.actual, location);
+    if (failed(destination))
+      return failure();
+    bool destinationSigned = isSignedNode(output.actual);
+    FailureOr<Value> converted =
+        convert(value, destination->type, output.formalSigned, location,
+                destinationSigned);
+    if (failed(converted) ||
+        failed(writeCapturedLValue(*destination, *converted, destinationSigned,
+                                   false, location)))
+      return failure();
+  }
+  return success();
+}
+
+LogicalResult UnitLowering::repairRecursiveRandSequence(Block *first,
+                                                        Location location) {
+  RandSequenceContext &context = randSequenceContexts.back();
+  SmallVector<Block *> blocks;
+  llvm::DenseMap<Block *, unsigned> blockOrder;
+  for (Block &block :
+       llvm::make_range(first->getIterator(), function.getBody().end())) {
+    blockOrder[&block] = blocks.size();
+    blocks.push_back(&block);
+  }
+  auto frameOf = [&](Block *block) -> std::optional<unsigned> {
+    if (!blockOrder.count(block))
+      return std::nullopt;
+    return context.blockFrames.lookup(block);
+  };
+
+  // A recursive call clobbers every value of a body it can reenter. Protect
+  // the values live into a resume block of such a call, and every use the
+  // return edges leave undominated.
+  Liveness liveness(function);
+  DominanceInfo dominance(function);
+  llvm::SetVector<Value> protect;
+  for (const auto &call : context.recursiveCalls) {
+    if (call.frame == 0 ||
+        context.frames[call.frame].component != call.component)
+      continue;
+    for (Value value : liveness.getLiveIn(call.resume)) {
+      std::optional<unsigned> frame = frameOf(value.getParentBlock());
+      if (frame && *frame && context.frames[*frame].component == call.component)
+        protect.insert(value);
+    }
+  }
+  for (Block *block : blocks)
+    block->walk([&](Operation *operation) {
+      for (Value operand : operation->getOperands())
+        if (frameOf(operand.getParentBlock()) &&
+            !dominance.properlyDominates(operand, operation))
+          protect.insert(operand);
+    });
+  // Allocate slots in program order.
+  llvm::DenseMap<Value, std::pair<unsigned, unsigned>> positions;
+  for (auto [blockIndex, block] : llvm::enumerate(blocks)) {
+    unsigned offset = 0;
+    for (BlockArgument argument : block->getArguments())
+      positions[argument] = {blockIndex, offset++};
+    for (Operation &operation : *block)
+      for (Value result : operation.getResults())
+        positions[result] = {blockIndex, offset++};
+  }
+  SmallVector<Value> ordered(protect.begin(), protect.end());
+  llvm::sort(ordered, [&](Value left, Value right) {
+    return positions.lookup(left) < positions.lookup(right);
+  });
+
+  // A pure computation over values no call changes is recomputed at each
+  // use. Anything else moves to a slot of its frame.
+  std::function<bool(Value)> invariant = [&](Value value) {
+    Block *block = value.getParentBlock();
+    if (!frameOf(block) || block == context.slotBlock)
+      return true;
+    Operation *definition = value.getDefiningOp();
+    return definition && definition->getNumRegions() == 0 &&
+           isMemoryEffectFree(definition) &&
+           llvm::all_of(definition->getOperands(), invariant);
+  };
+  std::function<Value(Value, Operation *)> rematerialize =
+      [&](Value value, Operation *user) -> Value {
+    Block *block = value.getParentBlock();
+    if (!frameOf(block) || block == context.slotBlock)
+      return value;
+    Operation *definition = value.getDefiningOp();
+    IRMapping mapping;
+    for (Value operand : definition->getOperands())
+      mapping.map(operand, rematerialize(operand, user));
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(user);
+    Operation *clone = builder.clone(*definition, mapping);
+    return clone->getResult(cast<OpResult>(value).getResultNumber());
+  };
+  for (Value value : ordered) {
+    if (invariant(value)) {
+      for (OpOperand &use : llvm::make_early_inc_range(value.getUses()))
+        use.set(rematerialize(value, use.getOwner()));
+      continue;
+    }
+    Type type = value.getType();
+    Value slot;
+    if (!isa<sim::RefType, sim::ManagedRefType, sim::ArgumentRefType,
+             sim::ReferencePathType, sim::NetType, sim::DriverType>(type))
+      slot = allocateRandSequenceSlot(type, location);
+    if (!slot)
+      return emitError(location)
+             << "a recursive randsequence production keeps a value of type "
+             << type << " across a production call";
+    context.frames[*frameOf(value.getParentBlock())].slots.push_back(slot);
+    OpBuilder::InsertionGuard guard(builder);
+    if (auto argument = dyn_cast<BlockArgument>(value))
+      builder.setInsertionPointToStart(argument.getOwner());
+    else
+      builder.setInsertionPointAfter(value.getDefiningOp());
+    Operation *store =
+        sim::SimRefStoreOp::create(builder, location, value, slot);
+    for (OpOperand &use : llvm::make_early_inc_range(value.getUses())) {
+      if (use.getOwner() == store)
+        continue;
+      builder.setInsertionPoint(use.getOwner());
+      use.set(sim::SimRefLoadOp::create(builder, location, type, slot));
+    }
+  }
+
+  // Each call that can reenter its caller's body saves that frame's slots
+  // and restores them when it returns.
+  Type i64 = builder.getI64Type();
+  llvm::DenseMap<Value, Value> stacks;
+  for (const auto &call : context.recursiveCalls) {
+    if (call.frame == 0 ||
+        context.frames[call.frame].component != call.component)
+      continue;
+    ArrayRef<Value> slots = context.frames[call.frame].slots;
+    for (Value slot : slots) {
+      Value &stack = stacks[slot];
+      if (!stack)
+        stack =
+            createRandSequenceStack(getReferenceElementType(slot), location);
+      if (!stack)
+        return failure();
+    }
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPoint(call.save->getTerminator());
+    for (Value slot : slots) {
+      Value stack = stacks.lookup(slot);
+      Value saved = sim::SimRefLoadOp::create(
+          builder, location, getReferenceElementType(slot), slot);
+      Value depth =
+          sim::SimContainerSizeOp::create(builder, location, i64, stack);
+      sim::SimQueueInsertOp::create(builder, location, stack, depth, saved);
+    }
+    builder.setInsertionPoint(call.restore->getTerminator());
+    for (Value slot : llvm::reverse(slots)) {
+      Value stack = stacks.lookup(slot);
+      Value depth =
+          sim::SimContainerSizeOp::create(builder, location, i64, stack);
+      Value one = arith::ConstantOp::create(builder, location, i64,
+                                            builder.getI64IntegerAttr(1));
+      Value top = arith::SubIOp::create(builder, location, depth, one);
+      Value saved = sim::SimContainerReadOp::create(
+          builder, location, getReferenceElementType(slot), stack, top);
+      sim::SimQueueDeleteOp::create(builder, location, stack, top);
+      sim::SimRefStoreOp::create(builder, location, saved, slot);
+    }
+  }
+  return success();
 }
 
 LogicalResult UnitLowering::lowerRandSequenceNode(Operation *node) {

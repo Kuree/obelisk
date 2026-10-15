@@ -579,10 +579,29 @@ private:
                                   ::mlir::Location location);
   ::mlir::LogicalResult
   lowerRandSequence(semantic::SVRandSequenceStatementOp op);
+  struct RecursiveProductionBody;
+  /// Lower one activation of `production`. Without `body`, the production
+  /// is expanded at the call site. With `body`, this emits the single body of
+  /// a recursive production, whose formals and result live in that body's
+  /// slots.
   ::mlir::LogicalResult
   lowerRandSequenceProduction(semantic::SVFrozenRandSeqProductionOp production,
                               ::mlir::ArrayRef<::mlir::Operation *> actuals,
-                              ::mlir::Value resultReference = {});
+                              ::mlir::Value resultReference = {},
+                              RecursiveProductionBody *body = nullptr);
+  ::mlir::FailureOr<RecursiveProductionBody *>
+  getRecursiveProductionBody(semantic::SVFrozenRandSeqProductionOp production,
+                             ::mlir::Location location);
+  ::mlir::LogicalResult
+  lowerRecursiveProductionCall(semantic::SVFrozenRandSeqProductionOp production,
+                               ::mlir::ArrayRef<::mlir::Operation *> actuals,
+                               ::mlir::Value resultReference);
+  ::mlir::Value allocateRandSequenceSlot(::mlir::Type type,
+                                         ::mlir::Location location);
+  ::mlir::Value createRandSequenceStack(::mlir::Type element,
+                                        ::mlir::Location location);
+  ::mlir::LogicalResult repairRecursiveRandSequence(::mlir::Block *first,
+                                                    ::mlir::Location location);
   ::mlir::LogicalResult
   lowerRandSequenceProductionItem(semantic::SVProdItemOp item);
   ::mlir::LogicalResult lowerRandSequenceNode(::mlir::Operation *node);
@@ -1097,14 +1116,52 @@ private:
     size_t controlDepth;
   };
   ::mlir::SmallVector<LoopTargets> loopTargets;
+  /// The single emission of a production on a cycle of its randsequence's
+  /// production graph (IEEE 1800-2023 18.17). A call stores the actuals in
+  /// the formal slots, pushes the index of its resume block, and enters
+  /// `entry`; `exit` pops that index and resumes the caller.
+  struct RecursiveProductionBody {
+    semantic::SVFrozenRandSeqProductionOp production;
+    ::mlir::Block *entry = nullptr;
+    ::mlir::Block *exit = nullptr;
+    ::mlir::SmallVector<::mlir::Value> formalSlots;
+    ::mlir::Value resultSlot;
+    ::mlir::SmallVector<::mlir::Block *> resumes;
+    unsigned frame = 0;
+  };
   struct RandSequenceContext {
     ::llvm::StringMap<semantic::SVFrozenRandSeqProductionOp> productions;
     ::mlir::Block *breakTarget;
     size_t controlDepth;
     size_t loopDepth;
     size_t productionDepth;
+    /// The recursion component of each production on a cycle.
+    ::llvm::StringMap<unsigned> recursiveComponents;
+    ::llvm::StringMap<RecursiveProductionBody> recursiveBodies;
+    ::mlir::SmallVector<std::string> pendingBodies;
+    /// Frame 0 is the statement; each recursive body has its own frame. A
+    /// frame's slots hold its activation state, which a call that can reenter
+    /// the frame's body saves and restores.
+    struct Frame {
+      unsigned component;
+      ::mlir::SmallVector<::mlir::Value> slots;
+    };
+    ::mlir::SmallVector<Frame> frames;
+    unsigned currentFrame = 0;
+    ::llvm::DenseMap<::mlir::Block *, unsigned> blockFrames;
+    struct RecursiveCall {
+      unsigned frame;
+      unsigned component;
+      ::mlir::Block *save;
+      ::mlir::Block *resume;
+      ::mlir::Block *restore;
+    };
+    ::mlir::SmallVector<RecursiveCall> recursiveCalls;
+    /// Dominates every block of the statement and holds its slots.
+    ::mlir::Block *slotBlock = nullptr;
+    ::mlir::Value returnStack;
   };
-  ::mlir::SmallVector<RandSequenceContext> randSequenceContexts;
+  ::mlir::SmallVector<RandSequenceContext, 1> randSequenceContexts;
   struct RandSequenceProductionReturn {
     ::mlir::Block *target;
     size_t controlDepth;

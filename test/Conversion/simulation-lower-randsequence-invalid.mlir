@@ -1,12 +1,11 @@
 // RUN: not obelisk-opt %s --split-input-file --pass-pipeline='builtin.module(obelisk-sim-prepare-unit-lowering,simulation.design(simulation.func(obelisk-sim-lower-unit)))' 2>&1 | FileCheck %s
 
-// Legal recursive grammars need dynamically nested production activations.
-// Until those frames are outlined, diagnose the exact boundary instead of
-// imposing an arbitrary recursion cutoff.
+// A recursive production is emitted once, so a ref argument, which aliases a
+// different actual in each activation, has no slot to live in.
 
 module {
-  simulation.design @recursive {
-    simulation.code_unit.decl 1 in 0 initial hierarchy "test.recursive"
+  simulation.design @recursive_ref {
+    simulation.code_unit.decl 1 in 0 initial hierarchy "test.recursive_ref"
     simulation.scope.decl 0
     simulation.func @test(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
@@ -16,8 +15,11 @@ module {
           first_production = @p, node_id = 1 : i64,
           production_count = 1 : i64} {
         obelisk.sv.rand_seq.frozen_production attributes {
-            argument_count = 0 : i64, formal_arguments = [], node_id = 2 : i64,
-            referenced_path = "p", referenced_symbol = @p,
+            argument_count = 1 : i64,
+            formal_arguments = [{default_operand_count = 0 : i64,
+              direction = 3 : i32, referenced_path = "p.x",
+              semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>}],
+            node_id = 2 : i64, referenced_path = "p", referenced_symbol = @p,
             rule_count = 1 : i64,
             rule_has_rand_join_expressions = array<i64: 0>,
             rule_has_weight_code_blocks = array<i64: 0>,
@@ -35,7 +37,7 @@ module {
   }
 }
 
-// CHECK: recursive randsequence production requires activation-frame lowering
+// CHECK: a recursive randsequence production cannot have a ref argument
 
 // -----
 
