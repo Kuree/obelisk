@@ -1829,9 +1829,9 @@ LogicalResult SimNBAEnqueueOp::verify() {
     return emitOpError(
         "aggregate values containing managed handles are not yet supported");
   if (getClockingOutputAttr()) {
-    if (!getPackedWidth(getValue().getType()))
+    if (!getOverrideBitWidth(getValue().getType()))
       return emitOpError(
-          "clocking output resolution requires a fixed packed value");
+          "clocking output resolution requires a fixed-width value");
     if (getClockingOutputAttr().getValue().getZExtValue() == UINT64_MAX)
       return emitOpError("clocking output identity is reserved");
   }

@@ -166,20 +166,24 @@ bool isClassPropertySubvalue(Operation *expression) {
 
 /// Peel the selects that SystemVerilog permits on the destination of a
 /// clocking output drive and return the clocking-variable access at their
-/// root. Other lvalue shapes are not clocking drives.
+/// root. IEEE 1800-2023 14.16 allows any `select` of a clockvar, including
+/// member selects of a structure. Other lvalue shapes are not clocking drives.
 Operation *findClockingOutputRoot(Operation *destination) {
-  while (isa<semantic::SVElementSelectExpressionOp,
-             semantic::SVRangeSelectExpressionOp>(destination)) {
+  while (true) {
+    if (destination->hasAttr(clockingVariableAttrName))
+      return destination;
+    auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
+    if (member && member->hasAttr("virtual_interface_clocking"))
+      return destination;
+    if (!isa<semantic::SVElementSelectExpressionOp,
+             semantic::SVRangeSelectExpressionOp,
+             semantic::SVMemberAccessExpressionOp>(destination))
+      return nullptr;
     SmallVector<Operation *> children = getChildren(destination);
     if (children.empty())
       return nullptr;
     destination = children.front();
   }
-  if (destination->hasAttr(clockingVariableAttrName))
-    return destination;
-  auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(destination);
-  return member && member->hasAttr("virtual_interface_clocking") ? destination
-                                                                 : nullptr;
 }
 
 } // namespace
