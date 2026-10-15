@@ -172,6 +172,19 @@ def SimConstantBindingAttr : SimAttr<"ConstantBinding", "constant_binding"> {
   let genVerifyDecl = 1;
 }
 
+def SimEnumFormatAttr : SimAttr<"EnumFormat", "enum_format"> {
+  let summary = "enumerator values and names of one source enum type";
+  let description = [{
+    The `values` (`#simulation.frozen_constant`) and `names` of the
+    enumerators of the source enum type `type`, in declaration order. An
+    assignment pattern prints an enum element by its name (IEEE 1800-2023
+    21.2.1.6).
+  }];
+  let parameters = (ins "::mlir::Type":$type, "::mlir::ArrayAttr":$values,
+      "::mlir::ArrayAttr":$names);
+  let assemblyFormat = "`<` struct(params) `>`";
+}
+
 def SimFieldAttr : SimAttr<"Field", "field"> {
   let summary = "ordered aggregate field metadata";
   let description = [{

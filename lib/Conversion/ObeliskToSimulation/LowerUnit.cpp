@@ -2310,6 +2310,7 @@ FailureOr<Value> UnitLowering::toArrayIndex(Value value, bool sourceSigned,
 
 FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
                                                         Type semanticType,
+                                                        ArrayAttr enumFormats,
                                                         Location location) {
   auto unionType = dyn_cast<sim::UnpackedUnionType>(value.getType());
   auto sourceType = dyn_cast<semantic::SourceAggregateType>(semanticType);
@@ -2336,61 +2337,8 @@ FailureOr<Value> UnitLowering::formatTaggedUnionPattern(Value value,
     } else {
       Value member = sim::SimUnionExtractOp::create(builder, location,
                                                     fieldType, value, index);
-      FailureOr<Value> formatted = failure();
-      if (auto nested = dyn_cast<sim::UnpackedUnionType>(fieldType);
-          nested && nested.getIsTagged())
-        formatted = formatTaggedUnionPattern(member, sourceFieldType, location);
-      else if (isa<sim::UnpackedArrayType, sim::UnpackedStructType,
-                   sim::UnpackedUnionType>(fieldType))
-        formatted = formatUnpackedAggregatePattern(member, location);
-      else {
-        auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
-        StringAttr lexicalScope =
-            sim::get<sim::metadata::HierarchicalName>(function);
-        if (!timeMultiplier || !lexicalScope)
-          return failure();
-        Value item = member;
-        uint32_t flags = 0;
-        StringRef format = "%p";
-        if (isa<sim::StringType>(fieldType)) {
-          flags = OBELISK_RT_OUTPUT_ITEM_STRING;
-          format = "\"%p\"";
-        } else if (isa<FloatType>(fieldType)) {
-          formatted = convert(member, builder.getF64Type(), false, location);
-          if (failed(formatted))
-            return failure();
-          item = *formatted;
-          flags = OBELISK_RT_OUTPUT_ITEM_REAL;
-        } else if (isa<sim::ClassHandleType>(fieldType)) {
-          flags = OBELISK_RT_OUTPUT_ITEM_CLASS;
-        } else if (isa<sim::ProcessType>(fieldType)) {
-          flags = OBELISK_RT_OUTPUT_ITEM_PROCESS;
-        } else if (isa<sim::VirtualInterfaceType>(fieldType)) {
-          flags = OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE;
-        } else if (isa<sim::DynamicArrayType, sim::QueueType,
-                       sim::AssocArrayType>(fieldType)) {
-          flags = OBELISK_RT_OUTPUT_ITEM_CONTAINER;
-        } else {
-          FailureOr<Value> scalar = toPackedScalar(member, location);
-          if (failed(scalar))
-            return failure();
-          item = *scalar;
-          if (isSignedSemanticType(sourceFieldType))
-            flags = OBELISK_RT_OUTPUT_ITEM_SIGNED;
-        }
-        Value formatValue =
-            sim::SimBytesConstantOp::create(builder, location, format);
-        formatted = sim::SimStringOutputFormatOp::create(
-                        builder, location, stringType,
-                        function.getBody().front().getArgument(0),
-                        ValueRange{formatValue, item}, sim::Radix::Decimal,
-                        builder.getDenseI32ArrayAttr(
-                            {OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT,
-                             static_cast<int32_t>(flags)}),
-                        lexicalScope, StringAttr{}, timeMultiplier,
-                        designTimePrecisionExponent())
-                        .getResult();
-      }
+      FailureOr<Value> formatted = formatAssignmentPattern(
+          member, sourceFieldType, enumFormats, location);
       if (failed(formatted))
         return failure();
       SmallVector<Value> parts{

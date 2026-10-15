@@ -845,15 +845,20 @@ public:
       result = slangir::EnumType::get(context, StringAttr::get(context, name),
                                       convert(enumeration.baseType));
       SmallVector<Attribute> values;
+      SmallVector<Attribute> names;
       for (const slang::ast::EnumValueSymbol &value :
-           enumeration.membersOfType<slang::ast::EnumValueSymbol>())
+           enumeration.membersOfType<slang::ast::EnumValueSymbol>()) {
         values.push_back(
             StringAttr::get(context, formatConstant(value.getValue())));
+        names.push_back(StringAttr::get(context, value.name));
+      }
       enumDomains.push_back(DictionaryAttr::get(
           context, {NamedAttribute(StringAttr::get(context, "type"),
                                    TypeAttr::get(result)),
                     NamedAttribute(StringAttr::get(context, "values"),
-                                   ArrayAttr::get(context, values))}));
+                                   ArrayAttr::get(context, values)),
+                    NamedAttribute(StringAttr::get(context, "names"),
+                                   ArrayAttr::get(context, names))}));
       break;
     }
     case SK::PackedArrayType: {

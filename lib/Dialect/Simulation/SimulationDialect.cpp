@@ -771,8 +771,8 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::VpiSourceTypeIdentity, metadata::VpiTop,
       metadata::DumpportsScope, metadata::DynamicCastEnumValues,
       metadata::DynamicCastTask, metadata::EnumFormatNames,
-      metadata::EnumFormatValues, metadata::EnumMethodNames,
-      metadata::EnumMethodValues>();
+      metadata::EnumFormatValues, metadata::EnumFormats,
+      metadata::EnumMethodNames, metadata::EnumMethodValues>();
 }
 
 /// Check that a simulation attribute is declared and has its payload kind.

@@ -700,6 +700,7 @@ using DynamicCastEnumValues =
 using DynamicCastTask = ObeliskSimulationDialect::DynamicCastTaskAttrHelper;
 using EnumFormatNames = ObeliskSimulationDialect::EnumFormatNamesAttrHelper;
 using EnumFormatValues = ObeliskSimulationDialect::EnumFormatValuesAttrHelper;
+using EnumFormats = ObeliskSimulationDialect::EnumFormatsAttrHelper;
 using EnumMethodNames = ObeliskSimulationDialect::EnumMethodNamesAttrHelper;
 using EnumMethodValues = ObeliskSimulationDialect::EnumMethodValuesAttrHelper;
 using BooleanMinimizations =

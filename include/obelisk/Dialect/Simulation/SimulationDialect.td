@@ -552,6 +552,9 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::UnitAttr":$dynamic_cast_task,
     "::mlir::ArrayAttr":$enum_format_names,
     "::mlir::ArrayAttr":$enum_format_values,
+    // `#simulation.enum_format` inventories of the enum types an output
+    // operand's assignment pattern can reach (IEEE 1800-2023 21.2.1.6).
+    "::mlir::ArrayAttr":$enum_formats,
     "::mlir::ArrayAttr":$enum_method_names,
     "::mlir::ArrayAttr":$enum_method_values
   );

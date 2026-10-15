@@ -752,14 +752,22 @@ private:
                                                 ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   formatTaggedUnionPattern(::mlir::Value value, ::mlir::Type semanticType,
+                           ::mlir::ArrayAttr enumFormats,
                            ::mlir::Location location);
-  // Render an unpacked struct, array, or untagged union as the assignment
-  // pattern IEEE 1800-2017 21.2.1.7 gives %p. The shape is static, so the
-  // pattern punctuation becomes a format string and the singular elements
-  // become its arguments.
+  // Render a value as the assignment pattern IEEE 1800-2023 21.2.1.6 gives
+  // %p. Its source type `semanticType`, when known, names packed-structure
+  // fields and, with `enumFormats`, enum elements. The shape is static, so
+  // the pattern punctuation becomes a format string and the singular
+  // elements become its arguments; a container whose elements need source
+  // names is rendered element by element.
   ::mlir::FailureOr<::mlir::Value>
-  formatUnpackedAggregatePattern(::mlir::Value value,
-                                 ::mlir::Location location);
+  formatAssignmentPattern(::mlir::Value value, ::mlir::Type semanticType,
+                          ::mlir::ArrayAttr enumFormats,
+                          ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  formatContainerPattern(::mlir::Value container, ::mlir::Type semanticType,
+                         ::mlir::ArrayAttr enumFormats,
+                         ::mlir::Location location);
   ::mlir::FailureOr<std::pair<::mlir::Value, ::mlir::Value>>
   formatUnpackedAggregateRaw(::mlir::Value value, ::mlir::Location location,
                              char mode);

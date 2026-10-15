@@ -35,6 +35,40 @@ void appendFormatText(std::string &format, StringRef text) {
   }
 }
 
+/// The `#simulation.enum_format` of source enum type `type` in `formats`.
+sim::EnumFormatAttr findEnumFormat(ArrayAttr formats, Type type) {
+  if (!formats || !isa_and_nonnull<semantic::EnumType>(type))
+    return {};
+  for (Attribute attribute : formats)
+    if (auto format = dyn_cast<sim::EnumFormatAttr>(attribute);
+        format && format.getType() == type)
+      return format;
+  return {};
+}
+
+/// Whether the IEEE 1800-2023 21.2.1.6 rendering of a source type needs
+/// names only the source type has: structure members, enum names, or a
+/// chandle, which the runtime's container rendering cannot know.
+bool needsSourcePattern(Type type) {
+  if (!type)
+    return false;
+  if (isa<semantic::EnumType, semantic::SourceAggregateType,
+          semantic::ChandleType>(type))
+    return true;
+  if (auto array = dyn_cast<semantic::RangedUnpackedArrayType>(type))
+    return needsSourcePattern(array.getElementType());
+  if (auto array = dyn_cast<semantic::UnpackedArrayType>(type))
+    return needsSourcePattern(array.getElementType());
+  if (auto queue = dyn_cast<semantic::QueueType>(type))
+    return needsSourcePattern(queue.getElementType());
+  if (auto array = dyn_cast<semantic::DynArrayType>(type))
+    return needsSourcePattern(array.getElementType());
+  if (auto assoc = dyn_cast<semantic::AssocArrayType>(type))
+    return needsSourcePattern(assoc.getKeyType()) ||
+           needsSourcePattern(assoc.getElementType());
+  return false;
+}
+
 } // namespace
 
 // The decimal exponent, in seconds, of one design-precision tick. %t needs it
@@ -151,10 +185,10 @@ LogicalResult UnitLowering::emitTerminationDiagnostic(StringRef name,
   return success();
 }
 
-FailureOr<Value>
-UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
-  if (!isUnpackedAggregateType(value.getType()))
-    return failure();
+FailureOr<Value> UnitLowering::formatAssignmentPattern(Value value,
+                                                       Type semanticType,
+                                                       ArrayAttr enumFormats,
+                                                       Location location) {
   auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
   StringAttr lexicalScope = sim::get<sim::metadata::HierarchicalName>(function);
   if (!timeMultiplier || !lexicalScope)
@@ -168,25 +202,54 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
   // complete pattern text.
   items.push_back(Value{});
   flags.push_back(OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT);
+  auto appendRendered = [&](Value rendered) {
+    format.append("%p");
+    items.push_back(rendered);
+    flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+  };
 
-  // IEEE 1800-2017 21.2.1.7: an unpacked type is traversed until a singular
+  // IEEE 1800-2023 21.2.1.6: an unpacked type is traversed until a singular
   // type is reached. Structures print their element names, arrays print bare
-  // elements, and a union prints only its first declared element.
-  std::function<LogicalResult(Value)> traverse =
-      [&](Value element) -> LogicalResult {
+  // elements, and a union prints only its first declared element. Among the
+  // singular elements, a packed structure prints as a named pattern, an enum
+  // by its name and a string in quotes.
+  std::function<LogicalResult(Value, Type)> traverse =
+      [&](Value element, Type source) -> LogicalResult {
     Type type = element.getType();
+    auto aggregate = dyn_cast_or_null<semantic::SourceAggregateType>(source);
+    // The source type of the member named `name`.
+    auto fieldSource = [&](StringAttr name) -> Type {
+      if (!aggregate)
+        return {};
+      for (Attribute attribute : aggregate.getFields()) {
+        auto field = dyn_cast<DictionaryAttr>(attribute);
+        auto fieldType = field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+        if (fieldType && field.get("name") == name)
+          return fieldType.getValue();
+      }
+      return {};
+    };
     if (auto unionType = dyn_cast<sim::UnpackedUnionType>(type)) {
+      if (unionType.getIsTagged()) {
+        FailureOr<Value> rendered =
+            formatTaggedUnionPattern(element, source, enumFormats, location);
+        if (failed(rendered))
+          return failure();
+        appendRendered(*rendered);
+        return success();
+      }
       auto first = unionType.getFields().empty()
                        ? sim::FieldAttr{}
                        : dyn_cast<sim::FieldAttr>(unionType.getFields()[0]);
-      if (unionType.getIsTagged() || !first)
+      if (!first)
         return failure();
       format.append("'{");
       appendFormatText(format, first.getName().getValue());
       format.push_back(':');
       Type fieldType = sim::getAggregateElementType(type, 0);
-      if (failed(traverse(sim::SimUnionExtractOp::create(
-              builder, location, fieldType, element, 0))))
+      if (failed(traverse(sim::SimUnionExtractOp::create(builder, location,
+                                                         fieldType, element, 0),
+                          fieldSource(first.getName()))))
         return failure();
       format.push_back('}');
       return success();
@@ -194,31 +257,137 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
     if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type)) {
       auto structType = dyn_cast<sim::UnpackedStructType>(type);
       ArrayAttr fields = structType ? structType.getFields() : ArrayAttr{};
+      Type elementSource;
+      if (auto array =
+              dyn_cast_or_null<semantic::RangedUnpackedArrayType>(source))
+        elementSource = array.getElementType();
+      else if (auto array =
+                   dyn_cast_or_null<semantic::UnpackedArrayType>(source))
+        elementSource = array.getElementType();
       unsigned count = sim::getAggregateNumElements(type);
       format.append("'{");
       for (unsigned index = 0; index != count; ++index) {
         if (index != 0)
           format.append(", ");
+        Type memberSource = elementSource;
         if (fields && index < fields.size())
           if (auto field = dyn_cast<sim::FieldAttr>(fields[index])) {
             appendFormatText(format, field.getName().getValue());
             format.push_back(':');
+            memberSource = fieldSource(field.getName());
           }
         Type elementType = sim::getAggregateElementType(type, index);
         if (failed(traverse(sim::SimAggregateExtractOp::create(
-                builder, location, elementType, element, index))))
+                                builder, location, elementType, element, index),
+                            memberSource)))
           return failure();
       }
       format.push_back('}');
       return success();
     }
-
-    // A singular element. The runtime already renders one for %p; only a
-    // string needs help here, because 21.2.1.7 prints it in quotes.
+    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
+      if (needsSourcePattern(source)) {
+        FailureOr<Value> rendered =
+            formatContainerPattern(element, source, enumFormats, location);
+        if (failed(rendered))
+          return failure();
+        appendRendered(*rendered);
+        return success();
+      }
+      format.append("%p");
+      items.push_back(element);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_CONTAINER);
+      return success();
+    }
+    if (aggregate && aggregate.getIsPacked() && !aggregate.getIsUnion()) {
+      FailureOr<Value> scalar = toPackedScalar(element, location);
+      if (failed(scalar))
+        return failure();
+      format.append("'{");
+      for (auto [index, attribute] : llvm::enumerate(aggregate.getFields())) {
+        auto field = dyn_cast<DictionaryAttr>(attribute);
+        auto name = field ? field.getAs<StringAttr>("name") : StringAttr{};
+        auto offset =
+            field ? field.getAs<IntegerAttr>("packed_offset") : IntegerAttr{};
+        auto memberTypeAttr =
+            field ? field.getAs<TypeAttr>("type") : TypeAttr{};
+        Type memberSource = memberTypeAttr ? memberTypeAttr.getValue() : Type{};
+        FailureOr<Type> memberType =
+            memberSource
+                ? normalizeSemanticType(memberSource, location, function)
+                : FailureOr<Type>(failure());
+        std::optional<unsigned> width =
+            succeeded(memberType)
+                ? sim::getPackedWidth(sim::getPackedScalarType(*memberType))
+                : std::nullopt;
+        if (!name || !offset || !width)
+          return failure();
+        if (index != 0)
+          format.append(", ");
+        appendFormatText(format, name.getValue());
+        format.push_back(':');
+        Value bits;
+        if (auto logic = dyn_cast<sim::LogicType>((*scalar).getType())) {
+          bits = sim::SimLogicExtractOp::create(
+              builder, location,
+              sim::LogicType::get(builder.getContext(), *width), *scalar,
+              builder.getI64IntegerAttr(offset.getInt()));
+        } else {
+          Value shifted = *scalar;
+          if (offset.getInt() != 0)
+            shifted = arith::ShRUIOp::create(
+                builder, location, *scalar,
+                arith::ConstantOp::create(
+                    builder, location, (*scalar).getType(),
+                    builder.getIntegerAttr((*scalar).getType(),
+                                           offset.getInt())));
+          bits = shifted;
+          if (shifted.getType() != builder.getIntegerType(*width))
+            bits = arith::TruncIOp::create(
+                builder, location, builder.getIntegerType(*width), shifted);
+        }
+        FailureOr<Value> member = convert(bits, *memberType, false, location);
+        if (failed(member) || failed(traverse(*member, memberSource)))
+          return failure();
+      }
+      format.push_back('}');
+      return success();
+    }
+    if (auto enumFormat = findEnumFormat(enumFormats, source)) {
+      FailureOr<Value> scalar = toPackedScalar(element, location);
+      FailureOr<Value> name =
+          succeeded(scalar)
+              ? lowerEnumFormatName(*scalar, enumFormat.getValues(),
+                                    enumFormat.getNames(), location)
+              : FailureOr<Value>(failure());
+      if (failed(name))
+        return failure();
+      format.append("%p");
+      items.append({*scalar, *name});
+      flags.push_back(
+          OBELISK_RT_OUTPUT_ITEM_ENUM |
+          (isSignedSemanticType(source) ? OBELISK_RT_OUTPUT_ITEM_SIGNED : 0));
+      return success();
+    }
     if (isa<sim::StringType>(type)) {
       format.append("\"%p\"");
       items.push_back(element);
       flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+      return success();
+    }
+    if (isa<sim::ChandleType>(type)) {
+      // A chandle has no value spelling of its own; only null is required
+      // to print as the word null.
+      Type stringType = sim::StringType::get(function.getContext());
+      Value isNull = sim::SimChandleEqualOp::create(
+          builder, location, builder.getI1Type(), element,
+          sim::SimChandleNullOp::create(builder, location));
+      appendRendered(arith::SelectOp::create(
+          builder, location, isNull,
+          sim::SimStringLiteralOp::create(builder, location, stringType,
+                                          "null"),
+          sim::SimStringLiteralOp::create(builder, location, stringType,
+                                          "chandle")));
       return success();
     }
     format.append("%p");
@@ -236,20 +405,30 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
       flags.push_back(OBELISK_RT_OUTPUT_ITEM_CLASS);
       return success();
     }
-    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(type)) {
+    if (isa<sim::ProcessType>(type)) {
       items.push_back(element);
-      flags.push_back(OBELISK_RT_OUTPUT_ITEM_CONTAINER);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_PROCESS);
+      return success();
+    }
+    if (isa<sim::VirtualInterfaceType>(type)) {
+      items.push_back(element);
+      flags.push_back(OBELISK_RT_OUTPUT_ITEM_VIRTUAL_INTERFACE);
       return success();
     }
     FailureOr<Value> scalar = toPackedScalar(element, location);
     if (failed(scalar))
       return failure();
     items.push_back(*scalar);
-    flags.push_back(0);
+    flags.push_back(source && isSignedSemanticType(source)
+                        ? OBELISK_RT_OUTPUT_ITEM_SIGNED
+                        : 0);
     return success();
   };
-  if (failed(traverse(value)))
+  if (failed(traverse(value, semanticType)))
     return failure();
+  // A value rendered as a whole needs no further formatting.
+  if (format == "%p" && flags.back() == OBELISK_RT_OUTPUT_ITEM_STRING)
+    return items.back();
 
   items.front() = sim::SimBytesConstantOp::create(builder, location, format);
   return sim::SimStringOutputFormatOp::create(
@@ -258,6 +437,120 @@ UnitLowering::formatUnpackedAggregatePattern(Value value, Location location) {
              sim::Radix::Decimal, flags, lexicalScope, StringAttr{},
              timeMultiplier, designTimePrecisionExponent())
       .getResult();
+}
+
+FailureOr<Value> UnitLowering::formatContainerPattern(Value container,
+                                                      Type semanticType,
+                                                      ArrayAttr enumFormats,
+                                                      Location location) {
+  // IEEE 1800-2023 21.2.1.6 renders a queue or dynamic array like an
+  // unpacked array and an associative array with its index labels. Element
+  // names come from the source type, so render each element in turn.
+  Type stringType = sim::StringType::get(function.getContext());
+  Type i64 = builder.getI64Type();
+  auto literal = [&](StringRef text) {
+    return sim::SimStringLiteralOp::create(builder, location, stringType, text)
+        .getResult();
+  };
+  auto concat = [&](ValueRange parts) {
+    return sim::SimStringConcatOp::create(builder, location, stringType, parts)
+        .getResult();
+  };
+  Block *header = addBlock();
+  Block *body = addBlock();
+  Block *exit = addBlock();
+  exit->addArgument(stringType, location);
+  if (auto assoc = dyn_cast<sim::AssocArrayType>(container.getType())) {
+    auto source = dyn_cast_or_null<semantic::AssocArrayType>(semanticType);
+    if (!source)
+      return failure();
+    Value noKey = createDefaultValue(builder, location, assoc.getKeyType());
+    if (!noKey)
+      return failure();
+    FailureOr<std::pair<Value, Value>> first = traverseAssoc(
+        container, noKey, /*direction=*/1, /*endpoint=*/true, location);
+    if (failed(first))
+      return failure();
+    header->addArgument(assoc.getKeyType(), location);
+    header->addArgument(builder.getI1Type(), location);
+    header->addArgument(stringType, location);
+    header->addArgument(stringType, location);
+    cf::BranchOp::create(
+        builder, location, header,
+        ValueRange{first->first, first->second, literal("'{"), literal("")});
+    setCurrent(header);
+    cf::CondBranchOp::create(builder, location, header->getArgument(1), body,
+                             ValueRange{}, exit,
+                             ValueRange{header->getArgument(2)});
+    setCurrent(body);
+    Value key = header->getArgument(0);
+    Value element = sim::SimAssocReadOp::create(
+        builder, location, assoc.getElementType(), container, key);
+    FailureOr<Value> keyText = formatAssignmentPattern(key, source.getKeyType(),
+                                                       enumFormats, location);
+    if (failed(keyText))
+      return failure();
+    FailureOr<Value> elementText = formatAssignmentPattern(
+        element, source.getElementType(), enumFormats, location);
+    if (failed(elementText))
+      return failure();
+    Value text = concat({header->getArgument(2), header->getArgument(3),
+                         *keyText, literal(":"), *elementText});
+    FailureOr<std::pair<Value, Value>> next = traverseAssoc(
+        container, key, /*direction=*/1, /*endpoint=*/false, location);
+    if (failed(next))
+      return failure();
+    cf::BranchOp::create(
+        builder, location, header,
+        ValueRange{next->first, next->second, text, literal(", ")});
+  } else {
+    Type elementSource;
+    if (auto queue = dyn_cast_or_null<semantic::QueueType>(semanticType))
+      elementSource = queue.getElementType();
+    else if (auto array =
+                 dyn_cast_or_null<semantic::DynArrayType>(semanticType))
+      elementSource = array.getElementType();
+    Type elementType;
+    if (auto queue = dyn_cast<sim::QueueType>(container.getType()))
+      elementType = queue.getElementType();
+    else if (auto array = dyn_cast<sim::DynamicArrayType>(container.getType()))
+      elementType = array.getElementType();
+    if (!elementSource || !elementType)
+      return failure();
+    Value size =
+        sim::SimContainerSizeOp::create(builder, location, i64, container);
+    header->addArgument(i64, location);
+    header->addArgument(stringType, location);
+    header->addArgument(stringType, location);
+    cf::BranchOp::create(
+        builder, location, header,
+        ValueRange{arith::ConstantOp::create(builder, location, i64,
+                                             builder.getI64IntegerAttr(0)),
+                   literal("'{"), literal("")});
+    setCurrent(header);
+    Value index = header->getArgument(0);
+    Value more = arith::CmpIOp::create(builder, location,
+                                       arith::CmpIPredicate::ult, index, size);
+    cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
+                             ValueRange{header->getArgument(1)});
+    setCurrent(body);
+    Value element = sim::SimContainerReadOp::create(
+        builder, location, elementType, container, index);
+    FailureOr<Value> elementText =
+        formatAssignmentPattern(element, elementSource, enumFormats, location);
+    if (failed(elementText))
+      return failure();
+    Value text =
+        concat({header->getArgument(1), header->getArgument(2), *elementText});
+    Value nextIndex = arith::AddIOp::create(
+        builder, location, index,
+        arith::ConstantOp::create(builder, location, i64,
+                                  builder.getI64IntegerAttr(1)));
+    cf::BranchOp::create(builder, location, header,
+                         ValueRange{nextIndex, text, literal(", ")});
+  }
+  setCurrent(exit);
+  return concat({exit->getArgument(0), literal("}")});
 }
 
 FailureOr<std::pair<Value, Value>>
@@ -515,8 +808,11 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_OMITTED);
       continue;
     }
+    // A string literal consumed by %p prints in quotes (IEEE 1800-2023
+    // 21.2.1.6), so it is rendered below rather than passed as text.
     if (auto literal = getStringLiteral(child);
-        literal && (isFormat || interpretLiteralsAsFormats)) {
+        literal && (isFormat || interpretLiteralsAsFormats) &&
+        (isFormat || consumingSpecifier != 'p')) {
       output.items.push_back(sim::SimBytesConstantOp::create(
           builder, getSemanticLocation(literal), literal.getConstantValue()));
       output.flags.push_back(isFormat ? OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT
@@ -557,6 +853,45 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
                              OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT);
       dynamicFormatOwnsRemainder = true;
       continue;
+    }
+    auto semanticTypeAttr = child->getAttrOfType<TypeAttr>("semantic_type");
+    Type sourceType = semanticTypeAttr ? semanticTypeAttr.getValue() : Type{};
+    ArrayAttr enumFormats = sim::get<sim::metadata::EnumFormats>(child);
+    if (consumingSpecifier == 'p') {
+      // IEEE 1800-2023 21.2.1.6 formats a singular %p operand as an element
+      // of an assignment pattern: a packed structure prints as a named
+      // pattern, a string or string literal in quotes and a null chandle as
+      // null. These, and containers whose elements need source names, are
+      // rendered here; other operands keep their runtime rendering.
+      Value rendered = *value;
+      auto sourceAggregate =
+          dyn_cast_or_null<semantic::SourceAggregateType>(sourceType);
+      bool packedStructure = sourceAggregate && sourceAggregate.getIsPacked() &&
+                             !sourceAggregate.getIsUnion();
+      bool render =
+          packedStructure ||
+          isa<sim::StringType, sim::ChandleType>(rendered.getType()) ||
+          (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+               rendered.getType()) &&
+           needsSourcePattern(sourceType));
+      if (getStringLiteral(child)) {
+        FailureOr<Value> packed =
+            toPackedScalar(rendered, getSemanticLocation(child));
+        if (failed(packed))
+          return failure();
+        rendered = sim::SimStringFromPackedOp::create(
+            builder, getSemanticLocation(child), stringType, *packed);
+        render = true;
+      }
+      if (render) {
+        FailureOr<Value> pattern = formatAssignmentPattern(
+            rendered, sourceType, enumFormats, getSemanticLocation(child));
+        if (failed(pattern))
+          return failure();
+        output.items.push_back(*pattern);
+        output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
+        continue;
+      }
     }
     if (isa<FloatType>((*value).getType())) {
       FailureOr<Value> real = convert(*value, builder.getF64Type(), false,
@@ -625,8 +960,9 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
             << "tagged-union output operand has no semantic type";
         return failure();
       }
-      FailureOr<Value> pattern = formatTaggedUnionPattern(
-          *value, semanticType.getValue(), getSemanticLocation(child));
+      FailureOr<Value> pattern =
+          formatTaggedUnionPattern(*value, semanticType.getValue(), enumFormats,
+                                   getSemanticLocation(child));
       if (failed(pattern))
         return failure();
       output.items.push_back(*pattern);
@@ -639,8 +975,8 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       FailureOr<std::pair<Value, Value>> raw = formatUnpackedAggregateRaw(
           *value, getSemanticLocation(child), rawMode);
       if (failed(raw)) {
-        FailureOr<Value> pattern =
-            formatUnpackedAggregatePattern(*value, getSemanticLocation(child));
+        FailureOr<Value> pattern = formatAssignmentPattern(
+            *value, sourceType, enumFormats, getSemanticLocation(child));
         if (failed(pattern))
           return failure();
         output.items.push_back(*pattern);
@@ -649,8 +985,8 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       }
       Value pattern;
       if (consumingSpecifier == '?') {
-        FailureOr<Value> rendered =
-            formatUnpackedAggregatePattern(*value, getSemanticLocation(child));
+        FailureOr<Value> rendered = formatAssignmentPattern(
+            *value, sourceType, enumFormats, getSemanticLocation(child));
         if (failed(rendered))
           return failure();
         pattern = *rendered;
@@ -661,12 +997,14 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       Value fourState = raw->second ? raw->second : pattern;
       output.items.append({pattern, twoState, fourState});
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_RAW_AGGREGATE);
-    } else if (FailureOr<Value> pattern = formatUnpackedAggregatePattern(
-                   *value, getSemanticLocation(child));
-               succeeded(pattern)) {
+    } else if (isUnpackedAggregateType((*value).getType())) {
       // An unpacked aggregate has no packed value to hand the runtime; its
-      // only formatted rendering is the IEEE 1800-2017 21.2.1.7 assignment
+      // only formatted rendering is the IEEE 1800-2023 21.2.1.6 assignment
       // pattern, which the compiler can build because the shape is static.
+      FailureOr<Value> pattern = formatAssignmentPattern(
+          *value, sourceType, enumFormats, getSemanticLocation(child));
+      if (failed(pattern))
+        return failure();
       output.items.push_back(*pattern);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else if (auto enumValues =
