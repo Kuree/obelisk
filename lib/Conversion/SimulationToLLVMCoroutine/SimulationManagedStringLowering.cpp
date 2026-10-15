@@ -1206,6 +1206,8 @@ void populateManagedStringToLLVMConversionPatterns(RewritePatternSet &patterns,
       converter, context, "obelisk_rt_v1_string_parse_integer");
   patterns.add<StringParseConversion<sim::SimStringParseRealOp>>(
       converter, context, "obelisk_rt_v1_string_parse_real");
+  patterns.add<StringParseConversion<sim::SimStringParseRealConstantOp>>(
+      converter, context, "obelisk_rt_v1_string_parse_real_constant");
   patterns.add<StringParseConversion<sim::SimPlusargParseRealOp>>(
       converter, context, "obelisk_rt_v1_plusarg_parse_real");
 }

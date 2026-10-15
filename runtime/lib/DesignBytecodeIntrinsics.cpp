@@ -2523,12 +2523,16 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         reinterpret_cast<uint64_t *>(frame.data + output.offset),
         reinterpret_cast<uint64_t *>(frame.data + output.offset + planeSize));
   }
-  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL: {
+  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL:
+  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT: {
     obelisk_rt_string_v1 input = 0;
     if (!readString(inputRegister(0), input))
       return OBELISK_RT_INVALID_BYTECODE;
     double result = 0.0;
-    obelisk_rt_status status = obelisk_rt_v1_string_parse_real(input, &result);
+    obelisk_rt_status status =
+        signature.id == OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL
+            ? obelisk_rt_v1_string_parse_real(input, &result)
+            : obelisk_rt_v1_string_parse_real_constant(input, &result);
     return status == OBELISK_RT_OK ? writeReal(0, result) : status;
   }
   case OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER: {

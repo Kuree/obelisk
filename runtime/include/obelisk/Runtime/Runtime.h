@@ -1379,6 +1379,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_TO_RANK = UINT32_C(0x00010484),
   OBELISK_RT_INTRINSIC_V1_RANDOM_REAL_FROM_RANK = UINT32_C(0x00010485),
   OBELISK_RT_INTRINSIC_V1_RANDOM_CYCLE_SAMPLE = UINT32_C(0x00010486),
+  OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT = UINT32_C(0x00010487),
   OBELISK_RT_INTRINSIC_V1_VPI_ROOT = UINT32_C(0x00011000),
   OBELISK_RT_INTRINSIC_V1_VPI_CHILD = UINT32_C(0x00011001),
   OBELISK_RT_INTRINSIC_V1_VPI_SIBLING = UINT32_C(0x00011002),
@@ -2800,6 +2801,9 @@ obelisk_rt_status obelisk_rt_v1_string_parse_logic(obelisk_rt_string_v1 string,
                                                    uint64_t *out_unknown);
 obelisk_rt_status obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string,
                                                   double *out_value);
+obelisk_rt_status
+obelisk_rt_v1_string_parse_real_constant(obelisk_rt_string_v1 string,
+                                         double *out_value);
 obelisk_rt_status
 obelisk_rt_v1_string_format_integer(obelisk_rt_gc_lane_v1 *lane, uint64_t value,
                                     uint32_t radix, uint32_t is_signed,

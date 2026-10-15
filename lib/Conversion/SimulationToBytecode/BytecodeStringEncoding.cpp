@@ -243,6 +243,9 @@ Encoder::encodeStringOperation(FunctionPlan &plan, Operation *operation) {
   if (auto op = dyn_cast<sim::SimStringParseRealOp>(operation))
     return emitIntrinsic(plan, kIntrinsicStringParseReal, {op.getInput()},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimStringParseRealConstantOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicStringParseRealConstant,
+                         {op.getInput()}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimPlusargParseRealOp>(operation))
     return emitIntrinsic(plan, kIntrinsicPlusargParseReal, {op.getInput()},
                          {op.getResult()});

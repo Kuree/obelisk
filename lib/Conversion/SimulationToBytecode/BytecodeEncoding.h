@@ -338,6 +338,8 @@ constexpr uint32_t kIntrinsicStringParseLogic =
     OBELISK_RT_INTRINSIC_V1_STRING_PARSE_LOGIC;
 constexpr uint32_t kIntrinsicStringParseReal =
     OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL;
+constexpr uint32_t kIntrinsicStringParseRealConstant =
+    OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT;
 constexpr uint32_t kIntrinsicStringFormatInteger =
     OBELISK_RT_INTRINSIC_V1_STRING_FORMAT_INTEGER;
 constexpr uint32_t kIntrinsicStringFormatReal =

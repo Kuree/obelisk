@@ -2413,6 +2413,19 @@ def SimStringParseRealOp : SimOp<"string.parse_real", [Pure]> {
   let results = (outs F64:$result);
 }
 
+def SimStringParseRealConstantOp
+    : SimOp<"string.parse_real_constant", [Pure]> {
+  let summary = "convert the real-constant prefix of a managed string";
+  let description = [{
+    Implements `str.atoreal()` (IEEE 1800-2023 6.16.10): converts the longest
+    prefix of the string that is real-constant syntax (5.7.2), and yields zero
+    when the string starts with no digit. Unlike `string.parse_real`, the
+    scan accepts no white space, sign or bare decimal point.
+  }];
+  let arguments = (ins SimStringType:$input);
+  let results = (outs F64:$result);
+}
+
 def SimStringFormatIntegerOp
     : SimStringAllocatingOp<"string.format_integer",
                             (ins I64:$input, SimRadixAttr:$radix,

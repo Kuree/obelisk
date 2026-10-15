@@ -342,11 +342,53 @@ TEST_F(ManagedValueTest, ParsesAndFormatsStringNumbers) {
             OBELISK_RT_OK);
   EXPECT_EQ(integer, 255u);
 
-  ASSERT_EQ(obelisk_rt_v1_string_create(lane, " 3.2_5junk", 11, &input),
-            OBELISK_RT_OK);
-  double real = 0.0;
-  ASSERT_EQ(obelisk_rt_v1_string_parse_real(input, &real), OBELISK_RT_OK);
-  EXPECT_DOUBLE_EQ(real, 3.25);
+  // IEEE 1800-2023 6.16.10: atoreal converts the longest prefix that is a
+  // 5.7.2 real constant, which has a digit on each side of a decimal point, a
+  // complete exponent, and no sign or leading white space.
+  for (auto [text, expected] :
+       std::initializer_list<std::pair<std::string_view, double>>{
+           {"3.2_5junk", 3.25},
+           {"236.123_763_e-12", 236.123763e-12},
+           {"23E10", 23e10},
+           {"1e1_0", 1e10},
+           {"12", 12.0},
+           {"9.", 9.0},
+           {"4.E3", 4.0},
+           {"1.5e", 1.5},
+           {"1.5e+x", 1.5},
+           {".5", 0.0},
+           {" 3.25", 0.0},
+           {"-1.5", 0.0},
+           {"_1", 0.0},
+           {"inf", 0.0},
+           {"1e999", std::numeric_limits<double>::infinity()},
+           {"1e-999", 0.0},
+           {"0.0000000000000000000000000000000000000000000000000000000000000"
+            "00000000000000000000000000000000000000000000000000000000000000"
+            "00000000000000000000000000000000000000000000000000000000000000"
+            "00000000000000000000000000000000000000000000000000000000000000"
+            "00000000000000000000000000000000000000000000000000000000000000"
+            "0000000000000000000000000000000000000000000000000000000000001",
+            0.0}}) {
+    ASSERT_EQ(
+        obelisk_rt_v1_string_create(lane, text.data(), text.size(), &input),
+        OBELISK_RT_OK);
+    double real = -1.0;
+    ASSERT_EQ(obelisk_rt_v1_string_parse_real_constant(input, &real),
+              OBELISK_RT_OK);
+    EXPECT_DOUBLE_EQ(real, expected) << text;
+  }
+  // A $sscanf floating-point field is not limited to real-constant syntax.
+  for (auto [text, expected] :
+       std::initializer_list<std::pair<std::string_view, double>>{
+           {" 3.2_5junk", 3.25}, {"-1.5", -1.5}, {".5", 0.5}}) {
+    ASSERT_EQ(
+        obelisk_rt_v1_string_create(lane, text.data(), text.size(), &input),
+        OBELISK_RT_OK);
+    double real = 0.0;
+    ASSERT_EQ(obelisk_rt_v1_string_parse_real(input, &real), OBELISK_RT_OK);
+    EXPECT_DOUBLE_EQ(real, expected) << text;
+  }
 
   auto expectString = [&](obelisk_rt_string_v1 string,
                           std::string_view expected) {

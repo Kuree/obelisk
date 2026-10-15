@@ -2539,6 +2539,88 @@ obelisk_rt_v1_string_parse_real(obelisk_rt_string_v1 string, double *outValue) {
 }
 
 extern "C" obelisk_rt_status
+obelisk_rt_v1_string_parse_real_constant(obelisk_rt_string_v1 string,
+                                         double *outValue) {
+  if (!outValue)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outValue = 0.0;
+  StringView view;
+  obelisk_rt_status status = readString(string, view);
+  if (status != OBELISK_RT_OK)
+    return status;
+  // IEEE 1800-2023 6.16.10 scans the real-constant syntax of 5.7.2,
+  //   unsigned_number [. unsigned_number] [exp [sign] unsigned_number],
+  // and stops before the first character that cannot extend it. White space,
+  // a sign and a leading decimal point never conform, and a fraction or an
+  // exponent without its digits is not part of the constant.
+  auto isDigit = [&](uint64_t index) {
+    return index < view.size && view.bytes[index] >= '0' &&
+           view.bytes[index] <= '9';
+  };
+  auto scanNumber = [&](uint64_t index) {
+    if (!isDigit(index))
+      return index;
+    while (isDigit(index) || (index < view.size && view.bytes[index] == '_'))
+      ++index;
+    return index;
+  };
+  uint64_t end = scanNumber(0);
+  if (end == 0)
+    return OBELISK_RT_OK;
+  if (end < view.size && view.bytes[end] == '.')
+    if (uint64_t fraction = scanNumber(end + 1); fraction != end + 1)
+      end = fraction;
+  bool negativeExponent = false;
+  if (end < view.size && (view.bytes[end] == 'e' || view.bytes[end] == 'E')) {
+    uint64_t exponent = end + 1;
+    bool negative = exponent < view.size && view.bytes[exponent] == '-';
+    if (exponent < view.size &&
+        (view.bytes[exponent] == '+' || view.bytes[exponent] == '-'))
+      ++exponent;
+    if (uint64_t digits = scanNumber(exponent); digits != exponent) {
+      end = digits;
+      negativeExponent = negative;
+    }
+  }
+  OBELISK_RT_TRY {
+    std::string spelling;
+    spelling.reserve(static_cast<size_t>(end));
+    for (uint64_t index = 0; index != end; ++index)
+      if (view.bytes[index] != '_')
+        spelling.push_back(view.bytes[index]);
+    double value = 0.0;
+    auto parsed =
+        std::from_chars(spelling.data(), spelling.data() + spelling.size(),
+                        value, std::chars_format::general);
+    if (parsed.ec == std::errc{}) {
+      *outValue = value;
+    } else if (parsed.ec == std::errc::result_out_of_range) {
+      // A conforming spelling is out of range only by magnitude, which the
+      // decimal exponent of its leading nonzero digit decides: it rounds to
+      // infinity above the largest double and to zero below the smallest.
+      size_t exponentStart = spelling.find_first_of("eE");
+      std::string_view mantissa(spelling.data(),
+                                std::min(exponentStart, spelling.size()));
+      size_t point = std::min(mantissa.find('.'), mantissa.size());
+      size_t leading = mantissa.find_first_of("123456789");
+      int64_t magnitude = leading < point
+                              ? static_cast<int64_t>(point - leading) - 1
+                              : -static_cast<int64_t>(leading - point);
+      int64_t exponent = 0;
+      if (exponentStart != std::string::npos)
+        for (char digit : std::string_view(spelling).substr(exponentStart + 1))
+          if (digit >= '0' && digit <= '9')
+            exponent = std::min<int64_t>(exponent * 10 + (digit - '0'),
+                                         int64_t{1} << 40);
+      magnitude += negativeExponent ? -exponent : exponent;
+      *outValue = magnitude > 0 ? std::numeric_limits<double>::infinity() : 0.0;
+    }
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+}
+
+extern "C" obelisk_rt_status
 obelisk_rt_v1_string_format_integer(obelisk_rt_gc_lane_v1 *lane, uint64_t value,
                                     uint32_t radix, uint32_t isSigned,
                                     obelisk_rt_string_v1 *outString) {

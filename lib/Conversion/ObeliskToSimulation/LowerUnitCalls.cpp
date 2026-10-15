@@ -1853,7 +1853,7 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         FailureOr<Value> input = receiver();
         if (failed(input))
           return failure();
-        return result(sim::SimStringParseRealOp::create(
+        return result(sim::SimStringParseRealConstantOp::create(
             builder, location, builder.getF64Type(), *input));
       }
       if ((name == "itoa" || name == "hextoa" || name == "octtoa" ||

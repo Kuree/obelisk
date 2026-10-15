@@ -1451,6 +1451,7 @@ bool validIntrinsic(const Image &image, const Function &function,
            output(0) && output(0)->kind == OBELISK_RT_DBREG_LOGIC &&
            output(0)->width == 64;
   case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL:
+  case OBELISK_RT_INTRINSIC_V1_STRING_PARSE_REAL_CONSTANT:
     return signature.flags == 0 && site.inputCount == 1 &&
            site.outputCount == 1 && string(input(0)) && output(0) &&
            output(0)->kind == OBELISK_RT_DBREG_REAL64;
