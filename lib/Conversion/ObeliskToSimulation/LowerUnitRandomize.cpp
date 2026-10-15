@@ -10613,7 +10613,11 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       Value fieldReference = sim::SimClassFieldRefOp::create(
           builder, location, fieldReferenceType, object, property.nestedField);
       if (property.isContainerSize) {
+        // A never-allocated container has no element metadata to copy;
+        // give it an empty allocation first (IEEE 1800-2023 18.4 resizes).
         FailureOr<Value> oldContainer = loadReference(fieldReference, location);
+        if (succeeded(oldContainer))
+          oldContainer = ensureSequentialContainer(*oldContainer, location);
         FailureOr<Value> scalarSize = toPackedScalar(candidate, location);
         FailureOr<Value> size =
             succeeded(scalarSize)
@@ -10632,6 +10636,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
     } else if (property.isContainerSize) {
       FailureOr<Value> oldContainer =
           loadReference(property.reference, location);
+      if (succeeded(oldContainer))
+        oldContainer = ensureSequentialContainer(*oldContainer, location);
       FailureOr<Value> scalarSize = toPackedScalar(candidate, location);
       FailureOr<Value> size =
           succeeded(scalarSize)

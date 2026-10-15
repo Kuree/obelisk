@@ -65,7 +65,8 @@ module {
 // CHECK: %[[OLD_SIZE:.*]] = simulation.container.size %[[ARRAY]]
 // CHECK: arith.cmpi sgt, {{.*}}, {{.*}} : i32
 // CHECK: arith.cmpi slt, {{.*}}, {{.*}} : i32
-// CHECK: %[[RESIZE_SOURCE:.*]] = simulation.managed.load {{.*}} -> !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>
+// CHECK: simulation.managed.load {{.*}} -> !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>
+// CHECK: ^{{bb[0-9]+}}(%[[RESIZE_SOURCE:[0-9]+]]: !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>):
 // CHECK: %[[RESIZED:.*]] = simulation.container.create_like %[[RESIZE_SOURCE]], %[[RESIZE_SOURCE]],
 // CHECK: simulation.managed.store %[[RESIZED]]
 // CHECK: %[[NEW_ARRAY:.*]] = simulation.managed.load {{.*}} -> !simulation.dynamic_array<!simulation.packed_array<7 : 0 x i1>>

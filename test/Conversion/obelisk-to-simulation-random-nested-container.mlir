@@ -154,7 +154,8 @@ module {
 // CHECK: arith.andi {{.*}}, %[[CHILD_SIZE_ENABLED]] : i1
 // CHECK: %[[COMMIT_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
 // CHECK: %[[COMMIT_ARRAY_REF:.*]] = simulation.class.field_ref %[[COMMIT_CHILD]][@__obelisk_class_s3_child_field_0]
-// CHECK: %[[COMMIT_OLD:.*]] = simulation.managed.load %[[COMMIT_ARRAY_REF]]
+// CHECK: simulation.managed.load %[[COMMIT_ARRAY_REF]]
+// CHECK: ^{{bb[0-9]+}}(%[[COMMIT_OLD:[0-9]+]]: !simulation.dynamic_array<
 // CHECK: %[[RESIZED:.*]] = simulation.container.create_like %[[COMMIT_OLD]], %[[COMMIT_OLD]],
 // CHECK: simulation.managed.store %[[RESIZED]] to %[[COMMIT_ARRAY_REF]]
 // CHECK: %[[ARRAY_CHILD:.*]] = simulation.managed.load %[[CHILD_REF]]
