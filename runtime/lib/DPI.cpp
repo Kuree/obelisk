@@ -9,6 +9,7 @@
 #include "svdpi.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -528,4 +529,64 @@ extern "C" int svIsDisabledState(void) {
 extern "C" void svAckDisabledState(void) {
   if (activeDpiCall && activeDpiCall->disabledState)
     activeDpiCall->disableAcknowledged = true;
+}
+
+namespace {
+
+// IEEE 1800-2023 H.13: the time unit and precision of a scope, or with a NULL
+// scope those of simulation time, which is the design's global precision.
+// They are the values vpi_get() reports for vpiTimeUnit and vpiTimePrecision.
+bool getScopeTimescale(const svScope scope, int32_t &unit, int32_t &precision) {
+  if (!activeDpiCall || !activeDpiCall->context->execution)
+    return false;
+  if (!scope) {
+    unit = precision = activeDpiCall->context->execution->dpi_time_precision;
+    return true;
+  }
+  DpiScopeHandle *handle = scopeFromOpaque(activeDpiCall, scope);
+  if (!handle)
+    return false;
+  unit = handle->timeUnit;
+  precision = handle->timePrecision;
+  return true;
+}
+
+} // namespace
+
+extern "C" int svGetTime(const svScope scope, svTimeVal *time) {
+  int32_t unit = 0;
+  int32_t precision = 0;
+  if (!time || !getScopeTimescale(scope, unit, precision))
+    return -1;
+  // As vpi_get_time(): simulation time counts ticks of the global precision,
+  // and scaled real time expresses them in the scope's time unit.
+  int32_t global = activeDpiCall->context->execution->dpi_time_precision;
+  uint64_t ticks = activeDpiCall->context->schedulerTime;
+  switch (time->type) {
+  case sv_sim_time:
+    time->high = static_cast<uint32_t>(ticks >> 32);
+    time->low = static_cast<uint32_t>(ticks);
+    time->real = 0.0;
+    return 0;
+  case sv_scaled_real_time:
+    time->high = 0;
+    time->low = 0;
+    time->real = static_cast<double>(
+        static_cast<long double>(ticks) *
+        std::pow(10.0L, static_cast<long double>(global - unit)));
+    return 0;
+  default:
+    return -1;
+  }
+}
+
+extern "C" int svGetTimeUnit(const svScope scope, int32_t *timeUnit) {
+  int32_t precision = 0;
+  return timeUnit && getScopeTimescale(scope, *timeUnit, precision) ? 0 : -1;
+}
+
+extern "C" int svGetTimePrecision(const svScope scope, int32_t *timePrecision) {
+  int32_t unit = 0;
+  return timePrecision && getScopeTimescale(scope, unit, *timePrecision) ? 0
+                                                                         : -1;
 }

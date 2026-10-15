@@ -1208,6 +1208,91 @@ TEST(RuntimeDPI, NoncontextBoundaryHasNoActiveCallState) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+obelisk_rt_status observeDpiTime(obelisk_rt_context *, uint32_t,
+                                 const obelisk_rt_import_input_v1 *, uint32_t,
+                                 obelisk_rt_import_output_v1 *, uint32_t,
+                                 void *userData) {
+  ++*static_cast<uint32_t *>(userData);
+  // IEEE 1800-2023 H.13: a scope reports its own time unit and precision; a
+  // NULL scope reports simulation time, whose unit is the global precision.
+  svScope top = svGetScope();
+  svScope child = svGetScopeFromName("top.child");
+  int32_t unit = 0;
+  int32_t precision = 0;
+  EXPECT_EQ(svGetTimeUnit(top, &unit), 0);
+  EXPECT_EQ(unit, -9);
+  EXPECT_EQ(svGetTimePrecision(top, &precision), 0);
+  EXPECT_EQ(precision, -12);
+  EXPECT_EQ(svGetTimeUnit(child, &unit), 0);
+  EXPECT_EQ(unit, -6);
+  EXPECT_EQ(svGetTimePrecision(child, &precision), 0);
+  EXPECT_EQ(precision, -9);
+  EXPECT_EQ(svGetTimeUnit(nullptr, &unit), 0);
+  EXPECT_EQ(unit, -12);
+  EXPECT_EQ(svGetTimePrecision(nullptr, &precision), 0);
+  EXPECT_EQ(precision, -12);
+
+  // Simulation time counts global-precision ticks; scaled real time is in
+  // the scope's time unit, like vpi_get_time().
+  svTimeVal time{sv_sim_time, 0, 0, 0.0};
+  EXPECT_EQ(svGetTime(child, &time), 0);
+  EXPECT_EQ(time.high, 0u);
+  EXPECT_EQ(time.low, 1500000u);
+  time.type = sv_scaled_real_time;
+  EXPECT_EQ(svGetTime(top, &time), 0);
+  EXPECT_DOUBLE_EQ(time.real, 1500.0);
+  EXPECT_EQ(svGetTime(child, &time), 0);
+  EXPECT_DOUBLE_EQ(time.real, 1.5);
+  EXPECT_EQ(svGetTime(nullptr, &time), 0);
+  EXPECT_DOUBLE_EQ(time.real, 1500000.0);
+
+  EXPECT_EQ(svGetTimeUnit(&unit, &unit), -1);
+  EXPECT_EQ(svGetTimeUnit(top, nullptr), -1);
+  time.type = vpiSuppressTime;
+  EXPECT_EQ(svGetTime(top, &time), -1);
+  return OBELISK_RT_OK;
+}
+
+TEST(RuntimeDPI, ReportsScopeTimeUnitsAndTime) {
+  static constexpr char topName[] = "top";
+  static constexpr char childName[] = "top.child";
+  const obelisk_rt_dpi_scope_v1 scopes[] = {
+      {0, UINT64_MAX, topName, sizeof(topName) - 1, -9, -12, 0},
+      {1, 0, childName, sizeof(childName) - 1, -6, -9, 0},
+  };
+  obelisk_rt_execution_descriptor_v1 execution{
+      OBELISK_RT_VERSION, 0,   0, nullptr, 0, nullptr, 0, 0, 0, scopes,
+      std::size(scopes),  -12, 0,
+  };
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  constexpr std::string_view name = "time";
+  uint32_t importID = obelisk_rt_v1_import_id(
+      reinterpret_cast<const uint8_t *>(name.data()), name.size());
+  uint32_t calls = 0;
+  ASSERT_EQ(obelisk_rt_v1_context_register_import(context, importID,
+                                                  observeDpiTime, &calls),
+            OBELISK_RT_OK);
+  context->schedulerTime = 1500000;
+  obelisk_rt_import_site_v1 site{OBELISK_RT_VERSION,
+                                 OBELISK_RT_IMPORT_CONTEXT,
+                                 importID,
+                                 0,
+                                 0,
+                                 nullptr,
+                                 0,
+                                 0,
+                                 0};
+  EXPECT_EQ(obelisk_rt_v1_import_call(context, &site, nullptr, 0, nullptr, 0),
+            OBELISK_RT_OK);
+  EXPECT_EQ(calls, 1u);
+  // Outside a context call there is no scope or simulation time to report.
+  int32_t unit = 0;
+  EXPECT_EQ(svGetTimeUnit(nullptr, &unit), -1);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(RuntimeDPI, AggregatePlanSupportsDeepLegalNesting) {
   constexpr uint64_t depth = 65;
   std::vector<int64_t> plan;

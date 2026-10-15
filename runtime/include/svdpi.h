@@ -65,6 +65,26 @@ typedef uint32_t svBitVecVal;
              : (((VALUE) & (1U << (N))) ? ((VALUE) | ~SV_MASK(N))              \
                                         : ((VALUE) & SV_MASK(N))))
 
+#ifndef VPI_TIME
+#define VPI_TIME
+typedef struct t_vpi_time {
+  int32_t type;
+  uint32_t high, low;
+  double real;
+} s_vpi_time, *p_vpi_time;
+
+#define vpiScaledRealTime 1
+#define vpiSimTime 2
+#define vpiSuppressTime 3
+#endif
+
+/* time value */
+typedef s_vpi_time svTimeVal;
+
+/* time value types */
+#define sv_scaled_real_time vpiScaledRealTime
+#define sv_sim_time vpiSimTime
+
 typedef void *svScope;
 typedef void *svOpenArrayHandle;
 
@@ -166,6 +186,9 @@ XXTERN void *svGetUserData(const svScope scope, void *userKey);
 XXTERN int svGetCallerInfo(const char **fileName, int *lineNumber);
 XXTERN int svIsDisabledState(void);
 XXTERN void svAckDisabledState(void);
+XXTERN int svGetTime(const svScope scope, svTimeVal *time);
+XXTERN int svGetTimeUnit(const svScope scope, int32_t *time_unit);
+XXTERN int svGetTimePrecision(const svScope scope, int32_t *time_precision);
 
 #undef DPI_EXTERN
 #undef DPI_PROTOTYPES
