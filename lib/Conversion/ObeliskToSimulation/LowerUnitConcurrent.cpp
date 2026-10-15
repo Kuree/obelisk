@@ -4574,11 +4574,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           llvm::any_of(*rhs, [](const FixedSequence &alternative) {
             return alternative.ages.size() > 1;
           })));
+    // An expect statement evaluates exactly one attempt, so it walks one
+    // deterministic antecedent directly instead of coalescing source ages.
     bool useSourceAgeCoalescer =
         lhs->size() == 1 && sourceAttemptCanRemainPending &&
         (antecedentAlternativeAdmissionCount > 1 ||
          lhs->front().ages.size() > 1) &&
-        !localInstance && !ordinaryBranchingConsequentAfterMinimization;
+        !localInstance && !expectMonitor &&
+        !ordinaryBranchingConsequentAfterMinimization;
     if (lhs->size() == 1 && !useSourceAgeCoalescer)
       antecedentSequence = std::move(lhs->front());
     else
@@ -4728,7 +4731,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            });
   };
   bool expectOneCycleBoolean =
-      expectMonitor &&
+      expectMonitor && !implication &&
       (branchingSequence
            ? llvm::all_of(sequenceAlternatives, isOneCycleExpectSequence)
            : isOneCycleExpectSequence(sequence));
@@ -4736,7 +4739,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       expectMonitor && branchingSequence &&
       llvm::all_of(sequenceAlternatives, isBoundedBranchingExpectSequence);
   bool expectHasIntrinsicEndStrength =
-      expectMonitor &&
+      expectMonitor && !implication &&
       (sequence.hasIntrinsicEndStrength ||
        llvm::any_of(sequenceAlternatives, [](const FixedSequence &alternative) {
          return alternative.hasIntrinsicEndStrength;
@@ -4861,6 +4864,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       antecedentSequence.ages.front().matchItems.empty() &&
       antecedentSequence.ages.front().caseGuards.empty();
   if (temporalNegation && implication && !branchingAntecedent &&
+      !expectMonitor &&
       (antecedentSequence.ages.size() != 1 ||
        antecedentSequence.vacuousSuccess ||
        !antecedentSequence.firstMatchBoundaries.empty() ||
@@ -5083,7 +5087,18 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
 
   if (expectMonitor) {
-    if (localInstance || implication || disable ||
+    // IEEE 1800-2023 16.17 admits any property. One attempt over a
+    // deterministic antecedent and consequent is an ordered walk below.
+    bool expectDeterministicImplication =
+        implication && !branchingAntecedent && !branchingConsequent &&
+        !hasPersistentDelay && !hasPersistentUnary && !hasPersistentUntil &&
+        !hasPersistentRepetition && !antecedentSequence.ages.empty() &&
+        !antecedentSequence.vacuousSuccess && !sequence.vacuousSuccess &&
+        antecedentSequence.firstMatchBoundaries.empty() &&
+        (!sequence.hasIntrinsicEndStrength ||
+         consequentUniformIntrinsicEndStrong.has_value());
+    if (localInstance || (implication && !expectDeterministicImplication) ||
+        disable ||
         (branchingSequence && !expectBoundedBranching) ||
         !sequence.firstMatchBoundaries.empty() ||
         llvm::any_of(sequence.ages,
@@ -5100,10 +5115,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                      }))
       return emitError(location)
                  << "expect currently requires one deterministic fixed "
-                    "sequence, optionally with outer first_match, or bounded "
-                    "alternatives with at most one outer first_match and "
-                    "without locals, implication/followed-by, disable iff, "
-                    "or match items",
+                    "sequence, optionally with outer first_match, bounded "
+                    "alternatives with at most one outer first_match, or an "
+                    "implication/followed-by between deterministic "
+                    "sequences, without locals, disable iff, or match items",
              failure();
     auto donePath = sim::get<sim::metadata::ExpectDonePath>(op);
     auto resultPath = sim::get<sim::metadata::ExpectResultPath>(op);
@@ -5154,6 +5169,26 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         builder, location,
         sim::RefType::get(function.getContext(), builder.getI1Type()),
         expectNotDone);
+    // A started evaluation still pending at the end of simulation completes
+    // with its operand's strength (IEEE 1800-2023 16.12.2). An implication is
+    // vacuously true and a followed-by false while its antecedent is pending;
+    // once the consequent starts, the consequent's strength decides.
+    bool expectOperandStrong =
+        implication ? (sequence.hasIntrinsicEndStrength
+                           ? *consequentUniformIntrinsicEndStrong
+                           : true)
+                    : expectEndStrong.value_or(true);
+    auto pendingOuterResult = [&](bool operandResult) {
+      return temporalNegation ? !operandResult : operandResult;
+    };
+    Value expectPendingStorage;
+    if (implication)
+      expectPendingStorage = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), builder.getI1Type()),
+          arith::ConstantOp::create(
+              builder, location, builder.getI1Type(),
+              builder.getBoolAttr(pendingOuterResult(!followedBy))));
     auto design = function->getParentOfType<sim::SimDesignOp>();
     if (!design)
       return function.emitError(
@@ -5185,6 +5220,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     Value context = function.getBody().front().getArgument(0);
     SmallVector<Value> finalCaptures{context, completed, resultStorage,
                                      expectDoneStorage, expectStartedStorage};
+    if (expectPendingStorage)
+      finalCaptures.push_back(expectPendingStorage);
     SmallVector<Type> finalInputs;
     SmallVector<DictionaryAttr> finalArgumentAttrs;
     for (auto [index, capture] : llvm::enumerate(finalCaptures)) {
@@ -5240,7 +5277,6 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     SymbolTable::setSymbolVisibility(finalCoordinator,
                                      SymbolTable::Visibility::Private);
     sim::mark<sim::metadata::ExpectEosCoordinator>(finalCoordinator);
-    bool expectOperandStrong = expectEndStrong.value_or(true);
     bool expectOuterStrong =
         temporalNegation ? !expectOperandStrong : expectOperandStrong;
     if (endStrength || temporalNegation) {
@@ -5276,9 +5312,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     cf::CondBranchOp::create(checkBuilder, location, wasStarted,
                              completePending, alreadyComplete);
     OpBuilder completeBuilder = OpBuilder::atBlockEnd(completePending);
-    Value finalResult = arith::ConstantOp::create(
-        completeBuilder, location, builder.getI1Type(),
-        completeBuilder.getBoolAttr(!expectOuterStrong));
+    Value finalResult =
+        expectPendingStorage
+            ? Value(sim::SimRefLoadOp::create(completeBuilder, location,
+                                              builder.getI1Type(),
+                                              finalEntry.getArgument(5)))
+            : Value(arith::ConstantOp::create(
+                  completeBuilder, location, builder.getI1Type(),
+                  completeBuilder.getBoolAttr(!expectOuterStrong)));
     sim::SimRefStoreOp::create(completeBuilder, location, finalResult,
                                finalEntry.getArgument(2));
     Value nowComplete = arith::ConstantOp::create(
@@ -5312,6 +5353,94 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       sim::SimRefStoreOp::create(builder, location, started,
                                  expectStartedStorage);
     };
+    // One clock tick's sampled match of a sequence age. Alternatives sampled
+    // at the same tick share `cache`, so a common predicate, case selector or
+    // case guard is evaluated once.
+    struct ExpectAgeCache {
+      DenseMap<Operation *, Value> predicates;
+      DenseMap<Attribute, Value> symbols;
+      DenseMap<std::pair<Operation *, Operation *>, Value> caseGuards;
+      DenseMap<Operation *, Value> selectors;
+    };
+    auto evaluateExpectAge = [&](const FixedSequenceAge &age,
+                                 ExpectAgeCache &cache) -> FailureOr<Value> {
+      Value trueValue = arith::ConstantOp::create(
+          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+      Value result = trueValue;
+      auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
+        if (auto found = cache.predicates.find(predicate);
+            found != cache.predicates.end())
+          return found->second;
+        Attribute referencedSymbol;
+        if (isa<semantic::SVNamedValueExpressionOp,
+                semantic::SVHierarchicalValueExpressionOp>(predicate))
+          referencedSymbol = predicate->getAttr("referenced_symbol");
+        if (referencedSymbol) {
+          if (auto found = cache.symbols.find(referencedSymbol);
+              found != cache.symbols.end()) {
+            cache.predicates[predicate] = found->second;
+            return found->second;
+          }
+        }
+        FailureOr<Value> value = lowerExpression(predicate);
+        if (failed(value))
+          return failure();
+        FailureOr<Value> truth =
+            truthValue(*value, getSemanticLocation(predicate));
+        if (failed(truth))
+          return failure();
+        cache.predicates[predicate] = *truth;
+        if (referencedSymbol)
+          cache.symbols[referencedSymbol] = *truth;
+        return *truth;
+      };
+      for (Operation *predicate : age.predicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        result = arith::AndIOp::create(builder, location, result, *truth);
+      }
+      for (Operation *predicate : age.negatedPredicates) {
+        FailureOr<Value> truth = evaluatePredicate(predicate);
+        if (failed(truth))
+          return failure();
+        Value negated =
+            arith::XOrIOp::create(builder, location, *truth, trueValue);
+        result = arith::AndIOp::create(builder, location, result, negated);
+      }
+      for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
+        std::pair<Operation *, Operation *> key{guard.selector, guard.label};
+        Value matched;
+        if (auto found = cache.caseGuards.find(key);
+            found != cache.caseGuards.end()) {
+          matched = found->second;
+        } else {
+          Value selector;
+          if (auto found = cache.selectors.find(guard.selector);
+              found != cache.selectors.end()) {
+            selector = found->second;
+          } else {
+            FailureOr<Value> lowered = lowerExpression(guard.selector);
+            if (failed(lowered))
+              return failure();
+            selector = *lowered;
+            cache.selectors[guard.selector] = selector;
+          }
+          FailureOr<Value> comparison =
+              lowerCaseLabel(selector, selector.getType(), guard.selector,
+                             guard.label, semantic::SVCaseCondition::Normal);
+          if (failed(comparison) || !comparison->getType().isInteger(1))
+            return failure();
+          matched = *comparison;
+          cache.caseGuards[key] = matched;
+        }
+        if (guard.negated)
+          matched =
+              arith::XOrIOp::create(builder, location, matched, trueValue);
+        result = arith::AndIOp::create(builder, location, result, matched);
+      }
+      return result;
+    };
 
     if (expectOneCycleBoolean) {
       if (branchingSequence)
@@ -5332,87 +5461,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       markExpectStarted();
       Value falseValue = arith::ConstantOp::create(
           builder, location, builder.getI1Type(), builder.getBoolAttr(false));
-      Value trueValue = arith::ConstantOp::create(
-          builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-      DenseMap<Operation *, Value> predicateCache;
-      DenseMap<Attribute, Value> symbolicPredicateCache;
-      DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
-      DenseMap<Operation *, Value> caseSelectorCache;
-      auto evaluateAge = [&](const FixedSequenceAge &age) -> FailureOr<Value> {
-        Value result = trueValue;
-        auto evaluatePredicate = [&](Operation *predicate) -> FailureOr<Value> {
-          if (auto found = predicateCache.find(predicate);
-              found != predicateCache.end())
-            return found->second;
-          Attribute referencedSymbol;
-          if (isa<semantic::SVNamedValueExpressionOp,
-                  semantic::SVHierarchicalValueExpressionOp>(predicate))
-            referencedSymbol = predicate->getAttr("referenced_symbol");
-          if (referencedSymbol) {
-            if (auto found = symbolicPredicateCache.find(referencedSymbol);
-                found != symbolicPredicateCache.end()) {
-              predicateCache[predicate] = found->second;
-              return found->second;
-            }
-          }
-          FailureOr<Value> value = lowerExpression(predicate);
-          if (failed(value))
-            return failure();
-          FailureOr<Value> truth =
-              truthValue(*value, getSemanticLocation(predicate));
-          if (failed(truth))
-            return failure();
-          predicateCache[predicate] = *truth;
-          if (referencedSymbol)
-            symbolicPredicateCache[referencedSymbol] = *truth;
-          return *truth;
-        };
-        for (Operation *predicate : age.predicates) {
-          FailureOr<Value> truth = evaluatePredicate(predicate);
-          if (failed(truth))
-            return failure();
-          result = arith::AndIOp::create(builder, location, result, *truth);
-        }
-        for (Operation *predicate : age.negatedPredicates) {
-          FailureOr<Value> truth = evaluatePredicate(predicate);
-          if (failed(truth))
-            return failure();
-          Value negated =
-              arith::XOrIOp::create(builder, location, *truth, trueValue);
-          result = arith::AndIOp::create(builder, location, result, negated);
-        }
-        for (const FixedSequenceAge::CaseGuard &guard : age.caseGuards) {
-          std::pair<Operation *, Operation *> key{guard.selector, guard.label};
-          Value matched;
-          if (auto found = caseGuardCache.find(key);
-              found != caseGuardCache.end()) {
-            matched = found->second;
-          } else {
-            Value selector;
-            if (auto found = caseSelectorCache.find(guard.selector);
-                found != caseSelectorCache.end()) {
-              selector = found->second;
-            } else {
-              FailureOr<Value> lowered = lowerExpression(guard.selector);
-              if (failed(lowered))
-                return failure();
-              selector = *lowered;
-              caseSelectorCache[guard.selector] = selector;
-            }
-            FailureOr<Value> comparison =
-                lowerCaseLabel(selector, selector.getType(), guard.selector,
-                               guard.label, semantic::SVCaseCondition::Normal);
-            if (failed(comparison) || !comparison->getType().isInteger(1))
-              return failure();
-            matched = *comparison;
-            caseGuardCache[key] = matched;
-          }
-          if (guard.negated)
-            matched =
-                arith::XOrIOp::create(builder, location, matched, trueValue);
-          result = arith::AndIOp::create(builder, location, result, matched);
-        }
-        return result;
+      ExpectAgeCache cache;
+      auto evaluateAge = [&](const FixedSequenceAge &age) {
+        return evaluateExpectAge(age, cache);
       };
 
       Value successAny = falseValue;
@@ -5475,89 +5526,9 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                      expectZero);
         Value successAny = falseValue;
         Value continueAny = falseValue;
-        DenseMap<Operation *, Value> predicateCache;
-        DenseMap<Attribute, Value> symbolicPredicateCache;
-        DenseMap<std::pair<Operation *, Operation *>, Value> caseGuardCache;
-        DenseMap<Operation *, Value> caseSelectorCache;
-        auto evaluateAge =
-            [&](const FixedSequenceAge &sequenceAge) -> FailureOr<Value> {
-          Value result = trueValue;
-          auto evaluatePredicate =
-              [&](Operation *predicate) -> FailureOr<Value> {
-            if (auto found = predicateCache.find(predicate);
-                found != predicateCache.end())
-              return found->second;
-            Attribute referencedSymbol;
-            if (isa<semantic::SVNamedValueExpressionOp,
-                    semantic::SVHierarchicalValueExpressionOp>(predicate))
-              referencedSymbol = predicate->getAttr("referenced_symbol");
-            if (referencedSymbol) {
-              if (auto found = symbolicPredicateCache.find(referencedSymbol);
-                  found != symbolicPredicateCache.end()) {
-                predicateCache[predicate] = found->second;
-                return found->second;
-              }
-            }
-            FailureOr<Value> value = lowerExpression(predicate);
-            if (failed(value))
-              return failure();
-            FailureOr<Value> truth =
-                truthValue(*value, getSemanticLocation(predicate));
-            if (failed(truth))
-              return failure();
-            predicateCache[predicate] = *truth;
-            if (referencedSymbol)
-              symbolicPredicateCache[referencedSymbol] = *truth;
-            return *truth;
-          };
-          for (Operation *predicate : sequenceAge.predicates) {
-            FailureOr<Value> truth = evaluatePredicate(predicate);
-            if (failed(truth))
-              return failure();
-            result = arith::AndIOp::create(builder, location, result, *truth);
-          }
-          for (Operation *predicate : sequenceAge.negatedPredicates) {
-            FailureOr<Value> truth = evaluatePredicate(predicate);
-            if (failed(truth))
-              return failure();
-            Value negated =
-                arith::XOrIOp::create(builder, location, *truth, trueValue);
-            result = arith::AndIOp::create(builder, location, result, negated);
-          }
-          for (const FixedSequenceAge::CaseGuard &guard :
-               sequenceAge.caseGuards) {
-            std::pair<Operation *, Operation *> key{guard.selector,
-                                                    guard.label};
-            Value matched;
-            if (auto found = caseGuardCache.find(key);
-                found != caseGuardCache.end()) {
-              matched = found->second;
-            } else {
-              Value selector;
-              if (auto found = caseSelectorCache.find(guard.selector);
-                  found != caseSelectorCache.end()) {
-                selector = found->second;
-              } else {
-                FailureOr<Value> lowered = lowerExpression(guard.selector);
-                if (failed(lowered))
-                  return failure();
-                selector = *lowered;
-                caseSelectorCache[guard.selector] = selector;
-              }
-              FailureOr<Value> comparison = lowerCaseLabel(
-                  selector, selector.getType(), guard.selector, guard.label,
-                  semantic::SVCaseCondition::Normal);
-              if (failed(comparison) || !comparison->getType().isInteger(1))
-                return failure();
-              matched = *comparison;
-              caseGuardCache[key] = matched;
-            }
-            if (guard.negated)
-              matched =
-                  arith::XOrIOp::create(builder, location, matched, trueValue);
-            result = arith::AndIOp::create(builder, location, result, matched);
-          }
-          return result;
+        ExpectAgeCache cache;
+        auto evaluateAge = [&](const FixedSequenceAge &sequenceAge) {
+          return evaluateExpectAge(sequenceAge, cache);
         };
 
         for (auto [alternativeIndex, alternative] :
@@ -5615,50 +5586,60 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         ageWait = nextWait;
       }
     } else {
-      for (auto [age, sequenceAge] : llvm::enumerate(sequence.ages)) {
-        Block *sample = addBlock();
+      // A deterministic sequence is one ordered walk of sampled ages. An
+      // implication (IEEE 1800-2023 16.12.7) or followed-by (16.12.9) walks
+      // its antecedent first: a mismatch there is vacuous success for
+      // implication and failure for followed-by. The consequent starts on
+      // the antecedent's last tick, or one clock later for |=> and #=#.
+      struct ExpectStep {
+        const FixedSequenceAge *age;
+        Block *mismatch;
+        bool waitsForClock;
+      };
+      SmallVector<ExpectStep> steps;
+      size_t consequentStep = 0;
+      if (implication) {
+        for (const FixedSequenceAge &age : antecedentSequence.ages)
+          steps.push_back(
+              {&age, followedBy ? failureBlock : successBlock, true});
+        consequentStep = steps.size();
+      }
+      for (auto [index, age] : llvm::enumerate(sequence.ages))
+        steps.push_back({&age, failureBlock,
+                         !implication || index != 0 || nonoverlapped});
+      // An overlapped consequent samples the antecedent's tick, so it reuses
+      // that tick's evaluated predicates.
+      ExpectAgeCache cache;
+      for (auto [index, step] : llvm::enumerate(steps)) {
         setCurrent(wait);
-        if (failed(emitEventSuspend(clock, sample)))
-          return failure();
-        wait->getTerminator()->setAttr(
-            "resume_region",
-            sim::EventRegionAttr::get(function.getContext(),
-                                      sim::EventRegion::Observed));
-        setCurrent(sample);
-        if (age == 0) {
+        if (implication && index == consequentStep) {
+          Value pending = arith::ConstantOp::create(
+              builder, location, builder.getI1Type(),
+              builder.getBoolAttr(pendingOuterResult(!expectOperandStrong)));
+          sim::SimRefStoreOp::create(builder, location, pending,
+                                     expectPendingStorage);
+        }
+        if (step.waitsForClock) {
+          cache = ExpectAgeCache{};
+          Block *sample = addBlock();
+          if (failed(emitEventSuspend(clock, sample)))
+            return failure();
+          wait->getTerminator()->setAttr(
+              "resume_region",
+              sim::EventRegionAttr::get(function.getContext(),
+                                        sim::EventRegion::Observed));
+          setCurrent(sample);
+        }
+        if (index == 0) {
           emitEvaluationCoverageHit();
           markExpectStarted();
         }
-        Value matches = arith::ConstantOp::create(
-            builder, location, builder.getI1Type(), builder.getBoolAttr(true));
-        for (Operation *predicate : sequenceAge.predicates) {
-          FailureOr<Value> value = lowerExpression(predicate);
-          if (failed(value))
-            return failure();
-          FailureOr<Value> truth =
-              truthValue(*value, getSemanticLocation(predicate));
-          if (failed(truth))
-            return failure();
-          matches = arith::AndIOp::create(builder, location, matches, *truth);
-        }
-        for (Operation *predicate : sequenceAge.negatedPredicates) {
-          FailureOr<Value> value = lowerExpression(predicate);
-          if (failed(value))
-            return failure();
-          FailureOr<Value> truth =
-              truthValue(*value, getSemanticLocation(predicate));
-          if (failed(truth))
-            return failure();
-          Value negated = arith::XOrIOp::create(
-              builder, location, *truth,
-              arith::ConstantOp::create(builder, location, builder.getI1Type(),
-                                        builder.getBoolAttr(true)));
-          matches = arith::AndIOp::create(builder, location, matches, negated);
-        }
-        Block *matched =
-            age + 1 == sequence.ages.size() ? successBlock : addBlock();
-        cf::CondBranchOp::create(builder, location, matches, matched,
-                                 ValueRange{}, failureBlock, ValueRange{});
+        FailureOr<Value> matches = evaluateExpectAge(*step.age, cache);
+        if (failed(matches))
+          return failure();
+        Block *matched = index + 1 == steps.size() ? successBlock : addBlock();
+        cf::CondBranchOp::create(builder, location, *matches, matched,
+                                 ValueRange{}, step.mismatch, ValueRange{});
         wait = matched;
       }
     }
