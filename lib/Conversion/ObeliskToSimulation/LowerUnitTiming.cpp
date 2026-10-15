@@ -220,6 +220,13 @@ bool UnitLowering::hasWatchableSignalHandle(Operation *expression) {
     if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
             *sourceType))
       return false;
+    // A virtual-interface member selects another instance's storage when the
+    // interface handle changes (IEEE 1800-2023 25.9). Unless only one
+    // instance can be selected, its observer watches the handle and every
+    // storage the member can select.
+    if (isa<sim::VirtualInterfaceType>(*sourceType) &&
+        selectsAmongVirtualInterfaceTargets(node))
+      return false;
     if (!sim::getPackedWidth(*sourceType))
       unpackedStep = true;
     node = children.front();
@@ -1715,7 +1722,11 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
     setCurrent(bodyBlock);
     return lowerStatement(children[1]);
   }
-  if (stableDependencies.size() != 1 ||
+  // A virtual-interface member that can select several instances' storage
+  // depends on the interface handle as well (IEEE 1800-2023 25.9), so one
+  // storage cannot decide the condition.
+  if (selectsAmongVirtualInterfaceTargets(children[0]) ||
+      stableDependencies.size() != 1 ||
       isa<sim::ManagedWatchType>(stableDependencies.front().getType()) ||
       !isAddressableExpression(children[0]) ||
       !storageDecidesTruth(children[0])) {

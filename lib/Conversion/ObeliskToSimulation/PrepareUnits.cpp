@@ -665,14 +665,25 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
     bool sampled = false;
   };
   SmallVector<ObserverCandidate> observerCandidates;
-  auto isManagedMemberExpression = [&](Operation *expression) {
-    auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(expression);
-    SmallVector<Operation *> children =
-        member ? getChildren(member) : SmallVector<Operation *>{};
-    if (!member || children.size() != 1)
-      return false;
-    FailureOr<Type> receiver = getNormalizedSemanticType(children.front());
-    return succeeded(receiver) && isa<sim::ClassHandleType>(*receiver);
+  // A member read through a class handle or a virtual interface also depends
+  // on that receiver, which can later select another object or interface
+  // instance (IEEE 1800-2023 9.4.3, 25.9). Watching only the storage selected
+  // when the process suspends would miss that change.
+  auto readsThroughDynamicHandle = [&](Operation *expression) {
+    WalkResult result =
+        expression->walk([&](semantic::SVMemberAccessExpressionOp member) {
+          SmallVector<Operation *> children = getChildren(member);
+          if (children.empty())
+            return WalkResult::advance();
+          FailureOr<Type> receiver =
+              getNormalizedSemanticType(children.front());
+          return succeeded(receiver) &&
+                         isa<sim::ClassHandleType, sim::VirtualInterfaceType>(
+                             *receiver)
+                     ? WalkResult::interrupt()
+                     : WalkResult::advance();
+        });
+    return result.wasInterrupted();
   };
   const size_t ordinaryUnitCount = result.units.size();
   for (size_t unitIndex = 0; unitIndex != ordinaryUnitCount; ++unitIndex) {
@@ -740,7 +751,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         SmallVector<Operation *> children = getChildren(wait);
         if (children.size() == 2 &&
             (!isAddressableTimingExpression(children.front()) ||
-             isManagedMemberExpression(children.front()) ||
+             readsThroughDynamicHandle(children.front()) ||
              !storageDecidesTruth(children.front())))
           observerCandidates.push_back({children.front(), ObserverResult::Truth,
                                         "wait", unit.id, unit.hierarchy});
@@ -950,7 +961,7 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
           event.getEdgeKind() == semantic::EdgeKind::Change &&
           succeeded(primaryType) && isa<sim::StringType>(*primaryType) &&
           isAddressableTimingExpression(children.front()) &&
-          !isManagedMemberExpression(children.front()))
+          !readsThroughDynamicHandle(children.front()))
         return;
       if (succeeded(primaryType) && isa<sim::EventType>(*primaryType))
         primaryResult = ObserverResult::Event;

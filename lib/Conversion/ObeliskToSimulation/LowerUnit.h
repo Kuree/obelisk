@@ -219,6 +219,24 @@ private:
   lowerVirtualInterfaceReceiverMembers(::mlir::Operation *expression,
                                        ::mlir::Value interface,
                                        ::mlir::Location location);
+  /// The cached storage, net or driver handle of one virtual-interface target
+  /// descriptor, created at function entry so every use is dominated.
+  ::mlir::Value getVirtualInterfaceHandle(uint64_t descriptorID,
+                                          ::mlir::Type handleType,
+                                          ::mlir::Location location);
+  /// The descriptors that reading virtual-interface member `op` can select at
+  /// run time, with their handle type. Null when `op` reads no such storage
+  /// or net.
+  ::mlir::FailureOr<std::pair<
+      const ::mlir::SmallVector<std::pair<uint64_t, uint64_t>> *, ::mlir::Type>>
+  lookupVirtualInterfaceReadTargets(semantic::SVMemberAccessExpressionOp op);
+  /// The storage and net handles that reading virtual-interface member `op`
+  /// can select at run time.
+  ::mlir::FailureOr<::mlir::SmallVector<::mlir::Value>>
+  getVirtualInterfaceReadTargets(semantic::SVMemberAccessExpressionOp op);
+  /// Whether `expression` reads a virtual-interface member that can select
+  /// more than one storage, so its target changes with the interface handle.
+  bool selectsAmongVirtualInterfaceTargets(::mlir::Operation *expression);
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceClock(semantic::SVMemberAccessExpressionOp op,
                              ::mlir::Value interface);

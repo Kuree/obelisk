@@ -3310,6 +3310,108 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceReceiverMembers(
   return interface;
 }
 
+Value UnitLowering::getVirtualInterfaceHandle(uint64_t descriptorID,
+                                              Type handleType,
+                                              Location location) {
+  DenseMap<uint64_t, Value> &handleCache =
+      isa<sim::DriverType>(handleType) ? virtualInterfaceDriverHandles
+      : isa<sim::NetType>(handleType)  ? virtualInterfaceNetHandles
+                                       : virtualInterfaceStorageHandles;
+  Value &handle = handleCache[descriptorID];
+  if (handle)
+    return handle;
+  OpBuilder entryBuilder(function.getContext());
+  entryBuilder.setInsertionPointToStart(&function.getBody().front());
+  Value context = function.getBody().front().getArgument(0);
+  IntegerAttr descriptor = entryBuilder.getI64IntegerAttr(descriptorID);
+  if (isa<sim::DriverType>(handleType))
+    handle = sim::SimContextDriverOp::create(entryBuilder, location, handleType,
+                                             context, descriptor);
+  else if (isa<sim::NetType>(handleType))
+    handle = sim::SimContextNetOp::create(entryBuilder, location, handleType,
+                                          context, descriptor);
+  else
+    handle = sim::SimContextStorageOp::create(entryBuilder, location,
+                                              handleType, context, descriptor);
+  return handle;
+}
+
+FailureOr<std::pair<const UnitLowering::VirtualMemberTargets *, Type>>
+UnitLowering::lookupVirtualInterfaceReadTargets(
+    semantic::SVMemberAccessExpressionOp op) {
+  // A clocking variable reads its sample, which publishes its own update, and
+  // a clocking-block event is lowered to the selected clock.
+  std::pair<const VirtualMemberTargets *, Type> none{nullptr, Type{}};
+  SmallVector<Operation *> children = getChildren(op);
+  if (children.empty() || op->hasAttr("virtual_interface_clocking") ||
+      op->hasAttr("virtual_interface_clocking_block_event"))
+    return none;
+  FailureOr<Type> receiver = getNormalizedSemanticType(children.front());
+  auto interfaceType = succeeded(receiver)
+                           ? dyn_cast<sim::VirtualInterfaceType>(*receiver)
+                           : sim::VirtualInterfaceType{};
+  StringAttr member = op->getAttrOfType<StringAttr>("member_name");
+  FailureOr<Type> elementType = getNormalizedSemanticType(op);
+  if (!interfaceType || !member || failed(elementType) ||
+      isa<sim::VirtualInterfaceType>(*elementType))
+    return none;
+  if (auto members =
+          sim::get<sim::metadata::VirtualInterfaceReceiverMembers>(op)) {
+    for (auto projection :
+         members.getAsRange<sim::VirtualInterfaceMemberAttr>()) {
+      FailureOr<Type> selected = normalizeSemanticType(
+          semantic::VirtualInterfaceType::get(builder.getContext(),
+                                              projection.getInterface(),
+                                              builder.getStringAttr("")),
+          getSemanticLocation(op), function);
+      if (failed(selected) || !isa<sim::VirtualInterfaceType>(*selected))
+        return failure();
+      interfaceType = cast<sim::VirtualInterfaceType>(*selected);
+    }
+  }
+  ensureVirtualInterfaceInventory();
+  std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
+                     member.getValue())
+                        .str();
+  if (auto found = virtualInterfaceStorageMembers.find(key);
+      found != virtualInterfaceStorageMembers.end())
+    return std::pair<const VirtualMemberTargets *, Type>(
+        &found->second, sim::RefType::get(function.getContext(), *elementType));
+  if (auto found = virtualInterfaceNetMembers.find(key);
+      found != virtualInterfaceNetMembers.end())
+    return std::pair<const VirtualMemberTargets *, Type>(
+        &found->second, sim::NetType::get(function.getContext(), *elementType));
+  return none;
+}
+
+FailureOr<SmallVector<Value>> UnitLowering::getVirtualInterfaceReadTargets(
+    semantic::SVMemberAccessExpressionOp op) {
+  auto lookup = lookupVirtualInterfaceReadTargets(op);
+  if (failed(lookup))
+    return failure();
+  SmallVector<Value> handles;
+  auto [targets, handleType] = *lookup;
+  if (!targets)
+    return handles;
+  for (auto [scopeID, descriptorID] : *targets) {
+    (void)scopeID;
+    handles.push_back(getVirtualInterfaceHandle(descriptorID, handleType,
+                                                getSemanticLocation(op)));
+  }
+  return handles;
+}
+
+bool UnitLowering::selectsAmongVirtualInterfaceTargets(Operation *expression) {
+  WalkResult result =
+      expression->walk([&](semantic::SVMemberAccessExpressionOp member) {
+        auto lookup = lookupVirtualInterfaceReadTargets(member);
+        return failed(lookup) || (lookup->first && lookup->first->size() > 1)
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      });
+  return result.wasInterrupted();
+}
+
 FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
     semantic::SVMemberAccessExpressionOp op, Value interface, Type elementType,
     bool lvalue) {
@@ -3369,7 +3471,6 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   VirtualMemberTargets *targets = nullptr;
   Type selectedType;
   bool isNet = false;
-  bool isDriver = false;
   if (!compositeClockedRead) {
     if (auto found = virtualInterfaceStorageMembers.find(key);
         found != virtualInterfaceStorageMembers.end()) {
@@ -3393,7 +3494,6 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
         }
         targets = &drivers->second;
         selectedType = sim::DriverType::get(function.getContext(), elementType);
-        isDriver = true;
       } else {
         targets = &found->second;
         selectedType = sim::NetType::get(function.getContext(), elementType);
@@ -3441,32 +3541,11 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   SmallVector<Value> staticTargets;
   if (targets)
     staticTargets.reserve(targets->size());
-  DenseMap<uint64_t, Value> &handleCache =
-      isDriver ? virtualInterfaceDriverHandles
-      : isNet  ? virtualInterfaceNetHandles
-               : virtualInterfaceStorageHandles;
   if (!compositeClockedRead) {
     for (auto [scopeID, descriptorID] : *targets) {
       (void)scopeID;
-      Value selected = handleCache.lookup(descriptorID);
-      if (!selected) {
-        OpBuilder entryBuilder(function.getContext());
-        entryBuilder.setInsertionPointToStart(&function.getBody().front());
-        Value context = function.getBody().front().getArgument(0);
-        if (isDriver)
-          selected = sim::SimContextDriverOp::create(
-              entryBuilder, location, selectedType, context,
-              entryBuilder.getI64IntegerAttr(descriptorID));
-        else if (isNet)
-          selected = sim::SimContextNetOp::create(
-              entryBuilder, location, selectedType, context,
-              entryBuilder.getI64IntegerAttr(descriptorID));
-        else
-          selected = sim::SimContextStorageOp::create(
-              entryBuilder, location, selectedType, context,
-              entryBuilder.getI64IntegerAttr(descriptorID));
-        handleCache[descriptorID] = selected;
-      }
+      Value selected =
+          getVirtualInterfaceHandle(descriptorID, selectedType, location);
       staticTargets.push_back(selected);
       if (!lvalue) {
         if (!sensitivityExcluded)

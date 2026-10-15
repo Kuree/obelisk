@@ -1216,6 +1216,25 @@ FailureOr<Value> UnitLowering::bindObserver(
       }
       dependencies.push_back(*value);
     }
+  // IEEE 1800-2023 25.9: a member read through a virtual interface selects
+  // one interface instance's storage at a time, which no captured path names.
+  // Watch every storage it can select, so the evaluator runs again when the
+  // selected one changes; it also runs when the interface handle changes.
+  if (includeStaticDependencies) {
+    WalkResult walked =
+        expression->walk([&](semantic::SVMemberAccessExpressionOp member) {
+          FailureOr<SmallVector<Value>> targets =
+              getVirtualInterfaceReadTargets(member);
+          if (failed(targets))
+            return WalkResult::interrupt();
+          for (Value target : *targets)
+            if (!llvm::is_contained(dependencies, target))
+              dependencies.push_back(target);
+          return WalkResult::advance();
+        });
+    if (walked.wasInterrupted())
+      return failure();
+  }
   for (Value dependency : dynamicDependencies) {
     if (!isa<sim::EventType, sim::ManagedWatchType>(dependency.getType())) {
       emitError(location)

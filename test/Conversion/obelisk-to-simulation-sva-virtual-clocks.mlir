@@ -179,10 +179,14 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: simulation.assert.clock_occurrence.consume
 // CHECK: arith.select
 // CHECK: simulation.spawn @unit_1.fork.
+// va.clk selects either interface's clock, so the single-clock monitor
+// observes the edge of the selected value (IEEE 1800-2023 25.9).
 // CHECK-LABEL: simulation.func private @unit_2(
 // CHECK-NOT: simulation.multiclock_sequence_monitor
 // CHECK: simulation.virtual_interface.scope
-// CHECK: simulation.suspend.edge posedge
+// CHECK: simulation.observer.bind
+// CHECK: simulation.suspend.observe
+// CHECK-SAME: edges [1]
 // CHECK-NOT: simulation.spawn
 // CHECK-LABEL: simulation.func private @unit_3(
 // CHECK: simulation.virtual_interface.scope
