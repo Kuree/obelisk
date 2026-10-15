@@ -2983,6 +2983,28 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
   return true;
 }
 
+void obelisk_rt_prune_finished_process_parents_unlocked(
+    obelisk_rt_context *context) {
+  auto &links = context->finishedProcessParents;
+  if (links.empty())
+    return;
+  std::unordered_set<uint64_t> live;
+  auto keepChain = [&](uint64_t parent) {
+    for (auto link = links.find(parent);
+         link != links.end() && live.insert(parent).second;
+         link = links.find(parent))
+      parent = link->second;
+  };
+  for (const ScheduledProcess &process : context->scheduledProcesses)
+    if (process.instance)
+      keepChain(process.parent);
+  for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
+    if (!task.terminated)
+      keepChain(task.parent);
+  for (auto link = links.begin(); link != links.end();)
+    link = live.count(link->first) ? std::next(link) : links.erase(link);
+}
+
 obelisk_rt_status
 adoptScheduledSuspendUnlocked(obelisk_rt_context *context,
                               ScheduledProcess &scheduled,
@@ -3356,6 +3378,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               context->designPollCandidates.insert(task.id);
           }
         }
+        obelisk_rt_prune_finished_process_parents_unlocked(context);
         context->schedulerCompactionPending =
             context->schedulerDeadProcessCount != 0;
       }
@@ -5561,7 +5584,7 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               return OBELISK_RT_LAYOUT_MISMATCH;
             obelisk_rt_program_seal_unlocked(context);
           }
-          obelisk_rt_reparent_process_children_unlocked(
+          obelisk_rt_retire_process_parent_unlocked(
               context, kNativeLogicalProcessTag | token, scheduled.parent);
           context->terminatedNativeProcesses.insert(token, scheduled.random);
           updateScheduledProcessInstance(context, scheduled, nullptr);

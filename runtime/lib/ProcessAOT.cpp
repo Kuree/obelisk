@@ -1196,7 +1196,7 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
           return OBELISK_RT_LAYOUT_MISMATCH;
         obelisk_rt_program_seal_unlocked(context);
       }
-      obelisk_rt_reparent_process_children_unlocked(
+      obelisk_rt_retire_process_parent_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,
           scheduled.parent);
       context->terminatedNativeProcesses.insert(scheduled.token,

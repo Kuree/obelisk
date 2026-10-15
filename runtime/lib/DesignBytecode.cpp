@@ -3675,6 +3675,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
             changed = true;
           }
         }
+        changed |= obelisk_rt_add_finished_descendants_unlocked(
+            context, targets, contains);
         if (preservedActive != 0 && !contains(preservedActive) &&
             context->activeLogicalProcessToken == preservedActive &&
             contains(context->activeLogicalProcessParent)) {
@@ -3682,7 +3684,8 @@ obelisk_rt_status cancelLogicalProcessTree(obelisk_rt_context *context,
           changed = true;
         }
       }
-      if (!foundRoot)
+      // A finished root has nothing left to terminate but its descendants.
+      if (!foundRoot && !context->finishedProcessParents.count(root))
         return OBELISK_RT_INVALID_HANDLE;
       preserved = preservedActive != 0 && contains(preservedActive);
 
@@ -3868,7 +3871,11 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
       bool terminated =
           native ? context->terminatedNativeProcesses.count(nativeToken) != 0
                  : context->terminatedDesignTasks.count(logicalProcess) != 0;
-      if (terminated)
+      // IEEE 1800-2023 9.7: kill() of a FINISHED or KILLED process still
+      // terminates its live descendants.
+      if (terminated &&
+          (kind != OBELISK_RT_PROCESS_CONTROL_KILL ||
+           !context->finishedProcessParents.count(logicalProcess)))
         return OBELISK_RT_OK;
 
       activeProcess = context->activeLogicalProcessToken;
@@ -3974,6 +3981,8 @@ obelisk_rt_v1_scheduler_disable_children(obelisk_rt_context *context) {
             descendants.push_back(task.id);
             changed = true;
           }
+        changed |= obelisk_rt_add_finished_descendants_unlocked(
+            context, descendants, contains);
       }
 
       size_t nativeActivationCount = 0;
@@ -5830,8 +5839,8 @@ runOneDesignTaskImpl(obelisk_rt_context *context, uint32_t maximumRegion,
         } else {
           obelisk_rt_program_complete_unlocked(context, task.id,
                                                task.programOwner);
-          obelisk_rt_reparent_process_children_unlocked(context, task.id,
-                                                        task.parent);
+          obelisk_rt_retire_process_parent_unlocked(context, task.id,
+                                                    task.parent);
           context->terminatedDesignTasks.insert(task.id, task.random);
           releaseDesignTaskOwnedStatesUnlocked(context, task.id);
           obelisk_rt_release_controls_unlocked(context, task.controls);

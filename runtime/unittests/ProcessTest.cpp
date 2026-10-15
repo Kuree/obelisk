@@ -7567,23 +7567,42 @@ TEST(Scheduler, TerminatedJoinNoneParentsPreserveDescendantAncestry) {
   context->scheduledDesignTasks.push_back(std::move(designGrandchild));
   context->logicalProcessParentsWithChildren.insert(tag | 4);
 
-  obelisk_rt_reparent_process_children_unlocked(context, tag | 4, tag | 2);
-
+  // IEEE 1800-2023 9.6.1: the survivors stay children of the finished
+  // process, so they are not immediate children of its parent.
+  obelisk_rt_retire_process_parent_unlocked(context, tag | 4, tag | 2);
   EXPECT_EQ(context->scheduledProcesses[0].parent, tag | 1);
-  EXPECT_EQ(context->scheduledProcesses[1].parent, tag | 2);
-  EXPECT_EQ(context->scheduledDesignTasks[0].parent, tag | 2);
+  EXPECT_EQ(context->scheduledProcesses[1].parent, tag | 4);
+  EXPECT_EQ(context->scheduledDesignTasks[0].parent, tag | 4);
   EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 4), 0u);
-  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 2), 1u);
-  obelisk_rt_reparent_process_children_unlocked(context, tag | 2, 0);
-  EXPECT_EQ(context->scheduledProcesses[1].parent, 0u);
-  EXPECT_EQ(context->scheduledDesignTasks[0].parent, 0u);
-  EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  ASSERT_EQ(context->finishedProcessParents.count(tag | 4), 1u);
+  EXPECT_EQ(context->finishedProcessParents[tag | 4], tag | 2);
+
+  // Descendant collection from the parent reaches them through the link.
+  std::vector<uint64_t> tree{tag | 2};
+  auto contains = [&](uint64_t token) {
+    return std::find(tree.begin(), tree.end(), token) != tree.end();
+  };
+  EXPECT_TRUE(
+      obelisk_rt_add_finished_descendants_unlocked(context, tree, contains));
+  EXPECT_EQ(tree, (std::vector<uint64_t>{tag | 2, tag | 4}));
+  EXPECT_FALSE(
+      obelisk_rt_add_finished_descendants_unlocked(context, tree, contains));
+
+  // The link survives while anything descends from it.
+  obelisk_rt_prune_finished_process_parents_unlocked(context);
+  EXPECT_EQ(context->finishedProcessParents.count(tag | 4), 1u);
+  context->scheduledProcesses[1].instance = nullptr;
+  obelisk_rt_prune_finished_process_parents_unlocked(context);
+  EXPECT_EQ(context->finishedProcessParents.count(tag | 4), 1u);
+  context->scheduledDesignTasks[0].terminated = true;
+  obelisk_rt_prune_finished_process_parents_unlocked(context);
+  EXPECT_TRUE(context->finishedProcessParents.empty());
   context->scheduledProcesses.clear();
   context->scheduledDesignTasks.clear();
   obelisk_rt_v1_context_destroy(context);
 }
 
-TEST(Scheduler, NativeChildAttachIndexesAndReparentsActualProcess) {
+TEST(Scheduler, NativeChildAttachIndexesActualProcess) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
   constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
@@ -7596,13 +7615,39 @@ TEST(Scheduler, NativeChildAttachIndexesAndReparentsActualProcess) {
   EXPECT_EQ(context->scheduledProcesses.front().parent, tag | 41);
   EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 41), 1u);
 
-  obelisk_rt_reparent_process_children_unlocked(context, tag | 41, tag | 40);
-  EXPECT_EQ(context->scheduledProcesses.front().parent, tag | 40);
-  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 41), 0u);
-  EXPECT_EQ(context->logicalProcessParentsWithChildren.count(tag | 40), 1u);
-  context->activeLogicalProcessToken = 0;
-  obelisk_rt_reparent_process_children_unlocked(context, tag | 40, 0);
+  obelisk_rt_retire_process_parent_unlocked(context, tag | 41, tag | 40);
+  EXPECT_EQ(context->scheduledProcesses.front().parent, tag | 41);
   EXPECT_TRUE(context->logicalProcessParentsWithChildren.empty());
+  EXPECT_EQ(context->finishedProcessParents.count(tag | 41), 1u);
+  context->activeLogicalProcessToken = 0;
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, KillOfFinishedProcessTerminatesLiveDescendants) {
+  // IEEE 1800-2023 9.7: kill() of a FINISHED process still terminates its
+  // descendants that are alive.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  context->activeLogicalProcessToken = tag | 41;
+  SchedulerFixture fixture(152);
+  obelisk_rt_process_instance_v1 *child = makeSchedulerInstance(fixture);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, child, 0), OBELISK_RT_OK);
+  uint64_t childToken = obelisk_rt_v1_scheduler_process_token(context, child);
+  context->activeLogicalProcessToken = 0;
+  context->terminatedNativeProcesses.insert(41);
+  obelisk_rt_retire_process_parent_unlocked(context, tag | 41, 0);
+
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, tag | 41,
+                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+                                          &disposition),
+            OBELISK_RT_OK);
+  EXPECT_EQ(disposition, OBELISK_RT_PROCESS_CONTROL_CONTINUE);
+  obelisk_rt_process_state state{};
+  ASSERT_EQ(obelisk_rt_v1_process_status(context, childToken, &state),
+            OBELISK_RT_OK);
+  EXPECT_EQ(state, OBELISK_RT_PROCESS_KILLED);
   obelisk_rt_v1_context_destroy(context);
 }
 

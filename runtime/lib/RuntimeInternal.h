@@ -2362,6 +2362,14 @@ struct obelisk_rt_context {
   // skip a full native/design task scan. Natural termination erases the mark;
   // any conservative stale-live mark only causes the old exact scan.
   std::unordered_set<uint64_t> logicalProcessParentsWithChildren;
+  // Finished logical processes that forked, mapped to their own parents.
+  // Their surviving subprocesses keep them as parents, so the chain still
+  // leads from every ancestor to them. Pruned once no live process descends
+  // from an entry.
+  std::unordered_map<uint64_t, uint64_t> finishedProcessParents;
+  // Size at which recording another finished parent prunes the links first,
+  // bounding them on executors without scheduler compaction.
+  size_t finishedProcessParentsPruneSize = 64;
   // A bytecode design task is moved out of the scheduler vector while it
   // executes, so its lane-local stream cannot be rediscovered by token.
   obelisk_rt_random_state_v1 *activeRandom = nullptr;
@@ -3160,27 +3168,44 @@ void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
                                           uint64_t programOwner);
 void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context);
 
+/// Drops finished-process links from which no live process descends.
+void obelisk_rt_prune_finished_process_parents_unlocked(
+    obelisk_rt_context *context);
+
 // A join_none branch may finish while processes spawned beneath it remain
-// live. Keep those descendants reachable from the surviving process tree so
-// a later wait fork or disable fork in the ancestor still sees them.
-inline void obelisk_rt_reparent_process_children_unlocked(
-    obelisk_rt_context *context, uint64_t parent, uint64_t replacement) {
-  if (!context->logicalProcessParentsWithChildren.count(parent))
+// live. They stay its children: wait fork in an ancestor waits only for its
+// own immediate children (IEEE 1800-2023 9.6.1). Remember the finished
+// branch's parent so disable fork and kill() in an ancestor, and kill() of
+// the finished branch itself, still reach them as descendants (9.6.3, 9.7).
+inline void
+obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
+                                          uint64_t finished, uint64_t parent) {
+  if (!context->logicalProcessParentsWithChildren.erase(finished))
     return;
-  bool reparented = false;
-  for (ScheduledProcess &process : context->scheduledProcesses)
-    if (process.instance && process.parent == parent) {
-      process.parent = replacement;
-      reparented = true;
+  auto &links = context->finishedProcessParents;
+  if (links.size() >= context->finishedProcessParentsPruneSize) {
+    obelisk_rt_prune_finished_process_parents_unlocked(context);
+    context->finishedProcessParentsPruneSize =
+        std::max<size_t>(64, 2 * links.size());
+  }
+  links[finished] = parent;
+}
+
+/// Adds to `tree` the finished processes whose parent `contains` accepts,
+/// returning whether any was added. Descendant collection repeats this with
+/// the live-process scan until neither grows the tree.
+template <typename Contains>
+inline bool
+obelisk_rt_add_finished_descendants_unlocked(const obelisk_rt_context *context,
+                                             std::vector<uint64_t> &tree,
+                                             Contains &&contains) {
+  bool added = false;
+  for (const auto &[finished, parent] : context->finishedProcessParents)
+    if (contains(parent) && !contains(finished)) {
+      tree.push_back(finished);
+      added = true;
     }
-  for (ScheduledDesignTask &task : context->scheduledDesignTasks)
-    if (!task.terminated && task.parent == parent) {
-      task.parent = replacement;
-      reparented = true;
-    }
-  context->logicalProcessParentsWithChildren.erase(parent);
-  if (reparented && replacement != 0)
-    context->logicalProcessParentsWithChildren.insert(replacement);
+  return added;
 }
 
 obelisk_rt_status obelisk_rt_initialize_design_bytecode_image(
