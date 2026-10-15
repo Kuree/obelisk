@@ -72,6 +72,20 @@ static uint16_t propagateThroughPass(uint16_t strengths,
   return propagated;
 }
 
+// A source reached through a pass component contributes the strengths that
+// survive its definite path, joined with those of a possible path whose
+// switch control is unknown. Reduction 5 marks a path that does not conduct.
+static uint16_t propagateFromRemote(uint16_t strengths, uint8_t resistiveEdges,
+                                    uint8_t possibleResistiveEdges) {
+  uint16_t possible = propagateThroughPass(strengths, possibleResistiveEdges);
+  if (resistiveEdges == 5)
+    return possible | strengthBit(0);
+  strengths = propagateThroughPass(strengths, resistiveEdges);
+  if (possibleResistiveEdges < resistiveEdges)
+    strengths |= possible;
+  return strengths;
+}
+
 static uint16_t combineStrengthRanges(uint16_t lhs, uint16_t rhs,
                                       uint8_t resolution = 0) {
   uint16_t result = 0;
@@ -825,34 +839,18 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
     if (forcedMember != sourceMembers->second.end()) {
       uint16_t strengths = driverStrengths(stateBit(false, *forcedMember),
                                            stateBit(true, *forcedMember), 7, 7);
-      if (remote) {
-        uint16_t possible =
-            propagateThroughPass(strengths, possibleResistiveEdges);
-        if (resistiveEdges == 5)
-          strengths = possible | strengthBit(0);
-        else {
-          strengths = propagateThroughPass(strengths, resistiveEdges);
-          if (possibleResistiveEdges < resistiveEdges)
-            strengths |= possible;
-        }
-      }
+      if (remote)
+        strengths = propagateFromRemote(strengths, resistiveEdges,
+                                        possibleResistiveEdges);
       resolvedStrengths =
           combineStrengthRanges(resolvedStrengths, strengths, resolution);
       return true;
     }
     uint16_t implicit =
         implicitNetStrength(cache.resolutionByRoot.at(sourceRoot));
-    if (remote) {
-      uint16_t possible =
-          propagateThroughPass(implicit, possibleResistiveEdges);
-      if (resistiveEdges == 5)
-        implicit = possible | strengthBit(0);
-      else {
-        implicit = propagateThroughPass(implicit, resistiveEdges);
-        if (possibleResistiveEdges < resistiveEdges)
-          implicit |= possible;
-      }
-    }
+    if (remote)
+      implicit =
+          propagateFromRemote(implicit, resistiveEdges, possibleResistiveEdges);
     resolvedStrengths =
         combineStrengthRanges(resolvedStrengths, implicit, resolution);
     auto componentDrivers = cache.driverBits.find(sourceRoot);
@@ -862,17 +860,9 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
         bool driverUnknown = stateBit(true, driver.valueOffset);
         uint16_t strengths = driverStrengths(
             driverValue, driverUnknown, driver.strength0, driver.strength1);
-        if (remote) {
-          uint16_t possible =
-              propagateThroughPass(strengths, possibleResistiveEdges);
-          if (resistiveEdges == 5)
-            strengths = possible | strengthBit(0);
-          else {
-            strengths = propagateThroughPass(strengths, resistiveEdges);
-            if (possibleResistiveEdges < resistiveEdges)
-              strengths |= possible;
-          }
-        }
+        if (remote)
+          strengths = propagateFromRemote(strengths, resistiveEdges,
+                                          possibleResistiveEdges);
         resolvedStrengths =
             combineStrengthRanges(resolvedStrengths, strengths, resolution);
       }
@@ -883,17 +873,9 @@ static bool computeResolvedStrengths(const NetAliasCache &cache,
         if (contribution == context->delayedMosContributions.end())
           return false;
         uint16_t strengths = contribution->second;
-        if (remote) {
-          uint16_t possible =
-              propagateThroughPass(strengths, possibleResistiveEdges);
-          if (resistiveEdges == 5)
-            strengths = possible | strengthBit(0);
-          else {
-            strengths = propagateThroughPass(strengths, resistiveEdges);
-            if (possibleResistiveEdges < resistiveEdges)
-              strengths |= possible;
-          }
-        }
+        if (remote)
+          strengths = propagateFromRemote(strengths, resistiveEdges,
+                                          possibleResistiveEdges);
         resolvedStrengths =
             combineStrengthRanges(resolvedStrengths, strengths, resolution);
       }
@@ -1097,25 +1079,57 @@ bool resolveNetRoots(const NetAliasCache &cache, obelisk_rt_context *context,
       // resolve the stored charges on the component at their declared
       // small/medium/large strengths. This is charge sharing; unlike an
       // active driver, a weaker stored charge can lose to a stronger one.
+      // 6.6.4.1: the charge spreads over the capacitive network, the trireg
+      // nets that conducting pass switches connect to this one.
       uint16_t chargeStrengths = strengthBit(0);
-      for (uint64_t member : members->second) {
-        auto strength = cache.chargeStrengthByBit.find(member);
-        if (strength == cache.chargeStrengthByBit.end())
-          continue;
-        bool value = bit(context->stateValue, member);
-        bool unknown = bit(context->stateUnknown, member);
-        uint16_t stored = 0;
-        if (!unknown) {
-          stored = strengthBit(value ? strength->second
-                                     : -static_cast<int>(strength->second));
-        } else if (value) {
-          stored = strengthBit(0);
-        } else {
-          for (int point = -static_cast<int>(strength->second);
-               point <= static_cast<int>(strength->second); ++point)
-            stored |= strengthBit(point);
+      auto accumulateCharges = [&](uint64_t sourceRoot, uint8_t resistiveEdges,
+                                   uint8_t possibleResistiveEdges) {
+        if (possibleResistiveEdges == 5)
+          return true;
+        auto sourceMembers = cache.members.find(sourceRoot);
+        if (sourceMembers == cache.members.end())
+          return false;
+        for (uint64_t member : sourceMembers->second) {
+          auto strength = cache.chargeStrengthByBit.find(member);
+          if (strength == cache.chargeStrengthByBit.end())
+            continue;
+          bool value = bit(context->stateValue, member);
+          bool unknown = bit(context->stateUnknown, member);
+          uint16_t stored = 0;
+          if (!unknown) {
+            stored = strengthBit(value ? strength->second
+                                       : -static_cast<int>(strength->second));
+          } else if (value) {
+            stored = strengthBit(0);
+          } else {
+            for (int point = -static_cast<int>(strength->second);
+                 point <= static_cast<int>(strength->second); ++point)
+              stored |= strengthBit(point);
+          }
+          if (sourceRoot != root)
+            stored = propagateFromRemote(stored, resistiveEdges,
+                                         possibleResistiveEdges);
+          chargeStrengths = combineStrengthRanges(chargeStrengths, stored);
         }
-        chargeStrengths = combineStrengthRanges(chargeStrengths, stored);
+        return true;
+      };
+      if (auto component = cache.passComponentByRoot.find(root);
+          component != cache.passComponentByRoot.end()) {
+        const NetPassComponent &passComponent =
+            cache.passComponents.at(component->second);
+        const std::vector<uint64_t> &roots = passComponent.roots;
+        auto target = std::lower_bound(roots.begin(), roots.end(), root);
+        if (target == roots.end() || *target != root ||
+            passComponent.reachableSources.size() != roots.size())
+          return false;
+        for (const NetPassComponent::ReachableSource &source :
+             passComponent.reachableSources[target - roots.begin()])
+          if (source.index >= roots.size() ||
+              !accumulateCharges(roots[source.index], source.definiteReduction,
+                                 source.possibleReduction))
+            return false;
+      } else if (!accumulateCharges(root, 0, 0)) {
+        return false;
       }
       bool chargeHasZero = (chargeStrengths & strengthBit(0)) != 0;
       bool chargeHasNegative = (chargeStrengths & negativeMask) != 0;
