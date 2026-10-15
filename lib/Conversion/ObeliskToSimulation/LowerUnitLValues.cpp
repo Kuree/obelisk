@@ -187,6 +187,36 @@ UnitLowering::captureLValue(Operation *destination, Location location) {
       return std::move(**coverage);
   }
 
+  // IEEE 1800-2023 10.9: a left-hand assignment pattern is positional, and
+  // each member takes the corresponding element of the right-hand side. A
+  // packed pattern splits its value like a concatenation; an unpacked one
+  // assigns element by element.
+  if (isa<semantic::SVSimpleAssignmentPatternExpressionOp>(destination)) {
+    bool packed = sim::getPackedWidth(captured.type).has_value();
+    captured.kind = packed ? CapturedLValue::Kind::Concatenation
+                           : CapturedLValue::Kind::AggregateSlice;
+    for (Operation *element : getChildren(destination)) {
+      Operation *member = getCopyOutActual(element);
+      if (member == element) {
+        emitError(location)
+            << "left-hand assignment pattern member is not an lvalue";
+        return failure();
+      }
+      FailureOr<CapturedLValue> target = captureLValue(member, location);
+      if (failed(target))
+        return failure();
+      captured.children.push_back(std::move(*target));
+    }
+    if (captured.children.empty() ||
+        (!packed && captured.children.size() !=
+                        sim::getAggregateNumElements(captured.type))) {
+      emitError(location) << "left-hand assignment pattern does not match "
+                          << captured.type;
+      return failure();
+    }
+    return captured;
+  }
+
   if (isa<semantic::SVConcatenationExpressionOp>(destination)) {
     SmallVector<Operation *> children = getChildren(destination);
     if (children.empty())
@@ -936,6 +966,26 @@ bool UnitLowering::haveSameCapturedStorage(const CapturedLValue &lhs,
     return false;
   }
   llvm_unreachable("unknown captured lvalue kind");
+}
+
+void UnitLowering::propagatePreviousContainers(
+    MutableArrayRef<CapturedLValue> leaves, size_t index) {
+  auto hasCapturedContainer = [](const CapturedLValue &target,
+                                 auto &&self) -> bool {
+    if (target.kind == CapturedLValue::Kind::ContainerElement ||
+        target.kind == CapturedLValue::Kind::ContainerSlice ||
+        target.kind == CapturedLValue::Kind::AssociativeElement)
+      return true;
+    return llvm::any_of(target.children, [&](const CapturedLValue &child) {
+      return self(child, self);
+    });
+  };
+  // Logical coverage fields always reload their current owner value. They
+  // need no pairwise copy-on-write container propagation.
+  if (!hasCapturedContainer(leaves[index], hasCapturedContainer))
+    return;
+  for (const CapturedLValue &previous : leaves.take_front(index))
+    propagateCapturedContainers(previous, leaves[index]);
 }
 
 void UnitLowering::propagateCapturedContainers(const CapturedLValue &source,
@@ -2422,6 +2472,7 @@ LogicalResult UnitLowering::writeCapturedLValue(
         sim::getAggregateNumElements(destination.type))
       return failure();
     for (auto [ordinal, child] : llvm::enumerate(destination.children)) {
+      propagatePreviousContainers(destination.children, ordinal);
       Type elementType =
           sim::getAggregateElementType(destination.type, ordinal);
       Value element = sim::SimAggregateExtractOp::create(
@@ -2476,23 +2527,8 @@ LogicalResult UnitLowering::writeCapturedLValue(
     if (!totalWidth)
       return failure();
     uint64_t trailing = *totalWidth;
-    auto hasCapturedContainer = [](const CapturedLValue &target,
-                                   auto &&self) -> bool {
-      if (target.kind == CapturedLValue::Kind::ContainerElement ||
-          target.kind == CapturedLValue::Kind::ContainerSlice ||
-          target.kind == CapturedLValue::Kind::AssociativeElement)
-        return true;
-      return llvm::any_of(target.children, [&](const CapturedLValue &child) {
-        return self(child, self);
-      });
-    };
     for (auto [childIndex, child] : llvm::enumerate(destination.children)) {
-      // Logical coverage fields always reload their current owner value.
-      // They need no pairwise copy-on-write container propagation.
-      if (hasCapturedContainer(child, hasCapturedContainer))
-        for (CapturedLValue &previous :
-             MutableArrayRef(destination.children).take_front(childIndex))
-          propagateCapturedContainers(previous, child);
+      propagatePreviousContainers(destination.children, childIndex);
       std::optional<unsigned> childWidth = sim::getPackedWidth(child.type);
       if (!childWidth || *childWidth > trailing) {
         emitError(location) << "concatenation lvalue width is inconsistent";

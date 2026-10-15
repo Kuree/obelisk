@@ -439,7 +439,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
             semantic::SVElementSelectExpressionOp,
             semantic::SVRangeSelectExpressionOp>(expression))
       return !children.empty() && referencesUWireNet(children.front());
-    if (isa<semantic::SVConcatenationExpressionOp>(expression))
+    if (isa<semantic::SVConcatenationExpressionOp,
+            semantic::SVSimpleAssignmentPatternExpressionOp>(expression))
       return llvm::any_of(children, referencesUWireNet);
     return false;
   };
@@ -1190,7 +1191,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                           SmallVectorImpl<NetRun> &runs) {
     if (!expression)
       return;
-    if (isa<semantic::SVConcatenationExpressionOp>(expression)) {
+    // Every member of a concatenation or of a left-hand assignment pattern
+    // (IEEE 1800-2023 10.9) is driven.
+    if (isa<semantic::SVConcatenationExpressionOp,
+            semantic::SVSimpleAssignmentPatternExpressionOp>(expression)) {
       for (Operation *child : getChildren(expression))
         collectDriverRuns(child, runs);
       return;

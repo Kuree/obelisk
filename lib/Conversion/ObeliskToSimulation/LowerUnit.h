@@ -305,6 +305,11 @@ private:
                                const CapturedLValue &rhs) const;
   void propagateCapturedContainers(const CapturedLValue &source,
                                    CapturedLValue &destination);
+  /// Feeds the containers that `leaves` before `index` rebuild into that
+  /// leaf, so sibling writes to one container compose in order.
+  void
+  propagatePreviousContainers(::llvm::MutableArrayRef<CapturedLValue> leaves,
+                              size_t index);
   void appendCapturedValues(const CapturedLValue &destination,
                             ::mlir::SmallVectorImpl<::mlir::Value> &values);
   ::mlir::LogicalResult replaceCapturedValues(CapturedLValue &destination,
