@@ -336,6 +336,20 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerInside(semantic::SVInsideExpressionOp op);
   ::mlir::FailureOr<::mlir::Value> lowerCall(semantic::SVCallExpressionOp op);
+  /// Returns the variable expression an output or inout actual names, looking
+  /// through the importer's `actual = <empty argument>` copy-out form.
+  ::mlir::Operation *getCopyOutActual(::mlir::Operation *actual);
+  /// Reads an inout actual on entry and converts it to the formal's type.
+  ::mlir::FailureOr<::mlir::Value> copyInFromActual(::mlir::Operation *actual,
+                                                    ::mlir::Type formalType,
+                                                    bool formalSigned,
+                                                    ::mlir::Location location);
+  /// Assigns a returned output or inout formal to its actual. `scopeObject`
+  /// is the receiver a defaulted actual is evaluated against.
+  ::mlir::LogicalResult copyOutToActual(::mlir::Operation *actual,
+                                        ::mlir::Value scopeObject,
+                                        ::mlir::Value value, bool formalSigned,
+                                        ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
                      semantic::SVCovergroupTypeOp covergroup = {},

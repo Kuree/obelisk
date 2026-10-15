@@ -209,9 +209,9 @@ module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", l
 // CHECK: simulation.container.create {{.*}}bit_width = 64 : i64{{.*}}element_kind = #simulation.element_kind<bits>
 // CHECK: simulation.container.write
 // CHECK: simulation.assoc.write
-// CHECK: simulation.reference_path.index
 // CHECK: simulation.reference_path.assoc
 // CHECK: simulation.task.call @unit_0
+// CHECK: simulation.reference_path.index
 // CHECK: simulation.argument_ref.store
 // CHECK-NOT: obelisk.sv.
 // BYTECODE: runtime.bytecode_image = array<i8:

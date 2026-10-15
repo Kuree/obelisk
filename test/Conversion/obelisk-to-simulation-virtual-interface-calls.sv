@@ -7,7 +7,8 @@
 // CHECK-DAG: simulation.scope.decl [[B:[0-9]+]] parent 1 hierarchy "top.b"
 // Per IEEE 1800-2017 13.5, the outlined task copies its hidden output
 // temporary back through the caller-provided output reference. Its unused
-// copy-in value is not part of the lowered boundary.
+// copy-in value is not part of the lowered boundary. That reference is the
+// caller's own formal cell, which reaches the actual only on return.
 // CHECK-LABEL: simulation.func private @unit_1(
 // CHECK: [[OUT_STORAGE:%.*]] = simulation.context.storage %arg0[4]
 // CHECK: [[OUT:%.*]] = simulation.ref.load [[OUT_STORAGE]]
@@ -20,10 +21,14 @@
 // CHECK: simulation.call @unit_2
 // CHECK: virtual interface call used a null or invalid handle.
 // CHECK: simulation.virtual_interface.scope
+// CHECK: [[FORMAL:%.*]] = simulation.ref.alloc
 // CHECK: arith.cmpi eq
-// CHECK: simulation.task.call @unit_1(%arg0, %arg2) {{.*}} to [[CONT:\^bb[0-9]+]]
+// CHECK: ^bb{{[0-9]+}}([[RETURNED_REF:%.*]]: !simulation.ref<i32>):
+// CHECK: [[RETURNED:%.*]] = simulation.ref.load [[RETURNED_REF]]
+// CHECK: simulation.ref.store [[RETURNED]] to %arg2
+// CHECK: simulation.task.call @unit_1(%arg0, [[FORMAL]], {{.*}} to [[CONT:\^bb[0-9]+]]
 // CHECK: arith.cmpi eq
-// CHECK: simulation.task.call @unit_3(%arg0, %arg2) {{.*}} to [[CONT]]
+// CHECK: simulation.task.call @unit_3(%arg0, [[FORMAL]], {{.*}} to [[CONT]]
 // CHECK: virtual interface task call used a null or invalid handle.
 // CHECK-NOT: obelisk.sv.
 // Every possible instance capture read by a dynamically selected function is

@@ -42,6 +42,62 @@ bool isSemaphoreCall(semantic::SVCallExpressionOp op) {
 
 } // namespace
 
+Operation *UnitLowering::getCopyOutActual(Operation *actual) {
+  auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(actual);
+  if (!assignment)
+    return actual;
+  SmallVector<Operation *> children = getChildren(assignment);
+  if (children.size() != 2)
+    return actual;
+  Operation *placeholder = children[1];
+  while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
+    SmallVector<Operation *> converted = getChildren(placeholder);
+    if (converted.size() != 1)
+      break;
+    placeholder = converted.front();
+  }
+  return isa<semantic::SVEmptyArgumentExpressionOp>(placeholder)
+             ? children.front()
+             : actual;
+}
+
+FailureOr<Value> UnitLowering::copyInFromActual(Operation *actual,
+                                                Type formalType,
+                                                bool formalSigned,
+                                                Location location) {
+  FailureOr<Value> value = lowerExpression(actual);
+  if (failed(value))
+    return failure();
+  return convert(*value, formalType, isSignedNode(actual), location,
+                 formalSigned);
+}
+
+LogicalResult UnitLowering::copyOutToActual(Operation *actual,
+                                            Value scopeObject, Value value,
+                                            bool formalSigned,
+                                            Location location) {
+  // IEEE 1800-2023 4.9.7: copy-out on return behaves as a blocking
+  // assignment, so the actual is addressed on return. A subroutine that
+  // changes an index of its own actual writes the element it selects then.
+  Value savedThisObject = thisObject;
+  if (scopeObject)
+    thisObject = scopeObject;
+  llvm::scope_exit restoreThisObject([&] { thisObject = savedThisObject; });
+  FailureOr<Value> destination = lowerExpression(actual, /*lvalue=*/true);
+  if (failed(destination))
+    return failure();
+  Type destinationType = getReferenceElementType(*destination);
+  if (!destinationType)
+    return emitError(location)
+               << "output and inout actuals must be variable references",
+           failure();
+  FailureOr<Value> converted = convert(value, destinationType, formalSigned,
+                                       location, isSignedNode(actual));
+  if (failed(converted))
+    return failure();
+  return storeReference(*destination, *converted, location);
+}
+
 FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -1929,20 +1985,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       return failure();
     }
     struct ClassCopyOut {
-      Value destination;
+      Operation *actual;
+      Value scopeObject;
       Type formalType;
       bool formalSigned;
-      bool destinationSigned;
     };
-    struct TaskIndirectCopyOut {
-      Value temporary;
-      Value destination;
+    struct TaskCopyOut {
+      Value formal;
+      Operation *actual;
+      Value scopeObject;
       bool formalSigned;
-      bool destinationSigned;
     };
     SmallVector<Value> arguments;
     SmallVector<ClassCopyOut> copyOuts;
-    SmallVector<TaskIndirectCopyOut> taskIndirectCopyOuts;
+    SmallVector<TaskCopyOut> taskCopyOuts;
     bool classTask = sim::has<sim::metadata::IsTask>(op);
     size_t formalIndex = 0;
     for (auto [actual, formalAttr] :
@@ -1971,44 +2027,16 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         continue;
       }
 
-      Operation *destination = actual;
-      if (auto assignment =
-              dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
-        SmallVector<Operation *> outputChildren = getChildren(assignment);
-        if (outputChildren.size() == 2) {
-          Operation *placeholder = outputChildren[1];
-          while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
-            SmallVector<Operation *> converted = getChildren(placeholder);
-            if (converted.size() != 1)
-              break;
-            placeholder = converted.front();
-          }
-          if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
-            destination = outputChildren.front();
-        }
-      }
-      FailureOr<Value> destinationRef = lowerExpression(destination, true);
-      if (failed(destinationRef))
-        return failure();
-      Type destinationType;
-      if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType()))
-        destinationType = ref.getElementType();
-      else if (auto ref =
-                   dyn_cast<sim::ManagedRefType>((*destinationRef).getType()))
-        destinationType = ref.getElementType();
-      else if (auto ref =
-                   dyn_cast<sim::ArgumentRefType>((*destinationRef).getType()))
-        destinationType = ref.getElementType();
-      else if (auto ref = dyn_cast<sim::ReferencePathType>(
-                   (*destinationRef).getType()))
-        destinationType = ref.getElementType();
-      else {
-        emitError(location)
-            << "class method output, inout, and ref actuals must be variable "
-               "references";
-        return failure();
-      }
+      Operation *destination = getCopyOutActual(actual);
       if (direction == sim::FormalDirection::Ref) {
+        FailureOr<Value> destinationRef = lowerExpression(destination, true);
+        if (failed(destinationRef))
+          return failure();
+        if (!getReferenceElementType(*destinationRef)) {
+          emitError(location)
+              << "class method ref actuals must be variable references";
+          return failure();
+        }
         FailureOr<Value> argument =
             toArgumentReference(*destinationRef, formalType, location);
         if (failed(argument)) {
@@ -2036,40 +2064,25 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
           return failure();
         }
       } else {
-        FailureOr<Value> loaded = loadReference(*destinationRef, location);
-        if (failed(loaded))
+        FailureOr<Value> copied =
+            copyInFromActual(destination, formalType, formalSigned, location);
+        if (failed(copied))
           return failure();
-        if (isa<sim::RefType>((*destinationRef).getType()))
-          recordSensitivity(*destinationRef);
-        FailureOr<Value> converted =
-            convert(*loaded, formalType, isSignedNode(destination), location,
-                    formalSigned);
-        if (failed(converted))
-          return failure();
-        initial = *converted;
+        initial = *copied;
       }
       arguments.push_back(cloneSequentialValue(initial, location));
+      Value scopeObject = usesDefault ? *receiver : Value();
       if (classTask) {
-        // IEEE 1800-2017 13.5: returning from the subroutine assigns the
-        // output and inout formals to the actuals, so a formal whose type
-        // differs from its actual keeps its own storage and is converted on
-        // the way back. Only an exactly matching variable reference can be
-        // the formal itself.
-        if (!isa<sim::RefType>((*destinationRef).getType()) ||
-            destinationType != formalType) {
-          Value temporary = sim::SimRefAllocOp::create(
-              builder, location,
-              sim::RefType::get(function.getContext(), formalType), initial);
-          arguments.push_back(temporary);
-          taskIndirectCopyOuts.push_back({temporary, *destinationRef,
-                                          formalSigned,
-                                          isSignedNode(destination)});
-        } else {
-          arguments.push_back(*destinationRef);
-        }
+        // IEEE 1800-2023 13.5.1: a task's changes to a formal stay invisible
+        // outside it until it returns, so the formal has its own storage.
+        Value temporary = sim::SimRefAllocOp::create(
+            builder, location,
+            sim::RefType::get(function.getContext(), formalType), initial);
+        arguments.push_back(temporary);
+        taskCopyOuts.push_back(
+            {temporary, destination, scopeObject, formalSigned});
       } else {
-        copyOuts.push_back({*destinationRef, formalType, formalSigned,
-                            isSignedNode(destination)});
+        copyOuts.push_back({destination, scopeObject, formalType, formalSigned});
       }
     }
     if (auto captures = sim::get<sim::metadata::CalleeCaptures>(op))
@@ -2099,20 +2112,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       Block *continuation = addBlock();
       auto finishTask = [&]() -> FailureOr<Value> {
         setCurrent(continuation);
-        for (const TaskIndirectCopyOut &copyOut : taskIndirectCopyOuts) {
-          auto temporaryType =
-              cast<sim::RefType>(copyOut.temporary.getType()).getElementType();
-          Value copied = sim::SimRefLoadOp::create(
-              builder, location, temporaryType, copyOut.temporary);
-          Type destinationType = getReferenceElementType(copyOut.destination);
-          if (!destinationType)
-            return failure();
-          FailureOr<Value> converted =
-              convert(copied, destinationType, copyOut.formalSigned, location,
-                      copyOut.destinationSigned);
-          if (failed(converted))
-            return failure();
-          if (failed(storeReference(copyOut.destination, *converted, location)))
+        for (const TaskCopyOut &copyOut : taskCopyOuts) {
+          Value returned = sim::SimRefLoadOp::create(
+              builder, location,
+              cast<sim::RefType>(copyOut.formal.getType()).getElementType(),
+              copyOut.formal);
+          if (failed(copyOutToActual(copyOut.actual, copyOut.scopeObject,
+                                     returned, copyOut.formalSigned,
+                                     location)))
             return failure();
         }
         return arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -2167,19 +2174,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (failed(emitTerminationPoll(location)))
       return failure();
     if (!classTask)
-      for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
-        Value result = results[index + (hasFunctionResult ? 1 : 0)];
-        Type destinationType = getReferenceElementType(copyOut.destination);
-        if (!destinationType)
+      for (auto [index, copyOut] : llvm::enumerate(copyOuts))
+        if (failed(copyOutToActual(
+                copyOut.actual, copyOut.scopeObject,
+                results[index + (hasFunctionResult ? 1 : 0)],
+                copyOut.formalSigned, location)))
           return failure();
-        FailureOr<Value> converted =
-            convert(result, destinationType, copyOut.formalSigned, location,
-                    copyOut.destinationSigned);
-        if (failed(converted))
-          return failure();
-        if (failed(storeReference(copyOut.destination, *converted, location)))
-          return failure();
-      }
     if (hasFunctionResult)
       return results.front();
     return arith::ConstantOp::create(builder, location, builder.getI1Type(),
@@ -2218,6 +2218,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     actuals = actuals.drop_front();
   }
   struct CopyOut {
+    Operation *actual;
+    /// The actual addressed when the call began, for transports it shapes.
     Value destination;
     Value taskDestination;
     Type formalType;
@@ -2492,26 +2494,10 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     return makeDPIAggregateABI(semanticType, normalizedType, location, builder);
   };
   for (auto [child, formalAttr] : llvm::zip_equal(actuals, formals)) {
-    Operation *actual = child;
     auto formal = cast<sim::CalleeFormalAttr>(formalAttr);
     sim::FormalDirection direction = formal.getDirection();
     bool isInput = direction == sim::FormalDirection::In;
-    if (!isInput)
-      if (auto assignment =
-              dyn_cast<semantic::SVAssignmentExpressionOp>(child)) {
-        SmallVector<Operation *> outputChildren = getChildren(assignment);
-        if (outputChildren.size() == 2) {
-          Operation *placeholder = outputChildren[1];
-          while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
-            SmallVector<Operation *> converted = getChildren(placeholder);
-            if (converted.size() != 1)
-              break;
-            placeholder = converted.front();
-          }
-          if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
-            actual = outputChildren.front();
-        }
-      }
+    Operation *actual = isInput ? child : getCopyOutActual(child);
     Type formalType = formal.getType();
     bool formalSigned = formal.getIsSigned();
     Type formalSemantic = formal.getSemanticType();
@@ -2608,14 +2594,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       continue;
     }
 
-    FailureOr<Value> destination = lowerExpression(actual, true);
-    if (failed(destination))
-      return failure();
-    Type destinationType = getReferenceElementType(*destination);
-    if (!destinationType) {
-      emitError(location)
-          << "output, inout, and ref actuals must be variable references";
-      return failure();
+    // Only a ref formal and a DPI open array, whose transport is shaped by
+    // the actual itself, address the actual when the call begins.
+    FailureOr<Value> destination = Value();
+    Type destinationType;
+    if (direction == sim::FormalDirection::Ref || (dpiImport && openFormal)) {
+      destination = lowerExpression(actual, true);
+      if (failed(destination))
+        return failure();
+      destinationType = getReferenceElementType(*destination);
+      if (!destinationType) {
+        emitError(location)
+            << "output, inout, and ref actuals must be variable references";
+        return failure();
+      }
     }
     if (direction == sim::FormalDirection::Ref) {
       bool argumentRef = formal.getArgumentRef();
@@ -2669,7 +2661,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       dpiOpenArrayLayouts.push_back(*layout);
       dpiAggregateLayouts.push_back(builder.getUnitAttr());
       operands.push_back(cloneSequentialValue(*transport, location));
-      copyOuts.push_back({*destination,
+      copyOuts.push_back({actual,
+                          *destination,
                           {},
                           destinationType,
                           (*transport).getType(),
@@ -2697,34 +2690,25 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
         return failure();
       }
     } else {
-      FailureOr<Value> loaded = loadReference(*destination, location);
-      if (failed(loaded))
+      FailureOr<Value> copied =
+          copyInFromActual(actual, formalType, formalSigned, location);
+      if (failed(copied))
         return failure();
-      FailureOr<Value> converted = convert(
-          *loaded, formalType, isSignedNode(actual), location, formalSigned);
-      if (failed(converted))
-        return failure();
-      initial = *converted;
-      if (isa<sim::RefType>((*destination).getType()))
-        recordSensitivity(*destination);
+      initial = *copied;
     }
     operands.push_back(cloneSequentialValue(initial, location));
     Value taskDestination;
     if (directTask) {
-      taskDestination = *destination;
-      // IEEE 1800-2017 13.5: returning from the subroutine assigns the output
-      // and inout formals to the actuals, so a formal whose type differs from
-      // its actual keeps its own storage and is converted on the way back.
-      // Only an exactly matching variable reference can be the formal itself.
-      if (!isa<sim::RefType>((*destination).getType()) ||
-          destinationType != formalType)
-        taskDestination = sim::SimRefAllocOp::create(
-            builder, location,
-            sim::RefType::get(function.getContext(), formalType), initial);
+      // IEEE 1800-2023 13.5.1: a task's changes to a formal stay invisible
+      // outside it until it returns, so the formal has its own storage.
+      taskDestination = sim::SimRefAllocOp::create(
+          builder, location,
+          sim::RefType::get(function.getContext(), formalType), initial);
       operands.push_back(taskDestination);
     }
     copyOuts.push_back(
-        {*destination,
+        {actual,
+         Value(),
          taskDestination,
          formalType,
          formalType,
@@ -2992,10 +2976,16 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     return failure();
   if (!directTask) {
     for (auto [index, copyOut] : llvm::enumerate(copyOuts)) {
+      Value result = callResults[index + (hasFunctionResult ? 1 : 0)];
+      if (!copyOut.destination) {
+        if (failed(copyOutToActual(copyOut.actual, {}, result,
+                                   copyOut.formalSigned, location)))
+          return failure();
+        continue;
+      }
       Type destinationType = getReferenceElementType(copyOut.destination);
       if (!destinationType)
         return failure();
-      Value result = callResults[index + (hasFunctionResult ? 1 : 0)];
       FailureOr<Value> converted =
           copyOut.openArray &&
                   sim::getDPIAggregateBitStreamImportPlan(destinationType)
@@ -3010,18 +3000,11 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     }
   } else {
     for (const CopyOut &copyOut : copyOuts) {
-      if (copyOut.taskDestination == copyOut.destination)
-        continue;
-      FailureOr<Value> copied =
+      FailureOr<Value> returned =
           loadReference(copyOut.taskDestination, location);
-      Type destinationType = getReferenceElementType(copyOut.destination);
-      if (failed(copied) || !destinationType)
-        return failure();
-      FailureOr<Value> converted =
-          convert(*copied, destinationType, copyOut.formalSigned, location,
-                  copyOut.destinationSigned);
-      if (failed(converted) ||
-          failed(storeReference(copyOut.destination, *converted, location)))
+      if (failed(returned) ||
+          failed(copyOutToActual(copyOut.actual, {}, *returned,
+                                 copyOut.formalSigned, location)))
         return failure();
     }
   }
@@ -3227,10 +3210,10 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   }
 
   struct ConstructorCopyOut {
-    Value destination;
+    Operation *actual;
+    Value scopeObject;
     Type formalType;
     bool formalSigned;
-    bool destinationSigned;
   };
   SmallVector<Value> arguments;
   SmallVector<ConstructorCopyOut> copyOuts;
@@ -3257,44 +3240,15 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
       continue;
     }
 
-    Operation *destination = actual;
-    if (auto assignment =
-            dyn_cast<semantic::SVAssignmentExpressionOp>(actual)) {
-      SmallVector<Operation *> outputChildren = getChildren(assignment);
-      if (outputChildren.size() == 2) {
-        Operation *placeholder = outputChildren[1];
-        while (isa<semantic::SVConversionExpressionOp>(placeholder)) {
-          SmallVector<Operation *> converted = getChildren(placeholder);
-          if (converted.size() != 1)
-            break;
-          placeholder = converted.front();
-        }
-        if (isa<semantic::SVEmptyArgumentExpressionOp>(placeholder))
-          destination = outputChildren.front();
-      }
-    }
-    FailureOr<Value> destinationRef = lowerExpression(destination, true);
-    if (failed(destinationRef))
-      return failure();
-    Type destinationType;
-    if (auto ref = dyn_cast<sim::RefType>((*destinationRef).getType()))
-      destinationType = ref.getElementType();
-    else if (auto ref =
-                 dyn_cast<sim::ManagedRefType>((*destinationRef).getType()))
-      destinationType = ref.getElementType();
-    else if (auto ref =
-                 dyn_cast<sim::ArgumentRefType>((*destinationRef).getType()))
-      destinationType = ref.getElementType();
-    else if (auto ref =
-                 dyn_cast<sim::ReferencePathType>((*destinationRef).getType()))
-      destinationType = ref.getElementType();
-    else
-      return emitError(location)
-                 << "constructor output, inout, and ref actuals must be "
-                    "variable references",
-             failure();
-
+    Operation *destination = getCopyOutActual(actual);
     if (direction == sim::FormalDirection::Ref) {
+      FailureOr<Value> destinationRef = lowerExpression(destination, true);
+      if (failed(destinationRef))
+        return failure();
+      if (!getReferenceElementType(*destinationRef))
+        return emitError(location)
+                   << "constructor ref actuals must be variable references",
+               failure();
       FailureOr<Value> argument =
           toArgumentReference(*destinationRef, formalType, location);
       if (failed(argument))
@@ -3320,21 +3274,15 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
                    << formalType,
                failure();
     } else {
-      FailureOr<Value> loaded = loadReference(*destinationRef, location);
-      if (failed(loaded))
+      FailureOr<Value> copied =
+          copyInFromActual(destination, formalType, formalSigned, location);
+      if (failed(copied))
         return failure();
-      if (isa<sim::RefType>((*destinationRef).getType()))
-        recordSensitivity(*destinationRef);
-      FailureOr<Value> converted =
-          convert(*loaded, formalType, isSignedNode(destination), location,
-                  formalSigned);
-      if (failed(converted))
-        return failure();
-      initial = *converted;
+      initial = *copied;
     }
     arguments.push_back(cloneSequentialValue(initial, location));
-    copyOuts.push_back(
-        {*destinationRef, formalType, formalSigned, isSignedNode(destination)});
+    copyOuts.push_back({destination, usesDefault ? receiver : Value(),
+                        formalType, formalSigned});
   }
   recordReadCaptures(call);
   if (auto captures = sim::get<sim::metadata::CalleeCaptures>(call))
@@ -3373,18 +3321,10 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   if (failed(emitTerminationPoll(location)))
     return failure();
   for (auto [result, copyOut] :
-       llvm::zip_equal(invocation.getResults(), copyOuts)) {
-    Type destinationType = getReferenceElementType(copyOut.destination);
-    if (!destinationType)
+       llvm::zip_equal(invocation.getResults(), copyOuts))
+    if (failed(copyOutToActual(copyOut.actual, copyOut.scopeObject, result,
+                               copyOut.formalSigned, location)))
       return failure();
-    FailureOr<Value> converted =
-        convert(result, destinationType, copyOut.formalSigned, location,
-                copyOut.destinationSigned);
-    if (failed(converted))
-      return failure();
-    if (failed(storeReference(copyOut.destination, *converted, location)))
-      return failure();
-  }
   if (!op.getIsSuperClass())
     return receiver;
   return arith::ConstantOp::create(builder, location, builder.getI1Type(),

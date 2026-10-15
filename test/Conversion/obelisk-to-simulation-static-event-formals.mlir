@@ -4,7 +4,8 @@
 // initializes them to the type's default value. For event formals, 6.17 makes
 // that value a fresh synchronization object. Copy-in, assignment, and copy-out
 // then replace handles in those static cells. Per 13.5, an output argument is
-// copied back on return, so an unused copy-in value need not cross the boundary.
+// copied back on return, so an unused copy-in value need not cross the boundary
+// and the caller's actual changes only once the task has returned.
 
 // CHECK: simulation.storage.decl 2 in 1 : !simulation.event static hierarchy "event_formal.copy_event.incoming"
 // CHECK: simulation.storage.decl 3 in 1 : !simulation.event static hierarchy "event_formal.copy_event.outgoing"
@@ -27,7 +28,10 @@
 
 // CHECK-LABEL: simulation.func private @unit_1
 // CHECK: %[[ACTUAL:.*]] = simulation.ref.load %arg1
-// CHECK: simulation.task.call @unit_0(%arg0, %[[ACTUAL]], %arg2)
+// CHECK: %[[FORMAL:.*]] = simulation.ref.alloc
+// CHECK: simulation.task.call @unit_0(%arg0, %[[ACTUAL]], %[[FORMAL]]
+// CHECK: %[[RETURNED:.*]] = simulation.ref.load
+// CHECK: simulation.ref.store %[[RETURNED]] to %arg2
 // CHECK-NOT: obelisk.sv.
 
 module {
