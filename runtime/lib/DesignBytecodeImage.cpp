@@ -698,7 +698,8 @@ bool validIntrinsic(const Image &image, const Function &function,
            site.outputCount == 1 && bits(input(0), 64) && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_SAMPLED_READ:
     return signature.flags == 0 && site.inputCount == 1 &&
-           site.outputCount == 1 && handle(input(0)) && numeric(output(0));
+           site.outputCount == 1 && handle(input(0)) &&
+           (numeric(output(0)) || floating(output(0)));
   case OBELISK_RT_INTRINSIC_V1_SAMPLED_HISTORY:
     return signature.flags == 0 && site.inputCount == 4 &&
            site.outputCount == 1 && bits(input(0), 64) && bits(input(1), 64) &&

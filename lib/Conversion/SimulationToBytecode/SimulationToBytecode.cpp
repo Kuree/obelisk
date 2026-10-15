@@ -89,8 +89,11 @@ planSampledRanges(sim::SimDesignOp design, const StateLayout &state) {
         provenance.emplace(provenanceAnalysis->derive(function));
       }
       auto found = provenance->find(sampled.getSource());
+      Type resultType = sampled.getResult().getType();
       std::optional<unsigned> width =
-          sim::getPackedWidth(sampled.getResult().getType());
+          isa<FloatType>(resultType)
+              ? std::optional<unsigned>(resultType.getIntOrFloatBitWidth())
+              : sim::getPackedWidth(resultType);
       if (found == provenance->end() || !found->second.descriptor || !width) {
         sampled.emitOpError(
             "requires a proven canonical descriptor and a packed result");

@@ -481,9 +481,11 @@ FailureOr<Value> UnitLowering::lowerSampledValue(Operation *expression,
   sampleAssertionValues = savedSampleAssertionValues;
   if (failed(sampled))
     return failure();
-  if (!sim::getPackedWidth((*sampled).getType())) {
+  if (!sim::getPackedWidth((*sampled).getType()) &&
+      !isa<FloatType>((*sampled).getType())) {
     emitError(getSemanticLocation(expression))
-        << "sampled-value expressions currently require packed values";
+        << "sampled-value expressions currently require packed or real "
+           "values";
     return failure();
   }
   return *sampled;
@@ -1216,6 +1218,12 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
     sampleAssertionDefaults = savedDefaults;
     if (failed(initial))
       return failure();
+    // A real history holds bit patterns.
+    if (isa<FloatType>((*initial).getType()) &&
+        (*initial).getType() != current.getType())
+      initial = arith::BitcastOp::create(builder, location, current.getType(),
+                                         *initial)
+                    .getResult();
     cf::BranchOp::create(builder, location, join, ValueRange{*initial});
     setCurrent(join);
     return join->getArgument(0);
@@ -1531,12 +1539,30 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
           return failure();
         gate = *truth;
       }
-      FailureOr<Value> prior = sampledHistory(*current, gate, depth);
+      // IEEE 1800-2023 16.9.3 admits a real expression. Its history is the
+      // bit pattern of each sample.
+      auto real = dyn_cast<FloatType>((*current).getType());
+      Value sample = *current;
+      if (real)
+        sample = arith::BitcastOp::create(
+            builder, location, builder.getIntegerType(real.getWidth()), sample);
+      FailureOr<Value> prior = sampledHistory(sample, gate, depth);
       if (failed(prior))
         return failure();
       previous = *prior;
       if (historyName == "$past")
-        return convertResult(previous);
+        return convertResult(
+            real ? arith::BitcastOp::create(builder, location, real, previous)
+                       .getResult()
+                 : previous);
+      if (real) {
+        if (historyName == "$rose" || historyName == "$fell") {
+          emitError(getSemanticLocation(children.front()))
+              << historyName << " requires an integral expression";
+          return failure();
+        }
+        current = sample;
+      }
     }
 
     FailureOr<Value> equal =

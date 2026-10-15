@@ -978,8 +978,12 @@ LogicalResult SimSampledReadOp::verify() {
     element = net.getElementType();
   else
     return emitOpError("source must be a storage or net reference");
-  if (element != getResult().getType() || !getPackedWidth(element))
-    return emitOpError("source element and result must have one packed type");
+  // IEEE 1800-2023 16.5.1 samples real variables too; their storage is the
+  // IEEE 754 bit pattern.
+  if (element != getResult().getType() ||
+      (!getPackedWidth(element) && !isa<FloatType>(element)))
+    return emitOpError(
+        "source element and result must have one packed or real type");
   return success();
 }
 

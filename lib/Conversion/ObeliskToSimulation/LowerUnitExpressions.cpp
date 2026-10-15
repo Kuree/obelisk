@@ -680,7 +680,8 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
       // packed storage. sampled_read snapshots packed state ranges; sampling
       // the containing unpacked array both loses the selected identity and is
       // outside the operation's contract.
-      if (!sim::getPackedWidth(ref.getElementType()))
+      if (!sim::getPackedWidth(ref.getElementType()) &&
+          !isa<FloatType>(ref.getElementType()))
         return value;
       if (clockedHistoryRead)
         return lowerClockedHistoryOperand(op, location);

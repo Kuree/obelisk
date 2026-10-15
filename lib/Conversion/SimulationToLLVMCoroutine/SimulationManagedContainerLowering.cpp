@@ -1327,8 +1327,11 @@ public:
             getTypeConverter()->convertType(op.getResult().getType(), types)) ||
         types.empty() || types.size() > 2)
       return failure();
-    auto plane = dyn_cast<IntegerType>(types.front());
-    if (!plane || (types.size() == 2 && types[1] != plane))
+    // A real variable's snapshot holds its IEEE 754 bit pattern.
+    auto real = dyn_cast<FloatType>(types.front());
+    auto plane = real ? rewriter.getIntegerType(real.getWidth())
+                      : dyn_cast<IntegerType>(types.front());
+    if (!plane || (types.size() == 2 && (real || types[1] != plane)))
       return failure();
     Value value = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
     Value unknown = entryAlloca(rewriter, op.getLoc(), plane, 1, 1);
@@ -1345,8 +1348,10 @@ public:
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), adaptor.getContext().front(),
                         status);
-    SmallVector<Value> results{
-        LLVM::LoadOp::create(rewriter, op.getLoc(), plane, value, 1)};
+    Value loaded = LLVM::LoadOp::create(rewriter, op.getLoc(), plane, value, 1);
+    if (real)
+      loaded = LLVM::BitcastOp::create(rewriter, op.getLoc(), real, loaded);
+    SmallVector<Value> results{loaded};
     if (types.size() == 2)
       results.push_back(
           LLVM::LoadOp::create(rewriter, op.getLoc(), plane, unknown, 1));

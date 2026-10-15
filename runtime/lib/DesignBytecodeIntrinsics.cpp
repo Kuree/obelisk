@@ -5829,6 +5829,21 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     std::memcpy(&end, frame.data + source.offset + 24, sizeof(end));
     if (start != kInvalidHandleStart && end <= start)
       stable = UINT64_MAX;
+    // IEEE 1800-2023 16.5.1 samples a real variable as its stored IEEE 754
+    // bit pattern.
+    if (output.kind == OBELISK_RT_DBREG_REAL32 ||
+        output.kind == OBELISK_RT_DBREG_REAL64) {
+      uint64_t value = 0, unknown = 0;
+      uint64_t width = output.kind == OBELISK_RT_DBREG_REAL64 ? 64 : 32;
+      if (output.size * 8 != width)
+        return OBELISK_RT_INVALID_BYTECODE;
+      obelisk_rt_status status = obelisk_rt_v1_sampled_read(
+          context, stable, width, reinterpret_cast<uint8_t *>(&value),
+          reinterpret_cast<uint8_t *>(&unknown));
+      if (status == OBELISK_RT_OK)
+        std::memcpy(frame.data + output.offset, &value, output.size);
+      return status;
+    }
     Logic sampled{output.width, output.kind == OBELISK_RT_DBREG_LOGIC,
                   LimbVector(limbCount(output.width)),
                   LimbVector(limbCount(output.width))};
