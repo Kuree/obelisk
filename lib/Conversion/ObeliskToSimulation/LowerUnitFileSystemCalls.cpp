@@ -1781,11 +1781,8 @@ UnitLowering::lowerFileSystemCall(semantic::SVCallExpressionOp op) {
                                                done->getArgument(0));
         return convertResult(result);
       }
-      if (children.size() != 2) {
-        emitError(getSemanticLocation(actual))
-            << "$fread start and count arguments require an unpacked memory";
-        return failure();
-      }
+      // IEEE 1800-2023 21.3.4.4 ignores start and count when $fread loads an
+      // integral variable.
     }
     std::optional<unsigned> width = sim::getPackedWidth(destinationType);
     if (!width) {
