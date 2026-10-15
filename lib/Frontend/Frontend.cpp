@@ -16,9 +16,11 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "slang/analysis/AnalysisManager.h"
@@ -6285,6 +6287,14 @@ buildSlangArguments(ArrayRef<std::string> inputs,
                           ? "1800-2017"
                           : "1800-2023");
 
+  // IEEE 1800-2023 22.4: a quoted relative `include searches the compiler's
+  // current working directory, and optionally user-specified locations.
+  // Slang itself searches the including file's directory first.
+  llvm::SmallString<256> workingDirectory;
+  if (!llvm::sys::fs::current_path(workingDirectory)) {
+    result.emplace_back("-I");
+    result.emplace_back(workingDirectory.str());
+  }
   appendValues(result, "-I", options.includeDirs);
   appendValues(result, "--isystem", options.includeSystemDirs);
   appendValues(result, "-D", options.defines);
