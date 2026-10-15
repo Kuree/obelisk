@@ -1159,6 +1159,40 @@ public:
     }
   }
 
+  // IEEE 1800-2023 35.5.3: export declarations in different scopes may use
+  // one C identifier when their signatures match, and the scope active at the
+  // call selects among them. Compilation::getDPIExports() keeps only the first
+  // declaration per C identifier, so mark the subroutine of every other
+  // export directive as well.
+  void markSharedDPIExports(const slang::ast::Compilation &compilation) {
+    struct Collector : slang::syntax::SyntaxVisitor<Collector> {
+      void handle(const slang::syntax::DPIExportSyntax &syntax) {
+        exports.push_back(&syntax);
+      }
+      SmallVector<const slang::syntax::DPIExportSyntax *> exports;
+    } collector;
+    for (const std::shared_ptr<slang::syntax::SyntaxTree> &tree :
+         compilation.getSyntaxTrees())
+      tree->root().visit(collector);
+    for (const slang::syntax::DPIExportSyntax *directive : collector.exports) {
+      if (directive->specString.valueText() == "DPI")
+        continue;
+      std::string_view name = directive->name.valueText();
+      std::string_view cIdentifier =
+          directive->c_identifier ? directive->c_identifier.valueText() : name;
+      for (auto [symbol, operation] : emittedSymbolOperations) {
+        if (symbol->kind != slang::ast::SymbolKind::Subroutine ||
+            symbol->name != name ||
+            operation->hasAttr("dpi_export_c_identifier"))
+          continue;
+        const slang::syntax::SyntaxNode *syntax = symbol->getSyntax();
+        if (syntax && syntax->parent == directive->parent)
+          operation->setAttr("dpi_export_c_identifier",
+                             builder.getStringAttr(cIdentifier));
+      }
+    }
+  }
+
   LogicalResult finalizeReferences() {
     // ASTVisitor follows ownership edges, while elaborated expressions can
     // reference semantic dependencies outside those roots (for example an
@@ -6486,6 +6520,7 @@ importSystemVerilog(ArrayRef<std::string> inputFilenames, MLIRContext &context,
   for (const slang::ast::Compilation::DPIExport &entry :
        compilation->getDPIExports())
     importer.markDPIExport(*entry.subroutine, entry.cIdentifier, entry.syntax);
+  importer.markSharedDPIExports(*compilation);
   if (!importer.succeeded())
     return failure();
 
