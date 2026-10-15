@@ -15940,16 +15940,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_database_merge(
       *outStatus = SVCovNoCoverage;
       return OBELISK_RT_OK;
     }
+    // IEEE 1800-2023 40.3.2.4 lets the saving simulation merge its own data
+    // back, for example after resetting its counters. That slice joins the
+    // loaded data under a run identity derived from this run's, so a second
+    // merge of it is rejected like any other duplicate run.
     bool currentRunInitialized =
         std::any_of(coverage->runUUID.begin(), coverage->runUUID.end(),
                     [](uint8_t byte) { return byte != 0; });
-    if (currentRunInitialized &&
-        std::any_of(incoming.runs.begin(), incoming.runs.end(),
-                    [&](const obelisk::coverage::Run &run) {
-                      return run.uuid == coverage->runUUID &&
-                             (run.flags & selected->runFlag) != 0;
-                    }))
-      return OBELISK_RT_OK;
+    if (currentRunInitialized) {
+      obelisk::coverage::UUID merged = coverage->runUUID;
+      merged.back() ^= 0xff;
+      for (obelisk::coverage::Run &run : incoming.runs)
+        if (run.uuid == coverage->runUUID)
+          run.uuid = merged;
+      for (obelisk::coverage::Counter &counter : incoming.counters)
+        if (counter.run == coverage->runUUID)
+          counter.run = merged;
+    }
     retainPersistentMetric(incoming, *selected);
     obelisk::coverage::Database combined = *coverage->schema;
     obelisk::coverage::Status canonicalStatus =

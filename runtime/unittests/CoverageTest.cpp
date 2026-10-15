@@ -1225,10 +1225,6 @@ TEST_F(CoverageRuntimeDesignTest,
   EXPECT_EQ(result, 1);
   ASSERT_EQ(save(producer, 23, togglePath, &result), OBELISK_RT_OK);
   EXPECT_EQ(result, 1);
-  ASSERT_EQ(merge(producer, 22, linePath, &result), OBELISK_RT_OK);
-  EXPECT_EQ(result, -1);
-  ASSERT_EQ(save(producer, 22, linePath, &result), OBELISK_RT_OK);
-  EXPECT_EQ(result, 1);
 
   Database savedLine, savedToggle;
   ASSERT_EQ(readFile(linePath.string(), savedLine), Status::Ok);
@@ -1309,6 +1305,24 @@ TEST_F(CoverageRuntimeDesignTest,
       ("obelisk-clause40-mismatch-" + suffix + ".obcov");
   ASSERT_EQ(writeFileAtomically(mismatchPath.string(), mismatched), Status::Ok);
   ASSERT_EQ(merge(consumer, 22, mismatchPath, &result), OBELISK_RT_OK);
+  EXPECT_EQ(result, -1);
+
+  // IEEE 1800-2023 40.3.2.4: the saving run may merge its own data back,
+  // which restores reset counters; merging it again is a duplicate run.
+  ASSERT_EQ(
+      obelisk_rt_v1_coverage_control_instance(producer, 2, 23, 11, 1, &result),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_coverage_query(producer, OBELISK_RT_COVERAGE_TOGGLE,
+                                         &covered, &total, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covered, 0u);
+  ASSERT_EQ(merge(producer, 23, togglePath, &result), OBELISK_RT_OK);
+  EXPECT_EQ(result, 1);
+  ASSERT_EQ(obelisk_rt_v1_coverage_query(producer, OBELISK_RT_COVERAGE_TOGGLE,
+                                         &covered, &total, &percentage),
+            OBELISK_RT_OK);
+  EXPECT_EQ(covered, 3u);
+  ASSERT_EQ(merge(producer, 23, togglePath, &result), OBELISK_RT_OK);
   EXPECT_EQ(result, -1);
 
   ASSERT_EQ(save(producer, 99, linePath, &result), OBELISK_RT_OK);
