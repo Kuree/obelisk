@@ -1,8 +1,8 @@
 // RUN: obelisk -O3 %s -o %t.native
-// RUN: %t.native > %t.native.out 2>&1
+// RUN: not %t.native > %t.native.out 2>&1
 // RUN: FileCheck %s < %t.native.out
 // RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
-// RUN: %t.bytecode 2>&1 | diff -u %t.native.out -
+// RUN: not %t.bytecode 2>&1 | diff -u %t.native.out -
 
 module native_assertions;
   logic value = 0;
@@ -60,7 +60,7 @@ module native_assertions;
   end
 endmodule
 
-// CHECK-COUNT-3: ERROR: {{.*}}native-assertions.sv:{{[0-9]+}}: immediate assertion failed.
+// CHECK-COUNT-3: ERROR: {{.*}}native-assertions.sv:{{[0-9]+}}: native_assertions: simulation time {{[0-9]+}}: immediate assertion failed.
 // CHECK-COUNT-1: assert-pass
 // CHECK-COUNT-1: assert-fail
 // CHECK-COUNT-1: assume-pass

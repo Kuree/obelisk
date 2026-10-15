@@ -1234,6 +1234,7 @@ UnitLowering::outlineForkBranch(
   IRMapping mapping;
   Operation *root = bodyBuilder.clone(*branch, mapping);
   UnitLowering nested(outlined, loweringInputs);
+  nested.outlinedLexicalScope = getLexicalScope(branch);
   for (auto [expression, argument] : expressionCaptureArguments) {
     Operation *cloned = mapping.lookupOrNull(expression);
     if (!cloned) {

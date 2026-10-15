@@ -3239,9 +3239,11 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
     if (failed(lowerStatement(
             children[actionBase + static_cast<size_t>(op.getHasPassAction())])))
       return failure();
-  } else if (op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
-             op.getAssertionKind() == semantic::SVAssertionKind::Assume) {
-    emitDefaultAssertionFailure(location, "concurrent assertion");
+  } else if ((op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
+              op.getAssertionKind() == semantic::SVAssertionKind::Assume) &&
+             failed(emitDefaultAssertionFailure(op, location,
+                                                "concurrent assertion"))) {
+    return failure();
   }
   emitBranch(done);
   setCurrent(done);
@@ -3258,10 +3260,8 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
 LogicalResult UnitLowering::lowerConcurrentAssertion(
     semantic::SVConcurrentAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
-  if (sim::has<sim::metadata::DefaultAssertionFailure>(op)) {
-    emitDefaultAssertionFailure(location, "concurrent assertion");
-    return success();
-  }
+  if (sim::has<sim::metadata::DefaultAssertionFailure>(op))
+    return emitDefaultAssertionFailure(op, location, "concurrent assertion");
   if (sim::has<sim::metadata::GlobalFutureResolver>(op))
     return lowerGlobalFutureAssertionResolver(op);
   auto emitEvaluationCoverageHit = [&](Value enabled = {}) {
@@ -3640,8 +3640,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (op.getHasFailAction()) {
       if (failed(lowerStatement(children[actionBase + op.getHasPassAction()])))
         return failure();
-    } else {
-      emitDefaultAssertionFailure(location, "expect");
+    } else if (failed(emitDefaultAssertionFailure(op, location, "expect"))) {
+      return failure();
     }
     emitBranch(mergeBlock);
     setCurrent(mergeBlock);

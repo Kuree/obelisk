@@ -21,43 +21,71 @@ using namespace mlir;
 
 namespace obelisk::simlowering {
 
-void UnitLowering::emitDefaultAssertionFailure(Location location,
-                                               StringRef description) {
+StringAttr UnitLowering::getLexicalScope(Operation *op) {
+  for (Operation *ancestor = op->getParentOp(); ancestor;
+       ancestor = ancestor->getParentOp()) {
+    if (auto block = dyn_cast<semantic::SVBlockStatementOp>(ancestor)) {
+      if (StringAttr path = block.getBlockPathAttr())
+        return path;
+      continue;
+    }
+    if (auto path = ancestor->getAttrOfType<StringAttr>("hierarchical_name"))
+      return path;
+  }
+  if (outlinedLexicalScope)
+    return outlinedLexicalScope;
+  return sim::get<sim::metadata::HierarchicalName>(function);
+}
+
+LogicalResult UnitLowering::emitDefaultAssertionFailure(Operation *source,
+                                                        Location location,
+                                                        StringRef description) {
+  // IEEE 1800-2023 20.10: the default fail action of an assert, assume, or
+  // expect statement, or of wait_order, is a call to $error. Its message
+  // names the severity, the file and line, the scope, and the simulation time.
   std::string file = "<unknown>";
   unsigned line = 0;
   if (auto source = location->findInstanceOf<FileLineColLoc>()) {
     file = source.getFilename().str();
     line = source.getLine();
   }
-  std::string message = (Twine("ERROR: ") + file + ":" + Twine(line) + ": " +
-                         description + " failed.")
-                            .str();
-  for (size_t position = 0;
-       (position = message.find('%', position)) != std::string::npos;
-       position += 2)
-    message.insert(position, 1, '%');
+  StringAttr scope = getLexicalScope(source);
+  auto escape = [](std::string text) {
+    for (size_t position = 0;
+         (position = text.find('%', position)) != std::string::npos;
+         position += 2)
+      text.insert(position, 1, '%');
+    return text;
+  };
+  std::string message =
+      escape((Twine("ERROR: ") + file + ":" + Twine(line) + ": " +
+              (scope ? scope.getValue() : StringRef("<unknown>")))
+                 .str()) +
+      ": simulation time %0t: " + escape((description + " failed.").str());
 
+  FailureOr<Value> time = currentTimeInUnits(location);
+  if (failed(time))
+    return failure();
   Value context = function.getBody().front().getArgument(0);
+  sim::SimErrorOp::create(builder, location, context);
   Value descriptor = arith::ConstantOp::create(
       builder, location, builder.getI32Type(),
       builder.getI32IntegerAttr(static_cast<int32_t>(0x80000002u)));
   Value item =
       sim::SimBytesConstantOp::create(builder, location, message).getResult();
   auto timeMultiplier = sim::get<sim::metadata::DelayScale>(function);
-  StringAttr scope = sim::get<sim::metadata::HierarchicalName>(function);
-  sim::SimDisplayOp::create(builder, location, context, descriptor,
-                            ValueRange{item}, true, sim::Radix::Decimal,
-                            builder.getDenseI32ArrayAttr({0}), scope,
-                            StringAttr{}, timeMultiplier, IntegerAttr{});
+  sim::SimDisplayOp::create(
+      builder, location, context, descriptor, ValueRange{item, *time}, true,
+      sim::Radix::Decimal, builder.getDenseI32ArrayAttr({0, 0}), scope,
+      StringAttr{}, timeMultiplier, designTimePrecisionExponent());
+  return success();
 }
 
 LogicalResult UnitLowering::lowerImmediateAssertion(
     semantic::SVImmediateAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
-  if (sim::has<sim::metadata::DefaultAssertionFailure>(op)) {
-    emitDefaultAssertionFailure(location);
-    return success();
-  }
+  if (sim::has<sim::metadata::DefaultAssertionFailure>(op))
+    return emitDefaultAssertionFailure(op, location, "immediate assertion");
   SmallVector<Operation *> children = getChildren(op);
   size_t expected = 1 + static_cast<size_t>(op.getHasPassAction()) +
                     static_cast<size_t>(op.getHasFailAction());
@@ -379,10 +407,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
     return success();
   };
   auto lowerDefaultFailure = [&]() -> LogicalResult {
-    if (!reactiveActions) {
-      emitDefaultAssertionFailure(location);
-      return success();
-    }
+    if (!reactiveActions)
+      return emitDefaultAssertionFailure(op, location, "immediate assertion");
     auto nodeAttr = op->getAttrOfType<IntegerAttr>("node_id");
     uint64_t node = nodeAttr ? nodeAttr.getValue().getZExtValue() : 0;
     std::string identity =

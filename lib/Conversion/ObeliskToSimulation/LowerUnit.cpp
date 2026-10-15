@@ -5017,11 +5017,11 @@ LogicalResult UnitLowering::lowerStatement(Operation *op) {
     if (waitOrder.getHasFailureAction()) {
       if (failed(lowerStatement(children[nextAction++])))
         return failure();
-    } else {
-      // IEEE 1800-2017 15.5.4 requires a run-time error only when the source
-      // omitted the fail statement. Scheduling otherwise continues.
-      sim::SimErrorOp::create(builder, location,
-                              function.getBody().front().getArgument(0));
+    } else if (failed(
+                   emitDefaultAssertionFailure(op, location, "wait_order"))) {
+      // IEEE 1800-2023 15.5.4: without a fail statement the default action is
+      // $error, and scheduling continues.
+      return failure();
     }
     emitBranch(done);
     setCurrent(done);

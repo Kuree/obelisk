@@ -1,8 +1,8 @@
 // RUN: obelisk -O3 %s -o %t.native
-// RUN: %t.native > %t.native.out 2>&1
+// RUN: not %t.native > %t.native.out 2>&1
 // RUN: FileCheck %s < %t.native.out
 // RUN: obelisk -O3 --execution-tier=bytecode %s -o %t.bytecode
-// RUN: %t.bytecode 2>&1 | diff -u %t.native.out -
+// RUN: not %t.bytecode 2>&1 | diff -u %t.native.out -
 // RUN: obelisk -O0 -emit-sim %s -o %t.mlir
 // RUN: FileCheck %s --check-prefix=IR < %t.mlir
 

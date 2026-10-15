@@ -493,9 +493,19 @@ private:
       semantic::SVConcurrentAssertionStatementOp op);
   ::mlir::LogicalResult
   lowerSequenceEndpointMonitor(::mlir::ArrayRef<::mlir::Operation *> roots);
-  void emitDefaultAssertionFailure(
-      ::mlir::Location location,
-      ::llvm::StringRef description = "immediate assertion");
+  /// The default fail action of the assertion, expect, or wait_order
+  /// statement `source`: a call to $error naming `description` (IEEE
+  /// 1800-2023 20.10).
+  ::mlir::LogicalResult
+  emitDefaultAssertionFailure(::mlir::Operation *source,
+                              ::mlir::Location location,
+                              ::llvm::StringRef description);
+  /// The hierarchical name of the innermost named scope enclosing `op`: a
+  /// named block, or the procedure, subroutine, or instance containing it.
+  ::mlir::StringAttr getLexicalScope(::mlir::Operation *op);
+  /// The lexical scope of an outlined branch, whose clone has no semantic
+  /// ancestors in this function.
+  ::mlir::StringAttr outlinedLexicalScope;
   ::mlir::LogicalResult emitRuntimeFatal(::mlir::Location location,
                                          ::mlir::StringRef message);
   void emitRuntimeWarning(::mlir::Location location, ::mlir::StringRef message);

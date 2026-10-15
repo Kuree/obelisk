@@ -1,8 +1,8 @@
 // RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot %s -o %t.native
-// RUN: %t.native > %t.native.out 2>&1
+// RUN: not %t.native > %t.native.out 2>&1
 // RUN: FileCheck %s < %t.native.out
 // RUN: obelisk --std=1800-2023 -O0 --execution-tier=bytecode %s -o %t.bytecode
-// RUN: %t.bytecode 2>&1 | diff -u %t.native.out -
+// RUN: not %t.bytecode 2>&1 | diff -u %t.native.out -
 // RUN: obelisk --std=1800-2023 -O0 -emit-sim %s | FileCheck %s --check-prefix=SIM
 // RUN: obelisk --std=1800-2023 -O3 --native-scheduler=aot -emit-llvm %s | FileCheck %s --check-prefix=AOT --implicit-check-not=obelisk_rt_v1_scheduler_run_aot_nodes
 
@@ -70,7 +70,7 @@ module native_concurrent_sva_observable;
   end
 endmodule
 
-// CHECK: ERROR: {{.*}}native-concurrent-sva-observable.sv:{{[0-9]+}}: concurrent assertion failed.
+// CHECK: ERROR: {{.*}}native-concurrent-sva-observable.sv:{{[0-9]+}}: native_concurrent_sva_observable: simulation time {{[0-9]+}}: concurrent assertion failed.
 // CHECK: assert=11 assume=11 cover=111111 vacuous=1 order=1234
 // SIM-DAG: simulation.assert.sampled_read
 // SIM-DAG: home_region = 8 : i32

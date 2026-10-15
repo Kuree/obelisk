@@ -27,13 +27,15 @@ module native_sampled_values;
     cycle++;
     case (cycle)
       1: begin
+        // IEEE 1800-2023 16.5.1: before the first tick, $past reads the
+        // default sampled value, which for `value` is its declaration's 0.
         assert (sampled_value === 1'b1);
-        assert (past_one === 1'bx);
+        assert (past_one === 1'b0);
         assert (rose_value);
         assert (!fell_value);
         assert (!stable_value);
         assert (changed_value);
-        assert (gated_past === 1'bx);
+        assert (gated_past === 1'b0);
       end
       2: begin
         assert (sampled_value === 1'b0);
