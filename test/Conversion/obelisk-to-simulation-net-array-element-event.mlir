@@ -6,10 +6,9 @@
 
 // IEEE 1800-2017 9.4.2: an event expression may select an element of an
 // aggregate as long as it reduces to a singular value, and only a change in
-// that value is an event. A built-in net exposes only flat packed windows of
-// its storage, so an element of an unpacked array of nets has no watchable
-// handle. The event is therefore evaluated by an observer, which re-reads the
-// whole net and selects the element from the value it read.
+// that value is an event. An event on an element of an unpacked array of nets
+// is evaluated by an observer, which reads only that element through an exact
+// element view of the net.
 
 module attributes {
   llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8",
@@ -62,5 +61,5 @@ module attributes {
 // CHECK: simulation.suspend.observe %[[OBSERVER]],
 
 // CHECK: simulation.func private @observer_
-// CHECK: %[[VALUE:.*]] = simulation.net.read
-// CHECK: simulation.aggregate.extract %[[VALUE]]
+// CHECK: %[[ELEMENT:.*]] = simulation.net.extract %{{.*}} from 8
+// CHECK: simulation.net.read %[[ELEMENT]]

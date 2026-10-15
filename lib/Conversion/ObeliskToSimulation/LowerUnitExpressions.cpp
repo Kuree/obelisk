@@ -5105,8 +5105,24 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     fixedArrayElement =
         succeeded(baseType) && isa<sim::UnpackedArrayType>(*baseType);
   }
-  FailureOr<Value> input = lowerExpression(
-      children.front(), lvalue || sampleAssertionValues || fixedArrayElement);
+  // A constant rvalue select of a built-in net reads, and in a combinational
+  // process watches, only its selected window instead of the whole net.
+  Value selectedNet;
+  if (!lvalue && !sampleAssertionValues && !sampleAssertionDefaults &&
+      !fixedArrayElement &&
+      isa<semantic::SVNamedValueExpressionOp>(children.front()) &&
+      llvm::all_of(ArrayRef(children).drop_front(), isIntegerConstant))
+    if (auto path =
+            children.front()->getAttrOfType<StringAttr>("referenced_path"))
+      if (!coverageInputs.lookup(path.getValue()).formal)
+        if (Value bound = values.lookup(path.getValue());
+            bound && isa<sim::NetType>(bound.getType()))
+          selectedNet = bound;
+  FailureOr<Value> input =
+      selectedNet
+          ? FailureOr<Value>(selectedNet)
+          : lowerExpression(children.front(), lvalue || sampleAssertionValues ||
+                                                  fixedArrayElement);
   if (failed(resultType) || failed(input))
     return failure();
 
@@ -5126,6 +5142,55 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
     sourceValueType = net.getElementType();
   else if (auto driver = dyn_cast<sim::DriverType>(sourceValueType))
     sourceValueType = driver.getElementType();
+
+  if (selectedNet) {
+    std::optional<uint64_t> lowBit;
+    if (element &&
+        isa<sim::PackedArrayType, sim::UnpackedArrayType>(sourceValueType)) {
+      FailureOr<Type> indexType = getNormalizedSemanticType(children[1]);
+      std::optional<unsigned> indexWidth =
+          succeeded(indexType) ? sim::getPackedWidth(*indexType) : std::nullopt;
+      if (!indexWidth)
+        return failure();
+      FailureOr<ParsedConstant> parsed = parseSVInteger(
+          *getConstantSpelling(children[1]), *indexWidth, location);
+      if (failed(parsed))
+        return failure();
+      APInt index = isSignedNode(children[1]) ? parsed->value.sextOrTrunc(65)
+                                              : parsed->value.zextOrTrunc(65);
+      std::optional<unsigned> ordinal;
+      if (parsed->unknown.isZero() && index.isSignedIntN(64))
+        ordinal =
+            sim::getArrayElementOrdinal(sourceValueType, index.getSExtValue());
+      if (ordinal && sim::getAggregateElementType(sourceValueType, *ordinal) ==
+                         *resultType)
+        if (auto subelement = sim::getAggregateProvenanceSubelement(
+                sourceValueType, *ordinal))
+          lowBit = subelement->first;
+    } else if (sim::getPackedWidth(sourceValueType)) {
+      FailureOr<PackedSelectionAddress> address =
+          lowerPackedSelectionAddress(op, sourceValueType, *resultType);
+      if (failed(address))
+        return failure();
+      if (address->constant && !address->padding)
+        lowBit = address->lowBit;
+    }
+    if (lowBit) {
+      Value view = sim::SimNetExtractOp::create(
+          builder, location,
+          sim::NetType::get(function.getContext(), *resultType), selectedNet,
+          builder.getI64IntegerAttr(*lowBit));
+      recordNetViewSensitivity(view, selectedNet);
+      return sim::SimNetReadOp::create(builder, location, *resultType, view)
+          .getResult();
+    }
+    // An unknown or out-of-range constant selects no stable window: read the
+    // whole net and apply the ordinary value selection below.
+    recordSensitivity(selectedNet);
+    input = sim::SimNetReadOp::create(builder, location, sourceValueType,
+                                      selectedNet)
+                .getResult();
+  }
 
   // Select the physical window of a borrowed fixed array without loading or
   // replacing the entire aggregate for each field access. The path retains

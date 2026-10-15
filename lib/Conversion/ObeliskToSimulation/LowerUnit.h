@@ -587,6 +587,8 @@ private:
   /// observed instead.
   bool hasWatchableSignalHandle(::mlir::Operation *expression);
   void recordSensitivity(::mlir::Value value);
+  /// Records a read through a constant `net.extract` view of `net`.
+  void recordNetViewSensitivity(::mlir::Value view, ::mlir::Value net);
   void recordImplicitEventActivationLocal(::mlir::Value reference);
   void recordManagedRead(::mlir::Value reference, ::mlir::Location location);
   void recordContainerSizeRead(::mlir::Value container,

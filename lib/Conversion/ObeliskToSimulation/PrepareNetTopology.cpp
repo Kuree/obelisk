@@ -301,18 +301,21 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     if (!flattenNetExpr(children.front(), base) || base.size() != 1)
       return false;
     auto literalValue = [&](Operation *node) -> std::optional<int64_t> {
-      StringAttr spelling = node->getAttrOfType<StringAttr>("constant_value");
+      // Elaboration folds generate-time index arithmetic such as `chain[i+1]`,
+      // so a folded spelling names the driven bits as exactly as a literal.
+      std::optional<StringRef> spelling = getConstantSpelling(node);
       if (!spelling)
         if (auto reference =
                 node->getAttrOfType<SymbolRefAttr>("referenced_symbol"))
           if (auto symbol = semanticSymbols.find(reference.getLeafReference());
               symbol != semanticSymbols.end())
-            spelling =
-                symbol->second->getAttrOfType<StringAttr>("constant_value");
+            if (auto constant =
+                    symbol->second->getAttrOfType<StringAttr>("constant_value"))
+              spelling = constant.getValue();
       if (!spelling)
         return std::nullopt;
       FailureOr<ParsedConstant> value =
-          parseSVInteger(spelling.getValue(), 64, getSemanticLocation(node));
+          parseSVInteger(*spelling, 64, getSemanticLocation(node));
       if (failed(value) || !value->unknown.isZero() ||
           !value->value.isSignedIntN(64))
         return std::nullopt;

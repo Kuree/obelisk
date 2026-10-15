@@ -1015,6 +1015,18 @@ void UnitLowering::recordSensitivity(Value value) {
     sensitivity.insert(value);
 }
 
+void UnitLowering::recordNetViewSensitivity(Value view, Value net) {
+  // An event-control dependency set keeps watching the whole capture.
+  if (observedDependencies)
+    observedDependencies->insert(net);
+  // IEEE 1800-2023 9.2.2.2.1: implicit sensitivity watches the longest static
+  // prefix of a select, so a combinational process watches only the selected
+  // element of a built-in net capture.
+  if (auto argument = dyn_cast<BlockArgument>(net);
+      argument && argument.getOwner() == &function.getBody().front())
+    sensitivity.insert(view);
+}
+
 void UnitLowering::recordImplicitEventActivationLocal(Value reference) {
   if (implicitEventActivationLocals)
     implicitEventActivationLocals->insert(reference);
@@ -6710,6 +6722,36 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
     sensitivity.insert(sim::SimManagedWatchOp::create(
         builder, watch.getLoc(), watch.getResult().getType(), *input,
         watch.getKind()));
+  }
+  // A net view selected inside a branch does not dominate the wait. Rebuild
+  // its constant view chain from the capture at the wait point, and drop it
+  // when the whole capture is already watched.
+  {
+    llvm::SetVector<Value> watched;
+    for (Value value : sensitivity) {
+      SmallVector<sim::SimNetExtractOp> chain;
+      Value root = value;
+      while (auto extract = root.getDefiningOp<sim::SimNetExtractOp>()) {
+        chain.push_back(extract);
+        root = extract.getInput();
+      }
+      if (chain.empty()) {
+        watched.insert(value);
+        continue;
+      }
+      if (sensitivity.contains(root))
+        continue;
+      if (!dominatesCurrent(value)) {
+        Value rebuilt = root;
+        for (sim::SimNetExtractOp extract : llvm::reverse(chain))
+          rebuilt = sim::SimNetExtractOp::create(
+              builder, extract.getLoc(), extract.getResult().getType(), rebuilt,
+              extract.getLowBitAttr());
+        value = rebuilt;
+      }
+      watched.insert(value);
+    }
+    sensitivity = std::move(watched);
   }
   if (sensitivity.empty()) {
     if (entryKind == sim::EntryKind::Continuous ||
