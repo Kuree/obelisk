@@ -32,8 +32,9 @@
 // CHECK: virtual interface task call used a null or invalid handle.
 // CHECK-NOT: obelisk.sv.
 // Every possible instance capture read by a dynamically selected function is
-// conservatively included in always_comb sensitivity.
-// SENS: simulation.suspend.any {{.*}} edges [0, 0, 0, 0]
+// conservatively included in always_comb sensitivity; a task body adds none
+// (IEEE 1800-2023 9.2.2.2.1).
+// SENS: simulation.suspend.any {{.*}} edges [0, 0]
 // MODPORT: virtual-interface method is not imported by the selected modport
 
 interface bus_if;

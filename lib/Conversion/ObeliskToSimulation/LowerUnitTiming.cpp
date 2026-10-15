@@ -1181,11 +1181,15 @@ LogicalResult UnitLowering::lowerTiming(Operation *control,
     llvm::DenseSet<Value> activationLocals;
     llvm::DenseSet<Value> *savedActivationLocals =
         implicitEventActivationLocals;
+    llvm::SetVector<Value> *savedImplicitEventDependencies =
+        implicitEventDependencies;
     observedDependencies = &dependencies;
     implicitEventActivationLocals = &activationLocals;
+    implicitEventDependencies = &dependencies;
     LogicalResult result = lowerControlledStatement(nullptr);
     observedDependencies = saved;
     implicitEventActivationLocals = savedActivationLocals;
+    implicitEventDependencies = savedImplicitEventDependencies;
     if (failed(result))
       return failure();
     // IEEE 1800-2017 9.4.2.2 includes variables read by the controlled

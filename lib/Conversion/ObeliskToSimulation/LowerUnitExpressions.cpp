@@ -3343,9 +3343,10 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
         handleCache[descriptorID] = selected;
       }
       staticTargets.push_back(selected);
-      if (!lvalue)
-        virtualInterfaceReadSensitivity.insert(selected);
-      else if (!isNet)
+      if (!lvalue) {
+        if (!sensitivityExcluded)
+          virtualInterfaceReadSensitivity.insert(selected);
+      } else if (!isNet)
         virtualInterfaceWrittenSensitivity.insert(selected);
     }
   }

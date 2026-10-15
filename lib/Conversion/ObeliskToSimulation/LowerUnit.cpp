@@ -904,6 +904,8 @@ InFlightDiagnostic UnitLowering::unsupported(Operation *op) {
 }
 
 void UnitLowering::recordSensitivity(Value value) {
+  if (sensitivityExcluded)
+    return;
   if (isa<sim::EventType, sim::ManagedWatchType>(value.getType())) {
     if (observedDependencies)
       observedDependencies->insert(value);
@@ -919,6 +921,8 @@ void UnitLowering::recordSensitivity(Value value) {
 }
 
 void UnitLowering::recordNetViewSensitivity(Value view, Value net) {
+  if (sensitivityExcluded)
+    return;
   // An event-control dependency set keeps watching the whole capture.
   if (observedDependencies)
     observedDependencies->insert(net);
@@ -928,6 +932,28 @@ void UnitLowering::recordNetViewSensitivity(Value view, Value net) {
   if (auto argument = dyn_cast<BlockArgument>(net);
       argument && argument.getOwner() == &function.getBody().front())
     sensitivity.insert(view);
+}
+
+bool UnitLowering::calleeBodyReadsAreSensitive(bool task) {
+  // IEEE 1800-2023 9.4.2.2: @* adds what its statement reads, including call
+  // arguments, but nothing a called subroutine reads (9.2.2.2.2).
+  if (sensitivityExcluded ||
+      (observedDependencies &&
+       observedDependencies == implicitEventDependencies))
+    return false;
+  switch (function.getEntryKind()) {
+  case sim::EntryKind::Continuous:
+  case sim::EntryKind::PortInput:
+  case sim::EntryKind::PortOutput:
+    return false;
+  // 9.2.2.2.1: always_comb, and by 9.2.2.3 always_latch, is sensitive to what
+  // a called function reads, but the contents of a task add nothing.
+  case sim::EntryKind::AlwaysComb:
+  case sim::EntryKind::AlwaysLatch:
+    return !task;
+  default:
+    return true;
+  }
 }
 
 void UnitLowering::recordImplicitEventActivationLocal(Value reference) {

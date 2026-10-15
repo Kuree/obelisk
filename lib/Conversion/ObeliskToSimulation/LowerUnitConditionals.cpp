@@ -11,6 +11,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <limits>
 #include <string>
@@ -94,6 +95,22 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
   if (actionControlled)
     actionState = sim::SimAssertionActionStateOp::create(
         builder, location, builder.getI32Type(), context, assertionID);
+
+  // IEEE 1800-2023 9.2.2.2.1: what an immediate assertion's action blocks
+  // read adds nothing to the implicit sensitivity of always_comb, nor by
+  // 9.2.2.3 of always_latch. Their writes still leave it.
+  bool insensitiveActions =
+      function.getEntryKind() == sim::EntryKind::AlwaysComb ||
+      function.getEntryKind() == sim::EntryKind::AlwaysLatch;
+  auto withoutActionSensitivity =
+      [&](function_ref<LogicalResult()> lower) -> LogicalResult {
+    if (!insensitiveActions)
+      return lower();
+    llvm::SaveAndRestore<llvm::SetVector<Value> *> dependencies(
+        observedDependencies, nullptr);
+    llvm::SaveAndRestore<bool> excluded(sensitivityExcluded, true);
+    return lower();
+  };
 
   auto actionEnabled = [&](bool passed) -> Value {
     if (!actionState)
@@ -196,19 +213,24 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
           if (!path.empty() && !referencedNodes.contains(path))
             referencedNodes[path] = named;
         });
-      for (const auto &entry : referencedNodes) {
-        StringRef path = entry.getKey();
-        Value old = values.lookup(path);
-        if (old)
-          previousValues[path] = old;
-        else
-          newlyBoundValues.insert(path);
-        FailureOr<Value> snapshot =
-            lowerReferencedValue(entry.getValue(), path, /*lvalue=*/false);
-        if (failed(snapshot))
-          return failure();
-        values[path] = *snapshot;
-      }
+      LogicalResult snapshotted = withoutActionSensitivity([&] {
+        for (const auto &entry : referencedNodes) {
+          StringRef path = entry.getKey();
+          Value old = values.lookup(path);
+          if (old)
+            previousValues[path] = old;
+          else
+            newlyBoundValues.insert(path);
+          FailureOr<Value> snapshot =
+              lowerReferencedValue(entry.getValue(), path, /*lvalue=*/false);
+          if (failed(snapshot))
+            return failure();
+          values[path] = *snapshot;
+        }
+        return success();
+      });
+      if (failed(snapshotted))
+        return failure();
 
       std::string identity =
           (Twine(siteIdentity) + (passed ? ".pass" : ".fail")).str();
@@ -409,7 +431,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
                                ValueRange{}, mergeBlock, ValueRange{});
       setCurrent(execute);
     }
-    if (failed(lowerAction(action, 0)))
+    if (failed(
+            withoutActionSensitivity([&] { return lowerAction(action, 0); })))
       return failure();
   }
   emitBranch(mergeBlock);
@@ -424,7 +447,8 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
                                  ValueRange{}, mergeBlock, ValueRange{});
         setCurrent(execute);
       }
-      if (failed(lowerAction(action, 1)))
+      if (failed(
+              withoutActionSensitivity([&] { return lowerAction(action, 1); })))
         return failure();
     } else if (op.getAssertionKind() == semantic::SVAssertionKind::Assert ||
                op.getAssertionKind() == semantic::SVAssertionKind::Assume) {

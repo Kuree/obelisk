@@ -587,6 +587,9 @@ private:
   /// observed instead.
   bool hasWatchableSignalHandle(::mlir::Operation *expression);
   void recordSensitivity(::mlir::Value value);
+  /// Whether the variables a called subroutine's body reads join the implicit
+  /// sensitivity being collected; `task` names a task callee.
+  bool calleeBodyReadsAreSensitive(bool task);
   /// Records a read through a constant `net.extract` view of `net`.
   void recordNetViewSensitivity(::mlir::Value view, ::mlir::Value net);
   void recordImplicitEventActivationLocal(::mlir::Value reference);
@@ -887,6 +890,12 @@ private:
   /// References allocated while lowering the statement controlled by @*.
   /// They do not exist yet at that statement's pre-entry wait point.
   ::llvm::DenseSet<::mlir::Value> *implicitEventActivationLocals = nullptr;
+  /// The dependencies of the statement controlled by @*, which are what the
+  /// statement itself reads (IEEE 1800-2023 9.4.2.2).
+  ::llvm::SetVector<::mlir::Value> *implicitEventDependencies = nullptr;
+  /// Lowering code whose reads add no implicit sensitivity, such as the
+  /// action blocks of an immediate assertion in always_comb (9.2.2.2.1).
+  bool sensitivityExcluded = false;
   ::llvm::SetVector<::mlir::Value> *observedWrites = nullptr;
   ::mlir::Operation *topLevelWildcardControl = nullptr;
   ::mlir::Operation *topLevelAlwaysControl = nullptr;

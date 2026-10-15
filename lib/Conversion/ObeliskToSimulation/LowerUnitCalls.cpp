@@ -2736,10 +2736,8 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool excludeWrittenSensitivity =
       function.getEntryKind() == sim::EntryKind::AlwaysComb ||
       function.getEntryKind() == sim::EntryKind::AlwaysLatch;
-  bool includeCalleeReadSensitivity =
-      function.getEntryKind() != sim::EntryKind::Continuous &&
-      function.getEntryKind() != sim::EntryKind::PortInput &&
-      function.getEntryKind() != sim::EntryKind::PortOutput;
+  bool includeCalleeReadSensitivity = calleeBodyReadsAreSensitive(
+      sim::has<sim::metadata::IsTask>(op) || dpi::has<dpi::Task>(op));
   if (!virtualCallees)
     for (const auto &read : readCaptures) {
       if (!includeCalleeReadSensitivity ||
@@ -3020,6 +3018,8 @@ UnitLowering::lowerNewClass(semantic::SVNewClassExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
   auto recordReadCaptures = [&](Operation *source) {
+    if (!calleeBodyReadsAreSensitive(/*task=*/false))
+      return;
     if (auto reads = sim::get<sim::metadata::CalleeReadCaptures>(source))
       for (Attribute readAttr : reads) {
         StringRef path = cast<StringAttr>(readAttr).getValue();
