@@ -2701,6 +2701,11 @@ void obelisk_rt_sync_native_state_range_unlocked(obelisk_rt_context *context,
 
 obelisk_rt_status
 obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context);
+/// Retakes the time-zero Preponed snapshot once the root initializer has run.
+/// Declaration initializers precede every time-zero event (IEEE 1800-2023
+/// 6.8, 16.5.1), so the values they establish are what time zero samples.
+obelisk_rt_status
+obelisk_rt_recapture_initialized_preponed_unlocked(obelisk_rt_context *context);
 
 // Emit every waveform value that changed during the time slot that is about to
 // end. Called immediately before each scheduler time advance and once more when

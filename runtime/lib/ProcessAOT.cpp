@@ -1195,6 +1195,10 @@ obelisk_rt_status executeAOTNode(obelisk_rt_context *context,
         if (!importNativeRootInitializerPlanesUnlocked(context))
           return OBELISK_RT_LAYOUT_MISMATCH;
         obelisk_rt_program_seal_unlocked(context);
+        if (obelisk_rt_status status =
+                obelisk_rt_recapture_initialized_preponed_unlocked(context);
+            status != OBELISK_RT_OK)
+          return status;
       }
       obelisk_rt_retire_process_parent_unlocked(
           context, kNativeLogicalProcessTag | scheduled.token,

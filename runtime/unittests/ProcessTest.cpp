@@ -12516,6 +12516,62 @@ TEST(SampledValues, CapturesCanonicalPreponedPlane) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+obelisk_rt_status
+rootInitializerExecute(obelisk_rt_process_instance_v1 *instance) {
+  if (!instance || !instance->context || !instance->action)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  instance->native_handle = instance;
+  instance->context->stateValue[0] = 1;
+  instance->context->stateUnknown[0] = 0;
+  *instance->action = {
+      OBELISK_RT_FRAGMENT_TERMINATE, OBELISK_RT_SUSPEND_NONE, 0, 0, 0, 0};
+  return OBELISK_RT_OK;
+}
+
+TEST(SampledValues, TimeZeroSamplesDeclarationInitializers) {
+  // Declaration initializers precede every time-zero event (IEEE 1800-2023
+  // 6.8), so time zero samples the values the root initializer establishes,
+  // not the uninitialized plane captured on entry to the time slot.
+  obelisk_rt_sampled_range_v1 sampledRange{0, 0, 1};
+  struct {
+    obelisk_rt_execution_descriptor_v1 execution{};
+    obelisk_rt_execution_extension_v1 extension{};
+  } storage;
+  storage.extension = {OBELISK_RT_EXECUTION_EXTENSION_VERSION,
+                       sizeof(obelisk_rt_execution_extension_v1), &sampledRange,
+                       1};
+  auto &execution = storage.execution;
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = OBELISK_RT_EXECUTION_PREPONED_SNAPSHOT;
+  execution.state_bit_count = 1;
+  execution.reserved = offsetof(decltype(storage), extension);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &context),
+            OBELISK_RT_OK);
+  context->stateValue[0] = 0;
+  context->stateUnknown[0] = 1;
+
+  SchedulerFixture fixture(100);
+  fixture.descriptor.native_execute = rootInitializerExecute;
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture),
+                                        OBELISK_RT_SCHEDULE_ROOT),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(context->schedulerTime, 0u);
+
+  // A later time-zero update is not sampled.
+  context->stateValue[0] = 0;
+  uint64_t handle =
+      obelisk_rt_stable_handle_encode(OBELISK_RT_STABLE_HANDLE_GLOBAL, 0, 0);
+  uint8_t value = 0;
+  uint8_t unknown = 0;
+  ASSERT_EQ(obelisk_rt_v1_sampled_read(context, handle, 1, &value, &unknown),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, 1);
+  EXPECT_EQ(unknown, 0);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 std::vector<uint32_t> preponedObserverSamples;
 
 std::vector<uint32_t> covergroupClockEventSamples;

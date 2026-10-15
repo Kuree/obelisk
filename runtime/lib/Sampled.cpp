@@ -163,6 +163,13 @@ obelisk_rt_capture_preponed_unlocked(obelisk_rt_context *context) {
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_DESIGN; }
 }
 
+obelisk_rt_status obelisk_rt_recapture_initialized_preponed_unlocked(
+    obelisk_rt_context *context) {
+  if (context->schedulerTime != 0 || context->preponedValue.empty())
+    return OBELISK_RT_OK;
+  return obelisk_rt_capture_preponed_unlocked(context);
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_sampled_read(obelisk_rt_context *context, uint64_t stableID,
                            uint64_t bitWidth, uint8_t *outValue,
