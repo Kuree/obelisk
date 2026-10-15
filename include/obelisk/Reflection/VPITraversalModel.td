@@ -1381,7 +1381,8 @@ def InstanceTypeParameters : VPITraversalEdge<InstanceObjects, TypeParameter,
 def InstanceSpecParams : VPITraversalEdge<InstanceObjects, SpecParam,
   IterateMode, SpecParamObjects, NoOrder, "37.10">;
 def InstanceAssertions : VPITraversalEdge<InstanceObjects, AssertionRel,
-  IterateMode, AssertionTargetObjects, NoOrder, "37.10">;
+  IterateMode, AssertionTargetObjects, NoOrder, "37.10", 0,
+  AutomaticDirectChild>;
 def InstanceTypedefs : VPITraversalEdge<InstanceObjects, TypedefRel,
   IterateMode, TypedefTargetObjects, NoOrder, "37.10">;
 def InstanceClassDefns : VPITraversalEdge<InstanceObjects, ClassDefn,
@@ -1393,7 +1394,7 @@ def ScopeSequenceDecls : VPITraversalEdge<ScopeSource, SequenceDecl,
   IterateMode, SequenceDeclObjects, NoOrder, "37.12">;
 def ScopeConcurrentAssertions : VPITraversalEdge<ScopeSource,
   ConcurrentAssertionRel, IterateMode, ConcurrentAssertionObjects,
-  NoOrder, "37.12">;
+  NoOrder, "37.12", 0, AutomaticDirectChild>;
 def ScopeNamedEvents : VPITraversalEdge<NonInstanceScopeObjects, NamedEvent,
   IterateMode, NamedEventTargetObjects, NoOrder, "37.12; 37.85">;
 def ScopeNamedEventArrays : VPITraversalEdge<NonInstanceScopeObjects,

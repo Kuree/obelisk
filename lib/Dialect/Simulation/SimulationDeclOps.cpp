@@ -620,6 +620,10 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   case Kind::Udp:
   case Kind::NamedEvent:
   case Kind::Parameter:
+  case Kind::Assert:
+  case Kind::Assume:
+  case Kind::Cover:
+  case Kind::Restrict:
     break;
   default:
     return emitOpError("kind cannot be a persistent lexical source anchor");
@@ -855,6 +859,14 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       break;
     case Kind::ClockingBlock:
       legal = isDesignScope(parentKind);
+      break;
+    // IEEE 1800-2023 39.3.1: a named concurrent assertion belongs to the
+    // module, interface, program or generate scope that declares it.
+    case Kind::Assert:
+    case Kind::Assume:
+    case Kind::Cover:
+    case Kind::Restrict:
+      legal = isDesignScope(parentKind) || parentKind == Kind::GenScope;
       break;
     case Kind::GenScope:
       legal = isDesignScope(parentKind) || parentKind == Kind::GenScope ||

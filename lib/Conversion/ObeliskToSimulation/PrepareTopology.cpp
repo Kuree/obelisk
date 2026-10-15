@@ -1188,6 +1188,36 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     else
       namedEventArrayRanges.try_emplace(variable, std::move(ranges));
   });
+  // IEEE 1800-2023 39.3.1: a named concurrent assertion is a VPI object of
+  // its scope. Its name is the label of the statement block that wraps it.
+  llvm::StringMap<VPIKind> assertionLabelKinds;
+  module.walk([&](semantic::SVBlockStatementOp block) {
+    SmallVector<Operation *> children = getChildren(block);
+    auto path = block->getAttrOfType<StringAttr>("block_path");
+    auto assertion = children.size() == 1
+                         ? dyn_cast<semantic::SVConcurrentAssertionStatementOp>(
+                               children.front())
+                         : semantic::SVConcurrentAssertionStatementOp{};
+    if (!path || !assertion)
+      return;
+    switch (assertion.getAssertionKind()) {
+    case semantic::SVAssertionKind::Assert:
+      assertionLabelKinds[path.getValue()] = VPIKind::Assert;
+      break;
+    case semantic::SVAssertionKind::Assume:
+      assertionLabelKinds[path.getValue()] = VPIKind::Assume;
+      break;
+    case semantic::SVAssertionKind::CoverProperty:
+    case semantic::SVAssertionKind::CoverSequence:
+      assertionLabelKinds[path.getValue()] = VPIKind::Cover;
+      break;
+    case semantic::SVAssertionKind::Restrict:
+      assertionLabelKinds[path.getValue()] = VPIKind::Restrict;
+      break;
+    case semantic::SVAssertionKind::Expect:
+      break;
+    }
+  });
   auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
              semantic::SVClassTypeOp, semantic::SVSubroutineSymbolOp,
@@ -1197,8 +1227,14 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
              semantic::SVGenerateBlockArraySymbolOp,
              semantic::SVPrimitiveInstanceSymbolOp,
              semantic::SVGenerateBlockSymbolOp,
-             semantic::SVInstanceBodySymbolOp>(operation))
+             semantic::SVInstanceBodySymbolOp,
+             semantic::SVStatementBlockSymbolOp>(operation))
       return std::nullopt;
+    if (isa<semantic::SVStatementBlockSymbolOp>(operation)) {
+      auto found = assertionLabelKinds.find(getHierarchyName(operation));
+      return found == assertionLabelKinds.end() ? std::nullopt
+                                                : std::optional(found->second);
+    }
     // Slang materializes interface bodies solely to describe parameterized
     // virtual-interface types.  They have no run-time instance identity and
     // must not become traversable vpiInterface objects.  Their typespecs are
