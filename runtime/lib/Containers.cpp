@@ -5296,7 +5296,10 @@ obelisk_rt_v1_assoc_read(obelisk_rt_object_v1 *array,
                              key, normalized);
   if (status != OBELISK_RT_OK)
     return status;
-  if (normalized.ignored) {
+  // IEEE 1800-2023 7.8.6: an X or Z key reads the nonexistent-entry value,
+  // which is the user-specified default (7.9.11) without a warning when one
+  // exists.
+  if (normalized.ignored && !snapshot.hasDefault) {
     warnIgnoredAssocKey();
     return OBELISK_RT_OK;
   }
@@ -5333,7 +5336,7 @@ obelisk_rt_v1_assoc_read(obelisk_rt_object_v1 *array,
                 return OBELISK_RT_OK;
               });
         };
-        if (!header->buffer)
+        if (!header->buffer || read->key.ignored)
           return readDefault();
         return accessBuffer(header->buffer, [&](uint8_t *data, uint64_t size) {
           std::optional<uint64_t> found =

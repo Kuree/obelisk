@@ -1672,6 +1672,21 @@ TEST_F(ManagedValueTest,
   EXPECT_EQ(present, 0u);
   EXPECT_EQ(value, fallback);
 
+  // IEEE 1800-2023 7.8.6: an X or Z key reads the user-specified default
+  // without a warning.
+  obelisk_rt_assoc_key_v1 unknownKey{OBELISK_RT_ASSOC_KEY_SIGNED, 0, 12, 3, 1,
+                                     0};
+  value = 0;
+  present = 1;
+  testing::internal::CaptureStderr();
+  ASSERT_EQ(obelisk_rt_v1_assoc_read_checked(array, &unknownKey, &value,
+                                             sizeof(value), nullptr, 0,
+                                             &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+  EXPECT_EQ(present, 0u);
+  EXPECT_EQ(value, fallback);
+
   for (auto [keyValue, stored] : {std::pair<int16_t, uint64_t>{4, 9},
                                   std::pair<int16_t, uint64_t>{-2, 5}}) {
     obelisk_rt_assoc_key_v1 key{OBELISK_RT_ASSOC_KEY_SIGNED,     0, 12,
