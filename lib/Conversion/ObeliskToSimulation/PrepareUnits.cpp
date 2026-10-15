@@ -746,6 +746,42 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
         if (assertion.getHasDefaultDisable() && !children.empty())
           observerCandidates.push_back({children.front(), ObserverResult::Truth,
                                         "disable", unit.id, unit.hierarchy});
+        // IEEE 1800-2023 16.5.1: the Preponed snapshot holds no dynamic
+        // container contents, so a packed value read from one is sampled
+        // through an observer. Action blocks and disable conditions read
+        // current values.
+        size_t actions = static_cast<size_t>(assertion.getHasPassAction()) +
+                         static_cast<size_t>(assertion.getHasFailAction());
+        size_t defaultDisable =
+            static_cast<size_t>(assertion.getHasDefaultDisable());
+        if (children.size() < actions + defaultDisable)
+          return;
+        for (Operation *child : ArrayRef<Operation *>(children)
+                                    .drop_front(defaultDisable)
+                                    .drop_back(actions))
+          child->walk<WalkOrder::PreOrder>([&](Operation *expression) {
+            if (auto disabled = dyn_cast<semantic::SVDisableIffAssertionExprOp>(
+                    expression)) {
+              SmallVector<Operation *> operands = getChildren(disabled);
+              if (operands.size() == 2)
+                operands.back()->walk<WalkOrder::PreOrder>(
+                    [&](Operation *inner) {
+                      if (!readsDynamicContainerValue(inner))
+                        return WalkResult::advance();
+                      observerCandidates.push_back(
+                          {inner, ObserverResult::Value, "sampled_dynamic",
+                           unit.id, unit.hierarchy});
+                      return WalkResult::skip();
+                    });
+              return WalkResult::skip();
+            }
+            if (!readsDynamicContainerValue(expression))
+              return WalkResult::advance();
+            observerCandidates.push_back({expression, ObserverResult::Value,
+                                          "sampled_dynamic", unit.id,
+                                          unit.hierarchy});
+            return WalkResult::skip();
+          });
         return;
       }
       if (auto disabled =

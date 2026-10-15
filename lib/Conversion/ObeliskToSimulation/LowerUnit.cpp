@@ -2790,6 +2790,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
   if (!lvalue) {
     if (Value captured = expressionCaptures.lookup(op))
       return captured;
+    if (sampleAssertionValues && sim::get<sim::metadata::Observer>(op) &&
+        readsDynamicContainerValue(op))
+      return lowerSampledDynamicValue(op);
     if (sim::has<sim::metadata::RandomArithmeticOperand>(op)) {
       emitError(op->getLoc())
           << "random arithmetic formal operand was not bound before lowering";

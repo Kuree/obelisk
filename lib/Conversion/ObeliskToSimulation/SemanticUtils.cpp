@@ -129,6 +129,36 @@ SmallVector<Operation *> getChildren(Operation *op) {
   return children;
 }
 
+bool readsDynamicContainerValue(Operation *expression) {
+  auto semanticType = [](Operation *operation) -> Type {
+    auto type = operation->getAttrOfType<TypeAttr>("semantic_type");
+    return type ? type.getValue() : Type{};
+  };
+  Type type = semanticType(expression);
+  if (!isa_and_nonnull<semantic::IntegralType, semantic::RangedPackedArrayType,
+                       semantic::PackedArrayType, semantic::EnumType,
+                       semantic::PackedStructType, semantic::PackedUnionType>(
+          type))
+    return false;
+  std::function<bool(Operation *)> reaches = [&](Operation *operation) {
+    for (Operation *child : getChildren(operation)) {
+      Type childType = semanticType(child);
+      if (isa_and_nonnull<semantic::QueueType, semantic::DynArrayType,
+                          semantic::AssocArrayType, semantic::StringType>(
+              childType))
+        return true;
+      if (isa_and_nonnull<
+              semantic::RangedUnpackedArrayType, semantic::UnpackedArrayType,
+              semantic::UnpackedStructType, semantic::UnpackedUnionType>(
+              childType) &&
+          reaches(child))
+        return true;
+    }
+    return false;
+  };
+  return reaches(expression);
+}
+
 FailureOr<CoverageBinChildren>
 decodeCoverageBinChildren(semantic::SVCoverageBinSymbolOp bin) {
   auto malformed = [&](const Twine &detail)

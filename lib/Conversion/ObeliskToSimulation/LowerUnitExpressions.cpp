@@ -11,6 +11,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <cmath>
@@ -2658,6 +2659,150 @@ FailureOr<Value> UnitLowering::bindVirtualClockingObserver(
       return failure();
   return bindObserver(expression, ValueRange{},
                       /*includeStaticDependencies=*/true, &overrides);
+}
+
+FailureOr<Value> UnitLowering::lowerSampledDynamicValue(Operation *expression) {
+  // IEEE 1800-2023 16.5.1: the value is sampled in Preponed, before any
+  // region of the time step changes the container. A helper re-evaluates the
+  // expression in Postponed of every time step in which it changes, so the
+  // retained sample is always the value with which the next time step begins.
+  Location location = getSemanticLocation(expression);
+  FailureOr<Value> observer = [&]() -> FailureOr<Value> {
+    llvm::SaveAndRestore<bool> current(sampleAssertionValues, false);
+    return bindObserver(expression);
+  }();
+  if (failed(observer))
+    return failure();
+  auto binding = observer->getDefiningOp<sim::SimObserverBindOp>();
+  if (!binding)
+    return emitError(location) << "sampled dynamic value has no observer",
+           failure();
+  auto observerType = cast<sim::ObserverType>(binding.getType());
+  Type type = observerType.getResultType();
+  FlatSymbolRefAttr evaluator = binding.getEvaluatorAttr();
+  IntegerAttr captureCount = binding.getCaptureCountAttr();
+  SmallVector<Value> values(binding.getValues());
+  SmallVector<DictionaryAttr> valueAttrs;
+  std::string key = (Twine("sampled-dynamic|") + evaluator.getValue()).str();
+  for (Value value : values) {
+    DictionaryAttr attrs;
+    if (auto storage = value.getDefiningOp<sim::SimContextStorageOp>())
+      attrs = captureMetadata(builder, sim::CaptureKind::Storage,
+                              storage.getIdAttr().getValue().getZExtValue());
+    else if (auto net = value.getDefiningOp<sim::SimContextNetOp>())
+      attrs = captureMetadata(builder, sim::CaptureKind::Net,
+                              net.getIdAttr().getValue().getZExtValue());
+    else if (auto argument = dyn_cast<BlockArgument>(value);
+             argument && argument.getOwner() == &function.getBody().front())
+      attrs = function.getArgAttrDict(argument.getArgNumber());
+    auto kind = attrs ? dyn_cast_or_null<sim::CaptureKindAttr>(
+                            attrs.get(sim::metadata::CaptureKind::getNameStr()))
+                      : sim::CaptureKindAttr{};
+    auto descriptor = attrs ? attrs.getAs<IntegerAttr>(
+                                  sim::metadata::DescriptorId::getNameStr())
+                            : IntegerAttr{};
+    if (!kind || !descriptor ||
+        (kind.getValue() != sim::CaptureKind::Storage &&
+         kind.getValue() != sim::CaptureKind::Net))
+      return emitError(location)
+                 << "a sampled dynamic container value requires statically "
+                    "descriptor-bound signals",
+             failure();
+    valueAttrs.push_back(attrs);
+    key += (Twine("|") + Twine(static_cast<uint32_t>(kind.getValue())) + ":" +
+            Twine(descriptor.getValue().getZExtValue()))
+               .str();
+  }
+  binding.erase();
+  uint64_t siteID = stableCodeUnitID(key);
+  if (!alternateClockSamplePlans.contains(key)) {
+    alternateClockSamplePlans[key] = {siteID, 1, type};
+    MLIRContext *context = function.getContext();
+    auto parentHierarchy = sim::get<sim::metadata::HierarchicalName>(function);
+    StringRef parentName =
+        parentHierarchy ? parentHierarchy.getValue() : function.getSymName();
+    std::string symbol =
+        (function.getSymName() + ".$sampled_value." + Twine(siteID)).str();
+    std::string hierarchy =
+        (Twine(parentName) + ".$sampled_value." + Twine(siteID)).str();
+    OpBuilder outlineBuilder(function);
+    outlineBuilder.setInsertionPoint(function);
+    SmallVector<Type> inputs{sim::ContextType::get(context)};
+    SmallVector<DictionaryAttr> argumentAttrs{
+        captureMetadata(outlineBuilder, sim::CaptureKind::Context)};
+    for (auto [value, attrs] : llvm::zip_equal(values, valueAttrs)) {
+      inputs.push_back(value.getType());
+      argumentAttrs.push_back(attrs);
+    }
+    SmallVector<NamedAttribute> attributes{
+        outlineBuilder.getNamedAttr("internal", outlineBuilder.getUnitAttr()),
+        outlineBuilder.getNamedAttr(
+            "home_region",
+            sim::EventRegionAttr::get(context, sim::EventRegion::Active)),
+        outlineBuilder.getNamedAttr("domain",
+                                    sim::ExecutionDomainAttr::get(
+                                        context, sim::ExecutionDomain::Design)),
+        ::obelisk::schedule::named<
+            ::obelisk::schedule::Field::ClockedSamplePlan>(
+            schedule::ClockedSamplePlanAttr::get(
+                context, outlineBuilder.getStringAttr(key),
+                outlineBuilder.getI64IntegerAttr(siteID),
+                outlineBuilder.getStringAttr(hierarchy))),
+        sim::named<sim::metadata::HierarchicalName>(
+            outlineBuilder.getStringAttr(hierarchy))};
+    sim::SimFuncOp sampler = sim::SimFuncOp::create(
+        outlineBuilder, location, symbol,
+        FunctionType::get(context, inputs, TypeRange{}), sim::EntryKind::Always,
+        attributes, argumentAttrs);
+    SymbolTable::setSymbolVisibility(sampler, SymbolTable::Visibility::Private);
+    Block &entry = sampler.getBody().front();
+    Block *wait = new Block();
+    Block *changed = new Block();
+    sampler.getBody().push_back(wait);
+    sampler.getBody().push_back(changed);
+    OpBuilder entryBuilder = OpBuilder::atBlockEnd(&entry);
+    auto evaluate = [&](OpBuilder &evaluateBuilder) {
+      SmallVector<Value> operands{entry.getArgument(0)};
+      llvm::append_range(operands, entry.getArguments().drop_front().take_front(
+                                       captureCount.getValue().getZExtValue()));
+      return sim::SimCallOp::create(evaluateBuilder, location, TypeRange{type},
+                                    evaluator, operands, ArrayAttr{},
+                                    ArrayAttr{})
+          .getResult(0);
+    };
+    auto update = [&](OpBuilder &updateBuilder) -> LogicalResult {
+      Value gate = arith::ConstantOp::create(updateBuilder, location,
+                                             updateBuilder.getI1Type(),
+                                             updateBuilder.getBoolAttr(true));
+      SmallVector<unsigned> path;
+      return emitClockedSampleUpdate(
+          updateBuilder, location, entry.getArgument(0),
+          evaluate(updateBuilder), gate, key, siteID, 1, path);
+    };
+    if (failed(update(entryBuilder)))
+      return failure();
+    cf::BranchOp::create(entryBuilder, location, wait);
+    // The computed wait record is sized from the binding at the suspension.
+    OpBuilder waitBuilder = OpBuilder::atBlockEnd(wait);
+    Value localObserver = sim::SimObserverBindOp::create(
+        waitBuilder, location, observerType, evaluator,
+        entry.getArguments().drop_front(), captureCount);
+    sim::SimSuspendObserveOp::create(
+        waitBuilder, location, ValueRange{localObserver, evaluate(waitBuilder)},
+        0, ArrayRef<int32_t>{static_cast<int32_t>(sim::EdgeKind::Change)},
+        ArrayRef<int32_t>{-1}, schedule::ContinuationSiteAttr{},
+        sim::EventRegionAttr::get(context, sim::EventRegion::Postponed),
+        changed);
+    OpBuilder changedBuilder = OpBuilder::atBlockEnd(changed);
+    if (failed(update(changedBuilder)))
+      return failure();
+    cf::BranchOp::create(changedBuilder, location, wait);
+    sim::mark<sim::metadata::Lowered>(sampler);
+  }
+  SmallVector<unsigned> path;
+  return emitClockedSampleRead(builder, location,
+                               function.getBody().front().getArgument(0), type,
+                               key, siteID, 1, 0, path);
 }
 
 FailureOr<Value> UnitLowering::lowerClockingInputSample(

@@ -482,6 +482,10 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   lowerClockedHistoryOperand(::mlir::Operation *operand,
                              ::mlir::Location location);
+  /// IEEE 1800-2023 16.5.1: the sampled value of a packed expression that
+  /// reads a dynamic container, which the Preponed snapshot does not hold.
+  ::mlir::FailureOr<::mlir::Value>
+  lowerSampledDynamicValue(::mlir::Operation *expression);
   ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
       ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
       uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,

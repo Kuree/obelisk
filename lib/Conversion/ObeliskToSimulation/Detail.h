@@ -242,6 +242,12 @@ bool isCompileTimeOnlyInstanceMember(::mlir::Operation *op);
 /// Operations in the first block of an AST node's inventory region.
 ::mlir::SmallVector<::mlir::Operation *> getChildren(::mlir::Operation *op);
 
+/// Whether an expression is a packed selection or method result applied to a
+/// queue, dynamic array, associative array, or string, possibly through
+/// unpacked elements in between. IEEE 1800-2023 16.5.1 samples such a value
+/// in Preponed, where the state snapshot holds no container contents.
+bool readsDynamicContainerValue(::mlir::Operation *expression);
+
 /// Lossless view of the heterogeneous direct children of a coverage-bin
 /// symbol.  The frontend records source roles and transition grouping in
 /// attributes because the generic AST region itself has no operand segments.
