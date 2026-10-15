@@ -559,7 +559,12 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       StringRef scaleName = name == "$timeunit" ? "dpi_unit_femtoseconds"
                                                 : "dpi_precision_femtoseconds";
       scale = targetScope->getAttrOfType<IntegerAttr>(scaleName);
-    } else if (children.empty()) {
+    } else if (!children.empty()) {
+      // The frontend froze the time scale of a $unit target.
+      StringRef scaleName = name == "$timeunit" ? "target_time_unit_fs"
+                                                : "target_time_precision_fs";
+      scale = op->getAttrOfType<IntegerAttr>(scaleName);
+    } else {
       StringRef scaleName = name == "$timeunit"
                                 ? "system_scope_time_unit_fs"
                                 : "system_scope_time_precision_fs";

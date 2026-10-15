@@ -4058,6 +4058,26 @@ private:
                 "system_scope_time_precision_fs",
                 builder.getI64IntegerAttr(getFemtoseconds(scale->precision)));
           }
+          // IEEE 1800-2023 20.4.1, 20.4.2: an explicit $unit names the
+          // compilation unit, which elaborates to no instance scope.
+          if (!node.arguments().empty())
+            if (const auto *target =
+                    node.arguments()[0]
+                        ->template as_if<
+                            slang::ast::ArbitrarySymbolExpression>();
+                target && target->symbol &&
+                target->symbol->kind ==
+                    slang::ast::SymbolKind::CompilationUnit) {
+              slang::TimeScale scale =
+                  target->symbol
+                      ->template as<slang::ast::CompilationUnitSymbol>()
+                      .timeScale.value_or(slang::TimeScale{});
+              attrs.set("target_time_unit_fs",
+                        builder.getI64IntegerAttr(getFemtoseconds(scale.base)));
+              attrs.set(
+                  "target_time_precision_fs",
+                  builder.getI64IntegerAttr(getFemtoseconds(scale.precision)));
+            }
           const slang::ast::Scope *timeScope = system->scope;
           while (timeScope) {
             const slang::ast::Symbol &timeScopeSymbol = timeScope->asSymbol();

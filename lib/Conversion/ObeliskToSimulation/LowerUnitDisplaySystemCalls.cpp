@@ -1216,7 +1216,11 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
       unit = targetScope->getAttrOfType<IntegerAttr>("dpi_unit_femtoseconds");
       precision =
           targetScope->getAttrOfType<IntegerAttr>("dpi_precision_femtoseconds");
-    } else if (children.empty()) {
+    } else if (!children.empty()) {
+      // The frontend froze the time scale of a $unit target.
+      unit = op->getAttrOfType<IntegerAttr>("target_time_unit_fs");
+      precision = op->getAttrOfType<IntegerAttr>("target_time_precision_fs");
+    } else {
       unit = op->getAttrOfType<IntegerAttr>("system_scope_time_unit_fs");
       precision =
           op->getAttrOfType<IntegerAttr>("system_scope_time_precision_fs");
@@ -1244,11 +1248,15 @@ UnitLowering::lowerDisplaySystemCall(semantic::SVCallExpressionOp op) {
           return (Twine(femtoseconds / factor) + suffix).str();
       return (Twine(femtoseconds) + "fs").str();
     };
-    std::string text =
-        (Twine("Time scale of (") + targetPath.getValue() + ") is " +
-         formatScale(unit.getValue().getZExtValue()) + " / " +
-         formatScale(precision.getValue().getZExtValue()))
-            .str();
+    // IEEE 1800-2023 20.4.2 names a $root target "$root", not by the
+    // escaped hierarchical name of the root scope.
+    StringRef targetName = targetScope && !targetScope.getParent()
+                               ? StringRef("$root")
+                               : targetPath.getValue();
+    std::string text = (Twine("Time scale of (") + targetName + ") is " +
+                        formatScale(unit.getValue().getZExtValue()) + " / " +
+                        formatScale(precision.getValue().getZExtValue()))
+                           .str();
     Value item =
         sim::SimBytesConstantOp::create(builder, location, text).getResult();
     Value descriptor = constant(i32, 1);
