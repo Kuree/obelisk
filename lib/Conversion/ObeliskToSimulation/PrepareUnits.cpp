@@ -1159,6 +1159,28 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   }
   codeUnitIDs[result.rootID] = semanticRoot;
 
+  // A nonblocking assignment or `->>` trigger with an event control acts in
+  // a detached process once the control occurs (9.4.5, 15.5.1).
+  auto assignDeferredEventCodeUnit = [&](Operation *owner, uint64_t nodeID,
+                                         StringRef parentHierarchy) {
+    std::string hierarchy =
+        (Twine(parentHierarchy) + ".$nba_event." + Twine(nodeID)).str();
+    uint64_t id = stableCodeUnitID(hierarchy);
+    auto [collision, inserted] = codeUnitIDs.try_emplace(id, owner);
+    if (!inserted) {
+      emitError(getSemanticLocation(owner))
+          << "stable deferred-NBA code-unit ID collision for '" << hierarchy
+          << "'";
+      emitRemark(getSemanticLocation(collision->second))
+          << "colliding code unit is here";
+      invalid = true;
+      return;
+    }
+    sim::set<sim::metadata::NbaEventCodeUnitId>(
+        owner, IntegerAttr::get(IntegerType::get(context, 64), id));
+    sim::set<sim::metadata::NbaEventHierarchy>(
+        owner, builder.getStringAttr(hierarchy));
+  };
   std::function<void(Operation *, StringRef)> assignForkCodeUnits;
   assignForkCodeUnits = [&](Operation *operation, StringRef parentHierarchy) {
     if (auto assignment =
@@ -1168,26 +1190,17 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
             semantic::SVAssignmentKind::Nonblocking) {
       SmallVector<Operation *> children = getChildren(assignment);
       if (children.size() == 3 &&
-          !isa<semantic::SVDelayControlOp>(children.front())) {
-        uint64_t nodeID = assignment.getNodeId();
-        std::string hierarchy =
-            (Twine(parentHierarchy) + ".$nba_event." + Twine(nodeID)).str();
-        uint64_t id = stableCodeUnitID(hierarchy);
-        auto [collision, inserted] = codeUnitIDs.try_emplace(id, assignment);
-        if (!inserted) {
-          emitError(getSemanticLocation(assignment))
-              << "stable deferred-NBA code-unit ID collision for '" << hierarchy
-              << "'";
-          emitRemark(getSemanticLocation(collision->second))
-              << "colliding code unit is here";
-          invalid = true;
-        } else {
-          sim::set<sim::metadata::NbaEventCodeUnitId>(
-              assignment, IntegerAttr::get(IntegerType::get(context, 64), id));
-          sim::set<sim::metadata::NbaEventHierarchy>(
-              assignment, builder.getStringAttr(hierarchy));
-        }
-      }
+          !isa<semantic::SVDelayControlOp>(children.front()))
+        assignDeferredEventCodeUnit(assignment, assignment.getNodeId(),
+                                    parentHierarchy);
+    }
+    if (auto trigger = dyn_cast<semantic::SVEventTriggerStatementOp>(operation);
+        trigger && trigger.getHasTimingControl() &&
+        trigger.getIsNonblocking()) {
+      SmallVector<Operation *> children = getChildren(trigger);
+      if (children.size() == 2 && !isa<semantic::SVDelayControlOp>(children[1]))
+        assignDeferredEventCodeUnit(trigger, trigger.getNodeId(),
+                                    parentHierarchy);
     }
     if (auto fork = dyn_cast<semantic::SVBlockStatementOp>(operation);
         fork &&

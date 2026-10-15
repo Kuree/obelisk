@@ -4133,10 +4133,36 @@ FailureOr<Value> UnitLowering::lowerStreamingAssignment(
 LogicalResult UnitLowering::emitDeferredNBAEvent(
     semantic::SVAssignmentExpressionOp assignment, Operation *control,
     CapturedLValue target, Value value, Location location) {
+  SmallVector<Value> targetValues;
+  appendCapturedValues(target, targetValues);
+  SmallVector<DeferredPayload> payload;
+  for (Value captured : targetValues)
+    payload.push_back({captured, sim::CaptureKind::Formal,
+                       /*retainReference=*/true});
+  payload.push_back({value, sim::CaptureKind::Value,
+                     /*retainReference=*/false});
+  return emitDeferredEventAction(
+      assignment, control, payload, location,
+      [&](UnitLowering &lowering, ValueRange arguments) -> LogicalResult {
+        CapturedLValue captured = target;
+        unsigned next = 0;
+        if (failed(lowering.replaceCapturedValues(
+                captured, arguments.drop_back(), next)) ||
+            next != targetValues.size())
+          return failure();
+        return lowering.writeCapturedLValue(captured, arguments.back(), false,
+                                            true, location);
+      });
+}
+
+LogicalResult UnitLowering::emitDeferredEventAction(
+    Operation *owner, Operation *control, ArrayRef<DeferredPayload> payload,
+    Location location,
+    function_ref<LogicalResult(UnitLowering &, ValueRange)> action) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError(
-        "deferred nonblocking assignment requires a simulation design");
+        "deferred event action requires a simulation design");
 
   SmallVector<Operation *> controlChildren = getChildren(control);
   bool repeated = isa<semantic::SVRepeatedEventControlOp>(control);
@@ -4156,8 +4182,6 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
     repeatCount = *lowered;
   }
 
-  SmallVector<Value> targetValues;
-  appendCapturedValues(target, targetValues);
   MLIRContext *context = function.getContext();
   SmallVector<Type> inputs;
   SmallVector<Value> captures;
@@ -4191,12 +4215,9 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
   Value processContext = function.getBody().front().getArgument(0);
   appendCapture(processContext, sim::CaptureKind::Context,
                 /*retainReference=*/false);
-  unsigned targetStart = inputs.size();
-  for (Value captured : targetValues)
-    appendCapture(captured, sim::CaptureKind::Formal,
-                  /*retainReference=*/true);
-  unsigned valueArgument = appendCapture(value, sim::CaptureKind::Value,
-                                         /*retainReference=*/false);
+  unsigned payloadStart = inputs.size();
+  for (const DeferredPayload &entry : payload)
+    appendCapture(entry.value, entry.kind, entry.retainReference);
   std::optional<unsigned> repeatArgument;
   if (repeatCount)
     repeatArgument = appendCapture(repeatCount, sim::CaptureKind::Value,
@@ -4300,13 +4321,12 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
   for (StringRef path : lexicalPaths)
     addPathCapture(path);
 
-  auto codeUnitIDAttr = sim::get<sim::metadata::NbaEventCodeUnitId>(assignment);
-  auto hierarchyAttr = sim::get<sim::metadata::NbaEventHierarchy>(assignment);
+  auto codeUnitIDAttr = sim::get<sim::metadata::NbaEventCodeUnitId>(owner);
+  auto hierarchyAttr = sim::get<sim::metadata::NbaEventHierarchy>(owner);
   if (!codeUnitIDAttr || !codeUnitIDAttr.getValue().isStrictlyPositive() ||
       !hierarchyAttr)
     return emitError(location)
-           << "deferred nonblocking assignment has no prepared code-unit "
-              "identity";
+           << "deferred event action has no prepared code-unit identity";
   uint64_t codeUnitID = codeUnitIDAttr.getValue().getZExtValue();
   uint64_t parentID = function.getCodeUnitId().value_or(0);
   uint64_t scopeID = 0;
@@ -4377,16 +4397,8 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
     return failure();
   }
   nested.setCurrent(continuation);
-  CapturedLValue childTarget = target;
-  unsigned next = 0;
-  if (failed(nested.replaceCapturedValues(
-          childTarget,
-          entry.getArguments().slice(targetStart, targetValues.size()),
-          next)) ||
-      next != targetValues.size() ||
-      failed(nested.writeCapturedLValue(childTarget,
-                                        entry.getArgument(valueArgument), false,
-                                        true, location))) {
+  if (failed(action(
+          nested, entry.getArguments().slice(payloadStart, payload.size())))) {
     deferred.erase();
     declaration.erase();
     return failure();
@@ -4422,7 +4434,10 @@ LogicalResult UnitLowering::emitDeferredNBAEvent(
   spawn();
   cf::BranchOp::create(builder, location, resume);
   setCurrent(immediateBlock);
-  if (failed(writeCapturedLValue(target, value, false, true, location)))
+  SmallVector<Value> payloadValues;
+  for (const DeferredPayload &entry : payload)
+    payloadValues.push_back(entry.value);
+  if (failed(action(*this, payloadValues)))
     return failure();
   if (current->empty() || !current->back().hasTrait<OpTrait::IsTerminator>())
     cf::BranchOp::create(builder, location, resume);

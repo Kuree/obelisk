@@ -607,6 +607,23 @@ private:
   emitDeferredNBAEvent(semantic::SVAssignmentExpressionOp assignment,
                        ::mlir::Operation *control, CapturedLValue target,
                        ::mlir::Value value, ::mlir::Location location);
+  /// A value evaluated when a deferred event action is encountered.
+  struct DeferredPayload {
+    ::mlir::Value value;
+    sim::CaptureKind kind;
+    bool retainReference;
+  };
+  /// Performs `action` once `control` occurs, without blocking the caller
+  /// (IEEE 1800-2023 9.4.5, 15.5.1). `owner` carries the prepared code-unit
+  /// identity, and `payload` is evaluated now and handed to `action`, which
+  /// runs in the deferred process, or in the caller when a repeat count is
+  /// not positive.
+  ::mlir::LogicalResult emitDeferredEventAction(
+      ::mlir::Operation *owner, ::mlir::Operation *control,
+      ::llvm::ArrayRef<DeferredPayload> payload, ::mlir::Location location,
+      ::llvm::function_ref<::mlir::LogicalResult(UnitLowering &,
+                                                 ::mlir::ValueRange)>
+          action);
   ::mlir::LogicalResult
   emitCycleDelaySuspend(semantic::SVCycleDelayControlOp control,
                         ::mlir::Block *continuation,

@@ -1779,6 +1779,19 @@ UnitLowering::lowerEventTrigger(semantic::SVEventTriggerStatementOp op) {
     emitError(location) << "event trigger operand is not an event handle";
     return failure();
   }
+  // IEEE 1800-2023 15.5.1: `->>` with an event control does not block; once
+  // the control occurs, the event is triggered in the NBA region.
+  if (op.getHasTimingControl() && !isa<semantic::SVDelayControlOp>(children[1]))
+    return emitDeferredEventAction(
+        op, children[1],
+        {{*event, sim::CaptureKind::Formal, /*retainReference=*/false}},
+        location, [&](UnitLowering &lowering, ValueRange arguments) {
+          sim::SimEventTriggerOp::create(lowering.builder, location,
+                                         arguments.front(), Value{},
+                                         lowering.builder.getBoolAttr(true),
+                                         schedule::EventSiteAttr{}, UnitAttr{});
+          return success();
+        });
   Value delay;
   if (op.getHasTimingControl()) {
     FailureOr<Value> loweredDelay = lowerDelayValue(children[1]);
