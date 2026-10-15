@@ -354,7 +354,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
   std::function<bool(Type)> isReflectableType = [&](Type type) {
     if (!simulationWidth(type))
       return false;
-    if (isa<IntegerType, sim::LogicType, sim::StringType>(type) ||
+    // IEEE 1800-2023 37.33: a class variable is a VPI object whether or not
+    // it references an object; its storage is the managed reference word.
+    if (isa<IntegerType, sim::LogicType, sim::StringType, sim::ClassHandleType>(
+            type) ||
         type.isF32() || type.isF64())
       return true;
     if (auto array = dyn_cast<sim::PackedArrayType>(type))
@@ -2528,6 +2531,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
     } else if (isa<sim::StringType>(type)) {
       record.kind = 1;
       record.name = "string";
+    } else if (isa<sim::ClassHandleType>(type)) {
+      record.kind = 1;
+      record.name = "class";
     } else if (auto packed = dyn_cast<sim::PackedArrayType>(type)) {
       record.kind = 2;
       record.flags |= 4;
