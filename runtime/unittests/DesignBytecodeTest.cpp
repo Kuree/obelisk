@@ -11411,6 +11411,60 @@ TEST(VPI, TimersShareCalendarAndSupportCancellationAndRearming) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+std::vector<std::pair<uint64_t, PLI_INT32>> syncProbeCalls;
+
+PLI_INT32 syncProbeCallback(p_cb_data data) {
+  EXPECT_NE(data->time, nullptr);
+  s_vpi_time now{};
+  now.type = vpiSimTime;
+  vpi_get_time(nullptr, &now);
+  syncProbeCalls.push_back(
+      {(uint64_t{now.high} << 32) | now.low, data->reason});
+  return 0;
+}
+
+TEST(VPI, SynchronizationCallbacksRunOnceInTheirRegion) {
+  // IEEE 1800-2023 4.10 Table 4-1, 38.36.2: cbNBASynch and cbReadWriteSynch
+  // run before the NBA region and cbReadOnlySynch in Postponed of the time
+  // their delay selects, even when no other event is scheduled then.
+  Fixture fixture;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  syncProbeCalls.clear();
+  auto add = [&](PLI_INT32 reason, uint32_t delay) {
+    s_vpi_time time{};
+    time.type = vpiSimTime;
+    time.low = delay;
+    s_cb_data callback{};
+    callback.reason = reason;
+    callback.cb_rtn = syncProbeCallback;
+    callback.time = &time;
+    return vpi_register_cb(&callback);
+  };
+  ASSERT_NE(add(cbReadOnlySynch, 3), nullptr);
+  ASSERT_NE(add(cbNBASynch, 3), nullptr);
+  ASSERT_NE(add(cbReadWriteSynch, 0), nullptr);
+  vpiHandle canceled = add(cbReadOnlySynch, 0);
+  ASSERT_NE(canceled, nullptr);
+  EXPECT_EQ(context->nextVPISyncCallback, 0u);
+  EXPECT_TRUE(context->vpiObservationDemand);
+  EXPECT_EQ(vpi_remove_cb(canceled), 1);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(syncProbeCalls,
+            (std::vector<std::pair<uint64_t, PLI_INT32>>{
+                {0, cbReadWriteSynch}, {3, cbNBASynch}, {3, cbReadOnlySynch}}));
+  EXPECT_EQ(context->schedulerTime, 3u);
+  EXPECT_FALSE(context->nextVPISyncCallback);
+  EXPECT_FALSE(context->vpiObservationDemand);
+  obelisk_rt_v1_vpi_shutdown(context);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, TimersValidateDelayAndCopyScaledObjectTime) {
   Fixture fixture;
   const obelisk_rt_dpi_scope_v1 scopes[] = {

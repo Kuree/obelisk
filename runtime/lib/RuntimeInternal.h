@@ -2608,6 +2608,9 @@ struct obelisk_rt_context {
   // The ordered callback records remain in the lazily allocated VPI state.
   std::optional<uint64_t> nextVPITimeCallback;
   bool vpiTimeCallbackActive = false;
+  // Earliest due time of a VPI synchronization callback; its region decides
+  // where in that time slot it runs.
+  std::optional<uint64_t> nextVPISyncCallback;
 
   // Allocated only for write-capable eval plans with complete source roots.
   // Tail placement retains all existing context offsets for off/read models.
@@ -2621,6 +2624,17 @@ struct obelisk_rt_context {
 // Execute due Pre-Active foreign work; never advance time or drain actors.
 obelisk_rt_status
 obelisk_rt_vpi_dispatch_time_callbacks_unlocked(obelisk_rt_context *context);
+/// VPI synchronization callback stages (IEEE 1800-2023 4.10 Table 4-1).
+enum : uint32_t {
+  OBELISK_RT_VPI_SYNC_PRE_NBA = 0,
+  OBELISK_RT_VPI_SYNC_READ_ONLY = 1,
+};
+/// Whether a synchronization callback of `stage` is due in this time slot.
+bool obelisk_rt_vpi_sync_due_unlocked(obelisk_rt_context *context,
+                                      uint32_t stage);
+obelisk_rt_status
+obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(obelisk_rt_context *context,
+                                                uint32_t stage);
 
 inline ReplaceableEventFeatureState *
 obelisk_rt_replaceable_events(obelisk_rt_context *context) {

@@ -111,9 +111,15 @@ The cold lifecycle callbacks `cbEndOfCompile`, `cbStartOfSimulation`, and
 `vpi_get_cb_info`, release, and removal. Lifecycle registration does not
 activate scheduler observation or alter native specialization. Callback input
 is copied at registration, duplicate registrations remain distinct, and each
-invocation receives a fresh action-callback record. Other callback reasons,
-delayed writes, system task/function registration, VPI strength and trireg
-access, and VPI-registered waveform dumping are not implemented.
+invocation receives a fresh action-callback record. `cbAfterDelay` runs at
+the start of the time slot its delay selects. The synchronization callbacks
+run once in that slot's region (IEEE 1800-2023 4.10 Table 4-1): `cbNBASynch`
+and `cbReadWriteSynch` after Active and Inactive and before any NBA update,
+and `cbReadOnlySynch` in Postponed. A synchronization callback registered for
+the current slot by another one runs on the next pass over its region. Other
+callback reasons, delayed writes, system task/function registration, VPI
+strength and trireg access, and VPI-registered waveform dumping are not
+implemented.
 SystemVerilog trireg execution itself, including charge strength, retention,
 decay, and connected charge sharing, is implemented independently of VPI.
 Unsupported registration calls made from a startup table produce a clear

@@ -3484,6 +3484,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     uint64_t nativeScanInsertionSequence = 0;
     uint32_t barrierRegion = UINT32_MAX;
     bool covergroupStrobePending = false;
+    bool vpiPreNBASyncPending = false;
+    bool vpiReadOnlySyncPending = false;
     std::optional<CachedNativeReady> cachedNativeSelection;
     {
       ContextMutexLock lock(context);
@@ -3840,6 +3842,14 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         barrierRegion = std::min(barrierRegion, options.localPendingNBARegion);
       covergroupStrobePending =
           obelisk_rt_covergroup_strobes_pending_unlocked(context);
+      if (context->nextVPISyncCallback &&
+          *context->nextVPISyncCallback <= context->schedulerTime &&
+          !context->vpiTimeCallbackActive && !context->schedulerRunningFinals) {
+        vpiPreNBASyncPending = obelisk_rt_vpi_sync_due_unlocked(
+            context, OBELISK_RT_VPI_SYNC_PRE_NBA);
+        vpiReadOnlySyncPending = obelisk_rt_vpi_sync_due_unlocked(
+            context, OBELISK_RT_VPI_SYNC_READ_ONLY);
+      }
     }
     if (options.completeNBABarrier != UINT32_MAX) {
       // The generated prefix can wake Active readers, but they must wait for
@@ -3857,6 +3867,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
       nativeInsertionSequence = UINT64_MAX;
       barrierRegion = options.completeNBABarrier;
       covergroupStrobePending = false;
+      vpiPreNBASyncPending = false;
+      vpiReadOnlySyncPending = false;
     }
     bool cachedCandidateExpected =
         cachedNativeSelection &&
@@ -3886,13 +3898,18 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
     }
     const auto covergroupStrobeKey = std::tuple{
         uint32_t{OBELISK_RT_REGION_POSTPONED}, uint32_t{0}, uint64_t{0}};
-    if (covergroupStrobePending &&
-        covergroupStrobeKey <
-            std::tuple{maximumRegion, maximumRank, maximumInsertionSequence}) {
-      maximumRegion = OBELISK_RT_REGION_POSTPONED;
-      maximumRank = 0;
-      maximumInsertionSequence = 0;
-    }
+    // IEEE 1800-2023 4.10: Pre-NBA follows Active and Inactive and precedes
+    // every NBA update; the read-only synchronization point is Postponed.
+    const auto vpiPreNBASyncKey =
+        std::tuple{uint32_t{OBELISK_RT_REGION_NBA}, uint32_t{0}, uint64_t{0}};
+    auto limitToKey = [&](bool pending, auto key) {
+      if (pending && key < std::tuple{maximumRegion, maximumRank,
+                                      maximumInsertionSequence})
+        std::tie(maximumRegion, maximumRank, maximumInsertionSequence) = key;
+    };
+    limitToKey(covergroupStrobePending, covergroupStrobeKey);
+    limitToKey(vpiPreNBASyncPending, vpiPreNBASyncKey);
+    limitToKey(vpiReadOnlySyncPending, covergroupStrobeKey);
     bool designProgress = false;
     if (deferredEvalIngress && maximumRegion > OBELISK_RT_REGION_ACTIVE) {
       maximumRegion = options.stopBeforeNBA ? OBELISK_RT_REGION_NBA
@@ -3964,6 +3981,37 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
           plan->timeslot_coordinator(plan->mutable_state, context);
       if (status != OBELISK_RT_OK)
         return status;
+      continue;
+    }
+    auto vpiSyncStageReady = [&](bool pending, auto key) {
+      return pending &&
+             key <= std::tuple{nativeRegion, nativeRank,
+                               nativeInsertionSequence} &&
+             key <= std::tuple{barrierRegion, uint32_t{0}, uint64_t{0}};
+    };
+    std::optional<uint32_t> vpiSyncStage;
+    if (vpiSyncStageReady(vpiPreNBASyncPending, vpiPreNBASyncKey))
+      vpiSyncStage = OBELISK_RT_VPI_SYNC_PRE_NBA;
+    else if (vpiSyncStageReady(vpiReadOnlySyncPending, covergroupStrobeKey))
+      vpiSyncStage = OBELISK_RT_VPI_SYNC_READ_ONLY;
+    if (vpiSyncStage) {
+      if (cachedNativeSelection && cachedNativeReadyValid) {
+        pushCachedNativeReady(*cachedNativeSelection);
+        cachedNativeUrgentCount += cachedNativeSelection->urgent;
+      }
+      {
+        ContextMutexLock lock(context);
+        obelisk_rt_status status =
+            obelisk_rt_vpi_dispatch_sync_callbacks_unlocked(context,
+                                                            *vpiSyncStage);
+        if (status != OBELISK_RT_OK)
+          return status;
+      }
+      obelisk_rt_status status = recordSlotProgress();
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (context->nativeScheduleSingleStep)
+        return OBELISK_RT_OK;
       continue;
     }
     if (covergroupStrobePending &&
@@ -5390,6 +5438,8 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         };
         if (context->nextVPITimeCallback)
           considerTime(*context->nextVPITimeCallback);
+        if (context->nextVPISyncCallback)
+          considerTime(*context->nextVPISyncCallback);
         if (std::optional<uint64_t> wakeTime =
                 nextScheduledProcessDelayUnlocked(context))
           considerTime(*wakeTime);

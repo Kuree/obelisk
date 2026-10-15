@@ -1451,6 +1451,8 @@ uint64_t nextPeriodicRuntimeDeadlineUnlocked(obelisk_rt_context *context) {
   };
   if (context->nextVPITimeCallback)
     considerDeadline(*context->nextVPITimeCallback);
+  if (context->nextVPISyncCallback)
+    considerDeadline(*context->nextVPISyncCallback);
   if (auto deadline = nextScheduledProcessDelayUnlocked(context))
     considerDeadline(*deadline);
   for (const ScheduledDesignTask &task : context->scheduledDesignTasks)
