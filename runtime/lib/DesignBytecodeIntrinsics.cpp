@@ -1399,10 +1399,12 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     auto program = bytes(0);
     auto constraintMask = scalar(3), rngState = scalar(4),
          rngIncrement = scalar(5), key = scalar(6), position = scalar(7),
-         domain = scalar(8), offset = scalar(9), width = scalar(10);
+         offset = scalar(9), width = scalar(10);
+    // The cycle's domain identity is a managed string register.
+    obelisk_rt_string_v1 domain = 0;
     if (!program || !constraintMask || !rngState || !rngIncrement || !key ||
-        !position || !domain || !offset || !width || *offset > UINT32_MAX ||
-        *width > UINT32_MAX)
+        !position || !readString(inputRegister(8), domain) || !offset ||
+        !width || *offset > UINT32_MAX || *width > UINT32_MAX)
       return OBELISK_RT_INVALID_BYTECODE;
     Layout startLayout = layoutAt(image, frame.function, inputRegister(1));
     Layout mutableLayout = layoutAt(image, frame.function, inputRegister(2));
@@ -1435,7 +1437,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     obelisk_rt_status status = obelisk_rt_v1_random_cycle_sample(
         context, program->data, program->size, start.value.data(),
         mutableMask.value.data(), start.value.size(), *constraintMask,
-        *rngState, *rngIncrement, *key, *position, *domain, *offset, *width,
+        *rngState, *rngIncrement, *key, *position, domain, *offset, *width,
         captures.data(), captures.size(), captureWidths.data(),
         captureWidths.size(), assignment.value.data(), &success, &nextState,
         &nextKey, &nextPosition, &nextDomain);
@@ -1446,7 +1448,7 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         !writeScalar(image, frame, outputRegister(2), nextState) ||
         !writeScalar(image, frame, outputRegister(3), nextKey) ||
         !writeScalar(image, frame, outputRegister(4), nextPosition) ||
-        !writeScalar(image, frame, outputRegister(5), nextDomain))
+        !writeString(outputRegister(5), nextDomain))
       return OBELISK_RT_INVALID_BYTECODE;
     return OBELISK_RT_OK;
   }
