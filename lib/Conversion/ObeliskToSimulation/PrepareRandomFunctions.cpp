@@ -215,12 +215,12 @@ getRandomConstraintPath(Operation *expression,
           << "constraint function ordering selection has no source type";
       return failure();
     }
+    // A selection from a runtime-sized container has no fixed bit position;
+    // its ordering path covers the whole variable.
     auto layout = getSemanticSelectionLayout(sourceTypeAttr.getValue());
     if (!layout) {
-      emitError(getSemanticLocation(expression))
-          << "constraint function ordering selection has no fixed integral "
-             "dimension";
-      return failure();
+      (**base).precise = false;
+      return base;
     }
     int64_t left = layout->left, right = layout->right;
     unsigned elementWidth = layout->elementWidth;

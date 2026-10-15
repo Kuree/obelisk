@@ -7870,9 +7870,13 @@ void ObeliskSimPreparePass::runOnOperation() {
             auto sizeCall = dyn_cast_or_null<semantic::SVCallExpressionOp>(
                 nested->getParentOp());
             if (!sizeCall || sizeCall.getCalleeName() != "size") {
+              // IEEE 1800-2023 18.5.7.1 solves size constraints first and
+              // element constraints next; the planned solver has only the
+              // size as a variable, so element constraints remain a boundary.
               emitError(getSemanticLocation(nested))
-                  << "a constrained dynamic container may only participate "
-                     "through its size() value";
+                  << "constraints on the elements of a random dynamic array "
+                     "or queue are not executable yet; only its size() can "
+                     "be constrained";
               invalid = true;
             } else {
               sim::set<sim::metadata::RandomVariable>(
