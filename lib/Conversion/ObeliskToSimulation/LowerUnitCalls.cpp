@@ -1919,8 +1919,31 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
     if (op.getHasThisClass() && !children.empty()) {
       FailureOr<Type> receiverType =
           getNormalizedSemanticType(children.front());
-      if (succeeded(receiverType) &&
-          isa<sim::VirtualInterfaceType>(*receiverType)) {
+      auto handle = succeeded(receiverType)
+                        ? dyn_cast<sim::VirtualInterfaceType>(*receiverType)
+                        : sim::VirtualInterfaceType{};
+      // IEEE 1800-2023 25.9: without an elaborated instance the handle can
+      // only be null, so the call reaches the runtime null-handle error.
+      if (handle && !hasVirtualInterfaceInstance(handle)) {
+        if (failed(lowerExpression(children.front())))
+          return failure();
+        Type resultType;
+        if (auto semanticType = op->getAttrOfType<TypeAttr>("semantic_type");
+            semanticType && !isa<semantic::VoidType>(semanticType.getValue())) {
+          FailureOr<Type> normalized = getNormalizedSemanticType(op);
+          if (failed(normalized))
+            return failure();
+          resultType = *normalized;
+        }
+        FailureOr<Value> result =
+            emitNullVirtualInterfaceAccess(resultType, location);
+        if (failed(result) || resultType)
+          return result;
+        return arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                         builder.getBoolAttr(false))
+            .getResult();
+      }
+      if (handle) {
         emitError(location)
             << "virtual-interface method is not imported by the selected "
                "modport (exported methods are not yet supported)";

@@ -436,8 +436,10 @@ void UnitLowering::ensureVirtualInterfaceInventory() {
     if (auto scope = dyn_cast<sim::SimScopeDeclOp>(operation)) {
       if (std::optional<StringRef> hierarchy = scope.getHierarchicalName())
         scopeIDs[*hierarchy] = scope.getId();
-      if (StringAttr identity = scope.getInterfaceTypeAttr())
+      if (StringAttr identity = scope.getInterfaceTypeAttr()) {
         interfaceScopes[scope.getId()] = identity;
+        virtualInterfaceInstanceTypes.insert(identity.getValue());
+      }
     }
 
   auto memberKey = [](StringRef identity, StringRef member) {

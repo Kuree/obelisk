@@ -2460,6 +2460,14 @@ UnitLowering::lowerVirtualInterfaceSignal(Value interface, StringRef member,
     targets = &found->second;
     isEvent = true;
   }
+  // IEEE 1800-2023 25.9: without an elaborated instance the handle can only
+  // be null. Only clock signals are selected without a known instance scope.
+  if ((!targets || targets->empty()) && !scopeID &&
+      !hasVirtualInterfaceInstance(interfaceType))
+    return emitNullVirtualInterfaceAccess(
+        sim::RefType::get(function.getContext(),
+                          sim::LogicType::get(function.getContext(), 1)),
+        location);
   if (!targets || targets->empty())
     return emitError(location) << "virtual interface signal '" << member
                                << "' has no elaborated descriptor",
@@ -3246,18 +3254,23 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceInstanceMember(
                      member.getValue() + "\n" +
                      selectedInterface.getInterfaceName().getValue())
                         .str();
+  // IEEE 1800-2023 25.9: without an elaborated instance the handle can only
+  // be null, so every access reaches the runtime null-handle error below.
   auto found = virtualInterfaceInstanceMembers.find(key);
-  if (found == virtualInterfaceInstanceMembers.end() || found->second.empty()) {
-    emitError(location) << "virtual interface member '" << member.getValue()
-                        << "' has no elaborated interface instance";
-    return failure();
-  }
+  ArrayRef<std::pair<uint64_t, uint64_t>> targets;
+  if (found != virtualInterfaceInstanceMembers.end())
+    targets = found->second;
+  else if (hasVirtualInterfaceInstance(interfaceType))
+    return emitError(location)
+               << "virtual interface member '" << member.getValue()
+               << "' has no elaborated interface instance",
+           failure();
 
   Value scope = sim::SimVirtualInterfaceScopeOp::create(
       builder, location, builder.getI64Type(), interface);
   Block *merge = addBlock();
   merge->addArgument(selectedInterface, location);
-  for (auto [parentScopeID, childScopeID] : found->second) {
+  for (auto [parentScopeID, childScopeID] : targets) {
     Block *matched = addBlock();
     Block *next = addBlock();
     Value expected =
@@ -3401,6 +3414,26 @@ FailureOr<SmallVector<Value>> UnitLowering::getVirtualInterfaceReadTargets(
   return handles;
 }
 
+bool UnitLowering::hasVirtualInterfaceInstance(
+    sim::VirtualInterfaceType handle) {
+  ensureVirtualInterfaceInventory();
+  return virtualInterfaceInstanceTypes.contains(
+      handle.getInterfaceName().getValue());
+}
+
+FailureOr<Value>
+UnitLowering::emitNullVirtualInterfaceAccess(Type type, Location location) {
+  if (failed(emitRuntimeFatal(
+          location,
+          "virtual interface member access used a null or invalid handle.")))
+    return failure();
+  Block *unreachable = addBlock();
+  setCurrent(unreachable);
+  if (!type)
+    return Value{};
+  return unreachable->addArgument(type, location);
+}
+
 bool UnitLowering::selectsAmongVirtualInterfaceTargets(Operation *expression) {
   WalkResult result =
       expression->walk([&](semantic::SVMemberAccessExpressionOp member) {
@@ -3468,6 +3501,9 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
   std::string key = (Twine(interfaceType.getInterfaceName().getValue()) + "\n" +
                      selectedMember.getValue())
                         .str();
+  // IEEE 1800-2023 25.9: without an elaborated instance the handle can only
+  // be null, so every access reaches the runtime null-handle error.
+  VirtualMemberTargets noTargets;
   VirtualMemberTargets *targets = nullptr;
   Type selectedType;
   bool isNet = false;
@@ -3500,11 +3536,14 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
         isNet = true;
       }
     }
-    if (!targets || targets->empty()) {
-      emitError(location) << "virtual interface member '"
-                          << selectedMember.getValue()
-                          << "' has no elaborated descriptor";
-      return failure();
+    if (!targets && hasVirtualInterfaceInstance(interfaceType))
+      return emitError(location)
+                 << "virtual interface member '" << selectedMember.getValue()
+                 << "' has no elaborated descriptor",
+             failure();
+    if (!targets) {
+      targets = &noTargets;
+      selectedType = sim::RefType::get(function.getContext(), elementType);
     }
     llvm::sort(*targets);
   }
@@ -3598,8 +3637,12 @@ FailureOr<Value> UnitLowering::lowerVirtualInterfaceMember(
       clockTargets = &found->second;
       clockIsEvent = true;
     }
+    if (!clockTargets && hasVirtualInterfaceInstance(interfaceType))
+      return emitError(location)
+                 << "virtual clocking input has no clock descriptor",
+             failure();
     if (!clockTargets)
-      return failure();
+      clockTargets = &noTargets;
     llvm::sort(*clockTargets);
     if (compositeClockedRead)
       targets = clockTargets;

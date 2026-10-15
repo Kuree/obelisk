@@ -237,6 +237,13 @@ private:
   /// Whether `expression` reads a virtual-interface member that can select
   /// more than one storage, so its target changes with the interface handle.
   bool selectsAmongVirtualInterfaceTargets(::mlir::Operation *expression);
+  /// Whether some elaborated interface instance has the type of `handle`.
+  bool hasVirtualInterfaceInstance(sim::VirtualInterfaceType handle);
+  /// Reports the runtime null-handle error of an access through a virtual
+  /// interface that cannot select any instance, then continues in an
+  /// unreachable block with a placeholder of `type`, if any.
+  ::mlir::FailureOr<::mlir::Value>
+  emitNullVirtualInterfaceAccess(::mlir::Type type, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerVirtualInterfaceClock(semantic::SVMemberAccessExpressionOp op,
                              ::mlir::Value interface);
@@ -941,6 +948,8 @@ private:
   using VirtualMemberTargets =
       ::mlir::SmallVector<std::pair<uint64_t, uint64_t>>;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceInstanceMembers;
+  /// Interface identities with at least one elaborated instance.
+  ::llvm::StringSet<> virtualInterfaceInstanceTypes;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceStorageMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceNetMembers;
   ::llvm::StringMap<VirtualMemberTargets> virtualInterfaceEventMembers;
