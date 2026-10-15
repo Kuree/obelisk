@@ -460,8 +460,13 @@ and case items retain separate slots, and repeat overwrites one slot on each
 generation. Typed returns end the current production; break ends the current
 grammar while respecting enclosing loops and nested grammars. These paths use
 the ordinary typed Simulation IR for native and WASM execution, including
-strings, wide integral values and unpacked arrays. Recursive activations and
-general rand join remain open.
+strings, wide integral values and unpacked arrays. A recursive production is
+emitted once: each call pushes its resume point, and a call that can reenter
+its caller's body saves and restores that activation's slots. A rand join runs
+each operand's prologue, then interleaves the items of the selected rules one
+step at a time, weighing operands by their remaining steps and the bias. A
+recursive operand runs as one step, and a recursive production cannot take a
+ref argument.
 
 Fixed `foreach` constraints expand into ordinary Z3 predicates before random
 dependency analysis in both class and scope randomization. Fixed packed and

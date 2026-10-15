@@ -580,15 +580,18 @@ private:
   ::mlir::LogicalResult
   lowerRandSequence(semantic::SVRandSequenceStatementOp op);
   struct RecursiveProductionBody;
-  /// Lower one activation of `production`. Without `body`, the production
-  /// is expanded at the call site. With `body`, this emits the single body of
-  /// a recursive production, whose formals and result live in that body's
-  /// slots.
+  struct RandJoinStream;
+  /// Lower one activation of `production`. Without `body` or `stream`, the
+  /// production is expanded at the call site. With `body`, this emits the
+  /// single body of a recursive production, whose formals and result live in
+  /// that body's slots. With `stream`, the production's prologue runs here
+  /// and each item of its selected rule becomes a step of a rand join.
   ::mlir::LogicalResult
   lowerRandSequenceProduction(semantic::SVFrozenRandSeqProductionOp production,
                               ::mlir::ArrayRef<::mlir::Operation *> actuals,
                               ::mlir::Value resultReference = {},
-                              RecursiveProductionBody *body = nullptr);
+                              RecursiveProductionBody *body = nullptr,
+                              RandJoinStream *stream = nullptr);
   ::mlir::FailureOr<RecursiveProductionBody *>
   getRecursiveProductionBody(semantic::SVFrozenRandSeqProductionOp production,
                              ::mlir::Location location);
@@ -600,8 +603,12 @@ private:
                                          ::mlir::Location location);
   ::mlir::Value createRandSequenceStack(::mlir::Type element,
                                         ::mlir::Location location);
-  ::mlir::LogicalResult repairRecursiveRandSequence(::mlir::Block *first,
-                                                    ::mlir::Location location);
+  /// After a randsequence with recursive bodies or rand join steps is
+  /// emitted, rematerialize or move to slots the values that a dispatch
+  /// leaves undominated or a reentering call would clobber, and save each
+  /// reentered frame's slots around the call.
+  ::mlir::LogicalResult repairRandSequenceFrames(::mlir::Block *first,
+                                                 ::mlir::Location location);
   ::mlir::LogicalResult
   lowerRandSequenceProductionItem(semantic::SVProdItemOp item);
   ::mlir::LogicalResult lowerRandSequenceNode(::mlir::Operation *node);
@@ -1128,6 +1135,19 @@ private:
     ::mlir::Value resultSlot;
     ::mlir::SmallVector<::mlir::Block *> resumes;
     unsigned frame = 0;
+  };
+  /// One operand of a rand join (IEEE 1800-2023 18.17.5). `next` holds the
+  /// join-wide index of the stream's next step, or -1 once the stream has
+  /// finished, and `remaining` the number of its steps not yet run. Every
+  /// step returns to `scheduler`; a prologue that finishes its production
+  /// before the join starts continues at `initialized`.
+  struct RandJoinStream {
+    ::mlir::Value next;
+    ::mlir::Value remaining;
+    ::mlir::Value started;
+    ::mlir::Block *initialized;
+    ::mlir::Block *scheduler;
+    ::mlir::SmallVector<::mlir::Block *> *steps;
   };
   struct RandSequenceContext {
     ::llvm::StringMap<semantic::SVFrozenRandSeqProductionOp> productions;

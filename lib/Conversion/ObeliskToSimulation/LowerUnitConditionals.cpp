@@ -1747,10 +1747,15 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
     return failure();
   }
 
+  // Recursive bodies and rand join steps keep activation state in slots of
+  // a block that dominates the whole statement.
   bool recursive = !context.recursiveComponents.empty();
+  bool interleaved = llvm::any_of(context.productions, [](auto &entry) {
+    return llvm::is_contained(entry.second.getRuleIsRandJoin(), 1);
+  });
   Block *firstBlock = nullptr;
   context.frames.push_back({0, {}});
-  if (recursive) {
+  if (recursive || interleaved) {
     firstBlock = addBlock();
     context.slotBlock = firstBlock;
     cf::BranchOp::create(builder, location, firstBlock);
@@ -1817,9 +1822,9 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
       cf::SwitchOp::create(builder, location, index, body.resumes.front(),
                            ValueRange{}, cases, body.resumes, operands);
     }
-    if (failed(repairRecursiveRandSequence(firstBlock, location)))
-      return failure();
   }
+  if (firstBlock && failed(repairRandSequenceFrames(firstBlock, location)))
+    return failure();
   setCurrent(exit);
   return success();
 }
@@ -1827,7 +1832,7 @@ UnitLowering::lowerRandSequence(semantic::SVRandSequenceStatementOp op) {
 LogicalResult UnitLowering::lowerRandSequenceProduction(
     semantic::SVFrozenRandSeqProductionOp production,
     ArrayRef<Operation *> actuals, Value resultReference,
-    RecursiveProductionBody *body) {
+    RecursiveProductionBody *body, RandJoinStream *stream) {
   Location location = getSemanticLocation(production);
   if (!body && randSequenceContexts.back().recursiveComponents.count(
                    production.getReferencedSymbol().getLeafReference()))
@@ -2033,9 +2038,22 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     savedBindings.push_back(
         {bindingPath, values.lookup(bindingPath), lvalues.lookup(bindingPath),
          values.count(bindingPath) != 0, lvalues.count(bindingPath) != 0});
-    Value reference = sim::SimRefAllocOp::create(
-        builder, location, sim::RefType::get(function.getContext(), *type),
-        *converted);
+    Value reference;
+    if (stream) {
+      // A rand join runs this production's steps after the prologue, so its
+      // formals live in slots of the enclosing frame.
+      reference = allocateRandSequenceSlot(*type, location);
+      if (!reference)
+        return emitError(location)
+               << "unsupported randsequence argument type " << *type;
+      RandSequenceContext &context = randSequenceContexts.back();
+      context.frames[context.currentFrame].slots.push_back(reference);
+      sim::SimRefStoreOp::create(builder, location, *converted, reference);
+    } else {
+      reference = sim::SimRefAllocOp::create(
+          builder, location, sim::RefType::get(function.getContext(), *type),
+          *converted);
+    }
     values[bindingPath] = reference;
     lvalues[bindingPath] = reference;
     if (argument.destination)
@@ -2050,6 +2068,13 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     if (!undefined)
       return emitError(location) << "unsupported randsequence return type";
     if (body) {
+      sim::SimRefStoreOp::create(builder, location, undefined, resultReference);
+    } else if (!resultReference && stream) {
+      resultReference = allocateRandSequenceSlot(resultType, location);
+      if (!resultReference)
+        return emitError(location) << "unsupported randsequence return type";
+      RandSequenceContext &context = randSequenceContexts.back();
+      context.frames[context.currentFrame].slots.push_back(resultReference);
       sim::SimRefStoreOp::create(builder, location, undefined, resultReference);
     } else if (!resultReference) {
       resultReference = sim::SimRefAllocOp::create(
@@ -2138,67 +2163,27 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       {productionReturn, controlScopes.size(), resultReference,
        std::move(copyOuts)});
   llvm::scope_exit popReturn([&] { randSequenceProductionReturns.pop_back(); });
+  // IEEE 1800-2023 18.17.5 interleaves the items of the operand productions,
+  // keeping each production's own order. Each operand's prologue runs first;
+  // then a scheduler repeatedly picks an operand with steps left and runs
+  // its next step.
   auto lowerRandJoin = [&](const Rule &rule) -> LogicalResult {
     if (rule.items.size() < 2)
       return emitError(location)
              << "rand join requires at least two production items";
 
-    SmallVector<Operation *> streams;
-    streams.reserve(rule.items.size());
-    for (Operation *operand : rule.items) {
-      auto item = dyn_cast<semantic::SVProdItemOp>(operand);
-      auto targetRef =
-          item ? item->getAttrOfType<SymbolRefAttr>("target") : SymbolRefAttr{};
-      auto target = targetRef ? randSequenceContexts.back().productions.find(
-                                    targetRef.getLeafReference())
-                              : randSequenceContexts.back().productions.end();
-      auto argumentCount =
-          item ? item->getAttrOfType<IntegerAttr>("argument_count")
-               : IntegerAttr{};
-      if (!item || !targetRef ||
-          target == randSequenceContexts.back().productions.end() ||
-          !argumentCount || argumentCount.getInt() != 0 ||
-          !getChildren(item).empty() ||
-          target->second.getArgumentCount() != 0 ||
-          target->second.getRuleCount() != 1 ||
-          target->second.getRuleItemCounts().size() != 1 ||
-          target->second.getRuleItemCounts()[0] != 1 ||
-          target->second.getRuleHasWeights().size() != 1 ||
-          target->second.getRuleHasWeights()[0] ||
-          target->second.getRuleHasWeightCodeBlocks().size() != 1 ||
-          target->second.getRuleHasWeightCodeBlocks()[0] ||
-          target->second.getRuleIsRandJoin().size() != 1 ||
-          target->second.getRuleIsRandJoin()[0] ||
-          target->second.getRuleHasRandJoinExpressions().size() != 1 ||
-          target->second.getRuleHasRandJoinExpressions()[0] ||
-          !target->second.getFormalArguments().empty()) {
-        return emitError(getSemanticLocation(operand))
-               << "rand join currently requires deterministic single-item "
-                  "operand productions of equal depth-one length";
-      }
-      auto targetType =
-          target->second->getAttrOfType<TypeAttr>("semantic_type");
-      SmallVector<Operation *> targetChildren = getChildren(target->second);
-      if (!targetType || !isa<semantic::VoidType>(targetType.getValue()) ||
-          targetChildren.size() != 1) {
-        return emitError(getSemanticLocation(operand))
-               << "rand join currently requires void single-item operand "
-                  "productions";
-      }
-      streams.push_back(targetChildren.front());
-    }
-
     // The bias is observable even when every active stream has the same
     // length, although equal lengths make it irrelevant to selection. Check
     // its required real [0.0, 1.0] domain before consuming any RNG state.
+    Value bias;
     if (rule.randJoinBias) {
       FailureOr<Value> lowered = lowerExpression(rule.randJoinBias);
       if (failed(lowered))
         return failure();
-      FailureOr<Value> bias = convert(*lowered, builder.getF64Type(),
-                                      isSignedNode(rule.randJoinBias),
-                                      getSemanticLocation(rule.randJoinBias));
-      if (failed(bias))
+      FailureOr<Value> biasValue = convert(
+          *lowered, builder.getF64Type(), isSignedNode(rule.randJoinBias),
+          getSemanticLocation(rule.randJoinBias));
+      if (failed(biasValue))
         return failure();
       Value zero = arith::ConstantOp::create(
           builder, getSemanticLocation(rule.randJoinBias),
@@ -2208,10 +2193,10 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
           builder.getF64FloatAttr(1.0));
       Value atLeastZero =
           arith::CmpFOp::create(builder, getSemanticLocation(rule.randJoinBias),
-                                arith::CmpFPredicate::OGE, *bias, zero);
+                                arith::CmpFPredicate::OGE, *biasValue, zero);
       Value atMostOne =
           arith::CmpFOp::create(builder, getSemanticLocation(rule.randJoinBias),
-                                arith::CmpFPredicate::OLE, *bias, one);
+                                arith::CmpFPredicate::OLE, *biasValue, one);
       Value valid =
           arith::AndIOp::create(builder, getSemanticLocation(rule.randJoinBias),
                                 atLeastZero, atMostOne);
@@ -2225,92 +2210,206 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
               "rand join bias is outside the real range [0.0, 1.0]")))
         return failure();
       setCurrent(accepted);
+      bias = *biasValue;
     }
 
     Type i64 = builder.getI64Type();
     Type i1 = builder.getI1Type();
-    Block *header = addBlock();
-    for (size_t index = 0; index < streams.size(); ++index)
-      header->addArgument(i1, location);
-    header->addArgument(i64, location);
-    Block *dispatch = addBlock();
-    Block *exit = addBlock();
-    SmallVector<Value> initial(
-        streams.size(), arith::ConstantOp::create(builder, location, i1,
-                                                  builder.getBoolAttr(true)));
-    initial.push_back(arith::ConstantOp::create(
-        builder, location, i64, builder.getI64IntegerAttr(streams.size())));
-    cf::BranchOp::create(builder, location, header, initial);
-
-    setCurrent(header);
-    Value remaining = header->getArgument(streams.size());
-    Value zero = arith::ConstantOp::create(builder, location, i64,
-                                           builder.getI64IntegerAttr(0));
-    Value more = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::ne, remaining, zero);
-    cf::CondBranchOp::create(builder, location, more, dispatch, exit);
-
-    setCurrent(dispatch);
-    Value one = arith::ConstantOp::create(builder, location, i64,
-                                          builder.getI64IntegerAttr(1));
-    Value last = arith::CmpIOp::create(
-        builder, location, arith::CmpIPredicate::eq, remaining, one);
-    Block *randomize = addBlock();
-    Block *choose = addBlock();
-    choose->addArgument(i64, location);
-    cf::CondBranchOp::create(builder, location, last, choose, ValueRange{zero},
-                             randomize, ValueRange{});
-
-    setCurrent(randomize);
     Value context = function.getBody().front().getArgument(0);
-    Value draw = sim::SimRandomBoundedOp::create(builder, location, i64,
-                                                 context, remaining);
-    cf::BranchOp::create(builder, location, choose, ValueRange{draw});
-
-    setCurrent(choose);
-    draw = choose->getArgument(0);
-    Value rank = zero;
-    Value nextRemaining =
-        arith::SubIOp::create(builder, location, remaining, one);
-    for (size_t index = 0; index < streams.size(); ++index) {
-      Value active = header->getArgument(index);
-      Value rankMatches = arith::CmpIOp::create(
-          builder, location, arith::CmpIPredicate::eq, draw, rank);
-      Value selected =
-          arith::AndIOp::create(builder, location, active, rankMatches);
-      Block *selectedBlock = addBlock();
-      Block *nextStream = addBlock();
-      cf::CondBranchOp::create(builder, location, selected, selectedBlock,
-                               nextStream);
-      setCurrent(selectedBlock);
-
-      Block *streamReturn = addBlock();
-      randSequenceProductionReturns.push_back(
-          {streamReturn, controlScopes.size()});
-      if (failed(lowerRandSequenceNode(streams[index]))) {
-        randSequenceProductionReturns.pop_back();
+    auto slot = [&](Type type) -> Value {
+      Value allocated = allocateRandSequenceSlot(type, location);
+      RandSequenceContext &sequence = randSequenceContexts.back();
+      if (allocated)
+        sequence.frames[sequence.currentFrame].slots.push_back(allocated);
+      return allocated;
+    };
+    auto constant = [&](Type type, int64_t value) -> Value {
+      return arith::ConstantOp::create(builder, location, type,
+                                       builder.getIntegerAttr(type, value));
+    };
+    Value started = slot(i1);
+    if (!started)
+      return failure();
+    sim::SimRefStoreOp::create(builder, location, constant(i1, 0), started);
+    SmallVector<Block *> steps;
+    SmallVector<std::pair<Value, Value>> streams;
+    Block *scheduler = addBlock();
+    Block *exit = addBlock();
+    for (Operation *operand : rule.items) {
+      auto item = dyn_cast<semantic::SVProdItemOp>(operand);
+      auto targetRef =
+          item ? item->getAttrOfType<SymbolRefAttr>("target") : SymbolRefAttr{};
+      auto target = targetRef ? randSequenceContexts.back().productions.find(
+                                    targetRef.getLeafReference())
+                              : randSequenceContexts.back().productions.end();
+      if (target == randSequenceContexts.back().productions.end())
+        return emitError(getSemanticLocation(operand))
+               << "rand join operand must name a production";
+      SmallVector<Operation *> actuals = getChildren(item);
+      auto argumentCount = item->getAttrOfType<IntegerAttr>("argument_count");
+      if (!argumentCount || argumentCount.getInt() < 0 ||
+          actuals.size() != static_cast<uint64_t>(argumentCount.getInt()))
+        return emitError(getSemanticLocation(item))
+               << "malformed randsequence actual argument inventory";
+      Value resultReference = randSequenceResultReferences.back().lookup(item);
+      Value next = slot(i64);
+      Value remaining = slot(i64);
+      if (!next || !remaining)
         return failure();
+      streams.push_back({next, remaining});
+      Block *initialized = addBlock();
+      if (randSequenceContexts.back().recursiveComponents.count(
+              target->getKey())) {
+        // A recursive production has one shared body, so it is one step.
+        sim::SimRefStoreOp::create(builder, location, constant(i64, 1),
+                                   remaining);
+        sim::SimRefStoreOp::create(builder, location,
+                                   constant(i64, steps.size()), next);
+        cf::BranchOp::create(builder, location, initialized);
+        Block *block = addBlock();
+        steps.push_back(block);
+        setCurrent(block);
+        if (failed(lowerRandSequenceProductionItem(item)))
+          return failure();
+        sim::SimRefStoreOp::create(builder, location, constant(i64, 0),
+                                   remaining);
+        sim::SimRefStoreOp::create(builder, location, constant(i64, -1), next);
+        emitBranch(scheduler);
+      } else {
+        RandJoinStream stream{next,        remaining, started,
+                              initialized, scheduler, &steps};
+        if (failed(lowerRandSequenceProduction(
+                target->second, actuals, resultReference, nullptr, &stream)))
+          return failure();
       }
-      emitBranch(streamReturn);
-      setCurrent(streamReturn);
-      randSequenceProductionReturns.pop_back();
-      SmallVector<Value> nextActive;
-      nextActive.reserve(streams.size() + 1);
-      for (size_t operand = 0; operand < streams.size(); ++operand)
-        nextActive.push_back(operand == index ? Value(arith::ConstantOp::create(
-                                                    builder, location, i1,
-                                                    builder.getBoolAttr(false)))
-                                              : header->getArgument(operand));
-      nextActive.push_back(nextRemaining);
-      cf::BranchOp::create(builder, location, header, nextActive);
-
-      setCurrent(nextStream);
-      Value nextRank = arith::AddIOp::create(builder, location, rank, one);
-      rank = arith::SelectOp::create(builder, location, active, nextRank, rank);
+      setCurrent(initialized);
     }
-    // The bounded draw and active-count invariant make this block
-    // unreachable, but keep the CFG structurally total.
-    cf::BranchOp::create(builder, location, exit);
+    sim::SimRefStoreOp::create(builder, location, constant(i1, 1), started);
+    cf::BranchOp::create(builder, location, scheduler);
+
+    setCurrent(scheduler);
+    SmallVector<Value> nexts;
+    SmallVector<Value> lengths;
+    SmallVector<Value> actives;
+    Value count = constant(i64, 0);
+    for (auto [next, remaining] : streams) {
+      nexts.push_back(sim::SimRefLoadOp::create(builder, location, i64, next));
+      Value length =
+          sim::SimRefLoadOp::create(builder, location, i64, remaining);
+      lengths.push_back(length);
+      Value active =
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::sgt,
+                                length, constant(i64, 0));
+      actives.push_back(active);
+      count = arith::AddIOp::create(
+          builder, location, count,
+          arith::ExtUIOp::create(builder, location, i64, active));
+    }
+    Block *choose = addBlock();
+    cf::CondBranchOp::create(builder, location,
+                             arith::CmpIOp::create(builder, location,
+                                                   arith::CmpIPredicate::eq,
+                                                   count, constant(i64, 0)),
+                             exit, choose);
+    setCurrent(choose);
+    Value selected = constant(i64, -1);
+    if (!bias) {
+      // Without a bias every operand with steps left is equally likely. A
+      // single such operand needs no random draw.
+      Block *draw = addBlock();
+      Block *pick = addBlock();
+      pick->addArgument(i64, location);
+      cf::CondBranchOp::create(
+          builder, location,
+          arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                count, constant(i64, 1)),
+          pick, ValueRange{constant(i64, 0)}, draw, ValueRange{});
+      setCurrent(draw);
+      Value drawn = sim::SimRandomBoundedOp::create(builder, location, i64,
+                                                    context, count);
+      cf::BranchOp::create(builder, location, pick, ValueRange{drawn});
+      setCurrent(pick);
+      Value rank = constant(i64, 0);
+      for (auto [next, active] : llvm::zip_equal(nexts, actives)) {
+        Value matches = arith::AndIOp::create(
+            builder, location, active,
+            arith::CmpIOp::create(builder, location, arith::CmpIPredicate::eq,
+                                  rank, pick->getArgument(0)));
+        selected =
+            arith::SelectOp::create(builder, location, matches, next, selected);
+        rank = arith::AddIOp::create(
+            builder, location, rank,
+            arith::ExtUIOp::create(builder, location, i64, active));
+      }
+    } else {
+      // An operand with n steps left weighs (1 - b + b n) / ((1 - b) n + b):
+      // the same for every operand at the default 0.5, favoring short
+      // operands as b approaches 0.0 and long ones as it approaches 1.0.
+      Type f64 = builder.getF64Type();
+      auto real = [&](double value) -> Value {
+        return arith::ConstantOp::create(builder, location, f64,
+                                         builder.getF64FloatAttr(value));
+      };
+      Value complement =
+          arith::SubFOp::create(builder, location, real(1.0), bias);
+      SmallVector<Value> cumulative;
+      Value total = real(0.0);
+      for (auto [length, active] : llvm::zip_equal(lengths, actives)) {
+        FailureOr<Value> n = convert(length, f64, true, location);
+        if (failed(n))
+          return failure();
+        Value numerator = arith::AddFOp::create(
+            builder, location, complement,
+            arith::MulFOp::create(builder, location, bias, *n));
+        Value denominator = arith::AddFOp::create(
+            builder, location,
+            arith::MulFOp::create(builder, location, complement, *n), bias);
+        Value weight = arith::SelectOp::create(
+            builder, location, active,
+            arith::DivFOp::create(builder, location, numerator, denominator),
+            real(0.0));
+        total = arith::AddFOp::create(builder, location, total, weight);
+        cumulative.push_back(total);
+      }
+      Value drawn = sim::SimRandomBoundedOp::create(
+          builder, location, i64, context, constant(i64, int64_t(1) << 53));
+      FailureOr<Value> drawnReal = convert(drawn, f64, true, location);
+      if (failed(drawnReal))
+        return failure();
+      Value fraction = arith::MulFOp::create(
+          builder, location, *drawnReal,
+          real(1.0 / static_cast<double>(int64_t(1) << 53)));
+      Value point = arith::MulFOp::create(builder, location, fraction, total);
+      Value found = constant(i1, 0);
+      Value lastActive = constant(i64, -1);
+      for (auto [next, active, bound] :
+           llvm::zip_equal(nexts, actives, cumulative)) {
+        Value below = arith::CmpFOp::create(
+            builder, location, arith::CmpFPredicate::OLT, point, bound);
+        Value take = arith::AndIOp::create(
+            builder, location, active,
+            arith::AndIOp::create(builder, location, below,
+                                  arith::XOrIOp::create(builder, location,
+                                                        found,
+                                                        constant(i1, 1))));
+        selected =
+            arith::SelectOp::create(builder, location, take, next, selected);
+        found = arith::OrIOp::create(builder, location, found, take);
+        lastActive = arith::SelectOp::create(builder, location, active, next,
+                                             lastActive);
+      }
+      // Rounding can leave the point at the total; take the last operand.
+      selected = arith::SelectOp::create(builder, location, found, selected,
+                                         lastActive);
+    }
+    SmallVector<APInt> cases;
+    SmallVector<ValueRange> operands;
+    for (size_t index = 0; index < steps.size(); ++index) {
+      cases.push_back(APInt(64, index));
+      operands.push_back(ValueRange{});
+    }
+    cf::SwitchOp::create(builder, location, selected, exit, ValueRange{}, cases,
+                         steps, operands);
     setCurrent(exit);
     return success();
   };
@@ -2392,10 +2491,11 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
       Value undefined = createDefaultValue(builder, location, *type);
       if (!undefined)
         return emitError(location) << "unsupported rule return-variable type";
-      // A recursive body keeps the variable in a slot of its frame, which a
-      // reentering call saves; its value restarts at each rule execution.
+      // A recursive body or rand join stream keeps the variable in a slot of
+      // its frame, which outlives the rule's prologue and which a reentering
+      // call saves; its value restarts at each rule execution.
       Value reference;
-      if (body) {
+      if (body || stream) {
         reference = allocateRandSequenceSlot(*type, location);
         if (!reference)
           return emitError(location) << "unsupported rule return-variable type";
@@ -2428,6 +2528,53 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
     randSequenceResultReferences.push_back(std::move(resultReferences));
     llvm::scope_exit popResultReferences(
         [&] { randSequenceResultReferences.pop_back(); });
+    if (stream) {
+      // Each item of the selected rule is one step of the join, which runs
+      // a nested rand join as a whole (18.17.5 interleaves to depth one).
+      SmallVector<Operation *> steps;
+      if (!rule.randJoin)
+        llvm::append_range(steps, rule.items);
+      if (rule.randJoin || rule.weightCodeBlock)
+        steps.push_back(nullptr);
+      Type i64 = builder.getI64Type();
+      auto store = [&](Value slot, int64_t value) {
+        sim::SimRefStoreOp::create(
+            builder, location,
+            arith::ConstantOp::create(builder, location, i64,
+                                      builder.getI64IntegerAttr(value)),
+            slot);
+      };
+      int64_t first = stream->steps->size();
+      store(stream->remaining, steps.size());
+      store(stream->next, steps.empty() ? -1 : first);
+      cf::BranchOp::create(builder, location,
+                           steps.empty() ? productionReturn
+                                         : stream->initialized);
+      for (auto [index, step] : llvm::enumerate(steps)) {
+        Block *block = addBlock();
+        stream->steps->push_back(block);
+        setCurrent(block);
+        if (step && failed(lowerRandSequenceNode(step)))
+          return failure();
+        if (!step && rule.randJoin && failed(lowerRandJoin(rule)))
+          return failure();
+        if (!step && rule.weightCodeBlock &&
+            failed(lowerRandSequenceNode(rule.weightCodeBlock)))
+          return failure();
+        Value remaining = sim::SimRefLoadOp::create(builder, location, i64,
+                                                    stream->remaining);
+        Value one = arith::ConstantOp::create(builder, location, i64,
+                                              builder.getI64IntegerAttr(1));
+        sim::SimRefStoreOp::create(
+            builder, location,
+            arith::SubIOp::create(builder, location, remaining, one),
+            stream->remaining);
+        bool last = index + 1 == steps.size();
+        store(stream->next, last ? -1 : first + index + 1);
+        emitBranch(last ? productionReturn : stream->scheduler);
+      }
+      return success();
+    }
     if (rule.randJoin) {
       if (failed(lowerRandJoin(rule)))
         return failure();
@@ -2567,8 +2714,29 @@ LogicalResult UnitLowering::lowerRandSequenceProduction(
   if (body)
     return success();
   setCurrent(productionReturn);
-  return copyRandSequenceOutputs(randSequenceProductionReturns.back(),
-                                 location);
+  if (failed(copyRandSequenceOutputs(randSequenceProductionReturns.back(),
+                                     location)))
+    return failure();
+  if (!stream)
+    return success();
+  // A finished stream returns to the join's scheduler, or continues the
+  // join's prologue if it finished there.
+  Type i64 = builder.getI64Type();
+  sim::SimRefStoreOp::create(
+      builder, location,
+      arith::ConstantOp::create(builder, location, i64,
+                                builder.getI64IntegerAttr(0)),
+      stream->remaining);
+  sim::SimRefStoreOp::create(
+      builder, location,
+      arith::ConstantOp::create(builder, location, i64,
+                                builder.getI64IntegerAttr(-1)),
+      stream->next);
+  Value started = sim::SimRefLoadOp::create(
+      builder, location, builder.getI1Type(), stream->started);
+  cf::CondBranchOp::create(builder, location, started, stream->scheduler,
+                           stream->initialized);
+  return success();
 }
 
 LogicalResult
@@ -2838,8 +3006,8 @@ LogicalResult UnitLowering::lowerRecursiveProductionCall(
   return success();
 }
 
-LogicalResult UnitLowering::repairRecursiveRandSequence(Block *first,
-                                                        Location location) {
+LogicalResult UnitLowering::repairRandSequenceFrames(Block *first,
+                                                     Location location) {
   RandSequenceContext &context = randSequenceContexts.back();
   SmallVector<Block *> blocks;
   llvm::DenseMap<Block *, unsigned> blockOrder;

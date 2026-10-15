@@ -347,15 +347,17 @@ module {
 // CHECK-NOT: arith.addi
 // CHECK-NOT: simulation.random.bounded
 
-// Equal depth-one streams are randomly interleaved while preserving each
-// stream's internal order. The bias is evaluated and range-checked first; it
-// cannot favor either stream while their remaining lengths are equal.
+// Rand join interleaves the operands' items while preserving each
+// operand's order. The bias is evaluated and range-checked first. After every
+// operand's prologue, a scheduler weighs the operands with steps left by
+// their remaining lengths and the bias, then runs the chosen operand's next
+// step through a switch.
 // CHECK-LABEL: simulation.func @rand_join
 // CHECK: arith.cmpf oge
 // CHECK: arith.cmpf ole
 // CHECK: cf.cond_br
-// CHECK: ^{{.*}}(%{{.*}}: i1, %{{.*}}: i1, %[[REMAINING:.*]]: i64):
-// CHECK: arith.cmpi ne, %[[REMAINING]],
-// CHECK: simulation.random.bounded %arg0, %[[REMAINING]]
-// CHECK: arith.cmpi eq
-// CHECK: arith.select
+// CHECK: arith.cmpi sgt
+// CHECK: arith.divf
+// CHECK: simulation.random.bounded %arg0,
+// CHECK: arith.cmpf olt
+// CHECK: cf.switch
