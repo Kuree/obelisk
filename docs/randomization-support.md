@@ -476,6 +476,9 @@ predicates over one-dimensional dynamic arrays and queues. The live container
 size is read for each candidate, the declared iterator type is respected,
 and an empty container contributes the identity value `true`. Generalized
 runtime dimensions, associative arrays, and strings remain explicit boundaries.
+An unconstrained `rand` associative array randomizes the value at each
+existing key and keeps its keys (18.4), including inside a `rand` object;
+constraints that reference a random associative array are rejected.
 For hard constraints over state arrays and queues, complete integral domains
 through 2^20 semantic assignments use generated mixed-radix rank traversal and
 reservoir sampling. This preserves the uniform distribution over legal tuples

@@ -978,6 +978,8 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       containerElementType = array.getElementType();
     else if (auto queue = dyn_cast<sim::QueueType>(property.getType()))
       containerElementType = queue.getElementType();
+    else if (auto assoc = dyn_cast<sim::AssocArrayType>(property.getType()))
+      containerElementType = assoc.getElementType();
     uint64_t elementWidth = property.getElementWidth();
     Type elementType = property.getElementType();
     if (!containerElementType || containerElementType != elementType ||
@@ -10867,6 +10869,51 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
       container = sim::SimManagedLoadOp::create(
           builder, location, property.type, property.reference);
     }
+    auto randomElement = [&](Value &state) -> FailureOr<Value> {
+      Value bits = next64(state);
+      Type scalarType =
+          IntegerType::get(function.getContext(), property.elementWidth);
+      if (property.elementWidth != 64)
+        bits = arith::TruncIOp::create(builder, location, scalarType, bits);
+      return convert(bits, property.elementType, false, location, false);
+    };
+    if (auto assoc = dyn_cast<sim::AssocArrayType>(property.type)) {
+      // IEEE 1800-2023 18.4: the value at every existing key is randomized;
+      // the keys themselves are not randomizable.
+      Value noKey = createDefaultValue(builder, location, assoc.getKeyType());
+      if (!noKey)
+        return failure();
+      FailureOr<std::pair<Value, Value>> first = traverseAssoc(
+          container, noKey, /*direction=*/1, /*endpoint=*/true, location);
+      if (failed(first))
+        return failure();
+      Value containerState = loadRandomState();
+      header->addArgument(assoc.getKeyType(), location);
+      header->addArgument(builder.getI1Type(), location);
+      header->addArgument(i64, location);
+      cf::BranchOp::create(
+          builder, location, header,
+          ValueRange{first->first, first->second, containerState});
+      setCurrent(header);
+      cf::CondBranchOp::create(builder, location, header->getArgument(1), body,
+                               ValueRange{}, nextProperty, ValueRange{});
+      setCurrent(body);
+      Value key = header->getArgument(0);
+      Value nextState = header->getArgument(2);
+      FailureOr<Value> element = randomElement(nextState);
+      if (failed(element))
+        return failure();
+      sim::SimAssocWriteOp::create(builder, location, container, key, *element);
+      storeRandomState(nextState);
+      FailureOr<std::pair<Value, Value>> next = traverseAssoc(
+          container, key, /*direction=*/1, /*endpoint=*/false, location);
+      if (failed(next))
+        return failure();
+      cf::BranchOp::create(builder, location, header,
+                           ValueRange{next->first, next->second, nextState});
+      setCurrent(nextProperty);
+      continue;
+    }
     Value size =
         sim::SimContainerSizeOp::create(builder, location, i64, container);
     Value containerState = loadRandomState();
@@ -10885,13 +10932,7 @@ FailureOr<Value> UnitLowering::lowerRandomize(semantic::SVCallExpressionOp op,
 
     setCurrent(body);
     Value nextState = loopState;
-    Value bits = next64(nextState);
-    Type scalarType =
-        IntegerType::get(function.getContext(), property.elementWidth);
-    if (property.elementWidth != 64)
-      bits = arith::TruncIOp::create(builder, location, scalarType, bits);
-    FailureOr<Value> element =
-        convert(bits, property.elementType, false, location, false);
+    FailureOr<Value> element = randomElement(nextState);
     if (failed(element))
       return failure();
     sim::SimContainerWriteOp::create(builder, location, container, index,

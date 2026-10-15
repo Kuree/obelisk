@@ -535,7 +535,7 @@ def SimRandomPropertyAttr : SimAttr<"RandomProperty", "random_property"> {
 }
 
 def SimRandomContainerAttr : SimAttr<"RandomContainer", "random_container"> {
-  let summary = "a random dynamic array or queue of a randomize() call";
+  let summary = "a random dynamic array, queue, or associative array";
   let description = [{
     The receiver's class `field` of container type `type`, whose elements of
     `elementType` are randomized as `elementWidth`-bit values; with

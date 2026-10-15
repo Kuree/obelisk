@@ -5693,6 +5693,14 @@ void ObeliskSimPreparePass::runOnOperation() {
           context, field, cast<sim::ClassHandleType>(concreteType),
           cast<sim::ClassHandleType>(storageType), outerModeIndex, steps);
     };
+    // IEEE 1800-2023 18.4: every element of a rand dynamic array, queue, or
+    // associative array is randomized; an associative array keeps its keys.
+    auto randomContainerElementType = [](Type type) -> Type {
+      return TypeSwitch<Type, Type>(type)
+          .Case<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+              [](auto container) { return container.getElementType(); })
+          .Default(Type{});
+    };
     SmallVector<RandomProperty, 0> properties;
     SmallVector<RandomContainerProperty> containerProperties;
     SmallVector<NestedObjectPlan, 0> nestedObjectPlans;
@@ -5902,11 +5910,7 @@ void ObeliskSimPreparePass::runOnOperation() {
             }
             continue;
           }
-          if (isa<sim::DynamicArrayType, sim::QueueType>(*type)) {
-            Type elementType =
-                isa<sim::DynamicArrayType>(*type)
-                    ? cast<sim::DynamicArrayType>(*type).getElementType()
-                    : cast<sim::QueueType>(*type).getElementType();
+          if (Type elementType = randomContainerElementType(*type)) {
             if (isStatic) {
               emitError(getSemanticLocation(property))
                   << "static random dynamic containers are not executable "
@@ -6464,14 +6468,8 @@ void ObeliskSimPreparePass::runOnOperation() {
                            "non-static rand values";
                     return failure();
                   }
-                  if (isa<sim::DynamicArrayType, sim::QueueType>(
-                          *recursiveType)) {
-                    Type elementType =
-                        isa<sim::DynamicArrayType>(*recursiveType)
-                            ? cast<sim::DynamicArrayType>(*recursiveType)
-                                  .getElementType()
-                            : cast<sim::QueueType>(*recursiveType)
-                                  .getElementType();
+                  if (Type elementType =
+                          randomContainerElementType(*recursiveType)) {
                     FailureOr<bool> inert = isInertClassHandleContainer(
                         *semanticRecursiveType, elementType);
                     if (failed(inert)) {
@@ -6615,13 +6613,10 @@ void ObeliskSimPreparePass::runOnOperation() {
                     getNormalizedSemanticType(nestedProperty);
                 std::optional<Type> semanticNestedType =
                     nestedProperty.getSemanticType();
-                if (succeeded(nestedType) && semanticNestedType &&
-                    isa<sim::DynamicArrayType, sim::QueueType>(*nestedType)) {
-                  Type elementType =
-                      isa<sim::DynamicArrayType>(*nestedType)
-                          ? cast<sim::DynamicArrayType>(*nestedType)
-                                .getElementType()
-                          : cast<sim::QueueType>(*nestedType).getElementType();
+                Type elementType = succeeded(nestedType)
+                                       ? randomContainerElementType(*nestedType)
+                                       : Type{};
+                if (semanticNestedType && elementType) {
                   FailureOr<bool> inert = isInertClassHandleContainer(
                       *semanticNestedType, elementType);
                   if (failed(inert)) {
@@ -7027,6 +7022,15 @@ void ObeliskSimPreparePass::runOnOperation() {
         });
         return found;
       });
+      if (referenced && isa<sim::AssocArrayType>(property.type)) {
+        // IEEE 1800-2023 18.4: an associative array's size and keys are not
+        // randomizable, and its values have no fixed-width solver variables.
+        emitError(getSemanticLocation(property.source))
+            << "constraints over a random associative array are not "
+               "executable yet";
+        invalid = true;
+        continue;
+      }
       if (referenced) {
         uint64_t constraintMask = 0;
         bool unconditionalConstraint = false;
