@@ -4345,6 +4345,33 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         binary.getOperatorKind() ==
             semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
     Operation *rhsOperand = operands.back();
+    // IEEE 1800-2023 16.12.7 and 16.12.9: a consequent that is itself an
+    // implication (followed-by under followed-by) fuses into the antecedent.
+    // s1 |-> (s2 |-> p) is (s1 ##0 s2) |-> p and s1 |=> (s2 |-> p) is
+    // (s1 ##1 s2) |-> p; the innermost operator decides the final handoff.
+    SmallVector<std::pair<Operation *, uint64_t>, 2> fusedAntecedents;
+    while (auto inner = dyn_cast_or_null<semantic::SVBinaryAssertionExprOp>(
+               unwrapAssertionInstance(rhsOperand))) {
+      semantic::SVAssertionBinaryOperator kind = inner.getOperatorKind();
+      bool innerFollowedBy =
+          kind == semantic::SVAssertionBinaryOperator::OverlappedFollowedBy ||
+          kind == semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
+      bool innerImplication =
+          kind == semantic::SVAssertionBinaryOperator::OverlappedImplication ||
+          kind ==
+              semantic::SVAssertionBinaryOperator::NonOverlappedImplication;
+      SmallVector<Operation *> innerOperands = getChildren(inner);
+      if ((followedBy ? !innerFollowedBy : !innerImplication) ||
+          innerOperands.size() != 2)
+        break;
+      fusedAntecedents.push_back({innerOperands.front(), nonoverlapped ? 1 : 0});
+      nonoverlapped =
+          kind ==
+              semantic::SVAssertionBinaryOperator::NonOverlappedImplication ||
+          kind == semantic::SVAssertionBinaryOperator::NonOverlappedFollowedBy;
+      rhsOperand = innerOperands.back();
+    }
+    Operation *consequentOperand = rhsOperand;
     if (auto strength =
             dyn_cast<semantic::SVStrongWeakAssertionExprOp>(rhsOperand)) {
       SmallVector<Operation *> strengthChildren = getChildren(strength);
@@ -4377,6 +4404,34 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }
     FailureOr<FixedSequenceAlternatives> lhs =
         compileFixedSequenceAlternatives(operands.front(), clock);
+    for (auto [operand, delay] : fusedAntecedents) {
+      FailureOr<FixedSequenceAlternatives> inner =
+          compileFixedSequenceAlternatives(operand, clock);
+      // An inner antecedent's empty match has no endpoint under |-> and starts
+      // its consequent on the current tick under |=>, which concatenation
+      // does not express; such antecedents stay unfused.
+      if (failed(lhs) || failed(inner) || inner->empty() ||
+          llvm::any_of(*inner, [](const FixedSequence &alternative) {
+            return alternative.emptyMatch;
+          }) ||
+          lhs->size() > maxFixedSequenceAlternatives / inner->size()) {
+        lhs = failure();
+        break;
+      }
+      FixedSequenceAlternatives fused;
+      bool fusible = true;
+      for (const FixedSequence &prefix : *lhs)
+        for (const FixedSequence &suffix : *inner) {
+          FixedSequence combined = prefix;
+          fusible &= succeeded(appendFixedSequence(combined, suffix, delay));
+          fused.push_back(std::move(combined));
+        }
+      if (!fusible) {
+        lhs = failure();
+        break;
+      }
+      lhs = std::move(fused);
+    }
     FailureOr<FixedSequenceAlternatives> rhs = compileFixedSequenceAlternatives(
         directFirstMatchConsequent ? directFirstMatchConsequent : rhsOperand,
         clock);
@@ -4392,7 +4447,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                         ? directFirstMatchConsequentSequence
                                         : rhsOperand);
     FailureOr<PersistentRepetitionSequence> repetitionLhs =
-        compilePersistentRepetition(operands.front());
+        fusedAntecedents.empty() ? compilePersistentRepetition(operands.front())
+                                 : FailureOr<PersistentRepetitionSequence>();
     if (succeeded(repetitionLhs)) {
       if (followedBy)
         return emitError(getSemanticLocation(operands.front()))
@@ -4406,7 +4462,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           rhs->front().firstMatchBoundaries.empty();
       if (!oneCycleBooleanConsequent || consequentEndStrength ||
           directFirstMatchConsequent)
-        return emitError(getSemanticLocation(operands.back()))
+        return emitError(getSemanticLocation(consequentOperand))
                    << "persistent implication antecedents "
                       "currently require one nonvacuous one-cycle Boolean "
                       "consequent without strength, first_match, or match "
@@ -4463,7 +4519,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     if (succeeded(rhs) && llvm::any_of(*rhs, [](const FixedSequence &value) {
           return value.emptyMatch;
         }))
-      return emitError(getSemanticLocation(operands.back()))
+      return emitError(getSemanticLocation(consequentOperand))
                  << "an empty-match sequence cannot be used as an "
                     "implication/followed-by consequent property",
              failure();
@@ -4486,7 +4542,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
              [](const FixedSequence &value) { return value.ages.empty(); })) &&
         failed(delayedRhs) && failed(unaryRhs) && failed(untilRhs) &&
         failed(repetitionRhs)) {
-      if (diagnoseUnsupportedConcurrentFeature(operands.back(),
+      if (diagnoseUnsupportedConcurrentFeature(consequentOperand,
                                                /*nested=*/true))
         return failure();
       return binary.emitError(
@@ -4543,7 +4599,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           consequentUniformIntrinsicEndStrong = explicitConsequentEndStrong;
         else
           consequentUniformIntrinsicEndStrong =
-              analyzeUniformIntrinsicEndStrength(operands.back(), clock);
+              analyzeUniformIntrinsicEndStrength(consequentOperand, clock);
         consequentEndStrengthComposable =
             consequentUniformIntrinsicEndStrong.has_value();
       }
