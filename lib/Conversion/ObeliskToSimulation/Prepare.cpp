@@ -701,21 +701,26 @@ void ObeliskSimPreparePass::runOnOperation() {
   // substituted body. An `iff` qualifies only the waiter. The bounded monitor
   // has no local-variable execution ABI, so local variables are rejected
   // instead of starting an inexact process-local monitor.
-  SmallVector<std::pair<semantic::SVSignalEventControlOp,
-                        semantic::SVAssertionInstanceExpressionOp>>
-      sequenceEvents;
-  semanticRoot->walk([&](semantic::SVSignalEventControlOp event) {
-    SmallVector<Operation *> children = getChildren(event);
-    if (children.empty())
-      return;
+  SmallVector<semantic::SVAssertionInstanceExpressionOp> sequenceEvents;
+  auto collectSequenceEvent = [&](Operation *expression) {
     auto instance =
-        dyn_cast<semantic::SVAssertionInstanceExpressionOp>(children.front());
+        dyn_cast_or_null<semantic::SVAssertionInstanceExpressionOp>(expression);
     auto type = instance ? instance->getAttrOfType<TypeAttr>("semantic_type")
                          : TypeAttr{};
     if (type && isa<semantic::SequenceType>(type.getValue()))
-      sequenceEvents.emplace_back(event, instance);
+      sequenceEvents.push_back(instance);
+  };
+  semanticRoot->walk([&](Operation *operation) {
+    SmallVector<Operation *> children = getChildren(operation);
+    if (children.empty())
+      return;
+    // 16.13.6: `.triggered` observes the same endpoint as an event control.
+    auto call = dyn_cast<semantic::SVCallExpressionOp>(operation);
+    if (isa<semantic::SVSignalEventControlOp>(operation) ||
+        (call && call.getCalleeName() == "triggered"))
+      collectSequenceEvent(children.front());
   });
-  for (auto [event, instance] : sequenceEvents) {
+  for (semantic::SVAssertionInstanceExpressionOp instance : sequenceEvents) {
     if (instance.getLocalVariableCount() != 0) {
       emitError(getSemanticLocation(instance))
           << "sequence event controls with local variables are not "

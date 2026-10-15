@@ -367,7 +367,11 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       SmallVector<Value> dynamicDependencies;
       FailureOr<Value> initial =
           evaluateInitial(children.front(), dynamicDependencies);
-      FailureOr<Type> primaryType = getNormalizedSemanticType(children.front());
+      // A sequence endpoint is a named event (IEEE 1800-2023 9.4.2.4).
+      FailureOr<Type> primaryType =
+          isa<semantic::SVAssertionInstanceExpressionOp>(children.front())
+              ? FailureOr<Type>(sim::EventType::get(function.getContext()))
+              : getNormalizedSemanticType(children.front());
       FailureOr<Value> primary =
           succeeded(primaryType) && isa<sim::EventType>(*primaryType) &&
                   dynamicDependencies.size() == 1
@@ -409,18 +413,12 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       unsupported(event) << " (event expression inventory)";
       return failure();
     }
-    if (auto instance = dyn_cast<semantic::SVAssertionInstanceExpressionOp>(
-            children.front())) {
-      auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
-      if (type && isa<semantic::SequenceType>(type.getValue())) {
-        Value endpoint = values.lookup(instance.getReferencedPath());
-        if (!endpoint || !isa<sim::EventType>(endpoint.getType())) {
-          emitError(location)
-              << "sequence event control has no prepared endpoint event for '"
-              << instance.getReferencedPath() << "' in "
-              << function.getSymName();
-          return failure();
-        }
+    {
+      FailureOr<Value> sequenceEndpoint =
+          lowerSequenceEndpoint(children.front());
+      if (failed(sequenceEndpoint))
+        return failure();
+      if (Value endpoint = *sequenceEndpoint) {
         auto reactive = sim::EventRegionAttr::get(function.getContext(),
                                                   sim::EventRegion::Reactive);
         if (!event.getHasIff()) {
@@ -852,6 +850,8 @@ FailureOr<bool> UnitLowering::classifyEventList(
     FailureOr<Type> watchedType =
         eventChildren.front()->hasAttr("virtual_interface_clocking_block_event")
             ? FailureOr<Type>(sim::LogicType::get(function.getContext(), 1))
+        : isa<semantic::SVAssertionInstanceExpressionOp>(eventChildren.front())
+            ? FailureOr<Type>(sim::EventType::get(function.getContext()))
             : getNormalizedSemanticType(eventChildren.front());
     if (failed(watchedType))
       return failure();

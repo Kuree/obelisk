@@ -709,9 +709,12 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
   bool stringBuiltin = false;
   bool containerBuiltin = false;
   bool associativeBuiltin = false;
+  // A sequence receiver (`s.triggered`, 16.13.6) has no value type.
   if (op.getIsSystemCall() && !op.getCalleeName().starts_with("$") &&
       !children.empty() && !sim::has<sim::metadata::RandMode>(op) &&
-      !sim::has<sim::metadata::ConstraintMode>(op)) {
+      !sim::has<sim::metadata::ConstraintMode>(op) &&
+      !isa<semantic::SVAssertionInstanceExpressionOp>(
+          op.getHasIteratorExpression() ? children.back() : children.front())) {
     Operation *receiverNode =
         op.getHasIteratorExpression() ? children.back() : children.front();
     FailureOr<Type> receiverType = getNormalizedSemanticType(receiverNode);

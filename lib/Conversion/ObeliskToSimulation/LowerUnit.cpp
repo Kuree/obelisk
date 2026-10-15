@@ -2607,7 +2607,29 @@ FailureOr<Value> UnitLowering::lowerContextDeterminedExpression(Operation *op) {
                  isSignedNode(op));
 }
 
+FailureOr<Value> UnitLowering::lowerSequenceEndpoint(Operation *expression) {
+  auto instance =
+      dyn_cast<semantic::SVAssertionInstanceExpressionOp>(expression);
+  auto type = instance ? instance->getAttrOfType<TypeAttr>("semantic_type")
+                       : TypeAttr{};
+  if (!type || !isa<semantic::SequenceType>(type.getValue()))
+    return Value{};
+  Value endpoint = values.lookup(instance.getReferencedPath());
+  if (!endpoint || !isa<sim::EventType>(endpoint.getType()))
+    return emitError(getSemanticLocation(instance))
+               << "sequence has no prepared endpoint event for '"
+               << instance.getReferencedPath() << "' in "
+               << function.getSymName(),
+           failure();
+  return endpoint;
+}
+
 FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
+  if (!lvalue && isa<semantic::SVAssertionInstanceExpressionOp>(op)) {
+    FailureOr<Value> endpoint = lowerSequenceEndpoint(op);
+    if (failed(endpoint) || *endpoint)
+      return endpoint;
+  }
   if (lvalue)
     if (Value captured = lvalueExpressionCaptures.lookup(op))
       return captured;

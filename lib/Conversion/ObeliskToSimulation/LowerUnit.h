@@ -567,6 +567,11 @@ private:
   ::mlir::LogicalResult
   emitEventSuspend(::mlir::Operation *control, ::mlir::Block *continuation,
                    ::mlir::ValueRange continuationOperands = {});
+  /// The endpoint event of a sequence instance used as a procedural event or
+  /// through `.triggered` (IEEE 1800-2023 9.4.2.4, 16.13.6), or null when
+  /// `expression` is not such an instance.
+  ::mlir::FailureOr<::mlir::Value>
+  lowerSequenceEndpoint(::mlir::Operation *expression);
   ::mlir::LogicalResult
   emitRepeatedEventSuspend(::mlir::Operation *control,
                            ::mlir::Block *continuation,
