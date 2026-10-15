@@ -3925,11 +3925,23 @@ private:
             kind = slangir::DynamicCastKind::AlwaysFail;
         } else if (destinationType.isAssignmentCompatible(sourceType)) {
           kind = slangir::DynamicCastKind::AlwaysSuccess;
-        } else if (!sourceType.isClass() ||
-                   !sourceType.isAssignmentCompatible(destinationType)) {
+        } else if (!sourceType.isClass()) {
           kind = slangir::DynamicCastKind::AlwaysFail;
         } else {
-          kind = slangir::DynamicCastKind::ClassRuntime;
+          // IEEE 1800-2023 8.16, 8.26.5: a downcast, or a cast to or from an
+          // interface class, succeeds when the referenced object's class is
+          // valid for the destination. Otherwise no object can satisfy both
+          // types: classes unrelated by inheritance share no objects, and a
+          // final class has no subclass that could add an interface.
+          const auto &source = sourceType.as<slang::ast::ClassType>();
+          const auto &destination = destinationType.as<slang::ast::ClassType>();
+          bool interfaceCast =
+              (source.isInterface || destination.isInterface) &&
+              !source.isFinal && !destination.isFinal;
+          kind = sourceType.isAssignmentCompatible(destinationType) ||
+                         interfaceCast
+                     ? slangir::DynamicCastKind::ClassRuntime
+                     : slangir::DynamicCastKind::AlwaysFail;
         }
         SET_OP_ATTR(DynamicCastKind, slangir::DynamicCastKindAttr::get(
                                          builder.getContext(), kind));
