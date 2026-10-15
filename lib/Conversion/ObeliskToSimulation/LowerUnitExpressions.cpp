@@ -1201,7 +1201,8 @@ FailureOr<Value> UnitLowering::createBitStream(bool fourState,
 FailureOr<Value> UnitLowering::appendToBitStream(Value value, Value stream,
                                                  Value outputIndex,
                                                  bool fourState,
-                                                 Location location) {
+                                                 Location location,
+                                                 bool allowHiddenRoot) {
   auto i64Constant = [&](uint64_t constant) -> Value {
     return arith::ConstantOp::create(builder, location, builder.getI64Type(),
                                      builder.getI64IntegerAttr(constant));
@@ -1209,6 +1210,44 @@ FailureOr<Value> UnitLowering::appendToBitStream(Value value, Value stream,
   Value zero = i64Constant(0);
   Value one = i64Constant(1);
   Type type = value.getType();
+  // IEEE 1800-2023 11.4.14.1: a null class handle is skipped, and any other
+  // streams the data members of its object.
+  if (auto handle = dyn_cast<sim::ClassHandleType>(type)) {
+    auto declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+        function, handle.getClassName());
+    IntegerAttr width =
+        declaration ? sim::get<sim::metadata::ClassBitstreamWidth>(declaration)
+                    : IntegerAttr{};
+    if (!width || width.getValue().isZero() ||
+        width.getValue().getActiveBits() > 32)
+      return emitError(location) << "streamed class " << handle.getClassName()
+                                 << " has no fixed bit-stream width",
+             failure();
+    Value null = sim::SimClassNullOp::create(builder, location, handle);
+    FailureOr<Value> isNull =
+        conditionalEqual(value, null, handle, location, /*caseEquality=*/true);
+    if (failed(isNull))
+      return failure();
+    Block *present = addBlock();
+    Block *exit = addBlock();
+    exit->addArgument(builder.getI64Type(), location);
+    cf::CondBranchOp::create(builder, location, *isNull, exit,
+                             ValueRange{outputIndex}, present, ValueRange{});
+    setCurrent(present);
+    Type packedType = sim::LogicType::get(function.getContext(),
+                                          width.getValue().getZExtValue());
+    FailureOr<Value> packed = convertRecursiveBitstream(
+        value, packedType, packedType, location, allowHiddenRoot);
+    if (failed(packed))
+      return failure();
+    FailureOr<Value> next =
+        appendToBitStream(*packed, stream, outputIndex, fourState, location);
+    if (failed(next))
+      return failure();
+    cf::BranchOp::create(builder, location, exit, ValueRange{*next});
+    setCurrent(exit);
+    return exit->getArgument(0);
+  }
   if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type)) {
     unsigned count = sim::getAggregateNumElements(type);
     for (unsigned ordinal = 0; ordinal < count; ++ordinal) {
@@ -1911,7 +1950,14 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       assignmentType && !hasDynamicTarget
           ? sim::getPackedWidth(assignmentType).value_or(0)
           : 0;
-  if (!op.getIsFixedSize() || hasDynamicTarget || withCount != 0) {
+  // A null class handle streams nothing (11.4.14.1), so a stream with a
+  // class operand has no fixed width.
+  bool classOperand = llvm::any_of(children, [&](auto part) {
+    FailureOr<Type> type = getNormalizedSemanticType(part.first);
+    return succeeded(type) && isa<sim::ClassHandleType>(*type);
+  });
+  if (!op.getIsFixedSize() || hasDynamicTarget || withCount != 0 ||
+      classOperand) {
     if (assignmentType && !hasDynamicTarget && fixedTargetWidth == 0)
       return emitError(location)
                  << "a dynamically sized stream requires a bit-stream "
@@ -1937,21 +1983,50 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       if (failed(value))
         return failure();
       Value streamedValue = *value;
-      // A sole dynamically sized class operand can still target a fixed
-      // stream exactly: the target supplies the required runtime width to the
-      // recursive exporter. Export once, then let the ordinary slice reorder
-      // consume the packed value. Multiple dynamic operands have no local
-      // width boundary and retain the generic diagnostic.
+      bool allowHiddenRoot =
+          sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op);
+      // A sole class operand without a fixed bit-stream width can still
+      // target a fixed stream exactly: the target supplies the required
+      // runtime width to the recursive exporter, and a null handle streams
+      // nothing. Multiple such operands have no local width boundary and
+      // retain the generic diagnostic.
+      auto handle = dyn_cast<sim::ClassHandleType>(streamedValue.getType());
+      auto declaration = handle ? lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                                      function, handle.getClassName())
+                                : sim::SimClassDeclOp{};
       if (!hasDynamicTarget && fixedTargetWidth != 0 && children.size() == 1 &&
-          !withRange && isa<sim::ClassHandleType>(streamedValue.getType())) {
+          !withRange && handle &&
+          !(declaration &&
+            sim::get<sim::metadata::ClassBitstreamWidth>(declaration))) {
+        Location childLocation = getSemanticLocation(child);
+        Value null =
+            sim::SimClassNullOp::create(builder, childLocation, handle);
+        FailureOr<Value> isNull = conditionalEqual(
+            streamedValue, null, handle, childLocation, /*caseEquality=*/true);
+        if (failed(isNull))
+          return failure();
+        Block *present = addBlock();
+        Block *joined = addBlock();
+        joined->addArgument(builder.getI64Type(), childLocation);
+        cf::CondBranchOp::create(builder, childLocation, *isNull, joined,
+                                 ValueRange{outputIndex}, present,
+                                 ValueRange{});
+        setCurrent(present);
         Type packedType =
             sim::LogicType::get(function.getContext(), fixedTargetWidth);
-        FailureOr<Value> packed = convertRecursiveBitstream(
-            streamedValue, packedType, packedType, getSemanticLocation(child),
-            sim::has<sim::metadata::ClassBitstreamAllowHiddenRoot>(op));
+        FailureOr<Value> packed =
+            convertRecursiveBitstream(streamedValue, packedType, packedType,
+                                      childLocation, allowHiddenRoot);
         if (failed(packed))
           return failure();
-        streamedValue = *packed;
+        FailureOr<Value> next = appendToBitStream(
+            *packed, *generic, outputIndex, fourState, childLocation);
+        if (failed(next))
+          return failure();
+        cf::BranchOp::create(builder, childLocation, joined, ValueRange{*next});
+        setCurrent(joined);
+        outputIndex = joined->getArgument(0);
+        continue;
       }
       if (withRange) {
         FailureOr<Value> selected = sliceStreamingContainer(
@@ -1962,7 +2037,7 @@ UnitLowering::lowerStreaming(semantic::SVStreamingConcatenationExpressionOp op,
       }
       FailureOr<Value> next =
           appendToBitStream(streamedValue, *generic, outputIndex, fourState,
-                            getSemanticLocation(child));
+                            getSemanticLocation(child), allowHiddenRoot);
       if (failed(next))
         return failure();
       outputIndex = *next;

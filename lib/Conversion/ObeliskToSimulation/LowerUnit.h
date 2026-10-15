@@ -185,11 +185,13 @@ private:
   bool streamNodeContainsFourState(::mlir::Operation *node) const;
   ::mlir::FailureOr<::mlir::Value> createBitStream(bool fourState,
                                                    ::mlir::Location location);
-  ::mlir::FailureOr<::mlir::Value> appendToBitStream(::mlir::Value value,
-                                                     ::mlir::Value stream,
-                                                     ::mlir::Value outputIndex,
-                                                     bool fourState,
-                                                     ::mlir::Location location);
+  /// Appends the bit stream of `value` at `outputIndex` and returns the index
+  /// after it. `allowHiddenRoot` exports a direct `this` class root with its
+  /// local members.
+  ::mlir::FailureOr<::mlir::Value>
+  appendToBitStream(::mlir::Value value, ::mlir::Value stream,
+                    ::mlir::Value outputIndex, bool fourState,
+                    ::mlir::Location location, bool allowHiddenRoot = false);
   ::mlir::FailureOr<::mlir::Value> reorderBitStream(::mlir::Value stream,
                                                     uint64_t slice,
                                                     ::mlir::Location location,

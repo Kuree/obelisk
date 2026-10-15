@@ -898,6 +898,12 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
         classType.getIsInterface(), classType.getIsFinal(),
         builder.getStringAttr(getDebugName(classType)));
     result.declarations[classType] = declaration;
+    // A class whose data members all have fixed bit-stream widths streams that
+    // many bits from any non-null handle (IEEE 1800-2023 11.4.14.1).
+    if (needsClassBitstreamMetadata && classType.getBitstreamWidth() != 0)
+      sim::set<sim::metadata::ClassBitstreamWidth>(
+          declaration,
+          builder.getI64IntegerAttr(classType.getBitstreamWidth()));
     // Class inventory is part of the executable ABI. Keep descriptors even
     // when the only current reference is embedded in a type.
     SymbolTable::setSymbolVisibility(declaration,

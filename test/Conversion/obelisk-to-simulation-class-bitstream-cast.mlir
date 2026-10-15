@@ -223,9 +223,9 @@ module attributes {
 
 // The native lowering must preserve the bytecode bindings already patched into
 // the class plan by the preceding encoder.  The first site is bound to bytecode
-// function/site 3; rematerializing the plan here would replace both with -1.
+// function 3, site 6; rematerializing the plan here would replace both with -1.
 // HYBRID: runtime.class_bitstream_blob = array<i8: 66, 83, 66, 67
-// HYBRID-SAME: {{.*}}1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0
+// HYBRID-SAME: {{.*}}1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 6, 0, 0, 0
 // HYBRID-SAME: runtime.features = #runtime.features<container_bitstream|class_bitstream|class_bitstream_bytecode>
 // HYBRID: llvm.call @obelisk_rt_v1_container_bitstream_link_anchor
 // HYBRID: llvm.call @obelisk_rt_v1_class_bitstream_link_anchor
