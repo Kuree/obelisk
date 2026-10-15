@@ -1136,22 +1136,79 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
     if (!withClause)
       return emitError(location) << "map requires a with clause", failure();
     FailureOr<Type> resultType = getNormalizedSemanticType(op);
+    FailureOr<StringRef> path = iteratorPath();
+    if (failed(resultType) || failed(path))
+      return failure();
+    // IEEE 1800-2023 7.12.5: the result has the source's range, so a fixed
+    // array maps to a fixed array of its declared range, built element by
+    // element.
+    if (auto fixedResult = dyn_cast<sim::UnpackedArrayType>(*resultType)) {
+      if (!fixedArray || sim::getAggregateNumElements(fixedResult) !=
+                             sim::getAggregateNumElements(fixedArray))
+        return emitError(location)
+                   << "map result range does not match its source: "
+                   << *resultType,
+               failure();
+      Value resultLeft = arith::ConstantOp::create(
+          builder, location, builder.getI64Type(),
+          builder.getI64IntegerAttr(fixedResult.getLeft()));
+      SavedIterator saved = saveIterator(*path);
+      Block *header = addBlock();
+      header->addArgument(builder.getI64Type(), location);
+      header->addArgument(fixedResult, location);
+      Block *body = addBlock();
+      Block *exit = addBlock();
+      exit->addArgument(fixedResult, location);
+      cf::BranchOp::create(
+          builder, location, header,
+          ValueRange{indexConstant(0),
+                     createDefaultValue(builder, location, fixedResult)});
+      setCurrent(header);
+      Value index = header->getArgument(0);
+      Value mappedArray = header->getArgument(1);
+      Value more = arith::CmpIOp::create(
+          builder, location, arith::CmpIPredicate::ult, index, inputSize());
+      cf::CondBranchOp::create(builder, location, more, body, ValueRange{},
+                               exit, ValueRange{mappedArray});
+      setCurrent(body);
+      FailureOr<Value> mapped = evaluateClause(*path, readInput(index), index);
+      if (failed(mapped))
+        return failure();
+      FailureOr<Value> converted =
+          convert(*mapped, fixedResult.getElementType(), isSignedNode(clause),
+                  location);
+      if (failed(converted))
+        return failure();
+      Value resultIndex = fixedResult.getLeft() <= fixedResult.getRight()
+                              ? Value(arith::AddIOp::create(builder, location,
+                                                            resultLeft, index))
+                              : Value(arith::SubIOp::create(builder, location,
+                                                            resultLeft, index));
+      Value updated = sim::SimArrayDynInsertOp::create(
+          builder, location, fixedResult, mappedArray, *converted, resultIndex);
+      Value next =
+          arith::AddIOp::create(builder, location, index, indexConstant(1));
+      cf::BranchOp::create(builder, location, header,
+                           ValueRange{next, updated});
+      restoreIterator(saved);
+      setCurrent(exit);
+      return exit->getArgument(0);
+    }
     Type resultElement;
     sim::ContainerKind resultKind = sim::ContainerKind::DynamicArray;
     uint64_t bound = 0;
-    if (succeeded(resultType)) {
-      if (auto array = dyn_cast<sim::DynamicArrayType>(*resultType)) {
-        resultElement = array.getElementType();
-        resultKind = sim::ContainerKind::DynamicArray;
-      } else if (auto queue = dyn_cast<sim::QueueType>(*resultType)) {
-        resultElement = queue.getElementType();
-        resultKind = sim::ContainerKind::Queue;
-        bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
-      }
+    if (auto array = dyn_cast<sim::DynamicArrayType>(*resultType)) {
+      resultElement = array.getElementType();
+      resultKind = sim::ContainerKind::DynamicArray;
+    } else if (auto queue = dyn_cast<sim::QueueType>(*resultType)) {
+      resultElement = queue.getElementType();
+      resultKind = sim::ContainerKind::Queue;
+      bound = queue.getBound() ? queue.getBound() : UINT64_MAX;
+    } else {
+      return emitError(location)
+                 << "map result type is not an unpacked array: " << *resultType,
+             failure();
     }
-    FailureOr<StringRef> path = iteratorPath();
-    if (!resultElement || failed(path))
-      return failure();
     FailureOr<ContainerElementDescriptor> descriptor =
         describeContainerElement(resultElement, location);
     if (failed(descriptor))
