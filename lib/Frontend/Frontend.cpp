@@ -4938,6 +4938,30 @@ private:
       SmallVector<int64_t> transitionRangeRepeatKinds;
       SmallVector<int64_t> transitionRangeHasRepeatFrom;
       SmallVector<int64_t> transitionRangeHasRepeatTo;
+      // IEEE 1800-2023 19.5.2: a transition of length 0, one value range that
+      // is not repeated or can be repeated exactly once, is illegal. A count
+      // that depends on a covergroup argument is checked when the bin is
+      // built.
+      slang::ast::EvalContext transitionEvalContext(node);
+      auto evaluatesToOne = [&](const slang::ast::Expression *expression) {
+        slang::ConstantValue value = expression->eval(transitionEvalContext);
+        return value.isInteger() && !value.integer().hasUnknown() &&
+               value.integer().as<int64_t>() == 1;
+      };
+      for (const auto &set : node.getTransList()) {
+        using RepeatKind = slang::ast::CoverageBinSymbol::TransRangeList;
+        if (set.size() != 1)
+          continue;
+        const auto &range = set.front();
+        if (range.repeatKind == RepeatKind::None ||
+            (range.repeatKind == RepeatKind::Consecutive && range.repeatFrom &&
+             evaluatesToOne(range.repeatFrom))) {
+          emitError(sourceLocation(node.location))
+              << "transition bin '" << node.name
+              << "' has a transition of length 0";
+          sawInvalidNode = true;
+        }
+      }
       for (const auto &set : node.getTransList()) {
         transitionSetRangeCounts.push_back(set.size());
         for (const auto &range : set) {
