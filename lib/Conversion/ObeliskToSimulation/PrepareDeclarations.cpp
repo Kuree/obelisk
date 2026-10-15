@@ -130,7 +130,226 @@ bool isBuiltinBaseMethodPath(StringRef path) {
          path.starts_with("std::mailbox#(");
 }
 
+/// The nested symbol reference that names `operation` from the module.
+SymbolRefAttr getSemanticSymbolPath(Operation *operation) {
+  SmallVector<StringAttr> names;
+  for (Operation *current = operation; current && !isa<ModuleOp>(current);
+       current = current->getParentOp())
+    if (auto symbol = current->getAttrOfType<StringAttr>(
+            SymbolTable::getSymbolAttrName()))
+      names.push_back(symbol);
+  std::reverse(names.begin(), names.end());
+  SmallVector<FlatSymbolRefAttr> nested;
+  for (StringAttr name : ArrayRef(names).drop_front())
+    nested.push_back(FlatSymbolRefAttr::get(name));
+  return SymbolRefAttr::get(names.front(), nested);
+}
+
+/// Creates semantic operations with fresh node IDs.
+class SemanticOpFactory {
+public:
+  explicit SemanticOpFactory(ModuleOp module) : builder(module.getContext()) {
+    module.walk([&](Operation *operation) {
+      if (auto node = operation->getAttrOfType<IntegerAttr>("node_id"))
+        nextNode = std::max(nextNode, node.getInt() + 1);
+    });
+  }
+
+  Operation *create(OpBuilder &at, Location location, StringRef name,
+                    ArrayRef<NamedAttribute> attributes) {
+    OperationState state(location, name);
+    state.addAttributes(attributes);
+    state.addAttribute("node_id", builder.getI64IntegerAttr(nextNode++));
+    state.addRegion();
+    Operation *operation = at.create(state);
+    operation->getRegion(0).push_back(new Block);
+    return operation;
+  }
+
+  Builder builder;
+
+private:
+  int64_t nextNode = 0;
+};
+
 } // namespace
+
+LogicalResult normalizeDefaultedConstructors(ModuleOp module) {
+  SmallVector<semantic::SVSubroutineSymbolOp> constructors;
+  module.walk([&](semantic::SVSubroutineSymbolOp subroutine) {
+    if (subroutine.getIsConstructor().value_or(false) &&
+        subroutine->hasAttr("has_defaulted_super_arg"))
+      constructors.push_back(subroutine);
+  });
+  if (constructors.empty())
+    return success();
+  llvm::StringMap<semantic::SVClassTypeOp> classes;
+  module.walk([&](semantic::SVClassTypeOp classType) {
+    classes[classType.getSymName()] = classType;
+  });
+  SemanticOpFactory factory(module);
+  Builder &builder = factory.builder;
+  MLIRContext *context = module.getContext();
+  for (semantic::SVSubroutineSymbolOp constructor : constructors) {
+    auto owner = constructor->getParentOfType<semantic::SVClassTypeOp>();
+    std::optional<Type> baseType =
+        owner ? owner.getBaseClass() : std::optional<Type>{};
+    auto baseHandle =
+        baseType ? dyn_cast<semantic::ClassHandleType>(*baseType) : nullptr;
+    semantic::SVClassTypeOp base =
+        baseHandle
+            ? classes.lookup(baseHandle.getClassName().getLeafReference())
+            : semantic::SVClassTypeOp{};
+    if (!base)
+      return constructor.emitError(
+          "constructor with a default argument has no base class");
+    // The base constructor whose argument list `default` expands.
+    semantic::SVSubroutineSymbolOp baseConstructor;
+    if (auto symbol = base->getAttrOfType<SymbolRefAttr>("constructor_symbol"))
+      for (Operation *member : getChildren(base))
+        if (auto method = dyn_cast<semantic::SVSubroutineSymbolOp>(member);
+            method &&
+            method.getSymName() == symbol.getLeafReference().getValue())
+          baseConstructor = method;
+
+    // An implicit constructor of `extends Base(default)` executes like a
+    // written one: it takes the expanded arguments and forwards them.
+    if (constructor.getIsBuiltin().value_or(false)) {
+      constructor->removeAttr("is_builtin");
+      if (!constructor.getThisVariablePath())
+        constructor->setAttr(
+            "this_variable_path",
+            builder.getStringAttr(getHierarchyName(constructor) + ".this"));
+    }
+
+    // IEEE 1800-2023 8.17: super.new(default) passes every argument that
+    // `default` expanded, and a constructor with `default` and no super.new
+    // gets an implicit super.new(default).
+    semantic::SVNewClassExpressionOp superCall;
+    constructor->walk([&](semantic::SVNewClassExpressionOp construct) {
+      if (construct.getIsSuperClass() && !superCall &&
+          construct->getParentOfType<semantic::SVSubroutineSymbolOp>() ==
+              constructor)
+        superCall = construct;
+    });
+    if (superCall && !getChildren(superCall).empty())
+      continue;
+    if (!baseConstructor) {
+      // The base takes no arguments; implicit chaining constructs it.
+      if (superCall) {
+        Operation *statement = superCall->getParentOp();
+        if (isa<semantic::SVExpressionStatementOp>(statement))
+          statement->erase();
+        else
+          superCall->erase();
+      }
+      continue;
+    }
+    llvm::StringMap<semantic::SVFormalArgumentSymbolOp> formals;
+    for (Operation *member : getChildren(constructor))
+      if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(member))
+        if (auto name = formal->getAttrOfType<StringAttr>("name"))
+          formals[name.getValue()] = formal;
+    SmallVector<semantic::SVFormalArgumentSymbolOp> forwarded;
+    for (Operation *member : getChildren(baseConstructor)) {
+      auto baseFormal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(member);
+      if (!baseFormal)
+        continue;
+      auto name = baseFormal->getAttrOfType<StringAttr>("name");
+      semantic::SVFormalArgumentSymbolOp formal =
+          name ? formals.lookup(name.getValue())
+               : semantic::SVFormalArgumentSymbolOp{};
+      if (!formal)
+        return constructor.emitError("constructor argument ")
+               << name << " expanded by `default` is missing";
+      forwarded.push_back(formal);
+    }
+
+    Location location = constructor.getLoc();
+    if (!superCall) {
+      // super.new must be the first statement (8.17); insert it before the
+      // body's first statement.
+      Block &members = constructor->getRegion(0).front();
+      Operation *body = nullptr;
+      for (Operation &member : members)
+        if (!isa<SymbolOpInterface>(member)) {
+          body = &member;
+          break;
+        }
+      OpBuilder at(context);
+      if (auto list = dyn_cast_or_null<semantic::SVStatementListOp>(body))
+        at.setInsertionPointToStart(&list->getRegion(0).front());
+      else if (body)
+        at.setInsertionPoint(body);
+      else
+        at.setInsertionPointToStart(&members);
+      Operation *statement = factory.create(
+          at, location, semantic::SVExpressionStatementOp::getOperationName(),
+          {});
+      OpBuilder inside =
+          OpBuilder::atBlockEnd(&statement->getRegion(0).front());
+      superCall = cast<semantic::SVNewClassExpressionOp>(factory.create(
+          inside, location,
+          semantic::SVNewClassExpressionOp::getOperationName(),
+          {builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+           builder.getNamedAttr("is_super_class", builder.getBoolAttr(true)),
+           builder.getNamedAttr(
+               "semantic_type",
+               TypeAttr::get(semantic::VoidType::get(context)))}));
+    }
+    OpBuilder callBuilder =
+        OpBuilder::atBlockEnd(&superCall->getRegion(0).front());
+    Operation *call = factory.create(
+        callBuilder, location, semantic::SVCallExpressionOp::getOperationName(),
+        {builder.getNamedAttr("argument_count",
+                              builder.getI64IntegerAttr(forwarded.size())),
+         builder.getNamedAttr("callee_name", builder.getStringAttr("new")),
+         builder.getNamedAttr("constraint_restrictions",
+                              builder.getArrayAttr({})),
+         builder.getNamedAttr("defaulted_arguments",
+                              builder.getDenseI64ArrayAttr(
+                                  SmallVector<int64_t>(forwarded.size(), 0))),
+         builder.getNamedAttr("has_inline_constraints",
+                              builder.getBoolAttr(false)),
+         builder.getNamedAttr("has_iterator_expression",
+                              builder.getBoolAttr(false)),
+         builder.getNamedAttr("has_output_arguments",
+                              builder.getBoolAttr(false)),
+         builder.getNamedAttr("has_this_class", builder.getBoolAttr(false)),
+         builder.getNamedAttr("is_signed", builder.getBoolAttr(false)),
+         builder.getNamedAttr("is_super_class", builder.getBoolAttr(true)),
+         builder.getNamedAttr("is_system_call", builder.getBoolAttr(false)),
+         builder.getNamedAttr(
+             "referenced_path",
+             builder.getStringAttr(getHierarchyName(baseConstructor))),
+         builder.getNamedAttr("referenced_symbol",
+                              getSemanticSymbolPath(baseConstructor)),
+         builder.getNamedAttr("semantic_type",
+                              TypeAttr::get(semantic::VoidType::get(context))),
+         builder.getNamedAttr(
+             "subroutine_kind",
+             semantic::SVSubroutineKindAttr::get(
+                 context, baseConstructor.getSubroutineKind()))});
+    OpBuilder argument = OpBuilder::atBlockEnd(&call->getRegion(0).front());
+    for (semantic::SVFormalArgumentSymbolOp formal : forwarded) {
+      auto type = formal->getAttrOfType<TypeAttr>("semantic_type");
+      auto integral =
+          type ? dyn_cast<semantic::IntegralType>(type.getValue()) : nullptr;
+      factory.create(argument, location,
+                     semantic::SVNamedValueExpressionOp::getOperationName(),
+                     {builder.getNamedAttr(
+                          "is_signed", builder.getBoolAttr(
+                                           integral && integral.getIsSigned())),
+                      builder.getNamedAttr(
+                          "referenced_path",
+                          builder.getStringAttr(getHierarchyName(formal))),
+                      builder.getNamedAttr("referenced_symbol",
+                                           getSemanticSymbolPath(formal)),
+                      builder.getNamedAttr("semantic_type", type)});
+    }
+  }
+  return success();
+}
 
 LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
   MLIRContext *context = module.getContext();
@@ -146,35 +365,13 @@ LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
   if (derived.empty())
     return success();
 
-  int64_t nextNode = 0;
-  module.walk([&](Operation *operation) {
-    if (auto node = operation->getAttrOfType<IntegerAttr>("node_id"))
-      nextNode = std::max(nextNode, node.getInt() + 1);
-  });
-  Builder builder(context);
+  SemanticOpFactory factory(module);
+  Builder &builder = factory.builder;
   auto create = [&](OpBuilder &at, Location location, StringRef name,
                     ArrayRef<NamedAttribute> attributes) {
-    OperationState state(location, name);
-    state.addAttributes(attributes);
-    state.addAttribute("node_id", builder.getI64IntegerAttr(nextNode++));
-    state.addRegion();
-    Operation *operation = at.create(state);
-    operation->getRegion(0).push_back(new Block);
-    return operation;
+    return factory.create(at, location, name, attributes);
   };
-  auto symbolPath = [](Operation *operation) {
-    SmallVector<StringAttr> names;
-    for (Operation *current = operation; current && !isa<ModuleOp>(current);
-         current = current->getParentOp())
-      if (auto symbol = current->getAttrOfType<StringAttr>(
-              SymbolTable::getSymbolAttrName()))
-        names.push_back(symbol);
-    std::reverse(names.begin(), names.end());
-    SmallVector<FlatSymbolRefAttr> nested;
-    for (StringAttr name : ArrayRef(names).drop_front())
-      nested.push_back(FlatSymbolRefAttr::get(name));
-    return SymbolRefAttr::get(names.front(), nested);
-  };
+  auto symbolPath = getSemanticSymbolPath;
 
   // The `$base` property of each derived class, keyed by class symbol.
   struct BuiltinBase {

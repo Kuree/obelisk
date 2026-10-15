@@ -54,6 +54,11 @@ struct PreparedScopeDeclarations {
 /// Return the executable method behind either a direct method or prototype.
 ir::SVSubroutineSymbolOp getClassMethod(mlir::Operation *member);
 
+/// IEEE 1800-2023 8.17: make each constructor whose argument list uses
+/// `default` forward the expanded arguments through an explicit super.new,
+/// including the implicit constructor of `extends Base(default)`.
+mlir::LogicalResult normalizeDefaultedConstructors(mlir::ModuleOp module);
+
 /// IEEE 1800-2023 15.2: semaphore and mailbox are built-in classes that can
 /// be base classes. Their objects are runtime handles rather than class
 /// objects, so rewrite each class derived from one to hold its built-in base

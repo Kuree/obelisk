@@ -535,7 +535,8 @@ public:
 
 void ObeliskSimPreparePass::runOnOperation() {
   ModuleOp module = getOperation();
-  if (failed(rewriteBuiltinBaseClasses(module))) {
+  if (failed(normalizeDefaultedConstructors(module)) ||
+      failed(rewriteBuiltinBaseClasses(module))) {
     signalPassFailure();
     return;
   }
