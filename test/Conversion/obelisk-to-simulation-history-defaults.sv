@@ -19,30 +19,31 @@
 // SNAPSHOT-LABEL: simulation.func private @unit_7(
 // SNAPSHOT-NOT: simulation.context.storage %arg0[10]
 // SNAPSHOT: simulation.return
-// On history underflow, $past(zero + 1) re-evaluates the expression on the
-// type default, $past(initialized) uses the declaration initializer 4'b0101,
-// and $past(dynamic_value) reads the snapshot instead of calling initialize().
+// Procedural $past evaluates its expression over each static variable's
+// sample from a prior clock tick, which a sampler process records. The gated
+// depth-two sampler records only clock edges that the gate qualifies.
+// SNAPSHOT: simulation.suspend.edge_iff posedge %arg2 iff %arg3
+// SNAPSHOT: simulation.assert.clocked_sample_update %arg0 from %{{.*}} gate %{{.*}} id [[GATED:[0-9]+]] depth 2
+// On history underflow, $past(zero + 1) adds one to the type default that
+// fills zero's sample ring, $past(initialized) uses the declaration
+// initializer 4'b0101, and $past(dynamic_value) reads the snapshot instead of
+// calling initialize().
 // SNAPSHOT-LABEL: simulation.func private @unit_11(
 // SNAPSHOT-NOT: simulation.call @unit_5
-// SNAPSHOT: %[[ZERO_VALID:.*]] = simulation.assert.sampled_history %arg0 from %{{.*}} gate %{{.*}} depth 1 : (!simulation.context, i1, i1) -> i1
-// SNAPSHOT-NEXT: cf.cond_br %[[ZERO_VALID]], ^{{bb[0-9]+}}(%{{.*}}), ^[[ZERO:bb[0-9]+]]
-// SNAPSHOT-NEXT: ^[[ZERO]]:
-// SNAPSHOT-NEXT: %[[TYPE_DEFAULT:.*]] = simulation.aggregate.default : !simulation.packed_array<3 : 0 x i1>
-// SNAPSHOT-NEXT: %[[TYPE_BITS:.*]] = simulation.packed.flatten %[[TYPE_DEFAULT]]
+// SNAPSHOT: %[[ZERO:.*]] = simulation.assert.clocked_sample_read %arg0 id {{[0-9]+}} depth 1 age 0 : (!simulation.context) -> !simulation.packed_array<3 : 0 x i1>
+// SNAPSHOT-NEXT: %[[ZERO_BITS:.*]] = simulation.packed.flatten %[[ZERO]]
 // SNAPSHOT-NEXT: %[[ONE:.*]] = arith.constant {simulation.rematerialized} 1 : i4
-// SNAPSHOT-NEXT: arith.addi %[[TYPE_BITS]], %[[ONE]] : i4
-// SNAPSHOT: %[[INITIALIZED_VALID:.*]] = simulation.assert.sampled_history %arg0 from %{{.*}} gate %{{.*}} depth 1 : (!simulation.context, i1, i1) -> i1
+// SNAPSHOT-NEXT: arith.addi %[[ZERO_BITS]], %[[ONE]] : i4
+// SNAPSHOT: %[[INITIALIZED_VALID:.*]] = simulation.assert.clocked_sample_read %arg0 id {{[0-9]+}} depth 1 age 0 : (!simulation.context) -> i1
 // SNAPSHOT-NEXT: cf.cond_br %[[INITIALIZED_VALID]], ^{{bb[0-9]+}}(%{{.*}}), ^[[DECLARED:bb[0-9]+]]
 // SNAPSHOT-NEXT: ^[[DECLARED]]:
 // SNAPSHOT-NEXT: simulation.logic.constant 5 : i4, 0 : i4
-// SNAPSHOT: %[[DYNAMIC_VALID:.*]] = simulation.assert.sampled_history %arg0 from %{{.*}} gate %{{.*}} depth 1 : (!simulation.context, i1, i1) -> i1
+// SNAPSHOT: %[[DYNAMIC_VALID:.*]] = simulation.assert.clocked_sample_read %arg0 id {{[0-9]+}} depth 1 age 0 : (!simulation.context) -> i1
 // SNAPSHOT-NEXT: cf.cond_br %[[DYNAMIC_VALID]], ^{{bb[0-9]+}}(%{{.*}}), ^[[UNDERFLOW:bb[0-9]+]]
 // SNAPSHOT-NEXT: ^[[UNDERFLOW]]:
 // SNAPSHOT-NEXT: %[[SLOT:.*]] = simulation.context.storage %arg0[10]
 // SNAPSHOT-NEXT: simulation.ref.load %[[SLOT]]
-// Gated depth-two history samples only when the gate is true.
-// SNAPSHOT: %[[GATE:.*]] = simulation.assert.sampled_read %arg0 from %arg5
-// SNAPSHOT-NEXT: simulation.assert.sampled_history %arg0 from %{{.*}} gate %[[GATE]] id {{[0-9]+}} depth 2 :
+// SNAPSHOT: simulation.assert.clocked_sample_read %arg0 id [[GATED]] depth 2 age 1 :
 // SNAPSHOT-LABEL: simulation.func private @unit_12
 
 `timescale 1ns / 1ps

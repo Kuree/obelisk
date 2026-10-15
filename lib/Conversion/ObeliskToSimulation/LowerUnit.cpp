@@ -783,15 +783,44 @@ UnitLowering::traverseAssoc(Value array, Value key, int32_t direction,
                                  resume->getArgument(1)};
 }
 
+bool UnitLowering::isSampledReference(Value reference) {
+  if (currentValueReferences.contains(reference))
+    return false;
+  // A past or future value of an automatic variable is its current value
+  // too, so a selection rooted at one is not sampled either.
+  Value root = reference;
+  while (Operation *view = root.getDefiningOp()) {
+    if (!isa<sim::SimRefExtractOp, sim::SimRefDynExtractOp,
+             sim::SimRefSubelementOp, sim::SimRefArrayElementOp>(view))
+      break;
+    root = view->getOperand(0);
+  }
+  if (root.getDefiningOp<sim::SimRefAllocOp>())
+    return false;
+  if (auto argument = dyn_cast<BlockArgument>(root);
+      argument && argument.getOwner() == &function.getBody().front())
+    if (auto kind = function.getArgAttrOfType<sim::CaptureKindAttr>(
+            argument.getArgNumber(), sim::metadata::CaptureKind::getNameStr()))
+      return kind.getValue() == sim::CaptureKind::Storage;
+  return true;
+}
+
 FailureOr<Value> UnitLowering::loadReference(Value reference,
                                              Location location) {
   if (auto type = dyn_cast<sim::RefType>(reference.getType())) {
-    if (sampleAssertionValues && !currentValueReferences.contains(reference) &&
-        sim::getPackedWidth(type.getElementType()))
+    if (sampleAssertionValues && isSampledReference(reference) &&
+        sim::getPackedWidth(type.getElementType())) {
+      // Clocked samplers record whole variables. canLowerClockedHistory
+      // admits only operands that read one before any selection.
+      if (clockedHistoryRead)
+        return emitError(location)
+                   << "past sampled value requires whole packed variables",
+               failure();
       return sim::SimSampledReadOp::create(
                  builder, location, type.getElementType(),
                  function.getBody().front().getArgument(0), reference)
           .getResult();
+    }
     return sim::SimRefLoadOp::create(builder, location, type.getElementType(),
                                      reference)
         .getResult();

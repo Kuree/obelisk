@@ -465,6 +465,20 @@ private:
                             ::mlir::Operation *gateExpression,
                             ::mlir::Operation *clock, uint64_t depth,
                             uint64_t age, ::mlir::Location location);
+  /// The capture attributes of `value` when it is a descriptor-bound signal
+  /// argument of this unit, which a clocked sampler can also capture.
+  ::mlir::DictionaryAttr getSignalCapture(::mlir::Value value);
+  bool canLowerClockedHistory(::mlir::Operation *expression,
+                              ::mlir::Operation *gateExpression,
+                              ::mlir::Operation *clock, bool callsAllowed);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerClockedHistory(::mlir::Operation *expression,
+                      ::mlir::Operation *gateExpression,
+                      ::mlir::Operation *clock, uint64_t depth, uint64_t age,
+                      ::mlir::Location location);
+  ::mlir::FailureOr<::mlir::Value>
+  lowerClockedHistoryOperand(::mlir::Operation *operand,
+                             ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> lowerClockingInputSample(
       ::mlir::Value source, uint64_t sourceDescriptor, ::mlir::Value clock,
       uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
@@ -1027,6 +1041,26 @@ private:
   ::mlir::Operation *checkerSampledStatement = nullptr;
   ::mlir::Operation *checkerSampledControl = nullptr;
   ::llvm::DenseSet<::mlir::Value> currentValueReferences;
+  /// Whether reading `reference` while sampling assertion values reads its
+  /// Preponed value. Only design storage is sampled; an automatic or local
+  /// variable reads its current value (IEEE 1800-2023 16.5.1).
+  bool isSampledReference(::mlir::Value reference);
+  /// While set, a sampled static variable reads its sample from a strictly
+  /// prior tick of `clock` instead of the current time slot (IEEE 1800-2023
+  /// 16.9.3), so an expression over it denotes its past sampled value.
+  struct ClockedHistoryRead {
+    ::mlir::Operation *clock;
+    ::mlir::Operation *gate;
+    uint64_t depth;
+    uint64_t age;
+  };
+  std::optional<ClockedHistoryRead> clockedHistoryRead;
+  /// Whether a sampled rvalue selection addresses its base by reference, so
+  /// that only the selected state range is sampled. A clocked sampler records
+  /// whole variables, so clocked history selects from their values instead.
+  bool selectsSampledReferences() const {
+    return sampleAssertionValues && !clockedHistoryRead;
+  }
   struct AlternateClockSamplePlan {
     uint64_t id;
     uint64_t depth;

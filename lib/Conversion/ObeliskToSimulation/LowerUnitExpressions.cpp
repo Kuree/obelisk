@@ -674,13 +674,15 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   // instead of escaping through a suspend operation.
   if (auto ref = dyn_cast<sim::RefType>(value.getType())) {
     recordSensitivity(value);
-    if (sampleAssertionValues && !currentValueReferences.contains(value)) {
+    if (sampleAssertionValues && isSampledReference(value)) {
       // Preserve an aggregate reference until selections have narrowed it to
       // packed storage. sampled_read snapshots packed state ranges; sampling
       // the containing unpacked array both loses the selected identity and is
       // outside the operation's contract.
       if (!sim::getPackedWidth(ref.getElementType()))
         return value;
+      if (clockedHistoryRead)
+        return lowerClockedHistoryOperand(op, location);
       Value context = function.getBody().front().getArgument(0);
       return sim::SimSampledReadOp::create(builder, location,
                                            ref.getElementType(), context, value)
@@ -699,6 +701,8 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   if (auto net = dyn_cast<sim::NetType>(value.getType())) {
     recordSensitivity(value);
     if (sampleAssertionValues && !currentValueReferences.contains(value)) {
+      if (clockedHistoryRead)
+        return lowerClockedHistoryOperand(op, location);
       Value context = function.getBody().front().getArgument(0);
       return sim::SimSampledReadOp::create(builder, location,
                                            net.getElementType(), context, value)
@@ -3910,7 +3914,7 @@ UnitLowering::lowerMember(semantic::SVMemberAccessExpressionOp op,
         succeeded(baseType) && isa<sim::UnpackedStructType>(*baseType);
   }
   FailureOr<Value> input = lowerExpression(
-      children.front(), lvalue || sampleAssertionValues || structMember);
+      children.front(), lvalue || selectsSampledReferences() || structMember);
   if (failed(resultType) || failed(input))
     return failure();
   Type inputValueType = (*input).getType();
@@ -5374,10 +5378,10 @@ FailureOr<Value> UnitLowering::lowerSelection(Operation *op, bool lvalue) {
             bound && isa<sim::NetType>(bound.getType()))
           selectedNet = bound;
   FailureOr<Value> input =
-      selectedNet
-          ? FailureOr<Value>(selectedNet)
-          : lowerExpression(children.front(), lvalue || sampleAssertionValues ||
-                                                  fixedArrayElement);
+      selectedNet ? FailureOr<Value>(selectedNet)
+                  : lowerExpression(children.front(),
+                                    lvalue || selectsSampledReferences() ||
+                                        fixedArrayElement);
   if (failed(resultType) || failed(input))
     return failure();
 

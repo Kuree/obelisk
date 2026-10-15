@@ -8,24 +8,25 @@ module native_sampled_explicit_clock_negative;
   logic other = 0;
   logic enable = 1;
   logic data = 0;
+  logic mem [2];
 
 `ifdef MISMATCH
   always @(posedge clk)
-    $display("%b", $past(data, , , @(posedge other)));
+    $display("%b", $past(mem[0], , , @(posedge other)));
 `elsif IFF_CLOCK
   always @(posedge clk)
     $display("%b", $rose(data, @(posedge clk iff (enable && data))));
 `elsif COMPUTED
   bad_operand: assert property (@(posedge clk)
-      $past(data & enable, , , @(posedge other)));
+      $past(mem[0], , , @(posedge other)));
 `else
   initial begin
-    #1 $display("%b", $changed(data, @(posedge clk)));
+    #1 $display("%b", $changed(mem[0], @(posedge clk)));
   end
 `endif
 endmodule
 
-// MISMATCH: error: $past genuinely alternate clocks are currently executable only in a statically clocked concurrent predicate
+// MISMATCH: error: $past on a clock other than its procedure's currently requires whole packed static variable operands
 // IFF: error: $rose explicit clocks currently require one direct named-signal edge and an optional direct named iff condition
-// COMPUTED: error: alternate-clock sampled values currently require direct named packed source, gate, clock-iff condition, and clock signals
-// UNBOUND: error: $changed explicit clock requires a matching statically enclosing direct event control
+// COMPUTED: error: clocked sampled values require statically descriptor-bound source, gate, clock-iff condition, and clock signals
+// UNBOUND: error: $changed explicit clock outside a procedure clocked by it currently requires whole packed static variable operands

@@ -7,7 +7,14 @@
 // process changes data and index before evaluating these expressions, while
 // the ordinary adjacent display operand must still see the current data.
 // The dynamic selection uses the Preponed index, not its newly assigned 1.
+// $past(data+1) adds one to the sample of data from the prior clock tick,
+// which a sampler process records at every tick.
 // This is semantic MLIR input; no SystemVerilog frontend is needed by the test.
+// PLAN: simulation.func private @unit_3.$clocked_sample.[[SITE:[0-9]+]](
+// PLAN: simulation.suspend.edge negedge
+// PLAN-SAME: resume_region = 16
+// PLAN: simulation.assert.sampled_read
+// PLAN: simulation.assert.clocked_sample_update {{.*}} id [[SITE]] depth 1
 // PLAN: %[[DATA:.*]] = simulation.assert.sampled_read {{.*}} from %arg2
 // PLAN: %[[FLAT:.*]] = simulation.packed.flatten %[[DATA]]
 // PLAN: %[[SUM:.*]] = simulation.logic.binary add %[[FLAT]], {{.*}}
@@ -16,8 +23,9 @@
 // PLAN-NEXT: %[[INDEX_BITS:.*]] = simulation.packed.flatten %[[INDEX]]
 // PLAN-NEXT: %[[SELECTOR:.*]] = simulation.logic.resize %[[INDEX_BITS]]
 // PLAN-NEXT: simulation.array.extract_dynamic %[[DATA]][%[[SELECTOR]]]
-// PLAN: %[[PACKED:.*]] = simulation.packed.unflatten %[[SUM]]
-// PLAN: simulation.assert.sampled_history {{.*}} from %[[PACKED]]
+// PLAN: %[[PRIOR:.*]] = simulation.assert.clocked_sample_read {{.*}} id [[SITE]] depth 1 age 0
+// PLAN-NEXT: %[[PRIOR_BITS:.*]] = simulation.packed.flatten %[[PRIOR]]
+// PLAN: simulation.logic.binary add %[[PRIOR_BITS]], {{.*}}
 // PLAN: %[[FLAG:.*]] = simulation.assert.sampled_read {{.*}} from %arg3
 // PLAN: %[[PAST:.*]] = simulation.assert.sampled_history {{.*}} from %[[FLAG]]
 // PLAN: simulation.assert.sampled_history {{.*}} from %[[PAST]]
