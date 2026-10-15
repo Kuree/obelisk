@@ -2670,6 +2670,19 @@ LogicalResult UnitLowering::emitRuntimeFatal(Location location,
 }
 
 void UnitLowering::emitRuntimeWarning(Location location, StringRef detail) {
+  emitRuntimeMessage(location, "WARNING", detail);
+}
+
+void UnitLowering::emitRuntimeError(Location location, StringRef detail) {
+  // An error diagnostic counts toward the simulation's error total, as
+  // $error does, and lets the simulation continue.
+  sim::SimErrorOp::create(builder, location,
+                          function.getBody().front().getArgument(0));
+  emitRuntimeMessage(location, "ERROR", detail);
+}
+
+void UnitLowering::emitRuntimeMessage(Location location, StringRef severity,
+                                      StringRef detail) {
   std::string file = "<unknown>";
   unsigned line = 0;
   if (auto source = location->findInstanceOf<FileLineColLoc>()) {
@@ -2677,7 +2690,7 @@ void UnitLowering::emitRuntimeWarning(Location location, StringRef detail) {
     line = source.getLine();
   }
   std::string message =
-      (Twine("WARNING: ") + file + ":" + Twine(line) + ": " + detail).str();
+      (Twine(severity) + ": " + file + ":" + Twine(line) + ": " + detail).str();
   for (size_t position = 0;
        (position = message.find('%', position)) != std::string::npos;
        position += 2)

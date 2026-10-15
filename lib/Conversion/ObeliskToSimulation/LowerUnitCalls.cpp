@@ -652,7 +652,20 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       FailureOr<Value> receiver = lowerExpression(children.front());
       if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType()))
         return failure();
+      // IEEE 1800-2023 9.7: a process cannot await its own termination,
+      // which would never come; report the error instead of waiting.
+      Block *self = addBlock();
+      Block *wait = addBlock();
       Block *continuation = addBlock();
+      Value current = sim::SimProcessCurrentOp::create(builder, location);
+      cf::CondBranchOp::create(
+          builder, location,
+          sim::SimProcessEqualOp::create(builder, location, *receiver, current),
+          self, wait);
+      setCurrent(self);
+      emitRuntimeError(location, "a process cannot await its own termination");
+      cf::BranchOp::create(builder, location, continuation);
+      setCurrent(wait);
       sim::SimSuspendAwaitOp::create(builder, location, *receiver, ValueRange{},
                                      schedule::ContinuationSiteAttr{},
                                      sim::EventRegionAttr{}, continuation);
@@ -675,6 +688,21 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       if (failed(receiver) || !isa<sim::ProcessType>((*receiver).getType()))
         return failure();
       Block *continuation = addBlock();
+      // IEEE 1800-2023 9.7: a function cannot suspend its own execution.
+      if (*kind == sim::ProcessControlKind::Suspend &&
+          function.getEntryKind() == sim::EntryKind::Function) {
+        Block *self = addBlock();
+        Block *control = addBlock();
+        Value current = sim::SimProcessCurrentOp::create(builder, location);
+        cf::CondBranchOp::create(builder, location,
+                                 sim::SimProcessEqualOp::create(
+                                     builder, location, *receiver, current),
+                                 self, control);
+        setCurrent(self);
+        emitRuntimeError(location, "a function cannot suspend its own process");
+        cf::BranchOp::create(builder, location, continuation);
+        setCurrent(control);
+      }
       sim::SimProcessControlOp::create(
           builder, location, *kind, *receiver, ValueRange{},
           schedule::ContinuationSiteAttr{}, continuation);

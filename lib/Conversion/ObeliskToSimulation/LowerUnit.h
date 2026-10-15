@@ -569,6 +569,9 @@ private:
   ::mlir::LogicalResult emitRuntimeFatal(::mlir::Location location,
                                          ::mlir::StringRef message);
   void emitRuntimeWarning(::mlir::Location location, ::mlir::StringRef message);
+  void emitRuntimeError(::mlir::Location location, ::mlir::StringRef message);
+  void emitRuntimeMessage(::mlir::Location location, ::mlir::StringRef severity,
+                          ::mlir::StringRef message);
   ::mlir::LogicalResult lowerConditional(semantic::SVConditionalStatementOp op);
   ::mlir::LogicalResult
   lowerQualifiedConditional(semantic::SVConditionalStatementOp op);
