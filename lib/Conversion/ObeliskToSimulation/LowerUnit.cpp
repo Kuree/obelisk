@@ -956,6 +956,149 @@ bool UnitLowering::calleeBodyReadsAreSensitive(bool task) {
   }
 }
 
+FailureOr<Value> UnitLowering::rematerializeManagedInput(Value value) {
+  if (auto extract = value.getDefiningOp<sim::SimAggregateExtractOp>()) {
+    FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
+    if (failed(input))
+      return failure();
+    return sim::SimAggregateExtractOp::create(builder, extract.getLoc(),
+                                              extract.getResult().getType(),
+                                              *input, extract.getIndexAttr())
+        .getResult();
+  }
+  if (auto extract = value.getDefiningOp<sim::SimUnionExtractOp>()) {
+    FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
+    if (failed(input))
+      return failure();
+    return sim::SimUnionExtractOp::create(builder, extract.getLoc(),
+                                          extract.getResult().getType(), *input,
+                                          extract.getIndexAttr())
+        .getResult();
+  }
+  if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
+    FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
+    if (failed(input))
+      return failure();
+    return sim::SimRefSubelementOp::create(builder, extract.getLoc(),
+                                           extract.getResult().getType(),
+                                           *input, extract.getIndicesAttr())
+        .getResult();
+  }
+  if (auto field = value.getDefiningOp<sim::SimClassFieldRefOp>()) {
+    FailureOr<Value> object = rematerializeManagedInput(field.getObject());
+    if (failed(object))
+      return failure();
+    return sim::SimClassFieldRefOp::create(builder, field.getLoc(),
+                                           field.getResult().getType(), *object,
+                                           field.getFieldAttr())
+        .getResult();
+  }
+  if (auto load = value.getDefiningOp<sim::SimManagedLoadOp>()) {
+    FailureOr<Value> reference = rematerializeManagedInput(load.getReference());
+    if (failed(reference))
+      return failure();
+    // A syntactic read may have occurred only on one short-circuit path.
+    // Rebuilding it at the common wait point must not turn a skipped null
+    // property dereference into a runtime error. A null managed result
+    // contributes token zero and remains dormant until the enclosing field
+    // or declaration dependency changes.
+    if (sim::isManagedHandleType(load.getResult().getType())) {
+      if (auto field = (*reference).getDefiningOp<sim::SimClassFieldRefOp>()) {
+        Value isNull = sim::SimManagedIsNullOp::create(
+            builder, load.getLoc(), builder.getI1Type(), field.getObject());
+        Block *missing = addBlock();
+        Block *present = addBlock();
+        Block *ready = addBlock();
+        ready->addArgument(load.getResult().getType(), load.getLoc());
+        cf::CondBranchOp::create(builder, load.getLoc(), isNull, missing,
+                                 ValueRange{}, present, ValueRange{});
+        setCurrent(missing);
+        Value null = createDefaultValue(builder, load.getLoc(),
+                                        load.getResult().getType());
+        if (!null)
+          return failure();
+        cf::BranchOp::create(builder, load.getLoc(), ready, ValueRange{null});
+        setCurrent(present);
+        Value loaded = sim::SimManagedLoadOp::create(
+            builder, load.getLoc(), load.getResult().getType(), *reference);
+        cf::BranchOp::create(builder, load.getLoc(), ready, ValueRange{loaded});
+        setCurrent(ready);
+        return ready->getArgument(0);
+      }
+    }
+    return sim::SimManagedLoadOp::create(builder, load.getLoc(),
+                                         load.getResult().getType(), *reference)
+        .getResult();
+  }
+  if (auto load = value.getDefiningOp<sim::SimRefLoadOp>()) {
+    FailureOr<Value> input = rematerializeManagedInput(load.getReference());
+    if (failed(input))
+      return failure();
+    return sim::SimRefLoadOp::create(builder, load.getLoc(),
+                                     load.getResult().getType(), *input)
+        .getResult();
+  }
+  if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
+    FailureOr<Value> object = rematerializeManagedInput(cast.getObject());
+    if (failed(object))
+      return failure();
+    return sim::SimClassCastOp::create(builder, cast.getLoc(),
+                                       cast.getResult().getType(), *object)
+        .getResult();
+  }
+  if (dominatesCurrent(value))
+    return value;
+  return failure();
+}
+
+bool UnitLowering::dominatesCurrent(Value value) {
+  Block *definition = value.getParentBlock();
+  return definition == current ||
+         DominanceInfo(function).dominates(definition, current);
+}
+
+FailureOr<Value> UnitLowering::rematerializeManagedWatch(Value dependency) {
+  auto watch = dependency.getDefiningOp<sim::SimManagedWatchOp>();
+  if (!watch)
+    return dependency;
+  FailureOr<Value> input = rematerializeManagedInput(watch.getInput());
+  if (failed(input))
+    return failure();
+  return sim::SimManagedWatchOp::create(builder, watch.getLoc(),
+                                        watch.getResult().getType(), *input,
+                                        watch.getKind())
+      .getResult();
+}
+
+void UnitLowering::recordObjectPropertyReads(Value object, Location location) {
+  auto handle = dyn_cast<sim::ClassHandleType>(object.getType());
+  auto design = function->getParentOfType<sim::SimDesignOp>();
+  if (!observedDependencies || !handle || !design)
+    return;
+  llvm::SmallPtrSet<Attribute, 8> owners;
+  for (auto declaration = lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+           function, handle.getClassName());
+       declaration && owners.insert(declaration.getSymNameAttr()).second;
+       declaration = declaration.getBaseAttr()
+                         ? lookupNearestSymbolFrom<sim::SimClassDeclOp>(
+                               function, declaration.getBaseAttr())
+                         : sim::SimClassDeclOp{})
+    ;
+  for (auto field :
+       design.getBody().front().getOps<sim::SimClassFieldDeclOp>()) {
+    // Compiler-owned fields carry no source-visible value.
+    std::optional<StringRef> name = field.getDebugName();
+    if (field.getIsStatic() || (name && name->starts_with("__obelisk_")) ||
+        !owners.contains(field.getOwnerAttr().getAttr()))
+      continue;
+    Type referenceType = sim::ManagedRefType::get(
+        function.getContext(), field.getType(), handle.getClassName());
+    Value reference = sim::SimClassFieldRefOp::create(
+        builder, location, referenceType, object, field.getSymNameAttr());
+    recordManagedRead(reference, location);
+  }
+}
+
 void UnitLowering::recordImplicitEventActivationLocal(Value reference) {
   if (implicitEventActivationLocals)
     implicitEventActivationLocals->insert(reference);
@@ -6564,123 +6707,17 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   // Rebuild every syntactically observed managed path immediately before the
   // implicit wait: this both gives the watch SSA dominance and selects the
   // current object after any whole-value replacement in this activation.
-  auto dominatesCurrent = [&](Value value) {
-    Block *definition = value.getParentBlock();
-    DominanceInfo dominance(function);
-    return definition == current || dominance.dominates(definition, current);
-  };
-  std::function<FailureOr<Value>(Value)> rematerializeManagedInput =
-      [&](Value value) -> FailureOr<Value> {
-    if (auto extract = value.getDefiningOp<sim::SimAggregateExtractOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
-      if (failed(input))
-        return failure();
-      return sim::SimAggregateExtractOp::create(builder, extract.getLoc(),
-                                                extract.getResult().getType(),
-                                                *input, extract.getIndexAttr())
-          .getResult();
-    }
-    if (auto extract = value.getDefiningOp<sim::SimUnionExtractOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
-      if (failed(input))
-        return failure();
-      return sim::SimUnionExtractOp::create(builder, extract.getLoc(),
-                                            extract.getResult().getType(),
-                                            *input, extract.getIndexAttr())
-          .getResult();
-    }
-    if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
-      if (failed(input))
-        return failure();
-      return sim::SimRefSubelementOp::create(builder, extract.getLoc(),
-                                             extract.getResult().getType(),
-                                             *input, extract.getIndicesAttr())
-          .getResult();
-    }
-    if (auto field = value.getDefiningOp<sim::SimClassFieldRefOp>()) {
-      FailureOr<Value> object = rematerializeManagedInput(field.getObject());
-      if (failed(object))
-        return failure();
-      return sim::SimClassFieldRefOp::create(builder, field.getLoc(),
-                                             field.getResult().getType(),
-                                             *object, field.getFieldAttr())
-          .getResult();
-    }
-    if (auto load = value.getDefiningOp<sim::SimManagedLoadOp>()) {
-      FailureOr<Value> reference =
-          rematerializeManagedInput(load.getReference());
-      if (failed(reference))
-        return failure();
-      // A syntactic read may have occurred only on one short-circuit path.
-      // Rebuilding it at the common wait point must not turn a skipped null
-      // property dereference into a runtime error. A null managed result
-      // contributes token zero and remains dormant until the enclosing field
-      // or declaration dependency changes.
-      if (sim::isManagedHandleType(load.getResult().getType())) {
-        if (auto field =
-                (*reference).getDefiningOp<sim::SimClassFieldRefOp>()) {
-          Value isNull = sim::SimManagedIsNullOp::create(
-              builder, load.getLoc(), builder.getI1Type(), field.getObject());
-          Block *missing = addBlock();
-          Block *present = addBlock();
-          Block *ready = addBlock();
-          ready->addArgument(load.getResult().getType(), load.getLoc());
-          cf::CondBranchOp::create(builder, load.getLoc(), isNull, missing,
-                                   ValueRange{}, present, ValueRange{});
-          setCurrent(missing);
-          Value null = createDefaultValue(builder, load.getLoc(),
-                                          load.getResult().getType());
-          if (!null)
-            return failure();
-          cf::BranchOp::create(builder, load.getLoc(), ready, ValueRange{null});
-          setCurrent(present);
-          Value loaded = sim::SimManagedLoadOp::create(
-              builder, load.getLoc(), load.getResult().getType(), *reference);
-          cf::BranchOp::create(builder, load.getLoc(), ready,
-                               ValueRange{loaded});
-          setCurrent(ready);
-          return ready->getArgument(0);
-        }
-      }
-      return sim::SimManagedLoadOp::create(
-                 builder, load.getLoc(), load.getResult().getType(), *reference)
-          .getResult();
-    }
-    if (auto load = value.getDefiningOp<sim::SimRefLoadOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(load.getReference());
-      if (failed(input))
-        return failure();
-      return sim::SimRefLoadOp::create(builder, load.getLoc(),
-                                       load.getResult().getType(), *input)
-          .getResult();
-    }
-    if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
-      FailureOr<Value> object = rematerializeManagedInput(cast.getObject());
-      if (failed(object))
-        return failure();
-      return sim::SimClassCastOp::create(builder, cast.getLoc(),
-                                         cast.getResult().getType(), *object)
-          .getResult();
-    }
-    if (dominatesCurrent(value))
-      return value;
-    return failure();
-  };
   for (Value dependency : implicitProcessDependencies) {
-    auto watch = dependency.getDefiningOp<sim::SimManagedWatchOp>();
-    if (!watch)
+    if (!dependency.getDefiningOp<sim::SimManagedWatchOp>())
       continue;
-    FailureOr<Value> input = rematerializeManagedInput(watch.getInput());
-    if (failed(input)) {
+    FailureOr<Value> watch = rematerializeManagedWatch(dependency);
+    if (failed(watch)) {
       function.emitError()
           << "implicit managed dependency cannot be rematerialized at its "
              "stable wait point";
       return failure();
     }
-    sensitivity.insert(sim::SimManagedWatchOp::create(
-        builder, watch.getLoc(), watch.getResult().getType(), *input,
-        watch.getKind()));
+    sensitivity.insert(*watch);
   }
   // A net view selected inside a branch does not dominate the wait. Rebuild
   // its constant view chain from the capture at the wait point, and drop it

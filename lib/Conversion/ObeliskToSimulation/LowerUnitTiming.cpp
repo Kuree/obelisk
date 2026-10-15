@@ -215,6 +215,11 @@ bool UnitLowering::hasWatchableSignalHandle(Operation *expression) {
     FailureOr<Type> sourceType = getNormalizedSemanticType(children.front());
     if (failed(sourceType))
       return true;
+    // An element of a dynamically sized array, queue, or associative array
+    // has no stable storage handle; its observer watches the container.
+    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
+            *sourceType))
+      return false;
     if (!sim::getPackedWidth(*sourceType))
       unpackedStep = true;
     node = children.front();
@@ -342,7 +347,14 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
   auto evaluateInitial =
       [&](Operation *expression,
           SmallVectorImpl<Value> &dynamicDependencies) -> FailureOr<Value> {
-    FailureOr<Value> value = lowerExpression(expression);
+    // The event expression's reads belong to its own observer, never to an
+    // enclosing implicit sensitivity.
+    llvm::SetVector<Value> observed;
+    FailureOr<Value> value = [&] {
+      llvm::SaveAndRestore<llvm::SetVector<Value> *> dependencies(
+          observedDependencies, &observed);
+      return lowerExpression(expression);
+    }();
     if (failed(value))
       return failure();
     if (isa<sim::EventType>((*value).getType())) {
@@ -350,6 +362,20 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
       return arith::ConstantOp::create(builder, location, builder.getI1Type(),
                                        builder.getBoolAttr(false))
           .getResult();
+    }
+    // IEEE 1800-2023 9.4.2: a change to an object member, an aggregate
+    // element, or the size of a dynamically sized array that the expression
+    // reads reevaluates it, not only a change of the declaration's handle.
+    for (Value dependency : observed) {
+      if (!dependency.getDefiningOp<sim::SimManagedWatchOp>())
+        continue;
+      FailureOr<Value> watch = rematerializeManagedWatch(dependency);
+      if (failed(watch))
+        return emitError(location)
+                   << "event expression dependency cannot be materialized at "
+                      "its wait",
+               failure();
+      dynamicDependencies.push_back(*watch);
     }
     return toPackedScalar(*value, getSemanticLocation(expression));
   };
@@ -1660,96 +1686,16 @@ LogicalResult UnitLowering::lowerWait(semantic::SVWaitStatementOp op) {
   // valid SSA, this is required for expressions whose evaluation changes a
   // container-valued field: the waiter must observe the container which is
   // current when it actually suspends.
-  DominanceInfo dominance(function);
-  auto dominatesCurrent = [&](Value value) {
-    Block *definition = value.getParentBlock();
-    return definition == current || dominance.dominates(definition, current);
-  };
-  std::function<FailureOr<Value>(Value)> rematerializeManagedInput =
-      [&](Value value) -> FailureOr<Value> {
-    if (auto extract = value.getDefiningOp<sim::SimAggregateExtractOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
-      if (failed(input))
-        return failure();
-      return sim::SimAggregateExtractOp::create(builder, extract.getLoc(),
-                                                extract.getResult().getType(),
-                                                *input, extract.getIndexAttr())
-          .getResult();
-    }
-    if (auto extract = value.getDefiningOp<sim::SimUnionExtractOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
-      if (failed(input))
-        return failure();
-      return sim::SimUnionExtractOp::create(builder, extract.getLoc(),
-                                            extract.getResult().getType(),
-                                            *input, extract.getIndexAttr())
-          .getResult();
-    }
-    if (auto extract = value.getDefiningOp<sim::SimRefSubelementOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(extract.getInput());
-      if (failed(input))
-        return failure();
-      return sim::SimRefSubelementOp::create(builder, extract.getLoc(),
-                                             extract.getResult().getType(),
-                                             *input, extract.getIndicesAttr())
-          .getResult();
-    }
-    if (auto field = value.getDefiningOp<sim::SimClassFieldRefOp>()) {
-      FailureOr<Value> object = rematerializeManagedInput(field.getObject());
-      if (failed(object))
-        return failure();
-      return sim::SimClassFieldRefOp::create(builder, field.getLoc(),
-                                             field.getResult().getType(),
-                                             *object, field.getFieldAttr())
-          .getResult();
-    }
-    if (auto load = value.getDefiningOp<sim::SimManagedLoadOp>()) {
-      FailureOr<Value> reference =
-          rematerializeManagedInput(load.getReference());
-      if (failed(reference))
-        return failure();
-      return sim::SimManagedLoadOp::create(
-                 builder, load.getLoc(), load.getResult().getType(), *reference)
-          .getResult();
-    }
-    if (auto load = value.getDefiningOp<sim::SimRefLoadOp>()) {
-      FailureOr<Value> input = rematerializeManagedInput(load.getReference());
-      if (failed(input))
-        return failure();
-      return sim::SimRefLoadOp::create(builder, load.getLoc(),
-                                       load.getResult().getType(), *input)
-          .getResult();
-    }
-    if (auto cast = value.getDefiningOp<sim::SimClassCastOp>()) {
-      FailureOr<Value> object = rematerializeManagedInput(cast.getObject());
-      if (failed(object))
-        return failure();
-      return sim::SimClassCastOp::create(builder, cast.getLoc(),
-                                         cast.getResult().getType(), *object)
-          .getResult();
-    }
-    if (dominatesCurrent(value))
-      return value;
-    emitError(location)
-        << "managed wait dependency cannot be materialized at the stable "
-           "condition point from "
-        << value.getType();
-    return failure();
-  };
   SmallVector<Value> stableDependencies;
   stableDependencies.reserve(dependencies.size());
   for (Value dependency : dependencies) {
-    auto watch = dependency.getDefiningOp<sim::SimManagedWatchOp>();
-    if (!watch) {
-      stableDependencies.push_back(dependency);
-      continue;
-    }
-    FailureOr<Value> input = rematerializeManagedInput(watch.getInput());
-    if (failed(input))
-      return failure();
-    stableDependencies.push_back(sim::SimManagedWatchOp::create(
-        builder, watch.getLoc(), watch.getResult().getType(), *input,
-        watch.getKind()));
+    FailureOr<Value> stable = rematerializeManagedWatch(dependency);
+    if (failed(stable))
+      return emitError(location)
+                 << "managed wait dependency cannot be materialized at the "
+                    "stable condition point",
+             failure();
+    stableDependencies.push_back(*stable);
   }
   if (dependencies.empty()) {
     std::optional<bool> truth = foldConstantTruth(*condition);

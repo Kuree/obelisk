@@ -1975,6 +1975,14 @@ FailureOr<Value> UnitLowering::lowerCall(semantic::SVCallExpressionOp op) {
       emitError(location) << "implicit receiver has no class method descriptor";
       return failure();
     }
+    // IEEE 1800-2023 9.4.2: an event expression calling a method reevaluates
+    // when an object member it reads changes; the method may read any
+    // property of its receiver. Implicit always_comb sensitivity (9.2.2.2.1)
+    // covers variables, not the members of an object.
+    if (function.getEntryKind() != sim::EntryKind::AlwaysComb &&
+        function.getEntryKind() != sim::EntryKind::AlwaysLatch &&
+        calleeBodyReadsAreSensitive(sim::has<sim::metadata::IsTask>(op)))
+      recordObjectPropertyReads(*receiver, location);
     struct ClassCopyOut {
       Operation *actual;
       Value scopeObject;

@@ -248,10 +248,12 @@ module attributes {
 // CHECK: simulation.hierarchical_name = "C::wait_q"
 // CHECK: %[[QUEUE_FIELD:.*]] = simulation.class.field_ref
 // CHECK: %[[QUEUE_WATCH:.*]] = simulation.managed.watch field %[[QUEUE_FIELD]]
-// CHECK: %[[SIZE_WATCH:.*]] = simulation.managed.watch container_size
+// The size watch is rebuilt at the wait from a null-guarded reload, so it is
+// defined in the block that branches to the suspension.
 // CHECK: simulation.observer.bind
-// CHECK-SAME: %[[QUEUE_WATCH]], %[[SIZE_WATCH]]
+// CHECK-SAME: %[[QUEUE_WATCH]], %[[SIZE_WATCH:[0-9]+]] :
 // CHECK-SAME: captures 1 : !simulation.observer<i1>
+// CHECK: %[[SIZE_WATCH]] = simulation.managed.watch container_size
 // CHECK: simulation.hierarchical_name = "C::wait_both"
 // CHECK: simulation.observer.bind
 // CHECK-SAME: !simulation.managed_watch, !simulation.managed_watch

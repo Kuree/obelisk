@@ -633,6 +633,21 @@ private:
   /// Records a read through a constant `net.extract` view of `net`.
   void recordNetViewSensitivity(::mlir::Value view, ::mlir::Value net);
   void recordImplicitEventActivationLocal(::mlir::Value reference);
+  /// Records a read of every source property of `object`'s class and its
+  /// bases, which a method called on it may read.
+  void recordObjectPropertyReads(::mlir::Value object,
+                                 ::mlir::Location location);
+  /// Rebuilds the managed path of a watch at the current insertion point, so
+  /// it dominates a wait there and selects the object current at that point.
+  /// A read that a short-circuit skipped yields a null, dormant handle.
+  ::mlir::FailureOr<::mlir::Value>
+  rematerializeManagedInput(::mlir::Value value);
+  /// A managed watch rebuilt by rematerializeManagedInput; any other
+  /// dependency is returned unchanged.
+  ::mlir::FailureOr<::mlir::Value>
+  rematerializeManagedWatch(::mlir::Value dependency);
+  /// Whether `value` is available in the block being lowered.
+  bool dominatesCurrent(::mlir::Value value);
   void recordManagedRead(::mlir::Value reference, ::mlir::Location location);
   void recordContainerSizeRead(::mlir::Value container,
                                ::mlir::Location location);
