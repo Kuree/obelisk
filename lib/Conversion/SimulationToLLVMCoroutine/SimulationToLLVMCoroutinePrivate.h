@@ -294,6 +294,8 @@ mlir::Value makeNativeAssocKey(mlir::OpBuilder &builder,
                                mlir::Location location,
                                sim::AssocArrayType array,
                                mlir::ValueRange values);
+/// The byte global holding the equality plan of element key type `typeID`.
+std::string getAssocKeyPlanGlobalName(uint64_t typeID);
 mlir::Value zeroNativeValue(mlir::OpBuilder &builder, mlir::Location location,
                             mlir::Type type);
 

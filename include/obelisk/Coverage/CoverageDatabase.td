@@ -218,6 +218,7 @@ def ContainerKeyString : CoverageFunctionalContainerKeyKind<"String", 3>;
 def ContainerKeyClass : CoverageFunctionalContainerKeyKind<"Class", 4>;
 def ContainerKeyProcess : CoverageFunctionalContainerKeyKind<"Process", 5>;
 def ContainerKeyWildcard : CoverageFunctionalContainerKeyKind<"Wildcard", 6>;
+def ContainerKeyElement : CoverageFunctionalContainerKeyKind<"Element", 7>;
 
 class CoverageSignedness<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
@@ -497,7 +498,7 @@ def DomainFunctionalContainerKeyKind : CoverageFieldDomain<
     "FunctionalContainerKeyKind", "Enum",
     [ContainerKeyNone, ContainerKeyUnsigned, ContainerKeySigned,
      ContainerKeyString, ContainerKeyClass, ContainerKeyProcess,
-     ContainerKeyWildcard]>;
+     ContainerKeyWildcard, ContainerKeyElement]>;
 def DomainCoverageSignedness : CoverageFieldDomain<
     "CoverageSignedness", "Enum",
     [CoverageUnsigned, CoverageSigned, CoverageNotApplicable]>;

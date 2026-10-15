@@ -151,6 +151,8 @@ static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Process) ==
               OBELISK_RT_ASSOC_KEY_PROCESS);
 static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Wildcard) ==
               OBELISK_RT_ASSOC_KEY_WILDCARD);
+static_assert(static_cast<uint32_t>(sim::AssocKeyKind::Element) ==
+              OBELISK_RT_ASSOC_KEY_ELEMENT);
 static_assert(static_cast<uint32_t>(sim::RandomDistribution::Uniform) ==
               OBELISK_RT_DISTRIBUTION_UNIFORM);
 static_assert(static_cast<uint32_t>(sim::RandomDistribution::Normal) ==
@@ -182,114 +184,23 @@ static uint64_t stableTypeID(Type type, uint32_t descriptorFlags = 0) {
 
 FailureOr<simlowering::ContainerElementDescriptor>
 describeContainerElementImpl(Type type, Location location) {
-  ContainerElementDescriptor result{stableTypeID(type),
-                                    sim::ElementKind::Bits,
-                                    sim::ElementFlags::None,
-                                    0,
-                                    1,
-                                    0,
-                                    {},
-                                    {}};
-  if (auto integer = dyn_cast<IntegerType>(type)) {
-    result.kind = sim::ElementKind::Bits;
-    result.valueSize = (integer.getWidth() + 7) / 8;
-    result.bitWidth = integer.getWidth();
-    return result;
-  }
-  if (auto logic = dyn_cast<sim::LogicType>(type)) {
-    result.kind = sim::ElementKind::Logic;
-    result.flags = sim::ElementFlags::FourState;
-    result.valueSize = (logic.getWidth() + 7) / 8;
-    result.bitWidth = logic.getWidth();
-    return result;
-  }
-  if (auto real = dyn_cast<FloatType>(type)) {
-    result.kind = sim::ElementKind::Real;
-    result.valueSize = real.getWidth() / 8;
-    result.bitWidth = real.getWidth();
-    return result;
-  }
-  if (isa<sim::ClassHandleType>(type)) {
-    result.kind = sim::ElementKind::ClassHandle;
-    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
-    return result;
-  }
-  if (isa<sim::StringType>(type)) {
-    result.kind = sim::ElementKind::String;
-    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
-    return result;
-  }
-  if (isa<sim::EventType>(type)) {
-    result.kind = sim::ElementKind::Event;
-    result.valueSize = sizeof(uint64_t);
-    return result;
-  }
-  // These handles are context-owned identities or opaque foreign pointers,
-  // rather than managed-heap roots. In particular, covergroup instances stay
-  // in the coverage model when a container drops its last handle (19.3, 19.8).
-  if (isa<sim::ProcessType, sim::CovergroupHandleType,
-          sim::VirtualInterfaceType, sim::ChandleType>(type)) {
-    result.kind = sim::ElementKind::Bits;
-    result.valueSize = sim::simulationHandleBitWidth / 8;
-    result.bitWidth = sim::simulationHandleBitWidth;
-    return result;
-  }
-  if (isa<sim::DynamicArrayType, sim::QueueType, sim::MailboxType, sim::BoxType,
-          sim::SemaphoreType, sim::AssocArrayType>(type)) {
-    result.kind = sim::ElementKind::ContainerHandle;
-    result.valueSize = sizeof(obelisk_rt_managed_word_v1);
-    return result;
-  }
-  if (Type scalar = sim::getPackedScalarType(type)) {
-    std::optional<unsigned> width = sim::getPackedWidth(type);
-    if (!width || *width == 0)
-      return failure();
-    bool fourState = isa<sim::LogicType>(scalar);
-    result.kind = fourState ? sim::ElementKind::Logic : sim::ElementKind::Bits;
-    result.flags =
-        fourState ? sim::ElementFlags::FourState : sim::ElementFlags::None;
-    result.valueSize = (*width + 7) / 8;
-    result.bitWidth = *width;
-    return result;
-  }
-  if (sim::isAggregateType(type)) {
-    std::optional<uint64_t> width = sim::getProvenanceSpan(type);
-    if (!width || *width == 0) {
+  if (std::optional<sim::ElementDescriptor> descriptor =
+          sim::getElementDescriptor(type))
+    return *descriptor;
+  if (!sim::isAggregateType(type)) {
+    if (!sim::getPackedScalarType(type))
       emitError(location)
-          << "dynamic-array aggregate element has no canonical layout: "
+          << "dynamic-array element type has no canonical container ABI: "
           << type;
-      return failure();
-    }
-    SmallVector<sim::ManagedHandleSlot, 2> traceSlots;
-    if (!sim::getManagedHandleSlots(type, traceSlots)) {
-      emitError(location)
-          << "dynamic-array aggregate element has no canonical trace layout: "
-          << type;
-      return failure();
-    }
-    for (const sim::ManagedHandleSlot &slot : traceSlots) {
-      std::optional<uint32_t> kind = sim::getManagedHandleTraceKind(slot);
-      if (!kind || (slot.bitOffset & 7) != 0 ||
-          slot.bitOffset / 8 > uint64_t{INT64_MAX}) {
-        emitError(location)
-            << "dynamic-array aggregate element has no canonical trace layout: "
-            << type;
-        return failure();
-      }
-      result.traceOffsets.push_back(static_cast<int64_t>(slot.bitOffset / 8));
-      result.traceKinds.push_back(static_cast<int32_t>(*kind));
-    }
-    bool fourState = false;
-    type.walk([&](sim::LogicType) { fourState = true; });
-    result.kind = sim::ElementKind::Aggregate;
-    result.flags =
-        fourState ? sim::ElementFlags::FourState : sim::ElementFlags::None;
-    result.valueSize = (*width + 7) / 8;
-    result.bitWidth = result.valueSize * 8;
-    return result;
+    return failure();
   }
-  emitError(location)
-      << "dynamic-array element type has no canonical container ABI: " << type;
+  std::optional<uint64_t> width = sim::getProvenanceSpan(type);
+  emitError(location) << (width && *width
+                              ? "dynamic-array aggregate element has no "
+                                "canonical trace layout: "
+                              : "dynamic-array aggregate element has no "
+                                "canonical layout: ")
+                      << type;
   return failure();
 }
 
@@ -790,34 +701,23 @@ FailureOr<Value> UnitLowering::createAssocArray(sim::AssocArrayType type,
       describeContainerElement(type.getElementType(), location);
   if (failed(descriptor))
     return failure();
-  bool stringKey = isa<sim::StringType>(type.getKeyType());
-  bool classKey = isa<sim::ClassHandleType>(type.getKeyType());
-  bool processKey = isa<sim::ProcessType>(type.getKeyType());
-  bool wildcardKey = type.getWildcardIndex();
-  std::optional<unsigned> width =
-      stringKey || classKey || processKey || wildcardKey
-          ? std::optional<unsigned>(0)
-          : sim::getPackedWidth(type.getKeyType());
-  if (!width ||
-      (!stringKey && !classKey && !processKey && !wildcardKey && *width == 0)) {
+  // IEEE 1800-2023 7.8.5: besides strings, classes, processes and integral
+  // types, any index type with an equality operator, such as an unpacked
+  // structure or a dynamically sized array, indexes by value.
+  std::optional<sim::AssocKeyLayout> key = sim::getAssocKeyLayout(type);
+  if (!key) {
     emitError(location)
-        << "associative array key must be string, class, process, or integral";
+        << "associative array index type has no runtime key representation: "
+        << type.getKeyType();
     return failure();
   }
-  sim::AssocKeyKind keyKind =
-      wildcardKey  ? sim::AssocKeyKind::Wildcard
-      : stringKey  ? sim::AssocKeyKind::String
-      : classKey   ? sim::AssocKeyKind::Class
-      : processKey ? sim::AssocKeyKind::Process
-                   : (type.getSignedKey() ? sim::AssocKeyKind::Signed
-                                          : sim::AssocKeyKind::Unsigned);
   return sim::SimAssocCreateOp::create(
              builder, location, type, descriptor->typeID, descriptor->kind,
              descriptor->flags, descriptor->valueSize, descriptor->alignment,
              descriptor->bitWidth,
              builder.getDenseI64ArrayAttr(descriptor->traceOffsets),
-             builder.getDenseI32ArrayAttr(descriptor->traceKinds), keyKind,
-             *width)
+             builder.getDenseI32ArrayAttr(descriptor->traceKinds), key->kind,
+             key->width)
       .getResult();
 }
 
@@ -870,9 +770,12 @@ UnitLowering::traverseAssoc(Value array, Value key, int32_t direction,
       static_cast<sim::AssocTraversalDirection>(
           static_cast<uint32_t>(direction)),
       endpoint);
+  // An element key's dynamic members are the array's own; the traversed
+  // index is a copy of them (IEEE 1800-2023 7.8.5 indices are values).
   cf::BranchOp::create(
       builder, location, resume,
-      ValueRange{traversed.getResultKey(), traversed.getSuccess()});
+      ValueRange{cloneSequentialValue(traversed.getResultKey(), location),
+                 traversed.getSuccess()});
   setCurrent(resume);
   return std::pair<Value, Value>{resume->getArgument(0),
                                  resume->getArgument(1)};

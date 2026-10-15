@@ -422,6 +422,41 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     if (obelisk_rt_v1_assoc_key_info(array, &key.kind, &key.width) !=
         OBELISK_RT_OK)
       return false;
+    if (key.kind == OBELISK_RT_ASSOC_KEY_ELEMENT) {
+      // An element key travels as its container-element planes. Copy them so
+      // that traversal never writes through an input register.
+      uint64_t keySize = key.width / 8;
+      const uint8_t *value = frame.data + layout.offset;
+      uint64_t planeSize = layout.size;
+      OBELISK_RT_TRY {
+        assocUnknownScratch.clear();
+        if (layout.kind == OBELISK_RT_DBREG_HANDLE) {
+          // An event element stores the event's start.
+          if (layout.flags != OBELISK_RT_DBREG_EVENT || layout.size != 32 ||
+              keySize != sizeof(int64_t))
+            return false;
+          assocValueScratch.assign(value + 16, value + 24);
+        } else if (layout.kind == OBELISK_RT_DBREG_MANAGED ||
+                   layout.kind == OBELISK_RT_DBREG_BITS ||
+                   layout.kind == OBELISK_RT_DBREG_LOGIC) {
+          if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+            planeSize /= 2;
+          if (keySize == 0 || planeSize < keySize)
+            return false;
+          assocValueScratch.assign(value, value + keySize);
+          if (layout.kind == OBELISK_RT_DBREG_LOGIC)
+            assocUnknownScratch.assign(value + planeSize,
+                                       value + planeSize + keySize);
+        } else {
+          return false;
+        }
+      }
+      OBELISK_RT_CATCH(const std::bad_alloc &) { return false; }
+      key.value_data = assocValueScratch.data();
+      if (!assocUnknownScratch.empty())
+        key.unknown_data = assocUnknownScratch.data();
+      return true;
+    }
     if (layout.kind == OBELISK_RT_DBREG_STRING) {
       if (key.kind != OBELISK_RT_ASSOC_KEY_STRING || layout.size != 8)
         return false;
@@ -481,6 +516,41 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
   auto writeAssocKey = [&](uint32_t reg, const obelisk_rt_assoc_key_v1 &key) {
     Layout layout = layoutAt(image, frame.function, reg);
     std::memset(frame.data + layout.offset, 0, layout.size);
+    if (key.kind == OBELISK_RT_ASSOC_KEY_ELEMENT) {
+      size_t keySize = static_cast<size_t>(key.width / 8);
+      uint8_t *value = frame.data + layout.offset;
+      if (!key.value_data)
+        return false;
+      if (layout.kind == OBELISK_RT_DBREG_HANDLE) {
+        if (layout.flags != OBELISK_RT_DBREG_EVENT || layout.size != 32 ||
+            keySize != sizeof(int64_t))
+          return false;
+        int64_t start = kInvalidHandleStart;
+        std::memcpy(&start, key.value_data, sizeof(start));
+        uint32_t kind = OBELISK_RT_DESCRIPTOR_EVENT;
+        int64_t begin = start == kInvalidHandleStart ? 0 : start;
+        int64_t end = start == kInvalidHandleStart
+                          ? 0
+                          : (start == INT64_MAX ? start : start + 1);
+        std::memcpy(value, &kind, sizeof(kind));
+        std::memcpy(value + 8, &begin, sizeof(begin));
+        std::memcpy(value + 16, &start, sizeof(start));
+        std::memcpy(value + 24, &end, sizeof(end));
+        return true;
+      }
+      if (layout.kind != OBELISK_RT_DBREG_MANAGED &&
+          layout.kind != OBELISK_RT_DBREG_BITS &&
+          layout.kind != OBELISK_RT_DBREG_LOGIC)
+        return false;
+      uint64_t planeSize =
+          layout.kind == OBELISK_RT_DBREG_LOGIC ? layout.size / 2 : layout.size;
+      if (keySize == 0 || planeSize < keySize)
+        return false;
+      std::memcpy(value, key.value_data, keySize);
+      if (layout.kind == OBELISK_RT_DBREG_LOGIC && key.unknown_data)
+        std::memcpy(value + planeSize, key.unknown_data, keySize);
+      return true;
+    }
     if (layout.kind == OBELISK_RT_DBREG_STRING) {
       if (key.kind != OBELISK_RT_ASSOC_KEY_STRING || layout.size != 8)
         return false;
@@ -911,31 +981,60 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return OBELISK_RT_OK;
   }
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE: {
-    std::array<std::optional<uint64_t>, 8> inputs;
+    bool elementKey = site.inputCount == 17;
+    if (!elementKey && site.inputCount != 9)
+      return OBELISK_RT_INVALID_BYTECODE;
+    std::array<std::optional<uint64_t>, 14> inputs;
     for (uint32_t index = 0; index != 6; ++index)
       inputs[index] = scalar(index);
     inputs[6] = scalar(7);
     inputs[7] = scalar(8);
-    if (std::any_of(inputs.begin(), inputs.end(),
+    for (uint32_t index = 0; elementKey && index != 6; ++index)
+      inputs[8 + index] = scalar(9 + index);
+    if (std::any_of(inputs.begin(), inputs.begin() + (elementKey ? 14 : 8),
                     [](const auto &value) { return !value; }))
       return OBELISK_RT_INVALID_BYTECODE;
-    std::optional<ByteSpan> trace =
-        readByteSpan(image, frame, inputRegister(6));
-    if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
+    auto readTrace = [&](uint32_t operand,
+                         std::vector<obelisk_rt_element_trace_slot_v1> &slots) {
+      std::optional<ByteSpan> trace =
+          readByteSpan(image, frame, inputRegister(operand));
+      if (!trace || trace->size % sizeof(obelisk_rt_element_trace_slot_v1) != 0)
+        return false;
+      slots.resize(trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
+      if (!slots.empty())
+        std::memcpy(slots.data(), trace->data, trace->size);
+      return true;
+    };
+    std::vector<obelisk_rt_element_trace_slot_v1> slots;
+    if (!readTrace(6, slots))
       return OBELISK_RT_INVALID_BYTECODE;
-    std::vector<obelisk_rt_element_trace_slot_v1> slots(
-        trace->size / sizeof(obelisk_rt_element_trace_slot_v1));
-    if (!slots.empty())
-      std::memcpy(slots.data(), trace->data, trace->size);
     obelisk_rt_gc_lane_v1 *lane = obelisk_rt_v1_gc_current_lane(context);
     if (!lane)
       return OBELISK_RT_INVALID_LIFECYCLE;
     obelisk_rt_object_v1 *result = nullptr;
-    obelisk_rt_status status = obelisk_rt_v1_assoc_create_typed(
-        lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
-        static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
-        slots.data(), slots.size(), static_cast<uint32_t>(*inputs[6]),
-        *inputs[7], &result);
+    obelisk_rt_status status;
+    if (elementKey) {
+      std::vector<obelisk_rt_element_trace_slot_v1> keySlots;
+      std::optional<ByteSpan> plan =
+          readByteSpan(image, frame, inputRegister(16));
+      if (*inputs[6] != OBELISK_RT_ASSOC_KEY_ELEMENT ||
+          !readTrace(15, keySlots) || !plan)
+        return OBELISK_RT_INVALID_BYTECODE;
+      status = obelisk_rt_v1_assoc_create_element_keyed(
+          lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
+          static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
+          slots.data(), slots.size(), *inputs[8],
+          static_cast<uint32_t>(*inputs[9]), static_cast<uint32_t>(*inputs[10]),
+          *inputs[11], *inputs[12], *inputs[13], keySlots.data(),
+          keySlots.size(), reinterpret_cast<const uint8_t *>(plan->data),
+          plan->size, &result);
+    } else {
+      status = obelisk_rt_v1_assoc_create_typed(
+          lane, *inputs[0], static_cast<uint32_t>(*inputs[1]),
+          static_cast<uint32_t>(*inputs[2]), *inputs[3], *inputs[4], *inputs[5],
+          slots.data(), slots.size(), static_cast<uint32_t>(*inputs[6]),
+          *inputs[7], &result);
+    }
     return status == OBELISK_RT_OK && !writeManaged(outputRegister(0), result)
                ? OBELISK_RT_INVALID_BYTECODE
                : status;

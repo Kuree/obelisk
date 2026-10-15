@@ -709,9 +709,13 @@ def SimAssocKeyKindString : I32EnumAttrCase<"String", 3, "string">;
 def SimAssocKeyKindClass : I32EnumAttrCase<"Class", 4, "class">;
 def SimAssocKeyKindProcess : I32EnumAttrCase<"Process", 5, "process">;
 def SimAssocKeyKindWildcard : I32EnumAttrCase<"Wildcard", 6, "wildcard">;
+// Any other index type with an equality operator (IEEE 1800-2023 7.8.5),
+// compared through its equality plan (sim::getAssocKeyPlan).
+def SimAssocKeyKindElement : I32EnumAttrCase<"Element", 7, "element">;
 def SimAssocKeyKind : I32EnumAttr<"AssocKeyKind", "simulation assoc key kind", [
   SimAssocKeyKindUnsigned, SimAssocKeyKindSigned, SimAssocKeyKindString,
-  SimAssocKeyKindClass, SimAssocKeyKindProcess, SimAssocKeyKindWildcard
+  SimAssocKeyKindClass, SimAssocKeyKindProcess, SimAssocKeyKindWildcard,
+  SimAssocKeyKindElement
 ]> {
   let cppNamespace = "::obelisk::sim";
   let genSpecializedAttr = 0;

@@ -174,6 +174,40 @@ bool getManagedHandleOffsets(::mlir::Type type,
 /// True for a nullable one-word value owned by the precise managed heap.
 bool isManagedHandleType(::mlir::Type type);
 
+/// The runtime element descriptor (`obelisk_rt_element_type_v1`) of a value of
+/// `type` held in a managed container, with its trace slots as byte offsets
+/// and managed slot kinds.
+struct ElementDescriptor {
+  uint64_t typeID;
+  ElementKind kind;
+  ElementFlags flags;
+  uint64_t valueSize;
+  uint64_t alignment;
+  uint64_t bitWidth;
+  ::llvm::SmallVector<int64_t, 2> traceOffsets;
+  ::llvm::SmallVector<int32_t, 2> traceKinds;
+};
+
+/// Describe `type` as a container element, or return std::nullopt when it has
+/// no canonical element layout.
+std::optional<ElementDescriptor> getElementDescriptor(::mlir::Type type);
+
+/// Build the runtime equality plan (OBELISK_RT_ASSOC_KEY_PLAN_*) of an
+/// associative-array index type that is none of the string, class, process,
+/// wildcard and integral key kinds (IEEE 1800-2023 7.8.5). Returns
+/// std::nullopt when part of the type has no such equality, such as a real.
+std::optional<::llvm::SmallVector<uint64_t>> getAssocKeyPlan(::mlir::Type type);
+
+/// How the runtime represents the index of an associative array type: its key
+/// kind and the width an `obelisk_rt_assoc_key_v1` of it carries.
+struct AssocKeyLayout {
+  AssocKeyKind kind;
+  uint64_t width;
+};
+
+/// The key layout of `type`, or std::nullopt when its index type has none.
+std::optional<AssocKeyLayout> getAssocKeyLayout(AssocArrayType type);
+
 /// True for a frame-relative simulator identifier. These are opaque 64-bit
 /// words wherever they are stored, independent of whatever they denote.
 bool isSimulationHandleType(::mlir::Type type);

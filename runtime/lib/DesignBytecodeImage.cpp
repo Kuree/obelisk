@@ -459,7 +459,7 @@ bool validIntrinsic(const Image &image, const Function &function,
            string(layout) || handle(layout);
   };
   auto assocKey = [&](const std::optional<Layout> &layout) {
-    return string(layout) || managed(layout) ||
+    return string(layout) || managed(layout) || event(layout) ||
            (numeric(layout) && layout->width >= 1);
   };
   auto cursor = [&](const std::optional<Layout> &layout) {
@@ -1324,12 +1324,22 @@ bool validIntrinsic(const Image &image, const Function &function,
       return false;
     return twoStateBits(input(0), 64) && twoStateBits(input(1), 64);
   case OBELISK_RT_INTRINSIC_V1_ASSOC_CREATE:
-    if (signature.flags != 0 || site.inputCount != 9 || site.outputCount != 1 ||
-        !managed(output(0)))
+    // An element-keyed array also carries its key's element descriptor, trace
+    // and equality plan.
+    if (signature.flags != 0 ||
+        (site.inputCount != 9 && site.inputCount != 17) ||
+        site.outputCount != 1 || !managed(output(0)))
       return false;
     for (uint32_t index = 0; index != 6; ++index)
       if (!twoStateBits(input(index), 64))
         return false;
+    if (site.inputCount == 17) {
+      for (uint32_t index = 9; index != 15; ++index)
+        if (!twoStateBits(input(index), 64))
+          return false;
+      if (!bytes(input(15)) || !bytes(input(16)))
+        return false;
+    }
     return bytes(input(6)) && twoStateBits(input(7), 64) &&
            twoStateBits(input(8), 64);
   case OBELISK_RT_INTRINSIC_V1_ASSOC_READ:

@@ -136,16 +136,24 @@ AssocArrayType::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     return success();
   }
   bool supportedKey = isa<StringType, ClassHandleType, ProcessType>(keyType);
+  bool integralKey = isa<IntegerType, LogicType>(keyType);
   if (auto integer = dyn_cast<IntegerType>(keyType))
     supportedKey = integer.isSignless() && integer.getWidth() != 0;
   if (auto logic = dyn_cast<LogicType>(keyType))
     supportedKey = logic.getWidth() != 0;
-  if (!supportedKey)
+  // IEEE 1800-2023 7.8.5: any other index type with an equality operator, such
+  // as an unpacked structure or a dynamically sized array, indexes by value.
+  bool elementKey = !supportedKey && !integralKey &&
+                    isNormalizedValueType(keyType) &&
+                    getElementDescriptor(keyType) && getAssocKeyPlan(keyType);
+  if (!supportedKey && !elementKey)
     return emitError()
-           << "key must be a string, class handle, process, or normalized "
-              "integral type";
+           << "key must be a string, class handle, process, normalized "
+              "integral type, or another type with an equality operator";
   if (isa<StringType, ClassHandleType, ProcessType>(keyType) && signedKey)
     return emitError() << "string, class, or process key cannot be signed";
+  if (elementKey && signedKey)
+    return emitError() << "only an integral key can be signed";
   return success();
 }
 

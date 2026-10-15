@@ -2542,6 +2542,9 @@ struct obelisk_rt_context {
   // Declared default element images by stable element type ID.
   std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>>
       elementDefaultImages;
+  // Associative-array element-key equality plans by stable key type ID.
+  std::unordered_map<uint64_t, std::unique_ptr<const std::vector<uint64_t>>>
+      assocKeyPlans;
   // Object identities are monotonic for the lifetime of a managed heap.
   // Each observed field/size selector therefore receives one stable scheduler
   // token without retaining the object itself.

@@ -768,7 +768,24 @@ LogicalResult lowerPackedSimulationOperations(
                               create.getTypeId(), create.getTraceOffsets(),
                               create.getTraceKinds())))
         return WalkResult::interrupt();
-      return WalkResult::advance();
+      if (create.getKeyKind() != sim::AssocKeyKind::Element)
+        return WalkResult::advance();
+      // An element key also needs its own descriptor trace and its equality
+      // plan, both shared by every array keyed by that type.
+      Type key = create.getResult().getType().getKeyType();
+      std::optional<sim::ElementDescriptor> descriptor =
+          sim::getElementDescriptor(key);
+      std::optional<SmallVector<uint64_t>> plan = sim::getAssocKeyPlan(key);
+      if (!descriptor || !plan) {
+        create.emitOpError("element key has no runtime layout");
+        return WalkResult::interrupt();
+      }
+      if (failed(reserveTrace(create.getLoc(), "__obelisk_element_trace_",
+                              descriptor->typeID, descriptor->traceOffsets,
+                              descriptor->traceKinds)))
+        return WalkResult::interrupt();
+      return reserve(getAssocKeyPlanGlobalName(descriptor->typeID),
+                     encodeUnsignedPlan(*plan));
     }
     StringRef program;
     if (auto solve = dyn_cast<sim::SimRandomSolveOp>(operation))

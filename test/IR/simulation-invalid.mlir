@@ -215,6 +215,26 @@ module {
 // -----
 
 module {
+  func.func @element_key_metadata() {
+    // An unpacked-structure index is an element key whose width is its value
+    // size in bits.
+    // expected-error @+1 {{key metadata does not match the associative key type}}
+    %array = simulation.assoc.create {
+      type_id = 48 : i64, element_kind = #simulation.element_kind<bits>,
+      element_flags = #simulation.element_flags<none>, value_size = 4 : i64,
+      alignment = 1 : i64, bit_width = 32 : i64,
+      trace_offsets = array<i64>, trace_kinds = array<i32>,
+      key_kind = #simulation.assoc_key_kind<unsigned>, key_width = 32 : i64
+    } : () -> !simulation.assoc_array<!simulation.unpacked_struct<[
+      #simulation.field<name = "v", type = i32, ordinal = 0, packedOffset = 0>
+    ]>, i32, false, false>
+    return
+  }
+}
+
+// -----
+
+module {
   func.func @missing_assoc_aggregate_trace() {
     // expected-error @+1 {{trace inventory does not match the associative element type}}
     %array = simulation.assoc.create {

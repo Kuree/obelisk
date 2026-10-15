@@ -1110,6 +1110,239 @@ bool isSimulationHandleType(Type type) {
              VirtualInterfaceType, ChandleType>(type);
 }
 
+std::optional<ElementDescriptor> getElementDescriptor(Type type) {
+  ElementDescriptor result{getStableStorageTypeID(type),
+                           ElementKind::Bits,
+                           ElementFlags::None,
+                           0,
+                           1,
+                           0,
+                           {},
+                           {}};
+  if (auto integer = dyn_cast<IntegerType>(type)) {
+    result.valueSize = (integer.getWidth() + 7) / 8;
+    result.bitWidth = integer.getWidth();
+    return result;
+  }
+  if (auto logic = dyn_cast<LogicType>(type)) {
+    result.kind = ElementKind::Logic;
+    result.flags = ElementFlags::FourState;
+    result.valueSize = (logic.getWidth() + 7) / 8;
+    result.bitWidth = logic.getWidth();
+    return result;
+  }
+  if (auto real = dyn_cast<FloatType>(type)) {
+    result.kind = ElementKind::Real;
+    result.valueSize = real.getWidth() / 8;
+    result.bitWidth = real.getWidth();
+    return result;
+  }
+  if (isa<ClassHandleType>(type)) {
+    result.kind = ElementKind::ClassHandle;
+    result.valueSize = managedHandleByteWidth;
+    return result;
+  }
+  if (isa<StringType>(type)) {
+    result.kind = ElementKind::String;
+    result.valueSize = managedHandleByteWidth;
+    return result;
+  }
+  if (isa<EventType>(type)) {
+    result.kind = ElementKind::Event;
+    result.valueSize = sizeof(uint64_t);
+    return result;
+  }
+  // These handles are context-owned identities or opaque foreign pointers,
+  // rather than managed-heap roots. In particular, covergroup instances stay
+  // in the coverage model when a container drops its last handle (19.3, 19.8).
+  if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType, ChandleType>(
+          type)) {
+    result.valueSize = simulationHandleBitWidth / 8;
+    result.bitWidth = simulationHandleBitWidth;
+    return result;
+  }
+  if (isa<DynamicArrayType, QueueType, MailboxType, BoxType, SemaphoreType,
+          AssocArrayType>(type)) {
+    result.kind = ElementKind::ContainerHandle;
+    result.valueSize = managedHandleByteWidth;
+    return result;
+  }
+  if (Type scalar = getPackedScalarType(type)) {
+    std::optional<unsigned> width = getPackedWidth(type);
+    if (!width || *width == 0)
+      return std::nullopt;
+    bool fourState = isa<LogicType>(scalar);
+    result.kind = fourState ? ElementKind::Logic : ElementKind::Bits;
+    result.flags = fourState ? ElementFlags::FourState : ElementFlags::None;
+    result.valueSize = (*width + 7) / 8;
+    result.bitWidth = *width;
+    return result;
+  }
+  if (!isAggregateType(type))
+    return std::nullopt;
+  std::optional<uint64_t> width = getProvenanceSpan(type);
+  if (!width || *width == 0 ||
+      failed(collectExpectedManagedTrace(type, result.traceOffsets,
+                                         result.traceKinds)))
+    return std::nullopt;
+  bool fourState = false;
+  type.walk([&](LogicType) { fourState = true; });
+  result.kind = ElementKind::Aggregate;
+  result.flags = fourState ? ElementFlags::FourState : ElementFlags::None;
+  result.valueSize = (*width + 7) / 8;
+  result.bitWidth = result.valueSize * 8;
+  return result;
+}
+
+std::optional<AssocKeyLayout> getAssocKeyLayout(AssocArrayType type) {
+  Type key = type.getKeyType();
+  if (type.getWildcardIndex())
+    return isa<BoxType>(key)
+               ? std::optional<AssocKeyLayout>({AssocKeyKind::Wildcard, 0})
+               : std::nullopt;
+  if (isa<StringType>(key))
+    return AssocKeyLayout{AssocKeyKind::String, 0};
+  if (isa<ClassHandleType>(key))
+    return AssocKeyLayout{AssocKeyKind::Class, 0};
+  if (isa<ProcessType>(key))
+    return AssocKeyLayout{AssocKeyKind::Process, 0};
+  if (std::optional<unsigned> width = getPackedWidth(key)) {
+    if (*width == 0)
+      return std::nullopt;
+    return AssocKeyLayout{type.getSignedKey() ? AssocKeyKind::Signed
+                                              : AssocKeyKind::Unsigned,
+                          *width};
+  }
+  // IEEE 1800-2023 7.8.5: any other index type with an equality operator
+  // indexes by value; a key travels as its element planes.
+  std::optional<ElementDescriptor> descriptor = getElementDescriptor(key);
+  if (!descriptor || !getAssocKeyPlan(key))
+    return std::nullopt;
+  return AssocKeyLayout{AssocKeyKind::Element, descriptor->valueSize * 8};
+}
+
+std::optional<SmallVector<uint64_t>> getAssocKeyPlan(Type type) {
+  SmallVector<uint64_t> records;
+  // Append one record; its body, when it has one, follows it.
+  auto record = [&](uint32_t opcode, uint64_t offset, uint64_t operand0 = 0,
+                    uint64_t operand1 = 0) {
+    records.append({opcode, offset, operand0, operand1});
+    return records.size() / OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS - 1;
+  };
+  auto closeBody = [&](uint64_t index) {
+    uint64_t body =
+        records.size() / OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS - index - 1;
+    records[index * OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS] |= body << 32;
+  };
+  std::function<bool(Type, uint64_t, unsigned)> append =
+      [&](Type current, uint64_t offset, unsigned depth) -> bool {
+    if (depth > OBELISK_RT_ASSOC_KEY_PLAN_MAX_DEPTH)
+      return false;
+    if (Type scalar = getPackedScalarType(current)) {
+      std::optional<unsigned> width = getPackedWidth(current);
+      if (!width || *width == 0)
+        return false;
+      record(OBELISK_RT_ASSOC_KEY_PLAN_BITS, offset, *width,
+             isa<LogicType>(scalar) ? 1 : 0);
+      return true;
+    }
+    if (isa<StringType>(current)) {
+      record(OBELISK_RT_ASSOC_KEY_PLAN_STRING, offset);
+      return true;
+    }
+    // Class handles and the built-in mailbox and semaphore classes compare by
+    // identity.
+    if (isa<ClassHandleType, MailboxType, SemaphoreType>(current)) {
+      record(OBELISK_RT_ASSOC_KEY_PLAN_OBJECT, offset);
+      return true;
+    }
+    if (isa<EventType, ProcessType, CovergroupHandleType, VirtualInterfaceType,
+            ChandleType>(current)) {
+      record(OBELISK_RT_ASSOC_KEY_PLAN_BITS, offset, simulationHandleBitWidth);
+      return true;
+    }
+    if (isa<DynamicArrayType, QueueType, AssocArrayType>(current)) {
+      bool associative = isa<AssocArrayType>(current);
+      Type element = getContainerElement(current);
+      std::optional<ElementDescriptor> descriptor =
+          element ? getElementDescriptor(element) : std::nullopt;
+      if (!descriptor)
+        return false;
+      uint64_t index =
+          record(associative ? OBELISK_RT_ASSOC_KEY_PLAN_ASSOCIATIVE
+                             : OBELISK_RT_ASSOC_KEY_PLAN_SEQUENCE,
+                 offset, descriptor->valueSize);
+      if (!append(element, 0, depth + 1))
+        return false;
+      closeBody(index);
+      return true;
+    }
+    if (auto array = dyn_cast<UnpackedArrayType>(current)) {
+      uint64_t count = getAggregateNumElements(array);
+      Type element = count ? getAggregateElementType(array, 0) : Type{};
+      auto first = getAggregateProvenanceSubelement(array, 0);
+      std::optional<uint64_t> stride = getArrayElementStorageStride(array);
+      if (!element || !first || !stride || *stride == 0)
+        return false;
+      uint64_t index = record(OBELISK_RT_ASSOC_KEY_PLAN_REPEAT,
+                              offset + first->first, count, *stride);
+      if (!append(element, 0, depth + 1))
+        return false;
+      closeBody(index);
+      return true;
+    }
+    if (!isa<UnpackedStructType, UnpackedUnionType>(current))
+      return false;
+    auto unionType = dyn_cast<UnpackedUnionType>(current);
+    bool tagged = unionType && unionType.getIsTagged();
+    // A tagged union compares its tag and then its active member only
+    // (IEEE 1800-2023 7.3.2); its tag above the payload is one plus the
+    // member ordinal.
+    std::optional<uint64_t> payload =
+        tagged ? getProvenanceSpan(current) : std::nullopt;
+    if (tagged && !payload)
+      return false;
+    unsigned count = getAggregateNumElements(current);
+    uint64_t taggedIndex =
+        tagged ? record(OBELISK_RT_ASSOC_KEY_PLAN_TAGGED, offset, *payload,
+                        llvm::Log2_64_Ceil(uint64_t{count} + 1))
+               : 0;
+    // A structure compares every member. So does an untagged union, whose
+    // members all overlap the same storage, as its equality operator does.
+    for (unsigned ordinal = 0; ordinal != count; ++ordinal) {
+      Type member = getAggregateElementType(current, ordinal);
+      auto subelement = getAggregateProvenanceSubelement(current, ordinal);
+      if (!member || !subelement)
+        return false;
+      if (!tagged) {
+        if (!append(member, offset + subelement->first, depth + 1))
+          return false;
+        continue;
+      }
+      uint64_t alternative = record(OBELISK_RT_ASSOC_KEY_PLAN_ALTERNATIVE,
+                                    subelement->first, ordinal + 1);
+      // A void member has no value to compare.
+      if (subelement->second != 0 && !append(member, 0, depth + 1))
+        return false;
+      closeBody(alternative);
+    }
+    if (tagged)
+      closeBody(taggedIndex);
+    return true;
+  };
+  if (!append(type, 0, 0) || records.empty())
+    return std::nullopt;
+  uint64_t count = records.size() / OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS;
+  if (count > OBELISK_RT_ASSOC_KEY_PLAN_MAX_RECORDS)
+    return std::nullopt;
+  SmallVector<uint64_t> plan{
+      uint64_t{OBELISK_RT_ASSOC_KEY_PLAN_MAGIC} |
+          (uint64_t{OBELISK_RT_ASSOC_KEY_PLAN_VERSION} << 32),
+      count};
+  llvm::append_range(plan, records);
+  return plan;
+}
+
 LogicalResult SimManagedNullOp::verify() {
   if (!isManagedHandleType(getResult().getType()) ||
       isa<ClassHandleType>(getResult().getType()))
@@ -1204,6 +1437,45 @@ LogicalResult SimContainerCreateLikeOp::verify() {
   return success();
 }
 
+/// Check an op's element descriptor attributes against its element type, which
+/// diagnostics call the `owner` element type. A type without a canonical
+/// element layout carries no trace inventory and is otherwise accepted unless
+/// `requireLayout`.
+static LogicalResult verifyElementMetadata(
+    Operation *operation, Type element, ElementKind kind, ElementFlags flags,
+    uint64_t valueSize, uint64_t bitWidth, ArrayRef<int64_t> traceOffsets,
+    ArrayRef<int32_t> traceKinds, StringRef owner, bool requireLayout) {
+  std::optional<ElementDescriptor> expected = getElementDescriptor(element);
+  if (!expected) {
+    if (getPackedScalarType(element))
+      return operation->emitOpError("packed element has no canonical width");
+    if (isAggregateType(element)) {
+      std::optional<uint64_t> width = getProvenanceSpan(element);
+      return operation->emitOpError(
+          width && *width ? "aggregate element has no canonical trace layout"
+                          : "aggregate element has no canonical layout");
+    }
+    if (requireLayout)
+      return operation->emitOpError("element metadata does not match the ")
+             << owner << " element type";
+  } else if (kind != expected->kind || valueSize != expected->valueSize ||
+             bitWidth != expected->bitWidth ||
+             bitEnumContainsAny(flags, ElementFlags::FourState) !=
+                 bitEnumContainsAny(expected->flags, ElementFlags::FourState)) {
+    return operation->emitOpError("element metadata does not match the ")
+           << owner << " element type";
+  }
+  ArrayRef<int64_t> expectedOffsets =
+      expected ? ArrayRef<int64_t>(expected->traceOffsets)
+               : ArrayRef<int64_t>{};
+  ArrayRef<int32_t> expectedKinds =
+      expected ? ArrayRef<int32_t>(expected->traceKinds) : ArrayRef<int32_t>{};
+  if (traceOffsets != expectedOffsets || traceKinds != expectedKinds)
+    return operation->emitOpError("trace inventory does not match the ")
+           << owner << " element type";
+  return success();
+}
+
 LogicalResult SimContainerCreateOp::verify() {
   Type type = getResult().getType();
   Type element = getSequentialContainerElement(type);
@@ -1226,74 +1498,11 @@ LogicalResult SimContainerCreateOp::verify() {
     return emitOpError("dynamic-array result requires dynamic-array metadata");
   if (isa<QueueType>(type) && getContainerKind() != ContainerKind::Queue)
     return emitOpError("queue result requires queue metadata");
-  std::optional<ElementKind> expectedKind;
-  uint64_t expectedSize = 0;
-  uint64_t expectedWidth = 0;
-  bool fourState = false;
-  SmallVector<int64_t, 2> expectedTraceOffsets;
-  SmallVector<int32_t, 2> expectedTraceKinds;
-  if (auto integer = dyn_cast<IntegerType>(element)) {
-    expectedKind = ElementKind::Bits;
-    expectedSize = (integer.getWidth() + 7) / 8;
-    expectedWidth = integer.getWidth();
-  } else if (auto logic = dyn_cast<LogicType>(element)) {
-    expectedKind = ElementKind::Logic;
-    expectedSize = (logic.getWidth() + 7) / 8;
-    expectedWidth = logic.getWidth();
-    fourState = true;
-  } else if (auto real = dyn_cast<FloatType>(element)) {
-    expectedKind = ElementKind::Real;
-    expectedSize = real.getWidth() / 8;
-    expectedWidth = real.getWidth();
-  } else if (isa<ClassHandleType>(element)) {
-    expectedKind = ElementKind::ClassHandle;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<StringType>(element)) {
-    expectedKind = ElementKind::String;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
-                 SemaphoreType, AssocArrayType>(element)) {
-    expectedKind = ElementKind::ContainerHandle;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<EventType>(element)) {
-    expectedKind = ElementKind::Event;
-    expectedSize = sizeof(uint64_t);
-  } else if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType,
-                 ChandleType>(element)) {
-    expectedKind = ElementKind::Bits;
-    expectedSize = simulationHandleBitWidth / 8;
-    expectedWidth = simulationHandleBitWidth;
-  } else if (Type scalar = getPackedScalarType(element)) {
-    std::optional<unsigned> width = getPackedWidth(element);
-    if (!width || *width == 0)
-      return emitOpError("packed element has no canonical width");
-    fourState = isa<LogicType>(scalar);
-    expectedKind = fourState ? ElementKind::Logic : ElementKind::Bits;
-    expectedSize = (*width + 7) / 8;
-    expectedWidth = *width;
-  } else if (isAggregateType(element)) {
-    std::optional<uint64_t> width = getProvenanceSpan(element);
-    if (!width || *width == 0)
-      return emitOpError("aggregate element has no canonical layout");
-    element.walk([&](LogicType) { fourState = true; });
-    expectedKind = ElementKind::Aggregate;
-    expectedSize = (*width + 7) / 8;
-    expectedWidth = expectedSize * 8;
-    if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
-                                           expectedTraceKinds)))
-      return emitOpError("aggregate element has no canonical trace layout");
-  }
-  if (expectedKind.has_value() &&
-      (getElementKind() != expectedKind || getValueSize() != expectedSize ||
-       getBitWidth() != expectedWidth ||
-       bitEnumContainsAny(getElementFlags(), ElementFlags::FourState) !=
-           fourState))
-    return emitOpError(
-        "element metadata does not match the result container element type");
-  if (traceOffsets != ArrayRef<int64_t>(expectedTraceOffsets) ||
-      traceKinds != ArrayRef<int32_t>(expectedTraceKinds))
-    return emitOpError(
-        "trace inventory does not match the result container element type");
+  if (failed(verifyElementMetadata(
+          getOperation(), element, getElementKind(), getElementFlags(),
+          getValueSize(), getBitWidth(), traceOffsets, traceKinds,
+          "result container", /*requireLayout=*/false)))
+    return failure();
   return success();
 }
 
@@ -1450,73 +1659,11 @@ LogicalResult SimMailboxCreateOp::verify() {
                                          getValueSize(), traceOffsets,
                                          traceKinds)))
     return failure();
-  std::optional<ElementKind> expectedKind;
-  uint64_t expectedSize = 0;
-  uint64_t expectedWidth = 0;
-  bool fourState = false;
-  SmallVector<int64_t, 2> expectedTraceOffsets;
-  SmallVector<int32_t, 2> expectedTraceKinds;
-  if (auto integer = dyn_cast<IntegerType>(element)) {
-    expectedKind = ElementKind::Bits;
-    expectedSize = (integer.getWidth() + 7) / 8;
-    expectedWidth = integer.getWidth();
-  } else if (auto logic = dyn_cast<LogicType>(element)) {
-    expectedKind = ElementKind::Logic;
-    expectedSize = (logic.getWidth() + 7) / 8;
-    expectedWidth = logic.getWidth();
-    fourState = true;
-  } else if (auto real = dyn_cast<FloatType>(element)) {
-    expectedKind = ElementKind::Real;
-    expectedSize = real.getWidth() / 8;
-    expectedWidth = real.getWidth();
-  } else if (isa<ClassHandleType>(element)) {
-    expectedKind = ElementKind::ClassHandle;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<StringType>(element)) {
-    expectedKind = ElementKind::String;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
-                 SemaphoreType, AssocArrayType>(element)) {
-    expectedKind = ElementKind::ContainerHandle;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<EventType>(element)) {
-    expectedKind = ElementKind::Event;
-    expectedSize = sizeof(uint64_t);
-  } else if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType,
-                 ChandleType>(element)) {
-    expectedKind = ElementKind::Bits;
-    expectedSize = simulationHandleBitWidth / 8;
-    expectedWidth = simulationHandleBitWidth;
-  } else if (Type scalar = getPackedScalarType(element)) {
-    std::optional<unsigned> width = getPackedWidth(element);
-    if (!width || *width == 0)
-      return emitOpError("packed element has no canonical width");
-    fourState = isa<LogicType>(scalar);
-    expectedKind = fourState ? ElementKind::Logic : ElementKind::Bits;
-    expectedSize = (*width + 7) / 8;
-    expectedWidth = *width;
-  } else if (isAggregateType(element)) {
-    std::optional<uint64_t> width = getProvenanceSpan(element);
-    if (!width || *width == 0)
-      return emitOpError("aggregate element has no canonical layout");
-    element.walk([&](LogicType) { fourState = true; });
-    expectedKind = ElementKind::Aggregate;
-    expectedSize = (*width + 7) / 8;
-    expectedWidth = expectedSize * 8;
-    if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
-                                           expectedTraceKinds)))
-      return emitOpError("aggregate element has no canonical trace layout");
-  }
-  if (!expectedKind || getElementKind() != expectedKind ||
-      getValueSize() != expectedSize || getBitWidth() != expectedWidth ||
-      bitEnumContainsAny(getElementFlags(), ElementFlags::FourState) !=
-          fourState)
-    return emitOpError(
-        "element metadata does not match the mailbox element type");
-  if (traceOffsets != ArrayRef<int64_t>(expectedTraceOffsets) ||
-      traceKinds != ArrayRef<int32_t>(expectedTraceKinds))
-    return emitOpError(
-        "trace inventory does not match the mailbox element type");
+  if (failed(verifyElementMetadata(getOperation(), element, getElementKind(),
+                                   getElementFlags(), getValueSize(),
+                                   getBitWidth(), traceOffsets, traceKinds,
+                                   "mailbox", /*requireLayout=*/true)))
+    return failure();
   return success();
 }
 
@@ -1573,96 +1720,14 @@ LogicalResult SimAssocCreateOp::verify() {
                                          getTraceKinds())))
     return failure();
   Type element = array.getElementType();
-  std::optional<ElementKind> expectedKind;
-  uint64_t expectedSize = 0;
-  uint64_t expectedWidth = 0;
-  bool fourState = false;
-  SmallVector<int64_t, 2> expectedTraceOffsets;
-  SmallVector<int32_t, 2> expectedTraceKinds;
-  if (auto integer = dyn_cast<IntegerType>(element)) {
-    expectedKind = ElementKind::Bits;
-    expectedSize = (integer.getWidth() + 7) / 8;
-    expectedWidth = integer.getWidth();
-  } else if (auto logic = dyn_cast<LogicType>(element)) {
-    expectedKind = ElementKind::Logic;
-    expectedSize = (logic.getWidth() + 7) / 8;
-    expectedWidth = logic.getWidth();
-    fourState = true;
-  } else if (auto real = dyn_cast<FloatType>(element)) {
-    expectedKind = ElementKind::Real;
-    expectedSize = real.getWidth() / 8;
-    expectedWidth = real.getWidth();
-  } else if (isa<ClassHandleType>(element)) {
-    expectedKind = ElementKind::ClassHandle;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<StringType>(element)) {
-    expectedKind = ElementKind::String;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<DynamicArrayType, QueueType, MailboxType, BoxType,
-                 SemaphoreType, AssocArrayType>(element)) {
-    expectedKind = ElementKind::ContainerHandle;
-    expectedSize = managedHandleByteWidth;
-  } else if (isa<EventType>(element)) {
-    expectedKind = ElementKind::Event;
-    expectedSize = sizeof(uint64_t);
-  } else if (isa<ProcessType, CovergroupHandleType, VirtualInterfaceType,
-                 ChandleType>(element)) {
-    expectedKind = ElementKind::Bits;
-    expectedSize = simulationHandleBitWidth / 8;
-    expectedWidth = simulationHandleBitWidth;
-  } else if (Type scalar = getPackedScalarType(element)) {
-    std::optional<unsigned> width = getPackedWidth(element);
-    if (!width || *width == 0)
-      return emitOpError("packed element has no canonical width");
-    fourState = isa<LogicType>(scalar);
-    expectedKind = fourState ? ElementKind::Logic : ElementKind::Bits;
-    expectedSize = (*width + 7) / 8;
-    expectedWidth = *width;
-  } else if (isAggregateType(element)) {
-    std::optional<uint64_t> width = getProvenanceSpan(element);
-    if (!width || *width == 0)
-      return emitOpError("aggregate element has no canonical layout");
-    element.walk([&](LogicType) { fourState = true; });
-    expectedKind = ElementKind::Aggregate;
-    expectedSize = (*width + 7) / 8;
-    expectedWidth = expectedSize * 8;
-    if (failed(collectExpectedManagedTrace(element, expectedTraceOffsets,
-                                           expectedTraceKinds)))
-      return emitOpError("aggregate element has no canonical trace layout");
-  }
-  if (expectedKind.has_value() &&
-      (getElementKind() != expectedKind || getValueSize() != expectedSize ||
-       getBitWidth() != expectedWidth ||
-       bitEnumContainsAny(getElementFlags(), ElementFlags::FourState) !=
-           fourState))
-    return emitOpError(
-        "element metadata does not match the associative element type");
-  if (getTraceOffsets() != ArrayRef<int64_t>(expectedTraceOffsets) ||
-      getTraceKinds() != ArrayRef<int32_t>(expectedTraceKinds))
-    return emitOpError(
-        "trace inventory does not match the associative element type");
-  Type key = array.getKeyType();
-  if (array.getWildcardIndex()) {
-    if (!isa<BoxType>(key) || getKeyKind() != AssocKeyKind::Wildcard ||
-        getKeyWidth() != 0)
-      return emitOpError("wildcard key metadata is inconsistent");
-  } else if (isa<StringType>(key)) {
-    if (getKeyKind() != AssocKeyKind::String || getKeyWidth() != 0)
-      return emitOpError("string key metadata is inconsistent");
-  } else if (isa<ClassHandleType>(key)) {
-    if (getKeyKind() != AssocKeyKind::Class || getKeyWidth() != 0)
-      return emitOpError("class key metadata is inconsistent");
-  } else if (isa<ProcessType>(key)) {
-    if (getKeyKind() != AssocKeyKind::Process || getKeyWidth() != 0)
-      return emitOpError("process key metadata is inconsistent");
-  } else {
-    std::optional<unsigned> width = getPackedWidth(key);
-    if (!width || *width == 0 ||
-        (getKeyKind() != AssocKeyKind::Unsigned &&
-         getKeyKind() != AssocKeyKind::Signed) ||
-        getKeyWidth() != *width)
-      return emitOpError("integral key metadata is inconsistent");
-  }
+  if (failed(verifyElementMetadata(
+          getOperation(), element, getElementKind(), getElementFlags(),
+          getValueSize(), getBitWidth(), getTraceOffsets(), getTraceKinds(),
+          "associative", /*requireLayout=*/false)))
+    return failure();
+  std::optional<AssocKeyLayout> key = getAssocKeyLayout(array);
+  if (!key || key->kind != getKeyKind() || key->width != getKeyWidth())
+    return emitOpError("key metadata does not match the associative key type");
   return success();
 }
 

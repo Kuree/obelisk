@@ -49,11 +49,15 @@ struct ContainerHeader {
   // the index stores only hashes and ordinals, so it needs no element tracer.
   obelisk_rt_object_v1 *referenceIndex;
   uint64_t referenceIndexCapacity;
+  // An OBELISK_RT_ASSOC_KEY_ELEMENT array's interned key element type and
+  // equality plan words; null for every other container.
+  const obelisk_rt_element_type_v1 *keyElement;
+  const uint64_t *keyPlan;
 };
 
 static_assert(sizeof(BufferHeader) == 16);
 static_assert(sizeof(AssocSlot) == 32);
-static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 144 : 128));
+static_assert(sizeof(ContainerHeader) == (sizeof(void *) == 8 ? 160 : 136));
 
 inline uint64_t elementStride(const obelisk_rt_element_type_v1 *element) {
   return element->value_size *

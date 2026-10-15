@@ -42,6 +42,10 @@ Value assocKeyFieldGEP(OpBuilder &builder, Location location, Value key,
 
 } // namespace
 
+std::string getAssocKeyPlanGlobalName(uint64_t typeID) {
+  return "__obelisk_assoc_key_plan_" + std::to_string(typeID);
+}
+
 Value makeNativeAssocKey(OpBuilder &builder, Location location,
                          sim::AssocArrayType array, ValueRange values) {
   Type i32 = builder.getI32Type();
@@ -63,20 +67,14 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
                           assocKeyFieldGEP(builder, location, storage, field),
                           8);
   };
-  bool stringKey = isa<sim::StringType>(array.getKeyType());
-  bool classKey = isa<sim::ClassHandleType>(array.getKeyType());
-  bool processKey = isa<sim::ProcessType>(array.getKeyType());
-  bool wildcardKey = array.getWildcardIndex();
-  uint32_t keyKind =
-      wildcardKey  ? OBELISK_RT_ASSOC_KEY_WILDCARD
-      : stringKey  ? OBELISK_RT_ASSOC_KEY_STRING
-      : classKey   ? OBELISK_RT_ASSOC_KEY_CLASS
-      : processKey ? OBELISK_RT_ASSOC_KEY_PROCESS
-                   : (array.getSignedKey() ? OBELISK_RT_ASSOC_KEY_SIGNED
-                                           : OBELISK_RT_ASSOC_KEY_UNSIGNED);
-  uint64_t keyWidth = stringKey || classKey || processKey || wildcardKey
-                          ? 0
-                          : *sim::getPackedWidth(array.getKeyType());
+  sim::AssocKeyLayout layout = *sim::getAssocKeyLayout(array);
+  bool stringKey = layout.kind == sim::AssocKeyKind::String;
+  bool objectKey = layout.kind == sim::AssocKeyKind::Class ||
+                   layout.kind == sim::AssocKeyKind::Process ||
+                   layout.kind == sim::AssocKeyKind::Wildcard;
+  bool elementKey = layout.kind == sim::AssocKeyKind::Element;
+  uint32_t keyKind = static_cast<uint32_t>(layout.kind);
+  uint64_t keyWidth = layout.width;
   store32(AssocKeyField::Kind, keyKind);
   store32(AssocKeyField::Reserved, 0);
   LLVM::StoreOp::create(
@@ -88,14 +86,15 @@ Value makeNativeAssocKey(OpBuilder &builder, Location location,
     storePointer(AssocKeyField::Value, null);
     storePointer(AssocKeyField::Unknown, null);
     store64(AssocKeyField::String, values.front());
-  } else if (classKey || processKey || wildcardKey) {
+  } else if (objectKey) {
     store64(AssocKeyField::Value, values.front());
     storePointer(AssocKeyField::Unknown, null);
     LLVM::StoreOp::create(
         builder, location, llvmConstant(builder, location, i64, 0),
         assocKeyFieldGEP(builder, location, storage, AssocKeyField::String), 8);
   } else {
-    if (keyWidth <= 64) {
+    // An element key always travels as its planes, whatever its width.
+    if (keyWidth <= 64 && !elementKey) {
       store64(AssocKeyField::Value, values.front());
       if (values.size() == 2)
         store64(AssocKeyField::Unknown, values[1]);
@@ -174,19 +173,48 @@ public:
     auto c64 = [&](uint64_t value) {
       return llvmConstant(rewriter, op.getLoc(), i64, value);
     };
+    SmallVector<Value> arguments{
+        lane,
+        c64(op.getTypeId()),
+        c32(static_cast<uint32_t>(op.getElementKind())),
+        c32(static_cast<uint32_t>(op.getElementFlags())),
+        c64(op.getValueSize()),
+        c64(op.getAlignment()),
+        c64(op.getBitWidth()),
+        trace,
+        c64(op.getTraceOffsets().size())};
+    StringRef callee = "obelisk_rt_v1_assoc_create_typed";
+    if (op.getKeyKind() == sim::AssocKeyKind::Element) {
+      // The key's element descriptor and equality plan follow; their globals
+      // are reserved before conversion.
+      Type key = op.getResult().getType().getKeyType();
+      std::optional<sim::ElementDescriptor> descriptor =
+          sim::getElementDescriptor(key);
+      std::optional<SmallVector<uint64_t>> plan = sim::getAssocKeyPlan(key);
+      if (!descriptor || !plan)
+        return failure();
+      Value keyTrace = makeNativeAssocTrace(
+          rewriter, op.getLoc(), descriptor->typeID, descriptor->traceOffsets);
+      Value keyPlan = LLVM::AddressOfOp::create(
+          rewriter, op.getLoc(), pointer,
+          getAssocKeyPlanGlobalName(descriptor->typeID));
+      arguments.append({c64(descriptor->typeID),
+                        c32(static_cast<uint32_t>(descriptor->kind)),
+                        c32(static_cast<uint32_t>(descriptor->flags)),
+                        c64(descriptor->valueSize), c64(descriptor->alignment),
+                        c64(descriptor->bitWidth), keyTrace,
+                        c64(descriptor->traceOffsets.size()), keyPlan,
+                        c64(plan->size() * sizeof(uint64_t))});
+      callee = "obelisk_rt_v1_assoc_create_element_keyed";
+    } else {
+      arguments.append(
+          {c32(static_cast<uint32_t>(op.getKeyKind())), c64(op.getKeyWidth())});
+    }
+    arguments.push_back(output);
     Value status =
-        LLVM::CallOp::create(
-            rewriter, op.getLoc(), TypeRange{i32},
-            SymbolRefAttr::get(rewriter.getContext(),
-                               "obelisk_rt_v1_assoc_create_typed"),
-            ValueRange{lane, c64(op.getTypeId()),
-                       c32(static_cast<uint32_t>(op.getElementKind())),
-                       c32(static_cast<uint32_t>(op.getElementFlags())),
-                       c64(op.getValueSize()), c64(op.getAlignment()),
-                       c64(op.getBitWidth()), trace,
-                       c64(op.getTraceOffsets().size()),
-                       c32(static_cast<uint32_t>(op.getKeyKind())),
-                       c64(op.getKeyWidth()), output})
+        LLVM::CallOp::create(rewriter, op.getLoc(), TypeRange{i32},
+                             SymbolRefAttr::get(rewriter.getContext(), callee),
+                             arguments)
             .getResult();
     reportManagedStatus(rewriter, op.getLoc(), context, status);
     Value result =
@@ -468,10 +496,14 @@ public:
               getTypeConverter()->convertType(array.getKeyType(), converted)) ||
           converted.empty() || converted.size() > 2)
         return failure();
+      // Integral keys up to 64 bits travel inline; wider integral keys and
+      // element keys travel as planes.
+      std::optional<unsigned> packedWidth =
+          sim::getPackedWidth(array.getKeyType());
       for (auto [index, type] : llvm::enumerate(converted)) {
         AssocKeyField field =
             index == 0 ? AssocKeyField::Value : AssocKeyField::Unknown;
-        if (*sim::getPackedWidth(array.getKeyType()) <= 64) {
+        if (packedWidth && *packedWidth <= 64) {
           Value loaded = LLVM::LoadOp::create(
               rewriter, op.getLoc(), i64,
               assocKeyFieldGEP(rewriter, op.getLoc(), key, field), 8);

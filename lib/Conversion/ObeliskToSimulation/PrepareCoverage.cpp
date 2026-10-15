@@ -44,6 +44,29 @@ namespace obelisk {
 #define GEN_PASS_DEF_OBELISKSIMPREPARECOVERAGEPASS
 #include "obelisk/Conversion/Passes.h.inc"
 
+// Functional container schemas record the runtime associative key kind.
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::Unsigned) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::Unsigned));
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::Signed) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::Signed));
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::String) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::String));
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::Class) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::Class));
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::Process) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::Process));
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::Wildcard) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::Wildcard));
+static_assert(
+    static_cast<uint32_t>(coverage::FunctionalContainerKeyKind::Element) ==
+    static_cast<uint32_t>(sim::AssocKeyKind::Element));
+
 namespace {
 
 using CrossPredicateKey = std::pair<Operation *, Operation *>;
@@ -3084,18 +3107,19 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
                 layout.kind =
                     coverage::FunctionalContainerKind::AssociativeArray;
                 element = array.getElementType();
-                Type key = array.getKeyType();
-                using KeyKind = coverage::FunctionalContainerKeyKind;
-                layout.keyKind = array.getWildcardIndex()    ? KeyKind::Wildcard
-                                 : isa<sim::StringType>(key) ? KeyKind::String
-                                 : isa<sim::ClassHandleType>(key)
-                                     ? KeyKind::Class
-                                 : isa<sim::ProcessType>(key) ? KeyKind::Process
-                                 : array.getSignedKey() ? KeyKind::Signed
-                                                        : KeyKind::Unsigned;
-                if (layout.keyKind == KeyKind::Unsigned ||
-                    layout.keyKind == KeyKind::Signed)
-                  layout.keyWidth = sim::getPackedWidth(key).value_or(0);
+                std::optional<sim::AssocKeyLayout> key =
+                    sim::getAssocKeyLayout(array);
+                if (!key) {
+                  formal.emitError("functional container key type has no "
+                                   "runtime key representation");
+                  signalPassFailure();
+                  return;
+                }
+                // The coverage schema mirrors the runtime key kinds.
+                layout.keyKind =
+                    static_cast<coverage::FunctionalContainerKeyKind>(
+                        static_cast<uint32_t>(key->kind));
+                layout.keyWidth = key->width;
               }
               layout.elementType = sim::getStableStorageTypeID(element);
               if (auto mailbox = dyn_cast<sim::MailboxType>(*normalized))

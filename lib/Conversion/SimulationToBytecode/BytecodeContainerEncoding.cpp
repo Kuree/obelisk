@@ -407,25 +407,51 @@ Encoder::encodeContainerOperation(FunctionPlan &plan, Operation *operation) {
     return emitIntrinsic(plan, kIntrinsicContainerWrite,
                          {op.getContainer(), op.getIndex(), op.getValue()}, {});
   if (auto op = dyn_cast<sim::SimAssocCreateOp>(operation)) {
-    SmallVector<uint8_t> traceSlots;
-    for (auto [offset, kind] :
-         llvm::zip_equal(op.getTraceOffsets(), op.getTraceKinds())) {
-      append64(traceSlots, static_cast<uint64_t>(offset));
-      append32(traceSlots, static_cast<uint32_t>(kind));
-      append32(traceSlots, 0);
+    auto encodeTrace = [](ArrayRef<int64_t> offsets, ArrayRef<int32_t> kinds) {
+      SmallVector<uint8_t> traceSlots;
+      for (auto [offset, kind] : llvm::zip_equal(offsets, kinds)) {
+        append64(traceSlots, static_cast<uint64_t>(offset));
+        append32(traceSlots, static_cast<uint32_t>(kind));
+        append32(traceSlots, 0);
+      }
+      return traceSlots;
+    };
+    SmallVector<uint32_t> inputs{
+        emitU64Constant(plan, op.getTypeId()),
+        emitU64Constant(plan, static_cast<uint32_t>(op.getElementKind())),
+        emitU64Constant(plan, static_cast<uint32_t>(op.getElementFlags())),
+        emitU64Constant(plan, op.getValueSize()),
+        emitU64Constant(plan, op.getAlignment()),
+        emitU64Constant(plan, op.getBitWidth()),
+        emitBytesConstant(
+            plan, encodeTrace(op.getTraceOffsets(), op.getTraceKinds())),
+        emitU64Constant(plan, static_cast<uint32_t>(op.getKeyKind())),
+        emitU64Constant(plan, op.getKeyWidth())};
+    // An element-keyed array also carries its key's element descriptor and
+    // equality plan.
+    if (op.getKeyKind() == sim::AssocKeyKind::Element) {
+      Type key = op.getResult().getType().getKeyType();
+      std::optional<sim::ElementDescriptor> descriptor =
+          sim::getElementDescriptor(key);
+      std::optional<SmallVector<uint64_t>> keyPlan = sim::getAssocKeyPlan(key);
+      if (!descriptor || !keyPlan)
+        return op.emitOpError("element key has no runtime layout");
+      SmallVector<uint8_t> planBytes;
+      for (uint64_t word : *keyPlan)
+        append64(planBytes, word);
+      inputs.append(
+          {emitU64Constant(plan, descriptor->typeID),
+           emitU64Constant(plan, static_cast<uint32_t>(descriptor->kind)),
+           emitU64Constant(plan, static_cast<uint32_t>(descriptor->flags)),
+           emitU64Constant(plan, descriptor->valueSize),
+           emitU64Constant(plan, descriptor->alignment),
+           emitU64Constant(plan, descriptor->bitWidth),
+           emitBytesConstant(plan, encodeTrace(descriptor->traceOffsets,
+                                               descriptor->traceKinds)),
+           emitBytesConstant(plan, planBytes)});
     }
-    return emitIntrinsicRegisters(
-        plan, kIntrinsicAssocCreate,
-        {emitU64Constant(plan, op.getTypeId()),
-         emitU64Constant(plan, static_cast<uint32_t>(op.getElementKind())),
-         emitU64Constant(plan, static_cast<uint32_t>(op.getElementFlags())),
-         emitU64Constant(plan, op.getValueSize()),
-         emitU64Constant(plan, op.getAlignment()),
-         emitU64Constant(plan, op.getBitWidth()),
-         emitBytesConstant(plan, traceSlots),
-         emitU64Constant(plan, static_cast<uint32_t>(op.getKeyKind())),
-         emitU64Constant(plan, op.getKeyWidth())},
-        {reg(plan, op.getResult())});
+    return emitIntrinsicRegisters(plan, kIntrinsicAssocCreate, inputs,
+                                  {reg(plan, op.getResult())});
   }
   if (auto op = dyn_cast<sim::SimAssocReadOp>(operation))
     return emitIntrinsic(plan, kIntrinsicAssocRead,

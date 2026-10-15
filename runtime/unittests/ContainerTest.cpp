@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -2425,6 +2426,387 @@ TEST_F(ManagedValueTest, AggregateWindowsPreservePlanesAndDetachedAliases) {
               OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &parentRoot), OBELISK_RT_OK);
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &queueRoot), OBELISK_RT_OK);
+}
+
+// Equality-plan records for element-keyed associative arrays.
+std::array<uint64_t, 4> keyPlanRecord(uint32_t opcode, uint64_t offset,
+                                      uint64_t operand0 = 0,
+                                      uint64_t operand1 = 0,
+                                      uint64_t body = 0) {
+  return {uint64_t{opcode} | (body << 32), offset, operand0, operand1};
+}
+
+std::vector<uint8_t>
+keyPlanBytes(std::initializer_list<std::array<uint64_t, 4>> records) {
+  std::vector<uint64_t> words{
+      uint64_t{OBELISK_RT_ASSOC_KEY_PLAN_MAGIC} |
+          (uint64_t{OBELISK_RT_ASSOC_KEY_PLAN_VERSION} << 32),
+      records.size()};
+  for (const auto &record : records)
+    words.insert(words.end(), record.begin(), record.end());
+  std::vector<uint8_t> bytes(words.size() * sizeof(uint64_t));
+  for (size_t word = 0; word != words.size(); ++word)
+    for (unsigned byte = 0; byte != 8; ++byte)
+      bytes[word * 8 + byte] = static_cast<uint8_t>(words[word] >> (byte * 8));
+  return bytes;
+}
+
+// struct { logic [3:0] l; string s; }: l in bits 0..3, s in the word at
+// byte 8. Bits 4..63 are padding.
+constexpr uint64_t structKeyTypeID = 900;
+const obelisk_rt_element_trace_slot_v1 structKeyTrace{
+    8, OBELISK_RT_MANAGED_SLOT_STRING, 0};
+
+obelisk_rt_status createStructKeyed(obelisk_rt_gc_lane_v1 *lane,
+                                    const std::vector<uint8_t> &plan,
+                                    obelisk_rt_object_v1 **array) {
+  return obelisk_rt_v1_assoc_create_element_keyed(
+      lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+      wordElement.value_size, wordElement.alignment, wordElement.bit_width,
+      nullptr, 0, structKeyTypeID, OBELISK_RT_ELEMENT_AGGREGATE,
+      OBELISK_RT_ELEMENT_FOUR_STATE, 16, 1, 128, &structKeyTrace, 1,
+      plan.data(), plan.size(), array);
+}
+
+const std::vector<uint8_t> structKeyPlan =
+    keyPlanBytes({keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 0, 4, 1),
+                  keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_STRING, 64)});
+
+struct StructKey {
+  std::array<uint8_t, 16> value{};
+  std::array<uint8_t, 16> unknown{};
+  obelisk_rt_assoc_key_v1 key{};
+
+  StructKey(uint8_t bits, obelisk_rt_string_v1 string) {
+    value[0] = bits;
+    std::memcpy(value.data() + 8, &string, sizeof(string));
+    key.kind = OBELISK_RT_ASSOC_KEY_ELEMENT;
+    key.width = 128;
+    key.value_data = value.data();
+    key.unknown_data = unknown.data();
+  }
+};
+
+TEST_F(ManagedValueTest, AssociativeElementKeysCompareThroughTheirPlan) {
+  ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, 1), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(createStructKeyed(lane, structKeyPlan, &array), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_assoc_key_kind_v1 kind = 0;
+  uint64_t width = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_key_info(array, &kind, &width), OBELISK_RT_OK);
+  EXPECT_EQ(kind, uint32_t{OBELISK_RT_ASSOC_KEY_ELEMENT});
+  EXPECT_EQ(width, 128u);
+
+  obelisk_rt_string_v1 text = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "a long key", 10, &text),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_managed_root_v1 textRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(lane, &textRoot, &text),
+            OBELISK_RT_OK);
+  StructKey inserted(5, text);
+  uint64_t stored = 10;
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_write(lane, array, &inserted.key, &stored, nullptr),
+      OBELISK_RT_OK);
+  // The array keeps its own key: the caller's string may be collected.
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &textRoot), OBELISK_RT_OK);
+  text = 0;
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+
+  // An equal key compares its string by value and ignores padding bits and
+  // their unknown plane.
+  obelisk_rt_string_v1 equal = 0;
+  ASSERT_EQ(obelisk_rt_v1_string_create(lane, "a long key", 10, &equal),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_managed_root_push(lane, &textRoot, &equal),
+            OBELISK_RT_OK);
+  StructKey lookup(0xf5, equal);
+  lookup.value[1] = 0xab;
+  lookup.unknown[0] = 0xf0;
+  lookup.unknown[2] = 0xff;
+  uint64_t value = 0;
+  uint32_t present = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(array, &lookup.key, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, stored);
+  StructKey other(6, equal);
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(array, &other.key, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
+
+  // IEEE 1800-2023 7.8.5: an X or Z bit in any compared part makes the index
+  // invalid.
+  StructKey unknownKey(5, equal);
+  unknownKey.unknown[0] = 0x01;
+  testing::internal::CaptureStderr();
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_write(lane, array, &unknownKey.key, &stored, nullptr),
+      OBELISK_RT_OK);
+  EXPECT_NE(testing::internal::GetCapturedStderr().find("X or Z"),
+            std::string::npos);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 1u);
+
+  // Traversal returns the stored key's planes.
+  StructKey cursor(0, 0);
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_first(lane, array, &cursor.key, &success),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ(cursor.value[0] & 0xf, 5);
+  obelisk_rt_string_v1 cursorText = 0;
+  std::memcpy(&cursorText, cursor.value.data() + 8, sizeof(cursorText));
+  EXPECT_EQ(obelisk_rt_v1_string_compare(cursorText, equal), 0);
+  ASSERT_EQ(obelisk_rt_v1_assoc_next(lane, array, &cursor.key, &success),
+            OBELISK_RT_OK);
+  EXPECT_EQ(success, 0u);
+
+  obelisk_rt_object_v1 *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  value = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(copy, &lookup.key, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, stored);
+  ASSERT_EQ(obelisk_rt_v1_assoc_delete(copy, &lookup.key), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(copy), 0u);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 1u);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_managed_root_pop(lane, &textRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, AssociativeElementKeysOwnTheirDynamicMembers) {
+  // int k[] indexing int a[k]: the key is a dynamic array compared by size and
+  // then element by element; a null array is the empty array.
+  std::vector<uint8_t> plan = keyPlanBytes(
+      {keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_SEQUENCE, 0, 8, 0, 1),
+       keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 0, 64, 0)});
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create_element_keyed(
+                lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+                wordElement.value_size, wordElement.alignment,
+                wordElement.bit_width, nullptr, 0, 901,
+                OBELISK_RT_ELEMENT_CONTAINER_HANDLE, 0, 8, 1, 0, nullptr, 0,
+                plan.data(), plan.size(), &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *keyArray = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 2, &keyArray),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 keyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &keyRoot, &keyArray),
+            OBELISK_RT_OK);
+  auto setElement = [&](int64_t index, uint64_t element) {
+    ASSERT_EQ(
+        obelisk_rt_v1_container_write(lane, keyArray, index, &element, nullptr),
+        OBELISK_RT_OK);
+  };
+  auto keyFor = [](obelisk_rt_object_v1 *const &handle) {
+    obelisk_rt_assoc_key_v1 key{};
+    key.kind = OBELISK_RT_ASSOC_KEY_ELEMENT;
+    key.width = 64;
+    key.value_data = const_cast<obelisk_rt_object_v1 **>(&handle);
+    return key;
+  };
+  setElement(0, 1);
+  setElement(1, 2);
+  obelisk_rt_assoc_key_v1 key = keyFor(keyArray);
+  uint64_t stored = 12;
+  ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &stored, nullptr),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *none = nullptr;
+  obelisk_rt_assoc_key_v1 nullKey = keyFor(none);
+  uint64_t empty = 3;
+  ASSERT_EQ(obelisk_rt_v1_assoc_write(lane, array, &nullKey, &empty, nullptr),
+            OBELISK_RT_OK);
+
+  // Changing the caller's array leaves the stored key '{1, 2} intact.
+  setElement(0, 9);
+  uint64_t value = 0;
+  uint32_t present = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(array, &key, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
+  setElement(0, 1);
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(array, &key, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, stored);
+
+  obelisk_rt_object_v1 *emptyArray = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_dynamic_array_create(lane, &wordElement, 0, &emptyArray),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 emptyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &emptyRoot, &emptyArray),
+            OBELISK_RT_OK);
+  obelisk_rt_assoc_key_v1 emptyKey = keyFor(emptyArray);
+  ASSERT_EQ(
+      obelisk_rt_v1_assoc_read(array, &emptyKey, &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(present, 1u);
+  EXPECT_EQ(value, empty);
+
+  // The order is fixed by the canonical bytes: the empty array, then '{1, 2}.
+  // The returned key's array is the stored key's own.
+  obelisk_rt_object_v1 *cursorArray = nullptr;
+  obelisk_rt_assoc_key_v1 cursor = keyFor(cursorArray);
+  uint32_t success = 0;
+  ASSERT_EQ(obelisk_rt_v1_assoc_first(lane, array, &cursor, &success),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ(obelisk_rt_v1_container_size(cursorArray), 0u);
+  ASSERT_EQ(obelisk_rt_v1_assoc_next(lane, array, &cursor, &success),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  ASSERT_NE(cursorArray, keyArray);
+  EXPECT_EQ(obelisk_rt_v1_container_size(cursorArray), 2u);
+  ASSERT_EQ(obelisk_rt_v1_assoc_prev(lane, array, &cursor, &success),
+            OBELISK_RT_OK);
+  ASSERT_EQ(success, 1u);
+  EXPECT_EQ(obelisk_rt_v1_container_size(cursorArray), 0u);
+
+  obelisk_rt_arg_v1 argument{OBELISK_RT_ARG_MANAGED_CONTAINER, 0, 0, &array,
+                             nullptr};
+  obelisk_rt_format_env_v1 environment{};
+  environment.time_multiplier = 1;
+  obelisk_rt_buffer_v1 output{};
+  ASSERT_EQ(obelisk_rt_v1_format(context, "%p", 2, &argument, 1, &environment,
+                                 &output),
+            OBELISK_RT_OK);
+  EXPECT_EQ(
+      std::string(reinterpret_cast<const char *>(output.data), output.size),
+      "'{'{}:3, '{1, 2}:12}");
+  obelisk_rt_v1_buffer_release(&output);
+
+  // Paths through equal keys share one capture, and deleting the entry
+  // detaches it.
+  obelisk_rt_object_v1 *paths[2] = {};
+  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(lane, array, &key,
+                                                      nullptr, 0, 0, nullptr,
+                                                      nullptr, 0, &paths[0]),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 pathRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &pathRoot, &paths[0]),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *equalArray = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, keyArray, &equalArray),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 equalRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &equalRoot, &equalArray),
+            OBELISK_RT_OK);
+  obelisk_rt_assoc_key_v1 equalKey = keyFor(equalArray);
+  ASSERT_EQ(obelisk_rt_v1_reference_path_assoc_create(lane, array, &equalKey,
+                                                      nullptr, 0, 0, nullptr,
+                                                      nullptr, 0, &paths[1]),
+            OBELISK_RT_OK);
+  EXPECT_EQ(paths[0], paths[1]);
+  value = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_load(paths[0], &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(value, stored);
+  uint64_t replaced = 21;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_store(lane, paths[0], &replaced, nullptr),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(array, &key, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(value, replaced);
+  ASSERT_EQ(obelisk_rt_v1_assoc_delete(array, &equalKey), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 1u);
+  value = 0;
+  ASSERT_EQ(
+      obelisk_rt_v1_reference_path_load(paths[0], &value, nullptr, &present),
+      OBELISK_RT_OK);
+  EXPECT_EQ(value, replaced);
+  ASSERT_EQ(obelisk_rt_v1_assoc_read(array, &key, &value, nullptr, &present),
+            OBELISK_RT_OK);
+  EXPECT_EQ(present, 0u);
+
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &equalRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &pathRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &emptyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &keyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, AssociativeElementKeysCompareActiveTaggedMembers) {
+  // union tagged { int a; int b; }: a in bits 0..31, b in bits 32..63, and a
+  // two-bit tag at bit 64 that is one for a and two for b.
+  std::vector<uint8_t> plan = keyPlanBytes(
+      {keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_TAGGED, 0, 64, 2, 4),
+       keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_ALTERNATIVE, 0, 1, 0, 1),
+       keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 0, 32, 0),
+       keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_ALTERNATIVE, 32, 2, 0, 1),
+       keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 0, 32, 0)});
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_assoc_create_element_keyed(
+                lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+                wordElement.value_size, wordElement.alignment,
+                wordElement.bit_width, nullptr, 0, 902,
+                OBELISK_RT_ELEMENT_AGGREGATE, 0, 9, 1, 72, nullptr, 0,
+                plan.data(), plan.size(), &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 arrayRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+  auto keyed = [&](uint8_t tag, uint32_t a, uint32_t b, uint64_t stored) {
+    std::array<uint8_t, 9> value{};
+    std::memcpy(value.data(), &a, sizeof(a));
+    std::memcpy(value.data() + 4, &b, sizeof(b));
+    value[8] = tag;
+    obelisk_rt_assoc_key_v1 key{};
+    key.kind = OBELISK_RT_ASSOC_KEY_ELEMENT;
+    key.width = 72;
+    key.value_data = value.data();
+    EXPECT_EQ(obelisk_rt_v1_assoc_write(lane, array, &key, &stored, nullptr),
+              OBELISK_RT_OK);
+  };
+  // The inactive member's stale bits are not part of the value.
+  keyed(1, 7, 100, 1);
+  keyed(1, 7, 200, 2);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 1u);
+  keyed(2, 7, 7, 3);
+  keyed(2, 8, 7, 4);
+  EXPECT_EQ(obelisk_rt_v1_container_size(array), 2u);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+}
+
+TEST_F(ManagedValueTest, AssociativeElementKeyPlansAreValidatedAndInterned) {
+  auto create = [&](const std::vector<uint8_t> &plan) {
+    obelisk_rt_object_v1 *array = nullptr;
+    return createStructKeyed(lane, plan, &array);
+  };
+  // Bits beyond the 128-bit key, an alternative outside a tagged union, and a
+  // bad header are all rejected.
+  EXPECT_EQ(create(keyPlanBytes(
+                {keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 120, 9, 0)})),
+            OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(create(keyPlanBytes({keyPlanRecord(
+                OBELISK_RT_ASSOC_KEY_PLAN_ALTERNATIVE, 0, 1, 0, 0)})),
+            OBELISK_RT_INVALID_ARGUMENT);
+  std::vector<uint8_t> truncated = structKeyPlan;
+  truncated.resize(truncated.size() - 8);
+  EXPECT_EQ(create(truncated), OBELISK_RT_INVALID_ARGUMENT);
+  // One key type has one plan.
+  EXPECT_EQ(create(structKeyPlan), OBELISK_RT_OK);
+  EXPECT_EQ(create(keyPlanBytes(
+                {keyPlanRecord(OBELISK_RT_ASSOC_KEY_PLAN_BITS, 0, 4, 1)})),
+            OBELISK_RT_INVALID_DESIGN);
 }
 
 } // namespace

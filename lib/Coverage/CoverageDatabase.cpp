@@ -3557,17 +3557,19 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     previousContainerType = type.id;
     const bool associative =
         type.kind == FunctionalContainerKind::AssociativeArray;
-    const bool integerKey =
+    // Integral and element keys carry their width.
+    const bool sizedKey =
         type.keyKind == FunctionalContainerKeyKind::Unsigned ||
-        type.keyKind == FunctionalContainerKeyKind::Signed;
+        type.keyKind == FunctionalContainerKeyKind::Signed ||
+        type.keyKind == FunctionalContainerKeyKind::Element;
     if (!enumBetween(type.kind, FunctionalContainerKind::DynamicArray,
                      FunctionalContainerKind::Mailbox) ||
         !enumBetween(type.keyKind, FunctionalContainerKeyKind::None,
-                     FunctionalContainerKeyKind::Wildcard) ||
+                     FunctionalContainerKeyKind::Element) ||
         !type.elementType ||
         (associative ? type.keyKind == FunctionalContainerKeyKind::None
                      : type.keyKind != FunctionalContainerKeyKind::None) ||
-        (integerKey ? !type.keyWidth : bool(type.keyWidth)) ||
+        (sizedKey ? !type.keyWidth : bool(type.keyWidth)) ||
         (type.kind != FunctionalContainerKind::Queue && type.bound))
       return fail(Status::InvalidReference, "functional_container_type");
     containerTypesByID.emplace(type.id, &type);

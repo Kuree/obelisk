@@ -39,3 +39,16 @@ func.func private @signed_class_assoc(
 // expected-error @+2 {{string, class, or process key cannot be signed}}
 func.func private @signed_process_assoc(
     %arg: !simulation.assoc_array<!simulation.process, i32, true, false>)
+
+// -----
+
+// IEEE 1800-2023 7.8.5: an index type containing a real is illegal.
+// expected-error @+2 {{key must be a string, class handle, process, normalized integral type, or another type with an equality operator}}
+func.func private @real_member_assoc(
+    %arg: !simulation.assoc_array<!simulation.unpacked_struct<[#simulation.field<name = "r", type = f64, ordinal = 0, packedOffset = 0>]>, i32, false, false>)
+
+// -----
+
+// expected-error @+2 {{only an integral key can be signed}}
+func.func private @signed_element_assoc(
+    %arg: !simulation.assoc_array<!simulation.dynamic_array<i32>, i32, true, false>)

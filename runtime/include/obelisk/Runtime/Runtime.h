@@ -1436,6 +1436,47 @@ enum {
   OBELISK_RT_RECURSIVE_BITSTREAM_OBJECT = UINT32_C(5)
 };
 
+// Versioned equality plan of an OBELISK_RT_ASSOC_KEY_ELEMENT index type (IEEE
+// 1800-2023 7.8.5). It lists in preorder every part of an index value that the
+// type's equality operator compares, so the runtime can hash, compare and order
+// indices without knowing their source type. All words are little-endian
+// uint64 values: a two-word header {MAGIC | VERSION << 32, record count} and
+// four-word records {opcode | body_records << 32, bit offset, operand0,
+// operand1}. A record owns the body_records that follow it.
+//  - BITS compares operand0 bits. When operand1 is one they are four-state,
+//    and an X or Z bit makes the index invalid (7.8.6).
+//  - STRING compares a managed string word by value.
+//  - OBJECT compares a managed object word by identity. Null is a value.
+//  - SEQUENCE compares a dynamic-array or queue word by size and then element
+//    by element. Its body describes one element of operand0 bytes, from that
+//    element's own planes. Null is the empty array.
+//  - ASSOCIATIVE compares an associative-array word by its entries. Its body
+//    describes one value of operand0 bytes. Null is the empty array.
+//  - REPEAT applies its body operand0 times, operand1 bits apart.
+//  - TAGGED compares a tagged union by its operand1-bit tag, operand0 bits past
+//    the union, and then by the active member. Its body is ALTERNATIVE records,
+//    each naming one member's tag value in operand0 and describing that member
+//    in its own body.
+// Except for SEQUENCE and ASSOCIATIVE, a body's offsets are relative to the
+// position its record's offset names. Two indices are equal when every
+// comparison holds; their relative order is fixed for a run but unspecified.
+enum {
+  OBELISK_RT_ASSOC_KEY_PLAN_MAGIC = UINT32_C(0x4b504b41),
+  OBELISK_RT_ASSOC_KEY_PLAN_VERSION = UINT32_C(1),
+  OBELISK_RT_ASSOC_KEY_PLAN_HEADER_WORDS = UINT32_C(2),
+  OBELISK_RT_ASSOC_KEY_PLAN_RECORD_WORDS = UINT32_C(4),
+  OBELISK_RT_ASSOC_KEY_PLAN_MAX_DEPTH = UINT32_C(64),
+  OBELISK_RT_ASSOC_KEY_PLAN_MAX_RECORDS = UINT32_C(1048576),
+  OBELISK_RT_ASSOC_KEY_PLAN_BITS = UINT32_C(1),
+  OBELISK_RT_ASSOC_KEY_PLAN_STRING = UINT32_C(2),
+  OBELISK_RT_ASSOC_KEY_PLAN_OBJECT = UINT32_C(3),
+  OBELISK_RT_ASSOC_KEY_PLAN_SEQUENCE = UINT32_C(4),
+  OBELISK_RT_ASSOC_KEY_PLAN_ASSOCIATIVE = UINT32_C(5),
+  OBELISK_RT_ASSOC_KEY_PLAN_REPEAT = UINT32_C(6),
+  OBELISK_RT_ASSOC_KEY_PLAN_TAGGED = UINT32_C(7),
+  OBELISK_RT_ASSOC_KEY_PLAN_ALTERNATIVE = UINT32_C(8)
+};
+
 // Pointer-free class bit-stream image. Every record is naturally aligned and
 // has the same byte layout on native64 and wasm32. Offsets are image-relative;
 // counts and ranges are validated before any record is trusted.
@@ -2839,7 +2880,13 @@ enum {
   OBELISK_RT_ASSOC_KEY_STRING = 3,
   OBELISK_RT_ASSOC_KEY_CLASS = 4,
   OBELISK_RT_ASSOC_KEY_PROCESS = 5,
-  OBELISK_RT_ASSOC_KEY_WILDCARD = 6
+  OBELISK_RT_ASSOC_KEY_WILDCARD = 6,
+  // Any other index type with an equality operator, such as an unpacked
+  // structure, array or union, a dynamically sized array, or a mailbox,
+  // semaphore, event, chandle or virtual interface (IEEE 1800-2023 7.8.5). The
+  // array compares these indices through an equality plan; see
+  // obelisk_rt_v1_assoc_create_element_keyed.
+  OBELISK_RT_ASSOC_KEY_ELEMENT = 7
 };
 
 // Canonical typed associative key. Integral keys up to 64 bits use the inline
@@ -2850,8 +2897,14 @@ enum {
 // keys use value and require width/unknown/string to be zero; their
 // stable scheduler token provides identity and zero is a valid null key. Any
 // nonzero unknown bit within width makes an integral-key operation a no-op.
-// Wide spans only need to remain valid for the duration of the call; traversal
-// writes through value_data and clears unknown_data when it is non-null.
+// Element keys use value_data and, exactly when the key element type is
+// four-state, unknown_data spans of the key element's value_size bytes, with
+// width set to eight times that size; an X or Z bit that the key's equality
+// plan compares as four-state makes the operation a no-op. The array keeps its
+// own deep copy of every inserted element key. Wide spans only need to remain
+// valid for the duration of the call; traversal writes through value_data and
+// clears unknown_data when it is non-null, or for an element key copies the
+// stored key's planes, whose dynamic members remain the stored key's own.
 typedef struct obelisk_rt_assoc_key_v1 {
   obelisk_rt_assoc_key_kind_v1 kind;
   uint32_t reserved;
@@ -3045,6 +3098,20 @@ obelisk_rt_status obelisk_rt_v1_assoc_create_typed(
     uint64_t bit_width, const obelisk_rt_element_trace_slot_v1 *trace_slots,
     uint64_t trace_slot_count, obelisk_rt_assoc_key_kind_v1 key_kind,
     uint64_t key_width, obelisk_rt_object_v1 **out_array);
+// Create an associative array whose index is an OBELISK_RT_ASSOC_KEY_ELEMENT
+// value of the key element type that follows the value element type. key_plan
+// holds key_plan_size bytes of the key type's equality plan (see
+// OBELISK_RT_ASSOC_KEY_PLAN_MAGIC).
+obelisk_rt_status obelisk_rt_v1_assoc_create_element_keyed(
+    obelisk_rt_gc_lane_v1 *lane, uint64_t type_id, uint32_t element_kind,
+    uint32_t element_flags, uint64_t value_size, uint64_t alignment,
+    uint64_t bit_width, const obelisk_rt_element_trace_slot_v1 *trace_slots,
+    uint64_t trace_slot_count, uint64_t key_type_id, uint32_t key_element_kind,
+    uint32_t key_element_flags, uint64_t key_value_size, uint64_t key_alignment,
+    uint64_t key_bit_width,
+    const obelisk_rt_element_trace_slot_v1 *key_trace_slots,
+    uint64_t key_trace_slot_count, const uint8_t *key_plan,
+    uint64_t key_plan_size, obelisk_rt_object_v1 **out_array);
 obelisk_rt_status obelisk_rt_v1_assoc_exists(obelisk_rt_object_v1 *array,
                                              const obelisk_rt_assoc_key_v1 *key,
                                              uint32_t *out_exists);
