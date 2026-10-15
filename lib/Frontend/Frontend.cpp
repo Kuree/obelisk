@@ -35,6 +35,8 @@
 #include "slang/driver/Driver.h"
 #include "slang/numeric/Time.h"
 #include "slang/syntax/AllSyntax.h"
+#include "slang/syntax/SyntaxTree.h"
+#include "slang/syntax/SyntaxVisitor.h"
 #include "slang/util/OS.h"
 #include "slang/util/VersionInfo.h"
 
@@ -91,6 +93,11 @@ template <typename Value> std::string formatConstant(const Value &value) {
 /// it; what it buys is not having to fold that tree a second time. Read back
 /// under the same name by the simulation lowering.
 constexpr llvm::StringLiteral foldedConstantAttrName = "folded_constant";
+/// Finest precision any timeprecision, timeunit or `timescale in the source
+/// declares, whether or not an elaborated scope uses it. Read back under the
+/// same name by the simulation lowering.
+constexpr llvm::StringLiteral declaredTimePrecisionAttrName =
+    "declared_time_precision_fs";
 // IEEE 1800-2017 20.7 query order cannot be reconstructed from a canonical
 // storage type after unpacked-array typedef boundaries have been erased.
 constexpr llvm::StringLiteral arrayQueryDimensionsAttrName =
@@ -288,6 +295,55 @@ uint64_t getFemtoseconds(slang::TimeScaleValue value) {
     break;
   }
   return unit * static_cast<uint64_t>(value.magnitude);
+}
+
+/// IEEE 1800-2023 3.14.3: the global time precision is the minimum of every
+/// timeprecision statement, every timeunit precision argument and the
+/// smallest `timescale precision in the design. A declaration counts even
+/// when no elaborated scope takes its time scale from it, so this reads the
+/// parsed source rather than the scopes.
+std::optional<uint64_t>
+getDeclaredTimePrecision(const slang::ast::Compilation &compilation) {
+  struct Visitor : slang::syntax::SyntaxVisitor<Visitor> {
+    std::optional<uint64_t> precision;
+
+    void accumulate(slang::parsing::Token token) {
+      if (token.kind != slang::parsing::TokenKind::TimeLiteral ||
+          token.isMissing())
+        return;
+      std::optional<slang::TimeScaleValue> value =
+          slang::TimeScaleValue::fromLiteral(token.realValue(),
+                                             token.numericFlags().unit());
+      if (!value)
+        return;
+      uint64_t femtoseconds = getFemtoseconds(*value);
+      precision = precision ? std::min(*precision, femtoseconds) : femtoseconds;
+    }
+
+    void handle(const slang::syntax::TimeUnitsDeclarationSyntax &syntax) {
+      if (syntax.keyword.kind ==
+          slang::parsing::TokenKind::TimePrecisionKeyword)
+        accumulate(syntax.time);
+      else if (syntax.divider)
+        accumulate(syntax.divider->value);
+      visitDefault(syntax);
+    }
+
+    // Directives survive only as trivia of the token that follows them.
+    void visitToken(slang::parsing::Token token) {
+      for (const slang::parsing::Trivia &trivia : token.trivia())
+        if (trivia.kind == slang::parsing::TriviaKind::Directive)
+          if (const slang::syntax::SyntaxNode *directive = trivia.syntax();
+              directive &&
+              directive->kind == slang::syntax::SyntaxKind::TimeScaleDirective)
+            accumulate(directive->as<slang::syntax::TimeScaleDirectiveSyntax>()
+                           .timePrecision);
+    }
+  } visitor;
+  for (const std::shared_ptr<slang::syntax::SyntaxTree> &tree :
+       compilation.getSyntaxTrees())
+    tree->root().visit(visitor);
+  return visitor.precision;
 }
 
 SmallVector<std::optional<int64_t>, 12>
@@ -3151,6 +3207,13 @@ private:
           attrs.set("path_pulse_error_fs", builder.getI64IntegerAttr(*error));
         }
       }
+    }
+
+    if constexpr (std::same_as<T, slang::ast::RootSymbol>) {
+      if (std::optional<uint64_t> precision =
+              getDeclaredTimePrecision(compilation))
+        attrs.set(declaredTimePrecisionAttrName,
+                  builder.getI64IntegerAttr(*precision));
     }
 
     if constexpr (std::same_as<T, slang::ast::InstanceBodySymbol>) {

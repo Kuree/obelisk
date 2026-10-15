@@ -46,6 +46,11 @@ inline constexpr ::mlir::StringLiteral readMemEnumElementValuesAttrName =
 /// Written by the Slang importer, so the spelling is fixed there as well.
 inline constexpr ::mlir::StringLiteral foldedConstantAttrName =
     "folded_constant";
+/// Finest precision any timeprecision, timeunit or `timescale in the source
+/// declares, carried on the semantic root. Written by the Slang importer, so
+/// the spelling is fixed there as well.
+inline constexpr ::mlir::StringLiteral declaredTimePrecisionAttrName =
+    "declared_time_precision_fs";
 /// Source array-query order when typedef expansion differs from storage
 /// nesting (IEEE 1800-2017 20.7).
 inline constexpr ::mlir::StringLiteral arrayQueryDimensionsAttrName =

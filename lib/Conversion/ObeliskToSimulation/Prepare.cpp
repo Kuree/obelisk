@@ -1916,6 +1916,19 @@ void ObeliskSimPreparePass::runOnOperation() {
           return;
         accumulateTimeScale(body, "simulation scope");
       });
+  // IEEE 1800-2023 3.14.3: a precision declared where no elaborated scope
+  // uses it, such as in the compilation unit or a package, still refines the
+  // global precision that 1step and $root report.
+  if (auto declared = semanticRoot->getAttrOfType<IntegerAttr>(
+          declaredTimePrecisionAttrName)) {
+    std::optional<uint64_t> precisionFs = getUnsigned64(declared);
+    if (!precisionFs || *precisionFs == 0) {
+      semanticRoot.emitError("invalid declared time precision");
+      invalid = true;
+    } else {
+      designPrecisionFs = std::min(designPrecisionFs, *precisionFs);
+    }
+  }
   if (designPrecisionFs == std::numeric_limits<uint64_t>::max())
     designPrecisionFs = 1'000'000;
   if (designPrecisionFs >
