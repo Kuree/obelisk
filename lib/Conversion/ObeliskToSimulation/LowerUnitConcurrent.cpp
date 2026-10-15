@@ -5361,6 +5361,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       DenseMap<Attribute, Value> symbols;
       DenseMap<std::pair<Operation *, Operation *>, Value> caseGuards;
       DenseMap<Operation *, Value> selectors;
+      void clear() {
+        predicates.clear();
+        symbols.clear();
+        caseGuards.clear();
+        selectors.clear();
+      }
     };
     auto evaluateExpectAge = [&](const FixedSequenceAge &age,
                                  ExpectAgeCache &cache) -> FailureOr<Value> {
@@ -5620,7 +5626,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                                      expectPendingStorage);
         }
         if (step.waitsForClock) {
-          cache = ExpectAgeCache{};
+          cache.clear();
           Block *sample = addBlock();
           if (failed(emitEventSuspend(clock, sample)))
             return failure();
