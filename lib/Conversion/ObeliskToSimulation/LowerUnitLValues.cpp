@@ -996,11 +996,9 @@ UnitLowering::insertCapturedPackedSlice(const CapturedLValue &selection,
   return updated;
 }
 
-LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
-                                                Value value, bool sourceSigned,
-                                                bool nonblocking,
-                                                Location location,
-                                                Value delay) {
+LogicalResult UnitLowering::writeCapturedLValue(
+    CapturedLValue &destination, Value value, bool sourceSigned,
+    bool nonblocking, Location location, Value delay, StoredValue stored) {
   if (!nonblocking || observeNonblockingWrites)
     recordImplicitWrite(destination.reference);
   switch (destination.kind) {
@@ -1055,11 +1053,9 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 isSignedNode(destination.semanticNode));
     if (failed(converted))
       return failure();
-    Value published = *converted;
-    if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
-            destination.type))
-      published = sim::SimContainerCloneOp::create(builder, location,
-                                                   destination.type, published);
+    Value published = stored == StoredValue::Owned
+                          ? *converted
+                          : cloneSequentialValue(*converted, location);
     Type referenceType = destination.reference.getType();
     if (isa<sim::ManagedRefType>(referenceType)) {
       if (nonblocking)
@@ -2101,7 +2097,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     sim::SimContainerWriteOp::create(builder, location, updated,
                                      destination.index, *converted);
     if (!directStorage) {
-      if (failed(writeCapturedLValue(base, updated, false, false, location)))
+      if (failed(writeCapturedLValue(base, updated, false, false, location,
+                                     Value{}, StoredValue::Owned)))
         return failure();
     } else {
       Block *publish = addBlock();
@@ -2109,7 +2106,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       cf::CondBranchOp::create(builder, location, wasNull, publish,
                                ValueRange{}, published, ValueRange{});
       setCurrent(publish);
-      if (failed(writeCapturedLValue(base, updated, false, false, location)))
+      if (failed(writeCapturedLValue(base, updated, false, false, location,
+                                     Value{}, StoredValue::Owned)))
         return failure();
       cf::BranchOp::create(builder, location, published);
       setCurrent(published);
@@ -2225,7 +2223,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
     sim::SimAssocWriteOp::create(builder, location, *allocated,
                                  destination.index, *converted);
     if (failed(writeCapturedLValue(createBase, *allocated, false, false,
-                                   location)))
+                                   location, Value{}, StoredValue::Owned)))
       return failure();
     cf::BranchOp::create(builder, location, resume, ValueRange{*allocated});
 
@@ -2241,8 +2239,9 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                               *currentContainer));
     sim::SimAssocWriteOp::create(builder, location, updated, destination.index,
                                  *converted);
-    if (!directStorage && failed(writeCapturedLValue(existingBase, updated,
-                                                     false, false, location)))
+    if (!directStorage &&
+        failed(writeCapturedLValue(existingBase, updated, false, false,
+                                   location, Value{}, StoredValue::Owned)))
       return failure();
     cf::BranchOp::create(builder, location, resume, ValueRange{updated});
     setCurrent(resume);
@@ -2275,7 +2274,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           builder.getDenseI64ArrayAttr(
               {static_cast<int64_t>(destination.ordinal)}));
       return writeCapturedLValue(selected, value, sourceSigned, false, location,
-                                 delay);
+                                 delay, stored);
     }
     if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
       if (auto array = dyn_cast<sim::UnpackedArrayType>(base.type)) {
@@ -2291,7 +2290,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                                       builder.getI64IntegerAttr(sourceIndex));
         selected.children.push_back(base);
         return writeCapturedLValue(selected, value, sourceSigned, true,
-                                   location, delay);
+                                   location, delay, stored);
       }
     }
     FailureOr<Value> aggregate = loadCapturedLValue(base, location);
@@ -2302,11 +2301,13 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         sim::getAggregateElementType((*aggregate).getType(),
                                      destination.ordinal) != destination.type)
       return failure();
+    if (stored == StoredValue::Borrowed)
+      replacement = cloneSequentialValue(*replacement, location);
     Value updated = sim::SimAggregateInsertOp::create(
         builder, location, (*aggregate).getType(), *aggregate, *replacement,
         destination.ordinal);
     return writeCapturedLValue(base, updated, false, nonblocking, location,
-                               delay);
+                               delay, StoredValue::Owned);
   }
   case CapturedLValue::Kind::AggregateDynamicElement: {
     if (destination.children.size() != 1)
@@ -2317,6 +2318,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 isSignedNode(destination.semanticNode));
     if (failed(replacement))
       return failure();
+    if (stored == StoredValue::Borrowed)
+      replacement = cloneSequentialValue(*replacement, location);
     if (nonblocking && base.kind == CapturedLValue::Kind::Reference) {
       auto array = dyn_cast<sim::UnpackedArrayType>(base.type);
       if (!array)
@@ -2358,7 +2361,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
         builder, location, (*aggregate).getType(), *aggregate, *replacement,
         destination.index);
     return writeCapturedLValue(base, updated, false, nonblocking, location,
-                               delay);
+                               delay, StoredValue::Owned);
   }
   case CapturedLValue::Kind::AggregateSlice: {
     FailureOr<Value> converted =
@@ -2366,6 +2369,8 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
                 isSignedNode(destination.semanticNode));
     if (failed(converted))
       return failure();
+    if (stored == StoredValue::Borrowed)
+      converted = cloneSequentialValue(*converted, location);
     if (!destination.indices.empty()) {
       if (destination.children.size() != 1 ||
           destination.indices.size() !=
@@ -2392,7 +2397,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
           selected.index = index;
           selected.children.push_back(base);
           if (failed(writeCapturedLValue(selected, element, false, true,
-                                         location, delay)))
+                                         location, delay, StoredValue::Owned)))
             return failure();
         }
         return success();
@@ -2411,7 +2416,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
             builder, location, source, updated, *replacement, index);
       }
       return writeCapturedLValue(base, updated, false, nonblocking, location,
-                                 delay);
+                                 delay, StoredValue::Owned);
     }
     if (destination.children.size() !=
         sim::getAggregateNumElements(destination.type))
@@ -2422,7 +2427,7 @@ LogicalResult UnitLowering::writeCapturedLValue(CapturedLValue &destination,
       Value element = sim::SimAggregateExtractOp::create(
           builder, location, elementType, *converted, ordinal);
       if (failed(writeCapturedLValue(child, element, false, nonblocking,
-                                     location, delay)))
+                                     location, delay, StoredValue::Owned)))
         return failure();
     }
     return success();

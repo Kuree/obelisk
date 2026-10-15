@@ -282,11 +282,25 @@ private:
   ::mlir::FailureOr<::mlir::Value>
   loadCapturedLValue(const CapturedLValue &destination,
                      ::mlir::Location location);
+  /// Whether a stored value may share sequential containers with other
+  /// storage. Assignment copies a borrowed value, including containers nested
+  /// in fixed aggregates (IEEE 1800-2023 7.6). A write-back rebuilt from the
+  /// destination's own value and already copied parts is owned: storing it
+  /// keeps the identity of the containers it holds.
+  enum class StoredValue { Borrowed, Owned };
   ::mlir::LogicalResult writeCapturedLValue(CapturedLValue &destination,
                                             ::mlir::Value value,
                                             bool sourceSigned, bool nonblocking,
                                             ::mlir::Location location,
-                                            ::mlir::Value delay = {});
+                                            ::mlir::Value delay = {}) {
+    return writeCapturedLValue(destination, value, sourceSigned, nonblocking,
+                               location, delay, StoredValue::Borrowed);
+  }
+  ::mlir::LogicalResult
+  writeCapturedLValue(CapturedLValue &destination, ::mlir::Value value,
+                      bool sourceSigned, bool nonblocking,
+                      ::mlir::Location location, ::mlir::Value delay,
+                      StoredValue stored);
   bool haveSameCapturedStorage(const CapturedLValue &lhs,
                                const CapturedLValue &rhs) const;
   void propagateCapturedContainers(const CapturedLValue &source,

@@ -215,7 +215,8 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return failure();
     Value updated = sim::SimContainerExportFixedOp::create(
         builder, location, fixed, temporary, *elementSpan);
-    if (failed(writeCapturedLValue(*captured, updated, false, false, location)))
+    if (failed(writeCapturedLValue(*captured, updated, false, false, location,
+                                   Value{}, StoredValue::Owned)))
       return failure();
     return *result;
   }
@@ -279,14 +280,14 @@ FailureOr<Value> UnitLowering::lowerArrayMethod(semantic::SVCallExpressionOp op,
       return success();
     if (!commitCondition)
       return writeCapturedLValue(*capturedReceiver, *receiver, false, false,
-                                 location);
+                                 location, Value{}, StoredValue::Owned);
     Block *publish = addBlock();
     Block *done = addBlock();
     cf::CondBranchOp::create(builder, location, commitCondition, publish,
                              ValueRange{}, done, ValueRange{});
     setCurrent(publish);
     if (failed(writeCapturedLValue(*capturedReceiver, *receiver, false, false,
-                                   location)))
+                                   location, Value{}, StoredValue::Owned)))
       return failure();
     cf::BranchOp::create(builder, location, done);
     setCurrent(done);
@@ -1562,8 +1563,8 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
       sim::SimAssocDeleteOp::create(builder, location, updated, *key);
     }
     if (!directStorage) {
-      if (failed(
-              writeCapturedLValue(*captured, updated, false, false, location)))
+      if (failed(writeCapturedLValue(*captured, updated, false, false,
+                                     location, Value{}, StoredValue::Owned)))
         return failure();
     } else {
       Block *publish = addBlock();
@@ -1571,8 +1572,8 @@ UnitLowering::lowerAssociativeArrayMethod(semantic::SVCallExpressionOp op) {
       cf::CondBranchOp::create(builder, location, wasNull, publish,
                                ValueRange{}, done, ValueRange{});
       setCurrent(publish);
-      if (failed(
-              writeCapturedLValue(*captured, updated, false, false, location)))
+      if (failed(writeCapturedLValue(*captured, updated, false, false,
+                                     location, Value{}, StoredValue::Owned)))
         return failure();
       cf::BranchOp::create(builder, location, done);
       setCurrent(done);
