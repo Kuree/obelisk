@@ -2,8 +2,9 @@
 
 // IEEE 1800-2023 21.3.3: a format string or an $sformat/$swrite destination
 // may be a dynamic array or queue of byte. The format string is the array's
-// text in index order; a destination takes the size of the text (5.9), and
-// a bounded queue keeps its first bound + 1 characters (7.10.5).
+// text in index order, which the runtime renders as %s does. A destination
+// takes the size of the text (5.9), and a bounded queue keeps its first
+// bound + 1 characters (7.10.5).
 //
 //   module top;
 //     byte fmt[]; byte da[]; byte q[$:1]; string s;
@@ -15,14 +16,9 @@
 //   endmodule
 
 // CHECK-LABEL: simulation.func private @unit_0(
+// CHECK: %[[TEXT_FORMAT:.*]] = simulation.bytes.constant "%s"
 // CHECK: %[[FMT:.*]] = simulation.ref.load %arg1
-// CHECK: %[[COUNT:.*]] = simulation.container.size %[[FMT]]
-// CHECK: ^[[HEAD:bb[0-9]+]](%[[I:.*]]: i64, %[[TEXT:.*]]: !simulation.string):
-// CHECK: arith.cmpi ult, %[[I]], %[[COUNT]]
-// CHECK: %[[BYTE:.*]] = simulation.container.read %[[FMT]], %[[I]]
-// CHECK: %[[CHAR:.*]] = simulation.string.from_packed %[[BYTE]]
-// CHECK: simulation.string.concat %[[TEXT]], %[[CHAR]]
-// CHECK: ^{{bb[0-9]+}}(%[[FORMAT:.*]]: !simulation.string):
+// CHECK: %[[FORMAT:.*]] = simulation.string.output_format %arg0(%[[TEXT_FORMAT]], %[[FMT]]) radix = <decimal> flags = [32, 16] :
 // CHECK: simulation.string.output_format %arg0(%[[FORMAT]],
 // CHECK: %[[DTEXT:.*]] = simulation.string.output_format
 // CHECK: %[[DLEN:.*]] = simulation.string.length %[[DTEXT]]

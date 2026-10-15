@@ -683,36 +683,6 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
     }
     return dyn_cast<semantic::SVStringLiteralOp>(spelling);
   };
-  auto lowerByteArray = [&](Operation *child, Value value) -> FailureOr<Value> {
-    auto array = dyn_cast<sim::UnpackedArrayType>(value.getType());
-    if (!array || !isa<IntegerType>(array.getElementType()) ||
-        cast<IntegerType>(array.getElementType()).getWidth() != 8)
-      return failure();
-    SmallVector<Value> characters;
-    unsigned count = sim::getAggregateNumElements(array);
-    Type logicType = sim::LogicType::get(function.getContext(), 8);
-    characters.reserve(count);
-    for (unsigned index = 0; index != count; ++index) {
-      Value character = sim::SimAggregateExtractOp::create(
-          builder, getSemanticLocation(child), array.getElementType(), value,
-          index);
-      FailureOr<Value> converted =
-          convert(character, logicType, false, getSemanticLocation(child));
-      if (failed(converted))
-        return failure();
-      characters.push_back(*converted);
-    }
-    Value packed = sim::SimLogicConcatOp::create(
-        builder, getSemanticLocation(child),
-        sim::LogicType::get(function.getContext(), count * 8), characters);
-    // IEEE 1800-2017 21.2.1 and 21.3.3 define unpacked byte-array text in
-    // left-bound-to-right-bound order. Aggregate operands use that logical
-    // order, and string.from_packed reads its most-significant byte first.
-    return sim::SimStringFromPackedOp::create(
-               builder, getSemanticLocation(child), stringType, packed)
-        .getResult();
-  };
-
   // Track which source operand a statically known format conversion consumes.
   // This lets ordinary/default aggregate output keep its old single pattern
   // string, and lets literal %u or %z build only the representation that can
@@ -834,9 +804,7 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
       Value format = *value;
       if (!isa<sim::StringType>(format.getType())) {
         FailureOr<Value> bytes =
-            isByteContainerType(format.getType())
-                ? lowerByteContainerString(format, getSemanticLocation(child))
-                : lowerByteArray(child, format);
+            lowerByteArrayString(format, getSemanticLocation(child));
         if (succeeded(bytes))
           format = *bytes;
         else {
@@ -928,7 +896,12 @@ UnitLowering::lowerOutputListItems(ArrayRef<Operation *> operations,
           (interpretLiteralsAsFormats ? OBELISK_RT_OUTPUT_ITEM_FORMAT : 0));
       if (unconsumed && interpretLiteralsAsFormats)
         dynamicFormatOwnsRemainder = true;
-    } else if (auto bytes = lowerByteArray(child, *value); succeeded(bytes)) {
+    } else if (isa<sim::UnpackedArrayType>((*value).getType()) &&
+               isByteArrayType((*value).getType())) {
+      FailureOr<Value> bytes =
+          lowerByteArrayString(*value, getSemanticLocation(child));
+      if (failed(bytes))
+        return failure();
       output.items.push_back(*bytes);
       output.flags.push_back(OBELISK_RT_OUTPUT_ITEM_STRING);
     } else if (isa<sim::DynamicArrayType, sim::QueueType, sim::AssocArrayType>(
@@ -1147,44 +1120,57 @@ bool UnitLowering::isByteContainerType(Type type) {
   return integer && integer.getWidth() == 8;
 }
 
+bool UnitLowering::isByteArrayType(Type type) {
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+    auto integer = dyn_cast<IntegerType>(array.getElementType());
+    return integer && integer.getWidth() == 8;
+  }
+  return isByteContainerType(type);
+}
+
+FailureOr<Value> UnitLowering::lowerByteArrayString(Value value,
+                                                    Location location) {
+  if (isByteContainerType(value.getType()))
+    return lowerByteContainerString(value, location);
+  if (!isByteArrayType(value.getType()))
+    return failure();
+  auto array = cast<sim::UnpackedArrayType>(value.getType());
+  SmallVector<Value> characters;
+  unsigned count = sim::getAggregateNumElements(array);
+  Type logicType = sim::LogicType::get(function.getContext(), 8);
+  characters.reserve(count);
+  for (unsigned index = 0; index != count; ++index) {
+    Value character = sim::SimAggregateExtractOp::create(
+        builder, location, array.getElementType(), value, index);
+    FailureOr<Value> converted = convert(character, logicType, false, location);
+    if (failed(converted))
+      return failure();
+    characters.push_back(*converted);
+  }
+  Value packed = sim::SimLogicConcatOp::create(
+      builder, location, sim::LogicType::get(function.getContext(), count * 8),
+      characters);
+  // IEEE 1800-2023 21.2.1.7 and 21.3.3 define unpacked byte-array text in
+  // left-bound-to-right-bound order. Aggregate operands use that logical
+  // order, and string.from_packed reads its most-significant byte first.
+  return sim::SimStringFromPackedOp::create(
+             builder, location, sim::StringType::get(function.getContext()),
+             packed)
+      .getResult();
+}
+
 FailureOr<Value> UnitLowering::lowerByteContainerString(Value container,
                                                         Location location) {
-  Type stringType = sim::StringType::get(function.getContext());
-  Type i64 = builder.getI64Type();
-  Value size =
-      sim::SimContainerSizeOp::create(builder, location, i64, container);
-  Value zero = arith::ConstantOp::create(builder, location, i64,
-                                         builder.getI64IntegerAttr(0));
-  Value empty =
-      sim::SimStringLiteralOp::create(builder, location, stringType, "");
-  Block *header = addBlock();
-  header->addArgument(i64, location);
-  header->addArgument(stringType, location);
-  Block *body = addBlock();
-  Block *exit = addBlock();
-  exit->addArgument(stringType, location);
-  cf::BranchOp::create(builder, location, header, ValueRange{zero, empty});
-  setCurrent(header);
-  Value index = header->getArgument(0);
-  Value text = header->getArgument(1);
-  Value more = arith::CmpIOp::create(builder, location,
-                                     arith::CmpIPredicate::ult, index, size);
-  cf::CondBranchOp::create(builder, location, more, body, ValueRange{}, exit,
-                           ValueRange{text});
-  setCurrent(body);
-  Value character = sim::SimContainerReadOp::create(
-      builder, location, builder.getI8Type(), container, index);
-  // A string from a zero byte is empty, which drops NUL characters.
-  Value piece = sim::SimStringFromPackedOp::create(builder, location,
-                                                   stringType, character);
-  Value joined = sim::SimStringConcatOp::create(builder, location, stringType,
-                                                ValueRange{text, piece});
-  Value one = arith::ConstantOp::create(builder, location, i64,
-                                        builder.getI64IntegerAttr(1));
-  Value next = arith::AddIOp::create(builder, location, index, one);
-  cf::BranchOp::create(builder, location, header, ValueRange{next, joined});
-  setCurrent(exit);
-  return exit->getArgument(0);
+  // The runtime formats a byte container under %s as its text in one pass.
+  Value format = sim::SimBytesConstantOp::create(builder, location, "%s");
+  return sim::SimStringOutputFormatOp::create(
+             builder, location, sim::StringType::get(function.getContext()),
+             function.getBody().front().getArgument(0),
+             ValueRange{format, container}, sim::Radix::Decimal,
+             ArrayRef<int32_t>{OBELISK_RT_OUTPUT_ITEM_DESIGNATED_FORMAT,
+                               OBELISK_RT_OUTPUT_ITEM_CONTAINER},
+             StringAttr{}, StringAttr{}, IntegerAttr{}, IntegerAttr{})
+      .getResult();
 }
 
 FailureOr<Value> UnitLowering::lowerFormattedResult(Value text,

@@ -502,8 +502,16 @@ private:
   /// Whether `type` is a dynamic array or queue of byte, which formatted
   /// output reads and writes as text (IEEE 1800-2023 21.2.1.7, 21.3.3).
   static bool isByteContainerType(::mlir::Type type);
-  /// The text of a dynamic array or queue of byte, in index order. Like a
-  /// fixed byte array's, it omits NUL characters.
+  /// Whether `type` is an unpacked array of byte: fixed-size, dynamic, or a
+  /// queue.
+  static bool isByteArrayType(::mlir::Type type);
+  /// The text of an unpacked array of byte, from its left bound to its right
+  /// bound (IEEE 1800-2023 21.2.1.7), omitting NUL characters. Fails without
+  /// a diagnostic when `value` is not one.
+  ::mlir::FailureOr<::mlir::Value>
+  lowerByteArrayString(::mlir::Value value, ::mlir::Location location);
+  /// lowerByteArrayString for a dynamic array or queue, which the runtime
+  /// renders in one pass.
   ::mlir::FailureOr<::mlir::Value>
   lowerByteContainerString(::mlir::Value container, ::mlir::Location location);
   /// Convert formatted text to an $sformat or $swrite destination of type

@@ -244,8 +244,11 @@ UnitLowering::lowerScanSystemCall(semantic::SVCallExpressionOp op) {
     if (failed(source))
       return failure();
     textUnknown = hasUnknownBits(*source);
+    // IEEE 1800-2023 21.3.4.3: str may also be an unpacked array of byte.
     FailureOr<Value> converted =
-        convert(*source, stringType, isSignedNode(children[0]), location);
+        isByteArrayType((*source).getType())
+            ? lowerByteArrayString(*source, location)
+            : convert(*source, stringType, isSignedNode(children[0]), location);
     if (failed(converted))
       return failure();
     text = *converted;
