@@ -668,21 +668,37 @@ FailureOr<PreparedUnits> materializeCodeUnitDeclarations(
   // A member read through a class handle or a virtual interface also depends
   // on that receiver, which can later select another object or interface
   // instance (IEEE 1800-2023 9.4.3, 25.9). Watching only the storage selected
-  // when the process suspends would miss that change.
+  // when the process suspends would miss that change. A method naming an
+  // instance property without a receiver reads it through `this` (8.11).
   auto readsThroughDynamicHandle = [&](Operation *expression) {
-    WalkResult result =
-        expression->walk([&](semantic::SVMemberAccessExpressionOp member) {
-          SmallVector<Operation *> children = getChildren(member);
-          if (children.empty())
-            return WalkResult::advance();
-          FailureOr<Type> receiver =
-              getNormalizedSemanticType(children.front());
-          return succeeded(receiver) &&
-                         isa<sim::ClassHandleType, sim::VirtualInterfaceType>(
-                             *receiver)
-                     ? WalkResult::interrupt()
-                     : WalkResult::advance();
-        });
+    WalkResult result = expression->walk([&](Operation *nested) {
+      if (isa<semantic::SVNamedValueExpressionOp>(nested)) {
+        auto reference =
+            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        auto symbol = reference
+                          ? semanticSymbols.find(reference.getLeafReference())
+                          : semanticSymbols.end();
+        auto property =
+            symbol != semanticSymbols.end()
+                ? dyn_cast<semantic::SVClassPropertySymbolOp>(symbol->second)
+                : semantic::SVClassPropertySymbolOp{};
+        return property && property.getLifetime() !=
+                               semantic::SVVariableLifetime::Static
+                   ? WalkResult::interrupt()
+                   : WalkResult::advance();
+      }
+      auto member = dyn_cast<semantic::SVMemberAccessExpressionOp>(nested);
+      SmallVector<Operation *> children =
+          member ? getChildren(member) : SmallVector<Operation *>{};
+      if (children.empty())
+        return WalkResult::advance();
+      FailureOr<Type> receiver = getNormalizedSemanticType(children.front());
+      return succeeded(receiver) &&
+                     isa<sim::ClassHandleType, sim::VirtualInterfaceType>(
+                         *receiver)
+                 ? WalkResult::interrupt()
+                 : WalkResult::advance();
+    });
     return result.wasInterrupted();
   };
   const size_t ordinaryUnitCount = result.units.size();
