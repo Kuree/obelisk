@@ -1492,6 +1492,7 @@ bool validIntrinsic(const Image &image, const Function &function,
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 0;
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
+  case OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED:
     return signature.flags == 0 && site.inputCount == 0 &&
            site.outputCount == 1 && bits(output(0), 1);
   case OBELISK_RT_INTRINSIC_V1_TIME_NOW:

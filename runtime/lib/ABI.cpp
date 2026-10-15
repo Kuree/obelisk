@@ -1336,6 +1336,8 @@ ABI_FUNCTION(obelisk_rt_v1_vpi_end_simulation,
 ABI_FUNCTION(obelisk_rt_v1_vpi_shutdown, void (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_termination_requested,
              uint32_t (*)(obelisk_rt_context *));
+ABI_FUNCTION(obelisk_rt_v1_scheduler_program_owned,
+             uint32_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_scheduler_time, uint64_t (*)(obelisk_rt_context *));
 ABI_FUNCTION(obelisk_rt_v1_dump_open_string,
              obelisk_rt_status (*)(obelisk_rt_context *, obelisk_rt_string_v1));

@@ -283,6 +283,13 @@ def RTGCCollectOp : RTOp<"gc.collect", [
   let results = (outs RTStatusType:$status);
 }
 
+def RTProgramOwnedOp : RTOp<"program.owned", [
+  MemoryEffects<[MemRead<RTRuntimeResource>]>
+]> {
+  let arguments = (ins RTContextType:$context);
+  let results = (outs I1:$result);
+}
+
 def RTTerminationRequestedOp : RTOp<"termination.requested", [
   MemoryEffects<[MemRead<RTRuntimeResource>]>
 ]> {

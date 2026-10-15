@@ -2665,6 +2665,24 @@ obelisk_rt_v1_scheduler_finish(obelisk_rt_context *context,
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_INVALID_ARGUMENT; }
 }
 
+extern "C" uint32_t
+obelisk_rt_v1_scheduler_program_owned(obelisk_rt_context *context) {
+  if (!context)
+    return 0;
+  ContextTransaction transaction(context);
+  OBELISK_RT_TRY {
+    ContextMutexLock lock(context);
+    uint64_t owner = context->activeProgramOwner;
+    uint64_t current = context->activeLogicalProcessToken;
+    if (!owner || !current)
+      return 0;
+    auto found = context->programProcesses.find(owner);
+    return found != context->programProcesses.end() &&
+           found->second.count(current) != 0;
+  }
+  OBELISK_RT_CATCH_ALL { return 0; }
+}
+
 extern "C" obelisk_rt_status
 obelisk_rt_v1_scheduler_program_exit(obelisk_rt_context *context) {
   if (!context)

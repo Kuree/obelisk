@@ -5639,6 +5639,8 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
     return obelisk_rt_v1_scheduler_program_exit(context);
   case OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED:
     return sentinel(0, obelisk_rt_v1_scheduler_termination_requested(context));
+  case OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED:
+    return sentinel(0, obelisk_rt_v1_scheduler_program_owned(context));
   case OBELISK_RT_INTRINSIC_V1_NET_COUNT_DRIVERS: {
     Layout net = layoutAt(image, frame.function, inputRegister(0));
     if (net.kind != OBELISK_RT_DBREG_HANDLE)

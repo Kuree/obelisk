@@ -25,6 +25,8 @@ constexpr uint32_t kIntrinsicFatal = OBELISK_RT_INTRINSIC_V1_FATAL;
 constexpr uint32_t kIntrinsicError = OBELISK_RT_INTRINSIC_V1_ERROR;
 constexpr uint32_t kIntrinsicTerminationRequested =
     OBELISK_RT_INTRINSIC_V1_TERMINATION_REQUESTED;
+constexpr uint32_t kIntrinsicProgramOwned =
+    OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED;
 constexpr uint32_t kIntrinsicTimeNow = OBELISK_RT_INTRINSIC_V1_TIME_NOW;
 constexpr uint32_t kIntrinsicSampledRead = OBELISK_RT_INTRINSIC_V1_SAMPLED_READ;
 constexpr uint32_t kIntrinsicSampledHistory =

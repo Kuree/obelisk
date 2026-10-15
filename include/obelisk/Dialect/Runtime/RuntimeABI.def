@@ -27,6 +27,9 @@ OBELISK_RUNTIME_CALL(GCCollect, RTGCCollectOp, obelisk_rt_v1_gc_collect_pending,
 OBELISK_RUNTIME_CALL(TerminationRequested, RTTerminationRequestedOp,
                      obelisk_rt_v1_scheduler_termination_requested,
                      TerminationRequested)
+OBELISK_RUNTIME_CALL(ProgramOwned, RTProgramOwnedOp,
+                     obelisk_rt_v1_scheduler_program_owned,
+                     TerminationRequested)
 OBELISK_RUNTIME_CALL(SchedulerTime, RTSchedulerTimeOp,
                      obelisk_rt_v1_scheduler_time, SchedulerTime)
 OBELISK_RUNTIME_CALL(Format, RTFormatOp, obelisk_rt_v1_format, Format)

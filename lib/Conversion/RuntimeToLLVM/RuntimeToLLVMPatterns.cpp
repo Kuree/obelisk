@@ -1049,7 +1049,8 @@ public:
     case runtime::RuntimeCall::PublicationBatchEnd:
     case runtime::RuntimeCall::GCCollect:
       return replaceStatus(operands);
-    case runtime::RuntimeCall::TerminationRequested: {
+    case runtime::RuntimeCall::TerminationRequested:
+    case runtime::RuntimeCall::ProgramOwned: {
       Value requested = emitCall(operands).getResult();
       rewriter.replaceOpWithNewOp<LLVM::TruncOp>(
           operation, rewriter.getI1Type(), requested);

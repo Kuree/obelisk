@@ -1242,6 +1242,7 @@ enum {
   OBELISK_RT_INTRINSIC_V1_NOCHANGE_UPDATE = UINT32_C(0x0001024c),
   OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_TRACK = UINT32_C(0x0001024d),
   OBELISK_RT_INTRINSIC_V1_CLOCKING_OUTPUT_CURRENT = UINT32_C(0x0001024e),
+  OBELISK_RT_INTRINSIC_V1_PROGRAM_OWNED = UINT32_C(0x0001024f),
   OBELISK_RT_INTRINSIC_V1_IMPORT = UINT32_C(0x00010300),
   OBELISK_RT_INTRINSIC_V1_DPI_IMPORT = UINT32_C(0x00010301),
   OBELISK_RT_INTRINSIC_V1_CLASS_ALLOC = UINT32_C(0x00010400),
@@ -4391,6 +4392,9 @@ obelisk_rt_status obelisk_rt_v1_scheduler_error(obelisk_rt_context *context);
 // for other context state; the caller must keep the context alive.
 uint32_t
 obelisk_rt_v1_scheduler_termination_requested(obelisk_rt_context *context);
+// IEEE 1800-2023 24.7: whether the executing thread originates in an initial
+// procedure of a program block, so that `$exit` terminates that program.
+uint32_t obelisk_rt_v1_scheduler_program_owned(obelisk_rt_context *context);
 uint64_t obelisk_rt_v1_scheduler_time(obelisk_rt_context *context);
 
 // Read one packed value from the once-per-time-slot Preponed snapshot. The

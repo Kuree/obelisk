@@ -14,7 +14,10 @@
 // sibling roots, without terminating another program. Natural completion of
 // that surviving program waits for its detached descendant, then requests
 // orderly finish and runs final processes before later module work.
-// CHECK: exit-descendant-3
+// The ownership query that guards $exit is false for a module thread, which
+// ignores the call, and true for a program descendant.
+// CHECK: module-not-owned
+// CHECK-NEXT: exit-descendant-3
 // CHECK-NEXT: survivor-root-5
 // CHECK-NEXT: survivor-descendant-7
 // CHECK-NEXT: final-ran
@@ -101,10 +104,18 @@ module attributes {
                     domain = 1 : i32, home_region = 10 : i32, internal,
                     schedule.detached_controls} {
       %delay = simulation.time.constant 3
-      simulation.suspend.delay %delay to ^exit
+      simulation.suspend.delay %delay to ^check
+    ^check:
+      %owned = simulation.program.owned %ctx
+      %stdout = arith.constant 1 : i32
+      cf.cond_br %owned, ^exit, ^not_owned
+    ^not_owned:
+      %failure = simulation.bytes.constant "descendant-not-owned-FAIL"
+      simulation.display %ctx to %stdout(%failure)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      simulation.return
     ^exit:
       %message = simulation.bytes.constant "exit-descendant-3"
-      %stdout = arith.constant 1 : i32
       simulation.display %ctx to %stdout(%message)
           newline = true radix = <decimal> flags = [0] : !simulation.bytes
       simulation.program.exit %ctx
@@ -154,12 +165,26 @@ module attributes {
     simulation.func private @module_hold(
         %ctx: !simulation.context {simulation.capture_kind = 0 : i32})
         attributes {entry_kind = 1 : i32, code_unit_id = 9940007 : i64} {
+      %owned = simulation.program.owned %ctx
+      %stdout = arith.constant 1 : i32
+      cf.cond_br %owned, ^owned, ^ignored
+    ^owned:
+      %owned_message = simulation.bytes.constant "module-owned-FAIL"
+      simulation.display %ctx to %stdout(%owned_message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      cf.br ^hold
+    ^ignored:
+      %ignored_message = simulation.bytes.constant "module-not-owned"
+      simulation.display %ctx to %stdout(%ignored_message)
+          newline = true radix = <decimal> flags = [0] : !simulation.bytes
+      cf.br ^hold
+    ^hold:
       %delay = simulation.time.constant 20
       simulation.suspend.delay %delay to ^failed
     ^failed:
       %message = simulation.bytes.constant "module-hold-FAIL"
-      %stdout = arith.constant 1 : i32
-      simulation.display %ctx to %stdout(%message)
+      %stdout_failed = arith.constant 1 : i32
+      simulation.display %ctx to %stdout_failed(%message)
           newline = true radix = <decimal> flags = [0] : !simulation.bytes
       simulation.return
     }

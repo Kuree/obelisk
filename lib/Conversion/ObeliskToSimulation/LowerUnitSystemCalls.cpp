@@ -2440,11 +2440,21 @@ UnitLowering::lowerSystemCall(semantic::SVCallExpressionOp op) {
       emitError(location) << "$exit accepts no arguments";
       return failure();
     }
+    // IEEE 1800-2023 24.7: `$exit` ends the program whose initial procedure
+    // the calling thread originates in. Any other thread ignores it, which a
+    // shared subroutine can only decide when it runs.
+    Value owned = sim::SimProgramOwnedOp::create(
+        builder, location, builder.getI1Type(), context);
+    Block *exit = addBlock();
+    Block *ignored = addBlock();
+    cf::CondBranchOp::create(builder, location, owned, exit, ValueRange{},
+                             ignored, ValueRange{});
+    setCurrent(exit);
     sim::SimProgramExitOp::create(builder, location, context);
     if (failed(emitFunctionReturn(location, std::nullopt, false,
                                   /*emitBlockEventEnd=*/false)))
       return failure();
-    setCurrent(addBlock());
+    setCurrent(ignored);
     return dummyTaskResult();
   }
 

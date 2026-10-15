@@ -3321,6 +3321,20 @@ def SimPublicationBatchEndOp : SimPublicationBatchOp<"publication.batch_end"> {
   let summary = "deliver the update events held since the matching begin";
 }
 
+def SimProgramOwnedOp : SimOp<"program.owned", [
+  MemoryEffects<[MemRead<SimSchedulerResource>, MemRead<SimProcessResource>]>
+]> {
+  let summary = "test whether the executing thread belongs to a program";
+  let description = [{
+    IEEE 1800-2023 24.7: true when the executing thread, or the thread it
+    descends from, originates in an initial procedure of a program block.
+    `$exit` terminates that program; any other thread ignores it.
+  }];
+  let arguments = (ins SimContextType:$context);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$context attr-dict";
+}
+
 def SimTerminationRequestedOp : SimOp<"termination.requested", [
   MemoryEffects<[MemRead<SimSchedulerResource>]>
 ]> {

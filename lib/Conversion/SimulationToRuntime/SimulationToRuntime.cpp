@@ -430,6 +430,22 @@ public:
   }
 };
 
+class ProgramOwnedConversion final
+    : public SimIOConversion<sim::SimProgramOwnedOp> {
+public:
+  using SimIOConversion::SimIOConversion;
+
+  LogicalResult
+  matchAndRewrite(sim::SimProgramOwnedOp op, OneToNOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Value context =
+        runtimeContext(rewriter, op.getLoc(), adaptor.getContext().front());
+    rewriter.replaceOpWithNewOp<runtime::RTProgramOwnedOp>(
+        op, rewriter.getI1Type(), context);
+    return success();
+  }
+};
+
 class ProgramExitConversion final
     : public SimIOConversion<sim::SimProgramExitOp> {
 public:
@@ -843,6 +859,7 @@ public:
         sim::SimFinishOp, sim::SimProgramExitOp, sim::SimStopOp,
         sim::SimFatalOp, sim::SimErrorOp, sim::SimPublicationBatchBeginOp,
         sim::SimPublicationBatchEndOp, sim::SimTerminationRequestedOp,
+        sim::SimProgramOwnedOp,
         sim::SimTimeNowOp, sim::SimDisplayOp, sim::SimStringOutputFormatOp,
         sim::SimFileOpenMCDOp, sim::SimFileOpenOp, sim::SimFileCloseOp,
         sim::SimFileFlushOp, sim::SimFileGetcOp, sim::SimFileUngetcOp,
@@ -884,6 +901,7 @@ void populateSimulationToRuntimePatterns(const TypeConverter &converter,
       converter, context);
   patterns.add<ProgramExitConversion>(converter, context);
   patterns.add<ErrorConversion, TerminationRequestedConversion,
+               ProgramOwnedConversion,
                SchedulerTimeConversion>(converter, context);
   patterns.add<PublicationBatchConversion<sim::SimPublicationBatchBeginOp,
                                           runtime::RTPublicationBatchBeginOp>,

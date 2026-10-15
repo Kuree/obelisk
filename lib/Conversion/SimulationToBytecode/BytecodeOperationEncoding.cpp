@@ -129,6 +129,8 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimTerminationRequestedOp>(operation))
     return emitIntrinsic(plan, kIntrinsicTerminationRequested, {},
                          {op.getResult()});
+  if (auto op = dyn_cast<sim::SimProgramOwnedOp>(operation))
+    return emitIntrinsic(plan, kIntrinsicProgramOwned, {}, {op.getResult()});
   if (auto op = dyn_cast<sim::SimNetCountDriversOp>(operation))
     return emitIntrinsic(plan, kIntrinsicNetCountDrivers, {op.getNet()},
                          {op.getForced(), op.getTotal(), op.getZero(),
