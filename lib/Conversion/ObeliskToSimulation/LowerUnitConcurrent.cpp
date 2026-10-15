@@ -3803,6 +3803,13 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "bounded concurrent monitors support one local-variable "
                   "assertion instance",
            failure();
+  // IEEE 1800-2023 16.11: subroutine calls attached to a sequence match run
+  // once per matching attempt, which the per-attempt monitor of assertion
+  // locals provides even when the property declares no local.
+  bool matchItems = false;
+  children[prefix]->walk(
+      [&](semantic::SVSequenceWithMatchExprOp) { matchItems = true; });
+  bool localMonitor = localInstance || matchItems;
 
   Operation *property = unwrapAssertionInstance(children[prefix]);
   if (!property)
@@ -3879,7 +3886,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                  << "global-future sampled values are not lowered through "
                     "expect or coverage monitors",
              failure();
-    if (localInstance || multipleLocalInstances)
+    if (localMonitor || multipleLocalInstances)
       return emitError(getSemanticLocation(property))
                  << "global-future sampled values cannot be combined with "
                     "assertion locals or match items",
@@ -4253,7 +4260,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
   if (succeeded(compiledMultiClock) && compiledMultiClock->changesClock) {
     multiClockSequence = std::move(*compiledMultiClock);
-    if (localInstance || disable || expectMonitor || firstMatch ||
+    if (localMonitor || disable || expectMonitor || firstMatch ||
         killControlled || actionControlled ||
         op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence)
       return emitError(getSemanticLocation(property))
@@ -4632,12 +4639,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           })));
     // An expect statement evaluates exactly one attempt, so it walks one
     // deterministic antecedent directly instead of coalescing source ages.
-    bool useSourceAgeCoalescer =
-        lhs->size() == 1 && sourceAttemptCanRemainPending &&
-        (antecedentAlternativeAdmissionCount > 1 ||
-         lhs->front().ages.size() > 1) &&
-        !localInstance && !expectMonitor &&
-        !ordinaryBranchingConsequentAfterMinimization;
+    bool useSourceAgeCoalescer = lhs->size() == 1 &&
+                                 sourceAttemptCanRemainPending &&
+                                 (antecedentAlternativeAdmissionCount > 1 ||
+                                  lhs->front().ages.size() > 1) &&
+                                 !localMonitor && !expectMonitor &&
+                                 !ordinaryBranchingConsequentAfterMinimization;
     if (lhs->size() == 1 && !useSourceAgeCoalescer)
       antecedentSequence = std::move(lhs->front());
     else
@@ -4888,7 +4895,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                "exceeds the 63-cycle bounded monitor horizon"),
            failure();
   if (actionControlled &&
-      (expectMonitor || abort || localInstance || temporalNegation ||
+      (expectMonitor || abort || localMonitor || temporalNegation ||
        hasPersistentDelay || hasPersistentUnary || hasPersistentUntil ||
        hasPersistentRepetition || nonoverlapped ||
        (implication && antecedentHorizon != 1) ||
@@ -4902,7 +4909,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "multicycle branching, or a vacuous branching-antecedent "
                   "consequent",
            failure();
-  if (implication && localInstance && branchingAntecedent)
+  if (implication && localMonitor && branchingAntecedent)
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by antecedents do not yet "
                   "compose with assertion locals",
@@ -4933,14 +4940,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "guaranteed empty antecedent without first_match, case "
                   "guards, or match items",
            failure();
-  if (implication && !localInstance &&
+  if (implication && !localMonitor &&
       (hasMatchItems(antecedentSequence) ||
        llvm::any_of(antecedentAlternatives, hasMatchItems)))
     return emitError(getSemanticLocation(implication))
                << "implication/followed-by antecedent match items require "
                   "assertion local flow",
            failure();
-  if (hasPersistentDelay && (localInstance || expectMonitor))
+  if (hasPersistentDelay && (localMonitor || expectMonitor))
     return emitError(getSemanticLocation(property))
                << "unbounded sequence delay ##[M:$] currently requires one "
                   "deterministic sequence without locals or expect; one "
@@ -4956,7 +4963,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "bounded consequent prefix before the final ##[M:$] "
                   "Boolean terminal",
            failure();
-  if (branchingAntecedent && (localInstance || expectMonitor || endStrength))
+  if (branchingAntecedent && (localMonitor || expectMonitor || endStrength))
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by antecedents currently "
                   "require a concurrent directive without locals, expect, "
@@ -4988,7 +4995,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
            failure();
   if (branchingConsequent &&
       ((!branchingAntecedent && antecedentSequence.ages.size() != 1) ||
-       localInstance || expectMonitor || endStrength))
+       localMonitor || expectMonitor || endStrength))
     return emitError(getSemanticLocation(implication))
                << "branching implication/followed-by consequents currently "
                   "require one Boolean antecedent in a concurrent directive "
@@ -5027,7 +5034,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     sequence.hasIntrinsicEndStrength = true;
   }
   if (hasPersistentRepetition &&
-      (localInstance ||
+      (localMonitor ||
        (implication && !persistentConsequentImplicationEligible) ||
        expectMonitor))
     return emitError(getSemanticLocation(property))
@@ -5039,7 +5046,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "first_match",
            failure();
   if (hasPersistentUntil &&
-      (localInstance ||
+      (localMonitor ||
        (implication && !persistentConsequentImplicationEligible) ||
        expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
@@ -5051,7 +5058,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                   "per-match accounting remain unsupported",
            failure();
   if (hasPersistentUnary &&
-      (localInstance ||
+      (localMonitor ||
        (implication && !persistentConsequentImplicationEligible) ||
        expectMonitor || firstMatch || coverSequence))
     return emitError(getSemanticLocation(property))
@@ -5074,7 +5081,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
           return !age.matchItems.empty();
         });
-    if (localInstance || implication || expectMonitor || firstMatch ||
+    if (localMonitor || implication || expectMonitor || firstMatch ||
         coverSequence || branchingSequence || matchItems)
       return emitError(getSemanticLocation(abort))
                  << "SVA property operator '" << spelling
@@ -5133,7 +5140,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                << "branching bounded sequences do not yet support match "
                   "items",
            failure();
-  if (!localInstance &&
+  if (!localMonitor &&
       llvm::any_of(sequence.ages, [](const FixedSequenceAge &age) {
         return !age.matchItems.empty();
       }))
@@ -5153,9 +5160,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         antecedentSequence.firstMatchBoundaries.empty() &&
         (!sequence.hasIntrinsicEndStrength ||
          consequentUniformIntrinsicEndStrong.has_value());
-    if (localInstance || (implication && !expectDeterministicImplication) ||
-        disable ||
-        (branchingSequence && !expectBoundedBranching) ||
+    if (localMonitor || (implication && !expectDeterministicImplication) ||
+        disable || (branchingSequence && !expectBoundedBranching) ||
         !sequence.firstMatchBoundaries.empty() ||
         llvm::any_of(sequence.ages,
                      [](const FixedSequenceAge &age) {
@@ -5732,7 +5738,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return age.caseGuards.empty() && age.matchItems.empty();
   };
   if (proceduralAttempt &&
-      (expectMonitor || multiClockAttempt || localInstance || firstMatch ||
+      (expectMonitor || multiClockAttempt || localMonitor || firstMatch ||
        temporalNegation || abort || attemptControlled || killControlled ||
        actionControlled || nonoverlapped || branchingSequence ||
        branchingAntecedent || branchingConsequent || hasPersistentDelay ||
@@ -7471,7 +7477,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           std::nullopt,
           /*identitySuffix=*/{}, attemptActionStateStorages)))
     return failure();
-  if (localInstance && implication && antecedentSequence.ages.size() > 1 &&
+  if (localMonitor && implication && antecedentSequence.ages.size() > 1 &&
       failed(outlineEndOfSimulationReports(
           {stateStorage}, sequence.ages.size() + antecedentSequence.ages.size(),
           sequence.ages.size() + 1,
@@ -11149,51 +11155,54 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     return success();
   }
 
-  if (localInstance) {
+  if (localMonitor) {
     struct LocalState {
       std::string path;
       Type type;
       Operation *initializer = nullptr;
       SmallVector<Value> ages;
     };
-    ArrayAttr typeAttrs =
-        sim::get<sim::metadata::AssertionLocalTypes>(localInstance);
-    if (!typeAttrs ||
-        typeAttrs.size() != localInstance.getLocalVariableCount() ||
-        localInstance.getLocalVariablePaths().size() != typeAttrs.size() ||
-        localInstance.getLocalVariableHasInitializer().size() !=
-            typeAttrs.size())
-      return emitError(getSemanticLocation(localInstance))
-                 << "assertion local-variable type inventory is malformed",
-             failure();
-    SmallVector<Operation *> instanceChildren = getChildren(localInstance);
-    size_t initializerIndex = 1 + localInstance.getArgumentCount();
     SmallVector<LocalState> locals;
     llvm::StringMap<unsigned> localIndices;
-    for (auto [index, pathAttr, typeAttr, hasInitializer] :
-         llvm::enumerate(localInstance.getLocalVariablePaths(), typeAttrs,
-                         localInstance.getLocalVariableHasInitializer())) {
-      auto path = dyn_cast<StringAttr>(pathAttr);
-      auto type = dyn_cast<TypeAttr>(typeAttr);
-      if (!path || !type || !sim::getPackedWidth(type.getValue()))
+    if (localInstance) {
+      ArrayAttr typeAttrs =
+          sim::get<sim::metadata::AssertionLocalTypes>(localInstance);
+      if (!typeAttrs ||
+          typeAttrs.size() != localInstance.getLocalVariableCount() ||
+          localInstance.getLocalVariablePaths().size() != typeAttrs.size() ||
+          localInstance.getLocalVariableHasInitializer().size() !=
+              typeAttrs.size())
         return emitError(getSemanticLocation(localInstance))
-                   << "bounded assertion locals require fixed packed types",
+                   << "assertion local-variable type inventory is malformed",
                failure();
-      Operation *initializer = nullptr;
-      if (hasInitializer != 0) {
-        if (initializerIndex >= instanceChildren.size())
-          return localInstance.emitError("missing assertion local initializer"),
+      SmallVector<Operation *> instanceChildren = getChildren(localInstance);
+      size_t initializerIndex = 1 + localInstance.getArgumentCount();
+      for (auto [index, pathAttr, typeAttr, hasInitializer] :
+           llvm::enumerate(localInstance.getLocalVariablePaths(), typeAttrs,
+                           localInstance.getLocalVariableHasInitializer())) {
+        auto path = dyn_cast<StringAttr>(pathAttr);
+        auto type = dyn_cast<TypeAttr>(typeAttr);
+        if (!path || !type || !sim::getPackedWidth(type.getValue()))
+          return emitError(getSemanticLocation(localInstance))
+                     << "bounded assertion locals require fixed packed types",
                  failure();
-        initializer = instanceChildren[initializerIndex++];
+        Operation *initializer = nullptr;
+        if (hasInitializer != 0) {
+          if (initializerIndex >= instanceChildren.size())
+            return localInstance.emitError(
+                       "missing assertion local initializer"),
+                   failure();
+          initializer = instanceChildren[initializerIndex++];
+        }
+        localIndices[path.getValue()] = locals.size();
+        locals.push_back(
+            {path.getValue().str(), type.getValue(), initializer, {}});
       }
-      localIndices[path.getValue()] = locals.size();
-      locals.push_back(
-          {path.getValue().str(), type.getValue(), initializer, {}});
+      if (initializerIndex != instanceChildren.size())
+        return localInstance.emitError(
+                   "unexpected assertion instance operands after locals"),
+               failure();
     }
-    if (initializerIndex != instanceChildren.size())
-      return localInstance.emitError(
-                 "unexpected assertion instance operands after locals"),
-             failure();
 
     // A deterministic fixed sequence has at most one live attempt at each
     // age. Keep one typed cell per (local, consequent age) and per live
