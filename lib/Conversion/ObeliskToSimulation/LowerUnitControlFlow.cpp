@@ -1809,7 +1809,18 @@ LogicalResult UnitLowering::lowerDisable(semantic::SVDisableStatementOp op) {
                                    builder.getBoolAttr(true));
   if (function.getEntryKind() == sim::EntryKind::Task ||
       function.getEntryKind() == sim::EntryKind::Function) {
-    Value escape = sim::SimControlEscapePendingOp::create(builder, location);
+    // IEEE 1800-2023 9.6.2: a task that disables itself ends this activation
+    // as well, which the runtime has already dropped from the control stack.
+    auto ownTarget = sim::get<sim::metadata::ControlTargetId>(function);
+    bool disablesSelf = function.getEntryKind() == sim::EntryKind::Task &&
+                        ownTarget && ownTarget.getValue() == targetID;
+    Value escape =
+        disablesSelf
+            ? arith::ConstantOp::create(builder, location, builder.getI1Type(),
+                                        builder.getBoolAttr(true))
+                  .getResult()
+            : sim::SimControlEscapePendingOp::create(builder, location)
+                  .getResult();
     Block *abandon = addBlock();
     Block *continuation = addBlock();
     cf::CondBranchOp::create(builder, location, escape, abandon, ValueRange{},
