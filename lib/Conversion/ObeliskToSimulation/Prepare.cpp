@@ -2431,6 +2431,9 @@ void ObeliskSimPreparePass::runOnOperation() {
       leaves[id].candidateTypeIdentity = leaves[root].candidateTypeIdentity;
       leaves[id].candidateLocation = leaves[root].candidateLocation;
     }
+    // Publishing below assumes every leaf acquired a type.
+    if (invalid)
+      return abort();
 
     // Scalar interconnects use the ordinary descriptor path. Aggregate
     // interconnects retain their typeless declaration shape and carry a
