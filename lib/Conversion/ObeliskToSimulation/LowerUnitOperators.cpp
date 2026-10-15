@@ -2222,6 +2222,69 @@ UnitLowering::compareFloatMember(Value selector, Value candidate,
       .getResult();
 }
 
+FailureOr<std::pair<Value, Value>>
+UnitLowering::lowerToleranceBounds(semantic::SVValueRangeExpressionOp range,
+                                   Location location) {
+  // IEEE 1800-2023 11.4.13: [A +/- B] spans A -/+ type(A)'(B), and [A +%- B]
+  // spans A -/+ type(A)'(A*B/100.0). An integral A truncates a real
+  // tolerance instead of rounding it.
+  SmallVector<Operation *> endpoints = getChildren(range);
+  if (endpoints.size() != 2) {
+    emitError(location) << "malformed inside range inventory";
+    return failure();
+  }
+  FailureOr<Type> centerType = getNormalizedSemanticType(endpoints[0]);
+  FailureOr<Value> center = lowerExpression(endpoints[0]);
+  FailureOr<Value> tolerance = lowerExpression(endpoints[1]);
+  if (failed(centerType) || failed(center) || failed(tolerance))
+    return failure();
+  bool centerSigned = isSignedNode(endpoints[0]);
+  Value amount = *tolerance;
+  bool amountSigned = isSignedNode(endpoints[1]);
+  Type f64 = builder.getF64Type();
+  if (range.getRangeKind() == semantic::SVValueRangeKind::RelativeTolerance) {
+    FailureOr<Value> realCenter = convert(*center, f64, centerSigned, location);
+    FailureOr<Value> percent = convert(amount, f64, amountSigned, location);
+    if (failed(realCenter) || failed(percent))
+      return failure();
+    Value hundred = arith::ConstantOp::create(builder, location,
+                                              builder.getF64FloatAttr(100.0));
+    amount = arith::DivFOp::create(
+        builder, location,
+        arith::MulFOp::create(builder, location, *realCenter, *percent),
+        hundred);
+    amountSigned = true;
+  }
+  bool realCenter = isa<FloatType>((*center).getType());
+  if (!realCenter && isa<FloatType>(amount.getType())) {
+    FailureOr<Value> real = convert(amount, f64, amountSigned, location);
+    if (failed(real))
+      return failure();
+    amount = truncateReal(*real, location);
+  }
+  FailureOr<Value> step =
+      convert(amount, *centerType, amountSigned, location, centerSigned);
+  if (failed(step))
+    return failure();
+  if (realCenter)
+    return std::pair<Value, Value>(
+        arith::SubFOp::create(builder, location, *center, *step),
+        arith::AddFOp::create(builder, location, *center, *step));
+  FailureOr<Value> base = toPackedScalar(*center, location);
+  FailureOr<Value> offset = toPackedScalar(*step, location);
+  if (failed(base) || failed(offset))
+    return failure();
+  if (isa<sim::LogicType>((*base).getType()))
+    return std::pair<Value, Value>(
+        sim::SimLogicBinaryOp::create(builder, location, (*base).getType(),
+                                      sim::BinaryKind::Sub, *base, *offset),
+        sim::SimLogicBinaryOp::create(builder, location, (*base).getType(),
+                                      sim::BinaryKind::Add, *base, *offset));
+  return std::pair<Value, Value>(
+      arith::SubIOp::create(builder, location, *base, *offset),
+      arith::AddIOp::create(builder, location, *base, *offset));
+}
+
 FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   Location location = getSemanticLocation(op);
   SmallVector<Operation *> children = getChildren(op);
@@ -2385,28 +2448,56 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
   for (Operation *item : ArrayRef<Operation *>(children).drop_front()) {
     Location itemLocation = getSemanticLocation(item);
     if (auto range = dyn_cast<semantic::SVValueRangeExpressionOp>(item)) {
-      if (range.getRangeKind() != semantic::SVValueRangeKind::Simple) {
-        emitError(itemLocation)
-            << "real-valued tolerance ranges are not executable";
-        return failure();
-      }
       SmallVector<Operation *> endpoints = getChildren(item);
       if (endpoints.size() != 2) {
         emitError(itemLocation) << "malformed inside range inventory";
         return failure();
       }
-      Value inRange;
       bool signedSelector = isSignedNode(children.front());
+      auto atLeast = [&](Value low) {
+        return compare(
+            low, signedSelector ? sim::CompareKind::SGE : sim::CompareKind::UGE,
+            stringSelector || signedSelector ? arith::CmpIPredicate::sge
+                                             : arith::CmpIPredicate::uge,
+            itemLocation);
+      };
+      auto atMost = [&](Value high) {
+        return compare(
+            high,
+            signedSelector ? sim::CompareKind::SLE : sim::CompareKind::ULE,
+            stringSelector || signedSelector ? arith::CmpIPredicate::sle
+                                             : arith::CmpIPredicate::ule,
+            itemLocation);
+      };
+      if (range.getRangeKind() != semantic::SVValueRangeKind::Simple) {
+        FailureOr<std::pair<Value, Value>> bounds =
+            lowerToleranceBounds(range, itemLocation);
+        if (failed(bounds))
+          return failure();
+        // The bounds are swapped as necessary (11.4.13): the ascending order
+        // matches the range, and the other one is empty unless both bounds
+        // are equal.
+        auto [low, high] = *bounds;
+        FailureOr<Value> aboveLow = atLeast(low);
+        FailureOr<Value> belowHigh = atMost(high);
+        FailureOr<Value> aboveHigh = atLeast(high);
+        FailureOr<Value> belowLow = atMost(low);
+        if (failed(aboveLow) || failed(belowHigh) || failed(aboveHigh) ||
+            failed(belowLow))
+          return failure();
+        Value ascending = combine(*aboveLow, *belowHigh, true, itemLocation);
+        Value descending = combine(*aboveHigh, *belowLow, true, itemLocation);
+        matched = combine(matched,
+                          combine(ascending, descending, false, itemLocation),
+                          false, itemLocation);
+        continue;
+      }
+      Value inRange;
       if (!isUnboundedEndpoint(endpoints[0])) {
         FailureOr<Value> lower = lowerExpression(endpoints[0]);
         if (failed(lower))
           return failure();
-        FailureOr<Value> above = compare(
-            *lower,
-            signedSelector ? sim::CompareKind::SGE : sim::CompareKind::UGE,
-            stringSelector || signedSelector ? arith::CmpIPredicate::sge
-                                             : arith::CmpIPredicate::uge,
-            itemLocation);
+        FailureOr<Value> above = atLeast(*lower);
         if (failed(above))
           return failure();
         inRange = *above;
@@ -2415,12 +2506,7 @@ FailureOr<Value> UnitLowering::lowerInside(semantic::SVInsideExpressionOp op) {
         FailureOr<Value> upper = lowerExpression(endpoints[1]);
         if (failed(upper))
           return failure();
-        FailureOr<Value> below = compare(
-            *upper,
-            signedSelector ? sim::CompareKind::SLE : sim::CompareKind::ULE,
-            stringSelector || signedSelector ? arith::CmpIPredicate::sle
-                                             : arith::CmpIPredicate::ule,
-            itemLocation);
+        FailureOr<Value> below = atMost(*upper);
         if (failed(below))
           return failure();
         inRange =

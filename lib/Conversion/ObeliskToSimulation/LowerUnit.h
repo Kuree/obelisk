@@ -340,6 +340,10 @@ private:
                          ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   lowerInside(semantic::SVInsideExpressionOp op);
+  /// The [low, high] bounds of a tolerance range, possibly descending.
+  ::mlir::FailureOr<std::pair<::mlir::Value, ::mlir::Value>>
+  lowerToleranceBounds(semantic::SVValueRangeExpressionOp range,
+                       ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> lowerCall(semantic::SVCallExpressionOp op);
   /// Returns the variable expression an output or inout actual names, looking
   /// through the importer's `actual = <empty argument>` copy-out form.
@@ -635,6 +639,9 @@ private:
   ::mlir::FailureOr<::mlir::Value> convertFixedBitstreamTarget(
       ::mlir::Value value, ::mlir::Type targetType, ::mlir::Location location,
       bool allowHiddenRoot = false, bool dpiLayout = false);
+  /// Rounds an f64 toward zero, keeping NaN and infinities, with operations
+  /// both execution tiers share.
+  ::mlir::Value truncateReal(::mlir::Value real, ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value> toPackedScalar(::mlir::Value value,
                                                   ::mlir::Location location);
   /// Compare a floating-point selector against one `case` label or `inside`
