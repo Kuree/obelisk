@@ -881,7 +881,8 @@ UnitLowering::traverseAssoc(Value array, Value key, int32_t direction,
 FailureOr<Value> UnitLowering::loadReference(Value reference,
                                              Location location) {
   if (auto type = dyn_cast<sim::RefType>(reference.getType())) {
-    if (sampleAssertionValues && sim::getPackedWidth(type.getElementType()))
+    if (sampleAssertionValues && !currentValueReferences.contains(reference) &&
+        sim::getPackedWidth(type.getElementType()))
       return sim::SimSampledReadOp::create(
                  builder, location, type.getElementType(),
                  function.getBody().front().getArgument(0), reference)
@@ -4344,6 +4345,23 @@ LogicalResult UnitLowering::lowerPrimitive(StringRef name,
   return success();
 }
 LogicalResult UnitLowering::lowerStatement(Operation *op) {
+  if (op == checkerSampledStatement) {
+    checkerSampledStatement = nullptr;
+    checkerSampledControl->walk([&](Operation *nested) {
+      if (!isa<semantic::SVNamedValueExpressionOp,
+               semantic::SVHierarchicalValueExpressionOp>(nested))
+        return;
+      if (auto path = nested->getAttrOfType<StringAttr>("referenced_path"))
+        if (Value reference = values.lookup(path.getValue()))
+          currentValueReferences.insert(reference);
+    });
+    bool savedSampleValues = sampleAssertionValues;
+    sampleAssertionValues = true;
+    LogicalResult result = lowerStatement(op);
+    sampleAssertionValues = savedSampleValues;
+    currentValueReferences.clear();
+    return result;
+  }
   SmallVector<Operation *> children = getChildren(op);
   Location location = getSemanticLocation(op);
   builder.setInsertionPointToEnd(current);
@@ -5859,6 +5877,14 @@ LogicalResult UnitLowering::lower(ArrayRef<Operation *> roots) {
   // Keep track of the outer timing control. An always procedure returns to
   // this same control after every iteration, unlike a nested control that has
   // not necessarily been reached when an earlier statement updates a signal.
+  if (entryKind == sim::EntryKind::AlwaysFF && roots.size() == 1 &&
+      sim::has<sim::metadata::CheckerProcedure>(function))
+    if (auto timed = dyn_cast<semantic::SVTimedStatementOp>(roots.front()))
+      if (SmallVector<Operation *> children = getChildren(timed);
+          children.size() == 2) {
+        checkerSampledControl = children.front();
+        checkerSampledStatement = children.back();
+      }
   if (entryKind == sim::EntryKind::Always && roots.size() == 1) {
     if (auto timed = dyn_cast<semantic::SVTimedStatementOp>(roots.front())) {
       SmallVector<Operation *> children = getChildren(timed);

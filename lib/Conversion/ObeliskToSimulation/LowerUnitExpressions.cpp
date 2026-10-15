@@ -654,7 +654,7 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
   // instead of escaping through a suspend operation.
   if (auto ref = dyn_cast<sim::RefType>(value.getType())) {
     recordSensitivity(value);
-    if (sampleAssertionValues) {
+    if (sampleAssertionValues && !currentValueReferences.contains(value)) {
       // Preserve an aggregate reference until selections have narrowed it to
       // packed storage. sampled_read snapshots packed state ranges; sampling
       // the containing unpacked array both loses the selected identity and is
@@ -678,7 +678,7 @@ UnitLowering::lowerReferencedValue(Operation *op, StringRef path, bool lvalue) {
     return loadReference(value, location);
   if (auto net = dyn_cast<sim::NetType>(value.getType())) {
     recordSensitivity(value);
-    if (sampleAssertionValues) {
+    if (sampleAssertionValues && !currentValueReferences.contains(value)) {
       Value context = function.getBody().front().getArgument(0);
       return sim::SimSampledReadOp::create(builder, location,
                                            net.getElementType(), context, value)

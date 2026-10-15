@@ -882,6 +882,11 @@ private:
   bool continuousStore = false;
   bool sampleAssertionValues = false;
   bool sampleAssertionDefaults = false;
+  /// IEEE 1800-2023 17.5: the statement controlled by a checker always_ff
+  /// reads sampled values, except for the variables its event control names.
+  ::mlir::Operation *checkerSampledStatement = nullptr;
+  ::mlir::Operation *checkerSampledControl = nullptr;
+  ::llvm::DenseSet<::mlir::Value> currentValueReferences;
   struct AlternateClockSamplePlan {
     uint64_t id;
     uint64_t depth;

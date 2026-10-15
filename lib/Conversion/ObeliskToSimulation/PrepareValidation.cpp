@@ -733,10 +733,32 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         owner != embeddedCoverageOwnerByOperation.end() &&
         result.unusedEmbeddedCovergroupTypes.contains(owner->second))
       return;
-    if (isa<semantic::SVCheckerInstanceSymbolOp>(op)) {
+    // A static checker instance body is an elaborated scope: its variables,
+    // procedures and static assertions execute under the checker scheduling
+    // rules (IEEE 1800-2023 17.5, 17.7.3). Reject only the checker features
+    // that have no executable lowering.
+    if (auto body = dyn_cast<semantic::SVCheckerInstanceBodySymbolOp>(op);
+        body && body.getIsProcedural()) {
+      emitError(getSemanticLocation(op->getParentOp() ? op->getParentOp() : op))
+          << "IEEE 1800-2023 17.3 procedural checker instances are not "
+             "executable yet";
+      invalid = true;
+      return;
+    }
+    if (auto variable = dyn_cast<semantic::SVVariableSymbolOp>(op);
+        variable && variable.getIsCheckerFreeVariable()) {
       emitError(getSemanticLocation(op))
-          << "IEEE 1800-2017 Clause 17 checker instances are retained in "
-             "semantic IR but are not executable yet";
+          << "IEEE 1800-2023 17.7 free checker variables are not "
+             "executable yet";
+      invalid = true;
+      return;
+    }
+    if (auto formal = dyn_cast<semantic::SVFormalArgumentSymbolOp>(op);
+        formal && formal.getDirection() != semantic::SVArgumentDirection::In &&
+        isa<semantic::SVCheckerInstanceBodySymbolOp>(formal->getParentOp())) {
+      emitError(getSemanticLocation(op))
+          << "IEEE 1800-2023 17.3 checker output arguments are not "
+             "executable yet";
       invalid = true;
       return;
     }

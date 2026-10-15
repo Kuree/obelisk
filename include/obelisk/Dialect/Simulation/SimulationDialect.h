@@ -114,6 +114,7 @@ using RandomNestedStateStorageType =
 using RandomObjectEdge = ObeliskSimulationDialect::RandomObjectEdgeAttrHelper;
 using EmbeddedCovergroup =
     ObeliskSimulationDialect::EmbeddedCovergroupAttrHelper;
+using CheckerProcedure = ObeliskSimulationDialect::CheckerProcedureAttrHelper;
 using RandomPostHook = ObeliskSimulationDialect::RandomPostHookAttrHelper;
 using RandomPreHook = ObeliskSimulationDialect::RandomPreHookAttrHelper;
 using RandomPriorityArguments =

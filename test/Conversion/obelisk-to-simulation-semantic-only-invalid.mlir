@@ -1,8 +1,9 @@
 // RUN: not obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' -o /dev/null 2>&1 | FileCheck %s
 
-// IEEE 1800-2017 Clauses 17, 30, and 31 define executable checker, specify,
-// and timing-check behavior. Until their roadmap chunks land, preparation must
-// reject the retained semantic nodes instead of silently erasing them.
+// IEEE 1800-2017 Clauses 30 and 31 define executable specify and timing-check
+// behavior. Until their roadmap chunks land, preparation must reject the
+// retained semantic nodes instead of silently erasing them. The empty static
+// checker instance (Clause 17) is executable.
 
 module {
   obelisk.sv.symbol.root @root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
@@ -25,6 +26,6 @@ module {
   }
 }
 
-// CHECK: error: IEEE 1800-2017 Clause 17 checker instances are retained in semantic IR but are not executable yet
+// CHECK-NOT: checker
 // CHECK: error: IEEE 1800-2017 Clause 30 specify timing paths are not executable yet for this form
 // CHECK: error: IEEE 1800-2017 Clause 31 system timing checks are retained in semantic IR but are not executable yet

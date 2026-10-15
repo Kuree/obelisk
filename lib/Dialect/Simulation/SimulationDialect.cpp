@@ -724,7 +724,7 @@ static const llvm::StringMap<discardable::PayloadCheck> &declarations() {
       metadata::CaptureKind, metadata::ClassBitstreamAllowHiddenRoot,
       metadata::ClassBitstreamBytecodeFunction,
       metadata::ClassBitstreamBytecodeSite, metadata::ClassBitstreamMember,
-      metadata::EmbeddedCovergroup,
+      metadata::EmbeddedCovergroup, metadata::CheckerProcedure,
       metadata::ClassBitstreamSource, metadata::ClassBitstreamVisibility,
       metadata::ClassBitstreamWidth, metadata::ClassField,
       metadata::ClassInstance, metadata::ClassMethod, metadata::ClassSignature,

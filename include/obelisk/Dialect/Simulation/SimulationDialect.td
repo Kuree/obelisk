@@ -416,6 +416,10 @@ def ObeliskSimulationDialect : Dialect {
     // Marks the instance field holding an embedded covergroup's handle. A
     // shallow copy sets it to null in the new object (IEEE 1800-2023 8.12).
     "::mlir::UnitAttr":$embedded_covergroup,
+    // Marks a code unit for a checker procedure or continuous assignment
+    // (IEEE 1800-2023 17.5, 17.7.3). It runs in Reactive, and a checker
+    // always_ff reads sampled values outside its event control.
+    "::mlir::UnitAttr":$checker_procedure,
     // Module marker set by preparation when source classes may be bitstreamed;
     // it keeps whole-design class planning off ordinary compilation paths.
     "::mlir::UnitAttr":$class_bitstream_source,
