@@ -41,7 +41,7 @@ CoverageDialect::verifyOperationAttribute(Operation *operation,
              BlockEventTargetId, BlockEventInstanceMethod, WithExpressionIds,
              WithExpressionOrdinals, WithCandidateValues, WithIteratorPath,
              CrossWithScalar, CrossWithTupleType, CrossWithSelectorId,
-             CrossWithTargetPaths>(operation, attribute)))
+             CrossWithTargetPaths, FsmBindings>(operation, attribute)))
     return failure();
   StringRef name = attribute.getName().strref();
   Attribute value = attribute.getValue();
@@ -64,6 +64,22 @@ CoverageDialect::verifyOperationAttribute(Operation *operation,
   if (name == ToggleBindings::getNameStr() &&
       !llvm::all_of(cast<ArrayAttr>(value), llvm::IsaPred<ToggleBindingAttr>))
     return error() << "must contain only #coverage.toggle_binding entries";
+  if (name == FsmBindings::getNameStr() &&
+      !llvm::all_of(cast<ArrayAttr>(value), llvm::IsaPred<FsmBindingAttr>))
+    return error() << "must contain only #coverage.fsm_binding entries";
+  return success();
+}
+
+LogicalResult
+FsmBindingAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                       uint64_t machine, uint64_t shift, int64_t low,
+                       uint64_t width) {
+  if (machine == 0)
+    return emitError() << "FSM binding must name a machine";
+  if (width == 0 || shift >= 64 || width > 64 - shift)
+    return emitError() << "FSM binding must cover bits of a 64-bit vector";
+  if (low < 0)
+    return emitError() << "FSM binding must start at a nonnegative bit";
   return success();
 }
 

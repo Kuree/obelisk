@@ -984,6 +984,9 @@ ABI_FUNCTION(obelisk_rt_v1_coverage_point_hit,
 ABI_FUNCTION(obelisk_rt_v1_coverage_toggle_transition,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
                                    const uint8_t *, const uint8_t *));
+ABI_FUNCTION(obelisk_rt_v1_coverage_fsm_bind,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
+                                   uint64_t, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_coverage_toggle_bind,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t, uint64_t,
                                    uint64_t));

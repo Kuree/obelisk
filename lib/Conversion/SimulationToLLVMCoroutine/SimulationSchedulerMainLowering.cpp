@@ -99,6 +99,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
               .Case("toggle", OBELISK_RT_COVERAGE_PERSIST_TOGGLE)
               .Case("functional", OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL)
               .Case("assertion", OBELISK_RT_COVERAGE_PERSIST_ASSERTION)
+              .Case("fsm", OBELISK_RT_COVERAGE_PERSIST_FSM)
               .Default(0);
     }
   }
@@ -547,8 +548,32 @@ LogicalResult makeSchedulerMain(ModuleOp module,
       uint64_t stateHandle;
     };
     SmallVector<ToggleBinding> toggleBindings;
+    struct FsmBinding {
+      uint64_t machine;
+      uint64_t shift;
+      uint64_t bitCount;
+      uint64_t stateHandle;
+    };
+    SmallVector<FsmBinding> fsmBindings;
     auto collectToggleBindings = [&](Operation *operation, uint64_t id,
                                      const auto &handles) -> LogicalResult {
+      if (auto values = cov::get<cov::FsmBindings>(operation)) {
+        auto handle = handles.find(id);
+        if (handle == handles.end())
+          return operation->emitError(
+              "FSM state vector has no native state handle");
+        for (Attribute value : values) {
+          auto binding = cast<cov::FsmBindingAttr>(value);
+          uint64_t stateHandle =
+              obelisk_rt_stable_handle_offset(handle->second, binding.getLow());
+          if (stateHandle == UINT64_MAX)
+            return operation->emitError(
+                "FSM coverage binding cannot be represented by a stable state "
+                "handle");
+          fsmBindings.push_back({binding.getMachine(), binding.getShift(),
+                                 binding.getWidth(), stateHandle});
+        }
+      }
       auto values = cov::get<cov::ToggleBindings>(operation);
       if (!values)
         return success();
@@ -643,6 +668,23 @@ LogicalResult makeSchedulerMain(ModuleOp module,
               ValueRange{
                   runtimeContext,
                   llvmConstant(builder, location, i64, binding.firstBit),
+                  llvmConstant(builder, location, i64, binding.bitCount),
+                  llvmConstant(builder, location, i64, binding.stateHandle)})
+              .getResult();
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          ValueRange{runtimeContext, bindStatus});
+    }
+    for (const FsmBinding &binding : fsmBindings) {
+      Value bindStatus =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context, "obelisk_rt_v1_coverage_fsm_bind"),
+              ValueRange{
+                  runtimeContext,
+                  llvmConstant(builder, location, i64, binding.machine),
+                  llvmConstant(builder, location, i64, binding.shift),
                   llvmConstant(builder, location, i64, binding.bitCount),
                   llvmConstant(builder, location, i64, binding.stateHandle)})
               .getResult();
@@ -809,6 +851,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                              {pointer, i64, i64, pointer, pointer, i32});
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_toggle_bind", i32,
                              {pointer, i64, i64, i64});
+    getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_fsm_bind", i32,
+                             {pointer, i64, i64, i64, i64});
     getOrDeclareLLVMFunction(module, "obelisk_rt_v1_coverage_toggle_seal", i32,
                              {pointer});
   }

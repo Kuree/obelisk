@@ -28,6 +28,7 @@ using AssertionPointCount = CoverageDialect::AssertionPointCountAttrHelper;
 using AssertionPointIndex = CoverageDialect::AssertionPointIndexAttrHelper;
 using ToggleObservable = CoverageDialect::ToggleObservableAttrHelper;
 using ToggleBindings = CoverageDialect::ToggleBindingsAttrHelper;
+using FsmBindings = CoverageDialect::FsmBindingsAttrHelper;
 using ToggleInitialValue = CoverageDialect::ToggleInitialValueAttrHelper;
 using ToggleInitialUnknown = CoverageDialect::ToggleInitialUnknownAttrHelper;
 using FunctionalExpressionId =

@@ -2004,6 +2004,22 @@ struct CoverageToggleBinding {
   uint64_t bitWidth = 0;
 };
 
+// IEEE 1800-2023 40.4: bits of static state that hold part of one FSM state
+// vector.
+struct CoverageFSMSegment {
+  uint32_t staticID = 0;
+  uint64_t stateLow = 0;
+  uint64_t bitWidth = 0;
+  uint64_t shift = 0;
+};
+
+struct CoverageFSMMachine {
+  std::vector<CoverageFSMSegment> segments;
+  // Indices of this machine's states in the schema FSM state table.
+  std::vector<uint32_t> states;
+  uint32_t width = 0;
+};
+
 struct CovergroupBlockEventRegistration {
   uint64_t id = 0;
   uint64_t covergroupHandle = 0;
@@ -2079,6 +2095,14 @@ struct CoverageState {
   std::unique_ptr<std::atomic<uint8_t>[]> assertionEnabled;
   std::vector<uint8_t> assertionExcluded;
   uint64_t assertionCount = 0;
+  // One counter per schema FSM state, and each machine's bound state vector.
+  std::vector<uint64_t> fsmCounters;
+  std::vector<uint8_t> fsmOverflow;
+  std::vector<uint8_t> fsmEnabled;
+  std::vector<uint8_t> fsmExcluded;
+  std::unordered_map<uint64_t, CoverageFSMMachine> fsmMachines;
+  // Static state -> machines whose state vector it holds.
+  std::unordered_map<uint32_t, std::vector<uint64_t>> fsmWatches;
   std::vector<uint64_t> toggleCounters;
   std::vector<uint8_t> toggleOverflow;
   std::vector<uint8_t> toggleEnabled;

@@ -23,4 +23,17 @@ def CoverageToggleBindingAttr
   let genVerifyDecl = 1;
 }
 
+def CoverageFsmBindingAttr : CoverageAttr<"FsmBinding", "fsm_binding"> {
+  let summary = "FSM state-vector bits held by a declaration";
+  let description = [{
+    The declaration's state from bit `low` upward holds `width` bits of the
+    state vector of the FSM whose schema states carry `machine`, starting at
+    vector bit `shift`.
+  }];
+  let parameters = (ins "uint64_t":$machine, "uint64_t":$shift,
+                        "int64_t":$low, "uint64_t":$width);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 #endif // OBELISK_DIALECT_COVERAGE_COVERAGEATTRS_TD

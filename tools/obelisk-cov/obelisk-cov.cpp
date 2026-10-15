@@ -309,6 +309,7 @@ struct ReportData {
   Summary line;
   Summary toggle;
   Summary assertion;
+  Summary fsm;
   Summary functional;
   std::string error;
 };
@@ -412,7 +413,7 @@ bool parseOptions(int argc, char **argv, Options &options) {
           !parseMetric(value.substr(0, equal), metric) ||
           (metric != MetricKind::Line && metric != MetricKind::Toggle &&
            metric != MetricKind::Functional &&
-           metric != MetricKind::Assertion) ||
+           metric != MetricKind::Assertion && metric != MetricKind::FSM) ||
           !parseDouble(value.substr(equal + 1), threshold))
         return false;
       options.thresholds[metric] = threshold;
@@ -840,6 +841,15 @@ ReportData analyze(const Database &database, const std::string &test) {
       ++report.assertion.total;
       if (aggregate(MetricKind::Assertion, point.id, 0))
         ++report.assertion.covered;
+    }
+
+  // IEEE 1800-2023 40.2.2: the FSM states that were reached.
+  report.fsm.available = !database.fsmStates.empty();
+  for (const FSMState &state : database.fsmStates)
+    if (!excluded.count({MetricKind::FSM, state.id})) {
+      ++report.fsm.total;
+      if (aggregate(MetricKind::FSM, state.id, 0))
+        ++report.fsm.covered;
     }
 
   report.toggle.available = !database.toggleObjects.empty();
@@ -2018,6 +2028,8 @@ void textReport(llvm::raw_ostream &out, const Database &database,
   print(MetricKind::Functional, report.functional);
   if (report.assertion.available)
     print(MetricKind::Assertion, report.assertion);
+  if (report.fsm.available)
+    print(MetricKind::FSM, report.fsm);
   if (report.functional.available) {
     IndexMap<uint64_t, std::string> functionalExclusions;
     for (const Exclusion &exclusion : database.exclusions)
@@ -2250,6 +2262,8 @@ void jsonReport(
       jsonSummary(out, MetricKind::Functional, report.functional, thresholds);
       if (report.assertion.available)
         jsonSummary(out, MetricKind::Assertion, report.assertion, thresholds);
+      if (report.fsm.available)
+        jsonSummary(out, MetricKind::FSM, report.fsm, thresholds);
     });
     out.attributeArray("runs", [&] {
       for (const Run &run : database.runs)
@@ -3483,6 +3497,8 @@ const Summary &summaryFor(const ReportData &report, MetricKind metric) {
     return report.toggle;
   if (metric == MetricKind::Assertion)
     return report.assertion;
+  if (metric == MetricKind::FSM)
+    return report.fsm;
   return report.functional;
 }
 
@@ -3530,7 +3546,8 @@ int main(int argc, char **argv) {
         << "\nresolved-instance-options: "
         << database.resolvedInstanceOptions.size()
         << "\nexclusions: " << database.exclusions.size()
-        << "\nassertion-points: " << database.assertionPoints.size() << '\n';
+        << "\nassertion-points: " << database.assertionPoints.size()
+        << "\nfsm-states: " << database.fsmStates.size() << '\n';
     return 0;
   }
   if (options.command == "merge") {

@@ -8403,6 +8403,39 @@ TEST(CoverageDatabaseTest, AssertionPointsRoundTripAndOwnTheirCounters) {
   EXPECT_EQ(validate(output), Status::InvalidReference);
 }
 
+TEST(CoverageDatabaseTest, FSMStatesRoundTripAndShareTheirMachine) {
+  using namespace obelisk::coverage;
+  Database database;
+  database.sourceFiles.push_back({1, "source.sv", {}});
+  database.scopes.push_back({2, 0, "top", 0, "top"});
+  database.fsmStates.push_back({3, 2, 1, 9, 0, "cs", "IDLE", 2, 5, 3, 0});
+  database.fsmStates.push_back({4, 2, 1, 9, 3, "cs", "DONE", 2, 6, 3, 0});
+  obelisk::coverage::Run run;
+  run.uuid.back() = 1;
+  run.name = "run";
+  run.flags = RunContainsFSM;
+  database.runs.push_back(run);
+  database.counters.push_back({run.uuid, MetricKind::FSM, 4, 0, 0, 0, 1});
+  database.schemaFingerprint = computeSchemaFingerprint(database);
+  ASSERT_EQ(validate(database), Status::Ok);
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(database, image), Status::Ok);
+  Database output;
+  ASSERT_EQ(parse(image.data(), image.size(), output), Status::Ok);
+  ASSERT_EQ(output.fsmStates.size(), 2u);
+  EXPECT_EQ(output.fsmStates.back().name, "DONE");
+  EXPECT_EQ(output.fsmStates.back().value, 3u);
+  EXPECT_EQ(output.fsmStates.back().machineName, "cs");
+  EXPECT_EQ(computeSchemaFingerprint(output),
+            computeSchemaFingerprint(database));
+  // A state encoding must fit the vector, and a machine's states share it.
+  output.fsmStates.back().value = 4;
+  EXPECT_EQ(validate(output), Status::InvalidReference);
+  output.fsmStates.back().value = 3;
+  output.fsmStates.back().width = 3;
+  EXPECT_EQ(validate(output), Status::InvalidReference);
+}
+
 TEST(CoverageDatabaseTest, ZeroMetricRunsNeverCoalesceAsDisjointPayloads) {
   using namespace obelisk::coverage;
   Database first;

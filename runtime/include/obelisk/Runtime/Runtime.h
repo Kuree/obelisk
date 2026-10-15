@@ -5011,10 +5011,11 @@ enum {
   OBELISK_RT_COVERAGE_PERSIST_TOGGLE = 1u << 1,
   OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL = 1u << 2,
   OBELISK_RT_COVERAGE_PERSIST_ASSERTION = 1u << 3,
-  OBELISK_RT_COVERAGE_PERSIST_ALL = OBELISK_RT_COVERAGE_PERSIST_LINE |
-                                    OBELISK_RT_COVERAGE_PERSIST_TOGGLE |
-                                    OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL |
-                                    OBELISK_RT_COVERAGE_PERSIST_ASSERTION
+  OBELISK_RT_COVERAGE_PERSIST_FSM = 1u << 4,
+  OBELISK_RT_COVERAGE_PERSIST_ALL =
+      OBELISK_RT_COVERAGE_PERSIST_LINE | OBELISK_RT_COVERAGE_PERSIST_TOGGLE |
+      OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL |
+      OBELISK_RT_COVERAGE_PERSIST_ASSERTION | OBELISK_RT_COVERAGE_PERSIST_FSM
 };
 obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     obelisk_rt_context *context, uint64_t line_count, uint64_t toggle_bit_count,
@@ -5032,6 +5033,15 @@ obelisk_rt_v1_coverage_toggle_bind(obelisk_rt_context *context,
                                    uint64_t state_handle);
 obelisk_rt_status
 obelisk_rt_v1_coverage_toggle_seal(obelisk_rt_context *context);
+// Bind `bit_count` bits of static state, starting at `state_handle`, to bits
+// [shift, shift + bit_count) of the state vector of the FSM whose schema
+// states carry `machine`. Every binding precedes the toggle seal, which also
+// records each FSM's initial state.
+obelisk_rt_status obelisk_rt_v1_coverage_fsm_bind(obelisk_rt_context *context,
+                                                  uint64_t machine,
+                                                  uint64_t shift,
+                                                  uint64_t bit_count,
+                                                  uint64_t state_handle);
 obelisk_rt_status obelisk_rt_v1_coverage_reset(
     obelisk_rt_context *context, obelisk_rt_coverage_metric_v1 metric,
     const uint8_t *current_value, const uint8_t *current_unknown);

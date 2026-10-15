@@ -502,7 +502,7 @@ struct PrefixMap {
 
 /// Metric families selectable by --coverage, rules, and source directives,
 /// indexed by coverageMetricIndex.
-static constexpr unsigned kCoverageMetricCount = 4;
+static constexpr unsigned kCoverageMetricCount = 5;
 
 struct CoverageRule {
   llvm::SmallBitVector metrics =
@@ -1103,6 +1103,8 @@ static std::optional<unsigned> coverageMetricIndex(StringRef name) {
     return 2;
   if (name == "assertion")
     return 3;
+  if (name == "fsm")
+    return 4;
   return std::nullopt;
 }
 
@@ -1206,7 +1208,7 @@ parseCoverageConfiguration(ModuleOp module) {
           if (!name || !index || !seen.insert(*name).second) {
             module.emitError(
                 "coverage rule metrics must contain unique line, toggle, "
-                "functional, or assertion names");
+                "functional, assertion, or fsm names");
             return failure();
           }
           rule.metrics.set(*index);
@@ -1326,8 +1328,8 @@ static LogicalResult parseDirectiveMetrics(ModuleOp module, StringRef path,
     if (name.empty() || !index || seen.test(*index)) {
       module.emitError("malformed coverage directive at ")
           << path << ':' << line
-          << ": metrics must be unique line, toggle, functional, or "
-             "assertion names";
+          << ": metrics must be unique line, toggle, functional, assertion, "
+             "or fsm names";
       return failure();
     }
     seen.set(*index);
@@ -1709,6 +1711,233 @@ static coverage::Digest digestFile(StringRef path) {
 }
 
 } // namespace
+
+namespace {
+
+/// IEEE 1800-2023 40.4.1-40.4.3: a pragma naming the vector that holds an
+/// FSM's current state.
+struct FSMVectorPragma {
+  // Signals whose concatenation, most significant first, holds the state.
+  SmallVector<std::string, 2> signals;
+  // A part-select [left:right] of the single signal.
+  std::optional<std::pair<int64_t, int64_t>> range;
+  std::string name;
+  std::string enumeration;
+  size_t offset = 0;
+};
+
+/// IEEE 1800-2023 40.4.1, 40.4.5, 40.4.6: an enumeration pragma inside a
+/// parameter declaration (the FSM's states) or a signal declaration (its
+/// current and next state).
+struct FSMEnumPragma {
+  std::string enumeration;
+  bool parameters = false;
+  SmallVector<std::pair<std::string, size_t>> names;
+};
+
+struct FSMPragmaFile {
+  std::string path;
+  std::string text;
+  SmallVector<size_t> lineStarts;
+  SmallVector<FSMVectorPragma> vectors;
+  SmallVector<FSMEnumPragma> enums;
+
+  uint32_t lineOf(size_t offset) const {
+    return static_cast<uint32_t>(llvm::upper_bound(lineStarts, offset) -
+                                 lineStarts.begin());
+  }
+  uint32_t columnOf(size_t offset) const {
+    return static_cast<uint32_t>(offset - lineStarts[lineOf(offset) - 1] + 1);
+  }
+};
+
+} // namespace
+
+static bool isIdentifierCharacter(char character) {
+  return llvm::isAlnum(character) || character == '_' || character == '$';
+}
+
+/// Tokens of a pragma: identifiers, unsigned numbers, and single punctuators.
+static SmallVector<StringRef> tokenizePragma(StringRef text) {
+  SmallVector<StringRef> tokens;
+  for (size_t index = 0; index < text.size();) {
+    if (llvm::isSpace(text[index])) {
+      ++index;
+      continue;
+    }
+    size_t end = index + 1;
+    if (isIdentifierCharacter(text[index]))
+      while (end < text.size() && isIdentifierCharacter(text[end]))
+        ++end;
+    tokens.push_back(text.slice(index, end));
+    index = end;
+  }
+  return tokens;
+}
+
+/// The leading identifier of each top-level comma-separated item of the
+/// declaration that follows `offset`, up to its terminating semicolon.
+static SmallVector<std::pair<std::string, size_t>>
+declaredNames(StringRef text, size_t offset) {
+  SmallVector<std::pair<std::string, size_t>> names;
+  int depth = 0;
+  bool expectName = true;
+  for (size_t index = offset; index < text.size(); ++index) {
+    char character = text[index];
+    if (character == '/' && index + 1 < text.size() &&
+        (text[index + 1] == '/' || text[index + 1] == '*')) {
+      size_t close = text[index + 1] == '/' ? text.find('\n', index)
+                                            : text.find("*/", index + 2);
+      if (close == StringRef::npos)
+        break;
+      index = text[index + 1] == '/' ? close : close + 1;
+      continue;
+    }
+    if (character == ';' && depth == 0)
+      break;
+    if (character == '(' || character == '[' || character == '{')
+      ++depth;
+    else if (character == ')' || character == ']' || character == '}')
+      --depth;
+    else if (character == ',' && depth == 0)
+      expectName = true;
+    else if (expectName && depth == 0 &&
+             (llvm::isAlpha(character) || character == '_')) {
+      size_t end = index;
+      while (end < text.size() && isIdentifierCharacter(text[end]))
+        ++end;
+      names.push_back({text.slice(index, end).str(), index});
+      expectName = false;
+      index = end - 1;
+    }
+  }
+  return names;
+}
+
+/// Read the IEEE 1800-2023 40.4 FSM pragmas of one source file. Pragmas work
+/// in block and one-line comments (40.4.7).
+static FailureOr<FSMPragmaFile> parseFSMPragmas(ModuleOp module,
+                                                StringRef path) {
+  FSMPragmaFile result;
+  result.path = path.str();
+  auto buffer = llvm::MemoryBuffer::getFile(path);
+  if (!buffer)
+    return result;
+  result.text = (*buffer)->getBuffer().str();
+  StringRef text = result.text;
+  result.lineStarts.push_back(0);
+  for (size_t index = 0; index != text.size(); ++index)
+    if (text[index] == '\n')
+      result.lineStarts.push_back(index + 1);
+
+  auto parsePragma = [&](StringRef body, size_t begin,
+                         size_t end) -> LogicalResult {
+    SmallVector<StringRef> tokens = tokenizePragma(body);
+    if (tokens.size() < 2 || tokens[0] != "tool")
+      return success();
+    auto malformed = [&]() {
+      return module.emitError("malformed FSM coverage pragma at ")
+             << path << ':' << result.lineOf(begin);
+    };
+    size_t next = 2;
+    if (tokens[1] == "enum") {
+      if (tokens.size() != 3)
+        return malformed();
+      FSMEnumPragma pragma;
+      pragma.enumeration = tokens[2].str();
+      // The declaration keyword precedes the pragma in the same statement.
+      size_t statement = text.rfind(';', begin);
+      statement = statement == StringRef::npos ? 0 : statement + 1;
+      for (StringRef word : tokenizePragma(text.slice(statement, begin)))
+        pragma.parameters |= word == "parameter" || word == "localparam";
+      pragma.names = declaredNames(text, end);
+      if (pragma.names.empty())
+        return malformed();
+      result.enums.push_back(std::move(pragma));
+      return success();
+    }
+    if (tokens[1] != "state_vector" || tokens.size() < 3)
+      return success();
+    FSMVectorPragma pragma;
+    pragma.offset = begin;
+    auto isIdentifier = [](StringRef token) {
+      return !token.empty() &&
+             (llvm::isAlpha(token.front()) || token.front() == '_');
+    };
+    if (tokens[next] == "{") {
+      // 40.4.3: a concatenation of whole signals.
+      for (++next; next < tokens.size() && tokens[next] != "}"; ++next) {
+        if (!isIdentifier(tokens[next]))
+          return malformed();
+        pragma.signals.push_back(tokens[next].str());
+        if (next + 1 < tokens.size() && tokens[next + 1] == ",")
+          ++next;
+      }
+      if (next == tokens.size() || pragma.signals.empty())
+        return malformed();
+      ++next;
+    } else {
+      if (!isIdentifier(tokens[next]))
+        return malformed();
+      pragma.signals.push_back(tokens[next++].str());
+      // 40.4.2: a part-select of the signal.
+      if (next < tokens.size() && tokens[next] == "[") {
+        int64_t left = 0, right = 0;
+        if (next + 4 >= tokens.size() || tokens[next + 2] != ":" ||
+            tokens[next + 4] != "]" ||
+            tokens[next + 1].getAsInteger(10, left) ||
+            tokens[next + 3].getAsInteger(10, right))
+          return malformed();
+        pragma.range = {left, right};
+        next += 5;
+      }
+    }
+    if (next < tokens.size() && tokens[next] != "enum")
+      pragma.name = tokens[next++].str();
+    if (next < tokens.size()) {
+      if (tokens[next] != "enum" || next + 2 != tokens.size())
+        return malformed();
+      pragma.enumeration = tokens[next + 1].str();
+    }
+    // A part-select or concatenation needs an FSM name and enumeration.
+    if ((pragma.range || pragma.signals.size() != 1) &&
+        (pragma.name.empty() || pragma.enumeration.empty()))
+      return malformed();
+    if (pragma.name.empty())
+      pragma.name = pragma.signals.front();
+    result.vectors.push_back(std::move(pragma));
+    return success();
+  };
+
+  bool inString = false;
+  for (size_t index = 0; index < text.size(); ++index) {
+    char current = text[index];
+    char next = index + 1 < text.size() ? text[index + 1] : '\0';
+    if (inString) {
+      if (current == '\\')
+        ++index;
+      else if (current == '"')
+        inString = false;
+      continue;
+    }
+    if (current == '"') {
+      inString = true;
+      continue;
+    }
+    if (current != '/' || (next != '/' && next != '*'))
+      continue;
+    size_t bodyBegin = index + 2;
+    size_t close =
+        next == '/' ? text.find('\n', bodyBegin) : text.find("*/", bodyBegin);
+    if (close == StringRef::npos)
+      close = text.size();
+    size_t end = next == '/' ? close : std::min(close + 2, text.size());
+    if (failed(parsePragma(text.slice(bodyBegin, close), index, end)))
+      return failure();
+    index = end == 0 ? 0 : end - 1;
+  }
+  return result;
+}
 
 void ObeliskSimPrepareCoveragePass::runOnOperation() {
   ModuleOp module = getOperation();
@@ -2297,6 +2526,266 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     }
     cov::set<cov::AssertionPointCount>(
         module, builder.getI64IntegerAttr(assertions.size()));
+  }
+
+  // IEEE 1800-2023 40.2.2 and 40.4: FSM state coverage of the FSMs that
+  // pragmas identify; automatic extraction is not required.
+  if (isMetricEnabled(module, "fsm")) {
+    llvm::StringMap<uint64_t> scopesByHierarchy;
+    for (auto &[design, inventory] : scopeInventories)
+      for (auto &[id, hierarchy] : inventory.hierarchies)
+        scopesByHierarchy.try_emplace(hierarchy, id);
+    llvm::StringMap<sim::SimStorageDeclOp> storagesByHierarchy;
+    for (sim::SimDesignOp design : module.getOps<sim::SimDesignOp>())
+      for (sim::SimStorageDeclOp declaration :
+           design.getBody().front().getOps<sim::SimStorageDeclOp>())
+        if (declaration.getLifetime() == sim::Lifetime::Design)
+          if (std::optional<StringRef> name = declaration.getHierarchicalName())
+            storagesByHierarchy.try_emplace(*name, declaration);
+    llvm::DenseMap<StringRef, SmallVector<ir::SVInstanceBodySymbolOp>>
+        instanceBodies;
+    module.walk([&](ir::SVInstanceSymbolOp instance) {
+      auto definition =
+          instance->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      if (!definition)
+        return;
+      for (Operation *child : simlowering::getChildren(instance))
+        if (auto body = dyn_cast<ir::SVInstanceBodySymbolOp>(child))
+          instanceBodies[definition.getRootReference().getValue()].push_back(
+              body);
+    });
+
+    struct FSMCandidate {
+      coverage::FSMState state;
+      std::string hierarchy;
+      SourceRange site;
+      bool excluded = false;
+    };
+    SmallVector<FSMCandidate, 0> fsmStates;
+    llvm::MapVector<Operation *, SmallVector<Attribute>> fsmBindings;
+    llvm::StringMap<FSMPragmaFile> pragmaFiles;
+    WalkResult walked = module.walk([&](ir::SVDefinitionSymbolOp definition) {
+      std::optional<SourceRange> range =
+          decodeSourceRange(definition->getAttr("source_range"));
+      if (!range)
+        range = decodeSourceRange(definition->getAttr("original_source_range"));
+      if (!range)
+        return WalkResult::advance();
+      auto [entry, inserted] = pragmaFiles.try_emplace(range->startFile);
+      if (inserted) {
+        FailureOr<FSMPragmaFile> parsed =
+            parseFSMPragmas(module, range->startFile);
+        if (failed(parsed))
+          return WalkResult::interrupt();
+        entry->second = std::move(*parsed);
+      }
+      const FSMPragmaFile &file = entry->second;
+      auto inside = [&](size_t offset) {
+        uint32_t line = file.lineOf(offset);
+        return line >= range->startLine && line <= range->endLine;
+      };
+      // States of each enumeration, and the enumeration a current-state
+      // signal declaration names (40.4.1, 40.4.5).
+      llvm::StringMap<SmallVector<std::pair<std::string, size_t>>> states;
+      llvm::StringMap<std::string> signalEnums;
+      for (const FSMEnumPragma &pragma : file.enums) {
+        if (!inside(pragma.names.front().second))
+          continue;
+        if (pragma.parameters)
+          llvm::append_range(states[pragma.enumeration], pragma.names);
+        else
+          signalEnums.try_emplace(pragma.names.front().first,
+                                  pragma.enumeration);
+      }
+      for (const FSMVectorPragma &vector : file.vectors) {
+        if (!inside(vector.offset))
+          continue;
+        std::string enumeration = vector.enumeration;
+        if (enumeration.empty())
+          enumeration = signalEnums.lookup(vector.signals.front());
+        auto names = states.find(enumeration);
+        if (names == states.end())
+          continue;
+        for (ir::SVInstanceBodySymbolOp body :
+             instanceBodies.lookup(definition.getSymName())) {
+          auto path = body->getAttrOfType<StringAttr>("hierarchical_name");
+          auto scope = path ? scopesByHierarchy.find(path.getValue())
+                            : scopesByHierarchy.end();
+          if (scope == scopesByHierarchy.end())
+            continue;
+          // Segments of the vector, least significant last.
+          struct Segment {
+            sim::SimStorageDeclOp storage;
+            uint64_t low;
+            uint64_t width;
+          };
+          SmallVector<Segment> segments;
+          for (const std::string &signal : vector.signals) {
+            auto storage = storagesByHierarchy.find(
+                (path.getValue() + "." + signal).str());
+            if (storage == storagesByHierarchy.end())
+              break;
+            Type type = storage->second.getType();
+            std::optional<unsigned> width = sim::getPackedWidth(type);
+            if (!width)
+              break;
+            uint64_t low = 0;
+            uint64_t selected = *width;
+            if (vector.range) {
+              // A part-select indexes the declared packed range.
+              int64_t left = static_cast<int64_t>(*width) - 1, right = 0;
+              uint64_t element = 1;
+              if (auto array = dyn_cast<sim::PackedArrayType>(type)) {
+                left = array.getLeft();
+                right = array.getRight();
+                element = *width / sim::getAggregateNumElements(array);
+              }
+              auto offset = [&](int64_t index) -> std::optional<uint64_t> {
+                int64_t position =
+                    left >= right ? index - right : right - index;
+                if (position < 0 ||
+                    static_cast<uint64_t>(position) * element >= *width)
+                  return std::nullopt;
+                return static_cast<uint64_t>(position) * element;
+              };
+              std::optional<uint64_t> first = offset(vector.range->first);
+              std::optional<uint64_t> second = offset(vector.range->second);
+              if (!first || !second)
+                break;
+              low = std::min(*first, *second);
+              selected = std::max(*first, *second) - low + element;
+            }
+            segments.push_back({storage->second, low, selected});
+          }
+          if (segments.size() != vector.signals.size())
+            continue;
+          uint64_t width = 0;
+          for (const Segment &segment : segments)
+            width += segment.width;
+          if (width == 0 || width > 64)
+            continue;
+          uint64_t machine =
+              appendText(OBELISK_STABLE_HASH_OFFSET_BASIS, "fsm");
+          machine =
+              obelisk_stable_hash_append_uint_le(machine, scope->second, 8);
+          machine = appendText(machine, vector.name);
+          if (!machine)
+            machine = 1;
+          size_t before = fsmStates.size();
+          for (const auto &[name, offset] : names->second) {
+            ir::SVParameterSymbolOp parameter;
+            for (Operation *child : simlowering::getChildren(body))
+              if (auto symbol = dyn_cast<ir::SVParameterSymbolOp>(child);
+                  symbol && symbol->getAttrOfType<StringAttr>("name") &&
+                  symbol->getAttrOfType<StringAttr>("name").getValue() == name)
+                parameter = symbol;
+            if (!parameter)
+              continue;
+            FailureOr<simlowering::ParsedConstant> parsed =
+                simlowering::parseSVInteger(parameter.getConstantValue(), 64,
+                                            parameter.getLoc());
+            if (failed(parsed) || !parsed->unknown.isZero())
+              continue;
+            uint64_t value = parsed->value.getZExtValue();
+            if (width < 64)
+              value &= (uint64_t{1} << width) - 1;
+            FailureOr<uint64_t> fileID = internFile(file.path);
+            if (failed(fileID))
+              return WalkResult::interrupt();
+            uint64_t id =
+                appendText(OBELISK_STABLE_HASH_OFFSET_BASIS, "fsm-state");
+            id = obelisk_stable_hash_append_uint_le(id, machine, 8);
+            id = appendText(id, name);
+            if (!id)
+              id = 1;
+            FSMCandidate candidate;
+            candidate.state = {id,
+                               scope->second,
+                               *fileID,
+                               machine,
+                               value,
+                               vector.name,
+                               name,
+                               static_cast<uint32_t>(width),
+                               file.lineOf(offset),
+                               file.columnOf(offset),
+                               0};
+            candidate.hierarchy = path.getValue().str();
+            candidate.site = {file.path,
+                              file.path,
+                              {},
+                              file.lineOf(offset),
+                              file.columnOf(offset),
+                              file.lineOf(offset),
+                              file.columnOf(offset)};
+            fsmStates.push_back(std::move(candidate));
+          }
+          if (fsmStates.size() == before)
+            continue;
+          uint64_t shift = width;
+          for (Segment &segment : segments) {
+            shift -= segment.width;
+            fsmBindings[segment.storage.getOperation()].push_back(
+                cov::FsmBindingAttr::get(&getContext(), machine, shift,
+                                         static_cast<int64_t>(segment.low),
+                                         segment.width));
+          }
+        }
+      }
+      return WalkResult::advance();
+    });
+    if (walked.wasInterrupted()) {
+      signalPassFailure();
+      return;
+    }
+
+    const bool hasFSMIncludes = llvm::any_of(
+        coverageConfiguration->includes,
+        [](const CoverageRule &rule) { return rule.metrics.test(4); });
+    llvm::DenseSet<uint64_t> fsmIDs;
+    for (FSMCandidate &candidate : fsmStates) {
+      if (!fsmIDs.insert(candidate.state.id).second) {
+        module.emitError("coverage FSM-state ID hash collision for state '")
+            << candidate.state.name << "' of " << candidate.hierarchy;
+        signalPassFailure();
+        return;
+      }
+      const std::string storedPath =
+          applyPrefixMaps(candidate.site.startFile, prefixMaps);
+      const bool included =
+          !hasFSMIncludes ||
+          llvm::any_of(
+              coverageConfiguration->includes, [&](const CoverageRule &rule) {
+                return matchesRule(rule, 4, storedPath, candidate.hierarchy);
+              });
+      const CoverageRule *excludingRule = nullptr;
+      for (const CoverageRule &rule : coverageConfiguration->excludes)
+        if (matchesRule(rule, 4, storedPath, candidate.hierarchy)) {
+          excludingRule = &rule;
+          break;
+        }
+      std::optional<StringRef> sourceReason =
+          directiveReason(directiveFiles, 4, candidate.site);
+      if (!included || excludingRule || sourceReason) {
+        StringRef reason =
+            sourceReason ? *sourceReason
+            : excludingRule
+                ? StringRef(excludingRule->reason)
+                : StringRef("not selected by coverage include rules");
+        schema.exclusions.push_back(
+            {candidate.state.id, coverage::MetricKind::FSM, reason.str(), 0});
+      }
+    }
+    sortCoverageRecords(fsmStates, [](const FSMCandidate &entry) {
+      return coverageOrderKey(entry.state.id);
+    });
+    for (FSMCandidate &candidate : fsmStates)
+      schema.fsmStates.push_back(std::move(candidate.state));
+    for (auto &[operation, values] : fsmBindings) {
+      cov::set<cov::FsmBindings>(operation,
+                                 ArrayAttr::get(&getContext(), values));
+      cov::mark<cov::ToggleObservable>(operation);
+    }
   }
 
   if (isMetricEnabled(module, "toggle")) {

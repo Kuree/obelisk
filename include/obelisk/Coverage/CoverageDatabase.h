@@ -121,6 +121,23 @@ struct AssertionPoint {
   uint32_t flags = 0;
 };
 
+/// One legal state of an FSM identified by IEEE 1800-2023 40.4 pragmas,
+/// covered once its state vector has held `value`. States of one FSM in one
+/// instance share `machine`.
+struct FSMState {
+  uint64_t id = 0;
+  uint64_t scope = 0;
+  uint64_t file = 0;
+  uint64_t machine = 0;
+  uint64_t value = 0;
+  std::string machineName;
+  std::string name;
+  uint32_t width = 0;
+  uint32_t line = 0;
+  uint32_t column = 0;
+  uint32_t flags = 0;
+};
+
 struct ToggleObject {
   uint64_t id = 0;
   uint64_t scope = 0;
@@ -858,9 +875,10 @@ inline constexpr uint64_t RunContainsLine = uint64_t{1} << 0;
 inline constexpr uint64_t RunContainsToggle = uint64_t{1} << 1;
 inline constexpr uint64_t RunContainsFunctional = uint64_t{1} << 2;
 inline constexpr uint64_t RunContainsAssertion = uint64_t{1} << 3;
+inline constexpr uint64_t RunContainsFSM = uint64_t{1} << 4;
 inline constexpr uint64_t RunContainsCoverageMask =
     RunContainsLine | RunContainsToggle | RunContainsFunctional |
-    RunContainsAssertion;
+    RunContainsAssertion | RunContainsFSM;
 
 struct Counter {
   UUID run{};
@@ -940,6 +958,7 @@ struct Database {
   std::vector<Scope> scopes;
   std::vector<LinePoint> linePoints;
   std::vector<AssertionPoint> assertionPoints;
+  std::vector<FSMState> fsmStates;
   std::vector<ToggleObject> toggleObjects;
   std::vector<ToggleDimension> toggleDimensions;
   std::vector<FunctionalType> functionalTypes;

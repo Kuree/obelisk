@@ -47,6 +47,9 @@ def CoverageDialect : Dialect {
     // `#coverage.toggle_binding` ranges. Aliases may bind several ranges to
     // one canonical state range.
     "::mlir::ArrayAttr":$toggle_bindings,
+    // IEEE 1800-2023 40.4: `#coverage.fsm_binding` ranges of FSM state
+    // vectors a source-visible declaration holds.
+    "::mlir::ArrayAttr":$fsm_bindings,
     // Module: the flattened toggle shadow, value and unknown planes, at the
     // language-defined initial state.
     "::mlir::DenseI8ArrayAttr":$toggle_initial_value,

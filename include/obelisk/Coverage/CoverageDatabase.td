@@ -394,6 +394,7 @@ def FunctionalVirtualInterfaceScopes : CoverageSection<"FunctionalVirtualInterfa
 def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 72, 0, 1>;
 def CrossPredicateOperands : CoverageSection<"CrossPredicateOperands", 64, 8, 0, 1>;
 def AssertionPoints : CoverageSection<"AssertionPoints", 65, 56, 0, 1>;
+def FSMStates : CoverageSection<"FSMStates", 66, 64, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -568,6 +569,7 @@ def DomainScopes : CoverageFieldDomain<"Scopes", "StableRef", [], 3>;
 def DomainLinePoints : CoverageFieldDomain<"LinePoints", "StableRef", [], 4>;
 def DomainToggleObjects : CoverageFieldDomain<"ToggleObjects", "StableRef", [], 5>;
 def DomainAssertionPoints : CoverageFieldDomain<"AssertionPoints", "StableRef", [], 65>;
+def DomainFSMStates : CoverageFieldDomain<"FSMStates", "StableRef", [], 66>;
 def DomainAssertionKind : CoverageFieldDomain<
     "AssertionKind", "Enum", [AssertionAssert, AssertionAssume, AssertionCover]>;
 def DomainFunctionalTypes : CoverageFieldDomain<"FunctionalTypes", "StableRef", [], 7>;
@@ -771,6 +773,36 @@ def AssertionPointRecord : CoverageRecord<"AssertionPointRecord",
     [APId, APScope, APFile, APName, APKind, APLine, APColumn, APEndLine,
      APEndColumn, APFlags, APReserved]>;
 
+// IEEE 1800-2023 40.2.2 and 40.4: one legal state of an FSM identified by
+// pragmas, covered once its state vector has held the state's encoding.
+// States of one FSM in one instance share `machine`.
+def FSId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainFSMStates;
+}
+def FSScope : CoverageField<"Scope", "scope", 8, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainScopes;
+}
+def FSFile : CoverageField<"File", "file", 16, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainSourceFiles;
+}
+def FSMachine : CoverageField<"Machine", "machine", 24, CovU64>;
+def FSValue : CoverageField<"Value", "value", 32, CovU64>;
+def FSMachineName : CoverageField<"MachineName", "machine_name", 40, CovU32> {
+  let semantic = "StringIndex"; let domain = DomainStrings;
+}
+def FSName : CoverageField<"Name", "name", 44, CovU32> {
+  let semantic = "StringIndex"; let domain = DomainStrings;
+}
+def FSWidth : CoverageField<"Width", "width", 48, CovU32>;
+def FSLine : CoverageField<"Line", "line", 52, CovU32>;
+def FSColumn : CoverageField<"Column", "column", 56, CovU32>;
+def FSFlags : CoverageField<"Flags", "flags", 60, CovU32> {
+  let semantic = "Flags"; let validMask = 0;
+}
+def FSMStateRecord : CoverageRecord<"FSMStateRecord", FSMStates,
+    [FSId, FSScope, FSFile, FSMachine, FSValue, FSMachineName, FSName,
+     FSWidth, FSLine, FSColumn, FSFlags]>;
+
 def TDObject : CoverageField<"Object", "object", 0, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainToggleObjects;
 }
@@ -908,7 +940,7 @@ def RunReserved : CoverageField<"Reserved", "reserved", 52, CovU32> {
   let semantic = "ReservedZero";
 }
 def RunFlags : CoverageField<"Flags", "flags", 56, CovU64> {
-  let semantic = "Flags"; let validMask = 15;
+  let semantic = "Flags"; let validMask = 31;
 }
 def RunRecord : CoverageRecord<"RunRecord", Runs,
     [RunUUID, RunName, RunStatus, RunSimulationTime, RunTimestamp, RunSeed,

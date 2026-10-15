@@ -410,6 +410,10 @@ Status collectStrings(const Database &database, StringTable &result) {
     unique.insert(v.macroName);
   for (const auto &v : database.assertionPoints)
     unique.insert(v.name);
+  for (const auto &v : database.fsmStates) {
+    unique.insert(v.machineName);
+    unique.insert(v.name);
+  }
   for (const auto &v : database.scopes) {
     unique.insert(v.name);
     unique.insert(v.definition);
@@ -621,6 +625,7 @@ Status planSections(const Database &db, const StringTable &strings,
   OBELISK_COVERAGE_PLAN(CrossPredicateOperands,
                         db.crossPredicateOperands.size());
   OBELISK_COVERAGE_PLAN(AssertionPoints, db.assertionPoints.size());
+  OBELISK_COVERAGE_PLAN(FSMStates, db.fsmStates.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1652,6 +1657,21 @@ Status encodeSections(const Database &db, const StringTable &strings,
       AssertionPointRecord::setEndColumn(p, v.endColumn);
       AssertionPointRecord::setFlags(p, v.flags);
     });
+  Bytes &fsm = add(SectionKind::FSMStates, db.fsmStates.size());
+  for (const auto &v : db.fsmStates)
+    fsm.record<FSMStateRecord>([&](uint8_t *p) {
+      FSMStateRecord::setId(p, v.id);
+      FSMStateRecord::setScope(p, v.scope);
+      FSMStateRecord::setFile(p, v.file);
+      FSMStateRecord::setMachine(p, v.machine);
+      FSMStateRecord::setValue(p, v.value);
+      FSMStateRecord::setMachineName(p, strings.get(v.machineName));
+      FSMStateRecord::setName(p, strings.get(v.name));
+      FSMStateRecord::setWidth(p, v.width);
+      FSMStateRecord::setLine(p, v.line);
+      FSMStateRecord::setColumn(p, v.column);
+      FSMStateRecord::setFlags(p, v.flags);
+    });
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -1814,6 +1834,21 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashScalar(h, v.column);
     hashScalar(h, v.endLine);
     hashScalar(h, v.endColumn);
+    hashScalar(h, v.flags);
+  }
+  for (const auto &v :
+       sorted(db.fsmStates, [](const auto &a) { return a.id; })) {
+    hashScalar(h, uint32_t(66));
+    hashScalar(h, v.id);
+    hashScalar(h, v.scope);
+    hashScalar(h, v.file);
+    hashScalar(h, v.machine);
+    hashScalar(h, v.value);
+    hashString(h, v.machineName);
+    hashString(h, v.name);
+    hashScalar(h, v.width);
+    hashScalar(h, v.line);
+    hashScalar(h, v.column);
     hashScalar(h, v.flags);
   }
   auto points = sorted(db.linePoints, [](const auto &a) { return a.id; });
@@ -3034,6 +3069,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   const auto scopesByID = indexRecords(db.scopes);
   const auto linePointsByID = indexRecords(db.linePoints);
   const auto assertionPointsByID = indexRecords(db.assertionPoints);
+  const auto fsmStatesByID = indexRecords(db.fsmStates);
   const auto toggleObjectsByID = indexRecords(db.toggleObjects);
   const auto functionalTypesByID = indexRecords(db.functionalTypes);
   const auto functionalItemsByID = indexRecords(db.functionalItems);
@@ -3120,6 +3156,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       !uniqueNonzero(db.scopes, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.linePoints, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.assertionPoints, [](const auto &v) { return v.id; }) ||
+      !uniqueNonzero(db.fsmStates, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.toggleObjects, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.functionalTypes, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.functionalItems, [](const auto &v) { return v.id; }) ||
@@ -3137,6 +3174,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           [](const auto &a, const auto &b) { return a.id < b.id; }) ||
       !std::is_sorted(
           db.assertionPoints.begin(), db.assertionPoints.end(),
+          [](const auto &a, const auto &b) { return a.id < b.id; }) ||
+      !std::is_sorted(
+          db.fsmStates.begin(), db.fsmStates.end(),
           [](const auto &a, const auto &b) { return a.id < b.id; }) ||
       !std::is_sorted(
           db.toggleObjects.begin(), db.toggleObjects.end(),
@@ -3199,6 +3239,21 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         v.flags != 0)
       return fail(text(v.name) ? Status::InvalidReference : Status::InvalidUtf8,
                   "assertion_point");
+  // A machine's states share their scope, name, and width.
+  IndexMap<uint64_t, const FSMState *> fsmMachines;
+  for (const auto &v : db.fsmStates) {
+    if (!text(v.name) || !text(v.machineName))
+      return fail(Status::InvalidUtf8, "fsm_state");
+    const FSMState *&first = fsmMachines[v.machine];
+    if (!first)
+      first = &v;
+    if (!scopesByID.count(v.scope) || !sourceFilesByID.count(v.file) ||
+        !v.machine || !v.line || !v.width || v.width > 64 ||
+        (v.width < 64 && v.value >> v.width) || v.flags != 0 ||
+        first->scope != v.scope || first->machineName != v.machineName ||
+        first->width != v.width)
+      return fail(Status::InvalidReference, "fsm_state");
+  }
   for (const auto &v : db.toggleObjects)
     if (!text(v.name) || !scopesByID.count(v.scope) ||
         !sourceFilesByID.count(v.file) || !v.bitWidth ||
@@ -4940,6 +4995,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return linePointsByID.count(id);
     case MetricKind::Assertion:
       return assertionPointsByID.count(id);
+    case MetricKind::FSM:
+      return fsmStatesByID.count(id);
     case MetricKind::Toggle:
       return toggleObjectsByID.count(id);
     case MetricKind::Functional:
@@ -7144,12 +7201,14 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         : v.metric == MetricKind::Toggle     ? RunContainsToggle
         : v.metric == MetricKind::Functional ? RunContainsFunctional
         : v.metric == MetricKind::Assertion  ? RunContainsAssertion
+        : v.metric == MetricKind::FSM        ? RunContainsFSM
                                              : uint64_t{0};
     if (!knownMetric(static_cast<uint32_t>(v.metric)) || !runs.count(v.run) ||
         !(runFlags.at(v.run) & requiredRunFlag) ||
         (v.metric != MetricKind::Functional &&
          !entityFor(v.metric, v.entity)) ||
-        ((v.metric == MetricKind::Line || v.metric == MetricKind::Assertion) &&
+        ((v.metric == MetricKind::Line || v.metric == MetricKind::Assertion ||
+          v.metric == MetricKind::FSM) &&
          (v.subindex != 0 || v.instance != 0)) ||
         (v.metric == MetricKind::Toggle &&
          (!toggle || toggle->bitWidth > UINT32_MAX / 4 ||
@@ -8525,6 +8584,24 @@ Status parse(const uint8_t *data, size_t size, Database &output,
            AssertionPointRecord::getEndLine(p),
            AssertionPointRecord::getEndColumn(p),
            AssertionPointRecord::getFlags(p)});
+      return Status::Ok;
+    });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::FSMStates, [&](const auto &e, uint64_t i,
+                                           const uint8_t *p) {
+      const auto *machine = str(FSMStateRecord::getMachineName(p), e, i,
+                                FSMStateRecord::MachineNameName);
+      const auto *name =
+          str(FSMStateRecord::getName(p), e, i, FSMStateRecord::NameName);
+      if (!machine || !name)
+        return Status::InvalidReference;
+      result.fsmStates.push_back(
+          {FSMStateRecord::getId(p), FSMStateRecord::getScope(p),
+           FSMStateRecord::getFile(p), FSMStateRecord::getMachine(p),
+           FSMStateRecord::getValue(p), *machine, *name,
+           FSMStateRecord::getWidth(p), FSMStateRecord::getLine(p),
+           FSMStateRecord::getColumn(p), FSMStateRecord::getFlags(p)});
       return Status::Ok;
     });
     if (st != Status::Ok)

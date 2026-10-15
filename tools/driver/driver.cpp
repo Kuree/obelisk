@@ -146,11 +146,12 @@ static bool validateCoverageConfiguration(StringRef path,
           std::optional<StringRef> metric = metricValue.getAsString();
           if (!metric ||
               (*metric != "line" && *metric != "toggle" &&
-               *metric != "functional" && *metric != "assertion") ||
+               *metric != "functional" && *metric != "assertion" &&
+               *metric != "fsm") ||
               !seen.insert(*metric).second) {
             emitDriverError(
                 "coverage rule metrics must contain unique line, toggle, "
-                "functional, or assertion names");
+                "functional, assertion, or fsm names");
             return false;
           }
         }
@@ -1176,11 +1177,11 @@ static int executeCompilation(
       llvm::StringSet<> seen;
       for (StringRef metric : metrics) {
         if ((metric != "line" && metric != "toggle" && metric != "functional" &&
-             metric != "assertion") ||
+             metric != "assertion" && metric != "fsm") ||
             !seen.insert(metric).second) {
           emitDriverError(
               Twine("invalid --coverage metric list '") + coverage->getValue() +
-              "'; expected unique line,toggle,functional,assertion names");
+              "'; expected unique line,toggle,functional,assertion,fsm names");
           valid = false;
           break;
         }
@@ -1394,7 +1395,8 @@ static int executeCompilation(
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     SmallVector<Attribute> metrics;
     if (coverage->getOption().matches(OPT_coverage)) {
-      for (StringRef metric : {"line", "toggle", "functional", "assertion"})
+      for (StringRef metric :
+           {"line", "toggle", "functional", "assertion", "fsm"})
         metrics.push_back(StringAttr::get(&context, metric));
     } else {
       SmallVector<StringRef> selected;

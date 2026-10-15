@@ -494,6 +494,57 @@ void recordToggleBit(CoverageState &coverage, uint64_t index, bool newValue,
   setBit(coverage.toggleUnknown, index, newUnknown);
 }
 
+/// IEEE 1800-2023 40.2.2: record each state of `machine` that its state
+/// vector now holds. Bits of `published` within [publishedLow,
+/// publishedLow + publishedWidth) come from the new planes when given; the
+/// others from committed static state. A vector with unknown bits holds no
+/// state.
+void recordFSMMachine(const obelisk_rt_context *context,
+                      CoverageState &coverage,
+                      const CoverageFSMMachine &machine, uint32_t published,
+                      uint64_t publishedLow, uint64_t publishedWidth,
+                      const uint8_t *newValue, const uint8_t *newUnknown) {
+  uint64_t bound = 0;
+  uint64_t value = 0;
+  for (const CoverageFSMSegment &segment : machine.segments) {
+    const NativeStaticState *state =
+        findNativeStaticState(context, segment.staticID);
+    for (uint64_t index = 0; index != segment.bitWidth; ++index) {
+      uint64_t stateBit = segment.stateLow + index;
+      bool bitValue = false;
+      bool bitUnknown = false;
+      if (newValue && segment.staticID == published &&
+          stateBit >= publishedLow &&
+          stateBit - publishedLow < publishedWidth) {
+        bitValue = bit(newValue, stateBit - publishedLow);
+        bitUnknown = newUnknown && bit(newUnknown, stateBit - publishedLow);
+      } else {
+        if (!state || stateBit >= state->bitWidth)
+          return;
+        uint64_t absolute = state->bitOffset + stateBit;
+        if (absolute / 64 >= context->stateValue.size() ||
+            absolute / 64 >= context->stateUnknown.size())
+          return;
+        uint64_t mask = uint64_t{1} << (absolute % 64);
+        bitValue = (context->stateValue[absolute / 64] & mask) != 0;
+        bitUnknown = (context->stateUnknown[absolute / 64] & mask) != 0;
+      }
+      if (bitUnknown)
+        return;
+      if (bitValue)
+        value |= uint64_t{1} << (segment.shift + index);
+    }
+    bound += segment.bitWidth;
+  }
+  if (bound != machine.width)
+    return;
+  for (uint32_t index : machine.states)
+    if (coverage.schema->fsmStates[index].value == value &&
+        coverage.fsmEnabled[index] && !coverage.fsmExcluded[index] &&
+        saturatingIncrement(coverage.fsmCounters[index]))
+      coverage.fsmOverflow[index] = 1;
+}
+
 bool schemaCounts(const obelisk::coverage::Database &schema,
                   uint64_t &lineCount, uint64_t &toggleBitCount) {
   lineCount = schema.linePoints.size();
@@ -552,6 +603,9 @@ uint64_t availableRunCoverage(const CoverageState &coverage) {
       flags |= RunContainsAssertion;
       break;
     }
+  if (std::find(coverage.fsmExcluded.begin(), coverage.fsmExcluded.end(), 0) !=
+      coverage.fsmExcluded.end())
+    flags |= RunContainsFSM;
   // A declared coverage model remains functional data even when it has no
   // bins or every bin is excluded. Its identities and options must survive a
   // save; contribution to the score is decided by the coverage calculation.
@@ -571,6 +625,8 @@ uint64_t runFlagForMetric(obelisk::coverage::MetricKind metric) {
     return RunContainsFunctional;
   case MetricKind::Assertion:
     return RunContainsAssertion;
+  case MetricKind::FSM:
+    return RunContainsFSM;
   default:
     return 0;
   }
@@ -667,13 +723,6 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
       !isValidSVScopeDefinition(scopeDefinition) || roots.empty())
     return SVCovError;
 
-  // Clause 40 does not require automatic FSM extraction. A valid stop or
-  // reset remains a successful no-op; check/start report no available
-  // obligations, per Table 40-1.
-  if (coverageType == SVCovFSM)
-    return control == SVCovStop || control == SVCovReset ? SVCovOK
-                                                         : SVCovNoCoverage;
-
   bool includeDescendants = scopeDefinition == SVCovHierarchy;
   uint64_t available = 0;
   uint64_t unavailable = 0;
@@ -697,6 +746,27 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
         coverage.lineCounters[index].store(0, std::memory_order_relaxed);
         coverage.lineOverflow[index].store(0, std::memory_order_relaxed);
         resetEntities.insert(point.id);
+      }
+    }
+  } else if (coverageType == SVCovFSM) {
+    // IEEE 1800-2023 40.4: only FSMs identified by pragmas have states.
+    for (size_t index = 0; index != coverage.fsmCounters.size(); ++index) {
+      const auto &state = coverage.schema->fsmStates[index];
+      if (!isScopeSelected(coverage, state.scope, roots, includeDescendants))
+        continue;
+      if (coverage.fsmExcluded[index]) {
+        unavailable = saturatingAdd(unavailable, 1);
+        continue;
+      }
+      available = saturatingAdd(available, 1);
+      if (control == SVCovStart)
+        coverage.fsmEnabled[index] = 1;
+      else if (control == SVCovStop)
+        coverage.fsmEnabled[index] = 0;
+      else if (control == SVCovReset) {
+        coverage.fsmCounters[index] = 0;
+        coverage.fsmOverflow[index] = 0;
+        resetEntities.insert(state.id);
       }
     }
   } else if (coverageType == SVCovAssertion) {
@@ -752,7 +822,8 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
         coverageType == SVCovStatement ? obelisk::coverage::MetricKind::Line
         : coverageType == SVCovAssertion
             ? obelisk::coverage::MetricKind::Assertion
-            : obelisk::coverage::MetricKind::Toggle;
+        : coverageType == SVCovFSM ? obelisk::coverage::MetricKind::FSM
+                                   : obelisk::coverage::MetricKind::Toggle;
     coverage.schema->counters.erase(
         std::remove_if(coverage.schema->counters.begin(),
                        coverage.schema->counters.end(),
@@ -777,9 +848,6 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
   if (!isValidSVCoverageType(coverageType) ||
       !isValidSVScopeDefinition(scopeDefinition) || roots.empty())
     return SVCovError;
-  if (coverageType == SVCovFSM)
-    return SVCovNoCoverage;
-
   bool includeDescendants = scopeDefinition == SVCovHierarchy;
   uint64_t covered = 0;
   uint64_t total = 0;
@@ -793,6 +861,19 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
       if (coverage.lineCounters[index].load(std::memory_order_relaxed) ||
           loadedCounterHit(coverage, obelisk::coverage::MetricKind::Line,
                            point.id, 0))
+        covered = saturatingAdd(covered, 1);
+    }
+  } else if (coverageType == SVCovFSM) {
+    // IEEE 1800-2023 40.2.2: the states of each FSM that were reached.
+    for (size_t index = 0; index != coverage.fsmCounters.size(); ++index) {
+      const auto &state = coverage.schema->fsmStates[index];
+      if (coverage.fsmExcluded[index] ||
+          !isScopeSelected(coverage, state.scope, roots, includeDescendants))
+        continue;
+      total = saturatingAdd(total, 1);
+      if (coverage.fsmCounters[index] ||
+          loadedCounterHit(coverage, obelisk::coverage::MetricKind::FSM,
+                           state.id, 0))
         covered = saturatingAdd(covered, 1);
     }
   } else if (coverageType == SVCovAssertion) {
@@ -849,6 +930,8 @@ persistentCoverageMetric(int32_t coverageType) {
   if (coverageType == SVCovAssertion)
     return PersistentCoverageMetric{MetricKind::Assertion,
                                     RunContainsAssertion};
+  if (coverageType == SVCovFSM)
+    return PersistentCoverageMetric{MetricKind::FSM, RunContainsFSM};
   return std::nullopt;
 }
 
@@ -1118,6 +1201,13 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
                ? 1u
                : 0u,
            coverage.assertionCounters[index].load(std::memory_order_relaxed)});
+  }
+  if (coverage.finalized && (run.flags & obelisk::coverage::RunContainsFSM)) {
+    for (size_t index = 0; index != coverage.fsmCounters.size(); ++index)
+      result.counters.push_back({run.uuid, obelisk::coverage::MetricKind::FSM,
+                                 result.fsmStates[index].id, 0, 0,
+                                 coverage.fsmOverflow[index] ? 1u : 0u,
+                                 coverage.fsmCounters[index]});
   }
   if (coverage.finalized &&
       (run.flags & obelisk::coverage::RunContainsToggle)) {
@@ -13565,8 +13655,9 @@ bool obelisk_rt_coverage_tracks_static_state_unlocked(
   if (!context || !context->coverage || !context->coverage->finalized)
     return false;
   auto found = context->coverage->toggleBindings.find(staticID);
-  return found != context->coverage->toggleBindings.end() &&
-         !found->second.empty();
+  return (found != context->coverage->toggleBindings.end() &&
+          !found->second.empty()) ||
+         context->coverage->fsmWatches.count(staticID) != 0;
 }
 
 void obelisk_rt_coverage_record_transition_unlocked(obelisk_rt_context *context,
@@ -13578,20 +13669,38 @@ void obelisk_rt_coverage_record_transition_unlocked(obelisk_rt_context *context,
   if (!context || !changed || bitWidth == 0)
     return;
   CoverageState *coverage = coverageState(context, false);
-  if (!coverage || !coverage->finalized || coverage->toggleBindings.empty())
+  if (!coverage || !coverage->finalized ||
+      (coverage->toggleBindings.empty() && coverage->fsmWatches.empty()))
     return;
 
   uint32_t staticID = 0;
   int64_t signedLow = 0;
   if (!decodeNativeStatic(stableID, staticID, signedLow) || signedLow < 0)
     return;
-  auto found = coverage->toggleBindings.find(staticID);
-  if (found == coverage->toggleBindings.end())
-    return;
   uint64_t publishedLow = static_cast<uint64_t>(signedLow);
   if (publishedLow > UINT64_MAX - bitWidth)
     return;
   uint64_t publishedEnd = publishedLow + bitWidth;
+  if (auto watches = coverage->fsmWatches.find(staticID);
+      watches != coverage->fsmWatches.end())
+    for (uint64_t key : watches->second) {
+      const CoverageFSMMachine &machine = coverage->fsmMachines.at(key);
+      bool touched = false;
+      for (const CoverageFSMSegment &segment : machine.segments)
+        for (uint64_t index = 0; !touched && segment.staticID == staticID &&
+                                 index != segment.bitWidth;
+             ++index) {
+          uint64_t stateBit = segment.stateLow + index;
+          touched = stateBit >= publishedLow && stateBit < publishedEnd &&
+                    bit(changed, stateBit - publishedLow);
+        }
+      if (touched)
+        recordFSMMachine(context, *coverage, machine, staticID, publishedLow,
+                         bitWidth, newValue, newUnknown);
+    }
+  auto found = coverage->toggleBindings.find(staticID);
+  if (found == coverage->toggleBindings.end())
+    return;
   const NativeStaticState *state = findNativeStaticState(context, staticID);
 
   for (const CoverageToggleBinding &binding : found->second) {
@@ -15462,6 +15571,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
                   obelisk::coverage::RunContainsFunctional);
     static_assert(OBELISK_RT_COVERAGE_PERSIST_ASSERTION ==
                   obelisk::coverage::RunContainsAssertion);
+    static_assert(OBELISK_RT_COVERAGE_PERSIST_FSM ==
+                  obelisk::coverage::RunContainsFSM);
     coverage->persistedRunFlags = persistenceMask;
     if (coverage->schema) {
       uint64_t schemaToggleBits = 0;
@@ -15507,6 +15618,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     }
     coverage->assertionCount = assertionCount;
     coverage->assertionExcluded.assign(static_cast<size_t>(assertionCount), 0);
+    size_t fsmStateCount =
+        coverage->schema ? coverage->schema->fsmStates.size() : 0;
+    if (fsmStateCount > UINT32_MAX)
+      return OBELISK_RT_INVALID_DESIGN;
+    coverage->fsmCounters.assign(fsmStateCount, 0);
+    coverage->fsmOverflow.assign(fsmStateCount, 0);
+    coverage->fsmEnabled.assign(fsmStateCount, 1);
+    coverage->fsmExcluded.assign(fsmStateCount, 0);
+    coverage->fsmMachines.clear();
+    coverage->fsmWatches.clear();
+    for (size_t index = 0; index != fsmStateCount; ++index) {
+      const obelisk::coverage::FSMState &state =
+          coverage->schema->fsmStates[index];
+      CoverageFSMMachine &machine = coverage->fsmMachines[state.machine];
+      machine.states.push_back(static_cast<uint32_t>(index));
+      machine.width = state.width;
+    }
     coverage->toggleBitCount = toggleBitCount;
     coverage->toggleCounters.assign(static_cast<size_t>(toggleBitCount * 4), 0);
     coverage->toggleOverflow.assign(static_cast<size_t>(toggleBitCount * 4), 0);
@@ -15528,6 +15656,7 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
       std::unordered_set<uint64_t> excludedLines;
       std::unordered_set<uint64_t> excludedToggles;
       std::unordered_set<uint64_t> excludedAssertions;
+      std::unordered_set<uint64_t> excludedFSMStates;
       for (const obelisk::coverage::Exclusion &exclusion :
            coverage->schema->exclusions) {
         if (exclusion.metric == obelisk::coverage::MetricKind::Line)
@@ -15536,7 +15665,12 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
           excludedToggles.insert(exclusion.entity);
         else if (exclusion.metric == obelisk::coverage::MetricKind::Assertion)
           excludedAssertions.insert(exclusion.entity);
+        else if (exclusion.metric == obelisk::coverage::MetricKind::FSM)
+          excludedFSMStates.insert(exclusion.entity);
       }
+      for (size_t index = 0; index != fsmStateCount; ++index)
+        coverage->fsmExcluded[index] =
+            excludedFSMStates.count(coverage->schema->fsmStates[index].id) != 0;
       for (uint64_t index = 0; index != lineCount; ++index)
         coverage->lineExcluded[index] =
             excludedLines.count(coverage->schema->linePoints[index].id) != 0;
@@ -15638,7 +15772,46 @@ obelisk_rt_v1_coverage_toggle_seal(obelisk_rt_context *context) {
       return OBELISK_RT_INVALID_DESIGN;
   coverage->toggleBindingsSealed = true;
   coverage->toggleBound.clear();
+  // Each FSM is in its initial state when simulation starts.
+  for (const auto &[key, machine] : coverage->fsmMachines)
+    recordFSMMachine(context, *coverage, machine, UINT32_MAX, 0, 0, nullptr,
+                     nullptr);
   return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_coverage_fsm_bind(obelisk_rt_context *context,
+                                uint64_t machineKey, uint64_t shift,
+                                uint64_t bitCount, uint64_t stateHandle) {
+  if (!context || bitCount == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    CoverageState *coverage = coverageState(context, false);
+    if (!coverage || !coverage->finalized || coverage->toggleBindingsSealed)
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    auto machine = coverage->fsmMachines.find(machineKey);
+    if (machine == coverage->fsmMachines.end() ||
+        shift > machine->second.width ||
+        bitCount > machine->second.width - shift)
+      return OBELISK_RT_INVALID_DESIGN;
+    uint32_t staticID = 0;
+    int64_t signedLow = 0;
+    if (!decodeNativeStatic(stateHandle, staticID, signedLow) || signedLow < 0)
+      return OBELISK_RT_INVALID_HANDLE;
+    const NativeStaticState *state = findNativeStaticState(context, staticID);
+    uint64_t stateLow = static_cast<uint64_t>(signedLow);
+    if (!state || stateLow > state->bitWidth ||
+        bitCount > state->bitWidth - stateLow)
+      return OBELISK_RT_INVALID_HANDLE;
+    machine->second.segments.push_back({staticID, stateLow, bitCount, shift});
+    std::vector<uint64_t> &watchers = coverage->fsmWatches[staticID];
+    if (std::find(watchers.begin(), watchers.end(), machineKey) ==
+        watchers.end())
+      watchers.push_back(machineKey);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
 }
 
 extern "C" obelisk_rt_status
@@ -15680,7 +15853,8 @@ obelisk_rt_v1_coverage_reset(obelisk_rt_context *context, uint32_t metric,
                              const uint8_t *currentUnknown) {
   if (!context || (metric != OBELISK_RT_COVERAGE_STATEMENT &&
                    metric != OBELISK_RT_COVERAGE_TOGGLE &&
-                   metric != OBELISK_RT_COVERAGE_ASSERTION))
+                   metric != OBELISK_RT_COVERAGE_ASSERTION &&
+                   metric != OBELISK_RT_COVERAGE_FSM))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
@@ -15696,6 +15870,9 @@ obelisk_rt_v1_coverage_reset(obelisk_rt_context *context, uint32_t metric,
       coverage->assertionCounters[index].store(0, std::memory_order_relaxed);
       coverage->assertionOverflow[index].store(0, std::memory_order_relaxed);
     }
+  } else if (metric == OBELISK_RT_COVERAGE_FSM) {
+    std::fill(coverage->fsmCounters.begin(), coverage->fsmCounters.end(), 0);
+    std::fill(coverage->fsmOverflow.begin(), coverage->fsmOverflow.end(), 0);
   } else {
     if (coverage->toggleBitCount && (!currentValue || !currentUnknown))
       return OBELISK_RT_INVALID_ARGUMENT;
@@ -15729,7 +15906,8 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
   if (!context || !outCovered || !outTotal || !outPercentage ||
       (metric != OBELISK_RT_COVERAGE_STATEMENT &&
        metric != OBELISK_RT_COVERAGE_TOGGLE &&
-       metric != OBELISK_RT_COVERAGE_ASSERTION))
+       metric != OBELISK_RT_COVERAGE_ASSERTION &&
+       metric != OBELISK_RT_COVERAGE_FSM))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
@@ -15757,6 +15935,15 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
       covered +=
           coverage->lineCounters[index].load(std::memory_order_relaxed) != 0 ||
           loaded(obelisk::coverage::MetricKind::Line, entity, 0) != 0;
+    }
+  } else if (metric == OBELISK_RT_COVERAGE_FSM) {
+    for (size_t index = 0; index != coverage->fsmCounters.size(); ++index) {
+      if (coverage->fsmExcluded[index])
+        continue;
+      ++total;
+      covered += coverage->fsmCounters[index] != 0 ||
+                 loaded(obelisk::coverage::MetricKind::FSM,
+                        coverage->schema->fsmStates[index].id, 0) != 0;
     }
   } else if (metric == OBELISK_RT_COVERAGE_ASSERTION) {
     for (uint64_t index = 0; index != coverage->assertionCount; ++index) {

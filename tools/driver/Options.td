@@ -104,9 +104,9 @@ def clocked_kernels_EQ : Joined<["--"], "clocked-kernels=">,
   Values<"off,immediate,deferred">,
   HelpText<"Select clocked kernels with direct NBA stores (default: deferred)">;
 def coverage : Flag<["--"], "coverage">, Group<Compilation_Group>,
-  HelpText<"Instrument line, toggle, functional, and assertion coverage">;
+  HelpText<"Instrument line, toggle, functional, assertion, and FSM coverage">;
 def coverage_EQ : Joined<["--"], "coverage=">, Group<Compilation_Group>,
-  MetaVarName<"<line,toggle,functional,assertion>">,
+  MetaVarName<"<line,toggle,functional,assertion,fsm>">,
   HelpText<"Select coverage metric families to instrument">;
 def coverage_config_EQ : Joined<["--"], "coverage-config=">,
   Group<Compilation_Group>, MetaVarName<"<file.json>">,
