@@ -35,6 +35,7 @@ using ContinuousDriverMap =
 mlir::FailureOr<ContinuousDriverMap> materializeNetTopology(
     mlir::SmallVectorImpl<mlir::Operation *> &sourceUnits,
     mlir::ArrayRef<ir::SVPortConnectionOp> portConnections,
+    mlir::ArrayRef<ir::SVNetAliasSymbolOp> netAliases,
     const llvm::StringMap<mlir::Operation *> &semanticSymbols,
     llvm::StringMap<DescriptorInfo> &descriptors,
     const PreparedScopeDeclarations &scopes, mlir::OpBuilder &builder);

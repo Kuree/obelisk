@@ -143,6 +143,7 @@ static Operation *peelClockingOutputSelects(Operation *destination) {
 FailureOr<ContinuousDriverMap>
 materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
                        ArrayRef<semantic::SVPortConnectionOp> portConnections,
+                       ArrayRef<semantic::SVNetAliasSymbolOp> netAliases,
                        const llvm::StringMap<Operation *> &semanticSymbols,
                        llvm::StringMap<DescriptorInfo> &descriptors,
                        const PreparedScopeDeclarations &scopes,
@@ -534,9 +535,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     }
     return std::pair(!internalDominates, warn);
   };
+  // `source` is the port connection or alias that joins `lhs` to `rhs`; only
+  // an inout port may leave bits of either side unjoined.
   auto appendStaticConnections =
-      [&](semantic::SVPortConnectionOp connection, ArrayRef<NetRun> lhs,
-          ArrayRef<NetRun> rhs) -> std::optional<bool> {
+      [&](Operation *source, StringRef provenance, bool allowPartial,
+          ArrayRef<NetRun> lhs, ArrayRef<NetRun> rhs) -> std::optional<bool> {
     size_t lhsIndex = 0, rhsIndex = 0;
     uint64_t lhsConsumed = 0, rhsConsumed = 0;
     bool emittedNetTypeWarning = false;
@@ -557,7 +560,7 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         auto [rhsDominates, warn] =
             portDominance(left.descriptor.netKind, right.descriptor.netKind);
         if (warn && !emittedNetTypeWarning) {
-          emitWarning(getSemanticLocation(connection))
+          emitWarning(getSemanticLocation(source))
               << "dissimilar net types require a port-collapse warning";
           emittedNetTypeWarning = true;
         }
@@ -568,14 +571,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         if (std::get<0>(edge) == std::get<1>(edge) &&
             std::get<2>(edge) == std::get<3>(edge))
           continue;
-        StaticEdgeMetadata metadata{
-            scopes.lookup(connection),
-            semantic::stringifySVPortConnectionKind(connection.getProvenance())
-                .str(),
-            getSemanticLocation(connection), rhsDominates};
+        StaticEdgeMetadata metadata{scopes.lookup(source), provenance.str(),
+                                    getSemanticLocation(source), rhsDominates};
         auto [found, inserted] = staticEdges.try_emplace(edge, metadata);
         if (!inserted && found->second.rhsDominates != metadata.rhsDominates) {
-          emitError(getSemanticLocation(connection))
+          emitError(getSemanticLocation(source))
               << "static net connection has conflicting dominating sides";
           invalid = true;
           return std::nullopt;
@@ -597,9 +597,8 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
       }
     }
     bool fullyMerged = lhsIndex == lhs.size() && rhsIndex == rhs.size();
-    if (!fullyMerged &&
-        connection.getDirection() != semantic::SVArgumentDirection::InOut) {
-      emitError(getSemanticLocation(connection))
+    if (!fullyMerged && !allowPartial) {
+      emitError(getSemanticLocation(source))
           << "static net connection has incompatible endpoint widths";
       invalid = true;
       return std::nullopt;
@@ -733,8 +732,11 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
         splitUnpackedArrayRuns(lhs);
         splitUnpackedArrayRuns(rhs);
       }
-      std::optional<bool> fullyMerged =
-          appendStaticConnections(connection, lhs, rhs);
+      std::optional<bool> fullyMerged = appendStaticConnections(
+          connection,
+          semantic::stringifySVPortConnectionKind(connection.getProvenance()),
+          connection.getDirection() == semantic::SVArgumentDirection::InOut,
+          lhs, rhs);
       if (fullyMerged && !*fullyMerged && hasUWireSide)
         emitWarning(getSemanticLocation(connection))
             << "uwire port connection was not fully merged into a single "
@@ -753,6 +755,34 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
           << "uwire port connection was not fully merged into a single "
              "simulated net";
     sourceUnits.push_back(connection);
+  }
+
+  // IEEE 1800-2023 10.11: the members of an alias share the physical nets of
+  // their bits. Join every member to the first one bit by bit; the overlay
+  // follows packed-union rules, so both sides count from their LSB.
+  for (semantic::SVNetAliasSymbolOp alias : netAliases) {
+    SmallVector<Operation *> members = getChildren(alias);
+    SmallVector<NetRun> first;
+    if (members.size() < 2 || !flattenNetExpr(members.front(), first)) {
+      emitError(getSemanticLocation(alias))
+          << "net alias member is not a static net selection";
+      invalid = true;
+      continue;
+    }
+    for (Operation *member : ArrayRef(members).drop_front()) {
+      SmallVector<NetRun> runs;
+      if (!flattenNetExpr(member, runs) ||
+          totalWidth(runs) != totalWidth(first)) {
+        emitError(getSemanticLocation(member))
+            << "net alias member is not a static net selection of the same "
+               "width";
+        invalid = true;
+        break;
+      }
+      if (!appendStaticConnections(alias, "alias", /*allowPartial=*/false,
+                                   first, runs))
+        break;
+    }
   }
 
   // IEEE 1800-2017 28.8 and 28.12: a tran-family channel is

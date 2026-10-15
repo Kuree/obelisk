@@ -304,7 +304,8 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
   // IEEE 1800-2023 10.11 net aliases are static topology, not executable
   // connectivity.  Collapse direct whole-net aliases onto one descriptor so
   // drivers, readers, and observers all use the same resolved net without
-  // adding any runtime propagation work.
+  // adding any runtime propagation work. Any other alias shares bits, which
+  // net topology joins like a collapsed port.
   llvm::StringMap<std::string> netAliasParents;
   auto findNetAlias = [&](StringRef path) -> std::string {
     SmallVector<std::string> chain;
@@ -337,8 +338,10 @@ analyzePortAliases(semantic::SVRootSymbolOp semanticRoot) {
       FailureOr<StaticStorageView> view = getStaticStorageView(expression);
       if (failed(view) || !view->identity || view->offset != 0 ||
           view->packedOffset != 0 || !view->indices.empty() ||
-          view->rootType != view->viewType)
+          view->rootType != view->viewType) {
+        result.partialNetAliases.push_back(alias);
         return;
+      }
       paths.push_back(view->path);
     }
     for (StringRef path : ArrayRef<std::string>(paths).drop_front())

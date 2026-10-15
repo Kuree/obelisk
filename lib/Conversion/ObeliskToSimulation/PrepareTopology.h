@@ -58,6 +58,9 @@ struct PreparedPortAliases {
   llvm::StringMap<StaticStorageView> interfaceViews;
   llvm::StringSet<> eventCellPaths;
   mlir::SmallVector<ir::SVPortConnectionOp> connections;
+  /// Aliases whose members are not all whole nets of one type. They join
+  /// bit by bit through static net connections.
+  mlir::SmallVector<ir::SVNetAliasSymbolOp> partialNetAliases;
 };
 
 /// The sole operation in the first block of a semantic inventory region.

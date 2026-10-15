@@ -2717,9 +2717,9 @@ void ObeliskSimPreparePass::runOnOperation() {
           property, builder.getArrayAttr(updated));
     }
 
-  FailureOr<ContinuousDriverMap> preparedNetTopology =
-      materializeNetTopology(sourceUnits, portConnections, semanticSymbols,
-                             descriptors, *scopes, builder);
+  FailureOr<ContinuousDriverMap> preparedNetTopology = materializeNetTopology(
+      sourceUnits, portConnections, portAliases->partialNetAliases,
+      semanticSymbols, descriptors, *scopes, builder);
   if (failed(preparedNetTopology))
     return abort();
   ContinuousDriverMap &continuousDrivers = *preparedNetTopology;
