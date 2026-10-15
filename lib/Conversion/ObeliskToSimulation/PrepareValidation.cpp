@@ -679,9 +679,13 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
   llvm::DenseMap<Operation *, Type> embeddedCoverageOwnerByOperation;
   if (pruneUnusedCoverage) {
     llvm::DenseSet<Type> candidates;
+    llvm::DenseMap<Type, SmallVector<Type>> derivedGroups;
     result.root->walk([&](semantic::SVCovergroupTypeOp covergroup) {
       if (isa<semantic::SVClassTypeOp>(covergroup->getParentOp())) {
         candidates.insert(covergroup.getSemanticType());
+        if (auto base = covergroup.getBaseGroupAttr())
+          derivedGroups[base.getValue()].push_back(
+              covergroup.getSemanticType());
         covergroup->walk([&](Operation *nested) {
           embeddedCoverageOwnerByOperation.try_emplace(
               nested, covergroup.getSemanticType());
@@ -717,6 +721,13 @@ validateSemanticDesign(ModuleOp module, bool pruneUnusedCoverage) {
         live.insert(owner->second);
     });
 
+    // IEEE 1800-2023 19.4.1: a derived embedded covergroup replaces the
+    // instance of its base, so every group extending a live one is live.
+    SmallVector<Type> worklist(live.begin(), live.end());
+    while (!worklist.empty())
+      for (Type derived : derivedGroups.lookup(worklist.pop_back_val()))
+        if (live.insert(derived).second)
+          worklist.push_back(derived);
     if (!preserveAll)
       for (Type candidate : candidates)
         if (!live.contains(candidate))

@@ -604,7 +604,15 @@ UnitLowering::lowerNewCovergroup(semantic::SVNewCovergroupExpressionOp op,
         cf::CondBranchOp::create(builder, location, matches, selected,
                                  ValueRange{}, next, ValueRange{});
         setCurrent(selected);
+        // The derived group's construction expressions read the derived
+        // class's properties, so they see `this` as that class (19.4.1).
+        Value savedThis = thisObject;
+        thisObject = sim::SimClassCastOp::create(
+            builder, location,
+            sim::ClassHandleType::get(function.getContext(), target),
+            thisObject);
         FailureOr<Value> selectedHandle = lowerNewCovergroup(op, derived, true);
+        thisObject = savedThis;
         if (failed(selectedHandle))
           return failure();
         FailureOr<Value> adjusted =
@@ -2235,9 +2243,15 @@ FailureOr<Value> UnitLowering::lowerCovergroupSample(
         setCurrent(selected);
         FailureOr<Value> adjusted =
             convert(handle, *derivedType, false, location);
+        // The derived group's expressions read the derived class's
+        // properties, so they see the owner as that class (19.4.1).
+        Value derivedOwner = sim::SimClassCastOp::create(
+            builder, location,
+            sim::ClassHandleType::get(function.getContext(), target),
+            classOwner);
         FailureOr<Value> selectedResult =
             succeeded(adjusted) ? lowerCovergroupSample(op, derived, *adjusted,
-                                                        classOwner, true)
+                                                        derivedOwner, true)
                                 : FailureOr<Value>(failure());
         if (failed(selectedResult))
           return failure();
