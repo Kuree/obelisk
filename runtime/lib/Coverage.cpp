@@ -15732,6 +15732,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_control_definition(
   }
 }
 
+obelisk_rt_status
+obelisk_rt_coverage_scope_for_path(obelisk_rt_context *context,
+                                   std::string_view path, uint64_t &scopeID) {
+  if (!context)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  std::lock_guard<std::recursive_mutex> lock(context->mutex);
+  CoverageState *coverage = coverageState(context, false);
+  if (!coverage || !coverage->finalized || !coverage->schema)
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  for (const obelisk::coverage::Scope &scope : coverage->schema->scopes)
+    if (scope.name == path) {
+      scopeID = scope.id;
+      return OBELISK_RT_OK;
+    }
+  return OBELISK_RT_INVALID_ARGUMENT;
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_coverage_control_instance(
     obelisk_rt_context *context, int32_t control, int32_t coverageType,
     int32_t scopeDefinition, uint64_t coverageScopeID, int32_t *outStatus) {

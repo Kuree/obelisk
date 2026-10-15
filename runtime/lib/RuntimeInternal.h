@@ -2045,6 +2045,11 @@ struct CoverageState {
   obelisk::coverage::UUID runUUID{};
 };
 
+// The Clause 40 coverage scope of the elaborated instance named `path`.
+obelisk_rt_status
+obelisk_rt_coverage_scope_for_path(obelisk_rt_context *context,
+                                   std::string_view path, uint64_t &scopeID);
+
 // Query immutable resolved covergroup type policy while the context mutex is
 // held. This is internal runtime state, not a second public ABI surface.
 obelisk_rt_status

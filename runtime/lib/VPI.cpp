@@ -7500,9 +7500,139 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_multi_index(
   return handleByIndices(object, count, indices);
 }
 
-extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32, ...) {
+namespace {
+
+// SV_COV_MODULE (IEEE 1800-2023 40.3.2.1): the instance itself, without the
+// instances below it.
+constexpr int32_t svCovModule = 10;
+
+// IEEE 1800-2023 40.5.1: the SV_COV_* coverage type of a VPI coverage type.
+std::optional<int32_t> coverageTypeFor(PLI_INT32 type) {
+  switch (type) {
+  case vpiAssertCoverage:
+    return 20;
+  case vpiFsmStateCoverage:
+    return 21;
+  case vpiStatementCoverage:
+    return 22;
+  case vpiToggleCoverage:
+    return 23;
+  default:
+    return std::nullopt;
+  }
+}
+
+// IEEE 1800-2023 40.5.3: start, stop, reset or check coverage of an instance
+// as $coverage_control does. Statement, toggle and FSM coverage are
+// controllable only per instance.
+PLI_INT32 controlCoverage(VPIState *state, int32_t control, PLI_INT32 type,
+                          vpiHandle object) {
+  std::optional<int32_t> coverageType = coverageTypeFor(type);
+  if (!coverageType) {
+    setError(state, "VPI coverage control has an invalid coverage type");
+    return 0;
+  }
+  __vpiHandle *handle = validate(object);
+  if (!handle)
+    return 0;
+  PLI_INT32 objectType = vpiTypeForHandle(handle);
+  if (objectType != vpiModule && objectType != vpiInterface &&
+      objectType != vpiProgram) {
+    setError(state, "VPI coverage control of this object is not supported",
+             vpiNotice);
+    return 0;
+  }
+  std::string path;
+  if (!nameFor(handle, path))
+    return 0;
+  uint64_t scopeID = 0;
+  int32_t status = 0;
+  if (obelisk_rt_coverage_scope_for_path(state->context, path, scopeID) !=
+          OBELISK_RT_OK ||
+      obelisk_rt_v1_coverage_control_instance(
+          state->context, control, *coverageType, svCovModule, scopeID,
+          &status) != OBELISK_RT_OK) {
+    setError(state, "VPI coverage control found no coverage for the instance",
+             vpiNotice);
+    return 0;
+  }
+  return status > 0 ? 1 : 0;
+}
+
+// IEEE 1800-2023 40.5.3: save or merge coverage as $coverage_save and
+// $coverage_merge do.
+PLI_INT32 persistCoverage(VPIState *state, bool save, PLI_INT32 type,
+                          const char *name) {
+  std::optional<int32_t> coverageType = coverageTypeFor(type);
+  if (!coverageType || !name) {
+    setError(state, "VPI coverage persistence has an invalid argument");
+    return 0;
+  }
+  ManagedExecutionScope managed(state->context);
+  obelisk_rt_gc_lane_v1 *lane = managed.getLane();
+  obelisk_rt_string_v1 string = 0;
+  int32_t status = 0;
+  if (managed.getStatus() != OBELISK_RT_OK || !lane ||
+      obelisk_rt_v1_string_create(lane, name, std::strlen(name), &string) !=
+          OBELISK_RT_OK ||
+      (save ? obelisk_rt_v1_coverage_database_save(
+                  state->context, *coverageType, string, &status)
+            : obelisk_rt_v1_coverage_database_merge(
+                  state->context, *coverageType, string, &status)) !=
+          OBELISK_RT_OK) {
+    setError(state, "VPI coverage persistence failed", vpiNotice);
+    return 0;
+  }
+  return status > 0 ? 1 : 0;
+}
+
+} // namespace
+
+extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
   beginVPICall();
   VPIState *state = requireState();
-  setError(state, "VPI control operations are not supported");
-  return 0;
+  if (!state)
+    return 0;
+  va_list arguments;
+  va_start(arguments, operation);
+  PLI_INT32 result = 0;
+  switch (operation) {
+  case vpiStop:
+  case vpiFinish: {
+    // IEEE 1800-2023 38.4: the diagnostic level is the $stop or $finish
+    // argument.
+    PLI_INT32 diagnostic = va_arg(arguments, PLI_INT32);
+    obelisk_rt_status status =
+        operation == vpiFinish
+            ? obelisk_rt_v1_scheduler_finish(state->context,
+                                             static_cast<uint32_t>(diagnostic))
+            : obelisk_rt_v1_scheduler_stop(state->context,
+                                           static_cast<uint32_t>(diagnostic));
+    result = status == OBELISK_RT_OK;
+    if (!result)
+      setError(state, "VPI simulation control failed");
+    break;
+  }
+  case vpiCoverageStart:
+  case vpiCoverageStop:
+  case vpiCoverageReset:
+  case vpiCoverageCheck: {
+    PLI_INT32 type = va_arg(arguments, PLI_INT32);
+    vpiHandle object = va_arg(arguments, vpiHandle);
+    result = controlCoverage(state, operation - vpiCoverageStart, type, object);
+    break;
+  }
+  case vpiCoverageSave:
+  case vpiCoverageMerge: {
+    PLI_INT32 type = va_arg(arguments, PLI_INT32);
+    const char *name = va_arg(arguments, const char *);
+    result = persistCoverage(state, operation == vpiCoverageSave, type, name);
+    break;
+  }
+  default:
+    setError(state, "VPI control operation is not supported");
+    break;
+  }
+  va_end(arguments);
+  return result;
 }
