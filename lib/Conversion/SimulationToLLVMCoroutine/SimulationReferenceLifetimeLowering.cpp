@@ -317,7 +317,15 @@ LogicalResult insertAutomaticOwnerReleases(sim::SimFuncOp function) {
           worklist.push_back(successor);
       }
 
-      if (!anyLive) {
+      // A terminator that hands the reference to a callee, such as a task
+      // call, uses it until control leaves through a successor edge, so the
+      // owner can be released only on those edges.
+      bool terminatorUses =
+          terminator->getNumSuccessors() != 0 &&
+          llvm::any_of(terminator->getOperands(), [&](Value operand) {
+            return family.contains(operand);
+          });
+      if (!anyLive && !terminatorUses) {
         auto [found, inserted] = blockReleases.try_emplace(terminator);
         if (inserted)
           blockOrder.push_back(terminator);

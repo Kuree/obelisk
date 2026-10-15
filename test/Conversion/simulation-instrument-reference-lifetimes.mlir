@@ -110,6 +110,28 @@ module {
       simulation.call @observe_alias(%ctx, %forwarded) : (!simulation.context, !simulation.argument_ref<i64>) -> ()
       simulation.return
     }
+
+    // A task writes its output formal until it returns, even when the caller
+    // never reads that formal again.
+    simulation.code_unit.decl 8 in 0 task hierarchy "reference_lifetimes.fill"
+    simulation.code_unit.decl 9 in 0 initial hierarchy "reference_lifetimes.task_argument"
+    simulation.func @fill(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %out: !simulation.ref<i64> {simulation.capture_kind = 1 : i32})
+        attributes {entry_kind = 12 : i32, code_unit_id = 8 : i64} {
+      %value = arith.constant 7 : i64
+      simulation.ref.store %value to %out : i64, !simulation.ref<i64>
+      simulation.return
+    }
+    simulation.func @task_argument(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %initial: i64 {simulation.capture_kind = 2 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 9 : i64} {
+      %formal = simulation.ref.alloc %initial : i64 -> !simulation.ref<i64>
+      simulation.task.call @fill(%ctx, %formal) arguments 2 to ^returned : !simulation.context, !simulation.ref<i64>
+    ^returned:
+      simulation.return
+    }
   }
 }
 
@@ -150,3 +172,11 @@ module {
 // CHECK: simulation.call @observe_alias
 // CHECK-NEXT: simulation.ref.release_owner %[[LOCAL]]
 // CHECK-NEXT: simulation.return
+
+// CHECK-LABEL: simulation.func @task_argument
+// CHECK: %[[FORMAL:.*]] = simulation.ref.alloc
+// CHECK-SAME: native.owner_release_instrumented
+// CHECK-NEXT: simulation.task.call @fill(%{{.*}}, %[[FORMAL]], %[[FORMAL]]) arguments 2 to ^[[CLEANUP:bb[0-9]+]]
+// CHECK: ^[[CLEANUP]](%[[RETURNED:.*]]: !simulation.ref<i64>):
+// CHECK-NEXT: simulation.ref.release_owner %[[RETURNED]]
+// CHECK-NEXT: cf.br
