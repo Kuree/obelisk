@@ -2834,34 +2834,9 @@ FailureOr<Value> UnitLowering::lowerExpression(Operation *op, bool lvalue) {
       emitError(location) << "floating-point literal is not representable";
       return failure();
     }
-    if (isa<semantic::SVTimeLiteralOp>(op)) {
-      auto scaleAttr = sim::get<sim::metadata::DelayScale>(function);
-      auto quantumAttr = sim::get<sim::metadata::DelayQuantum>(function);
-      if (!scaleAttr || !quantumAttr) {
-        function.emitError("code unit has incomplete time-literal metadata");
-        return failure();
-      }
-      uint64_t scale = scaleAttr.getValue().getZExtValue();
-      uint64_t quantum = quantumAttr.getValue().getZExtValue();
-      if (scale == 0 || quantum == 0 || scale % quantum != 0) {
-        function.emitError("code unit has invalid time-literal metadata");
-        return failure();
-      }
-
-      // Slang has already expressed the literal in the lexical timeunit. The
-      // LRM additionally requires rounding that realtime value to the lexical
-      // timeprecision. Keep the intermediate calculation wider than f64 so
-      // decimal half-quantum literals do not fall below the tie spuriously.
-      long double stepsPerUnit = static_cast<long double>(scale / quantum);
-      long double steps = static_cast<long double>(value) * stepsPerUnit;
-      long double rounded = std::round(steps) / stepsPerUnit;
-      if (!std::isfinite(rounded) ||
-          rounded > std::numeric_limits<double>::max()) {
-        emitError(location) << "rounded time literal is not representable";
-        return failure();
-      }
-      value = static_cast<double>(rounded);
-    }
+    // The importer already scaled a time literal to the lexical time unit,
+    // and rounded it to the lexical precision where the language revision
+    // requires that (IEEE 1800-2017 5.8).
     return arith::ConstantOp::create(builder, location, *type,
                                      builder.getFloatAttr(*type, value))
         .getResult();

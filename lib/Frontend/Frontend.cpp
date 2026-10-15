@@ -3529,8 +3529,21 @@ private:
       SET_OP_ATTR(ConstantValue,
                   builder.getStringAttr(formatReal(node.getValue())));
     } else if constexpr (std::same_as<T, slang::ast::TimeLiteral>) {
-      SET_OP_ATTR(ConstantValue,
-                  builder.getStringAttr(formatReal(node.getValue())));
+      // A time literal is a realtime value scaled to the current time unit.
+      // IEEE 1800-2017 5.8 also rounds it to the current time precision;
+      // IEEE 1800-2023 5.8 does not, leaving rounding to delays (3.14.1).
+      double value = node.getValue();
+      if (compilation.languageVersion() < slang::LanguageVersion::v1800_2023) {
+        slang::TimeScale scale = node.getScale();
+        // Keep the intermediate wider than f64 so that a decimal half-quantum
+        // literal does not fall below the tie spuriously.
+        long double stepsPerUnit = static_cast<long double>(
+            getFemtoseconds(scale.base) / getFemtoseconds(scale.precision));
+        value = static_cast<double>(
+            std::round(static_cast<long double>(value) * stepsPerUnit) /
+            stepsPerUnit);
+      }
+      SET_OP_ATTR(ConstantValue, builder.getStringAttr(formatReal(value)));
       SET_OP_ATTR(TimeScale, builder.getStringAttr(node.getScale().toString()));
     } else if constexpr (std::same_as<T, slang::ast::StringLiteral>) {
       SET_OP_ATTR(ConstantValue, builder.getStringAttr(node.getValue()));
