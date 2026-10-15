@@ -2680,6 +2680,7 @@ obelisk_rt_status validateClassDescriptor(
         (current->interface_count == 0) != (current->interfaces == nullptr) ||
         (current->method_count == 0) != (current->methods == nullptr) ||
         (current->debug_name_size == 0) != (current->debug_name == nullptr) ||
+        (current->copy_reset_count == 0) != (current->copy_resets == nullptr) ||
         (base && ((base->flags & OBELISK_RT_CLASS_FINAL) != 0 ||
                   current->instance_size < base->instance_size ||
                   current->instance_alignment < base->instance_alignment)))
@@ -2714,6 +2715,13 @@ obelisk_rt_status validateClassDescriptor(
     if (!methods.get(current) ||
         !validateRandomLayout(current, *currentHandles))
       return OBELISK_RT_INVALID_DESIGN;
+    for (uint64_t index = 0; index != current->copy_reset_count; ++index) {
+      const obelisk_rt_byte_range_v1 &range = current->copy_resets[index];
+      if (range.size == 0 || range.offset < sizeof(void *) ||
+          range.size > current->instance_size ||
+          range.offset > current->instance_size - range.size)
+        return OBELISK_RT_INVALID_DESIGN;
+    }
     if ((current->flags & OBELISK_RT_CLASS_WEAK_WRAPPER) != 0 &&
         (currentHandles->empty() ||
          currentHandles->first().offset != sizeof(obelisk_rt_managed_word_v1) ||
@@ -3503,6 +3511,13 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
                 reinterpret_cast<const uint8_t *>(source) + sizeof(void *),
                 dynamicDescriptor->instance_size - sizeof(void *));
   }
+  // An embedded covergroup handle is null in the copy (IEEE 1800-2023 8.12).
+  for (const auto *current = dynamicDescriptor; current;
+       current = current->base)
+    for (uint64_t index = 0; index != current->copy_reset_count; ++index)
+      std::memset(reinterpret_cast<uint8_t *>(*outObject) +
+                      current->copy_resets[index].offset,
+                  0, current->copy_resets[index].size);
   // IEEE 1800-2023 8.12 copies every property variable. Object handles are
   // shared, but a container property is a value and gets its own copy.
   obelisk_rt_gc_root_v1 copyRoot{};

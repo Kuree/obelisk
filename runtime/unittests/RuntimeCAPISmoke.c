@@ -52,7 +52,9 @@ _Static_assert(sizeof(obelisk_rt_random_variable_reference_v1) == 32,
                "managed random variable reference size changed");
 _Static_assert(sizeof(obelisk_rt_random_layout_v1) == 40,
                "managed random layout size changed");
-_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == SMOKE_PTR(104, 88),
+_Static_assert(sizeof(obelisk_rt_byte_range_v1) == 16,
+               "byte range size changed");
+_Static_assert(sizeof(obelisk_rt_class_descriptor_v1) == SMOKE_PTR(120, 96),
                "managed class descriptor size changed");
 _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, base) == 32,
                "managed class base offset changed");
@@ -62,6 +64,9 @@ _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, methods) ==
 _Static_assert(offsetof(obelisk_rt_class_descriptor_v1, random_layout) ==
                    SMOKE_PTR(96, 80),
                "managed class random layout offset changed");
+_Static_assert(offsetof(obelisk_rt_class_descriptor_v1, copy_resets) ==
+                   SMOKE_PTR(104, 84),
+               "managed class copy reset offset changed");
 _Static_assert(sizeof(obelisk_rt_gc_root_v1) == SMOKE_PTR(24, 16),
                "managed root size changed");
 _Static_assert(sizeof(obelisk_rt_gc_statistics_v1) == 72,

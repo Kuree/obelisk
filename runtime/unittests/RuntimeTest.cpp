@@ -5905,6 +5905,58 @@ TEST_F(ManagedHeapTest, ShallowCopiesContainerPropertiesAsValues) {
   EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &objectRoot), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedHeapTest, ShallowCopiesClearCopyResetRanges) {
+  // IEEE 1800-2023 8.12: an embedded covergroup handle is null in a shallow
+  // copy. Each descriptor lists its own ranges; the copy clears the whole
+  // chain of the source's dynamic class.
+  const obelisk_rt_byte_range_v1 baseResets[] = {{kNodeValueOffset, 8}};
+  obelisk_rt_class_descriptor_v1 base = nodeDescriptor;
+  base.class_id = 94;
+  base.copy_resets = baseResets;
+  base.copy_reset_count = 1;
+  const obelisk_rt_byte_range_v1 derivedResets[] = {{kDerivedExtraOffset, 8}};
+  obelisk_rt_class_descriptor_v1 derived = derivedDescriptor;
+  derived.class_id = 95;
+  derived.base = &base;
+  derived.copy_resets = derivedResets;
+  derived.copy_reset_count = 1;
+  ASSERT_EQ(obelisk_rt_v1_class_validate(&derived), OBELISK_RT_OK);
+
+  obelisk_rt_object_v1 *object = nullptr, *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &derived, &object),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &object), OBELISK_RT_OK);
+  const uint64_t value = 23;
+  for (uint64_t offset : {kNodeValueOffset, kDerivedExtraOffset})
+    ASSERT_EQ(obelisk_rt_v1_object_write(object, offset, &value, sizeof(value)),
+              OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_shallow_copy(lane, &base, object, &copy),
+            OBELISK_RT_OK);
+  for (uint64_t offset : {kNodeValueOffset, kDerivedExtraOffset}) {
+    uint64_t original = 0, copied = 1;
+    ASSERT_EQ(obelisk_rt_v1_object_read(object, offset, &original,
+                                        sizeof(original)),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_object_read(copy, offset, &copied, sizeof(copied)),
+              OBELISK_RT_OK);
+    EXPECT_EQ(original, value) << offset;
+    EXPECT_EQ(copied, 0u) << offset;
+  }
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+
+  // Ranges must be nonempty, follow the descriptor word and fit the instance.
+  for (obelisk_rt_byte_range_v1 invalid :
+       {obelisk_rt_byte_range_v1{kNodeValueOffset, 0},
+        obelisk_rt_byte_range_v1{0, 8},
+        obelisk_rt_byte_range_v1{kSlot * 3, 8}}) {
+    base.copy_resets = &invalid;
+    EXPECT_EQ(obelisk_rt_v1_class_validate(&base), OBELISK_RT_INVALID_DESIGN);
+  }
+  base.copy_resets = nullptr;
+  EXPECT_EQ(obelisk_rt_v1_class_validate(&base), OBELISK_RT_INVALID_DESIGN);
+}
+
 TEST_F(ManagedHeapTest, UsesChunkAllocationForSmallObjectChurn) {
   ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX), OBELISK_RT_OK);
   constexpr uint64_t objectCount = 200'000;

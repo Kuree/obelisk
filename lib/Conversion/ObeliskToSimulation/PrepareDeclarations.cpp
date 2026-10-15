@@ -980,6 +980,16 @@ FailureOr<PreparedClassDeclarations> materializeClassDeclarations(
                 builder.getContext(), static_cast<sim::MemberVisibility>(
                                           property.getMemberVisibility())));
       }
+      // IEEE 1800-2023 19.4: a covergroup declared in the class is embedded,
+      // and its implicit property is the one a shallow copy sets to null.
+      if (auto handle = dyn_cast_or_null<semantic::CovergroupHandleType>(
+              propertySemanticType ? *propertySemanticType : Type{})) {
+        auto covergroup = covergroupsBySymbol.find(
+            handle.getCovergroupName().getLeafReference());
+        if (!isStatic && covergroup != covergroupsBySymbol.end() &&
+            covergroup->second->getParentOp() == classType)
+          sim::mark<sim::metadata::EmbeddedCovergroup>(field);
+      }
       fieldDeclarations[property] = field;
       if (property.getRandMode() != semantic::SVRandMode::None) {
         sim::set<sim::metadata::RandomModeIndex>(

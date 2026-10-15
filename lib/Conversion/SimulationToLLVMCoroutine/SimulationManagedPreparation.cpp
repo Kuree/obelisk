@@ -67,6 +67,8 @@ struct ManagedClassLayout {
   SmallVector<ManagedTraceLayout> tracedFields;
   SmallVector<ManagedRandomEdge> randomEdges;
   SmallVector<ManagedRandomVariable> randomVariables;
+  // Own instance (offset, size) ranges a shallow copy clears.
+  SmallVector<std::pair<uint64_t, uint64_t>> copyResets;
   SmallVector<sim::SimClassMethodDeclOp> methods;
   SmallVector<Interface> interfaces;
 };
@@ -202,6 +204,9 @@ prepareManagedClassInventory(ModuleOp module,
             {sharedField.offset + rootOffset,
              isa<sim::ClassHandleType>(field.getType()) && field.getIsWeak(),
              slotKind});
+      if (sim::has<sim::metadata::EmbeddedCovergroup>(field))
+        layout.copyResets.push_back(
+            {sharedField.offset, sharedField.storage.size});
       if (sim::has<sim::metadata::RandomObjectEdge>(field)) {
         auto modeIndex = sim::get<sim::metadata::RandomModeIndex>(field);
         FailureOr<std::pair<uint64_t, uint64_t>> mode =
@@ -423,9 +428,10 @@ prepareManagedClassInventory(ModuleOp module,
       context, {i64, i32, i32, pointer, pointer, i64});
   Type interfaceType = LLVM::LLVMStructType::getLiteral(
       context, {i64, pointer, i64, pointer, i64});
+  Type byteRangeType = LLVM::LLVMStructType::getLiteral(context, {i64, i64});
   Type classType = LLVM::LLVMStructType::getLiteral(
       context, {i32, i32, i64, i64, i64, pointer, pointer, i64, pointer,
-                pointer, i64, pointer, i64, pointer});
+                pointer, i64, pointer, i64, pointer, pointer, i64});
   bool bytecodeOnly =
       runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),
                                   runtime::ExecutionFlags::RequireBytecode);
@@ -545,6 +551,7 @@ prepareManagedClassInventory(ModuleOp module,
           std::string randomLayoutName = prefix + ".__obelisk_random_layout";
           std::string methodsName = prefix + ".__obelisk_methods";
           std::string interfacesName = prefix + ".__obelisk_interfaces";
+          std::string copyResetsName = prefix + ".__obelisk_copy_resets";
           std::string debugName = prefix + ".__obelisk_debug_name";
           std::string descriptorName = managedClassDescriptorName(
               FlatSymbolRefAttr::get(context, declaration.getSymName()));
@@ -821,6 +828,31 @@ prepareManagedClassInventory(ModuleOp module,
                   return array;
                 });
 
+          Type copyResetsType =
+              LLVM::LLVMArrayType::get(byteRangeType, layout.copyResets.size());
+          if (!layout.copyResets.empty())
+            makeConstantGlobal(
+                module, location, copyResetsType, copyResetsName,
+                LLVM::Linkage::Internal, 8, [&](OpBuilder &builder) {
+                  Value array =
+                      LLVM::ZeroOp::create(builder, location, copyResetsType);
+                  for (auto [index, range] :
+                       llvm::enumerate(layout.copyResets)) {
+                    Value record =
+                        LLVM::ZeroOp::create(builder, location, byteRangeType);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i64, range.first), 0);
+                    record = insertValue(
+                        builder, location, record,
+                        llvmConstant(builder, location, i64, range.second), 1);
+                    array = LLVM::InsertValueOp::create(
+                        builder, location, array, record,
+                        ArrayRef<int64_t>{static_cast<int64_t>(index)});
+                  }
+                  return array;
+                });
+
           StringRef debug = declaration.getDebugNameAttr()
                                 ? declaration.getDebugNameAttr().getValue()
                                 : StringRef{};
@@ -905,6 +937,17 @@ prepareManagedClassInventory(ModuleOp module,
                       LLVM::AddressOfOp::create(builder, location, pointer,
                                                 randomLayoutName),
                       13);
+                if (!layout.copyResets.empty())
+                  descriptor = insertValue(
+                      builder, location, descriptor,
+                      LLVM::AddressOfOp::create(builder, location, pointer,
+                                                copyResetsName),
+                      14);
+                descriptor = insertValue(
+                    builder, location, descriptor,
+                    llvmConstant(builder, location, i64,
+                                 layout.copyResets.size()),
+                    15);
                 return descriptor;
               });
           return success();

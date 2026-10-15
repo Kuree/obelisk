@@ -413,6 +413,9 @@ def ObeliskSimulationDialect : Dialect {
     // instance property. Compiler-owned fields and static properties are absent
     // from the object bit-stream inventory.
     "::mlir::UnitAttr":$class_bitstream_member,
+    // Marks the instance field holding an embedded covergroup's handle. A
+    // shallow copy sets it to null in the new object (IEEE 1800-2023 8.12).
+    "::mlir::UnitAttr":$embedded_covergroup,
     // Module marker set by preparation when source classes may be bitstreamed;
     // it keeps whole-design class planning off ordinary compilation paths.
     "::mlir::UnitAttr":$class_bitstream_source,

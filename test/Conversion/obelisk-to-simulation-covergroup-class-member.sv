@@ -2,11 +2,12 @@
 
 // IEEE 19.4: an embedded covergroup is a class member. The class declaration
 // carries the covergroup handle as a field, and the constructor creates the
-// covergroup and stores it through the receiver.
+// covergroup and stores it through the receiver. The field is marked so a
+// shallow copy sets it to null (IEEE 1800-2023 8.12).
 // CHECK: simulation.covergroup.decl
 // CHECK: simulation.class.decl @[[BASE:[^ ]+]] id 1
-// CHECK: simulation.class.field {{.*}}debug_name = "value"
-// CHECK: simulation.class.field {{.*}}debug_name = "cg"
+// CHECK: simulation.class.field {{.*}}debug_name = "value", is_static = false, is_weak = false}
+// CHECK: simulation.class.field {{.*}}debug_name = "cg", is_static = false, is_weak = false, simulation.embedded_covergroup}
 // CHECK: simulation.class.decl @[[DERIVED:[^ ]+]] id 2 extends @[[BASE]]
 // CHECK: simulation.class.field {{.*}}of @[[DERIVED]]{{.*}}debug_name = "bias"
 // CHECK: simulation.func private @{{unit_[0-9]+}}({{.*}}%arg1: !simulation.class_handle

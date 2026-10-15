@@ -49,6 +49,7 @@ inline bool isKnownOperation(llvm::StringRef name) {
          name == RandomCyclePositionField::getNameStr() ||
          name == RandomModeField::getNameStr() ||
          name == ClassBitstreamMember::getNameStr() ||
+         name == EmbeddedCovergroup::getNameStr() ||
          name == ClassBitstreamVisibility::getNameStr() ||
          name == schedule::metadata::staticBodyFusion ||
          name == schedule::metadata::evalDiscardableStore ||

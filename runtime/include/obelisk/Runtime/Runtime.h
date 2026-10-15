@@ -248,6 +248,12 @@ typedef struct obelisk_rt_random_layout_v1 {
   uint64_t variable_count;
 } obelisk_rt_random_layout_v1;
 
+// A byte range of a class instance, relative to the descriptor word.
+typedef struct obelisk_rt_byte_range_v1 {
+  uint64_t offset;
+  uint64_t size;
+} obelisk_rt_byte_range_v1;
+
 #define OBELISK_RT_CLASS_ABSTRACT (UINT32_C(1) << 0)
 #define OBELISK_RT_CLASS_INTERFACE (UINT32_C(1) << 1)
 #define OBELISK_RT_CLASS_FINAL (UINT32_C(1) << 2)
@@ -271,6 +277,11 @@ typedef struct obelisk_rt_class_descriptor_v1 {
   const char *debug_name;
   uint64_t debug_name_size;
   const obelisk_rt_random_layout_v1 *random_layout;
+  // This class's own instance ranges that a shallow copy (IEEE 1800-2023 8.12)
+  // clears instead of copying, such as embedded covergroup handles. Base
+  // descriptors list their own ranges.
+  const obelisk_rt_byte_range_v1 *copy_resets;
+  uint64_t copy_reset_count;
 } obelisk_rt_class_descriptor_v1;
 
 // Compiler-emitted erased element metadata. Four-state storage places an

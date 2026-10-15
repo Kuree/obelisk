@@ -1012,6 +1012,40 @@ module {
 // -----
 
 module {
+  simulation.design @embedded_covergroup_type {
+    simulation.scope.decl 0
+    simulation.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{embedded covergroup requires an instance covergroup-handle field}}
+    simulation.class.field @C_value of @C at 0 : i64 {
+      is_static = false, is_weak = false,
+      simulation.embedded_covergroup
+    }
+  }
+}
+
+// -----
+
+module {
+  simulation.design @embedded_covergroup_static {
+    simulation.scope.decl 0
+    simulation.covergroup.decl @cg schema 1 debug ""
+    simulation.class.decl @C id 1 {
+      is_abstract = false, is_final = false, is_interface = false
+    }
+    // expected-error @below {{embedded covergroup requires an instance covergroup-handle field}}
+    simulation.class.field @C_group of @C at 0 :
+        !simulation.covergroup_handle<@cg> {
+      is_static = true, is_weak = false,
+      simulation.embedded_covergroup
+    }
+  }
+}
+
+// -----
+
+module {
   simulation.design @unmarked_object_plan {
     simulation.scope.decl 0
     simulation.code_unit.decl 1 in 0 function hierarchy "cast"

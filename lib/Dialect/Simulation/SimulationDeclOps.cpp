@@ -1931,6 +1931,10 @@ LogicalResult SimClassFieldDeclOp::verify() {
   if (bitstreamMember != static_cast<bool>(visibility))
     return emitOpError(
         "class bit-stream member and visibility metadata must be paired");
+  if (has<metadata::EmbeddedCovergroup>(*this) &&
+      (getIsStatic() || !isa<CovergroupHandleType>(getType())))
+    return emitOpError(
+        "embedded covergroup requires an instance covergroup-handle field");
   // The simulation dialect verifies the payload kinds of this metadata.
   IntegerAttr modeIndex = get<metadata::RandomModeIndex>(*this);
   if (modeIndex && (modeIndex.getValue().isNegative() ||
