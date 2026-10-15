@@ -165,6 +165,47 @@ TEST(TableProcess, EntryErrorsAndInvalidExitDoNotPublishWaits) {
   EXPECT_EQ(obelisk_rt_v1_process_instance_destroy(instance), OBELISK_RT_OK);
 }
 
+TEST(TableProcess, ResumeForgetsEventsMissedWhileSuspended) {
+  // IEEE 1800-2023 9.7: suspend() desensitizes a WAITING process and resume()
+  // resensitizes it, so an edge that occurred while it was suspended does not
+  // resume it; the next edge does.
+  TableFixture fixture;
+  fixture.watch.width = 1;
+  fixture.wait.action_flags = 0;
+  fixture.wait.record.flags = 0;
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  obelisk_rt_process_instance_v1 *instance = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_process_instance_create(&fixture.descriptor.base,
+                                                  &instance),
+            OBELISK_RT_OK);
+  uint64_t handle = 16;
+  std::memcpy(instance->frame, &handle, sizeof(handle));
+  ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+  uint64_t token = obelisk_rt_v1_scheduler_process_token(context, instance);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(entryCount, 1u);
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, token,
+                                          OBELISK_RT_PROCESS_CONTROL_SUSPEND,
+                                          &disposition),
+            OBELISK_RT_OK);
+  obelisk_rt_v1_scheduler_signal(
+      context, handle, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, token,
+                                          OBELISK_RT_PROCESS_CONTROL_RESUME,
+                                          &disposition),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(entryCount, 1u);
+  obelisk_rt_v1_scheduler_signal(
+      context, handle, 1, OBELISK_RT_SIGNAL_CHANGE | OBELISK_RT_SIGNAL_POSEDGE);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(entryCount, 2u);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(TableProcess, ExternalSuspendResumeAndKillRetainLogicalIdentity) {
   TableFixture fixture;
   fixture.watch.width = 1;

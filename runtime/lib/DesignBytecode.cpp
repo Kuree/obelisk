@@ -3896,6 +3896,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
                                     });
           if (found == context->scheduledProcesses.end())
             return OBELISK_RT_INVALID_HANDLE;
+          if (kind == OBELISK_RT_PROCESS_CONTROL_RESUME &&
+              found->explicitlySuspended)
+            obelisk_rt_resensitize_process_unlocked(context, *found);
           found->explicitlySuspended =
               kind == OBELISK_RT_PROCESS_CONTROL_SUSPEND;
           context->nativePollCandidates.insert(nativeToken);
@@ -3912,6 +3915,9 @@ extern "C" obelisk_rt_status obelisk_rt_v1_process_control(
               context->scheduledDesignTasks[indexed->second];
           if (task.terminated || task.id != logicalProcess)
             return OBELISK_RT_INVALID_HANDLE;
+          if (kind == OBELISK_RT_PROCESS_CONTROL_RESUME &&
+              task.explicitlySuspended)
+            obelisk_rt_resensitize_design_task_unlocked(context, task);
           task.explicitlySuspended = kind == OBELISK_RT_PROCESS_CONTROL_SUSPEND;
           context->designPollCandidates.insert(logicalProcess);
         }

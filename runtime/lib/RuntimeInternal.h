@@ -3168,6 +3168,18 @@ void obelisk_rt_program_complete_unlocked(obelisk_rt_context *context,
                                           uint64_t programOwner);
 void obelisk_rt_program_seal_unlocked(obelisk_rt_context *context);
 
+/// Whether every-bit-known truth holds for any watched bit of a level wait
+/// entry, reading through the current publication snapshot.
+bool obelisk_rt_level_wait_entry_true_unlocked(
+    const obelisk_rt_context *context, const obelisk_rt_wait_entry_v1 &entry);
+/// Resensitizes a process resumed while WAITING (IEEE 1800-2023 9.7): events
+/// that occurred while it was suspended are forgotten, while a level wait is
+/// satisfied by its current value and a delay keeps its deadline.
+void obelisk_rt_resensitize_process_unlocked(obelisk_rt_context *context,
+                                             ScheduledProcess &process);
+void obelisk_rt_resensitize_design_task_unlocked(obelisk_rt_context *context,
+                                                 ScheduledDesignTask &task);
+
 /// Drops finished-process links from which no live process descends.
 void obelisk_rt_prune_finished_process_parents_unlocked(
     obelisk_rt_context *context);

@@ -1547,12 +1547,8 @@ bool obelisk_rt_register_computed_signal_wait_unlocked(
   return false;
 }
 
-namespace {
-
-bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
-                                       uint64_t bitOffset, uint32_t edges) {
-  if (!obelisk_rt_has_conditional_signal_waiters(context))
-    return true;
+bool obelisk_rt_level_wait_entry_true_unlocked(
+    const obelisk_rt_context *context, const obelisk_rt_wait_entry_v1 &entry) {
   auto readBit = [&](uint64_t handle, uint64_t bitIndex, bool &value,
                      bool &unknown) {
     obelisk_rt_stable_handle_v1 decoded;
@@ -1592,27 +1588,36 @@ bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
     unknown = (context->stateUnknown[absolute / 64] & mask) != 0;
     return true;
   };
-  auto levelTrue = [&](const obelisk_rt_wait_entry_v1 &entry) {
-    for (uint64_t index = 0; index != entry.reserved; ++index) {
-      bool value = false;
-      bool unknown = false;
-      uint64_t indexed = index <= uint64_t{INT64_MAX}
-                             ? obelisk_rt_stable_handle_offset(
-                                   entry.stable_id, static_cast<int64_t>(index))
-                             : UINT64_MAX;
-      auto snapshot = indexed == UINT64_MAX
-                          ? context->signalValueSnapshots.end()
-                          : context->signalValueSnapshots.find(indexed);
-      if (snapshot != context->signalValueSnapshots.end()) {
-        value = snapshot->second.value;
-        unknown = snapshot->second.unknown;
-      } else if (!readBit(entry.stable_id, index, value, unknown)) {
-        return false;
-      }
-      if (value && !unknown)
-        return true;
+  for (uint64_t index = 0; index != entry.reserved; ++index) {
+    bool value = false;
+    bool unknown = false;
+    uint64_t indexed = index <= uint64_t{INT64_MAX}
+                           ? obelisk_rt_stable_handle_offset(
+                                 entry.stable_id, static_cast<int64_t>(index))
+                           : UINT64_MAX;
+    auto snapshot = indexed == UINT64_MAX
+                        ? context->signalValueSnapshots.end()
+                        : context->signalValueSnapshots.find(indexed);
+    if (snapshot != context->signalValueSnapshots.end()) {
+      value = snapshot->second.value;
+      unknown = snapshot->second.unknown;
+    } else if (!readBit(entry.stable_id, index, value, unknown)) {
+      return false;
     }
-    return false;
+    if (value && !unknown)
+      return true;
+  }
+  return false;
+}
+
+namespace {
+
+bool latchConditionalSignalWaitersImpl(obelisk_rt_context *context,
+                                       uint64_t bitOffset, uint32_t edges) {
+  if (!obelisk_rt_has_conditional_signal_waiters(context))
+    return true;
+  auto levelTrue = [&](const obelisk_rt_wait_entry_v1 &entry) {
+    return obelisk_rt_level_wait_entry_true_unlocked(context, entry);
   };
   auto consider = [&](const obelisk_rt_wait_record_v1 *wait,
                       uint32_t suspendKind, uint64_t logicalToken,

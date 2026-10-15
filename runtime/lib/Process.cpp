@@ -2983,6 +2983,48 @@ bool hasSameDirectSignalWait(const ScheduledProcess &scheduled,
   return true;
 }
 
+template <typename Scheduled>
+static void resensitizeWait(obelisk_rt_context *context, Scheduled &scheduled,
+                            const obelisk_rt_wait_record_v1 *wait) {
+  if (!scheduled.started || !wait)
+    return;
+  const obelisk_rt_wait_entry_v1 *entries = waitEntries(wait);
+  switch (scheduled.suspendKind) {
+  case OBELISK_RT_SUSPEND_CHANGE:
+  case OBELISK_RT_SUSPEND_EDGE:
+    if ((wait->flags & OBELISK_RT_WAIT_LEVEL_TRUE) != 0) {
+      scheduled.signalTriggered =
+          wait->count == 1 &&
+          obelisk_rt_level_wait_entry_true_unlocked(context, entries[0]);
+      return;
+    }
+    scheduled.signalTriggered = false;
+    if (scheduled.signalLatch)
+      scheduled.signalLatch->triggered = false;
+    return;
+  case OBELISK_RT_SUSPEND_EVENT:
+    scheduled.waitGenerations.clear();
+    for (uint32_t index = 0; index != wait->count; ++index) {
+      auto event = context->events.find(entries[index].stable_id);
+      scheduled.waitGenerations.push_back(
+          event == context->events.end() ? 0 : event->second.generation);
+    }
+    return;
+  default:
+    return;
+  }
+}
+
+void obelisk_rt_resensitize_process_unlocked(obelisk_rt_context *context,
+                                             ScheduledProcess &process) {
+  resensitizeWait(context, process, currentWait(process));
+}
+
+void obelisk_rt_resensitize_design_task_unlocked(obelisk_rt_context *context,
+                                                 ScheduledDesignTask &task) {
+  resensitizeWait(context, task, designTaskWait(task));
+}
+
 void obelisk_rt_prune_finished_process_parents_unlocked(
     obelisk_rt_context *context) {
   auto &links = context->finishedProcessParents;
