@@ -176,12 +176,31 @@ constexpr uint64_t stringInlineTag = 1;
 obelisk_rt_object_v1 *heapStringObject(obelisk_rt_string_v1 string);
 bool stringBelongsTo(obelisk_rt_context *context, obelisk_rt_string_v1 string);
 
+// Sets every unknown bit of a four-state element's X default. A packed value
+// keeps the bits above its width clear: native code loads it as an iN value
+// and relies on that canonical padding, as every other runtime producer of X
+// does. Aggregate images keep each member's unknown bits in place and their
+// readers extract members, so the whole plane stays set.
+void fillElementUnknown(const obelisk_rt_element_type_v1 *element,
+                        void *unknown) {
+  auto *plane = static_cast<uint8_t *>(unknown);
+  uint64_t size = element->value_size;
+  std::memset(plane, 0xff, static_cast<size_t>(size));
+  uint64_t width = element->bit_width;
+  if (element->kind != OBELISK_RT_ELEMENT_LOGIC || width >= size * 8)
+    return;
+  uint64_t byte = width / 8;
+  if (width % 8 != 0)
+    plane[byte++] = static_cast<uint8_t>((1u << (width % 8)) - 1);
+  std::memset(plane + byte, 0, static_cast<size_t>(size - byte));
+}
+
 void initializeElementDefault(const obelisk_rt_element_type_v1 *element,
                               void *value, void *unknown = nullptr) {
   std::memset(value, element->kind == OBELISK_RT_ELEMENT_EVENT ? 0xff : 0,
               static_cast<size_t>(element->value_size));
   if ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) && unknown)
-    std::memset(unknown, 0xff, static_cast<size_t>(element->value_size));
+    fillElementUnknown(element, unknown);
 }
 
 void initializeElementRange(const obelisk_rt_element_type_v1 *element,
@@ -7846,9 +7865,13 @@ obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
     uint64_t offset = 0;
     *outPresent = aggregateReferenceOffset(snapshot, offset) ? 1 : 0;
     std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
-    if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
-      std::memset(outUnknown, *outPresent ? 0 : 0xff,
-                  static_cast<size_t>(snapshot.element->value_size));
+    if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) {
+      if (*outPresent)
+        std::memset(outUnknown, 0,
+                    static_cast<size_t>(snapshot.element->value_size));
+      else
+        fillElementUnknown(snapshot.element, outUnknown);
+    }
     if (!*outPresent)
       return OBELISK_RT_OK;
     OBELISK_RT_TRY {

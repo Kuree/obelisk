@@ -845,6 +845,30 @@ TEST_F(ManagedValueTest, ContainerConstructionUsesRegisteredDescriptorIDs) {
   EXPECT_EQ(conflictingArray, nullptr);
 }
 
+TEST_F(ManagedValueTest, FourStateDefaultsKeepPaddingClear) {
+  // Native code loads a packed element as an iN value, so the X default sets
+  // only the element's own unknown bits.
+  obelisk_rt_element_type_v1 tenBits = logicElement;
+  tenBits.type_id = 92;
+  tenBits.value_size = 2;
+  tenBits.bit_width = 10;
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &tenBits, 1, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &array), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_resize(lane, array, 2), OBELISK_RT_OK);
+  for (int64_t index : {0, 1}) {
+    std::array<uint8_t, 2> value{0xaa, 0xaa}, unknown{};
+    ASSERT_EQ(obelisk_rt_v1_container_read(array, index, value.data(),
+                                           unknown.data()),
+              OBELISK_RT_OK);
+    EXPECT_EQ(value, (std::array<uint8_t, 2>{0, 0})) << index;
+    EXPECT_EQ(unknown, (std::array<uint8_t, 2>{0xff, 0x03})) << index;
+  }
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedValueTest, ElementDescriptorsRejectWeakManagedSlots) {
   obelisk_rt_trace_entry_v1 weakEntry = managedWordTraceEntry;
   weakEntry.kind = OBELISK_RT_TRACE_WEAK;
