@@ -118,20 +118,26 @@ struct BooleanMinimizationStats {
 };
 
 /// One nonempty maximal clocked subsequence in the deliberately small
-/// multi-clock slice below. `delay` is the exact ##0/##1 handoff from the
-/// preceding stage, or from the directive clock for the first stage. A ##0
-/// stage never owns persistent state: it is fused into the current occurrence
-/// cohort. Only ##1 stages retain an aggregate token count.
+/// multi-clock slice below. `delay` is the handoff from the preceding stage,
+/// or from the directive clock for the first stage: exact ##0, ##1 to the
+/// nearest strictly later tick, or (`kAtOrAfterTick`) the nearest tick at or
+/// after, as an overlapped implication's consequent starts. A ##0 stage never
+/// owns persistent state: it is fused into the current occurrence cohort. The
+/// other stages retain an aggregate token count.
 struct MultiClockSequenceStage {
+  static constexpr uint8_t kAtOrAfterTick = 2;
   Operation *clock = nullptr;
   SmallVector<Operation *, 2> predicates;
   uint8_t delay = 0;
+  /// A mismatch in an implication antecedent stage is a vacuous success.
+  bool antecedent = false;
 };
 
 struct MultiClockSequence {
   SmallVector<MultiClockSequenceStage, 4> stages;
   bool changesClock = false;
   bool hasLeadingDelay = false;
+  bool implication = false;
 };
 
 /// A common persistent repetition shape compiled to an aggregate token DFA.
@@ -1478,6 +1484,40 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
   }
 
   if (auto binary = dyn_cast<semantic::SVBinaryAssertionExprOp>(operation)) {
+    // IEEE 1800-2023 16.13.2: the consequent of a multiclocked overlapped
+    // implication starts at the nearest tick of its clock at or after the
+    // antecedent's end point; for |=>, at the nearest strictly later tick.
+    // An antecedent that does not match succeeds vacuously.
+    bool overlapped =
+        binary.getOperatorKind() ==
+        semantic::SVAssertionBinaryOperator::OverlappedImplication;
+    if (overlapped ||
+        binary.getOperatorKind() ==
+            semantic::SVAssertionBinaryOperator::NonOverlappedImplication) {
+      SmallVector<Operation *> children = getChildren(binary);
+      if (children.size() != 2)
+        return failure();
+      FailureOr<MultiClockSequence> antecedent =
+          compileMultiClockSequence(children.front(), inheritedClock);
+      if (failed(antecedent) || antecedent->implication)
+        return failure();
+      FailureOr<MultiClockSequence> consequent = compileMultiClockSequence(
+          children.back(), antecedent->stages.back().clock);
+      if (failed(consequent) || consequent->implication ||
+          consequent->stages.front().delay != 0)
+        return failure();
+      for (MultiClockSequenceStage &stage : antecedent->stages)
+        stage.antecedent = true;
+      consequent->stages.front().delay =
+          overlapped ? MultiClockSequenceStage::kAtOrAfterTick : 1;
+      antecedent->changesClock |=
+          consequent->changesClock ||
+          !areEquivalentDirectClocks(antecedent->stages.back().clock,
+                                     consequent->stages.front().clock);
+      llvm::append_range(antecedent->stages, consequent->stages);
+      antecedent->implication = true;
+      return antecedent;
+    }
     if (binary.getOperatorKind() != semantic::SVAssertionBinaryOperator::And &&
         binary.getOperatorKind() !=
             semantic::SVAssertionBinaryOperator::Intersect)
@@ -1489,7 +1529,8 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
         compileMultiClockSequence(children.front(), inheritedClock);
     FailureOr<MultiClockSequence> rhs =
         compileMultiClockSequence(children.back(), inheritedClock);
-    if (failed(lhs) || failed(rhs) || lhs->stages.size() != rhs->stages.size())
+    if (failed(lhs) || failed(rhs) || lhs->implication || rhs->implication ||
+        lhs->stages.size() != rhs->stages.size())
       return failure();
     for (auto &&[left, right] : llvm::zip_equal(lhs->stages, rhs->stages)) {
       if (left.delay != right.delay ||
@@ -1522,7 +1563,7 @@ compileMultiClockSequence(Operation *operation, Operation *inheritedClock) {
       return failure();
     FailureOr<MultiClockSequence> nested =
         compileMultiClockSequence(child, inheritedClock);
-    if (failed(nested) || nested->stages.empty())
+    if (failed(nested) || nested->implication || nested->stages.empty())
       return failure();
     uint64_t combinedDelay =
         static_cast<uint64_t>(minimum.getInt()) + nested->stages.front().delay;
@@ -9457,7 +9498,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // one finalized mask and therefore allocate no state of their own.
     SmallVector<Value, 8> tokenStorages(multiClockSequence.stages.size());
     for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages))
-      if (stage.delay == 1)
+      if (stage.delay != 0)
         tokenStorages[index] = sim::SimRefAllocOp::create(
             builder, location,
             sim::RefType::get(function.getContext(), stateType), zero);
@@ -9469,10 +9510,12 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // qualified. A weak cover-sequence has separate per-match accounting and
     // intentionally remains outside this executable slice.
     bool weakCompletion = usesWeakSequenceCompletion();
+    // A pending antecedent completes vacuously.
     SmallVector<Value> endCounts;
     if (!weakCompletion || !coverSequence)
-      for (Value storage : tokenStorages)
-        if (storage)
+      for (auto [storage, stage] :
+           llvm::zip_equal(tokenStorages, multiClockSequence.stages))
+        if (storage && !stage.antecedent)
           endCounts.push_back(storage);
     StringRef completionTag =
         weakCompletion ? "multiclock_weak" : "multiclock_strong";
@@ -9596,18 +9639,32 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       return arith::SelectOp::create(builder, location, condition, amount,
                                      zero);
     };
+    // Attempts that fail at `stage`; an antecedent mismatch is vacuous.
+    auto addMismatch = [&](size_t stage, Value amount) {
+      add(multiClockSequence.stages[stage].antecedent ? successCount
+                                                      : failureCount,
+          amount);
+    };
     auto routeAfter = [&](size_t completed, Value amount) {
       for (size_t index = completed + 1;
            index < multiClockSequence.stages.size(); ++index) {
-        if (multiClockSequence.stages[index].delay == 1) {
+        uint8_t delay = multiClockSequence.stages[index].delay;
+        if (delay == 1) {
           add(nextAmounts[index], amount);
           return;
+        }
+        // At or after: wait for the clock unless it ticks in this cohort.
+        if (delay == MultiClockSequenceStage::kAtOrAfterTick) {
+          Value now = selectAmount(present[index], amount);
+          add(nextAmounts[index],
+              arith::SubIOp::create(builder, location, amount, now));
+          amount = now;
         }
         Value eligible = arith::AndIOp::create(
             builder, location, present[index], stageMatches[index]);
         Value matched = selectAmount(eligible, amount);
-        add(failureCount,
-            arith::SubIOp::create(builder, location, amount, matched));
+        addMismatch(index,
+                    arith::SubIOp::create(builder, location, amount, matched));
         amount = matched;
       }
       add(successCount, amount);
@@ -9617,7 +9674,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     // occurrence below cannot consume the same cohort, which is the exact
     // nearest-strictly-later rule rather than an artifact of publication order.
     for (auto [index, stage] : llvm::enumerate(multiClockSequence.stages)) {
-      if (stage.delay != 1)
+      if (stage.delay == 0)
         continue;
       Value amount = sim::SimRefLoadOp::create(builder, location, stateType,
                                                tokenStorages[index]);
@@ -9626,8 +9683,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
           arith::SubIOp::create(builder, location, amount, consumed);
       add(nextAmounts[index], retained);
       Value matched = selectAmount(stageMatches[index], consumed);
-      add(failureCount,
-          arith::SubIOp::create(builder, location, consumed, matched));
+      addMismatch(index,
+                  arith::SubIOp::create(builder, location, consumed, matched));
       routeAfter(index, matched);
     }
 
@@ -9642,8 +9699,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       Value eligible = arith::AndIOp::create(builder, location, present.front(),
                                              stageMatches.front());
       Value matched = selectAmount(eligible, sourceAmount);
-      add(failureCount,
-          arith::SubIOp::create(builder, location, sourceAmount, matched));
+      addMismatch(
+          0, arith::SubIOp::create(builder, location, sourceAmount, matched));
       routeAfter(0, matched);
     }
 
