@@ -5843,6 +5843,68 @@ TEST_F(ManagedHeapTest, DispatchesOverridesAndShallowCopiesDynamicType) {
   EXPECT_EQ(castResult, nullptr);
 }
 
+TEST_F(ManagedHeapTest, ShallowCopiesContainerPropertiesAsValues) {
+  // IEEE 1800-2023 8.12: a shallow copy shares object handles but copies
+  // every property variable, so a container property gets its own value.
+  const obelisk_rt_trace_entry_v1 entries[] = {
+      {kSlot, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CONTAINER,
+       nullptr},
+      {kSlot * 2, 0, 1, OBELISK_RT_TRACE_STRONG, OBELISK_RT_MANAGED_SLOT_CLASS,
+       nullptr}};
+  const obelisk_rt_trace_layout_v1 layout{
+      OBELISK_RT_VERSION, 0, kSlot * 3, kSlotAlign, entries, 2};
+  obelisk_rt_class_descriptor_v1 descriptor = nodeDescriptor;
+  descriptor.class_id = 91;
+  descriptor.layout = &layout;
+  const obelisk_rt_element_type_v1 word{
+      OBELISK_RT_VERSION, OBELISK_RT_ELEMENT_BITS, 93, 0, 0, sizeof(uint64_t),
+      alignof(uint64_t),  64,                      nullptr};
+
+  obelisk_rt_object_v1 *object = nullptr, *child = nullptr, *array = nullptr,
+                       *copy = nullptr;
+  obelisk_rt_gc_root_v1 objectRoot{}, copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &descriptor, &object),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &objectRoot, &object),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_allocate(lane, &nodeDescriptor, &child),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_store(object, kSlot * 2, child),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &word, 1, &array),
+            OBELISK_RT_OK);
+  auto arrayWord = static_cast<obelisk_rt_managed_word_v1>(
+      reinterpret_cast<uintptr_t>(array));
+  ASSERT_EQ(obelisk_rt_v1_object_write(object, kSlot, &arrayWord,
+                                       sizeof(arrayWord)),
+            OBELISK_RT_OK);
+  const uint64_t value = 7;
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &value, nullptr),
+            OBELISK_RT_OK);
+
+  ASSERT_EQ(obelisk_rt_v1_object_shallow_copy(lane, &descriptor, object, &copy),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  obelisk_rt_managed_word_v1 copiedWord = 0;
+  obelisk_rt_object_v1 *copiedChild = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_object_read(copy, kSlot, &copiedWord,
+                                      sizeof(copiedWord)),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_object_field_load(copy, kSlot * 2, &copiedChild),
+            OBELISK_RT_OK);
+  auto *copiedArray = reinterpret_cast<obelisk_rt_object_v1 *>(
+      static_cast<uintptr_t>(copiedWord));
+  EXPECT_EQ(copiedChild, child);
+  ASSERT_NE(copiedArray, nullptr);
+  EXPECT_NE(copiedArray, array);
+  uint64_t copied = 0;
+  ASSERT_EQ(obelisk_rt_v1_container_read(copiedArray, 0, &copied, nullptr),
+            OBELISK_RT_OK);
+  EXPECT_EQ(copied, value);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &objectRoot), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedHeapTest, UsesChunkAllocationForSmallObjectChurn) {
   ASSERT_EQ(obelisk_rt_v1_gc_set_threshold(context, UINT64_MAX), OBELISK_RT_OK);
   constexpr uint64_t objectCount = 200'000;

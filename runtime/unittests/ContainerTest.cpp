@@ -869,6 +869,37 @@ TEST_F(ManagedValueTest, FourStateDefaultsKeepPaddingClear) {
   ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
 }
 
+TEST_F(ManagedValueTest, StoredSemaphoresKeepTheirIdentity) {
+  // A semaphore is a built-in class (IEEE 1800-2023 15.3): storing its handle
+  // in a container and copying that container share the one object.
+  obelisk_rt_object_v1 *semaphore = nullptr, *array = nullptr, *copy = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 1, &semaphore),
+            OBELISK_RT_OK);
+  obelisk_rt_gc_root_v1 semaphoreRoot{}, arrayRoot{}, copyRoot{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &semaphoreRoot, &semaphore),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_dynamic_array_create(lane, &containerElement, 1,
+                                               &array),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &arrayRoot, &array),
+            OBELISK_RT_OK);
+  obelisk_rt_managed_word_v1 word =
+      obelisk_rt_managed_word_from_object(semaphore);
+  ASSERT_EQ(obelisk_rt_v1_container_write(lane, array, 0, &word, nullptr),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_container_clone(lane, array, &copy), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &copyRoot, &copy), OBELISK_RT_OK);
+  for (obelisk_rt_object_v1 *container : {array, copy}) {
+    obelisk_rt_managed_word_v1 stored = 0;
+    ASSERT_EQ(obelisk_rt_v1_container_read(container, 0, &stored, nullptr),
+              OBELISK_RT_OK);
+    EXPECT_EQ(stored, word);
+  }
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &copyRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &arrayRoot), OBELISK_RT_OK);
+  EXPECT_EQ(obelisk_rt_v1_gc_root_pop(lane, &semaphoreRoot), OBELISK_RT_OK);
+}
+
 TEST_F(ManagedValueTest, ElementDescriptorsRejectWeakManagedSlots) {
   obelisk_rt_trace_entry_v1 weakEntry = managedWordTraceEntry;
   weakEntry.kind = OBELISK_RT_TRACE_WEAK;

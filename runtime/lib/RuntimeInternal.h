@@ -3019,6 +3019,12 @@ void obelisk_rt_managed_trace_runtime_object(obelisk_rt_managed_kind_v1 kind,
                                              uint8_t *object, uint64_t extent,
                                              ManagedTraceVisit visit,
                                              void *environment) noexcept;
+// Replaces each container a strong slot of a traced value image holds with its
+// value copy, as assignment does (IEEE 1800-2023 7.6). Mailbox and semaphore
+// objects are class identities and stay shared. The caller roots the image.
+obelisk_rt_status
+obelisk_rt_clone_traced_containers(obelisk_rt_gc_lane_v1 *lane, uint8_t *image,
+                                   const obelisk_rt_trace_layout_v1 *layout);
 // A whole dynamic aggregate selected by force / procedural assign is a value,
 // not a mutable reference. Suppress mutations through that selected value
 // while its owning override layer is active.

@@ -3497,11 +3497,30 @@ extern "C" obelisk_rt_status obelisk_rt_v1_object_shallow_copy(
     (void)lane->heap->popRoot(lane, &sourceRoot);
     return status;
   }
-  ObjectLock lock(sourceMetadata);
-  std::memcpy(reinterpret_cast<uint8_t *>(*outObject) + sizeof(void *),
-              reinterpret_cast<const uint8_t *>(source) + sizeof(void *),
-              dynamicDescriptor->instance_size - sizeof(void *));
-  return lane->heap->popRoot(lane, &sourceRoot);
+  {
+    ObjectLock lock(sourceMetadata);
+    std::memcpy(reinterpret_cast<uint8_t *>(*outObject) + sizeof(void *),
+                reinterpret_cast<const uint8_t *>(source) + sizeof(void *),
+                dynamicDescriptor->instance_size - sizeof(void *));
+  }
+  // IEEE 1800-2023 8.12 copies every property variable. Object handles are
+  // shared, but a container property is a value and gets its own copy.
+  obelisk_rt_gc_root_v1 copyRoot{};
+  status = lane->heap->pushRoot(lane, &copyRoot, outObject);
+  if (status == OBELISK_RT_OK) {
+    status = obelisk_rt_clone_traced_containers(
+        lane, reinterpret_cast<uint8_t *>(*outObject),
+        dynamicDescriptor->layout);
+    obelisk_rt_status popStatus = lane->heap->popRoot(lane, &copyRoot);
+    if (status == OBELISK_RT_OK)
+      status = popStatus;
+  }
+  obelisk_rt_status popStatus = lane->heap->popRoot(lane, &sourceRoot);
+  if (status != OBELISK_RT_OK) {
+    *outObject = nullptr;
+    return status;
+  }
+  return popStatus;
 }
 
 namespace {

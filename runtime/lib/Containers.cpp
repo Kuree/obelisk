@@ -47,6 +47,21 @@ struct SemaphoreHeader {
 // Guard the private semaphore storage against an unnoticed field being added.
 static_assert(sizeof(SemaphoreHeader) == 16);
 
+bool isSemaphore(obelisk_rt_object_v1 *object) {
+  bool semaphore = false;
+  (void)obelisk_rt_managed_object_access(
+      object, OBELISK_RT_MANAGED_CONTAINER,
+      [](void *result, uint8_t *storage, uint64_t extent) {
+        *static_cast<bool *>(result) =
+            extent == sizeof(SemaphoreHeader) &&
+            reinterpret_cast<SemaphoreHeader *>(storage)->descriptor ==
+                &semaphoreDescriptorToken;
+        return OBELISK_RT_OK;
+      },
+      &semaphore);
+  return semaphore;
+}
+
 enum class ReferenceSelector : uint32_t {
   Index = 1,
   Associative = 2,
@@ -2598,34 +2613,8 @@ obelisk_rt_status prepareElementValue(obelisk_rt_gc_lane_v1 *lane,
                                          &roots);
   if (status != OBELISK_RT_OK)
     return status;
-  walkTraceSlots(
-      storage.data(), element->trace,
-      [&](obelisk_rt_managed_word_v1 *word,
-          obelisk_rt_managed_slot_kind_v1 kind) {
-        bool exactContainer = kind == OBELISK_RT_MANAGED_SLOT_CONTAINER;
-        bool candidateContainer =
-            (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0 &&
-            (kind & OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER) != 0;
-        if (status != OBELISK_RT_OK || !word || *word == 0 ||
-            (!exactContainer && !candidateContainer))
-          return;
-        if (candidateContainer) {
-          obelisk_rt_managed_word_v1 candidate =
-              obelisk_rt_v1_gc_candidate_root(
-                  context, *word, OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER);
-          if (candidate == 0)
-            return;
-        }
-        obelisk_rt_object_v1 *nested =
-            obelisk_rt_object_from_managed_word(*word);
-        if (obelisk_rt_managed_object_kind(nested) !=
-            OBELISK_RT_MANAGED_CONTAINER)
-          return;
-        obelisk_rt_object_v1 *clone = nullptr;
-        status = cloneContainerImpl(lane, nested, &clone);
-        if (status == OBELISK_RT_OK)
-          *word = obelisk_rt_managed_word_from_object(clone);
-      });
+  status = obelisk_rt_clone_traced_containers(lane, storage.data(),
+                                              element->trace);
   obelisk_rt_status popStatus = obelisk_rt_managed_roots_pop(lane, &provider);
   return status == OBELISK_RT_OK ? popStatus : status;
 }
@@ -3387,9 +3376,11 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
     return status;
   ContainerHeader snapshot{};
   status = snapshotHeader(container, snapshot);
-  // A mailbox is a class identity backed by queue storage. Copying a message
-  // or aggregate containing it must share that identity, not copy its messages.
-  if (status == OBELISK_RT_OK && snapshot.isMailbox) {
+  // Mailboxes and semaphores are class identities (IEEE 1800-2023 15.3, 15.4);
+  // a mailbox is backed by queue storage. Copying a message or aggregate that
+  // holds one shares that identity, not its messages or keys.
+  if ((status == OBELISK_RT_OK && snapshot.isMailbox) ||
+      (status == OBELISK_RT_INVALID_HANDLE && isSemaphore(container))) {
     status = obelisk_rt_v1_gc_root_pop(lane, &sourceRoot);
     if (status == OBELISK_RT_OK)
       *outContainer = container;
@@ -3419,35 +3410,8 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
   if (status == OBELISK_RT_OK && snapshot.element->trace) {
     for (uint64_t index = 0; index != snapshot.size && status == OBELISK_RT_OK;
          ++index)
-      walkTraceSlots(values.data() + index * stride, snapshot.element->trace,
-                     [&](obelisk_rt_managed_word_v1 *word,
-                         obelisk_rt_managed_slot_kind_v1 kind) {
-                       bool exactContainer =
-                           kind == OBELISK_RT_MANAGED_SLOT_CONTAINER;
-                       bool candidateContainer =
-                           (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0 &&
-                           (kind & OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER) != 0;
-                       if (status != OBELISK_RT_OK || !word || *word == 0 ||
-                           (!exactContainer && !candidateContainer))
-                         return;
-                       if (candidateContainer) {
-                         obelisk_rt_managed_word_v1 candidate =
-                             obelisk_rt_v1_gc_candidate_root(
-                                 obelisk_rt_managed_lane_context(lane), *word,
-                                 OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER);
-                         if (candidate == 0)
-                           return;
-                       }
-                       obelisk_rt_object_v1 *source =
-                           obelisk_rt_object_from_managed_word(*word);
-                       if (obelisk_rt_managed_object_kind(source) !=
-                           OBELISK_RT_MANAGED_CONTAINER)
-                         return;
-                       obelisk_rt_object_v1 *nested = nullptr;
-                       status = cloneContainerImpl(lane, source, &nested);
-                       if (status == OBELISK_RT_OK)
-                         *word = obelisk_rt_managed_word_from_object(nested);
-                     });
+      status = obelisk_rt_clone_traced_containers(
+          lane, values.data() + index * stride, snapshot.element->trace);
   }
   obelisk_rt_object_v1 *result = nullptr;
   if (status == OBELISK_RT_OK)
@@ -3479,6 +3443,46 @@ obelisk_rt_status cloneContainerImpl(obelisk_rt_gc_lane_v1 *lane,
 }
 
 } // namespace
+
+obelisk_rt_status
+obelisk_rt_clone_traced_containers(obelisk_rt_gc_lane_v1 *lane, uint8_t *image,
+                                   const obelisk_rt_trace_layout_v1 *layout) {
+  if (!layout)
+    return OBELISK_RT_OK;
+  obelisk_rt_context *context = obelisk_rt_managed_lane_context(lane);
+  for (uint64_t index = 0; index != layout->entry_count; ++index) {
+    const obelisk_rt_trace_entry_v1 &entry = layout->entries[index];
+    for (uint64_t item = 0; item != entry.count; ++item) {
+      uint8_t *address = image + entry.offset + item * entry.stride;
+      if (entry.kind == OBELISK_RT_TRACE_EMBEDDED) {
+        if (obelisk_rt_status status = obelisk_rt_clone_traced_containers(
+                lane, address, entry.child_layout);
+            status != OBELISK_RT_OK)
+          return status;
+        continue;
+      }
+      auto *word = reinterpret_cast<obelisk_rt_managed_word_v1 *>(address);
+      obelisk_rt_managed_slot_kind_v1 kind = entry.slot_kind;
+      bool candidate = (kind & OBELISK_RT_MANAGED_SLOT_CANDIDATE) != 0 &&
+                       (kind & OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER) != 0;
+      if (entry.kind != OBELISK_RT_TRACE_STRONG || *word == 0 ||
+          (kind != OBELISK_RT_MANAGED_SLOT_CONTAINER && !candidate) ||
+          (candidate && obelisk_rt_v1_gc_candidate_root(
+                            context, *word,
+                            OBELISK_RT_MANAGED_ROOT_KIND_CONTAINER) == 0))
+        continue;
+      obelisk_rt_object_v1 *source = obelisk_rt_object_from_managed_word(*word);
+      if (obelisk_rt_managed_object_kind(source) != OBELISK_RT_MANAGED_CONTAINER)
+        continue;
+      obelisk_rt_object_v1 *clone = nullptr;
+      if (obelisk_rt_status status = cloneContainerImpl(lane, source, &clone);
+          status != OBELISK_RT_OK)
+        return status;
+      *word = obelisk_rt_managed_word_from_object(clone);
+    }
+  }
+  return OBELISK_RT_OK;
+}
 
 obelisk_rt_status obelisk_rt_container_pattern(obelisk_rt_object_v1 *container,
                                                std::string &output,
