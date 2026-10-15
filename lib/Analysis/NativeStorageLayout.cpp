@@ -96,6 +96,78 @@ llvm::APInt getLogicalStorageMask(Type type) {
   return getStorageMask(type, false);
 }
 
+bool hasMemberDefaults(Type type) {
+  // A container or class handle owns its elements elsewhere; only fixed
+  // storage carries its members' defaults inline.
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type))
+    return hasMemberDefaults(array.getElementType());
+  if (auto record = dyn_cast<sim::UnpackedStructType>(type))
+    return llvm::any_of(record.getFields(), [](Attribute attribute) {
+      auto field = cast<sim::FieldAttr>(attribute);
+      return field.getInitializer() || hasMemberDefaults(field.getType());
+    });
+  return false;
+}
+
+/// Writes the storage bits of `constant` at bit `offset` of the planes.
+static void placeConstant(sim::FrozenConstantAttr constant, unsigned offset,
+                          APInt &value, APInt &unknown) {
+  Type type = constant.getType();
+  unsigned width = *getSimulationStorageBitWidth(type);
+  if (isa<sim::UnpackedArrayType, sim::UnpackedStructType>(type)) {
+    for (auto [index, element] :
+         llvm::enumerate(cast<ArrayAttr>(constant.getValue())))
+      placeConstant(cast<sim::FrozenConstantAttr>(element),
+                    offset + sim::getAggregateProvenanceSubelement(
+                                 type, static_cast<unsigned>(index))
+                                 ->first,
+                    value, unknown);
+    return;
+  }
+  if (auto real = dyn_cast<FloatAttr>(constant.getValue())) {
+    value.insertBits(real.getValue().bitcastToAPInt().zextOrTrunc(width),
+                     offset);
+    return;
+  }
+  auto planes = cast<ArrayAttr>(constant.getValue());
+  value.insertBits(cast<IntegerAttr>(planes[0]).getValue().zextOrTrunc(width),
+                   offset);
+  unknown.insertBits(cast<IntegerAttr>(planes[1]).getValue().zextOrTrunc(width),
+                     offset);
+}
+
+DefaultStoragePlanes getDefaultStoragePlanes(Type type) {
+  unsigned width = *getSimulationStorageBitWidth(type);
+  if (!hasMemberDefaults(type))
+    return {APInt::getZero(width), getDefaultUnknownMask(type)};
+  DefaultStoragePlanes planes{APInt::getZero(width), APInt::getZero(width)};
+  auto place = [&](const DefaultStoragePlanes &child, unsigned offset) {
+    planes.value.insertBits(child.value, offset);
+    planes.unknown.insertBits(child.unknown, offset);
+  };
+  if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+    DefaultStoragePlanes child =
+        getDefaultStoragePlanes(array.getElementType());
+    for (unsigned index = 0, count = sim::getAggregateNumElements(type);
+         index != count; ++index)
+      place(child, sim::getAggregateProvenanceSubelement(type, index)->first);
+    return planes;
+  }
+  auto record = cast<sim::UnpackedStructType>(type);
+  for (auto [index, fieldAttr] : llvm::enumerate(record.getFields())) {
+    auto field = cast<sim::FieldAttr>(fieldAttr);
+    unsigned offset = sim::getAggregateProvenanceSubelement(
+                          type, static_cast<unsigned>(index))
+                          ->first;
+    if (auto initializer =
+            dyn_cast_or_null<sim::FrozenConstantAttr>(field.getInitializer()))
+      placeConstant(initializer, offset, planes.value, planes.unknown);
+    else
+      place(getDefaultStoragePlanes(field.getType()), offset);
+  }
+  return planes;
+}
+
 llvm::Type *NativeStorageLayout::getType(Type type) {
   if (auto found = types.find(type); found != types.end())
     return found->second;

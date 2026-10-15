@@ -879,9 +879,11 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
   if (auto op = dyn_cast<sim::SimAggregateDefaultOp>(operation)) {
     uint32_t destination = reg(plan, op.getResult());
     Layout layout = plan.layouts[destination];
-    APInt value = APInt::getZero(layout.width);
+    analysis::DefaultStoragePlanes defaults =
+        analysis::getDefaultStoragePlanes(op.getType());
+    APInt value = defaults.value.zextOrTrunc(layout.width);
     APInt unknown = layout.kind == Logic
-                        ? analysis::getDefaultUnknownMask(op.getType())
+                        ? defaults.unknown.zextOrTrunc(layout.width)
                         : APInt::getZero(layout.width);
     return emitConstant(plan, op.getResult(), value,
                         layout.kind == Logic ? &unknown : nullptr);

@@ -514,6 +514,37 @@ TEST_F(ManagedValueTest, CreatesTypedContainersAndFormatsPatterns) {
             OBELISK_RT_INVALID_ARGUMENT);
 }
 
+TEST_F(ManagedValueTest, CreatesElementsFromDeclaredDefaults) {
+  // IEEE 1800-2023 7.2.2: struct member defaults make an element's default
+  // differ from Table 6-7. Value plane {7, 0xa}, then a known unknown plane.
+  const uint8_t image[] = {7, 0xa, 0, 0};
+  ASSERT_EQ(obelisk_rt_v1_element_type_define_default(context, 779, image,
+                                                      sizeof(image)),
+            OBELISK_RT_OK);
+  obelisk_rt_object_v1 *array = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                lane, OBELISK_RT_CONTAINER_DYNAMIC_ARRAY, 779,
+                OBELISK_RT_ELEMENT_AGGREGATE, OBELISK_RT_ELEMENT_FOUR_STATE, 2,
+                1, 16, nullptr, 0, 2, 0, &array),
+            OBELISK_RT_OK);
+  std::array<uint8_t, 2> value{}, unknown{0xff, 0xff};
+  ASSERT_EQ(
+      obelisk_rt_v1_container_read(array, 1, value.data(), unknown.data()),
+      OBELISK_RT_OK);
+  EXPECT_EQ(value, (std::array<uint8_t, 2>{7, 0xa}));
+  EXPECT_EQ(unknown, (std::array<uint8_t, 2>{0, 0}));
+
+  // A conflicting default, or one declared after its type is in use, could
+  // not apply to elements that already exist.
+  const uint8_t other[] = {1, 0, 0, 0};
+  EXPECT_EQ(obelisk_rt_v1_element_type_define_default(context, 779, other,
+                                                      sizeof(other)),
+            OBELISK_RT_INVALID_DESIGN);
+  EXPECT_EQ(obelisk_rt_v1_element_type_define_default(context, 779, image,
+                                                      sizeof(image)),
+            OBELISK_RT_INVALID_DESIGN);
+}
+
 TEST_F(ManagedValueTest, FormatsFixedArrayElementsAsNestedPatterns) {
   constexpr std::array<uint64_t, 8> words{
       OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION,

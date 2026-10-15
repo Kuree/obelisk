@@ -326,6 +326,11 @@ typedef struct obelisk_rt_element_type_v1 {
   uint64_t alignment;
   uint64_t bit_width;
   const obelisk_rt_trace_layout_v1 *trace;
+  // Optional default element value: value_size bytes of value plane followed,
+  // for a four-state element, by value_size bytes of unknown plane. Null
+  // means the type default of IEEE 1800-2023 Table 6-7, zero with X in every
+  // four-state bit.
+  const uint8_t *default_image;
 } obelisk_rt_element_type_v1;
 
 #define OBELISK_RT_CONTAINER_PATTERN_PLAN_VERSION UINT64_C(1)
@@ -2570,6 +2575,14 @@ obelisk_rt_status obelisk_rt_v1_element_type_validate(
     const obelisk_rt_element_type_v1 *descriptor);
 obelisk_rt_status obelisk_rt_v1_element_type_register(
     obelisk_rt_context *context, const obelisk_rt_element_type_v1 *descriptor);
+// Declare the default value of every element of stable type `type_id`, in the
+// default_image layout above, for an element type whose default is not
+// Table 6-7's, such as an unpacked struct with member initializers
+// (IEEE 1800-2023 7.2.2). Containers of that type created afterwards use it
+// for every element they create and every nonexistent entry they read.
+obelisk_rt_status obelisk_rt_v1_element_type_define_default(
+    obelisk_rt_context *context, uint64_t type_id, const uint8_t *image,
+    uint64_t image_size);
 
 // Register one 64-bit-aligned class managed-word slot in the pointer-free
 // design state. This is used by the bytecode tier; the backing state allocation

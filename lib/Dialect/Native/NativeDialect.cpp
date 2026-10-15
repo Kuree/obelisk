@@ -33,20 +33,20 @@ NativeDialect::verifyOperationAttribute(Operation *operation,
   if (failed(discardable::verify<
              OptimizationLevel, MaxStateDomainFunctions, DebugTiming,
              ClosedExecutable, Partition, PartitionManifest, PartitionManifests,
-             PhysicalPartitionManifest, Frame, FrameInputs, FrameCheckpoint,
-             EntryKind, ScratchSize, ObserverWidth, ObserverFourState,
-             SpawnCaptureOffsets, SpawnCaptureSize, MethodArgumentSizes,
-             MethodArgumentRoots, TableWait, Unmanaged, SharedCallback,
-             RuntimePublicationCertified, OwnerReleaseInstrumented,
-             TwoStateBlockUnknowns, DriverId, DriverLow, NetId,
-             ExactDriverRange, WholeDriver, GuardedBulkDrive, CleanBulkDrive,
-             BulkCopySourceAssumeClean, GuardedRefStore, InBoundsHandleOffset,
-             ManagedRootRangeRecord, ManagedRootRangePushCheck,
-             ManagedRootActivationPrologue, TransferredReferences,
-             NoTransitionRoots, StringGlobal, ScanPrefixGlobal,
-             FileScanPrefixGlobal, AggregateBitstreamPlanGlobal,
-             ContainerPatternPlanGlobal, ContainerPatternPlanSize>(operation,
-                                                                   attribute)))
+             ElementDefaults, PhysicalPartitionManifest, Frame, FrameInputs,
+             FrameCheckpoint, EntryKind, ScratchSize, ObserverWidth,
+             ObserverFourState, SpawnCaptureOffsets, SpawnCaptureSize,
+             MethodArgumentSizes, MethodArgumentRoots, TableWait, Unmanaged,
+             SharedCallback, RuntimePublicationCertified,
+             OwnerReleaseInstrumented, TwoStateBlockUnknowns, DriverId,
+             DriverLow, NetId, ExactDriverRange, WholeDriver, GuardedBulkDrive,
+             CleanBulkDrive, BulkCopySourceAssumeClean, GuardedRefStore,
+             InBoundsHandleOffset, ManagedRootRangeRecord,
+             ManagedRootRangePushCheck, ManagedRootActivationPrologue,
+             TransferredReferences, NoTransitionRoots, StringGlobal,
+             ScanPrefixGlobal, FileScanPrefixGlobal,
+             AggregateBitstreamPlanGlobal, ContainerPatternPlanGlobal,
+             ContainerPatternPlanSize>(operation, attribute)))
     return failure();
   StringRef name = attribute.getName().strref();
   Attribute value = attribute.getValue();
@@ -58,6 +58,7 @@ NativeDialect::verifyOperationAttribute(Operation *operation,
                       name == DebugTiming::getNameStr() ||
                       name == ClosedExecutable::getNameStr() ||
                       name == PartitionManifests::getNameStr() ||
+                      name == ElementDefaults::getNameStr() ||
                       name == PhysicalPartitionManifest::getNameStr() ||
                       name == FrameCheckpoint::getNameStr();
   if (moduleOption && !isa<ModuleOp>(operation))
@@ -69,9 +70,22 @@ NativeDialect::verifyOperationAttribute(Operation *operation,
   if (name == PartitionManifests::getNameStr() &&
       !allOf<DesignPartitionsAttr>(cast<ArrayAttr>(value)))
     return error() << "must contain only #native.design_partitions entries";
+  if (name == ElementDefaults::getNameStr() &&
+      !allOf<ElementDefaultAttr>(cast<ArrayAttr>(value)))
+    return error() << "must contain only #native.element_default entries";
   if (name == TwoStateBlockUnknowns::getNameStr() &&
       !allOf<DenseI64ArrayAttr>(cast<ArrayAttr>(value)))
     return error() << "must contain one index array per block";
+  return success();
+}
+
+LogicalResult
+ElementDefaultAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                           uint64_t typeId, DenseI8ArrayAttr image) {
+  if (typeId == 0)
+    return emitError() << "element default requires a nonzero type ID";
+  if (!image || image.empty())
+    return emitError() << "element default requires a nonempty image";
   return success();
 }
 

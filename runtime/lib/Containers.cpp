@@ -212,9 +212,17 @@ void fillElementUnknown(const obelisk_rt_element_type_v1 *element,
 
 void initializeElementDefault(const obelisk_rt_element_type_v1 *element,
                               void *value, void *unknown = nullptr) {
+  bool fourState = element->flags & OBELISK_RT_ELEMENT_FOUR_STATE;
+  if (const uint8_t *image = element->default_image) {
+    std::memcpy(value, image, static_cast<size_t>(element->value_size));
+    if (fourState && unknown)
+      std::memcpy(unknown, image + element->value_size,
+                  static_cast<size_t>(element->value_size));
+    return;
+  }
   std::memset(value, element->kind == OBELISK_RT_ELEMENT_EVENT ? 0xff : 0,
               static_cast<size_t>(element->value_size));
-  if ((element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) && unknown)
+  if (fourState && unknown)
     fillElementUnknown(element, unknown);
 }
 
@@ -4155,6 +4163,14 @@ static obelisk_rt_status internElementType(
   const obelisk_rt_element_type_v1 *element = nullptr;
   OBELISK_RT_TRY {
     std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    if (auto image = context->elementDefaultImages.find(typeID);
+        image != context->elementDefaultImages.end()) {
+      if (image->second->size() !=
+          valueSize * ((elementFlags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1))
+        return OBELISK_RT_INVALID_DESIGN;
+      owned->defaultImage = image->second;
+      owned->descriptor.default_image = owned->defaultImage->data();
+    }
     auto found = context->managedElementTypes.find(typeID);
     if (found != context->managedElementTypes.end()) {
       obelisk_rt_status status =
@@ -4198,6 +4214,30 @@ static obelisk_rt_status internElementType(
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   *outElement = element;
   return OBELISK_RT_OK;
+}
+
+extern "C" obelisk_rt_status
+obelisk_rt_v1_element_type_define_default(obelisk_rt_context *context,
+                                          uint64_t typeID, const uint8_t *image,
+                                          uint64_t imageSize) {
+  if (!context || typeID == 0 || !image || imageSize == 0)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  OBELISK_RT_TRY {
+    auto bytes =
+        std::make_shared<const std::vector<uint8_t>>(image, image + imageSize);
+    std::lock_guard<std::recursive_mutex> lock(context->mutex);
+    // A container interned before its default was declared would already
+    // have created elements without it.
+    if (context->managedElementTypes.count(typeID))
+      return OBELISK_RT_INVALID_DESIGN;
+    auto [found, inserted] =
+        context->elementDefaultImages.try_emplace(typeID, std::move(bytes));
+    return inserted || *found->second ==
+                           std::vector<uint8_t>(image, image + imageSize)
+               ? OBELISK_RT_OK
+               : OBELISK_RT_INVALID_DESIGN;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
 }
 
 extern "C" obelisk_rt_status obelisk_rt_v1_container_create_typed(
@@ -7950,16 +7990,14 @@ obelisk_rt_v1_reference_path_load(obelisk_rt_object_v1 *path, void *outValue,
   if (snapshot.selector == ReferenceSelector::AggregateElement) {
     uint64_t offset = 0;
     *outPresent = aggregateReferenceOffset(snapshot, offset) ? 1 : 0;
-    std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
-    if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) {
-      if (*outPresent)
-        std::memset(outUnknown, 0,
-                    static_cast<size_t>(snapshot.element->value_size));
-      else
-        fillElementUnknown(snapshot.element, outUnknown);
-    }
-    if (!*outPresent)
+    if (!*outPresent) {
+      initializeElementDefault(snapshot.element, outValue, outUnknown);
       return OBELISK_RT_OK;
+    }
+    std::memset(outValue, 0, static_cast<size_t>(snapshot.element->value_size));
+    if (snapshot.element->flags & OBELISK_RT_ELEMENT_FOUR_STATE)
+      std::memset(outUnknown, 0,
+                  static_cast<size_t>(snapshot.element->value_size));
     OBELISK_RT_TRY {
       return accessReferenceWindow(
           obelisk_rt_managed_object_context(path), nullptr, snapshot.stateValue,

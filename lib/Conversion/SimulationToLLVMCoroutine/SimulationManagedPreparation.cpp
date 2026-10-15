@@ -5,6 +5,8 @@
 #include "obelisk/Analysis/ClassDispatchAnalysis.h"
 #include "obelisk/Analysis/DescriptorOrdering.h"
 #include "obelisk/Analysis/ManagedClassLayoutAnalysis.h"
+#include "obelisk/Analysis/NativeStorageLayout.h"
+#include "obelisk/Dialect/Native/NativeDialect.h"
 #include "obelisk/Dialect/Simulation/SimulationMetadata.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Runtime/DescriptorMap.h"
@@ -25,6 +27,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <map>
 #include <string>
 #include <tuple>
 
@@ -991,10 +994,75 @@ void expandManagedSelectsToCFG(ModuleOp module) {
 
 } // namespace
 
+/// IEEE 1800-2023 7.2.2 and Table 7-1: an element whose unpacked struct type
+/// declares member defaults starts from them, whether the runtime creates it
+/// or reads a nonexistent entry. Record each such container element default
+/// so the executable declares it before any process runs.
+static LogicalResult collectElementDefaults(ModuleOp module) {
+  std::map<uint64_t, SmallVector<int8_t>> images;
+  WalkResult walked = module.walk([&](Operation *operation) {
+    Type element;
+    uint64_t typeID = 0, valueSize = 0;
+    sim::ElementFlags flags = sim::ElementFlags::None;
+    auto describe = [&](auto create, Type elementType) {
+      element = elementType;
+      typeID = create.getTypeId();
+      valueSize = create.getValueSize();
+      flags = create.getElementFlags();
+    };
+    if (auto create = dyn_cast<sim::SimContainerCreateOp>(operation))
+      describe(create, sim::getContainerElement(create.getResult().getType()));
+    else if (auto create = dyn_cast<sim::SimAssocCreateOp>(operation))
+      describe(create, sim::getContainerElement(create.getResult().getType()));
+    else if (auto create = dyn_cast<sim::SimMailboxCreateOp>(operation))
+      describe(create, create.getResult().getType().getElementType());
+    if (!element || !analysis::hasMemberDefaults(element))
+      return WalkResult::advance();
+    analysis::DefaultStoragePlanes planes =
+        analysis::getDefaultStoragePlanes(element);
+    bool fourState =
+        sim::bitEnumContainsAll(flags, sim::ElementFlags::FourState);
+    if (planes.value.getBitWidth() > valueSize * 8) {
+      operation->emitOpError("element default exceeds the element size");
+      return WalkResult::interrupt();
+    }
+    SmallVector<int8_t> image;
+    image.reserve(valueSize * (fourState ? 2 : 1));
+    for (const APInt *plane : {&planes.value, &planes.unknown}) {
+      if (plane == &planes.unknown && !fourState)
+        break;
+      APInt bits = plane->zext(valueSize * 8);
+      for (uint64_t byte = 0; byte != valueSize; ++byte)
+        image.push_back(
+            static_cast<int8_t>(bits.extractBitsAsZExtValue(8, byte * 8)));
+    }
+    auto [found, inserted] = images.try_emplace(typeID, image);
+    if (!inserted && found->second != image) {
+      operation->emitOpError("element type ID has conflicting defaults");
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (walked.wasInterrupted())
+    return failure();
+  if (images.empty())
+    return success();
+  MLIRContext *context = module.getContext();
+  SmallVector<Attribute> defaults;
+  for (const auto &[typeID, image] : images)
+    defaults.push_back(native::ElementDefaultAttr::get(
+        context, typeID, DenseI8ArrayAttr::get(context, image)));
+  native::set<native::ElementDefaults>(module,
+                                       ArrayAttr::get(context, defaults));
+  return success();
+}
+
 LogicalResult prepareManagedLowering(ModuleOp module,
                                      const llvm::DataLayout &dataLayout) {
   llvm::StringMap<ManagedClassLayout> layouts;
   if (failed(prepareManagedClassInventory(module, dataLayout, layouts)))
+    return failure();
+  if (failed(collectElementDefaults(module)))
     return failure();
   bool bytecodeOnly =
       runtime::bitEnumContainsAll(runtime::getExecutionFlags(module),

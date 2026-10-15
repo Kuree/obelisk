@@ -171,6 +171,10 @@ LogicalResult SourceAggregateType::verify(
     if (randMode && (randMode.getValue().isNegative() ||
                      randMode.getValue().getZExtValue() > 2))
       return emitError() << "aggregate field has invalid randomization mode";
+    if (Attribute initializer = field.get("initializer");
+        initializer && (!isa<StringAttr>(initializer) || isPacked || isUnion))
+      return emitError() << "only an unpacked struct field can have a "
+                            "constant initializer spelling";
     if (!names.insert(name.getValue()).second)
       return emitError() << "aggregate field names must be unique";
   }

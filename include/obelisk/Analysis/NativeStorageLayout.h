@@ -38,6 +38,19 @@ llvm::APInt getDefaultUnknownMask(mlir::Type type);
 /// Bits belonging to language values, excluding target ABI padding.
 llvm::APInt getLogicalStorageMask(mlir::Type type);
 
+/// The storage planes of a type's default value (IEEE 1800-2023 Table 6-7 and
+/// Table 7-1). Unlike getDefaultUnknownMask, which only marks four-state
+/// bits, these carry the constant member defaults of unpacked structs
+/// (7.2.2): an initialized member holds its initializer's bits instead.
+struct DefaultStoragePlanes {
+  llvm::APInt value;
+  llvm::APInt unknown;
+};
+DefaultStoragePlanes getDefaultStoragePlanes(mlir::Type type);
+
+/// Whether the fixed storage of `type` holds a declared struct member default.
+bool hasMemberDefaults(mlir::Type type);
+
 /// Reject stored layout encodings from a different target before either
 /// execution backend consumes their physical offsets.
 mlir::LogicalResult verifyNativeStorageLayouts(mlir::Operation *root,

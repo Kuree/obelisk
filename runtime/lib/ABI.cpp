@@ -123,7 +123,7 @@ ABI_OFFSET(obelisk_rt_class_descriptor_v1, debug_name_size, ABI_PTR(88, 72));
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, random_layout, ABI_PTR(96, 80));
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, copy_resets, ABI_PTR(104, 84));
 ABI_OFFSET(obelisk_rt_class_descriptor_v1, copy_reset_count, ABI_PTR(112, 88));
-ABI_SIZE_ALIGN(obelisk_rt_element_type_v1, 56, 8);
+ABI_SIZE_ALIGN(obelisk_rt_element_type_v1, 64, 8);
 ABI_OFFSET(obelisk_rt_element_type_v1, version, 0);
 ABI_OFFSET(obelisk_rt_element_type_v1, kind, 4);
 ABI_OFFSET(obelisk_rt_element_type_v1, type_id, 8);
@@ -133,6 +133,7 @@ ABI_OFFSET(obelisk_rt_element_type_v1, value_size, 24);
 ABI_OFFSET(obelisk_rt_element_type_v1, alignment, 32);
 ABI_OFFSET(obelisk_rt_element_type_v1, bit_width, 40);
 ABI_OFFSET(obelisk_rt_element_type_v1, trace, 48);
+ABI_OFFSET(obelisk_rt_element_type_v1, default_image, 56);
 ABI_SIZE_ALIGN(obelisk_rt_assoc_key_v1, 40, 8);
 ABI_OFFSET(obelisk_rt_assoc_key_v1, kind, 0);
 ABI_OFFSET(obelisk_rt_assoc_key_v1, reserved, 4);
@@ -1979,6 +1980,9 @@ ABI_FUNCTION(obelisk_rt_v1_element_type_validate,
 ABI_FUNCTION(obelisk_rt_v1_element_type_register,
              obelisk_rt_status (*)(obelisk_rt_context *,
                                    const obelisk_rt_element_type_v1 *));
+ABI_FUNCTION(obelisk_rt_v1_element_type_define_default,
+             obelisk_rt_status (*)(obelisk_rt_context *, uint64_t,
+                                   const uint8_t *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_gc_design_root_register,
              obelisk_rt_status (*)(obelisk_rt_context *, uint64_t));
 ABI_FUNCTION(obelisk_rt_v1_object_allocate,

@@ -163,6 +163,23 @@ std::string formatConstant(const slang::ConstantValue &value) {
   return value.toString(slang::SVInt::MAX_BITS, /*exactUnknowns=*/true);
 }
 
+/// Whether every value of `type` is a fixed bit pattern: integral, real, or
+/// a fixed unpacked array or unpacked struct of those.
+bool isPlainDataType(const slang::ast::Type &type) {
+  const slang::ast::Type &canonical = type.getCanonicalType();
+  if (canonical.isIntegral() || canonical.isFloating())
+    return true;
+  if (canonical.kind == slang::ast::SymbolKind::FixedSizeUnpackedArrayType)
+    return isPlainDataType(
+        canonical.as<slang::ast::FixedSizeUnpackedArrayType>().elementType);
+  if (canonical.kind == slang::ast::SymbolKind::UnpackedStructType)
+    return llvm::all_of(canonical.as<slang::ast::UnpackedStructType>().fields,
+                        [](const slang::ast::FieldSymbol *field) {
+                          return isPlainDataType(field->getType());
+                        });
+  return false;
+}
+
 const slang::ast::Type &unwrapTypeAliases(const slang::ast::Type &type) {
   const slang::ast::Type *current = &type;
   while (current->kind == slang::ast::SymbolKind::TypeAlias)
@@ -935,25 +952,36 @@ public:
       SmallVector<Attribute> fields;
       for (const slang::ast::FieldSymbol &field :
            aggregateScope->membersOfType<slang::ast::FieldSymbol>()) {
-        fields.push_back(DictionaryAttr::get(
-            context,
-            {
-                NamedAttribute(StringAttr::get(context, "name"),
-                               StringAttr::get(context, field.name)),
-                NamedAttribute(StringAttr::get(context, "type"),
-                               TypeAttr::get(convert(field.getType()))),
-                NamedAttribute(StringAttr::get(context, "ordinal"),
-                               IntegerAttr::get(IntegerType::get(context, 32),
-                                                field.fieldIndex)),
-                NamedAttribute(
-                    StringAttr::get(context, "packed_offset"),
-                    IntegerAttr::get(IntegerType::get(context, 64),
-                                     isPacked ? field.bitOffset : 0)),
-                NamedAttribute(
-                    StringAttr::get(context, "rand_mode"),
-                    IntegerAttr::get(IntegerType::get(context, 32),
-                                     static_cast<uint32_t>(field.randMode))),
-            }));
+        SmallVector<NamedAttribute, 6> entries{
+            NamedAttribute(StringAttr::get(context, "name"),
+                           StringAttr::get(context, field.name)),
+            NamedAttribute(StringAttr::get(context, "type"),
+                           TypeAttr::get(convert(field.getType()))),
+            NamedAttribute(StringAttr::get(context, "ordinal"),
+                           IntegerAttr::get(IntegerType::get(context, 32),
+                                            field.fieldIndex)),
+            NamedAttribute(StringAttr::get(context, "packed_offset"),
+                           IntegerAttr::get(IntegerType::get(context, 64),
+                                            isPacked ? field.bitOffset : 0)),
+            NamedAttribute(
+                StringAttr::get(context, "rand_mode"),
+                IntegerAttr::get(IntegerType::get(context, 32),
+                                 static_cast<uint32_t>(field.randMode))),
+        };
+        // IEEE 1800-2023 7.2.2: a member's constant initializer is part of
+        // the unpacked struct type's default value, wherever that default
+        // arises. Only plain data has a default that is a bit pattern.
+        if (type.kind == SK::UnpackedStructType)
+          if (const slang::ast::Expression *initializer =
+                  field.getInitializer();
+              initializer && isPlainDataType(field.getType())) {
+            slang::ast::EvalContext evalContext(field);
+            if (slang::ConstantValue value = initializer->eval(evalContext))
+              entries.push_back(NamedAttribute(
+                  StringAttr::get(context, "initializer"),
+                  StringAttr::get(context, formatConstant(value))));
+          }
+        fields.push_back(DictionaryAttr::get(context, entries));
       }
       result = slangir::AggregateType::get(
           context, StringAttr::get(context, name), isPacked, isUnion, isTagged,

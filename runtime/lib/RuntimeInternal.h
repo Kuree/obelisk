@@ -222,6 +222,7 @@ struct OwnedElementTypeDescriptor {
   obelisk_rt_trace_layout_v1 trace{};
   std::vector<obelisk_rt_trace_entry_v1> entries;
   std::shared_ptr<const std::vector<uint64_t>> pattern;
+  std::shared_ptr<const std::vector<uint8_t>> defaultImage;
 };
 
 // Append an IEEE-style recursive assignment-pattern representation of a
@@ -2538,6 +2539,9 @@ struct obelisk_rt_context {
       managedElementTypes;
   std::unordered_map<uint64_t, std::unique_ptr<OwnedElementTypeDescriptor>>
       managedOwnedElementTypes;
+  // Declared default element images by stable element type ID.
+  std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>>
+      elementDefaultImages;
   // Object identities are monotonic for the lifetime of a managed heap.
   // Each observed field/size selector therefore receives one stable scheduler
   // token without retaining the object itself.

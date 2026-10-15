@@ -310,6 +310,46 @@ LogicalResult makeSchedulerMain(ModuleOp module,
         SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
         ValueRange{runtimeContext, status});
   }
+  // Element defaults must precede the first container of their type, which
+  // the root initializer may already create.
+  if (ArrayAttr defaults = native::get<native::ElementDefaults>(module))
+    for (auto entry : defaults.getAsRange<native::ElementDefaultAttr>()) {
+      ArrayRef<int8_t> image = entry.getImage().asArrayRef();
+      std::string name =
+          "__obelisk_element_default_" + std::to_string(entry.getTypeId());
+      if (!module.lookupSymbol(name)) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToEnd(module.getBody());
+        LLVM::GlobalOp::create(
+            builder, location,
+            LLVM::LLVMArrayType::get(builder.getI8Type(), image.size()),
+            /*isConstant=*/true, LLVM::Linkage::Internal, name,
+            builder.getStringAttr(StringRef(
+                reinterpret_cast<const char *>(image.data()), image.size())),
+            1);
+      }
+      Value status =
+          LLVM::CallOp::create(
+              builder, location, TypeRange{i32},
+              SymbolRefAttr::get(context,
+                                 "obelisk_rt_v1_element_type_define_default"),
+              ValueRange{
+                  runtimeContext,
+                  LLVM::ConstantOp::create(
+                      builder, location, i64,
+                      builder.getI64IntegerAttr(
+                          static_cast<int64_t>(entry.getTypeId()))),
+                  LLVM::AddressOfOp::create(builder, location, pointer, name),
+                  LLVM::ConstantOp::create(
+                      builder, location, i64,
+                      builder.getI64IntegerAttr(
+                          static_cast<int64_t>(image.size())))})
+              .getResult();
+      LLVM::CallOp::create(
+          builder, location, TypeRange{},
+          SymbolRefAttr::get(context, "obelisk_rt_v1_scheduler_fail"),
+          ValueRange{runtimeContext, status});
+    }
   if (requiresClassBitstreamFeature) {
     Value status = LLVM::CallOp::create(
                        builder, location, TypeRange{i32},
@@ -752,6 +792,8 @@ LogicalResult makeSchedulerMain(ModuleOp module,
                            i32, {pointer, i64, i32});
   getOrDeclareLLVMFunction(module, "obelisk_rt_v1_class_register", i32,
                            {pointer, pointer});
+  getOrDeclareLLVMFunction(module, "obelisk_rt_v1_element_type_define_default",
+                           i32, {pointer, i64, pointer, i64});
   getOrDeclareLLVMFunction(module,
                            "obelisk_rt_v1_context_register_import_signature",
                            i32, {pointer, i32, i64, pointer, pointer});

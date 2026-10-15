@@ -3357,7 +3357,15 @@ bool elementTypesEquivalent(const obelisk_rt_element_type_v1 *left,
           left->value_size == right->value_size &&
           left->alignment == right->alignment &&
           left->bit_width == right->bit_width &&
-          traceLayoutsEquivalent(left->trace, right->trace));
+          traceLayoutsEquivalent(left->trace, right->trace) &&
+          (left->default_image == right->default_image ||
+           (left->default_image && right->default_image &&
+            std::memcmp(
+                left->default_image, right->default_image,
+                static_cast<size_t>(
+                    left->value_size *
+                    ((left->flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1))) ==
+                0)));
 }
 
 } // namespace

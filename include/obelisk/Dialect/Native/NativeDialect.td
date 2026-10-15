@@ -37,6 +37,9 @@ def NativeDialect : Dialect {
     "::mlir::ArrayAttr":$partition_manifest,
     // Module: `#native.design_partitions`, preserved once designs are erased.
     "::mlir::ArrayAttr":$partition_manifests,
+    // Module: `#native.element_default` images the runtime learns before any
+    // process runs, preserved once designs are erased.
+    "::mlir::ArrayAttr":$element_defaults,
     // Module: link-complete `#native.partition` inventory of LLVM symbols and
     // their cross-partition references, which object emission consumes.
     "::mlir::ArrayAttr":$physical_partition_manifest,

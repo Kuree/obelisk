@@ -1531,10 +1531,18 @@ static FailureOr<ArrayAttr> normalizeSourceFields(ArrayAttr fields,
             : normalizeType(typeAttr.getValue(), location, allowRealFields);
     if (failed(fieldType))
       return failure();
+    Attribute initializer;
+    if (auto spelling = field.getAs<StringAttr>("initializer")) {
+      FailureOr<sim::FrozenConstantAttr> frozen = freezeConstantSpelling(
+          *fieldType, typeAttr.getValue(), spelling.getValue(), location);
+      if (failed(frozen))
+        return failure();
+      initializer = *frozen;
+    }
     normalized.push_back(sim::FieldAttr::get(
         fields.getContext(), name, *fieldType,
         static_cast<uint32_t>(ordinal.getValue().getZExtValue()),
-        offset.getValue().getZExtValue()));
+        offset.getValue().getZExtValue(), initializer));
   }
   return ArrayAttr::get(fields.getContext(), normalized);
 }
@@ -2686,20 +2694,11 @@ FailureOr<ParsedConstant> parseSVInteger(StringRef spelling, unsigned width,
   return resize(value, unknown);
 }
 
-FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
-  Location location = getSemanticLocation(symbol);
-  FailureOr<Type> normalized = getNormalizedSemanticType(symbol);
-  if (failed(normalized))
-    return failure();
-  auto semanticType = symbol->getAttrOfType<TypeAttr>("semantic_type");
-  auto spelling = symbol->getAttrOfType<StringAttr>("constant_value");
-  if (!semanticType || !spelling) {
-    symbol->emitError(
-        "constant symbol requires semantic_type and constant_value");
-    return failure();
-  }
-
-  Builder builder(symbol->getContext());
+FailureOr<sim::FrozenConstantAttr> freezeConstantSpelling(Type normalized,
+                                                          Type source,
+                                                          StringRef spelling,
+                                                          Location location) {
+  Builder builder(normalized.getContext());
   std::function<FailureOr<sim::FrozenConstantAttr>(Type, Type, StringRef)>
       freeze = [&](Type normalizedType, Type sourceType,
                    StringRef text) -> FailureOr<sim::FrozenConstantAttr> {
@@ -2808,6 +2807,52 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
         elements.push_back(*element);
       }
       payload = builder.getArrayAttr(elements);
+    } else if (auto record =
+                   dyn_cast<sim::UnpackedStructType>(normalizedType)) {
+      // A struct value spells its members like array elements, `[m0,m1]`.
+      auto source = dyn_cast<semantic::SourceAggregateType>(sourceType);
+      ArrayAttr fields = record.getFields();
+      text = text.trim();
+      if (!source || source.getFields().size() != fields.size() ||
+          !text.consume_front("[") || !text.consume_back("]")) {
+        emitError(location)
+            << "malformed unpacked-struct constant '" << text << "'";
+        return failure();
+      }
+      SmallVector<StringRef> memberSpellings;
+      unsigned depth = 0;
+      size_t begin = 0;
+      for (size_t index = 0; index != text.size(); ++index) {
+        if (text[index] == '[')
+          ++depth;
+        else if (text[index] == ']' && depth != 0)
+          --depth;
+        else if (text[index] == ',' && depth == 0) {
+          memberSpellings.push_back(text.slice(begin, index));
+          begin = index + 1;
+        }
+      }
+      memberSpellings.push_back(text.drop_front(begin));
+      if (depth != 0 || memberSpellings.size() != fields.size()) {
+        emitError(location)
+            << "malformed unpacked-struct constant '" << text << "'";
+        return failure();
+      }
+      SmallVector<Attribute> members;
+      members.reserve(fields.size());
+      for (auto [fieldAttr, sourceField, memberSpelling] :
+           llvm::zip(fields, source.getFields(), memberSpellings)) {
+        auto sourceTypeAttr =
+            cast<DictionaryAttr>(sourceField).getAs<TypeAttr>("type");
+        FailureOr<sim::FrozenConstantAttr> member =
+            freeze(cast<sim::FieldAttr>(fieldAttr).getType(),
+                   sourceTypeAttr ? sourceTypeAttr.getValue() : Type{},
+                   memberSpelling);
+        if (failed(member))
+          return failure();
+        members.push_back(*member);
+      }
+      payload = builder.getArrayAttr(members);
     } else {
       Type scalar = sim::getPackedScalarType(normalizedType);
       std::optional<unsigned> width =
@@ -2827,11 +2872,27 @@ FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
           {builder.getIntegerAttr(planeType, parsed->value),
            builder.getIntegerAttr(planeType, parsed->unknown)});
     }
-    return sim::FrozenConstantAttr::get(symbol->getContext(), normalizedType,
+    return sim::FrozenConstantAttr::get(builder.getContext(), normalizedType,
                                         payload,
                                         isSignedSemanticType(sourceType));
   };
-  return freeze(*normalized, semanticType.getValue(), spelling.getValue());
+  return freeze(normalized, source, spelling);
+}
+
+FailureOr<sim::FrozenConstantAttr> freezeSemanticConstant(Operation *symbol) {
+  Location location = getSemanticLocation(symbol);
+  FailureOr<Type> normalized = getNormalizedSemanticType(symbol);
+  if (failed(normalized))
+    return failure();
+  auto semanticType = symbol->getAttrOfType<TypeAttr>("semantic_type");
+  auto spelling = symbol->getAttrOfType<StringAttr>("constant_value");
+  if (!semanticType || !spelling) {
+    symbol->emitError(
+        "constant symbol requires semantic_type and constant_value");
+    return failure();
+  }
+  return freezeConstantSpelling(*normalized, semanticType.getValue(),
+                                spelling.getValue(), location);
 }
 
 Value createDefaultValue(OpBuilder &builder, Location location, Type type) {

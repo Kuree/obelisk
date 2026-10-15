@@ -65,7 +65,29 @@ void materializeNativeStatePlanes(ModuleOp module,
   for (const auto &[id, offset] : layout.storageOffsets)
     storageOffsets.insert(offset);
   for (const auto &bound : layout.bounds) {
-    if (!bound.fourState || !storageOffsets.contains(bound.offset))
+    if (!storageOffsets.contains(bound.offset))
+      continue;
+    // IEEE 1800-2023 7.2.2: struct member defaults are part of the type's
+    // default value, so such storage starts from its exact default planes.
+    if (analysis::hasMemberDefaults(bound.type)) {
+      analysis::DefaultStoragePlanes planes =
+          analysis::getDefaultStoragePlanes(bound.type);
+      roots.erase(bound.offset);
+      unsigned width = planes.value.getBitWidth();
+      for (unsigned position = 0; position != width;) {
+        bool value = planes.value[position];
+        bool unknown = planes.unknown[position];
+        unsigned end = position + 1;
+        while (end != width && planes.value[end] == value &&
+               planes.unknown[end] == unknown)
+          ++end;
+        roots.emplace(bound.offset + position,
+                      Initial{end - position, value, unknown});
+        position = end;
+      }
+      continue;
+    }
+    if (!bound.fourState)
       continue;
     APInt mask = analysis::getDefaultUnknownMask(bound.type);
     if (mask.isAllOnes())

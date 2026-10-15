@@ -427,6 +427,9 @@ public:
     Type element = address->elementType;
     unsigned resultWidth = address->elementWidth;
     IntegerType outputType = rewriter.getIntegerType(resultWidth);
+    // IEEE 1800-2023 Table 7-1: an invalid index reads the element default.
+    analysis::DefaultStoragePlanes defaults =
+        analysis::getDefaultStoragePlanes(element);
     SmallVector<Value> results;
     for (auto [planeIndex, plane] : llvm::enumerate(adaptor.getInput())) {
       auto planeType = cast<IntegerType>(plane.getType());
@@ -438,8 +441,9 @@ public:
               ? shifted
               : arith::TruncIOp::create(rewriter, location, outputType, shifted)
                     .getResult();
-      APInt fallback = planeIndex == 1 && containsLogic(element)
-                           ? analysis::getDefaultUnknownMask(element)
+      APInt fallback = planeIndex == 0 ? defaults.value.zextOrTrunc(resultWidth)
+                       : containsLogic(element)
+                           ? defaults.unknown.zextOrTrunc(resultWidth)
                            : APInt::getZero(resultWidth);
       Value defaultValue = arith::ConstantOp::create(
           rewriter, location, outputType,
@@ -591,15 +595,16 @@ public:
     if (!width)
       return failure();
     IntegerType plane = rewriter.getIntegerType(*width);
-    Value zero = arith::ConstantOp::create(
+    analysis::DefaultStoragePlanes defaults =
+        analysis::getDefaultStoragePlanes(op.getResult().getType());
+    SmallVector<Value> results{arith::ConstantOp::create(
         rewriter, op.getLoc(), plane,
-        rewriter.getIntegerAttr(plane, APInt::getZero(*width)));
-    SmallVector<Value> results{zero};
+        rewriter.getIntegerAttr(plane, defaults.value.zextOrTrunc(*width)))};
     if (containsLogic(op.getResult().getType()))
       results.push_back(arith::ConstantOp::create(
           rewriter, op.getLoc(), plane,
-          rewriter.getIntegerAttr(plane, analysis::getDefaultUnknownMask(
-                                             op.getResult().getType()))));
+          rewriter.getIntegerAttr(plane,
+                                  defaults.unknown.zextOrTrunc(*width))));
     SmallVector<ValueRange> replacements{ValueRange(results)};
     rewriter.replaceOpWithMultiple(op, replacements);
     return success();

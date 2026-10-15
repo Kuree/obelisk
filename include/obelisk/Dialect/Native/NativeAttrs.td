@@ -28,6 +28,22 @@ def NativePartitionAttr : NativeAttr<"Partition", "partition"> {
   let genVerifyDecl = 1;
 }
 
+def NativeElementDefaultAttr
+    : NativeAttr<"ElementDefault", "element_default"> {
+  let summary = "the default value of one container element type";
+  let description = [{
+    Element type `typeId` defaults to `image` rather than to the type default
+    of IEEE 1800-2023 Table 6-7, as an unpacked struct with member
+    initializers does (7.2.2). `image` is the element's value plane followed,
+    for a four-state element, by its unknown plane, in the runtime's
+    `default_image` layout.
+  }];
+  let parameters = (ins "uint64_t":$typeId,
+      "::mlir::DenseI8ArrayAttr":$image);
+  let assemblyFormat = "`<` struct(params) `>`";
+  let genVerifyDecl = 1;
+}
+
 def NativeDesignPartitionsAttr
     : NativeAttr<"DesignPartitions", "design_partitions"> {
   let summary = "the semantic partition manifest of one erased design";

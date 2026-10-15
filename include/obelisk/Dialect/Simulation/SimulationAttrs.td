@@ -174,8 +174,21 @@ def SimConstantBindingAttr : SimAttr<"ConstantBinding", "constant_binding"> {
 
 def SimFieldAttr : SimAttr<"Field", "field"> {
   let summary = "ordered aggregate field metadata";
+  let description = [{
+    `initializer` is the constant default member value an unpacked struct
+    field declares (IEEE 1800-2023 7.2.2), as a `#simulation.frozen_constant`
+    of the field type. It is part of the struct type's default value, so every
+    default of the type -- a variable without an initializer, a new array
+    element, or a read of a nonexistent entry (Table 7-1) -- carries it.
+  }];
   let parameters = (ins "::mlir::StringAttr":$name, "::mlir::Type":$type,
-      "uint32_t":$ordinal, "uint64_t":$packedOffset);
+      "uint32_t":$ordinal, "uint64_t":$packedOffset,
+      OptionalParameter<"::mlir::Attribute">:$initializer);
+  let builders = [AttrBuilder<(ins "::mlir::StringAttr":$name,
+      "::mlir::Type":$type, "uint32_t":$ordinal, "uint64_t":$packedOffset), [{
+    return $_get($_ctxt, name, type, ordinal, packedOffset,
+                 ::mlir::Attribute{});
+  }]>];
   let assemblyFormat = "`<` struct(params) `>`";
   let genVerifyDecl = 1;
 }

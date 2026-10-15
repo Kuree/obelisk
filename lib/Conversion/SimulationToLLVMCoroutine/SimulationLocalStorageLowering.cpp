@@ -638,16 +638,27 @@ public:
                                       APInt::getAllOnes(plane.getWidth()))));
       value = arith::AndIOp::create(rewriter, location, value, known);
     }
-    value =
-        arith::SelectOp::create(rewriter, location, window.valid, value, zero);
+    // IEEE 1800-2023 Table 7-1: an invalid index reads the element default.
+    analysis::DefaultStoragePlanes defaults =
+        analysis::getDefaultStoragePlanes(type);
+    Value defaultValue =
+        defaults.value.isZero()
+            ? zero
+            : arith::ConstantOp::create(
+                  rewriter, location, plane,
+                  rewriter.getIntegerAttr(
+                      plane, defaults.value.zextOrTrunc(plane.getWidth())))
+                  .getResult();
+    value = arith::SelectOp::create(rewriter, location, window.valid, value,
+                                    defaultValue);
     if (isa<FloatType>(type))
       value = arith::BitcastOp::create(rewriter, location, type, value);
     SmallVector<Value> values{value};
     if (containsLogic(type)) {
       Value fallback = arith::ConstantOp::create(
           rewriter, location, plane,
-          rewriter.getIntegerAttr(plane,
-                                  analysis::getDefaultUnknownMask(type)));
+          rewriter.getIntegerAttr(
+              plane, defaults.unknown.zextOrTrunc(plane.getWidth())));
       values.push_back(arith::SelectOp::create(rewriter, location, window.valid,
                                                unknown, fallback));
     }

@@ -26,6 +26,7 @@ using ClosedExecutable = NativeDialect::ClosedExecutableAttrHelper;
 using Partition = NativeDialect::PartitionAttrHelper;
 using PartitionManifest = NativeDialect::PartitionManifestAttrHelper;
 using PartitionManifests = NativeDialect::PartitionManifestsAttrHelper;
+using ElementDefaults = NativeDialect::ElementDefaultsAttrHelper;
 using PhysicalPartitionManifest =
     NativeDialect::PhysicalPartitionManifestAttrHelper;
 using Frame = NativeDialect::FrameAttrHelper;

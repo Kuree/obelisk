@@ -193,11 +193,26 @@ FrozenConstantAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
     }
     return success();
   }
+  if (auto record = dyn_cast<UnpackedStructType>(type)) {
+    auto members = dyn_cast<ArrayAttr>(value);
+    ArrayAttr fields = record.getFields();
+    if (!members || members.size() != fields.size())
+      return emitError() << "unpacked-struct frozen constant requires exactly "
+                         << fields.size() << " member payloads";
+    for (auto [memberAttr, fieldAttr] : llvm::zip(members, fields)) {
+      auto member = dyn_cast<FrozenConstantAttr>(memberAttr);
+      if (!member || member.getType() != cast<FieldAttr>(fieldAttr).getType())
+        return emitError() << "unpacked-struct frozen constant requires "
+                              "matching typed member payloads";
+    }
+    return success();
+  }
 
   Type scalar = getPackedScalarType(type);
   if (!scalar)
     return emitError() << "frozen constant type must be floating, a fixed "
-                          "unpacked array, or a fixed packed value, got "
+                          "unpacked array or struct, or a fixed packed value, "
+                          "got "
                        << type;
   std::optional<unsigned> width = getPackedWidth(scalar);
   auto planes = dyn_cast<ArrayAttr>(value);
@@ -329,6 +344,22 @@ FailureOr<Value> materializeFrozenConstant(OpBuilder &builder,
     return SimAggregateConstructOp::create(builder, location, type, values)
         .getResult();
   }
+  if (auto record = dyn_cast<UnpackedStructType>(type)) {
+    auto members = dyn_cast<ArrayAttr>(constant.getValue());
+    if (!members || members.size() != record.getFields().size())
+      return failure();
+    SmallVector<Value> values;
+    values.reserve(members.size());
+    for (Attribute memberAttr : members) {
+      FailureOr<Value> value = materializeFrozenConstant(
+          builder, location, dyn_cast<FrozenConstantAttr>(memberAttr));
+      if (failed(value))
+        return failure();
+      values.push_back(*value);
+    }
+    return SimAggregateConstructOp::create(builder, location, type, values)
+        .getResult();
+  }
 
   Type scalar = getPackedScalarType(type);
   auto planes = dyn_cast<ArrayAttr>(constant.getValue());
@@ -443,11 +474,18 @@ verifyElementType(llvm::function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 FieldAttr::verify(llvm::function_ref<InFlightDiagnostic()> emitError,
-                  StringAttr name, Type type, uint32_t, uint64_t) {
+                  StringAttr name, Type type, uint32_t, uint64_t,
+                  Attribute initializer) {
   if (!name || name.getValue().empty())
     return emitError() << "aggregate field name must not be empty";
   if (!type)
     return emitError() << "aggregate field type must not be null";
+  if (initializer) {
+    auto constant = dyn_cast<FrozenConstantAttr>(initializer);
+    if (!constant || constant.getType() != type)
+      return emitError() << "aggregate field initializer must be a frozen "
+                            "constant of the field type";
+  }
   return success();
 }
 
@@ -534,6 +572,10 @@ verifyRecordType(llvm::function_ref<InFlightDiagnostic()> emitError,
       return failure();
     if (packed && isa<FloatType>(field.getType()))
       return emitError() << "real-valued aggregate fields are not supported";
+    // IEEE 1800-2023 7.2.2: only unpacked structs declare member defaults.
+    if (field.getInitializer() && (packed || isUnion))
+      return emitError() << "only an unpacked struct field can have an "
+                            "initializer";
     if (!packed) {
       if (field.getPackedOffset() != 0)
         return emitError() << "unpacked aggregate field has a packed offset";

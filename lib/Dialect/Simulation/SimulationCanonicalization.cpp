@@ -2914,8 +2914,21 @@ struct SimplifyAggregateExtract final
       return success();
     }
     if (op.getInput().getDefiningOp<SimAggregateDefaultOp>()) {
-      Value value = materializeDefaultValue(rewriter, op.getLoc(),
-                                            op.getResult().getType());
+      // IEEE 1800-2023 7.2.2: an initialized member defaults to its
+      // initializer rather than to its type's default.
+      Value value;
+      if (auto record = dyn_cast<UnpackedStructType>(op.getInput().getType()))
+        if (auto initializer = dyn_cast_or_null<FrozenConstantAttr>(
+                cast<FieldAttr>(record.getFields()[index]).getInitializer())) {
+          FailureOr<Value> materialized =
+              materializeFrozenConstant(rewriter, op.getLoc(), initializer);
+          if (failed(materialized))
+            return failure();
+          value = *materialized;
+        }
+      if (!value)
+        value = materializeDefaultValue(rewriter, op.getLoc(),
+                                        op.getResult().getType());
       if (!value)
         return failure();
       rewriter.replaceOp(op, value);
