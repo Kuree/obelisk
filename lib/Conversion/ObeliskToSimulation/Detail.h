@@ -169,6 +169,11 @@ inline constexpr ::mlir::StringLiteral clockingVariableAttrName =
     "clocking_variable";
 inline constexpr ::mlir::StringLiteral clockingAccessDirectionAttrName =
     "clocking_access_direction";
+/// Path of the private design storage that mirrors the published sample of a
+/// clocking input whose changes are observed (IEEE 1800-2023 14.13, 14.15).
+inline std::string getClockingSamplePath(::llvm::StringRef clockVariable) {
+  return (clockVariable + ".$sampled").str();
+}
 inline constexpr ::mlir::StringLiteral clockingSourcePathAttrName =
     "clocking_source_path";
 inline constexpr ::mlir::StringLiteral clockingSourceSymbolAttrName =

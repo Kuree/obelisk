@@ -302,10 +302,7 @@ NativeHotPathReachability::NativeHotPathReachability(sim::SimFuncOp function) {
   function.walk([&](Operation *op) {
     if (schedule::has<schedule::Field::EvalDirectOutput>(op))
       return;
-    if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-            sim::SimProgramExitOp, sim::SimErrorOp, sim::SimStatusCheckOp,
-            sim::SimDisplayOp, sim::SimSampledReadOp, sim::SimSampledHistoryOp>(
-            op))
+    if (sim::isColdRuntimeCheckpoint(op))
       cold.insert(op->getBlock());
   });
   if (cold.empty())

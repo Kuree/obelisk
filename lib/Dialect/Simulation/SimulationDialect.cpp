@@ -78,6 +78,12 @@ bool returnsToScheduler(Operation *operation) {
              SimSuspendForeverOp>(operation);
 }
 
+bool isColdRuntimeCheckpoint(Operation *operation) {
+  return isa<SimFinishOp, SimStopOp, SimFatalOp, SimProgramExitOp, SimErrorOp,
+             SimStatusCheckOp, SimDisplayOp, SimSampledReadOp,
+             SimSampledHistoryOp, SimClockedSampleReadOp>(operation);
+}
+
 bool isStartupEntryKind(EntryKind kind) {
   switch (kind) {
   case EntryKind::Always:

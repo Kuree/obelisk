@@ -103,6 +103,12 @@ bool isSuspensionOp(::mlir::Operation *operation);
 /// mailbox or semaphore operations may continue without a scheduler pass.
 bool returnsToScheduler(::mlir::Operation *operation);
 
+/// Whether an operation is a cold exit to the runtime from generated
+/// combinational evaluation: a status, termination, or output effect, or a
+/// read of runtime-owned sampled history. A generated eval closure takes a
+/// checkpoint before its block instead of calling the runtime.
+bool isColdRuntimeCheckpoint(::mlir::Operation *operation);
+
 /// Whether a process is startup infrastructure that must reach its first
 /// suspension or termination before ordinary initial actors begin.
 bool isStartupEntryKind(EntryKind kind);

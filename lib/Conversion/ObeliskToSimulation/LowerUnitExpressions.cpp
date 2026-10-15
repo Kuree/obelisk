@@ -345,12 +345,32 @@ FailureOr<Value> UnitLowering::lowerStaticClockingVariable(Operation *op,
     emitError(location) << "clocking input has no frozen storage descriptor";
     return failure();
   }
+  // Preparation gives a clocking input whose changes are observed a private
+  // storage that mirrors its published sample (IEEE 1800-2023 14.13, 14.15);
+  // sensitivity to the sampled value is sensitivity to that storage.
+  Value publication;
+  uint64_t publicationDescriptor = 0;
+  if (auto path = op->getAttrOfType<StringAttr>("referenced_path")) {
+    std::string samplePath = getClockingSamplePath(path.getValue());
+    if (auto descriptor = descriptorIDs.find(samplePath);
+        descriptor != descriptorIDs.end()) {
+      FailureOr<Value> sample =
+          lowerReferencedValue(op, samplePath, /*lvalue=*/true);
+      if (failed(sample) || !isa<sim::RefType>((*sample).getType()))
+        return emitError(location)
+                   << "clocking input has no private sample storage",
+               failure();
+      publication = *sample;
+      publicationDescriptor = descriptor->second;
+      recordSensitivity(publication);
+    }
+  }
   FailureOr<Value> sample = lowerClockingInputSample(
       *source,
       sourceDescriptor == descriptorIDs.end() ? 0 : sourceDescriptor->second,
       *clock, clockDescriptor->second, static_cast<sim::EdgeKind>(selectedEdge),
       oneStep, skewTicks, location, sourceObserver, primaryObserver,
-      conditionObserver);
+      conditionObserver, publication, publicationDescriptor);
   if (failed(sample) || !sourceObserver)
     return sample;
   FailureOr<Type> resultType = getNormalizedSemanticType(op);
@@ -2632,7 +2652,8 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     Value source, uint64_t sourceDescriptor, Value clock,
     uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
     uint64_t skewTicks, Location location, Value sourceObserver,
-    Value primaryObserver, Value conditionObserver) {
+    Value primaryObserver, Value conditionObserver, Value publication,
+    uint64_t publicationDescriptor) {
   Type sourceType =
       sourceObserver
           ? cast<sim::ObserverType>(sourceObserver.getType()).getResultType()
@@ -2987,6 +3008,13 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     appendPlanKey("primary", *primaryPlan);
     appendPlanKey("iff", *conditionPlan);
   }
+  // A clocking input has one sampled value (IEEE 1800-2023 14.13). Every
+  // read site of a published input shares the sampler that writes its
+  // storage, even though each site outlines its own copy of a source or iff
+  // expression, so no reader can observe a sibling sampler's stale value.
+  if (publication)
+    key =
+        (Twine("clocking-input|publish:") + Twine(publicationDescriptor)).str();
   uint64_t siteID = stableCodeUnitID(key);
   if (!alternateClockSamplePlans.contains(key)) {
     alternateClockSamplePlans[key] = {siteID, 1, sourceType};
@@ -3015,6 +3043,14 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
     observerArguments.emplace_back(clock, clockIndex);
     inputs.push_back(clock.getType());
     argumentAttrs.push_back(clockAttrs);
+    std::optional<unsigned> publicationIndex;
+    if (publication) {
+      publicationIndex = inputs.size();
+      observerArguments.emplace_back(publication, *publicationIndex);
+      inputs.push_back(publication.getType());
+      argumentAttrs.push_back(captureMetadata(
+          outlineBuilder, sim::CaptureKind::Storage, publicationDescriptor));
+    }
     auto appendObserverArguments = [&](ObserverPlan &plan) {
       for (auto [operand, attrs] : llvm::zip(plan.values, plan.valueAttrs)) {
         auto existing =
@@ -3174,6 +3210,20 @@ FailureOr<Value> UnitLowering::lowerClockingInputSample(
                                        entry.getArgument(0), sampled, gate, key,
                                        siteID, 1, sampleUpdatePath)))
       return failure();
+    // Publish the sample only once it is readable, so whatever observes the
+    // clock variable wakes after the update, and only when it changed.
+    if (publicationIndex) {
+      Value published = entry.getArgument(*publicationIndex);
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPoint(sampleBuilder.getInsertionBlock(),
+                                sampleBuilder.getInsertionPoint());
+      FailureOr<Value> stored =
+          convert(sampled, getReferenceElementType(published),
+                  /*sourceSigned=*/false, location, /*targetSigned=*/false);
+      if (failed(stored))
+        return failure();
+      sim::SimRefStoreOp::create(builder, location, *stored, published);
+    }
     cf::BranchOp::create(sampleBuilder, location, wait);
     sim::mark<sim::metadata::Lowered>(sampler);
   }

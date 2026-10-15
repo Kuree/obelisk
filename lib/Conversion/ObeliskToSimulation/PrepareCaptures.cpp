@@ -365,11 +365,32 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
             writtenDescriptors[unit.source].insert(path.getValue());
         };
         bool written = isWrittenReferenceUse(nested);
+        // A published clocking input changes only when its sampler writes
+        // the private sample storage. Every reader captures that storage so
+        // all read sites share one sampler; an observer or function depends
+        // on it instead of the raw source and clock the sampler watches.
+        auto publication = descriptors.end();
+        if (auto path = nested->getAttrOfType<StringAttr>("referenced_path"))
+          publication = descriptors.find(getClockingSamplePath(path));
+        bool published = publication != descriptors.end() &&
+                         !isWriteOnlyReferenceUse(nested);
+        bool publicationDependency =
+            published && (unit.entryKind == sim::EntryKind::Observer ||
+                          unit.entryKind == sim::EntryKind::Function);
+        if (published) {
+          if (seenPaths.insert(publication->getKey()).second)
+            result.descriptors[unit.source].push_back(
+                {publication->getKey().str(), publication->second});
+          if (publicationDependency)
+            result.readDescriptors[unit.source].insert(publication->getKey());
+        }
         captureDescriptor(clockingSourcePathAttrName,
-                          !isWriteOnlyReferenceUse(nested), written);
-        captureDescriptor(clockingEventPathAttrName, /*read=*/true,
+                          !publicationDependency &&
+                              !isWriteOnlyReferenceUse(nested),
+                          written);
+        captureDescriptor(clockingEventPathAttrName, !publicationDependency,
                           /*written=*/false);
-        captureDescriptor(clockingEventRawPathAttrName, /*read=*/true,
+        captureDescriptor(clockingEventRawPathAttrName, !publicationDependency,
                           /*written=*/false);
         if (written &&
             !nested->getAttrOfType<StringAttr>(clockingSourcePathAttrName)) {

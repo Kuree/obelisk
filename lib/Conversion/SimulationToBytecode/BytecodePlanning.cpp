@@ -117,10 +117,7 @@ void pruneNativeFunctions(sim::SimDesignOp design,
         native.getRuntimeObservedWriterActors().contains(function);
     function.walk([&](Operation *op) {
       needsFallback |=
-          isa<sim::SimTaskCallOp, sim::SimDisplayOp, sim::SimFinishOp,
-              sim::SimStopOp, sim::SimProgramExitOp, sim::SimFatalOp,
-              sim::SimErrorOp, sim::SimStatusCheckOp, sim::SimSampledReadOp,
-              sim::SimSampledHistoryOp>(op);
+          isa<sim::SimTaskCallOp>(op) || sim::isColdRuntimeCheckpoint(op);
       if (auto call = dyn_cast<sim::SimCallOp>(op))
         needsFallback |= !symbols.contains(call.getCallee());
     });

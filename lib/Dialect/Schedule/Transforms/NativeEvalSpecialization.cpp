@@ -375,10 +375,7 @@ LogicalResult materializeEvalTwoStateVariants(
       source.walk([&](Operation *operation) {
         if (isDirectOutput(operation))
           return;
-        if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimProgramExitOp, sim::SimErrorOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp, sim::SimSampledReadOp,
-                sim::SimSampledHistoryOp>(operation))
+        if (sim::isColdRuntimeCheckpoint(operation))
           coldCheckpointBlocks.insert(operation->getBlock());
       });
       source.walk([&](Operation *operation) {
@@ -405,10 +402,7 @@ LogicalResult materializeEvalTwoStateVariants(
           checkpointSafe = false;
           return;
         }
-        if (isa<sim::SimFinishOp, sim::SimStopOp, sim::SimFatalOp,
-                sim::SimProgramExitOp, sim::SimErrorOp, sim::SimStatusCheckOp,
-                sim::SimDisplayOp, sim::SimSampledReadOp,
-                sim::SimSampledHistoryOp>(operation)) {
+        if (sim::isColdRuntimeCheckpoint(operation)) {
           // These operations are cold checkpoint exits.  They do not create
           // or consume persistent four-state data in the generated body, so
           // the surrounding module-instance logic can still have a two-state
@@ -1006,10 +1000,7 @@ LogicalResult materializeEvalTwoStateVariants(
     source.walk([&](Operation *operation) {
       if (isDirectOutput(operation))
         return;
-      if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
-              sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimStatusCheckOp, sim::SimSampledReadOp,
-              sim::SimSampledHistoryOp>(operation))
+      if (sim::isColdRuntimeCheckpoint(operation))
         coldCheckpointBlocks.insert(operation->getBlock());
     });
     if (coldCheckpointBlocks.contains(&source.getBody().front())) {
@@ -1432,10 +1423,7 @@ LogicalResult materializeEvalTwoStateVariants(
     llvm::SmallPtrSet<Block *, 4> checkpointBlocks;
     llvm::MapVector<Block *, Location> checkpoints;
     probe.walk([&](Operation *operation) {
-      if (isa<sim::SimDisplayOp, sim::SimFinishOp, sim::SimStopOp,
-              sim::SimProgramExitOp, sim::SimFatalOp, sim::SimErrorOp,
-              sim::SimStatusCheckOp, sim::SimSampledReadOp,
-              sim::SimSampledHistoryOp>(operation)) {
+      if (sim::isColdRuntimeCheckpoint(operation)) {
         Block *block = operation->getBlock();
         checkpoints.try_emplace(block, operation->getLoc());
       }

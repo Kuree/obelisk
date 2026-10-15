@@ -17,6 +17,11 @@ using namespace mlir;
 namespace obelisk::simlowering {
 
 static bool isAddressableTimingExpression(Operation *op) {
+  // A clocking variable reads the value its clocking block sampled, not
+  // storage (IEEE 1800-2023 14.13).
+  if (op->hasAttr(clockingVariableAttrName) ||
+      op->hasAttr("virtual_interface_clocking"))
+    return false;
   if (isa<semantic::SVNamedValueExpressionOp,
           semantic::SVHierarchicalValueExpressionOp>(op))
     return true;

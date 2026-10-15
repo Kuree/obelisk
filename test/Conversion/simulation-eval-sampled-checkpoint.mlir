@@ -1,12 +1,14 @@
 // RUN: obelisk-opt %s --pass-pipeline='builtin.module(simulation.design(simulation.func(obelisk-sim-thread-suspension),obelisk-sim-build-compute-graph,obelisk-sim-verify-compute-graph,obelisk-sim-materialize-graph-regions,obelisk-sim-materialize-compute-fusion,obelisk-sim-specialize-static-state-nba,obelisk-sim-plan-static-superstep),convert-obelisk-sim-processes-to-llvm-coroutines)' | FileCheck %s
 
-// Preponed snapshots and sampled-history rings are runtime-owned. Each query
-// must independently create a checkpoint; neither may silently enter a hot
-// generated closure just because the surrounding output supports snapshots.
+// Preponed snapshots, sampled-history rings and clocked-sample rings are
+// runtime-owned. Each query must independently create a checkpoint; none may
+// silently enter a hot generated closure just because the surrounding output
+// supports snapshots.
 // CHECK: module attributes {{.*}}schedule.eval.generated
 // CHECK-DAG: llvm.func @work.__obelisk_eval_body_0.__obelisk_checkpoint_path
 // CHECK-DAG: llvm.call @obelisk_rt_v1_sampled_read
 // CHECK-DAG: llvm.call @obelisk_rt_v1_sampled_history
+// CHECK-DAG: llvm.call @obelisk_rt_v1_clocked_sample_read
 module attributes {
   llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128",
   llvm.target_triple = "x86_64-unknown-linux-gnu",
@@ -64,7 +66,15 @@ module attributes {
       cf.br ^wait
     ^choose_history:
       %history = arith.cmpi eq, %select, %one : i32
-      cf.cond_br %history, ^past, ^wait
+      cf.cond_br %history, ^past, ^choose_clocked
+    ^choose_clocked:
+      %two = arith.constant 2 : i32
+      %clocked = arith.cmpi eq, %select, %two : i32
+      cf.cond_br %clocked, ^clocked_sample, ^wait
+    ^clocked_sample:
+      %latched = simulation.assert.clocked_sample_read %ctx id 43 depth 1 age 0 : (!simulation.context) -> !simulation.logic<16>
+      simulation.ref.store %latched to %data : !simulation.logic<16>, !simulation.ref<!simulation.logic<16>>
+      cf.br ^wait
     ^past:
       %current = simulation.ref.load %data : !simulation.ref<!simulation.logic<16>> -> !simulation.logic<16>
       %enabled = arith.constant true

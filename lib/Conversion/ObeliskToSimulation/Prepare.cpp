@@ -8659,6 +8659,77 @@ void ObeliskSimPreparePass::runOnOperation() {
   if (invalid)
     return abort();
 
+  // IEEE 1800-2023 14.13 and 14.15: an event expression, wait condition, or
+  // implicit sensitivity that reads a clocking input observes its sampled
+  // value, which changes only when the clocking block publishes a new sample
+  // in Observed. The raw clock and source change at other times, so give each
+  // clocking input read where changes are observed one private storage that
+  // its sampler writes after each update; readers that observe changes depend
+  // on that storage. Function bodies count because always_comb and
+  // always_latch are sensitive to what a called function reads (9.2.2.2.1).
+  {
+    auto publishClockingInputs = [&](Operation *root) {
+      root->walk([&](Operation *nested) {
+        auto direction =
+            nested->getAttrOfType<semantic::SVArgumentDirectionAttr>(
+                clockingAccessDirectionAttrName);
+        auto reference =
+            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        if (!nested->hasAttr(clockingVariableAttrName) || !direction ||
+            direction.getValue() == semantic::SVArgumentDirection::Out ||
+            !reference)
+          return;
+        auto symbol = semanticSymbols.find(reference.getLeafReference());
+        if (symbol == semanticSymbols.end() ||
+            !isa<semantic::SVClockVarSymbolOp>(symbol->second))
+          return;
+        StringRef clockVariable = getHierarchyName(symbol->second);
+        std::string path = getClockingSamplePath(clockVariable);
+        if (clockVariable.empty() || descriptors.contains(path))
+          return;
+        FailureOr<Type> type = getNormalizedSemanticType(symbol->second);
+        if (failed(type) || nextStorageId == UINT64_MAX) {
+          emitError(getSemanticLocation(nested))
+              << "clocking input has no private sample storage";
+          invalid = true;
+          return;
+        }
+        uint64_t id = nextStorageId++;
+        uint64_t scopeID = scopes->lookup(symbol->second);
+        DescriptorInfo sample{DescriptorInfo::Kind::Storage, id, scopeID, *type,
+                              sim::NetResolutionKind::Wire};
+        sample.rootType = *type;
+        descriptors[path] = sample;
+        sim::SimStorageDeclOp::create(
+            builder, getSemanticLocation(symbol->second), id, scopeID, *type,
+            sim::Lifetime::Design, builder.getStringAttr(path),
+            builder.getStringAttr("__obelisk_clocking_sample"),
+            schedule::ComputeObservabilityKindAttr{},
+            sim::VPITypeSemanticsAttr{});
+      });
+    };
+    for (const PreparedUnit &unit : preparedUnits->units) {
+      switch (unit.entryKind) {
+      case sim::EntryKind::Observer:
+      case sim::EntryKind::AlwaysComb:
+      case sim::EntryKind::AlwaysLatch:
+      case sim::EntryKind::Continuous:
+      case sim::EntryKind::PortInput:
+      case sim::EntryKind::PortOutput:
+      case sim::EntryKind::Function:
+        publishClockingInputs(unit.source);
+        break;
+      default:
+        unit.source->walk([&](semantic::SVImplicitEventControlOp control) {
+          publishClockingInputs(control->getParentOp());
+        });
+        break;
+      }
+    }
+  }
+  if (invalid)
+    return abort();
+
   FailureOr<PreparedCaptures> preparedCaptures = analyzeCodeUnitCaptures(
       *preparedUnits, descriptors, semanticSymbols, classSources);
   if (failed(preparedCaptures))

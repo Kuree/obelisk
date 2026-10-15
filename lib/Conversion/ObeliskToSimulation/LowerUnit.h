@@ -445,7 +445,8 @@ private:
       uint64_t clockDescriptor, sim::EdgeKind edge, bool oneStep,
       uint64_t skewTicks, ::mlir::Location location,
       ::mlir::Value sourceObserver = {}, ::mlir::Value primaryObserver = {},
-      ::mlir::Value conditionObserver = {});
+      ::mlir::Value conditionObserver = {}, ::mlir::Value publication = {},
+      uint64_t publicationDescriptor = 0);
   ::mlir::FailureOr<::mlir::Value>
   lowerArrayQuerySystemCall(semantic::SVCallExpressionOp op);
   ::mlir::FailureOr<::mlir::Value>

@@ -387,13 +387,25 @@ bool isSupportedEntryKind(sim::EntryKind kind) {
   return kind == sim::EntryKind::Always || kind == sim::EntryKind::AlwaysFF;
 }
 
+/// Generated evaluation executes activations in the Active region, or in
+/// Inactive for a deferred activation (IEEE 1800-2023 4.4.2.3). A wait that
+/// resumes its activation in a later region (for example, a clocking input
+/// sampler latching in Observed) keeps the generic scheduler.
+static bool resumesInActiveRegion(Operation *operation) {
+  auto region = operation->getAttrOfType<sim::EventRegionAttr>("resume_region");
+  return !region || region.getValue() == sim::EventRegion::Active ||
+         region.getValue() == sim::EventRegion::Inactive;
+}
+
 bool isTypedDirectWait(Operation *operation) {
-  return isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation);
+  return isa<sim::SimSuspendChangeOp, sim::SimSuspendEdgeOp>(operation) &&
+         resumesInActiveRegion(operation);
 }
 
 bool isEvalDirectWait(Operation *operation) {
   return isTypedDirectWait(operation) ||
-         isa<sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation);
+         (isa<sim::SimSuspendAnyOp, sim::SimSuspendObserveOp>(operation) &&
+          resumesInActiveRegion(operation));
 }
 
 bool isTypedSuspend(Operation *operation) {

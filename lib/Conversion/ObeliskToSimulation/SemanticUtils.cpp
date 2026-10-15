@@ -390,6 +390,11 @@ std::optional<bool> foldConstantTruth(Value value) {
 bool isAddressableExpression(Operation *operation) {
   if (operation->hasAttr(clockingBlockEventAttrName))
     return operation->hasAttr(clockingEventPathAttrName);
+  // A clocking variable reads the value its clocking block sampled, not
+  // storage (IEEE 1800-2023 14.13).
+  if (operation->hasAttr(clockingVariableAttrName) ||
+      operation->hasAttr("virtual_interface_clocking"))
+    return false;
   if (isa<semantic::SVNamedValueExpressionOp,
           semantic::SVHierarchicalValueExpressionOp>(operation))
     return true;
