@@ -11,12 +11,18 @@
 #include "slang/ast/ASTVisitor.h"
 #include "slang/ast/Compilation.h"
 #include "slang/ast/EvalContext.h"
+#include "slang/ast/expressions/AssignmentExpressions.h"
 #include "slang/ast/expressions/CallExpression.h"
+#include "slang/ast/expressions/MiscExpressions.h"
+#include "slang/ast/expressions/OperatorExpressions.h"
 #include "slang/ast/expressions/SelectExpressions.h"
 #include "slang/ast/statements/MiscStatements.h"
 #include "slang/ast/symbols/BlockSymbols.h"
 #include "slang/ast/symbols/InstanceSymbols.h"
+#include "slang/ast/symbols/PortSymbols.h"
 #include "slang/ast/symbols/SpecifySymbols.h"
+#include "slang/ast/symbols/SubroutineSymbols.h"
+#include "slang/ast/symbols/VariableSymbols.h"
 #include "slang/parsing/KnownSystemName.h"
 #include "slang/syntax/SyntaxTree.h"
 #include "slang/syntax/SyntaxVisitor.h"
@@ -547,7 +553,42 @@ struct DesignInventory
   DenseMap<const slang::ast::CallExpression *,
            const slang::ast::InstanceSymbol *>
       callOwner;
+  /// Values that an assignment, increment, non-input call argument, system
+  /// call argument or port connection may write. Every value an expression
+  /// in such a position names is included, so the set over-approximates.
+  DenseSet<const slang::ast::Symbol *> writtenValues;
   const slang::ast::InstanceSymbol *currentInstance = nullptr;
+
+  void recordWritten(const slang::ast::Expression &expression) {
+    struct Collector
+        : slang::ast::ASTVisitor<Collector, slang::ast::VisitFlags::AllGood> {
+      DenseSet<const slang::ast::Symbol *> &written;
+      explicit Collector(DenseSet<const slang::ast::Symbol *> &written)
+          : written(written) {}
+      void handle(const slang::ast::NamedValueExpression &value) {
+        written.insert(&value.symbol);
+      }
+      void handle(const slang::ast::HierarchicalValueExpression &value) {
+        written.insert(&value.symbol);
+      }
+    } collector(writtenValues);
+    expression.visit(collector);
+  }
+
+  void handle(const slang::ast::AssignmentExpression &assignment) {
+    recordWritten(assignment.left());
+    visitDefault(assignment);
+  }
+
+  void handle(const slang::ast::UnaryExpression &unary) {
+    using slang::ast::UnaryOperator;
+    if (unary.op == UnaryOperator::Preincrement ||
+        unary.op == UnaryOperator::Predecrement ||
+        unary.op == UnaryOperator::Postincrement ||
+        unary.op == UnaryOperator::Postdecrement)
+      recordWritten(unary.operand());
+    visitDefault(unary);
+  }
 
   const slang::ast::CallExpression *
   sdfCall(const slang::ast::Expression &expr) {
@@ -617,6 +658,10 @@ struct DesignInventory
   }
 
   void handle(const slang::ast::InstanceSymbol &instance) {
+    for (const slang::ast::PortConnection *connection :
+         instance.getPortConnections())
+      if (const slang::ast::Expression *actual = connection->getExpression())
+        recordWritten(*actual);
     if (instance.isModule())
       instances[instance.getHierarchicalPath()] = &instance;
     instanceByBody[&instance.body] = &instance;
@@ -627,10 +672,26 @@ struct DesignInventory
   }
 
   void handle(const slang::ast::CallExpression &call) {
-    if (currentInstance && call.isSystemCall() &&
-        call.getSubroutineName() == "$sdf_annotate") {
+    bool annotation =
+        call.isSystemCall() && call.getSubroutineName() == "$sdf_annotate";
+    if (currentInstance && annotation) {
       calls.push_back({&call, currentInstance});
       callOwner[&call] = currentInstance;
+    }
+    if (call.isSystemCall()) {
+      if (!annotation)
+        for (const slang::ast::Expression *argument : call.arguments())
+          if (argument)
+            recordWritten(*argument);
+    } else if (const slang::ast::SubroutineSymbol *subroutine =
+                   std::get<const slang::ast::SubroutineSymbol *>(
+                       call.subroutine)) {
+      auto formals = subroutine->getArguments();
+      for (auto [index, argument] : llvm::enumerate(call.arguments()))
+        if (argument &&
+            (index >= formals.size() ||
+             formals[index]->direction != slang::ast::ArgumentDirection::In))
+          recordWritten(*argument);
     }
     visitDefault(call);
   }
@@ -672,13 +733,32 @@ owningInstance(const slang::ast::Scope &scope,
 }
 
 static std::optional<std::string>
-constantFilename(const slang::ast::CallExpression &call) {
+constantFilename(const slang::ast::CallExpression &call,
+                 const DesignInventory &inventory) {
   if (call.arguments().empty() || !call.arguments().front())
     return std::nullopt;
   slang::ast::EvalContext context(
       std::get<slang::ast::CallExpression::SystemCallInfo>(call.subroutine)
           .scope->asSymbol());
-  slang::ConstantValue value = call.arguments().front()->eval(context);
+  const slang::ast::Expression *argument = call.arguments().front();
+  slang::ConstantValue value = argument->eval(context);
+  // IEEE 1800-2023 32.9 accepts any string or integral filename expression.
+  // A static variable that nothing writes keeps its constant declaration
+  // initializer, which every startup call therefore observes.
+  while (!value && argument->kind == slang::ast::ExpressionKind::Conversion)
+    argument = &argument->as<slang::ast::ConversionExpression>().operand();
+  if (!value && argument->kind == slang::ast::ExpressionKind::NamedValue) {
+    const auto &symbol =
+        argument->as<slang::ast::NamedValueExpression>().symbol;
+    if (symbol.kind == slang::ast::SymbolKind::Variable &&
+        symbol.as<slang::ast::VariableSymbol>().lifetime ==
+            slang::ast::VariableLifetime::Static &&
+        !inventory.writtenValues.contains(&symbol))
+      if (const slang::ast::Expression *initializer = symbol.getInitializer()) {
+        slang::ast::EvalContext initializerContext(symbol);
+        value = initializer->eval(initializerContext);
+      }
+  }
   if (!value)
     return std::nullopt;
   slang::ConstantValue stringValue = value.convertToStr();
@@ -1998,7 +2078,7 @@ buildSDFAnnotationDatabase(slang::ast::Compilation &compilation,
       invalid = true;
       continue;
     }
-    std::optional<std::string> filename = constantFilename(*call);
+    std::optional<std::string> filename = constantFilename(*call, inventory);
     const slang::ast::InstanceSymbol *scope =
         annotationScope(*call, inventory, annotationCall.owner);
     if (!filename || !scope) {
