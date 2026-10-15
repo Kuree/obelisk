@@ -98,6 +98,7 @@ LogicalResult makeSchedulerMain(ModuleOp module,
               .Case("line", OBELISK_RT_COVERAGE_PERSIST_LINE)
               .Case("toggle", OBELISK_RT_COVERAGE_PERSIST_TOGGLE)
               .Case("functional", OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL)
+              .Case("assertion", OBELISK_RT_COVERAGE_PERSIST_ASSERTION)
               .Default(0);
     }
   }

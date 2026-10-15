@@ -410,6 +410,10 @@ private:
       const CapturedLValue &destination, ::mlir::Value value,
       ::mlir::Value mask, ::mlir::Value index, bool character,
       ::mlir::Location location, ::mlir::Value delay);
+  /// Record an assertion success for assertion coverage when `op` has an
+  /// inventoried assertion point.
+  void emitAssertionCoverageHit(::mlir::Operation *op,
+                                ::mlir::Location location);
   ::mlir::FailureOr<::mlir::Value>
   insertCapturedPackedSlice(const CapturedLValue &selection, ::mlir::Value base,
                             ::mlir::Value replacement,

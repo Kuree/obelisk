@@ -408,6 +408,8 @@ Status collectStrings(const Database &database, StringTable &result) {
     unique.insert(v.path);
   for (const auto &v : database.linePoints)
     unique.insert(v.macroName);
+  for (const auto &v : database.assertionPoints)
+    unique.insert(v.name);
   for (const auto &v : database.scopes) {
     unique.insert(v.name);
     unique.insert(v.definition);
@@ -618,6 +620,7 @@ Status planSections(const Database &db, const StringTable &strings,
   OBELISK_COVERAGE_PLAN(CrossPredicateNodes, db.crossPredicateNodes.size());
   OBELISK_COVERAGE_PLAN(CrossPredicateOperands,
                         db.crossPredicateOperands.size());
+  OBELISK_COVERAGE_PLAN(AssertionPoints, db.assertionPoints.size());
 #undef OBELISK_COVERAGE_PLAN
   return Status::Ok;
 }
@@ -1634,6 +1637,21 @@ Status encodeSections(const Database &db, const StringTable &strings,
     predicateOperands.record<CrossPredicateOperandRecord>([&](uint8_t *p) {
       CrossPredicateOperandRecord::setOperand(p, operand);
     });
+  Bytes &assertions =
+      add(SectionKind::AssertionPoints, db.assertionPoints.size());
+  for (const auto &v : db.assertionPoints)
+    assertions.record<AssertionPointRecord>([&](uint8_t *p) {
+      AssertionPointRecord::setId(p, v.id);
+      AssertionPointRecord::setScope(p, v.scope);
+      AssertionPointRecord::setFile(p, v.file);
+      AssertionPointRecord::setName(p, strings.get(v.name));
+      AssertionPointRecord::setKind(p, static_cast<uint32_t>(v.kind));
+      AssertionPointRecord::setLine(p, v.line);
+      AssertionPointRecord::setColumn(p, v.column);
+      AssertionPointRecord::setEndLine(p, v.endLine);
+      AssertionPointRecord::setEndColumn(p, v.endColumn);
+      AssertionPointRecord::setFlags(p, v.flags);
+    });
   finish();
   if (!allGood || sectionIndex != sections.size())
     return failure == Status::Ok ? Status::InvalidDatabase : failure;
@@ -1783,6 +1801,20 @@ Digest computeSchemaFingerprint(const Database &db) {
     hashString(h, v.name);
     hashScalar(h, v.kind);
     hashString(h, v.definition);
+  }
+  for (const auto &v :
+       sorted(db.assertionPoints, [](const auto &a) { return a.id; })) {
+    hashScalar(h, uint32_t(65));
+    hashScalar(h, v.id);
+    hashScalar(h, v.scope);
+    hashScalar(h, v.file);
+    hashString(h, v.name);
+    hashScalar(h, static_cast<uint32_t>(v.kind));
+    hashScalar(h, v.line);
+    hashScalar(h, v.column);
+    hashScalar(h, v.endLine);
+    hashScalar(h, v.endColumn);
+    hashScalar(h, v.flags);
   }
   auto points = sorted(db.linePoints, [](const auto &a) { return a.id; });
   for (const auto &v : points) {
@@ -3001,6 +3033,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   const auto sourceFilesByID = indexRecords(db.sourceFiles);
   const auto scopesByID = indexRecords(db.scopes);
   const auto linePointsByID = indexRecords(db.linePoints);
+  const auto assertionPointsByID = indexRecords(db.assertionPoints);
   const auto toggleObjectsByID = indexRecords(db.toggleObjects);
   const auto functionalTypesByID = indexRecords(db.functionalTypes);
   const auto functionalItemsByID = indexRecords(db.functionalItems);
@@ -3086,6 +3119,7 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
   if (!uniqueNonzero(db.sourceFiles, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.scopes, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.linePoints, [](const auto &v) { return v.id; }) ||
+      !uniqueNonzero(db.assertionPoints, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.toggleObjects, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.functionalTypes, [](const auto &v) { return v.id; }) ||
       !uniqueNonzero(db.functionalItems, [](const auto &v) { return v.id; }) ||
@@ -3100,6 +3134,9 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
           [](const auto &a, const auto &b) { return a.id < b.id; }) ||
       !std::is_sorted(
           db.linePoints.begin(), db.linePoints.end(),
+          [](const auto &a, const auto &b) { return a.id < b.id; }) ||
+      !std::is_sorted(
+          db.assertionPoints.begin(), db.assertionPoints.end(),
           [](const auto &a, const auto &b) { return a.id < b.id; }) ||
       !std::is_sorted(
           db.toggleObjects.begin(), db.toggleObjects.end(),
@@ -3152,6 +3189,16 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
       return fail(text(v.macroName) ? Status::InvalidReference
                                     : Status::InvalidUtf8,
                   "line_point");
+  for (const auto &v : db.assertionPoints)
+    if (!text(v.name) || !scopesByID.count(v.scope) ||
+        !sourceFilesByID.count(v.file) || !v.line || !v.endLine ||
+        static_cast<uint32_t>(v.kind) <
+            static_cast<uint32_t>(AssertionKind::Assert) ||
+        static_cast<uint32_t>(v.kind) >
+            static_cast<uint32_t>(AssertionKind::Cover) ||
+        v.flags != 0)
+      return fail(text(v.name) ? Status::InvalidReference : Status::InvalidUtf8,
+                  "assertion_point");
   for (const auto &v : db.toggleObjects)
     if (!text(v.name) || !scopesByID.count(v.scope) ||
         !sourceFilesByID.count(v.file) || !v.bitWidth ||
@@ -4891,6 +4938,8 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
     switch (metric) {
     case MetricKind::Line:
       return linePointsByID.count(id);
+    case MetricKind::Assertion:
+      return assertionPointsByID.count(id);
     case MetricKind::Toggle:
       return toggleObjectsByID.count(id);
     case MetricKind::Functional:
@@ -7094,12 +7143,13 @@ Status validate(const Database &db, Diagnostic *diagnostic) {
         v.metric == MetricKind::Line         ? RunContainsLine
         : v.metric == MetricKind::Toggle     ? RunContainsToggle
         : v.metric == MetricKind::Functional ? RunContainsFunctional
+        : v.metric == MetricKind::Assertion  ? RunContainsAssertion
                                              : uint64_t{0};
     if (!knownMetric(static_cast<uint32_t>(v.metric)) || !runs.count(v.run) ||
         !(runFlags.at(v.run) & requiredRunFlag) ||
         (v.metric != MetricKind::Functional &&
          !entityFor(v.metric, v.entity)) ||
-        (v.metric == MetricKind::Line &&
+        ((v.metric == MetricKind::Line || v.metric == MetricKind::Assertion) &&
          (v.subindex != 0 || v.instance != 0)) ||
         (v.metric == MetricKind::Toggle &&
          (!toggle || toggle->bitWidth > UINT32_MAX / 4 ||
@@ -8457,6 +8507,24 @@ Status parse(const uint8_t *data, size_t size, Database &output,
            LinePointRecord::getLine(p), LinePointRecord::getColumn(p),
            LinePointRecord::getEndLine(p), LinePointRecord::getEndColumn(p),
            LinePointRecord::getSemanticPhase(p), LinePointRecord::getFlags(p)});
+      return Status::Ok;
+    });
+    if (st != Status::Ok)
+      return st;
+    st = fixed(SectionKind::AssertionPoints, [&](const auto &e, uint64_t i,
+                                                 const uint8_t *p) {
+      const auto *name = str(AssertionPointRecord::getName(p), e, i,
+                             AssertionPointRecord::NameName);
+      if (!name)
+        return Status::InvalidReference;
+      result.assertionPoints.push_back(
+          {AssertionPointRecord::getId(p), AssertionPointRecord::getScope(p),
+           AssertionPointRecord::getFile(p), *name,
+           static_cast<AssertionKind>(AssertionPointRecord::getKind(p)),
+           AssertionPointRecord::getLine(p), AssertionPointRecord::getColumn(p),
+           AssertionPointRecord::getEndLine(p),
+           AssertionPointRecord::getEndColumn(p),
+           AssertionPointRecord::getFlags(p)});
       return Status::Ok;
     });
     if (st != Status::Ok)

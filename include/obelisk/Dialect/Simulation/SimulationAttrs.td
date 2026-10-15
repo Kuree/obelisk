@@ -863,6 +863,8 @@ def SimAssertionControlActionAttr
     : SimEnumAttr<SimAssertionControlAction, "assertion_control_action">;
 def SimBlockEventKindAttr
     : SimEnumAttr<SimBlockEventKind, "block_event_kind">;
+def SimCoveragePointKindAttr
+    : SimEnumAttr<SimCoveragePointKind, "coverage_point_kind">;
 def SimRadixAttr : SimEnumAttr<SimRadix, "radix">;
 def SimAssocTraversalDirectionAttr
     : SimEnumAttr<SimAssocTraversalDirection, "assoc_traversal_direction">;

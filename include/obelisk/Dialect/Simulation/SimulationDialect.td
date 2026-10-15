@@ -251,6 +251,9 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::StringAttr":$consequent_end_of_simulation_strength,
     "::mlir::UnitAttr":$consequent_first_match_equivalence,
     "::mlir::UnitAttr":$cover_sequence_per_match,
+    // A concurrent assertion outlined as a report that only records its
+    // coverage success.
+    "::mlir::UnitAttr":$assertion_coverage_report,
     "::mlir::UnitAttr":$default_assertion_failure,
     "::mlir::UnitAttr":$deferred_evaluator,
     "::mlir::BoolAttr":$deferred_result,

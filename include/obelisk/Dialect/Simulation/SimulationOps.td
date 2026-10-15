@@ -1008,16 +1008,26 @@ def SimCovergroupBlockEventFireOp
 def SimCoveragePointHitOp : SimOp<"coverage.point_hit", [
     MemoryEffects<[MemWrite<SimCoverageResource>]>
   ]> {
-  let summary = "saturating hit of one inventoried source line point";
+  let summary = "saturating hit of one inventoried coverage point";
   let description = [{
-    Records a semantic execution point by its dense physical counter index.
-    Stable point identity and source metadata live in the embedded native
-    coverage schema. The explicit index keeps lowering cheap while the
-    resource effect prevents motion across observed execution boundaries.
+    Records a semantic execution point by its dense physical counter index:
+    a source line point, or (with `kind` assertion) the success of an
+    assertion statement. Stable
+    point identity and source metadata live in the embedded native coverage
+    schema. The explicit index keeps lowering cheap while the resource effect
+    prevents motion across observed execution boundaries.
   }];
   let arguments = (ins SimContextType:$context,
                        I1:$enabled,
-                       ConfinedAttr<I64Attr, [IntNonNegative]>:$point);
+                       ConfinedAttr<I64Attr, [IntNonNegative]>:$point,
+                       OptionalAttr<SimCoveragePointKindAttr>:$kind);
+  let builders = [
+    OpBuilder<(ins "::mlir::Value":$simContext, "::mlir::Value":$enabled,
+                   "::mlir::IntegerAttr":$point), [{
+      build($_builder, $_state, simContext, enabled, point,
+            CoveragePointKindAttr{});
+    }]>
+  ];
   let assemblyFormat = "$context `if` $enabled `[` $point `]` attr-dict `:` type($context)";
   let hasVerifier = 1;
 }

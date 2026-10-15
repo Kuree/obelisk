@@ -28,7 +28,8 @@ CoverageDialect::verifyOperationAttribute(Operation *operation,
                                           NamedAttribute attribute) {
   if (failed(discardable::verify<
              Metrics, Config, PrefixMaps, SourceFiles, LanguageVersion,
-             LinePointCount, ToggleBitCount, LinePointIndex, ToggleObservable,
+             LinePointCount, ToggleBitCount, LinePointIndex,
+             AssertionPointCount, AssertionPointIndex, ToggleObservable,
              ToggleBindings, ToggleInitialValue, ToggleInitialUnknown,
              FunctionalExpressionId, FunctionalExpressionOrdinal,
              FunctionalExpressionKind, FunctionalExpressionBitWidth,
@@ -52,7 +53,8 @@ CoverageDialect::verifyOperationAttribute(Operation *operation,
       name == PrefixMaps::getNameStr() || name == SourceFiles::getNameStr() ||
       name == LanguageVersion::getNameStr() ||
       name == LinePointCount::getNameStr() ||
-      name == ToggleBitCount::getNameStr();
+      name == ToggleBitCount::getNameStr() ||
+      name == AssertionPointCount::getNameStr();
   if (moduleOption && !isa<ModuleOp>(operation))
     return error() << "belongs on a module";
   if ((name == Metrics::getNameStr() || name == PrefixMaps::getNameStr() ||

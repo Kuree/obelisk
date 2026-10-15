@@ -5010,9 +5010,11 @@ enum {
   OBELISK_RT_COVERAGE_PERSIST_LINE = 1u << 0,
   OBELISK_RT_COVERAGE_PERSIST_TOGGLE = 1u << 1,
   OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL = 1u << 2,
+  OBELISK_RT_COVERAGE_PERSIST_ASSERTION = 1u << 3,
   OBELISK_RT_COVERAGE_PERSIST_ALL = OBELISK_RT_COVERAGE_PERSIST_LINE |
                                     OBELISK_RT_COVERAGE_PERSIST_TOGGLE |
-                                    OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL
+                                    OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL |
+                                    OBELISK_RT_COVERAGE_PERSIST_ASSERTION
 };
 obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     obelisk_rt_context *context, uint64_t line_count, uint64_t toggle_bit_count,

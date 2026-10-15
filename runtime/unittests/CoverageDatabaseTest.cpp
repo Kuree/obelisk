@@ -1762,7 +1762,7 @@ TEST(CoverageDatabaseTest, GeneratedFixedFieldDiagnosticsAreExact) {
   };
   check(SectionKind::FunctionalItems, 44, 1, Status::InvalidDatabase,
         "reserved");
-  check(SectionKind::Runs, 56, 8, Status::InvalidEnum, "flags");
+  check(SectionKind::Runs, 56, uint32_t{1} << 31, Status::InvalidEnum, "flags");
   check(SectionKind::FunctionalItems, 20, 99, Status::InvalidEnum, "kind");
   check(SectionKind::FunctionalItems, 16, UINT32_MAX, Status::InvalidReference,
         "name");

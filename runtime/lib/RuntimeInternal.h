@@ -2072,6 +2072,13 @@ struct CoverageState {
   std::unique_ptr<std::atomic<uint8_t>[]> lineEnabled;
   std::vector<uint8_t> lineExcluded;
   uint64_t lineCount = 0;
+  // Assertion success counters follow the line points in the dense point
+  // index space of obelisk_rt_v1_coverage_point_hit.
+  std::unique_ptr<std::atomic<uint64_t>[]> assertionCounters;
+  std::unique_ptr<std::atomic<uint8_t>[]> assertionOverflow;
+  std::unique_ptr<std::atomic<uint8_t>[]> assertionEnabled;
+  std::vector<uint8_t> assertionExcluded;
+  uint64_t assertionCount = 0;
   std::vector<uint64_t> toggleCounters;
   std::vector<uint8_t> toggleOverflow;
   std::vector<uint8_t> toggleEnabled;

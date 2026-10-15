@@ -308,6 +308,7 @@ struct ReportData {
   IndexMap<EntityKey, std::vector<Contribution>> contributors;
   Summary line;
   Summary toggle;
+  Summary assertion;
   Summary functional;
   std::string error;
 };
@@ -410,7 +411,8 @@ bool parseOptions(int argc, char **argv, Options &options) {
       if (equal == std::string::npos ||
           !parseMetric(value.substr(0, equal), metric) ||
           (metric != MetricKind::Line && metric != MetricKind::Toggle &&
-           metric != MetricKind::Functional) ||
+           metric != MetricKind::Functional &&
+           metric != MetricKind::Assertion) ||
           !parseDouble(value.substr(equal + 1), threshold))
         return false;
       options.thresholds[metric] = threshold;
@@ -830,6 +832,15 @@ ReportData analyze(const Database &database, const std::string &test) {
     else if (hit)
       ++report.line.partial;
   }
+
+  // IEEE 1800-2023 40.2.2: an assertion is covered once it has succeeded.
+  report.assertion.available = !database.assertionPoints.empty();
+  for (const AssertionPoint &point : database.assertionPoints)
+    if (!excluded.count({MetricKind::Assertion, point.id})) {
+      ++report.assertion.total;
+      if (aggregate(MetricKind::Assertion, point.id, 0))
+        ++report.assertion.covered;
+    }
 
   report.toggle.available = !database.toggleObjects.empty();
   for (const ToggleObject &object : database.toggleObjects)
@@ -2005,6 +2016,8 @@ void textReport(llvm::raw_ostream &out, const Database &database,
   print(MetricKind::Line, report.line);
   print(MetricKind::Toggle, report.toggle);
   print(MetricKind::Functional, report.functional);
+  if (report.assertion.available)
+    print(MetricKind::Assertion, report.assertion);
   if (report.functional.available) {
     IndexMap<uint64_t, std::string> functionalExclusions;
     for (const Exclusion &exclusion : database.exclusions)
@@ -2235,6 +2248,8 @@ void jsonReport(
       jsonSummary(out, MetricKind::Line, report.line, thresholds);
       jsonSummary(out, MetricKind::Toggle, report.toggle, thresholds);
       jsonSummary(out, MetricKind::Functional, report.functional, thresholds);
+      if (report.assertion.available)
+        jsonSummary(out, MetricKind::Assertion, report.assertion, thresholds);
     });
     out.attributeArray("runs", [&] {
       for (const Run &run : database.runs)
@@ -3466,6 +3481,8 @@ const Summary &summaryFor(const ReportData &report, MetricKind metric) {
     return report.line;
   if (metric == MetricKind::Toggle)
     return report.toggle;
+  if (metric == MetricKind::Assertion)
+    return report.assertion;
   return report.functional;
 }
 
@@ -3512,7 +3529,8 @@ int main(int argc, char **argv) {
         << "\nresolved-instances: " << database.resolvedInstances.size()
         << "\nresolved-instance-options: "
         << database.resolvedInstanceOptions.size()
-        << "\nexclusions: " << database.exclusions.size() << '\n';
+        << "\nexclusions: " << database.exclusions.size()
+        << "\nassertion-points: " << database.assertionPoints.size() << '\n';
     return 0;
   }
   if (options.command == "merge") {

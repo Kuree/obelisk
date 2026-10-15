@@ -87,6 +87,19 @@ LogicalResult UnitLowering::emitDefaultAssertionFailure(Operation *source,
   return success();
 }
 
+void UnitLowering::emitAssertionCoverageHit(Operation *op, Location location) {
+  IntegerAttr point = cov::get<cov::AssertionPointIndex>(op);
+  if (!point)
+    return;
+  Value enabled = arith::ConstantOp::create(
+      builder, location, builder.getI1Type(), builder.getBoolAttr(true));
+  sim::SimCoveragePointHitOp::create(
+      builder, location, function.getBody().front().getArgument(0), enabled,
+      point,
+      sim::CoveragePointKindAttr::get(function.getContext(),
+                                      sim::CoveragePointKind::Assertion));
+}
+
 LogicalResult UnitLowering::lowerImmediateAssertion(
     semantic::SVImmediateAssertionStatementOp op) {
   Location location = getSemanticLocation(op);
@@ -475,6 +488,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
 
   size_t nextChild = 1;
   setCurrent(passBlock);
+  emitAssertionCoverageHit(op, location);
   bool cover =
       op.getAssertionKind() == semantic::SVAssertionKind::CoverProperty ||
       op.getAssertionKind() == semantic::SVAssertionKind::CoverSequence;

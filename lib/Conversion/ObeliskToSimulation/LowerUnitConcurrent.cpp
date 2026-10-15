@@ -3272,6 +3272,7 @@ LogicalResult UnitLowering::lowerGlobalFutureAssertionResolver(
                            ValueRange{});
   size_t actionBase = prefix + 1;
   setCurrent(pass);
+  emitAssertionCoverageHit(op, location);
   if (op.getHasPassAction() && failed(lowerStatement(children[actionBase])))
     return failure();
   emitBranch(done);
@@ -3303,6 +3304,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
   Location location = getSemanticLocation(op);
   if (sim::has<sim::metadata::DefaultAssertionFailure>(op))
     return emitDefaultAssertionFailure(op, location, "concurrent assertion");
+  if (sim::has<sim::metadata::AssertionCoverageReport>(op)) {
+    emitAssertionCoverageHit(op, location);
+    return success();
+  }
   if (sim::has<sim::metadata::GlobalFutureResolver>(op))
     return lowerGlobalFutureAssertionResolver(op);
   auto emitEvaluationCoverageHit = [&](Value enabled = {}) {
@@ -3670,6 +3675,7 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
                              failBlock, ValueRange{});
     size_t actionBase = children.size() - actionCount;
     setCurrent(passBlock);
+    emitAssertionCoverageHit(op, location);
     if (op.getHasPassAction() && failed(lowerStatement(children[actionBase])))
       return failure();
     emitBranch(mergeBlock);
@@ -6002,6 +6008,10 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       [&](bool passed, std::optional<ReportCallback> &report) -> LogicalResult {
     if (!observable || (!passed && cover))
       return success();
+    // IEEE 1800-2023 40.2.2: a covered assertion needs its successes, so a
+    // pass report exists whenever its success is a coverage point.
+    IntegerAttr coveragePoint =
+        passed ? cov::get<cov::AssertionPointIndex>(op) : IntegerAttr{};
     Operation *selected = nullptr;
     bool defaultFailure = false;
     if (passed && op.getHasPassAction())
@@ -6010,12 +6020,14 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
       selected = children[prefix + 1 + op.getHasPassAction()];
     else if (!passed && assertion)
       defaultFailure = true;
-    if (!selected && !defaultFailure)
-      return success();
     if (selected && isa<semantic::SVEmptyStatementOp>(selected))
+      selected = nullptr;
+    if (!selected && !defaultFailure && !coveragePoint)
       return success();
+    bool coverageOnly = !selected && !defaultFailure;
 
-    Operation *outlined = defaultFailure ? op.getOperation() : selected;
+    Operation *outlined =
+        defaultFailure || coverageOnly ? op.getOperation() : selected;
     unsigned ordinal = passed ? 0 : (defaultFailure ? 2 : 1);
     std::string identity = (function.getSymName() + ".$concurrent_report." +
                             Twine(node) + "." + Twine(ordinal))
@@ -6025,6 +6037,8 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
         outlined, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     if (defaultFailure)
       sim::mark<sim::metadata::DefaultAssertionFailure>(op);
+    if (coverageOnly)
+      sim::mark<sim::metadata::AssertionCoverageReport>(op);
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback = [&]() {
       SmallVector<std::pair<Operation *, Value>> frozenActionExpressions;
       outlined->walk([&](Operation *nested) {
@@ -6037,12 +6051,27 @@ LogicalResult UnitLowering::lowerConcurrentAssertion(
     }();
     if (defaultFailure)
       sim::remove<sim::metadata::DefaultAssertionFailure>(op);
+    if (coverageOnly)
+      sim::remove<sim::metadata::AssertionCoverageReport>(op);
     if (previousCodeUnit)
       sim::set<sim::metadata::ForkCodeUnitId>(outlined, previousCodeUnit);
     else
       sim::remove<sim::metadata::ForkCodeUnitId>(outlined);
     if (failed(callback))
       return failure();
+    if (coveragePoint && !coverageOnly) {
+      // The pass action's report also records the success, ahead of the
+      // kill-epoch guard that splits this entry block.
+      Block &entry = callback->first.getBody().front();
+      OpBuilder hitBuilder = OpBuilder::atBlockBegin(&entry);
+      Value enabled = arith::ConstantOp::create(hitBuilder, location,
+                                                hitBuilder.getI1Type(),
+                                                hitBuilder.getBoolAttr(true));
+      sim::SimCoveragePointHitOp::create(
+          hitBuilder, location, entry.getArgument(0), enabled, coveragePoint,
+          sim::CoveragePointKindAttr::get(function.getContext(),
+                                          sim::CoveragePointKind::Assertion));
+    }
 
     callback->first->setAttr(
         "home_region", sim::EventRegionAttr::get(function.getContext(),

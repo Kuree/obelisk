@@ -22,7 +22,7 @@
 # CONTROL-NOT: DA:15,
 
 # UNBALANCED: unbalanced coverage 'off' directive
-# UNKNOWN: metrics must be unique line, toggle, or functional names
+# UNKNOWN: metrics must be unique line, toggle, functional, or assertion names
 
 #--- defs.svh
 // obelisk coverage off line reason="macro definition region"

@@ -500,8 +500,13 @@ struct PrefixMap {
   std::string to;
 };
 
+/// Metric families selectable by --coverage, rules, and source directives,
+/// indexed by coverageMetricIndex.
+static constexpr unsigned kCoverageMetricCount = 4;
+
 struct CoverageRule {
-  llvm::SmallBitVector metrics = llvm::SmallBitVector(3, true);
+  llvm::SmallBitVector metrics =
+      llvm::SmallBitVector(kCoverageMetricCount, true);
   std::optional<std::string> file;
   std::optional<std::string> hierarchy;
   std::string reason;
@@ -519,7 +524,7 @@ struct DirectiveInterval {
 };
 
 struct CoverageDirectiveFile {
-  std::array<SmallVector<DirectiveInterval>, 3> intervals;
+  std::array<SmallVector<DirectiveInterval>, kCoverageMetricCount> intervals;
 };
 
 struct ActiveDirective {
@@ -1096,6 +1101,8 @@ static std::optional<unsigned> coverageMetricIndex(StringRef name) {
     return 1;
   if (name == "functional")
     return 2;
+  if (name == "assertion")
+    return 3;
   return std::nullopt;
 }
 
@@ -1198,8 +1205,8 @@ parseCoverageConfiguration(ModuleOp module) {
               name ? coverageMetricIndex(*name) : std::nullopt;
           if (!name || !index || !seen.insert(*name).second) {
             module.emitError(
-                "coverage rule metrics must contain unique line, toggle, or "
-                "functional names");
+                "coverage rule metrics must contain unique line, toggle, "
+                "functional, or assertion names");
             return failure();
           }
           rule.metrics.set(*index);
@@ -1306,20 +1313,21 @@ static std::optional<StringRef> findLineComment(StringRef line,
 static LogicalResult parseDirectiveMetrics(ModuleOp module, StringRef path,
                                            uint32_t line, StringRef text,
                                            llvm::SmallBitVector &metrics) {
-  metrics = llvm::SmallBitVector(3, true);
+  metrics = llvm::SmallBitVector(kCoverageMetricCount, true);
   if (text.empty())
     return success();
   metrics.reset();
   SmallVector<StringRef> names;
   text.split(names, ',', -1, false);
-  llvm::SmallBitVector seen(3);
+  llvm::SmallBitVector seen(kCoverageMetricCount);
   for (StringRef name : names) {
     name = name.trim();
     std::optional<unsigned> index = coverageMetricIndex(name);
     if (name.empty() || !index || seen.test(*index)) {
       module.emitError("malformed coverage directive at ")
           << path << ':' << line
-          << ": metrics must be unique line, toggle, or functional names";
+          << ": metrics must be unique line, toggle, functional, or "
+             "assertion names";
       return failure();
     }
     seen.set(*index);
@@ -1336,7 +1344,7 @@ static LogicalResult parseCoverageDirectives(ModuleOp module, StringRef path,
   if (!buffer)
     return success();
 
-  std::array<SmallVector<ActiveDirective>, 3> active;
+  std::array<SmallVector<ActiveDirective>, kCoverageMetricCount> active;
   bool inBlockComment = false;
   SmallVector<StringRef> lines;
   (*buffer)->getBuffer().split(lines, '\n');
@@ -2107,6 +2115,188 @@ void ObeliskSimPrepareCoveragePass::runOnOperation() {
     }
     cov::set<cov::LinePointCount>(module,
                                   builder.getI64IntegerAttr(candidates.size()));
+  }
+
+  // IEEE 1800-2023 40.2.2: assertion coverage records, for each elaborated
+  // assert, assume, cover, and expect statement, whether it has succeeded.
+  if (isMetricEnabled(module, "assertion")) {
+    struct AssertionCandidate {
+      Operation *operation;
+      sim::SimFuncOp function;
+      SourceInfo source;
+      uint64_t scope;
+      uint64_t codeUnit;
+      uint64_t node;
+      std::string hierarchy;
+      coverage::AssertionPoint point;
+      bool excluded = false;
+    };
+    SmallVector<AssertionCandidate, 0> assertions;
+    for (sim::SimDesignOp design : module.getOps<sim::SimDesignOp>()) {
+      ScopeInventory &scopeInventory =
+          scopeInventories.find(design.getOperation())->second;
+      llvm::DenseMap<uint64_t, uint64_t> codeUnitScopes;
+      for (sim::SimCodeUnitDeclOp declaration :
+           design.getBody().front().getOps<sim::SimCodeUnitDeclOp>()) {
+        auto scope = scopeInventory.ids.find(declaration.getScopeId());
+        if (scope != scopeInventory.ids.end())
+          codeUnitScopes.try_emplace(declaration.getId(), scope->second);
+      }
+      for (sim::SimFuncOp function :
+           design.getBody().front().getOps<sim::SimFuncOp>()) {
+        std::optional<uint64_t> codeUnit = function.getCodeUnitId();
+        auto scope =
+            codeUnit ? codeUnitScopes.find(*codeUnit) : codeUnitScopes.end();
+        if (scope == codeUnitScopes.end())
+          continue;
+        function.walk([&](Operation *operation) {
+          std::optional<ir::SVAssertionKind> sourceKind;
+          if (auto concurrent =
+                  dyn_cast<ir::SVConcurrentAssertionStatementOp>(operation))
+            sourceKind = concurrent.getAssertionKind();
+          else if (auto immediate =
+                       dyn_cast<ir::SVImmediateAssertionStatementOp>(operation))
+            sourceKind = immediate.getAssertionKind();
+          // A restrict statement only constrains formal tools; it never
+          // succeeds or fails in simulation.
+          if (!sourceKind || *sourceKind == ir::SVAssertionKind::Restrict)
+            return;
+          std::optional<SourceInfo> source = getSourceInfo(operation);
+          if (!source) {
+            std::optional<SourceRange> site = getSiteRange(operation);
+            if (!site)
+              return;
+            source = SourceInfo{std::move(*site), std::nullopt, {}};
+          }
+          coverage::AssertionKind kind = coverage::AssertionKind::Assert;
+          if (*sourceKind == ir::SVAssertionKind::Assume)
+            kind = coverage::AssertionKind::Assume;
+          else if (*sourceKind == ir::SVAssertionKind::CoverProperty ||
+                   *sourceKind == ir::SVAssertionKind::CoverSequence)
+            kind = coverage::AssertionKind::Cover;
+          // A statement label arrives as a synthetic named block.
+          std::string name;
+          if (Operation *parent = operation->getParentOp())
+            if (auto path = parent->getAttrOfType<StringAttr>("block_path");
+                path && isa<ir::SVBlockStatementOp>(parent))
+              name = path.getValue().rsplit('.').second.str();
+          uint64_t node = 0;
+          if (auto attr = operation->getAttrOfType<IntegerAttr>("node_id"))
+            node = attr.getValue().getZExtValue();
+          AssertionCandidate candidate{
+              operation,
+              function,
+              std::move(*source),
+              scope->second,
+              *codeUnit,
+              node,
+              scopeInventory.hierarchies.lookup(scope->second),
+              {},
+              false};
+          candidate.point.name = std::move(name);
+          candidate.point.kind = kind;
+          assertions.push_back(std::move(candidate));
+        });
+      }
+    }
+
+    const bool hasAssertionIncludes = llvm::any_of(
+        coverageConfiguration->includes,
+        [](const CoverageRule &rule) { return rule.metrics.test(3); });
+    llvm::DenseMap<uint64_t, Operation *> assertionOwners;
+    for (AssertionCandidate &candidate : assertions) {
+      const SourceRange &expanded = candidate.source.expanded;
+      FailureOr<uint64_t> file = internFile(expanded.startFile);
+      if (failed(file)) {
+        signalPassFailure();
+        return;
+      }
+      uint64_t hash = appendText(OBELISK_STABLE_HASH_OFFSET_BASIS, "assertion");
+      hash = obelisk_stable_hash_append_uint_le(hash, candidate.scope, 8);
+      hash = obelisk_stable_hash_append_uint_le(hash, candidate.codeUnit, 8);
+      hash = appendSourceRange(hash, expanded, prefixMaps);
+      hash = obelisk_stable_hash_append_uint_le(hash, candidate.node, 8);
+      if (!hash)
+        hash = 1;
+      auto [owner, inserted] =
+          assertionOwners.try_emplace(hash, candidate.operation);
+      if (!inserted) {
+        candidate.operation->emitError(
+            "coverage assertion-point ID hash collision")
+            << " with " << owner->second->getLoc();
+        signalPassFailure();
+        return;
+      }
+      candidate.point.id = hash;
+      candidate.point.scope = candidate.scope;
+      candidate.point.file = *file;
+      candidate.point.line = expanded.startLine;
+      candidate.point.column = expanded.startColumn;
+      candidate.point.endLine = expanded.endLine;
+      candidate.point.endColumn = expanded.endColumn;
+
+      const std::string storedPath =
+          applyPrefixMaps(expanded.startFile, prefixMaps);
+      const bool included =
+          !hasAssertionIncludes ||
+          llvm::any_of(
+              coverageConfiguration->includes, [&](const CoverageRule &rule) {
+                return matchesRule(rule, 3, storedPath, candidate.hierarchy);
+              });
+      const CoverageRule *excludingRule = nullptr;
+      for (const CoverageRule &rule : coverageConfiguration->excludes)
+        if (matchesRule(rule, 3, storedPath, candidate.hierarchy)) {
+          excludingRule = &rule;
+          break;
+        }
+      std::optional<StringRef> sourceReason =
+          directiveReason(directiveFiles, 3, expanded);
+      if (!sourceReason && candidate.source.original)
+        sourceReason =
+            directiveReason(directiveFiles, 3, *candidate.source.original);
+      candidate.excluded = !included || excludingRule || sourceReason;
+      if (candidate.excluded) {
+        StringRef reason =
+            sourceReason ? *sourceReason
+            : excludingRule
+                ? StringRef(excludingRule->reason)
+                : StringRef("not selected by coverage include rules");
+        schema.exclusions.push_back(
+            {hash, coverage::MetricKind::Assertion, reason.str(), 0});
+      }
+    }
+
+    sortCoverageRecords(assertions, [](const AssertionCandidate &entry) {
+      return coverageOrderKey(entry.point.id);
+    });
+    // Assertion counters follow the line counters in the dense point space.
+    uint64_t firstPoint = schema.linePoints.size();
+    Builder builder(&getContext());
+    llvm::DenseMap<Operation *, SmallVector<FlatSymbolRefAttr>> keepalives;
+    for (auto [index, candidate] : llvm::enumerate(assertions)) {
+      schema.assertionPoints.push_back(candidate.point);
+      if (candidate.excluded)
+        continue;
+      cov::set<cov::AssertionPointIndex>(
+          candidate.operation, builder.getI64IntegerAttr(firstPoint + index));
+      auto design = candidate.function->getParentOfType<sim::SimDesignOp>();
+      auto reference =
+          FlatSymbolRefAttr::get(candidate.function.getSymNameAttr());
+      SmallVectorImpl<FlatSymbolRefAttr> &references =
+          keepalives[design.getOperation()];
+      if (!llvm::is_contained(references, reference))
+        references.push_back(reference);
+    }
+    for (auto &[operation, references] : keepalives) {
+      auto design = cast<sim::SimDesignOp>(operation);
+      OpBuilder keepaliveBuilder(&getContext());
+      keepaliveBuilder.setInsertionPointToStart(&design.getBody().front());
+      for (FlatSymbolRefAttr reference : references)
+        sim::SimCoverageKeepaliveOp::create(keepaliveBuilder, design.getLoc(),
+                                            reference);
+    }
+    cov::set<cov::AssertionPointCount>(
+        module, builder.getI64IntegerAttr(assertions.size()));
   }
 
   if (isMetricEnabled(module, "toggle")) {

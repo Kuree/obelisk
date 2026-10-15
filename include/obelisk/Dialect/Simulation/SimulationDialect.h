@@ -336,6 +336,8 @@ using ConsequentFirstMatchEquivalence =
     ObeliskSimulationDialect::ConsequentFirstMatchEquivalenceAttrHelper;
 using CoverSequencePerMatch =
     ObeliskSimulationDialect::CoverSequencePerMatchAttrHelper;
+using AssertionCoverageReport =
+    ObeliskSimulationDialect::AssertionCoverageReportAttrHelper;
 using DefaultAssertionFailure =
     ObeliskSimulationDialect::DefaultAssertionFailureAttrHelper;
 using DeferredEvaluator = ObeliskSimulationDialect::DeferredEvaluatorAttrHelper;

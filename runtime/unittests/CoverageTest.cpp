@@ -8366,8 +8366,41 @@ TEST(CoverageDatabaseTest, RunMetricFlagsOwnEveryDynamicCounter) {
   EXPECT_EQ(validate(database), Status::Ok);
   database.runs.front().flags = RunContainsToggle;
   EXPECT_EQ(validate(database), Status::InvalidReference);
-  database.runs.front().flags = RunContainsCoverageMask | uint64_t{8};
+  database.runs.front().flags = RunContainsCoverageMask | uint64_t{1} << 63;
   EXPECT_EQ(validate(database), Status::InvalidDatabase);
+}
+
+TEST(CoverageDatabaseTest, AssertionPointsRoundTripAndOwnTheirCounters) {
+  using namespace obelisk::coverage;
+  Database database;
+  database.sourceFiles.push_back({1, "source.sv", {}});
+  database.scopes.push_back({2, 0, "top", 0, "top"});
+  database.assertionPoints.push_back(
+      {3, 2, 1, "check", AssertionKind::Cover, 4, 5, 4, 30, 0});
+  obelisk::coverage::Run run;
+  run.uuid.back() = 1;
+  run.name = "run";
+  run.flags = RunContainsAssertion;
+  database.runs.push_back(run);
+  database.counters.push_back({run.uuid, MetricKind::Assertion, 3, 0, 0, 0, 2});
+  database.schemaFingerprint = computeSchemaFingerprint(database);
+  ASSERT_EQ(validate(database), Status::Ok);
+  std::vector<uint8_t> image;
+  ASSERT_EQ(serialize(database, image), Status::Ok);
+  Database output;
+  ASSERT_EQ(parse(image.data(), image.size(), output), Status::Ok);
+  ASSERT_EQ(output.assertionPoints.size(), 1u);
+  EXPECT_EQ(output.assertionPoints.front().name, "check");
+  EXPECT_EQ(output.assertionPoints.front().kind, AssertionKind::Cover);
+  EXPECT_EQ(output.assertionPoints.front().endColumn, 30u);
+  EXPECT_EQ(computeSchemaFingerprint(output),
+            computeSchemaFingerprint(database));
+  // An assertion counter needs its run's assertion flag and its point.
+  output.runs.front().flags = RunContainsLine;
+  EXPECT_EQ(validate(output), Status::InvalidReference);
+  output.runs.front().flags = RunContainsAssertion;
+  output.counters.front().entity = 4;
+  EXPECT_EQ(validate(output), Status::InvalidReference);
 }
 
 TEST(CoverageDatabaseTest, ZeroMetricRunsNeverCoalesceAsDisjointPayloads) {

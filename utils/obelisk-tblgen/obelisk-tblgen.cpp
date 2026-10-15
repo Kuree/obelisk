@@ -4352,6 +4352,8 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       records.getAllDerivedDefinitions("CoverageTupleElementMode");
   auto resolvedValueSetRoles =
       records.getAllDerivedDefinitions("CoverageResolvedValueSetRole");
+  auto assertionKinds =
+      records.getAllDerivedDefinitions("CoverageAssertionKind");
   if (metrics.empty() || sections.empty() || dimensions.empty() ||
       functionalItems.empty() || functionalBins.empty() ||
       functionalSources.empty() || repetitions.empty() || valueSets.empty() ||
@@ -4362,7 +4364,7 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       distributions.empty() || matchesPolicies.empty() ||
       optionScopes.empty() || optionKinds.empty() || optionOwners.empty() ||
       optionValues.empty() || expressionPhases.empty() || tupleModes.empty() ||
-      resolvedValueSetRoles.empty()) {
+      resolvedValueSetRoles.empty() || assertionKinds.empty()) {
     PrintError("coverage schema needs metrics, toggle dimensions, functional "
                "kinds, and sections");
     return false;
@@ -4408,7 +4410,8 @@ bool validateCoverageSchema(const RecordKeeper &records) {
       !validateKinds(optionValues, "configuration value kind") ||
       !validateKinds(expressionPhases, "expression evaluation phase") ||
       !validateKinds(tupleModes, "tuple element mode") ||
-      !validateKinds(resolvedValueSetRoles, "resolved value-set role"))
+      !validateKinds(resolvedValueSetRoles, "resolved value-set role") ||
+      !validateKinds(assertionKinds, "assertion kind"))
     return false;
   DenseSet<uint32_t> dimensionValues;
   StringSet<> dimensionNames;
@@ -4571,7 +4574,8 @@ bool validateCoverageSchema(const RecordKeeper &records) {
                           expressionPhases) ||
       !validateEnumDomain("FunctionalTupleElementMode", tupleModes) ||
       !validateEnumDomain("ResolvedFunctionalValueSetRole",
-                          resolvedValueSetRoles))
+                          resolvedValueSetRoles) ||
+      !validateEnumDomain("AssertionKind", assertionKinds))
     return false;
   StringMap<uint32_t> encodingWidths;
   for (const Record *encoding : encodings) {
@@ -4867,6 +4871,7 @@ bool emitCoverageDecls(const RecordKeeper &records, raw_ostream &os) {
            "CoverageExpressionEvaluationPhase");
   emitEnum("FunctionalTupleElementMode", "CoverageTupleElementMode");
   emitEnum("ResolvedFunctionalValueSetRole", "CoverageResolvedValueSetRole");
+  emitEnum("AssertionKind", "CoverageAssertionKind");
   os << "enum class CoverageFieldSemantic : uint32_t {\n"
         "  Scalar, Enum, StableID, StableIDRef, RangeStart, RangeCount,\n"
         "  StringIndex, Flags, ReservedZero, UUIDID, UUIDRef, Digest,\n"

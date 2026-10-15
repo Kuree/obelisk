@@ -33,10 +33,14 @@ def CoverageDialect : Dialect {
     // Line counters and flattened toggle bits the embedded schema expects.
     "::mlir::IntegerAttr":$line_point_count,
     "::mlir::IntegerAttr":$toggle_bit_count,
+    // Assertion success counters the embedded schema expects.
+    "::mlir::IntegerAttr":$assertion_point_count,
 
     // Transient dense line counter index. Stable entity identity stays in
     // the schema and never depends on this physical index.
     "::mlir::IntegerAttr":$line_point_index,
+    // Transient dense assertion counter index of an assertion statement.
+    "::mlir::IntegerAttr":$assertion_point_index,
     // Canonical state whose committed transitions are coverage-observable.
     "::mlir::UnitAttr":$toggle_observable,
     // Toggle coverage of a source-visible declaration: its

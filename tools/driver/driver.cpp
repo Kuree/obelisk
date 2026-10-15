@@ -146,11 +146,11 @@ static bool validateCoverageConfiguration(StringRef path,
           std::optional<StringRef> metric = metricValue.getAsString();
           if (!metric ||
               (*metric != "line" && *metric != "toggle" &&
-               *metric != "functional") ||
+               *metric != "functional" && *metric != "assertion") ||
               !seen.insert(*metric).second) {
             emitDriverError(
-                "coverage rule metrics must contain unique line, toggle, or "
-                "functional names");
+                "coverage rule metrics must contain unique line, toggle, "
+                "functional, or assertion names");
             return false;
           }
         }
@@ -1175,12 +1175,12 @@ static int executeCompilation(
                  /*KeepEmpty=*/true);
       llvm::StringSet<> seen;
       for (StringRef metric : metrics) {
-        if ((metric != "line" && metric != "toggle" &&
-             metric != "functional") ||
+        if ((metric != "line" && metric != "toggle" && metric != "functional" &&
+             metric != "assertion") ||
             !seen.insert(metric).second) {
-          emitDriverError(Twine("invalid --coverage metric list '") +
-                          coverage->getValue() +
-                          "'; expected unique line,toggle,functional names");
+          emitDriverError(
+              Twine("invalid --coverage metric list '") + coverage->getValue() +
+              "'; expected unique line,toggle,functional,assertion names");
           valid = false;
           break;
         }
@@ -1394,7 +1394,7 @@ static int executeCompilation(
   if (const Arg *coverage = args.getLastArg(OPT_coverage, OPT_coverage_EQ)) {
     SmallVector<Attribute> metrics;
     if (coverage->getOption().matches(OPT_coverage)) {
-      for (StringRef metric : {"line", "toggle", "functional"})
+      for (StringRef metric : {"line", "toggle", "functional", "assertion"})
         metrics.push_back(StringAttr::get(&context, metric));
     } else {
       SmallVector<StringRef> selected;

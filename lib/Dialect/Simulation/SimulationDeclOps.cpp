@@ -1510,18 +1510,32 @@ SimCovergroupCreateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 LogicalResult SimCoveragePointHitOp::verify() {
+  bool assertion = getKind() == CoveragePointKind::Assertion;
+  StringRef inventory = assertion ? "assertion-point" : "line-point";
   ModuleOp module = (*this)->getParentOfType<ModuleOp>();
   if (!module)
-    return emitOpError(
-        "must be nested in a module with a line-point inventory");
-  auto count = cov::get<cov::LinePointCount>(module);
+    return emitOpError("must be nested in a module with a ")
+           << inventory << " inventory";
+  auto count = assertion ? cov::get<cov::AssertionPointCount>(module)
+                         : cov::get<cov::LinePointCount>(module);
   if (!count)
-    return emitOpError("requires the module line-point inventory attribute '")
-           << cov::LinePointCount::getNameStr() << "'";
+    return emitOpError("requires the module ")
+           << inventory << " inventory attribute '"
+           << (assertion ? cov::AssertionPointCount::getNameStr()
+                         : cov::LinePointCount::getNameStr())
+           << "'";
   if (!count.getType().isSignlessInteger(64))
-    return emitOpError("requires a 64-bit module line-point inventory");
-  if (count.getValue().isNegative() ||
-      getPoint() >= count.getValue().getZExtValue())
+    return emitOpError("requires a 64-bit module ")
+           << inventory << " inventory";
+  if (count.getValue().isNegative())
+    return emitOpError("point index is outside the module inventory");
+  // Assertion points follow the line points in the dense index space.
+  uint64_t first = 0;
+  if (auto lines = cov::get<cov::LinePointCount>(module);
+      assertion && lines && !lines.getValue().isNegative())
+    first = lines.getValue().getZExtValue();
+  if (getPoint() < first ||
+      getPoint() - first >= count.getValue().getZExtValue())
     return emitOpError("point index is outside the module inventory");
   return success();
 }

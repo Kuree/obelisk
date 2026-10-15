@@ -547,6 +547,11 @@ uint64_t availableRunCoverage(const CoverageState &coverage) {
       flags |= RunContainsToggle;
       break;
     }
+  for (uint64_t index = 0; index != coverage.assertionCount; ++index)
+    if (!coverage.assertionExcluded[index]) {
+      flags |= RunContainsAssertion;
+      break;
+    }
   // A declared coverage model remains functional data even when it has no
   // bins or every bin is excluded. Its identities and options must survive a
   // save; contribution to the score is decided by the coverage calculation.
@@ -564,6 +569,8 @@ uint64_t runFlagForMetric(obelisk::coverage::MetricKind metric) {
     return RunContainsToggle;
   case MetricKind::Functional:
     return RunContainsFunctional;
+  case MetricKind::Assertion:
+    return RunContainsAssertion;
   default:
     return 0;
   }
@@ -660,10 +667,10 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
       !isValidSVScopeDefinition(scopeDefinition) || roots.empty())
     return SVCovError;
 
-  // Clause 40 does not require assertion or FSM extraction. A valid stop or
+  // Clause 40 does not require automatic FSM extraction. A valid stop or
   // reset remains a successful no-op; check/start report no available
   // obligations, per Table 40-1.
-  if (coverageType == SVCovAssertion || coverageType == SVCovFSM)
+  if (coverageType == SVCovFSM)
     return control == SVCovStop || control == SVCovReset ? SVCovOK
                                                          : SVCovNoCoverage;
 
@@ -689,6 +696,26 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
       else if (control == SVCovReset) {
         coverage.lineCounters[index].store(0, std::memory_order_relaxed);
         coverage.lineOverflow[index].store(0, std::memory_order_relaxed);
+        resetEntities.insert(point.id);
+      }
+    }
+  } else if (coverageType == SVCovAssertion) {
+    for (uint64_t index = 0; index != coverage.assertionCount; ++index) {
+      const auto &point = coverage.schema->assertionPoints[index];
+      if (!isScopeSelected(coverage, point.scope, roots, includeDescendants))
+        continue;
+      if (coverage.assertionExcluded[index]) {
+        unavailable = saturatingAdd(unavailable, 1);
+        continue;
+      }
+      available = saturatingAdd(available, 1);
+      if (control == SVCovStart)
+        coverage.assertionEnabled[index].store(1, std::memory_order_relaxed);
+      else if (control == SVCovStop)
+        coverage.assertionEnabled[index].store(0, std::memory_order_relaxed);
+      else if (control == SVCovReset) {
+        coverage.assertionCounters[index].store(0, std::memory_order_relaxed);
+        coverage.assertionOverflow[index].store(0, std::memory_order_relaxed);
         resetEntities.insert(point.id);
       }
     }
@@ -723,7 +750,9 @@ int32_t controlSelectedCoverage(CoverageState &coverage, int32_t control,
   if (control == SVCovReset && coverage.schema) {
     obelisk::coverage::MetricKind metric =
         coverageType == SVCovStatement ? obelisk::coverage::MetricKind::Line
-                                       : obelisk::coverage::MetricKind::Toggle;
+        : coverageType == SVCovAssertion
+            ? obelisk::coverage::MetricKind::Assertion
+            : obelisk::coverage::MetricKind::Toggle;
     coverage.schema->counters.erase(
         std::remove_if(coverage.schema->counters.begin(),
                        coverage.schema->counters.end(),
@@ -748,7 +777,7 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
   if (!isValidSVCoverageType(coverageType) ||
       !isValidSVScopeDefinition(scopeDefinition) || roots.empty())
     return SVCovError;
-  if (coverageType == SVCovAssertion || coverageType == SVCovFSM)
+  if (coverageType == SVCovFSM)
     return SVCovNoCoverage;
 
   bool includeDescendants = scopeDefinition == SVCovHierarchy;
@@ -763,6 +792,19 @@ int32_t querySelectedCoverage(const CoverageState &coverage,
       total = saturatingAdd(total, 1);
       if (coverage.lineCounters[index].load(std::memory_order_relaxed) ||
           loadedCounterHit(coverage, obelisk::coverage::MetricKind::Line,
+                           point.id, 0))
+        covered = saturatingAdd(covered, 1);
+    }
+  } else if (coverageType == SVCovAssertion) {
+    // IEEE 1800-2023 40.2.2: an assertion is covered once it has succeeded.
+    for (uint64_t index = 0; index != coverage.assertionCount; ++index) {
+      const auto &point = coverage.schema->assertionPoints[index];
+      if (coverage.assertionExcluded[index] ||
+          !isScopeSelected(coverage, point.scope, roots, includeDescendants))
+        continue;
+      total = saturatingAdd(total, 1);
+      if (coverage.assertionCounters[index].load(std::memory_order_relaxed) ||
+          loadedCounterHit(coverage, obelisk::coverage::MetricKind::Assertion,
                            point.id, 0))
         covered = saturatingAdd(covered, 1);
     }
@@ -804,6 +846,9 @@ persistentCoverageMetric(int32_t coverageType) {
     return PersistentCoverageMetric{MetricKind::Line, RunContainsLine};
   if (coverageType == SVCovToggle)
     return PersistentCoverageMetric{MetricKind::Toggle, RunContainsToggle};
+  if (coverageType == SVCovAssertion)
+    return PersistentCoverageMetric{MetricKind::Assertion,
+                                    RunContainsAssertion};
   return std::nullopt;
 }
 
@@ -1062,6 +1107,17 @@ obelisk_rt_status makeSnapshot(obelisk_rt_context *context,
            coverage.lineOverflow[index].load(std::memory_order_relaxed) ? 1u
                                                                         : 0u,
            coverage.lineCounters[index].load(std::memory_order_relaxed)});
+  }
+  if (coverage.finalized &&
+      (run.flags & obelisk::coverage::RunContainsAssertion)) {
+    for (uint64_t index = 0; index != coverage.assertionCount; ++index)
+      result.counters.push_back(
+          {run.uuid, obelisk::coverage::MetricKind::Assertion,
+           result.assertionPoints[index].id, 0, 0,
+           coverage.assertionOverflow[index].load(std::memory_order_relaxed)
+               ? 1u
+               : 0u,
+           coverage.assertionCounters[index].load(std::memory_order_relaxed)});
   }
   if (coverage.finalized &&
       (run.flags & obelisk::coverage::RunContainsToggle)) {
@@ -15404,6 +15460,8 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
                   obelisk::coverage::RunContainsToggle);
     static_assert(OBELISK_RT_COVERAGE_PERSIST_FUNCTIONAL ==
                   obelisk::coverage::RunContainsFunctional);
+    static_assert(OBELISK_RT_COVERAGE_PERSIST_ASSERTION ==
+                  obelisk::coverage::RunContainsAssertion);
     coverage->persistedRunFlags = persistenceMask;
     if (coverage->schema) {
       uint64_t schemaToggleBits = 0;
@@ -15432,6 +15490,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     }
     coverage->lineCount = lineCount;
     coverage->lineExcluded.assign(static_cast<size_t>(lineCount), 0);
+    uint64_t assertionCount =
+        coverage->schema ? coverage->schema->assertionPoints.size() : 0;
+    if (assertionCount) {
+      coverage->assertionCounters =
+          std::make_unique<std::atomic<uint64_t>[]>(assertionCount);
+      coverage->assertionOverflow =
+          std::make_unique<std::atomic<uint8_t>[]>(assertionCount);
+      coverage->assertionEnabled =
+          std::make_unique<std::atomic<uint8_t>[]>(assertionCount);
+      for (uint64_t index = 0; index != assertionCount; ++index) {
+        coverage->assertionCounters[index].store(0, std::memory_order_relaxed);
+        coverage->assertionOverflow[index].store(0, std::memory_order_relaxed);
+        coverage->assertionEnabled[index].store(1, std::memory_order_relaxed);
+      }
+    }
+    coverage->assertionCount = assertionCount;
+    coverage->assertionExcluded.assign(static_cast<size_t>(assertionCount), 0);
     coverage->toggleBitCount = toggleBitCount;
     coverage->toggleCounters.assign(static_cast<size_t>(toggleBitCount * 4), 0);
     coverage->toggleOverflow.assign(static_cast<size_t>(toggleBitCount * 4), 0);
@@ -15452,16 +15527,23 @@ extern "C" obelisk_rt_status obelisk_rt_v1_coverage_finalize(
     if (coverage->schema) {
       std::unordered_set<uint64_t> excludedLines;
       std::unordered_set<uint64_t> excludedToggles;
+      std::unordered_set<uint64_t> excludedAssertions;
       for (const obelisk::coverage::Exclusion &exclusion :
            coverage->schema->exclusions) {
         if (exclusion.metric == obelisk::coverage::MetricKind::Line)
           excludedLines.insert(exclusion.entity);
         else if (exclusion.metric == obelisk::coverage::MetricKind::Toggle)
           excludedToggles.insert(exclusion.entity);
+        else if (exclusion.metric == obelisk::coverage::MetricKind::Assertion)
+          excludedAssertions.insert(exclusion.entity);
       }
       for (uint64_t index = 0; index != lineCount; ++index)
         coverage->lineExcluded[index] =
             excludedLines.count(coverage->schema->linePoints[index].id) != 0;
+      for (uint64_t index = 0; index != assertionCount; ++index)
+        coverage->assertionExcluded[index] =
+            excludedAssertions.count(
+                coverage->schema->assertionPoints[index].id) != 0;
       uint64_t base = 0;
       for (const obelisk::coverage::ToggleObject &object :
            coverage->schema->toggleObjects) {
@@ -15498,8 +15580,21 @@ obelisk_rt_v1_coverage_point_hit(obelisk_rt_context *context, uint64_t point,
   CoverageState *coverage = context->coverage.get();
   if (!coverage || !coverage->finalized)
     return OBELISK_RT_INVALID_LIFECYCLE;
-  if (point >= coverage->lineCount)
-    return OBELISK_RT_INVALID_ARGUMENT;
+  if (point >= coverage->lineCount) {
+    // Assertion success points follow the line points.
+    uint64_t assertion = point - coverage->lineCount;
+    if (assertion >= coverage->assertionCount)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    if (!enabled ||
+        !coverage->assertionEnabled[assertion].load(
+            std::memory_order_relaxed) ||
+        coverage->assertionExcluded[assertion])
+      return OBELISK_RT_OK;
+    if (atomicSaturatingIncrement(coverage->assertionCounters[assertion]))
+      coverage->assertionOverflow[assertion].store(1,
+                                                   std::memory_order_relaxed);
+    return OBELISK_RT_OK;
+  }
   if (!enabled ||
       !coverage->lineEnabled[point].load(std::memory_order_relaxed) ||
       coverage->lineExcluded[point])
@@ -15584,7 +15679,8 @@ obelisk_rt_v1_coverage_reset(obelisk_rt_context *context, uint32_t metric,
                              const uint8_t *currentValue,
                              const uint8_t *currentUnknown) {
   if (!context || (metric != OBELISK_RT_COVERAGE_STATEMENT &&
-                   metric != OBELISK_RT_COVERAGE_TOGGLE))
+                   metric != OBELISK_RT_COVERAGE_TOGGLE &&
+                   metric != OBELISK_RT_COVERAGE_ASSERTION))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
@@ -15594,6 +15690,11 @@ obelisk_rt_v1_coverage_reset(obelisk_rt_context *context, uint32_t metric,
     for (uint64_t index = 0; index != coverage->lineCount; ++index) {
       coverage->lineCounters[index].store(0, std::memory_order_relaxed);
       coverage->lineOverflow[index].store(0, std::memory_order_relaxed);
+    }
+  } else if (metric == OBELISK_RT_COVERAGE_ASSERTION) {
+    for (uint64_t index = 0; index != coverage->assertionCount; ++index) {
+      coverage->assertionCounters[index].store(0, std::memory_order_relaxed);
+      coverage->assertionOverflow[index].store(0, std::memory_order_relaxed);
     }
   } else {
     if (coverage->toggleBitCount && (!currentValue || !currentUnknown))
@@ -15627,7 +15728,8 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
                              double *outPercentage) {
   if (!context || !outCovered || !outTotal || !outPercentage ||
       (metric != OBELISK_RT_COVERAGE_STATEMENT &&
-       metric != OBELISK_RT_COVERAGE_TOGGLE))
+       metric != OBELISK_RT_COVERAGE_TOGGLE &&
+       metric != OBELISK_RT_COVERAGE_ASSERTION))
     return OBELISK_RT_INVALID_ARGUMENT;
   std::lock_guard<std::recursive_mutex> lock(context->mutex);
   CoverageState *coverage = coverageState(context, false);
@@ -15655,6 +15757,16 @@ obelisk_rt_v1_coverage_query(obelisk_rt_context *context, uint32_t metric,
       covered +=
           coverage->lineCounters[index].load(std::memory_order_relaxed) != 0 ||
           loaded(obelisk::coverage::MetricKind::Line, entity, 0) != 0;
+    }
+  } else if (metric == OBELISK_RT_COVERAGE_ASSERTION) {
+    for (uint64_t index = 0; index != coverage->assertionCount; ++index) {
+      if (coverage->assertionExcluded[index])
+        continue;
+      ++total;
+      covered += coverage->assertionCounters[index].load(
+                     std::memory_order_relaxed) != 0 ||
+                 loaded(obelisk::coverage::MetricKind::Assertion,
+                        coverage->schema->assertionPoints[index].id, 0) != 0;
     }
   } else {
     if (!coverage->schema) {

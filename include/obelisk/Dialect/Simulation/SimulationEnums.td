@@ -787,6 +787,17 @@ def SimAssertionControlAction
   let genSpecializedAttr = 0;
 }
 
+def SimCoveragePointKindLine : I32EnumAttrCase<"Line", 0, "line">;
+def SimCoveragePointKindAssertion
+    : I32EnumAttrCase<"Assertion", 1, "assertion">;
+def SimCoveragePointKind
+    : I32EnumAttr<"CoveragePointKind", "simulation coverage point kind", [
+  SimCoveragePointKindLine, SimCoveragePointKindAssertion
+]> {
+  let cppNamespace = "::obelisk::sim";
+  let genSpecializedAttr = 0;
+}
+
 def SimBlockEventKindBegin : I32EnumAttrCase<"Begin", 0, "begin">;
 def SimBlockEventKindEnd : I32EnumAttrCase<"End", 1, "end">;
 def SimBlockEventKind

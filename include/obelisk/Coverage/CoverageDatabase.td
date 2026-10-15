@@ -16,6 +16,13 @@ def MetricAssertion  : CoverageMetric<"Assertion", 5>;
 def MetricBranch     : CoverageMetric<"Branch", 6>;
 def MetricMCDC       : CoverageMetric<"MCDC", 7>;
 
+class CoverageAssertionKind<string cppName_, int value_>
+    : CoverageEnumValue<cppName_, value_>;
+
+def AssertionAssert : CoverageAssertionKind<"Assert", 1>;
+def AssertionAssume : CoverageAssertionKind<"Assume", 2>;
+def AssertionCover  : CoverageAssertionKind<"Cover", 3>;
+
 class CoverageToggleDimensionKind<string cppName_, int value_>
     : CoverageEnumValue<cppName_, value_>;
 
@@ -386,6 +393,7 @@ def FunctionalVirtualInterfaceScopes : CoverageSection<"FunctionalVirtualInterfa
 
 def CrossPredicateNodes : CoverageSection<"CrossPredicateNodes", 63, 72, 0, 1>;
 def CrossPredicateOperands : CoverageSection<"CrossPredicateOperands", 64, 8, 0, 1>;
+def AssertionPoints : CoverageSection<"AssertionPoints", 65, 56, 0, 1>;
 
 // Normalized functional records use generated wire declarations, accessors,
 // field descriptors, and low-level validation.
@@ -559,6 +567,9 @@ def DomainSourceFiles : CoverageFieldDomain<"SourceFiles", "StableRef", [], 2>;
 def DomainScopes : CoverageFieldDomain<"Scopes", "StableRef", [], 3>;
 def DomainLinePoints : CoverageFieldDomain<"LinePoints", "StableRef", [], 4>;
 def DomainToggleObjects : CoverageFieldDomain<"ToggleObjects", "StableRef", [], 5>;
+def DomainAssertionPoints : CoverageFieldDomain<"AssertionPoints", "StableRef", [], 65>;
+def DomainAssertionKind : CoverageFieldDomain<
+    "AssertionKind", "Enum", [AssertionAssert, AssertionAssume, AssertionCover]>;
 def DomainFunctionalTypes : CoverageFieldDomain<"FunctionalTypes", "StableRef", [], 7>;
 def DomainFunctionalItems : CoverageFieldDomain<"FunctionalItems", "StableRef", [], 8>;
 def DomainFunctionalBins : CoverageFieldDomain<"FunctionalBins", "StableRef", [], 9>;
@@ -728,6 +739,38 @@ def ToggleObjectRecord : CoverageRecord<"ToggleObjectRecord", ToggleObjects,
     [TOId, TOScope, TOFile, TOName, TOTypeRoot, TOBitWidth, TOLine, TOColumn,
      TOEndLine, TOEndColumn, TOFlags, TOReserved]>;
 
+// IEEE 1800-2023 40.2.2: one elaborated assert, assume, or cover statement,
+// covered once it has had at least one success.
+def APId : CoverageField<"Id", "id", 0, CovU64> {
+  let semantic = "StableID"; let domain = DomainAssertionPoints;
+}
+def APScope : CoverageField<"Scope", "scope", 8, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainScopes;
+}
+def APFile : CoverageField<"File", "file", 16, CovU64> {
+  let semantic = "StableIDRef"; let domain = DomainSourceFiles;
+}
+def APName : CoverageField<"Name", "name", 24, CovU32> {
+  let semantic = "StringIndex"; let domain = DomainStrings;
+}
+def APKind : CoverageField<"Kind", "kind", 28, CovU32> {
+  let semantic = "Enum"; let domain = DomainAssertionKind;
+}
+def APLine : CoverageField<"Line", "line", 32, CovU32>;
+def APColumn : CoverageField<"Column", "column", 36, CovU32>;
+def APEndLine : CoverageField<"EndLine", "end_line", 40, CovU32>;
+def APEndColumn : CoverageField<"EndColumn", "end_column", 44, CovU32>;
+def APFlags : CoverageField<"Flags", "flags", 48, CovU32> {
+  let semantic = "Flags"; let validMask = 0;
+}
+def APReserved : CoverageField<"Reserved", "reserved", 52, CovU32> {
+  let semantic = "ReservedZero";
+}
+def AssertionPointRecord : CoverageRecord<"AssertionPointRecord",
+    AssertionPoints,
+    [APId, APScope, APFile, APName, APKind, APLine, APColumn, APEndLine,
+     APEndColumn, APFlags, APReserved]>;
+
 def TDObject : CoverageField<"Object", "object", 0, CovU64> {
   let semantic = "StableIDRef"; let domain = DomainToggleObjects;
 }
@@ -865,7 +908,7 @@ def RunReserved : CoverageField<"Reserved", "reserved", 52, CovU32> {
   let semantic = "ReservedZero";
 }
 def RunFlags : CoverageField<"Flags", "flags", 56, CovU64> {
-  let semantic = "Flags"; let validMask = 7;
+  let semantic = "Flags"; let validMask = 15;
 }
 def RunRecord : CoverageRecord<"RunRecord", Runs,
     [RunUUID, RunName, RunStatus, RunSimulationTime, RunTimestamp, RunSeed,
