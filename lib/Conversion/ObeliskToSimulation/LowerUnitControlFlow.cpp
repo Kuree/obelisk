@@ -911,7 +911,8 @@ UnitLowering::outlineForkBranch(
     ArrayRef<std::pair<Operation *, Value>> globalFutureCurrentCaptures,
     ArrayRef<std::pair<StringRef, Value>> explicitCaptures,
     SmallVectorImpl<MonitorObservation> *outlinedMonitorObservations,
-    bool *outlinedMonitorObservationComplete) {
+    bool *outlinedMonitorObservationComplete,
+    ArrayRef<StringRef> liveReferencePaths) {
   auto design = function->getParentOfType<sim::SimDesignOp>();
   if (!design)
     return function.emitError("fork outlining requires a simulation design"),
@@ -959,15 +960,9 @@ UnitLowering::outlineForkBranch(
   }
 
   llvm::StringSet<> capturedPaths;
+  llvm::StringMap<Value> capturedValues;
   llvm::StringSet<> branchDeclarations;
-  auto addCaptureValue = [&](StringRef path, Value capture) {
-    if (!capturedPaths.insert(path).second)
-      return;
-    if (!capture)
-      return;
-    unsigned argument = inputs.size();
-    inputs.push_back(capture.getType());
-    captures.push_back(capture);
+  auto captureMetadataFor = [&](Value capture) {
     // A captured entry argument may still name concrete design storage. Keep
     // its descriptor/view metadata on the outlined ABI so sampled reads and
     // effect analysis can recover the same canonical state range. Falling
@@ -987,17 +982,33 @@ UnitLowering::outlineForkBranch(
             builder.getUnitAttr()));
       metadata = builder.getDictionaryAttr(entries);
     }
-    argumentAttrs.push_back(metadata);
+    return metadata;
+  };
+  auto addCaptureValue = [&](StringRef path, Value capture) {
+    if (!capturedPaths.insert(path).second)
+      return;
+    if (!capture)
+      return;
+    capturedValues[path] = capture;
+    unsigned argument = inputs.size();
+    inputs.push_back(capture.getType());
+    captures.push_back(capture);
+    argumentAttrs.push_back(captureMetadataFor(capture));
     bindings.push_back(sim::ArgumentBindingAttr::get(
         context, builder.getStringAttr(path), argument,
         sim::UnitArgumentKind::Direct, /*copyOut=*/false, IntegerAttr{},
         /*copyIn=*/true));
   };
+  // A live-reference path reads its captured value and binds its storage
+  // separately for lvalue uses, whichever kind of capture the branch takes.
+  llvm::StringSet<> liveReferences;
+  for (StringRef path : liveReferencePaths)
+    liveReferences.insert(path);
   auto addCapture = [&](StringRef path) {
-    Value capture =
-        captureReferences ? lvalues.lookup(path) : values.lookup(path);
+    bool byReference = captureReferences && !liveReferences.contains(path);
+    Value capture = byReference ? lvalues.lookup(path) : values.lookup(path);
     if (!capture)
-      capture = captureReferences ? values.lookup(path) : lvalues.lookup(path);
+      capture = byReference ? values.lookup(path) : lvalues.lookup(path);
     addCaptureValue(path, capture);
   };
   for (auto [path, capture] : explicitCaptures)
@@ -1162,6 +1173,20 @@ UnitLowering::outlineForkBranch(
   llvm::sort(lexicalPaths);
   for (StringRef path : lexicalPaths)
     addCapture(path);
+  for (StringRef path : liveReferencePaths) {
+    Value captured = capturedValues.lookup(path);
+    Value reference = lvalues.lookup(path);
+    if (!captured || !reference || captured == reference)
+      continue;
+    unsigned argument = inputs.size();
+    inputs.push_back(reference.getType());
+    captures.push_back(reference);
+    argumentAttrs.push_back(captureMetadataFor(reference));
+    bindings.push_back(sim::ArgumentBindingAttr::get(
+        context, builder.getStringAttr(path), argument,
+        sim::UnitArgumentKind::LValueOnly, /*copyOut=*/false, IntegerAttr{},
+        /*copyIn=*/true));
+  }
 
   uint64_t ordinal = nextForkOrdinal++;
   std::string symbol = (function.getSymName() + ".fork." + Twine(forkNode) +

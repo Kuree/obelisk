@@ -192,6 +192,7 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       llvm::StringMap<Value> previousValues;
       llvm::StringSet<> newlyBoundValues;
       llvm::StringMap<Operation *> referencedNodes;
+      llvm::SetVector<StringRef> referencePaths;
       Operation *selectedAction = nullptr;
       if (passed && op.getHasPassAction())
         selectedAction = children[1];
@@ -215,19 +216,23 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
             break;
           }
           // Input actuals are values in a deferred report. Output/inout/ref
-          // actuals remain references so the matured action can update their
-          // live destinations. Prepared direct calls carry one formal record
-          // per argument; conservatively preserve references for an unresolved
-          // output-bearing call.
+          // and const ref actuals remain references so the matured action
+          // uses or updates their live values (IEEE 1800-2023 16.4). Prepared
+          // direct calls carry one formal record per argument; conservatively
+          // preserve references for an unresolved output-bearing call.
           for (Operation *ancestor = named; ancestor != selectedAction;
                ancestor = ancestor->getParentOp()) {
             auto call = dyn_cast_or_null<semantic::SVCallExpressionOp>(
                 ancestor->getParentOp());
-            if (!call || !call.getHasOutputArguments())
+            if (!call)
               continue;
             auto formals = sim::get<sim::metadata::CalleeFormals>(call);
-            if (!formals)
+            if (!formals) {
+              if (!call.getHasOutputArguments())
+                continue;
+              referencePaths.insert(named.getReferencedPath());
               return;
+            }
             SmallVector<Operation *> arguments = getChildren(call);
             Operation *argument = ancestor;
             while (argument->getParentOp() != call)
@@ -239,8 +244,10 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
             if (index >= formals.size())
               return;
             auto formal = cast<sim::CalleeFormalAttr>(formals[index]);
-            if (formal.getDirection() != sim::FormalDirection::In)
+            if (formal.getDirection() != sim::FormalDirection::In) {
+              referencePaths.insert(named.getReferencedPath());
               return;
+            }
             break;
           }
           StringRef path = named.getReferencedPath();
@@ -275,9 +282,12 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
       sim::set<sim::metadata::ForkCodeUnitId>(
           op, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
       op->setAttr("is_deferred", builder.getBoolAttr(false));
+      // A variable read as an input and also passed by reference keeps its
+      // snapshot for reads and binds its live storage for the reference.
       FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
           outlineForkBranch(op, node, passed ? 0 : 1,
-                            /*captureReferences=*/false);
+                            /*captureReferences=*/false, {}, {}, {}, nullptr,
+                            nullptr, referencePaths.getArrayRef());
       op->setAttr("is_deferred", previousDeferred);
       sim::remove<sim::metadata::DeferredEvaluator>(op);
       sim::remove<sim::metadata::DeferredResult>(op);
@@ -393,11 +403,24 @@ LogicalResult UnitLowering::lowerImmediateAssertion(
         (function.getSymName() + ".$reactive_assert_action." + Twine(node) +
          "." + Twine(branch))
             .str();
+    // A variable the report snapshotted for input actuals but also passes by
+    // reference keeps both bindings in the action process.
+    llvm::SetVector<StringRef> liveReferencePaths;
+    action->walk([&](semantic::SVNamedValueExpressionOp named) {
+      StringRef path = named.getReferencedPath();
+      Value snapshot = values.lookup(path);
+      Value reference = lvalues.lookup(path);
+      if (snapshot && reference && snapshot != reference &&
+          !getReferenceElementType(snapshot))
+        liveReferencePaths.insert(path);
+    });
     auto previousCodeUnit = sim::get<sim::metadata::ForkCodeUnitId>(action);
     sim::set<sim::metadata::ForkCodeUnitId>(
         action, builder.getI64IntegerAttr(stableCodeUnitID(identity)));
     FailureOr<std::pair<sim::SimFuncOp, SmallVector<Value>>> callback =
-        outlineForkBranch(action, node, branch, /*captureReferences=*/true);
+        outlineForkBranch(action, node, branch, /*captureReferences=*/true, {},
+                          {}, {}, nullptr, nullptr,
+                          liveReferencePaths.getArrayRef());
     if (previousCodeUnit)
       sim::set<sim::metadata::ForkCodeUnitId>(action, previousCodeUnit);
     else

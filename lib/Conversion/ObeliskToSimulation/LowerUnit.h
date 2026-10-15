@@ -680,7 +680,8 @@ private:
           explicitCaptures = {},
       ::mlir::SmallVectorImpl<MonitorObservation> *monitorObservations =
           nullptr,
-      bool *monitorObservationComplete = nullptr);
+      bool *monitorObservationComplete = nullptr,
+      ::mlir::ArrayRef<::llvm::StringRef> liveReferencePaths = {});
   ::mlir::FailureOr<
       std::pair<sim::SimFuncOp, ::mlir::SmallVector<::mlir::Value>>>
   outlinePostponedDisplay(semantic::SVCallExpressionOp call,
