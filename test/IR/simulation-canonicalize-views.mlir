@@ -34,6 +34,40 @@ func.func @mixed_escape(%initial: !simulation.logic<24>, %part: i16) -> i16 {
   return %w : i16
 }
 
+// The same holds for a member of any storage, not only a local cell: a store
+// writes known bits and a load converts X and Z to zero. A packed-array member
+// keeps its shape so that a dynamic element selection still applies, and a
+// user that is not a packed access keeps the two-state view.
+!bits = !simulation.packed_struct<[
+  #simulation.field<name = "h", type = !simulation.packed_array<3 : 0 x i1>, ordinal = 0, packedOffset = 1>,
+  #simulation.field<name = "l", type = !simulation.logic<1>, ordinal = 1, packedOffset = 0>
+]>
+func.func private @observe(!simulation.ref<i8>)
+// CHECK-LABEL: func.func @storage_member(
+// CHECK: %[[ONE:.*]] = simulation.logic.constant true, false : !simulation.logic<1>
+// CHECK: %[[LOW:.*]] = simulation.ref.extract %arg0 from 0 : !simulation.ref<!simulation.packed_struct<{{.*}}>> -> !simulation.ref<!simulation.logic<8>>
+// CHECK: %[[TWO:.*]] = simulation.ref.subelement %arg0{{\[\[}}0{{\]\]}}
+// CHECK: %[[KNOWN:.*]] = simulation.logic.from_bits %arg2 : i8 -> !simulation.logic<8>
+// CHECK: simulation.ref.store %[[KNOWN]] to %[[LOW]]
+// CHECK: %[[H:.*]] = simulation.ref.extract %arg1 from 1 : {{.*}} -> !simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>
+// CHECK: %[[BIT:.*]] = simulation.ref.array_element %[[H]][%arg3] : (!simulation.ref<!simulation.packed_array<3 : 0 x !simulation.logic<1>>>, i32) -> !simulation.ref<!simulation.logic<1>>
+// CHECK: simulation.ref.store %[[ONE]] to %[[BIT]]
+// CHECK: call @observe(%[[TWO]])
+// CHECK: %[[READ:.*]] = simulation.ref.load %[[LOW]] : !simulation.ref<!simulation.logic<8>> -> !simulation.logic<8>
+// CHECK: %[[VALUE:.*]] = simulation.logic.to_bits %[[READ]] : !simulation.logic<8> -> i8
+// CHECK: return %[[VALUE]]
+func.func @storage_member(%s: !simulation.ref<!struct>, %b: !simulation.ref<!bits>, %part: i8, %index: i32) -> i8 {
+  %true = arith.constant true
+  %two = simulation.ref.subelement %s[[0]] : !simulation.ref<!struct> -> !simulation.ref<i8>
+  simulation.ref.store %part to %two : i8, !simulation.ref<i8>
+  %h = simulation.ref.subelement %b[[0]] : !simulation.ref<!bits> -> !simulation.ref<!simulation.packed_array<3 : 0 x i1>>
+  %bit = simulation.ref.array_element %h[%index] : (!simulation.ref<!simulation.packed_array<3 : 0 x i1>>, i32) -> !simulation.ref<i1>
+  simulation.ref.store %true to %bit : i1, !simulation.ref<i1>
+  func.call @observe(%two) : (!simulation.ref<i8>) -> ()
+  %v = simulation.ref.load %two : !simulation.ref<i8> -> i8
+  return %v : i8
+}
+
 // Packed net slices compose and a whole-width view is the net itself. A view
 // of an unpacked net element is addressed by storage offset and names exactly
 // one element, so a slice of it does not compose with the element view.

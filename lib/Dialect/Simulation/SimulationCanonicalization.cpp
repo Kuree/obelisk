@@ -2307,6 +2307,120 @@ struct ExplicitReenteredLocalInitialization final
   }
 };
 
+/// Offset of a static member path inside packed storage. Tagged member
+/// access must retain its active-member check (LRM 7.3.2).
+static std::optional<uint64_t> getPackedMemberOffset(Type type,
+                                                     ArrayRef<int64_t> path) {
+  uint64_t low = 0;
+  for (int64_t index : path) {
+    if (auto packed = dyn_cast<PackedUnionType>(type);
+        packed && packed.getIsTagged())
+      return std::nullopt;
+    if (index < 0 || uint64_t(index) > UINT_MAX)
+      return std::nullopt;
+    auto child = getAggregateProvenanceSubelement(type, index);
+    if (!child || child->first > UINT64_MAX - low)
+      return std::nullopt;
+    low += child->first;
+    type = getAggregateElementType(type, index);
+  }
+  return low;
+}
+
+/// The four-state view type of two-state packed storage. Packed arrays keep
+/// their shape so that dynamic element selections still apply; any other
+/// packed type is viewed as its flat bits.
+static Type getFourStateViewType(Type type) {
+  if (auto array = dyn_cast<PackedArrayType>(type))
+    return PackedArrayType::get(type.getContext(),
+                                getFourStateViewType(array.getElementType()),
+                                array.getLeft(), array.getRight());
+  return LogicType::get(type.getContext(), *getPackedWidth(type));
+}
+
+/// Rewrite the loads, stores and packed views through a two-state reference
+/// as accesses through the four-state view of the same bits. Any other user
+/// keeps the two-state reference. Returns whether an access moved.
+static bool convertTwoStateAccesses(PatternRewriter &rewriter, Value twoState,
+                                    Value fourState) {
+  MLIRContext *context = rewriter.getContext();
+  Type viewed = cast<RefType>(fourState.getType()).getElementType();
+  bool converted = false;
+  for (Operation *user : llvm::make_early_inc_range(twoState.getUsers())) {
+    rewriter.setInsertionPoint(user);
+    Location location = user->getLoc();
+    if (auto load = dyn_cast<SimRefLoadOp>(user)) {
+      Type type = load.getResult().getType();
+      Type scalar = getPackedScalarType(type);
+      Value bits = SimRefLoadOp::create(rewriter, location, viewed, fourState);
+      bits.getDefiningOp()->setAttrs(load->getAttrs());
+      Type logic = LogicType::get(context, *getPackedWidth(type));
+      if (viewed != logic)
+        bits = SimPackedFlattenOp::create(rewriter, location, logic, bits);
+      Value value = SimLogicToBitsOp::create(rewriter, location, scalar, bits);
+      if (type != scalar)
+        value = SimPackedUnflattenOp::create(rewriter, location, type, value);
+      rewriter.replaceOp(load, value);
+      converted = true;
+      continue;
+    }
+    if (auto store = dyn_cast<SimRefStoreOp>(user)) {
+      if (store.getReference() != twoState)
+        continue;
+      Value value = store.getValue();
+      Type scalar = getPackedScalarType(value.getType());
+      if (value.getType() != scalar)
+        value = SimPackedFlattenOp::create(rewriter, location, scalar, value);
+      value = SimLogicFromBitsOp::create(
+          rewriter, location, LogicType::get(context, *getPackedWidth(scalar)),
+          value);
+      if (viewed != value.getType())
+        value = SimPackedUnflattenOp::create(rewriter, location, viewed, value);
+      auto replacement =
+          SimRefStoreOp::create(rewriter, location, value, fourState);
+      replacement->setAttrs(store->getAttrs());
+      rewriter.eraseOp(store);
+      converted = true;
+      continue;
+    }
+    if (!isa<SimRefExtractOp, SimRefDynExtractOp, SimRefSubelementOp,
+             SimRefArrayElementOp>(user) ||
+        user->getOperand(0) != twoState)
+      continue;
+    std::optional<uint64_t> memberOffset;
+    if (auto member = dyn_cast<SimRefSubelementOp>(user)) {
+      memberOffset = getPackedMemberOffset(
+          member.getInput().getType().getElementType(), member.getIndices());
+      if (!memberOffset)
+        continue;
+    }
+    if (isa<SimRefArrayElementOp>(user) && !isa<PackedArrayType>(viewed))
+      continue;
+    Type element = cast<RefType>(user->getResult(0).getType()).getElementType();
+    Type viewType = RefType::get(context, getFourStateViewType(element));
+    Value view;
+    if (auto extract = dyn_cast<SimRefExtractOp>(user))
+      view = SimRefExtractOp::create(rewriter, location, viewType, fourState,
+                                     extract.getLowBitAttr());
+    else if (auto extract = dyn_cast<SimRefDynExtractOp>(user))
+      view = SimRefDynExtractOp::create(rewriter, location, viewType, fourState,
+                                        extract.getLowBit());
+    else if (auto element = dyn_cast<SimRefArrayElementOp>(user))
+      view = SimRefArrayElementOp::create(rewriter, location, viewType,
+                                          fourState, element.getIndex());
+    else
+      view = SimRefExtractOp::create(rewriter, location, viewType, fourState,
+                                     *memberOffset);
+    if (convertTwoStateAccesses(rewriter, user->getResult(0), view))
+      converted = true;
+    if (view.use_empty())
+      rewriter.eraseOp(view.getDefiningOp());
+    if (user->use_empty())
+      rewriter.eraseOp(user);
+  }
+  return converted;
+}
+
 struct PackedLocalSubelement final : OpRewritePattern<SimRefSubelementOp> {
   using OpRewritePattern::OpRewritePattern;
 
@@ -2338,138 +2452,47 @@ struct PackedLocalSubelement final : OpRewritePattern<SimRefSubelementOp> {
         getPackedScalarType(op.getResult().getType().getElementType());
     if (!parentScalar || !memberScalar)
       return failure();
-    if (isa<LogicType>(parentScalar) == isa<LogicType>(memberScalar)) {
-      rewriter.replaceOpWithNewOp<SimRefExtractOp>(op, op.getResult().getType(),
-                                                   op.getInput(), *low);
-      return success();
-    }
-    // LRM 7.2.1, 7.3.1: a two-state member of a four-state packed aggregate
-    // occupies four-state bits. Reading it converts X and Z to zero; writing
-    // it stores known bits. A reference view cannot change the state domain,
-    // so view the four-state bits and convert at every access instead.
-    if (!isa<LogicType>(parentScalar) || !hasOnlyPackedAccesses(op.getResult()))
+    // A member whose state domain differs is FourStatePackedMember's.
+    if (isa<LogicType>(parentScalar) != isa<LogicType>(memberScalar))
       return failure();
-    std::optional<unsigned> width =
-        getPackedWidth(op.getResult().getType().getElementType());
-    auto view = SimRefExtractOp::create(
-        rewriter, op.getLoc(),
-        RefType::get(op.getContext(), LogicType::get(op.getContext(), *width)),
-        op.getInput(), *low);
-    convertTwoStateAccesses(rewriter, op.getResult(), view.getResult());
-    rewriter.eraseOp(op);
+    rewriter.replaceOpWithNewOp<SimRefExtractOp>(op, op.getResult().getType(),
+                                                 op.getInput(), *low);
     return success();
   }
+};
 
-private:
-  /// Offset of a static member path inside packed storage. Tagged member
-  /// access must retain its active-member check (LRM 7.3.2).
-  static std::optional<uint64_t> getPackedMemberOffset(Type type,
-                                                       ArrayRef<int64_t> path) {
-    uint64_t low = 0;
-    for (int64_t index : path) {
-      if (auto packed = dyn_cast<PackedUnionType>(type);
-          packed && packed.getIsTagged())
-        return std::nullopt;
-      if (index < 0 || uint64_t(index) > UINT_MAX)
-        return std::nullopt;
-      auto child = getAggregateProvenanceSubelement(type, index);
-      if (!child || child->first > UINT64_MAX - low)
-        return std::nullopt;
-      low += child->first;
-      type = getAggregateElementType(type, index);
-    }
-    return low;
-  }
+// LRM 7.2.1, 7.3.1: a two-state member of a four-state packed aggregate
+// occupies four-state bits. Reading it converts X and Z to zero; writing it
+// stores known bits. A reference view cannot change the state domain, so view
+// the four-state bits and convert at every access instead, whatever storage
+// the aggregate lives in.
+struct FourStatePackedMember final : OpRewritePattern<SimRefSubelementOp> {
+  using OpRewritePattern::OpRewritePattern;
 
-  /// Every transitive use is a load, a store, or a static or dynamic packed
-  /// view, so each access can be expressed on four-state storage.
-  static bool hasOnlyPackedAccesses(Value reference) {
-    for (Operation *user : reference.getUsers()) {
-      if (auto load = dyn_cast<SimRefLoadOp>(user)) {
-        if (load.getReference() != reference)
-          return false;
-        continue;
-      }
-      if (auto store = dyn_cast<SimRefStoreOp>(user)) {
-        if (store.getReference() != reference)
-          return false;
-        continue;
-      }
-      if (isa<SimRefExtractOp, SimRefDynExtractOp>(user) &&
-          user->getOperand(0) == reference) {
-        if (!hasOnlyPackedAccesses(user->getResult(0)))
-          return false;
-        continue;
-      }
-      if (auto member = dyn_cast<SimRefSubelementOp>(user)) {
-        if (!getPackedMemberOffset(member.getInput().getType().getElementType(),
-                                   member.getIndices()) ||
-            !hasOnlyPackedAccesses(member.getResult()))
-          return false;
-        continue;
-      }
-      return false;
+  LogicalResult matchAndRewrite(SimRefSubelementOp op,
+                                PatternRewriter &rewriter) const override {
+    Type type = op.getInput().getType().getElementType();
+    Type member = op.getResult().getType().getElementType();
+    Type parentScalar = getPackedScalarType(type);
+    Type memberScalar = getPackedScalarType(member);
+    if (!parentScalar || !memberScalar || !isa<LogicType>(parentScalar) ||
+        isa<LogicType>(memberScalar))
+      return failure();
+    std::optional<uint64_t> low = getPackedMemberOffset(type, op.getIndices());
+    if (!low)
+      return failure();
+    rewriter.setInsertionPoint(op);
+    auto view = SimRefExtractOp::create(
+        rewriter, op.getLoc(),
+        RefType::get(op.getContext(), getFourStateViewType(member)),
+        op.getInput(), *low);
+    if (!convertTwoStateAccesses(rewriter, op.getResult(), view)) {
+      rewriter.eraseOp(view);
+      return failure();
     }
-    return true;
-  }
-
-  /// Rewrite the accesses through a two-state reference as accesses through
-  /// the four-state view of the same bits.
-  static void convertTwoStateAccesses(PatternRewriter &rewriter, Value twoState,
-                                      Value fourState) {
-    MLIRContext *context = rewriter.getContext();
-    for (Operation *user : llvm::make_early_inc_range(twoState.getUsers())) {
-      rewriter.setInsertionPoint(user);
-      Location location = user->getLoc();
-      if (auto load = dyn_cast<SimRefLoadOp>(user)) {
-        Type type = load.getResult().getType();
-        Type scalar = getPackedScalarType(type);
-        Value bits = SimRefLoadOp::create(
-            rewriter, location, LogicType::get(context, *getPackedWidth(type)),
-            fourState);
-        bits.getDefiningOp()->setAttrs(load->getAttrs());
-        Value value =
-            SimLogicToBitsOp::create(rewriter, location, scalar, bits);
-        if (type != scalar)
-          value = SimPackedUnflattenOp::create(rewriter, location, type, value);
-        rewriter.replaceOp(load, value);
-        continue;
-      }
-      if (auto store = dyn_cast<SimRefStoreOp>(user)) {
-        Value value = store.getValue();
-        Type scalar = getPackedScalarType(value.getType());
-        if (value.getType() != scalar)
-          value = SimPackedFlattenOp::create(rewriter, location, scalar, value);
-        value = SimLogicFromBitsOp::create(
-            rewriter, location,
-            LogicType::get(context, *getPackedWidth(scalar)), value);
-        auto replacement =
-            SimRefStoreOp::create(rewriter, location, value, fourState);
-        replacement->setAttrs(store->getAttrs());
-        rewriter.eraseOp(store);
-        continue;
-      }
-      Type element =
-          cast<RefType>(user->getResult(0).getType()).getElementType();
-      Type viewType = RefType::get(
-          context, LogicType::get(context, *getPackedWidth(element)));
-      Value view;
-      if (auto extract = dyn_cast<SimRefExtractOp>(user))
-        view = SimRefExtractOp::create(rewriter, location, viewType, fourState,
-                                       extract.getLowBitAttr());
-      else if (auto extract = dyn_cast<SimRefDynExtractOp>(user))
-        view = SimRefDynExtractOp::create(rewriter, location, viewType,
-                                          fourState, extract.getLowBit());
-      else {
-        auto member = cast<SimRefSubelementOp>(user);
-        view = SimRefExtractOp::create(
-            rewriter, location, viewType, fourState,
-            *getPackedMemberOffset(member.getInput().getType().getElementType(),
-                                   member.getIndices()));
-      }
-      convertTwoStateAccesses(rewriter, user->getResult(0), view);
-      rewriter.eraseOp(user);
-    }
+    if (op->use_empty())
+      rewriter.eraseOp(op);
+    return success();
   }
 };
 
@@ -4772,8 +4795,8 @@ void SimUnionExtractOp::getCanonicalizationPatterns(RewritePatternSet &results,
 
 void SimRefSubelementOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                                      MLIRContext *context) {
-  results.add<FlattenSubelementPath<SimRefSubelementOp>, PackedLocalSubelement>(
-      context);
+  results.add<FlattenSubelementPath<SimRefSubelementOp>, PackedLocalSubelement,
+              FourStatePackedMember>(context);
   results.add<PromoteLocalArrayView<SimRefSubelementOp>>(context);
 }
 
