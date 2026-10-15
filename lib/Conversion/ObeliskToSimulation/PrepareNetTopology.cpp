@@ -606,6 +606,47 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
     return fullyMerged;
   };
 
+  // The leaves of an interconnect array are separate nets (IEEE 1800-2023
+  // 6.6.8), so an unpacked-array net connected to them pairs element by
+  // element (23.3.3) instead of across its padded storage.
+  std::function<void(const NetRun &, Type, uint64_t, SmallVectorImpl<NetRun> &)>
+      appendElementRuns;
+  appendElementRuns = [&](const NetRun &run, Type type, uint64_t offset,
+                          SmallVectorImpl<NetRun> &runs) {
+    if (auto array = dyn_cast<sim::UnpackedArrayType>(type)) {
+      for (unsigned ordinal = 0, count = sim::getAggregateNumElements(array);
+           ordinal != count; ++ordinal)
+        if (auto subelement =
+                sim::getAggregateProvenanceSubelement(array, ordinal))
+          appendElementRuns(run, sim::getAggregateElementType(array, ordinal),
+                            offset + subelement->first, runs);
+      return;
+    }
+    NetRun element = run;
+    element.offset = offset;
+    element.width = analysis::getSimulationStorageBitWidth(type).value_or(0);
+    runs.push_back(std::move(element));
+  };
+  auto splitUnpackedArrayRuns = [&](SmallVectorImpl<NetRun> &runs) {
+    SmallVector<NetRun> split;
+    for (const NetRun &run : runs) {
+      std::optional<unsigned> width =
+          analysis::getSimulationStorageBitWidth(run.descriptor.type);
+      if (isa<sim::UnpackedArrayType>(run.descriptor.type) && run.offset == 0 &&
+          width && run.width == *width)
+        appendElementRuns(run, run.descriptor.type, 0, split);
+      else
+        split.push_back(run);
+    }
+    runs.assign(split.begin(), split.end());
+  };
+  auto totalWidth = [](ArrayRef<NetRun> runs) {
+    uint64_t width = 0;
+    for (const NetRun &run : runs)
+      width += run.width;
+    return width;
+  };
+
   for (semantic::SVPortConnectionOp connection : portConnections) {
     if (connection.getDirection() == semantic::SVArgumentDirection::Ref)
       continue;
@@ -687,6 +728,10 @@ materializeNetTopology(SmallVectorImpl<Operation *> &sourceUnits,
          internalDescriptor->second.netKind == sim::NetResolutionKind::UWire) ||
         referencesUWireNet(actual);
     if (internalNet && actualNet) {
+      if (totalWidth(lhs) != totalWidth(rhs)) {
+        splitUnpackedArrayRuns(lhs);
+        splitUnpackedArrayRuns(rhs);
+      }
       std::optional<bool> fullyMerged =
           appendStaticConnections(connection, lhs, rhs);
       if (fullyMerged && !*fullyMerged && hasUWireSide)
