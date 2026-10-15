@@ -10,6 +10,7 @@
 #include "mlir/IR/Dominance.h"
 
 #include "llvm/ADT/SetVector.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <cmath>
 #include <functional>
@@ -412,10 +413,6 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
             children.front())) {
       auto type = instance->getAttrOfType<TypeAttr>("semantic_type");
       if (type && isa<semantic::SequenceType>(type.getValue())) {
-        if (event.getHasIff()) {
-          emitError(location) << "sequence event controls cannot use iff";
-          return failure();
-        }
         Value endpoint = values.lookup(instance.getReferencedPath());
         if (!endpoint || !isa<sim::EventType>(endpoint.getType())) {
           emitError(location)
@@ -424,10 +421,42 @@ LogicalResult UnitLowering::emitEventSuspend(Operation *control,
               << function.getSymName();
           return failure();
         }
-        emitDirect(endpoint, sim::EdgeKind::Change, continuation,
-                   continuationOperands,
-                   sim::EventRegionAttr::get(function.getContext(),
-                                             sim::EventRegion::Reactive));
+        auto reactive = sim::EventRegionAttr::get(function.getContext(),
+                                                  sim::EventRegion::Reactive);
+        if (!event.getHasIff()) {
+          emitDirect(endpoint, sim::EdgeKind::Change, continuation,
+                     continuationOperands, reactive);
+          return success();
+        }
+        // IEEE 1800-2023 9.4.2.3: the event occurs at an endpoint at which
+        // the iff condition is true; the condition adds no sensitivity.
+        auto addCarrier = [&] {
+          Block *block = addBlock();
+          for (Value operand : continuationOperands)
+            block->addArgument(operand.getType(), location);
+          return block;
+        };
+        Block *wait = addCarrier();
+        Block *check = addCarrier();
+        cf::BranchOp::create(builder, location, wait, continuationOperands);
+        setCurrent(wait);
+        emitDirect(endpoint, sim::EdgeKind::Change, check, wait->getArguments(),
+                   reactive);
+        setCurrent(check);
+        FailureOr<Value> condition = [&]() -> FailureOr<Value> {
+          llvm::SaveAndRestore<llvm::SetVector<Value> *> dependencies(
+              observedDependencies, nullptr);
+          llvm::SaveAndRestore<bool> excluded(sensitivityExcluded, true);
+          FailureOr<Value> value = lowerExpression(children[1]);
+          if (failed(value))
+            return failure();
+          return truthValue(*value, location);
+        }();
+        if (failed(condition))
+          return failure();
+        cf::CondBranchOp::create(builder, location, *condition, continuation,
+                                 check->getArguments(), wait,
+                                 check->getArguments());
         return success();
       }
     }

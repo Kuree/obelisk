@@ -694,11 +694,16 @@ void ObeliskSimPreparePass::runOnOperation() {
   });
 
   // A sequence used as a procedural event is a static assertion instance
-  // (IEEE 1800-2017 9.4.2.4). Mark the referenced declaration so preparation
+  // (IEEE 1800-2023 9.4.2.4). Mark the referenced declaration so preparation
   // can materialize one time-zero endpoint monitor and one shared event
-  // descriptor. The bounded monitor currently has no formal/local-variable
-  // execution ABI, so reject those forms instead of starting an inexact
-  // process-local monitor when the waiter is reached.
+  // descriptor. An instance with actual arguments is its own assertion
+  // instance: it gets a private declaration whose body is the instance's
+  // substituted body. An `iff` qualifies only the waiter. The bounded monitor
+  // has no local-variable execution ABI, so local variables are rejected
+  // instead of starting an inexact process-local monitor.
+  SmallVector<std::pair<semantic::SVSignalEventControlOp,
+                        semantic::SVAssertionInstanceExpressionOp>>
+      sequenceEvents;
   semanticRoot->walk([&](semantic::SVSignalEventControlOp event) {
     SmallVector<Operation *> children = getChildren(event);
     if (children.empty())
@@ -707,15 +712,16 @@ void ObeliskSimPreparePass::runOnOperation() {
         dyn_cast<semantic::SVAssertionInstanceExpressionOp>(children.front());
     auto type = instance ? instance->getAttrOfType<TypeAttr>("semantic_type")
                          : TypeAttr{};
-    if (!type || !isa<semantic::SequenceType>(type.getValue()))
-      return;
-    if (event.getHasIff() || instance.getArgumentCount() != 0 ||
-        instance.getLocalVariableCount() != 0) {
+    if (type && isa<semantic::SequenceType>(type.getValue()))
+      sequenceEvents.emplace_back(event, instance);
+  });
+  for (auto [event, instance] : sequenceEvents) {
+    if (instance.getLocalVariableCount() != 0) {
       emitError(getSemanticLocation(instance))
-          << "sequence event controls with iff, formal arguments, or local "
-             "variables are not executable by the bounded endpoint monitor";
+          << "sequence event controls with local variables are not "
+             "executable by the bounded endpoint monitor";
       invalid = true;
-      return;
+      continue;
     }
     auto symbol =
         semanticSymbols.find(instance.getReferencedSymbol().getLeafReference());
@@ -727,13 +733,56 @@ void ObeliskSimPreparePass::runOnOperation() {
       emitError(getSemanticLocation(instance))
           << "sequence event control does not resolve to a named sequence";
       invalid = true;
-      return;
+      continue;
+    }
+    if (instance.getArgumentCount() != 0) {
+      bool automaticArgument = false;
+      instance->walk([&](Operation *nested) {
+        auto reference =
+            nested->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+        auto found = reference
+                         ? semanticSymbols.find(reference.getLeafReference())
+                         : semanticSymbols.end();
+        automaticArgument |= found != semanticSymbols.end() &&
+                             isAutomaticLocalSymbol(found->second);
+      });
+      if (automaticArgument) {
+        emitError(getSemanticLocation(instance))
+            << "arguments of a sequence event control shall be static";
+        invalid = true;
+        continue;
+      }
+      auto node = instance->getAttrOfType<IntegerAttr>("node_id");
+      std::string suffix =
+          "$event" + std::to_string(node ? node.getValue().getZExtValue() : 0);
+      std::string path = (getHierarchyName(sequence) + "." + suffix).str();
+      OpBuilder declarationBuilder(context);
+      declarationBuilder.setInsertionPointAfter(sequence);
+      auto declaration = cast<semantic::SVSequenceSymbolOp>(
+          declarationBuilder.cloneWithoutRegions(*sequence));
+      declaration->setAttr(SymbolTable::getSymbolAttrName(),
+                           declarationBuilder.getStringAttr(
+                               sequence.getSymName() + "." + suffix));
+      declaration->setAttr("hierarchical_name",
+                           declarationBuilder.getStringAttr(path));
+      declaration.setPortCount(0);
+      declaration.setPortSymbolsAttr(declarationBuilder.getArrayAttr({}));
+      declaration.setPortPathsAttr(declarationBuilder.getArrayAttr({}));
+      declaration.setHasDefaultInstance(true);
+      Block *body = new Block;
+      declaration->getRegion(0).push_back(body);
+      declarationBuilder.setInsertionPointToEnd(body);
+      Operation *own = declarationBuilder.clone(*instance);
+      own->setAttr("referenced_path", declarationBuilder.getStringAttr(path));
+      instance->setAttr("referenced_path",
+                        declarationBuilder.getStringAttr(path));
+      sequence = declaration;
     }
     bool firstEndpointUse =
         !sim::has<sim::metadata::SequenceEndpointEvent>(sequence);
     sim::mark<sim::metadata::SequenceEndpointEvent>(sequence);
     if (!firstEndpointUse)
-      return;
+      continue;
 
     // IEEE 1800-2017 16.13.6 applies sampled-function clock inference to a
     // sequence instantiated in an event expression. Materialize the available
@@ -750,13 +799,13 @@ void ObeliskSimPreparePass::runOnOperation() {
                         : SmallVector<Operation *>{};
     Operation *declarationBody =
         defaultInstance && defaultInstance.getHasExpandedBody() &&
-                defaultInstance.getArgumentCount() == 0 &&
-                defaultInstanceChildren.size() == 1
+                defaultInstanceChildren.size() ==
+                    1 + defaultInstance.getArgumentCount()
             ? defaultInstanceChildren.front()
             : nullptr;
     if (!declarationBody ||
         isa<semantic::SVClockingAssertionExprOp>(declarationBody))
-      return;
+      continue;
     auto defaultClock =
         sequence->getAttrOfType<SymbolRefAttr>("default_clocking_symbol");
     auto clockingSymbol =
@@ -767,19 +816,19 @@ void ObeliskSimPreparePass::runOnOperation() {
                         : dyn_cast<semantic::SVClockingBlockSymbolOp>(
                               clockingSymbol->second);
     if (!clocking)
-      return;
+      continue;
     SmallVector<Operation *> clockingChildren = getChildren(clocking);
     auto clockEvent = llvm::find_if(clockingChildren, [](Operation *child) {
       return isa<semantic::SVSignalEventControlOp,
                  semantic::SVEventListControlOp>(child);
     });
     if (clockEvent == clockingChildren.end())
-      return;
+      continue;
     OpBuilder endpointBuilder(context);
     endpointBuilder.setInsertionPointToEnd(&sequence->getRegion(0).front());
     Operation *resolvedClock = endpointBuilder.clone(**clockEvent);
     sim::mark<sim::metadata::SequenceEndpointDefaultClock>(resolvedClock);
-  });
+  }
 
   // Freeze the normalized storage type of every assertion local on its
   // expanded instance. Local declarations remain in the semantic symbol
