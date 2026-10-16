@@ -5325,8 +5325,10 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   // Both variable and net ports retain the exact higher-side expression.
   // Electrical collapse does not decide the identity of the declaration that
   // appeared in source; named variables and independently resolved nets are
-  // equally valid whole-object connections (37.14).
-  VPIExpressionResolver portExpressions(design, descriptors);
+  // equally valid connections (37.14). Computed connections use shared
+  // expression recipes with distinct occurrence identities in the instantiating
+  // scope.
+  VPIExpressionMaterializer portExpressions(design, descriptors, builder);
   const auto *highConnection = reflection::findVPITraversal(
       static_cast<uint32_t>(VPIKind::Port),
       static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
@@ -5335,12 +5337,24 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     Operation *actual = getPortActualLValue(connection);
     if (!actual)
       continue;
-    auto high = portExpressions.resolve(actual);
-    if (!high || !highConnection ||
-        !reflection::vpiObjectSetContains(highConnection->targets, high->kind))
+    auto instance = scopeDeclarationsById.find(port.getScopeId());
+    if (instance == scopeDeclarationsById.end() ||
+        !instance->second.getParent())
       continue;
     auto source = sim::VPIObjectRefAttr::get(
         builder.getContext(), sim::VPIObjectRefKind::Port, port.getIdAttr());
+    auto resolved = portExpressions.resolve(
+        actual, source, static_cast<uint32_t>(VPIKind::Port),
+        *instance->second.getParent(),
+        static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel));
+    if (failed(resolved)) {
+      invalid = true;
+      continue;
+    }
+    auto high = *resolved;
+    if (!high || !highConnection ||
+        !reflection::vpiObjectSetContains(highConnection->targets, high->kind))
+      continue;
     sim::SimVPIRelationDeclOp::create(
         builder, getSemanticLocation(connection), source,
         static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),

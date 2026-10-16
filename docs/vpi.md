@@ -62,11 +62,17 @@ including intra-assignment and repeated-event controls. Repeated declarations
 produce one reverse use per control; expression occurrences retain distinct
 identities. Both-edge and implicit event-list source queries remain incomplete.
 
+Port `vpiHighConn` relations also retain supported selected and compound
+expressions in the instantiating scope. Selected output connections preserve
+their source parent, while repeated connections retain distinct expression
+identities and deduplicated declaration uses. These connections reuse the same
+expression templates and bindings.
+
 Identical syntax templates share their node and type metadata across instances;
 small root and leaf bindings preserve distinct occurrence identities and values.
 Effective type or width differences split templates. Ordinary unary/binary
 operators, bit-object selection, hierarchical reference spelling,
-and selected/compound port or primitive source producers
+and broader port or primitive source expressions
 remain follow-ups to this bounded procedural slice.
 
 Elaborated generate scopes preserve packed parameters and localparams, including
