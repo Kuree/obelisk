@@ -3788,6 +3788,12 @@ obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     obelisk_rt_design_semantic_type_info_v1 *outInfo) noexcept;
+// Return an integral/real semantic width, including nested packed dimensions
+// and enum bases. EOF denotes a semantic kind without a fixed packed width.
+obelisk_rt_status
+obelisk_rt_cached_design_semantic_bit_width(const obelisk_rt_context *context,
+                                            obelisk_rt_design_cursor_v1 cursor,
+                                            uint64_t *outWidth) noexcept;
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 cursor,
     uint64_t index, obelisk_rt_design_semantic_type_edge_v1 *outEdge) noexcept;

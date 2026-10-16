@@ -56,14 +56,24 @@ Mailbox, semaphore, and process variables also expose `vpiClassObj` and
 `vpiClassTypespec`. Upcasting a user class to its mailbox or semaphore base
 preserves the outer object's identity and allocated class type. Built-in
 typespecs have no `vpiClassDefn`. Process objects retain their identity after
-execution finishes or is killed.
+execution finishes or is killed. Mailbox typespecs and live objects expose
+their effective type parameter `T` through `vpiParameter`, preserving its
+typedef spelling independently of the canonical mailbox type identity.
 
 `vpiWaitingProcesses` on a mailbox or semaphore returns its suspended threads,
 including when the resource is a built-in base of a user class. Thread handles
 expose `vpiParent`, child `vpiThread` iteration, and `vpiActive`, which is true
 only during that thread's execution. Thread handles expire on finish or kill;
 they have `vpiAutomaticScheme` lifetime. Thread source-statement and frame
-relations, and mailbox message iteration, are still being completed.
+relations are still being completed.
+
+`vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
+Integral and packed values retain every bit and unknown bit; real and string
+values are copied. Scanned values are read-only; copied values survive removal
+from the mailbox and collection of the mailbox. Class references are weak and
+expire when their referents are collected; the iterator's `vpiUse` also holds
+the mailbox weakly. Unpacked aggregate and container message snapshots are
+still being completed.
 
 Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`
@@ -72,8 +82,7 @@ iteration includes unused declarations, and a modport's reverse relation is
 `vpiInterface`. Virtual-interface iteration flattens fixed arrays into element
 handles, while `vpiVariables` returns one array declaration. Fixed class event
 arrays likewise select the event references stored in the object. Dynamic
-virtual-interface arrays and live built-in class inventories are still being
-completed.
+virtual-interface arrays are still being completed.
 
 Port handles additionally expose `vpiDirection`, `vpiPortIndex`,
 `vpiPortType`, `vpiScalar`, and `vpiVector` directly from their immutable

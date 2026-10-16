@@ -1240,7 +1240,8 @@ bool semanticBitWidth(const Database &database, uint32_t semanticType,
   uint32_t encoded = read32(semantic);
   uint32_t kind = encoded & UINT32_C(0xff);
   if (bitWidth == 0 &&
-      (kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
+      (kind == OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL ||
+       kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
        kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
        kind == OBELISK_RT_DESIGN_SEMANTIC_REG ||
        (encoded & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0)) {
@@ -6808,6 +6809,52 @@ obelisk_rt_status obelisk_rt_cached_design_semantic_type_info(
   const Database *database = cachedDatabase(context);
   return database ? designSemanticTypeInfo(*database, cursor, outInfo)
                   : OBELISK_RT_INVALID_HANDLE;
+}
+
+obelisk_rt_status
+obelisk_rt_cached_design_semantic_bit_width(const obelisk_rt_context *context,
+                                            obelisk_rt_design_cursor_v1 cursor,
+                                            uint64_t *outWidth) noexcept {
+  if (!outWidth)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outWidth = 0;
+  const Database *database = cachedDatabase(context);
+  if (!database || cursor.offset == 0 ||
+      cursor.offset > database->semanticTypeCount)
+    return OBELISK_RT_INVALID_HANDLE;
+  uint32_t index = static_cast<uint32_t>(cursor.offset - 1);
+  uint64_t multiplier = 1;
+  // The image validator has already established an acyclic semantic graph.
+  // Packed dimensions and enum bases have one child, so no traversal stack or
+  // allocation is needed; aggregate widths use their required layout metadata.
+  for (;;) {
+    const uint8_t *record = database->data + database->semanticTypes +
+                            uint64_t{index} * kSemanticTypeSize;
+    const uint32_t kind = read32(record) & UINT32_C(0xff);
+    // An unpacked dimension's range is its element count, not a packed width.
+    if (kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+      return OBELISK_RT_EOF;
+    uint64_t width = 0;
+    if (!semanticBitWidth(*database, index, width))
+      return OBELISK_RT_INVALID_DESIGN;
+    if (kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+        kind != OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
+      if (width == 0)
+        return OBELISK_RT_EOF;
+      if (multiplier > UINT64_MAX / width)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      *outWidth = multiplier * width;
+      return OBELISK_RT_OK;
+    }
+    if (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
+      if (width == 0 || multiplier > UINT64_MAX / width)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      multiplier *= width;
+    }
+    const uint8_t *edge = database->data + database->semanticTypeEdges +
+                          uint64_t{read32(record + 4)} * kSemanticTypeEdgeSize;
+    index = read32(edge);
+  }
 }
 
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(

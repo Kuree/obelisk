@@ -7900,6 +7900,172 @@ TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(VPI, ProcessMailboxMessagesRetainIdentityAfterExitAndMailboxCollection) {
+  Fixture fixture;
+  fixture.database =
+      makeBuiltinClassVariableDatabase(OBELISK_RT_DESIGN_SEMANTIC_MAILBOX);
+  using namespace obelisk::reflection;
+  const HeaderView header(fixture.database.data());
+  const SemanticDirectoryView directory(fixture.database.data() +
+                                        header.getReserved());
+  ASSERT_EQ(directory.getSemanticTypeCount(), 2u);
+  // The mailbox's element is a process value, represented by a logical
+  // scheduler token, not a managed-heap pointer or an integral VPI expression.
+  SemanticTypeWriter element(fixture.database.data() +
+                             directory.getSemanticTypeOffset() +
+                             SemanticTypeLayout.size);
+  element.setKindAndFlags(
+      OBELISK_RT_DESIGN_SEMANTIC_PROCESS |
+      (vpiClassTypespec << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+  element.setLeft(0);
+  element.setRight(0);
+  put64(fixture.database, 32, imageChecksum(fixture.database));
+  fixture.execution.design_database = fixture.database.data();
+  fixture.execution.design_database_size = fixture.database.size();
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(
+      obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+      OBELISK_RT_OK);
+  obelisk_rt_gc_lane_v1 *lane = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+  obelisk_rt_object_v1 *mailbox = nullptr;
+  obelisk_rt_gc_root_v1 root{};
+  ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &mailbox), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(lane, 301,
+                                               OBELISK_RT_ELEMENT_BITS, 0, 8, 8,
+                                               64, nullptr, 0, 0, &mailbox),
+            OBELISK_RT_OK);
+  char name[] = "top.value";
+  obelisk_rt_design_cursor_v1 cursor{};
+  ASSERT_EQ(obelisk_rt_v1_design_lookup(&fixture.execution,
+                                        reinterpret_cast<const uint8_t *>(name),
+                                        std::strlen(name), &cursor),
+            OBELISK_RT_OK);
+  const uint64_t mailboxWord = obelisk_rt_managed_word_from_object(mailbox);
+  ASSERT_EQ(
+      obelisk_rt_v1_design_write(context, cursor, &mailboxWord, nullptr, 64),
+      OBELISK_RT_OK);
+  vpiHandle variable = vpi_handle_by_name(name, nullptr);
+  ASSERT_NE(variable, nullptr);
+  vpiHandle object = vpi_handle(vpiClassObj, variable);
+  ASSERT_NE(object, nullptr);
+  std::array<uint64_t, 2> tokens{}, identities{};
+  for (size_t i = 0; i != tokens.size(); ++i) {
+    obelisk_rt_process_instance_v1 *instance = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_process_instance_create_for_context(
+                  context, &fixture.descriptor, &instance),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_scheduler_add(context, instance, 0), OBELISK_RT_OK);
+    tokens[i] = obelisk_rt_v1_scheduler_process_token(context, instance);
+    ASSERT_NE(tokens[i], 0u);
+    ASSERT_EQ(
+        obelisk_rt_process_object_identity(context, tokens[i], &identities[i]),
+        OBELISK_RT_OK);
+  }
+  const std::array<uint64_t, 4> words{tokens[0], tokens[1], tokens[0], 0};
+  for (uint64_t word : words) {
+    uint32_t success = 0;
+    ASSERT_EQ(
+        obelisk_rt_v1_mailbox_try_put(lane, mailbox, &word, nullptr, &success),
+        OBELISK_RT_OK);
+    ASSERT_EQ(success, 1u);
+  }
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  vpiHandle iterator = vpi_iterate(vpiMessages, object);
+  ASSERT_NE(iterator, nullptr);
+  EXPECT_EQ(vpi_get(vpiIteratorType, iterator), vpiMessages);
+  vpiHandle use = vpi_handle(vpiUse, iterator);
+  ASSERT_NE(use, nullptr);
+  EXPECT_EQ(vpi_compare_objects(use, object), 1);
+  EXPECT_EQ(vpi_release_handle(use), 1);
+  std::array<vpiHandle, 4> messages{}, types{};
+  std::array<vpiHandle, 3> processObjects{};
+  for (size_t i = 0; i != messages.size(); ++i) {
+    messages[i] = vpi_scan(iterator);
+    ASSERT_NE(messages[i], nullptr);
+    EXPECT_EQ(vpi_get(vpiType, messages[i]), vpiClassVar);
+    EXPECT_EQ(vpi_get64(vpiObjId, messages[i]),
+              i == 3 ? 0 : static_cast<PLI_INT64>(identities[i == 1 ? 1 : 0]));
+    types[i] = vpi_handle(vpiClassTypespec, messages[i]);
+    ASSERT_NE(types[i], nullptr);
+    EXPECT_EQ(vpi_get(vpiClassType, types[i]), vpiProcessClass);
+    EXPECT_STREQ(vpi_get_str(vpiName, types[i]), "process");
+    EXPECT_EQ(vpi_handle(vpiClassDefn, types[i]), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    if (i == 3) {
+      EXPECT_EQ(vpi_handle(vpiClassObj, messages[i]), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    } else {
+      processObjects[i] = vpi_handle(vpiClassObj, messages[i]);
+      ASSERT_NE(processObjects[i], nullptr);
+      vpiHandle actual = vpi_handle(vpiClassTypespec, processObjects[i]);
+      ASSERT_NE(actual, nullptr);
+      EXPECT_EQ(vpi_compare_objects(actual, types[i]), 1);
+      EXPECT_EQ(vpi_release_handle(actual), 1);
+    }
+  }
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  EXPECT_EQ(vpi_compare_objects(messages[0], messages[2]), 0);
+  EXPECT_EQ(vpi_compare_objects(processObjects[0], processObjects[2]), 1);
+  EXPECT_EQ(vpi_compare_objects(processObjects[0], processObjects[1]), 0);
+  vpiHandle pending = vpi_iterate(vpiMessages, object);
+  ASSERT_NE(pending, nullptr);
+
+  obelisk_rt_process_control_disposition disposition{};
+  ASSERT_EQ(obelisk_rt_v1_process_control(context, tokens[1],
+                                          OBELISK_RT_PROCESS_CONTROL_KILL,
+                                          &disposition),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  for (size_t i = 0; i != tokens.size(); ++i) {
+    obelisk_rt_process_state state{};
+    ASSERT_EQ(obelisk_rt_v1_process_status(context, tokens[i], &state),
+              OBELISK_RT_OK);
+    EXPECT_EQ(state,
+              i ? OBELISK_RT_PROCESS_KILLED : OBELISK_RT_PROCESS_FINISHED);
+    EXPECT_EQ(vpi_get64(vpiObjId, processObjects[i]),
+              static_cast<PLI_INT64>(identities[i]));
+  }
+  const uint64_t zero = 0;
+  ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &zero, nullptr, 64),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+  obelisk_rt_gc_statistics_v1 statistics{};
+  ASSERT_EQ(obelisk_rt_v1_gc_statistics(context, &statistics), OBELISK_RT_OK);
+  EXPECT_EQ(statistics.live_objects, 0u);
+  EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  EXPECT_EQ(vpi_scan(pending), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+  // Process class objects are context identities and outlive execution.
+  // Their snapshot expressions remain valid after the mailbox is reclaimed.
+  for (size_t i = 0; i != messages.size(); ++i) {
+    EXPECT_EQ(vpi_get(vpiType, messages[i]), vpiClassVar);
+    EXPECT_EQ(vpi_get64(vpiObjId, messages[i]),
+              i == 3 ? 0 : static_cast<PLI_INT64>(identities[i == 1 ? 1 : 0]));
+    EXPECT_EQ(vpi_get(vpiClassType, types[i]), vpiProcessClass);
+    if (i != 3) {
+      vpiHandle alias = vpi_handle(vpiClassObj, messages[i]);
+      ASSERT_NE(alias, nullptr);
+      EXPECT_EQ(vpi_compare_objects(alias, processObjects[i]), 1);
+      EXPECT_EQ(vpi_release_handle(alias), 1);
+      EXPECT_EQ(vpi_release_handle(processObjects[i]), 1);
+    }
+    EXPECT_EQ(vpi_release_handle(types[i]), 1);
+    EXPECT_EQ(vpi_release_handle(messages[i]), 1);
+  }
+  EXPECT_EQ(vpi_release_handle(variable), 1);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
   for (uint32_t kind : {OBELISK_RT_DESIGN_SEMANTIC_MAILBOX,
                         OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
@@ -15397,6 +15563,73 @@ TEST(DesignDatabase, RejectsMalformedCompactStaticObjects) {
   put64(malformed, 160, 0);
   put64(malformed, 168, 0);
   reject(std::move(malformed));
+}
+
+TEST(DesignDatabase,
+     ResolvesPackedSemanticWidthsWithoutOptionalScalarPayloads) {
+  using namespace obelisk::reflection;
+  for (bool genericIntegral : {false, true}) {
+    SCOPED_TRACE(genericIntegral);
+    Fixture fixture;
+    fixture.database = makeSemanticTraversalDatabase();
+    HeaderView header(fixture.database.data());
+    SemanticDirectoryView directory(fixture.database.data() +
+                                    header.getReserved());
+    if (genericIntegral) {
+      // The associative key is independent of the packed aggregate fields.
+      // Generic integral types carry an intrinsic range without HAS_RANGE.
+      uint64_t offset =
+          directory.getSemanticTypeOffset() + 3 * SemanticTypeLayout.size;
+      put32(fixture.database, offset,
+            OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL |
+                (vpiBitTypespec
+                 << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+      put64(fixture.database, offset + 32, 22);
+      put64(fixture.database, offset + 40, 0);
+      put64(fixture.database, field::HeaderChecksum,
+            imageChecksum(fixture.database));
+    }
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+    ASSERT_EQ(obelisk_rt_v1_design_validate(&fixture.execution), OBELISK_RT_OK);
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    auto expectWidth = [&](uint64_t cursor, uint64_t expected) {
+      uint64_t width = UINT64_MAX;
+      EXPECT_EQ(obelisk_rt_cached_design_semantic_bit_width(context, {cursor},
+                                                            &width),
+                OBELISK_RT_OK);
+      EXPECT_EQ(width, expected);
+    };
+    expectWidth(6, 8); // Four packed elements, each a two-bit struct.
+    expectWidth(7, 2); // Packed aggregate width comes from exact layout.
+    expectWidth(8, 1); // Scalar logic has no explicit bit-width payload.
+    expectWidth(9, 1); // Enum width comes from its base type.
+    if (genericIntegral)
+      expectWidth(4, 23);
+    for (uint64_t cursor : {UINT64_C(1), UINT64_C(2), UINT64_C(11)}) {
+      uint64_t width = UINT64_MAX;
+      EXPECT_EQ(obelisk_rt_cached_design_semantic_bit_width(context, {cursor},
+                                                            &width),
+                OBELISK_RT_EOF);
+      EXPECT_EQ(width, 0u);
+    }
+    for (uint64_t cursor :
+         {UINT64_C(0), directory.getSemanticTypeCount() + 1}) {
+      uint64_t width = UINT64_MAX;
+      EXPECT_EQ(obelisk_rt_cached_design_semantic_bit_width(context, {cursor},
+                                                            &width),
+                OBELISK_RT_INVALID_HANDLE);
+      EXPECT_EQ(width, 0u);
+    }
+    EXPECT_EQ(
+        obelisk_rt_cached_design_semantic_bit_width(context, {9}, nullptr),
+        OBELISK_RT_INVALID_ARGUMENT);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(DesignDatabase, SupportsImmutableSourceOnlyVPIObjects) {
