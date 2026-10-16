@@ -20,7 +20,9 @@
 // SCHEMA-DAG: functional_bin id=[[RANGED_NONCONSECUTIVE:[0-9]+]] {{.*}} hierarchy=top.cg.ranged_nonconsecutive.ordinary
 // SCHEMA-DAG: functional_bin id=[[FOUR:[0-9]+]] {{.*}} hierarchy=top.cg.four_state_gaps.ordinary
 // SCHEMA-DAG: functional_bin id=[[TWO:[0-9]+]] {{.*}} hierarchy=top.cg.two_state_gaps.ordinary
-// SCHEMA: transition_step
+// Steps follow the alternatives. Ending this barrier on a step line instead
+// would hide whichever step sorts first, and steps sort by path-derived IDs.
+// SCHEMA: transition_alternative
 // SCHEMA-DAG: transition_step bin=[[GOTO]] {{.*}} upper_expression=0 {{.*}} ordinal=0 repetition=3 flags=1
 // SCHEMA-DAG: transition_step bin=[[NONCONSECUTIVE]] {{.*}} upper_expression=0 {{.*}} ordinal=0 repetition=4 flags=1
 // SCHEMA-DAG: transition_step bin=[[RANGED_GOTO]] {{.*}} upper_expression={{[1-9][0-9]*}} {{.*}} ordinal=0 repetition=3 flags=1

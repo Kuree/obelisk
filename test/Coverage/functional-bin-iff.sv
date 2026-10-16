@@ -89,11 +89,13 @@ endmodule
 
 // Illegal guards only gate the diagnostics (19.5.6): each illegal bin reports
 // exactly once per true-guard hit, at times 0 and 10, and nothing else is
-// reported.
-// ERROR: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 0
-// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.illegal_overlap' sampled at simulation time 0
-// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.illegal' sampled at simulation time 10
-// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.illegal_overlap' sampled at simulation time 10
+// reported. Bins hit by one sample report in bin-ID order, which derives from
+// the source path, so each line accepts either bin; the JSON records below
+// pin one diagnostic per bin and time.
+// ERROR: ERROR: functional coverage illegal bin 'top.cg.cp.{{illegal|illegal_overlap}}' sampled at simulation time 0
+// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.{{illegal|illegal_overlap}}' sampled at simulation time 0
+// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.{{illegal|illegal_overlap}}' sampled at simulation time 10
+// ERROR-NEXT: ERROR: functional coverage illegal bin 'top.cg.cp.{{illegal|illegal_overlap}}' sampled at simulation time 10
 
 // Loading the first run and running again persists a distinct diagnostic per
 // run, test name and time: eight records, each with count 1.

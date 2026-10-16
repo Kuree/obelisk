@@ -9,6 +9,7 @@
 // RUN: diff -u %t.native.out %t.bytecode.out
 // RUN: diff -u %t.native.err %t.bytecode.err
 // RUN: FileCheck %s --implicit-check-not="functional coverpoint" < %t.native.err
+// RUN: FileCheck %s --check-prefix=DEFAULTED --implicit-check-not=top.cg.defaulted < %t.native.err
 
 module top;
   bit [1:0] sampled;
@@ -55,6 +56,12 @@ module top;
   end
 endmodule
 
-// CHECK-COUNT-2: functional coverpoint 'top.cg.forced' bins 'low' and 'high' overlap
-// CHECK: functional coverpoint 'top.cg.defaulted' bins 'low' and 'high' overlap
-// CHECK: functional coverpoint 'top.large_cg.huge_point' bins 'left[0]' and 'right[0]' overlap
+// Instances report in construction order. Within the enabled instance the two
+// coverpoints report in item-ID order, which derives from the source path, so
+// either may come first; the DEFAULTED run requires exactly one of them to be
+// 'defaulted'.
+// CHECK: functional coverpoint 'top.cg.forced' bins 'low' and 'high' overlap
+// CHECK-NEXT: functional coverpoint 'top.cg.{{defaulted|forced}}' bins 'low' and 'high' overlap
+// CHECK-NEXT: functional coverpoint 'top.cg.{{defaulted|forced}}' bins 'low' and 'high' overlap
+// CHECK-NEXT: functional coverpoint 'top.large_cg.huge_point' bins 'left[0]' and 'right[0]' overlap
+// DEFAULTED: functional coverpoint 'top.cg.defaulted' bins 'low' and 'high' overlap
