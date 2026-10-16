@@ -12796,6 +12796,13 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   }
   if (!allowProtectedSource(handle, "vpi_get_value"))
     return;
+  if (handle->form == VPIObjectForm::Design &&
+      vpiTypeForHandle(handle) == vpiFuncCall) {
+    setError(handle->owner,
+             "source function call has no retained invocation result",
+             vpiNotice);
+    return;
+  }
   if (handle->form == VPIObjectForm::SnapshotValue &&
       (!handle->snapshot->readable ||
        (handle->snapshot->variableView && !handle->snapshot->integral &&

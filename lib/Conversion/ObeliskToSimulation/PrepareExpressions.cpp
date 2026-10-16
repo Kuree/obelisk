@@ -574,7 +574,13 @@ LogicalResult materializeProceduralExpressionRelations(
   llvm::DenseMap<uint64_t, sim::SimStatementDeclOp> statements;
   for (auto statement : design.getOps<sim::SimStatementDeclOp>())
     statements[statement.getId()] = statement;
-  if (statements.empty())
+  llvm::DenseMap<uint64_t, Operation *> unitSources;
+  for (const PreparedUnit &unit : units.units)
+    unitSources[unit.id] = unit.source;
+  llvm::StringMap<sim::SimVPICallDeclOp> calls;
+  for (auto call : design.getOps<sim::SimVPICallDeclOp>())
+    calls[call.getSymName()] = call;
+  if (statements.empty() && calls.empty())
     return success();
   llvm::DenseMap<std::pair<uint64_t, uint64_t>, uint64_t> caseItems;
   for (auto relation : design.getOps<sim::SimVPIStatementRelationDeclOp>())
@@ -601,6 +607,64 @@ LogicalResult materializeProceduralExpressionRelations(
       if (source != unit.source && isa<semantic::SVProceduralBlockSymbolOp,
                                        semantic::SVSubroutineSymbolOp>(source))
         return WalkResult::skip();
+      if (auto call = dyn_cast<semantic::SVCallExpressionOp>(source)) {
+        auto site = sim::get<sim::metadata::VpiCallSite>(call);
+        auto declaration =
+            site ? calls.lookup(site.getValue()) : sim::SimVPICallDeclOp{};
+        using Kind = reflection::VPIObjectKind;
+        auto defaulted = call.getDefaultedArguments();
+        auto arguments = getChildren(call);
+        bool supported =
+            declaration &&
+            (declaration.getVpiKind() == uint32_t(Kind::FuncCall) ||
+             declaration.getVpiKind() == uint32_t(Kind::TaskCall)) &&
+            declaration.getCalleeCodeUnitId() && !call.getHasThisClass() &&
+            !call.getHasOutputArguments() && defaulted &&
+            defaulted->size() == arguments.size() &&
+            call.getArgumentCount() == arguments.size() &&
+            llvm::all_of(*defaulted, [](int64_t flag) { return flag == 0; });
+        Operation *callee =
+            supported ? unitSources.lookup(*declaration.getCalleeCodeUnitId())
+                      : nullptr;
+        unsigned formalCount = 0;
+        if (callee)
+          for (Operation *child : getChildren(callee))
+            if (auto formal =
+                    dyn_cast<semantic::SVFormalArgumentSymbolOp>(child)) {
+              ++formalCount;
+              supported &=
+                  formal.getDirection() == semantic::SVArgumentDirection::In;
+            }
+        supported &= callee && formalCount == arguments.size();
+        if (supported) {
+          auto owner = sim::VPIObjectRefAttr::get(builder.getContext(), site);
+          auto group = materializer.resolveGroup(
+              arguments, owner, declaration.getVpiKind(),
+              declaration.getScopeId(), uint32_t(Relation::ArgumentRel));
+          if (failed(group))
+            invalid = true;
+          else if (*group)
+            for (auto [ordinal, target] : llvm::enumerate(**group)) {
+              auto location = getSemanticLocation(arguments[ordinal]);
+              sim::SimVPIRelationDeclOp::create(
+                  builder, location, owner, uint32_t(Relation::ArgumentRel),
+                  sim::VPIRelationMode::Iterate, ordinal, target.reference);
+              const auto *edge = reflection::findVPITraversal(
+                  target.kind, uint32_t(Relation::UseRel), Mode::Iterate);
+              if (!edge || !reflection::vpiObjectSetContains(
+                               edge->targets, declaration.getVpiKind()))
+                continue;
+              auto &targets = uses[target.reference];
+              if (llvm::is_contained(targets, owner))
+                continue;
+              sim::SimVPIRelationDeclOp::create(
+                  builder, location, target.reference,
+                  uint32_t(Relation::UseRel), sim::VPIRelationMode::Iterate,
+                  targets.size(), owner);
+              targets.push_back(owner);
+            }
+        }
+      }
       auto identity = sim::get<sim::metadata::VpiStatementId>(source);
       if (!identity)
         return WalkResult::advance();

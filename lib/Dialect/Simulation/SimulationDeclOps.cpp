@@ -850,7 +850,8 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
              SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp,
              SimVPILexicalClassTypespecDeclOp, SimVPIClassExtendsDeclOp,
              SimVPIClassParameterAssignDeclOp, SimVPILocalDeclOp,
-             SimVPIExpressionDeclOp, SimVPIDefinitionMemberDeclOp>(declaration))
+             SimVPIExpressionDeclOp, SimVPIDefinitionMemberDeclOp,
+             SimVPICallDeclOp>(declaration))
       return emitOpError()
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
@@ -5735,6 +5736,9 @@ LogicalResult SimDesignOp::verifyRegions() {
   for (auto [index, operation] : llvm::enumerate(getBody().front()))
     declarationIds[&operation] = index;
   auto canonicalDeclaration = [&](Operation *operation) -> Operation * {
+    if (auto call = dyn_cast<SimVPICallDeclOp>(operation))
+      if (auto statement = call.getStatementId())
+        return statements.lookup(*statement);
     auto anchor = dyn_cast<SimVPIObjectAnchorOp>(operation);
     if (!anchor || !anchor.getBackingAttr())
       return operation;
@@ -5831,6 +5835,8 @@ LogicalResult SimDesignOp::verifyRegions() {
         // SymbolUserOpInterface validates the declaration category first.
         if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(declaration))
           kind = anchor.getVpiKind();
+        else if (auto call = dyn_cast<SimVPICallDeclOp>(declaration))
+          kind = call.getVpiKind();
         else if (auto expression =
                      dyn_cast<SimVPIExpressionDeclOp>(declaration))
           kind = expression.getVpiKind();
@@ -5984,6 +5990,13 @@ LogicalResult SimDesignOp::verifyRegions() {
             use->targets,
             static_cast<uint32_t>(reflection::VPIObjectKind::Case));
     using ExpressionKind = reflection::VPIObjectKind;
+    bool repeatedCallDeclaration =
+        (*sourceKind == uint32_t(ExpressionKind::FuncCall) ||
+         *sourceKind == uint32_t(ExpressionKind::TaskCall)) &&
+        relation.getSelector() ==
+            uint32_t(reflection::VPIRelationKind::ArgumentRel) &&
+        mode == reflection::VPITraversalMode::Iterate && use &&
+        reflection::vpiObjectSetContains(use->targets, *sourceKind);
     bool repeatedCompactDeclaration =
         isa_and_nonnull<SimVPIExpressionDeclOp>(
             symbolDeclaration(relation.getSource())) &&
@@ -6001,7 +6014,8 @@ LogicalResult SimDesignOp::verifyRegions() {
          static_cast<uint32_t>(relation.getSelector()),
          static_cast<uint32_t>(relation.getMode()), relation.getOrdinal(),
          static_cast<uint32_t>(relation.getTarget().getKind()), targetId,
-         repeatedCaseDeclaration || repeatedCompactDeclaration ||
+         repeatedCaseDeclaration || repeatedCallDeclaration ||
+             repeatedCompactDeclaration ||
              (*sourceKind ==
                   static_cast<uint32_t>(reflection::VPIObjectKind::Operation) &&
               *targetKind ==

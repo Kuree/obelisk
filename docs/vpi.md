@@ -188,6 +188,13 @@ event controls. Call statements retain their exact function, task, system, or me
 kind and enclosing scope. Call inventories also retain nested expression calls,
 exact lexical owners, direct callee relations, and shared identity for calls
 that are themselves statements. Indirect dispatch remains explicitly marked.
+Ordinary function and task calls expose complete explicit input-argument lists
+through `vpiArgument`, including supported computed expressions and contextual
+parameters. Repeated declaration arguments preserve one declaration identity;
+computed occurrences remain distinct. Argument queries read current supported
+values without executing a call. Defaulted, output/ref, method/system, and
+unsupported argument groups remain unavailable. Source function results report
+a notice because the inventory does not retain an invocation result.
 Unsupported source statement forms remain unbound.
 
 Virtual-interface call lowering considers every elaborated instance of the exact

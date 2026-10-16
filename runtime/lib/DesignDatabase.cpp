@@ -3955,8 +3955,12 @@ bool validateExpressions(const Database &database,
         (!definitionDefault &&
          !expressionContext(database, root, scope, &ownerKind, &owner)))
       return false;
-    if (iterate && (ownerKind != uint32_t(Kind::CaseItem) ||
-                    read16(root + 12) != uint16_t(Rel::ExprRel)))
+    bool callArgument = (ownerKind == uint32_t(Kind::FuncCall) ||
+                         ownerKind == uint32_t(Kind::TaskCall)) &&
+                        read16(root + 12) == uint16_t(Rel::ArgumentRel);
+    if (iterate && !callArgument &&
+        (ownerKind != uint32_t(Kind::CaseItem) ||
+         read16(root + 12) != uint16_t(Rel::ExprRel)))
       return false;
     previous = key;
     const auto *edge = obelisk::reflection::findVPITraversal(
@@ -3987,7 +3991,7 @@ bool validateExpressions(const Database &database,
     if (!definitionDefault &&
         table != obelisk::reflection::TableKind::Statement &&
         ownerKind != uint32_t(Kind::Port) &&
-        ownerKind != uint32_t(Kind::PrimTerm))
+        ownerKind != uint32_t(Kind::PrimTerm) && !callArgument)
       return false;
     uint32_t ownerIndex = obelisk::reflection::unpackTableIndex(read32(root));
     uint64_t physical = lowerBoundRelation(database, table, ownerIndex,

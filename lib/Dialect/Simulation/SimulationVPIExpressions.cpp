@@ -413,9 +413,19 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
           return statement.getIdAttr() == source.getId() &&
                  statement.getVpiKind() == uint32_t(Kind::CaseItem);
         });
-    if (!computed && !caseLabel)
-      return relation.emitOpError(
-          "contextual declaration root requires a singular or case-label slot");
+    auto call =
+        source.getKind() == VPIObjectRefKind::Symbol
+            ? referenceSymbols.lookupNearestSymbolFrom<SimVPICallDeclOp>(
+                  relation, source.getSymbol())
+            : SimVPICallDeclOp{};
+    bool callArgument =
+        call &&
+        (call.getVpiKind() == uint32_t(Kind::FuncCall) ||
+         call.getVpiKind() == uint32_t(Kind::TaskCall)) &&
+        relation.getSelector() == uint32_t(Relation::ArgumentRel);
+    if (!computed && !caseLabel && !callArgument)
+      return relation.emitOpError("contextual declaration root requires a "
+                                  "singular, case-label or call-argument slot");
   }
   SmallVector<SimVPIExpressionDeclOp> expressions;
   DenseSet<uint64_t> allExpressionIDs;
@@ -458,6 +468,9 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
     else if (auto statement = dyn_cast<SimStatementDeclOp>(operation))
       endpoints[numeric(VPIObjectRefKind::Statement, statement.getIdAttr())] = {
           statement, statement.getVpiKind(), statement.getScopeId()};
+    else if (auto call = dyn_cast<SimVPICallDeclOp>(operation))
+      endpoints[symbolic(call.getSymNameAttr())] = {call, call.getVpiKind(),
+                                                    call.getScopeId()};
     else if (auto port = dyn_cast<SimPortDeclOp>(operation))
       endpoints[numeric(VPIObjectRefKind::Port, port.getIdAttr())] = {
           port, uint32_t(Kind::Port), port.getScopeId(), port.getType(),
@@ -588,15 +601,21 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
     bool ownerStatement = isa<SimStatementDeclOp>(owner->second.operation);
     bool ownerPort = owner->second.kind == uint32_t(Kind::Port);
     bool ownerTerminal = owner->second.kind == uint32_t(Kind::PrimTerm);
+    bool callArgument =
+        isa<SimVPICallDeclOp>(owner->second.operation) &&
+        (owner->second.kind == uint32_t(Kind::FuncCall) ||
+         owner->second.kind == uint32_t(Kind::TaskCall)) &&
+        expression.getSelector() == uint32_t(Relation::ArgumentRel);
     bool caseLabel = owner->second.kind == uint32_t(Kind::CaseItem) &&
                      expression.getSelector() == uint32_t(Relation::ExprRel);
     if (!ownerExpression && expression.getMode() != VPIRelationMode::Handle &&
-        !caseLabel)
+        !caseLabel && !callArgument)
       return expression.emitOpError(
-          "compact root requires a singular or case-label slot");
-    if (!ownerExpression && !ownerStatement && !ownerPort && !ownerTerminal)
-      return expression.emitOpError(
-          "owner must be an expression, statement, port or terminal");
+          "compact root requires a singular, case-label or call-argument slot");
+    if (!ownerExpression && !ownerStatement && !ownerPort && !ownerTerminal &&
+        !callArgument)
+      return expression.emitOpError("owner must be an expression, statement, "
+                                    "port, terminal or ordinary call");
     uint64_t scope = owner->second.scope;
     if (ownerPort &&
         expression.getSelector() == uint32_t(Relation::HighConnRel)) {

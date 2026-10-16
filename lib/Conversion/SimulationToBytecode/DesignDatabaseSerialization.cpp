@@ -274,6 +274,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   };
   SmallVector<FrameLocalBindingRecord> frameLocalBindings;
   SmallVector<sim::SimVPICallDeclOp> callDeclarations;
+  llvm::StringMap<sim::SimVPICallDeclOp> callRefsBySymbol;
   struct CallSiteBindingRecord {
     uint64_t id;
     uint32_t object, owner, flags;
@@ -1661,6 +1662,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
       call.emitOpError("call occurrence object reference cannot be packed");
       return {};
     }
+    callRefsBySymbol[call.getSymName()] = call;
     callSiteBindings.push_back(
         {call.getId(), packed,
          codeUnitObjectIndices.lookup(call.getCodeUnitId()),
@@ -3852,6 +3854,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
       else if (auto member = classMembersBySymbol.find(name);
                member != classMembersBySymbol.end())
         resolved = classMemberRefs.lookup(member->second);
+      else if (auto call = callRefsBySymbol.find(name);
+               call != callRefsBySymbol.end())
+        resolved = call->second.getStatementId()
+                       ? ImageObjectRef{TableKind::Statement,
+                                        statementIndices.lookup(
+                                            *call->second.getStatementId()),
+                                        call->second.getVpiKind()}
+                       : ImageObjectRef{TableKind::Object,
+                                        objectIndices.lookup(call->second),
+                                        call->second.getVpiKind()};
       else if (auto local = localsBySymbol.find(name);
                local != localsBySymbol.end())
         resolved = ImageObjectRef{
@@ -3882,6 +3894,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
            statements[statement->second].declaration.getVpiKind() ==
                uint32_t(VPIObjectKind::CaseItem);
   };
+  auto isCallArgument = [&](sim::SimVPIRelationDeclOp relation) {
+    if (relation.getSelector() != uint32_t(VPIRelationKind::ArgumentRel) ||
+        relation.getMode() != sim::VPIRelationMode::Iterate)
+      return false;
+    auto source = relation.getSource();
+    if (source.getKind() != sim::VPIObjectRefKind::Symbol)
+      return false;
+    auto found = callRefsBySymbol.find(source.getSymbol().getValue());
+    return found != callRefsBySymbol.end() &&
+           (found->second.getVpiKind() == uint32_t(VPIObjectKind::FuncCall) ||
+            found->second.getVpiKind() == uint32_t(VPIObjectKind::TaskCall));
+  };
   auto expressionUseSource = [&](sim::SimVPIRelationDeclOp relation) {
     if (!isCaseLabel(relation))
       return relation.getSource();
@@ -3893,16 +3917,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                                parent)
                   : sim::VPIObjectRefAttr{};
   };
-  DenseSet<Attribute> compactCaseGroups;
+  DenseSet<Attribute> compactExpressionGroups;
   DenseSet<std::pair<Attribute, Attribute>> caseTargets;
   for (auto relation : generalRelationDeclarations)
-    if (isCaseLabel(relation) &&
+    if ((isCaseLabel(relation) || isCallArgument(relation)) &&
         (!caseTargets.insert({relation.getSource(), relation.getTarget()})
               .second ||
          expressionFor(relation.getTarget()) ||
          relation.getTarget().getKind() ==
              sim::VPIObjectRefKind::DefinitionMember))
-      compactCaseGroups.insert(relation.getSource());
+      compactExpressionGroups.insert(relation.getSource());
   auto definitionMemberFor = [&](sim::VPIObjectRefAttr reference) {
     return reference.getKind() == sim::VPIObjectRefKind::Symbol
                ? definitionMembersBySymbol.lookup(
@@ -3921,7 +3945,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
             return expressionUseSource(forward) == relation.getTarget() &&
                    forward.getTarget() == relation.getSource() &&
                    (forward.getMode() == sim::VPIRelationMode::Handle ||
-                    isCaseLabel(forward));
+                    isCaseLabel(forward) || isCallArgument(forward));
           });
       if (!exactUse) {
         relation.emitOpError("contextual declaration relation requires an "
@@ -3938,8 +3962,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       expressionChildren[expression].push_back(relation);
       continue;
     }
-    if ((isCaseLabel(relation) &&
-         compactCaseGroups.contains(relation.getSource())) ||
+    if (((isCaseLabel(relation) || isCallArgument(relation)) &&
+         compactExpressionGroups.contains(relation.getSource())) ||
         expressionFor(relation.getTarget()) ||
         relation.getTarget().getKind() ==
             sim::VPIObjectRefKind::DefinitionMember) {
