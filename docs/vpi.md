@@ -120,10 +120,15 @@ Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`
 describes the declared type even for a null variable. Interface modport
 iteration includes unused declarations, and a modport's reverse relation is
-`vpiInterface`. Virtual-interface iteration flattens fixed arrays into element
-handles, while `vpiVariables` returns one array declaration. Fixed class event
-arrays likewise select the event references stored in the object. Dynamic
-virtual-interface arrays are still being completed.
+`vpiInterface`. Virtual-interface iteration flattens fixed arrays, dynamic
+arrays, queues, and their nesting into element handles, while `vpiVariables`
+returns one array declaration. Element handles reread current storage after
+retargeting or resizing and retain their parent, index, and declared typespec
+relations without keeping the containers alive. The outer dynamic-array or
+queue range reflects its current size; nested managed dimensions retain the
+standard empty ranges. Fixed class event arrays likewise select the event
+references stored in the object. Associative virtual-interface arrays are still
+being completed.
 
 Port handles additionally expose `vpiDirection`, `vpiPortIndex`,
 `vpiPortType`, `vpiScalar`, and `vpiVector` directly from their immutable

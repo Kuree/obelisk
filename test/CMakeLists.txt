@@ -263,6 +263,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIUntypedMessagesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIValueLayoutTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIBoxTypesTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIManagedInterfacesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIMailboxLayoutTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIEventBindingsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPISourceValueDefaultsTest.cpp"
