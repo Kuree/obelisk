@@ -3,6 +3,7 @@
 #include "ProcessPacking.h"
 #include "ProcessShared.h"
 #include "RuntimeInternal.h"
+#include "VPIExpressionValue.h"
 #include "obelisk/Reflection/DesignReflection.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "obelisk/Runtime/DescriptorMap.h"
@@ -3606,51 +3607,141 @@ bool expressionOperandIsConstant(const Database &database, const uint8_t *root,
 bool expressionKnownInteger(const Database &database, const uint8_t *root,
                             const uint8_t *recipe, uint32_t operand,
                             int64_t &result) {
-  VPIFrozenValue value{};
-  if ((operand & kExpressionOperandLeafFlag) != 0) {
-    ExpressionLeafInfo leaf;
-    uint32_t packed = 0;
-    if (!expressionLeaf(database, root, operand & ~kExpressionOperandLeafFlag,
-                        leaf))
-      return false;
-    uint32_t scope = 0, memberIndex = 0, specialization = 0;
-    const uint8_t *member = nullptr;
-    if (virtualMemberForCursor(database, leaf.cursor, scope, memberIndex,
-                               member, nullptr, &specialization)) {
-      if (!findDefinitionParameterValue(database, specialization, memberIndex,
-                                        value))
+  using Kind = obelisk::reflection::VPIObjectKind;
+  using Shape = obelisk::reflection::VPIIntegralExpressionShape;
+  using obelisk::designbytecode::Logic;
+  struct Constant {
+    Logic value;
+    Shape shape;
+  };
+  // Template structure is proved before root-specific width checks. Still
+  // prove effective operand shapes before arithmetic: later nodes have not
+  // yet undergone their root-specific type check. No storage or calls enter
+  // this proof, and all temporary values are discarded after validation.
+  std::unordered_map<uint32_t, Constant> values;
+  std::vector<std::pair<uint32_t, bool>> pending{{operand, false}};
+  while (!pending.empty()) {
+    auto [current, ready] = pending.back();
+    pending.pop_back();
+    if (values.count(current))
+      continue;
+    VPIFrozenValue frozen{};
+    uint32_t semantic = UINT32_MAX, code = 0;
+    const uint8_t *node = nullptr;
+    if (current & kExpressionOperandLeafFlag) {
+      ExpressionLeafInfo leaf;
+      uint32_t ordinal = current & ~kExpressionOperandLeafFlag;
+      if (ordinal >= (recipe ? read32(recipe + 20) : 1) ||
+          !expressionLeaf(database, root, ordinal, leaf) ||
+          (leaf.kind != uint32_t(Kind::Parameter) &&
+           leaf.kind != uint32_t(Kind::SpecParam) &&
+           leaf.kind != uint32_t(Kind::EnumConst)))
         return false;
-    } else if (!packedObjectReferenceForCursor(database, leaf.cursor, packed) ||
-               !findFrozenValue(database, packed, value))
+      semantic = leaf.semantic;
+      uint32_t scope = 0, memberIndex = 0, specialization = 0, packed = 0;
+      const uint8_t *member = nullptr;
+      if (virtualMemberForCursor(database, leaf.cursor, scope, memberIndex,
+                                 member, nullptr, &specialization)) {
+        if (!findDefinitionParameterValue(database, specialization, memberIndex,
+                                          frozen))
+          return false;
+      } else if (!packedObjectReferenceForCursor(database, leaf.cursor,
+                                                 packed) ||
+                 !findFrozenValue(database, packed, frozen))
+        return false;
+    } else {
+      node = recipe ? expressionNode(database, recipe, current) : nullptr;
+      if (!node)
+        return false;
+      semantic = read32(node + 4);
+      if (read16(node) == uint16_t(Kind::Constant)) {
+        if (!expressionFrozen(database, read32(node + 28), frozen))
+          return false;
+      } else if (read16(node) == uint16_t(Kind::Operation)) {
+        code = read16(node + 2);
+        auto descriptor = obelisk::reflection::findVPISourceOperator(code);
+        if (!descriptor || read32(node + 12) != descriptor->arity ||
+            obelisk::reflection::integralOperatorRule(code) ==
+                obelisk::reflection::VPIIntegralOperatorRule::Unsupported)
+          return false;
+      } else
+        return false;
+    }
+    uint64_t width = 0;
+    uint32_t flags = 0;
+    if (!expressionIntegral(database, semantic, width, flags) ||
+        width > UINT32_MAX)
       return false;
-  } else {
-    const uint8_t *node = expressionNode(database, recipe, operand);
-    if (!node ||
-        read16(node) !=
-            uint16_t(obelisk::reflection::VPIObjectKind::Constant) ||
-        !expressionFrozen(database, read32(node + 28), value))
+    Shape shape{width, bool(flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED),
+                bool(flags & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE), code};
+    if (!code) {
+      uint64_t bytes = (width + 7) / 8;
+      if (frozen.bitWidth != width || frozen.payloadSize != bytes * 2 ||
+          bool(frozen.kindAndFlags & obelisk::reflection::frozenValueSigned) !=
+              shape.isSigned ||
+          bool(frozen.kindAndFlags &
+               obelisk::reflection::frozenValueFourState) != shape.fourState)
+        return false;
+      Logic value{static_cast<uint32_t>(width), shape.fourState, {}, {}};
+      value.value.assign(obelisk::designbytecode::limbCount(width), 0);
+      value.unknown.assign(obelisk::designbytecode::limbCount(width), 0);
+      for (uint64_t byte = 0; byte != bytes; ++byte) {
+        value.value[byte / 8] |= uint64_t{frozen.payload[byte]}
+                                 << (byte % 8 * 8);
+        value.unknown[byte / 8] |= uint64_t{frozen.payload[bytes + byte]}
+                                   << (byte % 8 * 8);
+      }
+      values.emplace(current, Constant{std::move(value), shape});
+      continue;
+    }
+    auto operandAt = [&](uint32_t child) {
+      return read32(database.data + database.expressionOperands +
+                    (uint64_t{read32(recipe + 12)} + read32(node + 8) + child) *
+                        kExpressionOperandSize);
+    };
+    if (!ready) {
+      pending.push_back({current, true});
+      for (uint32_t child = 0; child != read32(node + 12); ++child) {
+        uint32_t next = operandAt(child);
+        // The on-image parent-before-child order also bounds this worklist.
+        if (!(next & kExpressionOperandLeafFlag) && next <= current)
+          return false;
+        pending.push_back({next, false});
+      }
+      continue;
+    }
+    std::array<Logic, 3> inputs;
+    std::array<Shape, 3> shapes;
+    uint32_t count = read32(node + 12);
+    if (count > inputs.size())
       return false;
+    for (uint32_t child = 0; child != count; ++child) {
+      auto found = values.find(operandAt(child));
+      if (found == values.end())
+        return false;
+      inputs[child] = found->second.value;
+      shapes[child] = found->second.shape;
+    }
+    if (!obelisk::reflection::validVPIIntegralOperator(code, shape,
+                                                       shapes.data(), count))
+      return false;
+    values.emplace(current, Constant{obelisk::vpiexpression::evaluate(
+                                         code, shape, inputs, shapes),
+                                     shape});
   }
-  if (!value.bitWidth)
+  auto found = values.find(operand);
+  if (found == values.end() ||
+      obelisk::designbytecode::anyUnknown(found->second.value))
     return false;
-  uint64_t bytes = (value.bitWidth + 7) / 8, raw = 0;
-  bool isSigned =
-      (value.kindAndFlags & obelisk::reflection::frozenValueSigned) != 0;
-  bool negative =
-      isSigned &&
-      ((value.payload[(value.bitWidth - 1) / 8] >> ((value.bitWidth - 1) % 8)) &
-       1);
-  for (uint64_t byte = 0; byte != bytes; ++byte) {
-    if (value.payload[bytes + byte])
+  const auto &value = found->second.value;
+  bool negative = found->second.shape.isSigned &&
+                  obelisk::designbytecode::bit(value.value, value.width - 1);
+  for (uint64_t bit = 64; bit < value.width; ++bit)
+    if (obelisk::designbytecode::bit(value.value, bit) != negative)
       return false;
-    if (byte < 8)
-      raw |= uint64_t{value.payload[byte]} << (byte * 8);
-  }
-  for (uint64_t bit = 64; bit < value.bitWidth; ++bit)
-    if (bool((value.payload[bit / 8] >> (bit % 8)) & 1) != negative)
-      return false;
-  if (value.bitWidth < 64 && negative)
-    raw |= UINT64_MAX << value.bitWidth;
+  uint64_t raw = value.value[0];
+  if (value.width < 64 && negative)
+    raw |= UINT64_MAX << value.width;
   if ((raw >> 63) != uint64_t(negative))
     return false;
   result = static_cast<int64_t>(raw);

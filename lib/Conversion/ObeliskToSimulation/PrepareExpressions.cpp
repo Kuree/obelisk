@@ -3,6 +3,7 @@
 
 #include "PrepareExpressions.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "obelisk/Dialect/Simulation/SimulationVPIConstantValues.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "llvm/ADT/DenseSet.h"
 
@@ -462,27 +463,87 @@ VPIExpressionMaterializer::resolveImpl(Operation *expression,
     return reflection::VPIIntegralExpressionShape{
         *width, semantic->getIsSigned(), semantic->getIsFourState(), node.code};
   };
-  for (const auto &node : plan) {
-    // The retained width proof currently accepts frozen literals and exact
-    // Parameter declarations for static bounds. A computed constant bound
-    // needs its own non-evaluating constant proof before we can expose it.
-    auto computedBound = [&](unsigned position) {
-      return position < node.children.size() &&
-             plan[node.children[position]].kind == uint32_t(Kind::Operation);
+  // Prove immutable arithmetic from the exact source tree. These temporary
+  // values are validation state only; the database retains the original
+  // operations and contextual parameter references, never another value copy.
+  SmallVector<std::optional<sim::VPIConstantValue>> constants(plan.size());
+  SmallVector<std::optional<reflection::VPIIntegralExpressionShape>> shapes;
+  for (const auto &node : plan)
+    shapes.push_back(shape(node));
+  for (size_t index = plan.size(); index-- != 0;) {
+    const auto &node = plan[index];
+    if (!shapes[index])
+      continue;
+    auto frozen = node.frozen;
+    if (node.endpoint && (node.kind == uint32_t(Kind::Parameter) ||
+                          node.kind == uint32_t(Kind::SpecParam) ||
+                          node.kind == uint32_t(Kind::EnumConst))) {
+      auto reference =
+          node.source->getAttrOfType<SymbolRefAttr>("referenced_symbol");
+      SymbolTableCollection symbols;
+      auto module = node.source->getParentOfType<ModuleOp>();
+      auto *declaration = reference && module
+                              ? symbols.lookupSymbolIn(module, reference)
+                              : nullptr;
+      if (declaration && declaration->hasAttr("constant_value")) {
+        auto value = freezeSemanticConstant(declaration);
+        if (failed(value))
+          return failure();
+        frozen = *value;
+      }
+    }
+    if (frozen) {
+      auto planes = dyn_cast<ArrayAttr>(frozen.getValue());
+      if (!planes || planes.size() != 2)
+        continue;
+      auto value = dyn_cast<IntegerAttr>(planes[0]);
+      auto unknown = dyn_cast<IntegerAttr>(planes[1]);
+      if (value && unknown &&
+          value.getValue().getBitWidth() == shapes[index]->width &&
+          unknown.getValue().getBitWidth() == shapes[index]->width)
+        constants[index] =
+            sim::VPIConstantValue{value.getValue(), unknown.getValue()};
+      continue;
+    }
+    if (node.kind != uint32_t(Kind::Operation) || node.sourceOnly)
+      continue;
+    SmallVector<sim::VPIConstantValue, 3> values;
+    SmallVector<reflection::VPIIntegralExpressionShape, 3> operands;
+    for (unsigned child : node.children) {
+      if (!constants[child] || !shapes[child])
+        break;
+      values.push_back(*constants[child]);
+      operands.push_back(*shapes[child]);
+    }
+    if (values.size() == node.children.size())
+      constants[index] = sim::evaluateVPIIntegralConstant(
+          node.code, *shapes[index], values, operands);
+  }
+  for (size_t nodeIndex = 0; nodeIndex != plan.size(); ++nodeIndex) {
+    const auto &node = plan[nodeIndex];
+    auto knownBound = [&](unsigned position) -> std::optional<int64_t> {
+      if (position >= node.children.size())
+        return std::nullopt;
+      unsigned child = node.children[position];
+      return constants[child] && shapes[child]
+                 ? sim::knownVPIConstantInteger(*constants[child],
+                                                shapes[child]->isSigned)
+                 : std::nullopt;
     };
     if ((node.kind == uint32_t(Kind::PartSelect) &&
-         (computedBound(1) || computedBound(2))) ||
-        (node.kind == uint32_t(Kind::IndexedPartSelect) && computedBound(2)) ||
+         (!knownBound(1) || !knownBound(2))) ||
+        (node.kind == uint32_t(Kind::IndexedPartSelect) &&
+         (!knownBound(2) || *knownBound(2) <= 0)) ||
         (node.kind == uint32_t(Kind::Operation) && node.code == 34 &&
-         computedBound(0)))
+         (!knownBound(0) || *knownBound(0) <= 0)))
       return unsupported();
     if (!node.sourceOnly && node.kind == uint32_t(Kind::Operation) &&
         reflection::integralOperatorRule(node.code) !=
             reflection::VPIIntegralOperatorRule::Unsupported) {
-      auto resultShape = shape(node);
+      auto resultShape = shapes[nodeIndex];
       SmallVector<reflection::VPIIntegralExpressionShape, 3> operands;
       for (unsigned child : node.children) {
-        auto childShape = shape(plan[child]);
+        auto childShape = shapes[child];
         if (!childShape)
           return unsupported();
         operands.push_back(*childShape);

@@ -60,6 +60,12 @@ the source `Index`, and syntactic `ConstantSelect`. Existing-object names and
 comparison follow the current index; unknown or out-of-range indices have no
 current object name. Selected `Use` queries include whole-parent and overlapping
 selection uses, with each owner returned once.
+Static part-select bounds, indexed widths, and positive replication counts can
+retain pure integral arithmetic over literals and exact immutable parameters.
+The compiler and image validator derive their values from the existing recipes,
+including wide and four-state arithmetic; no folded proof values or per-instance
+syntax copies are stored. Unknown, overflowing, mutable, or unsupported bounds
+cannot establish a width.
 The query layer preserves ordered operands, exact selected parents, contextual
 parameter identity, Module/Instance ancestry, and owning-statement `vpiUse`.
 Value reads observe current declaration values and preserve wide four-state

@@ -1,0 +1,131 @@
+//===- GeneratedVPIConstantEvaluationTest.cpp - Constant arithmetic -------===//
+
+#include "../lib/VPIExpressionValue.h"
+#include "obelisk/Dialect/Simulation/SimulationVPIConstantValues.h"
+#include "gtest/gtest.h"
+#include <array>
+#include <vector>
+
+TEST(VPIConstantEvaluation, CompilerRuntimeParity) {
+  using namespace obelisk;
+  using Shape = reflection::VPIIntegralExpressionShape;
+  unsigned checked = 0;
+  for (unsigned width : {1u, 8u, 32u, 64u, 65u, 130u})
+    for (bool sign : {false, true})
+      for (bool state : {false, true})
+        for (uint32_t code = 1; code <= 89; ++code) {
+          if (reflection::integralOperatorRule(code) ==
+              reflection::VPIIntegralOperatorRule::Unsupported)
+            continue;
+          const unsigned count = reflection::findVPISourceOperator(code)->arity;
+          bool context = reflection::hasIntegralOperatorContext(code);
+          Shape result{context ? width : 1, context && sign,
+                       state || code == 12 || code == 13 || code == 43, code};
+          if (code == 16 || code == 17)
+            result.fourState = false;
+          std::array<Shape, 3> shapes;
+          for (auto &shape : shapes)
+            shape = {width, sign, state, 0};
+          ASSERT_TRUE(reflection::validVPIIntegralOperator(
+              code, result, shapes.data(), count));
+          for (unsigned sample = 0; sample != 20; ++sample) {
+            SCOPED_TRACE(::testing::Message()
+                         << width << '/' << sign << '/' << state << '/' << code
+                         << '/' << sample);
+            std::vector<sim::VPIConstantValue> constants;
+            std::array<designbytecode::Logic, 3> operands;
+            for (unsigned index = 0; index != count; ++index) {
+              llvm::APInt value(width, (sample + 3 * index) % 9, false, true);
+              if ((sample + index) % 4 == 0)
+                value = ~value;
+              if ((sample + index) % 7 == 0)
+                value.setBit(width - 1);
+              llvm::APInt unknown(width, 0);
+              if (state && sample % 3 == 0) {
+                unknown.setBit((sample + index) % width);
+                if (sample % 2)
+                  unknown.setBit(width - 1);
+              }
+              constants.push_back({value, unknown});
+              operands[index].width = width;
+              operands[index].fourState = state;
+              operands[index].value.assign(value.getNumWords(), 0);
+              operands[index].unknown.assign(unknown.getNumWords(), 0);
+              for (unsigned word = 0; word != value.getNumWords(); ++word) {
+                operands[index].value[word] = value.getRawData()[word];
+                operands[index].unknown[word] = unknown.getRawData()[word];
+              }
+            }
+            auto constant = sim::evaluateVPIIntegralConstant(
+                code, result, constants,
+                llvm::ArrayRef<Shape>(shapes.data(), count));
+            ASSERT_TRUE(constant);
+            auto runtime =
+                vpiexpression::evaluate(code, result, operands, shapes);
+            EXPECT_EQ(constant->value,
+                      llvm::APInt(result.width, llvm::ArrayRef<uint64_t>(
+                                                    runtime.value.data(),
+                                                    runtime.value.size())));
+            EXPECT_EQ(constant->unknown,
+                      llvm::APInt(result.width, llvm::ArrayRef<uint64_t>(
+                                                    runtime.unknown.data(),
+                                                    runtime.unknown.size())));
+            ++checked;
+          }
+        }
+  EXPECT_GT(checked, 10000u);
+}
+
+TEST(VPIConstantEvaluation, CheckedIntegerBounds) {
+  using namespace obelisk::sim;
+  using llvm::APInt;
+  EXPECT_EQ(knownVPIConstantInteger(
+                {APInt(65, UINT64_MAX).sextOrTrunc(65), APInt(65, 0)}, true),
+            std::nullopt);
+  EXPECT_EQ(
+      knownVPIConstantInteger({APInt::getAllOnes(130), APInt(130, 0)}, true),
+      -1);
+  EXPECT_EQ(
+      knownVPIConstantInteger({APInt(64, INT64_MAX), APInt(64, 0)}, false),
+      INT64_MAX);
+  EXPECT_EQ(knownVPIConstantInteger(
+                {APInt(64, uint64_t{1} << 63), APInt(64, 0)}, false),
+            std::nullopt);
+  EXPECT_EQ(knownVPIConstantInteger(
+                {APInt(64, uint64_t{1} << 63), APInt(64, 0)}, true),
+            INT64_MIN);
+  EXPECT_EQ(knownVPIConstantInteger({APInt(32, 1), APInt(32, 1)}, true),
+            std::nullopt);
+}
+
+TEST(VPIConstantEvaluation, IntegralCornerCases) {
+  using namespace obelisk;
+  using Shape = reflection::VPIIntegralExpressionShape;
+  using llvm::APInt;
+  auto check = [&](uint32_t code, std::initializer_list<uint8_t> bits,
+                   std::initializer_list<uint8_t> unknown, uint8_t expected,
+                   uint8_t expectedUnknown) {
+    std::vector<sim::VPIConstantValue> inputs;
+    std::vector<Shape> shapes;
+    auto u = unknown.begin();
+    for (uint8_t value : bits) {
+      inputs.push_back({APInt(8, value), APInt(8, *u++)});
+      shapes.push_back({8, true, true, 0});
+    }
+    auto result = sim::evaluateVPIIntegralConstant(code, {8, true, true, code},
+                                                   inputs, shapes);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->value, APInt(8, expected));
+    EXPECT_EQ(result->unknown, APInt(8, expectedUnknown));
+  };
+  check(12, {128, 255}, {0, 0}, 128, 0); // Signed minimum / -1 wraps.
+  check(13, {128, 255}, {0, 0}, 0, 0);
+  check(42, {252, 255}, {0, 0}, 255, 0); // Large unsigned shift amount.
+  check(22, {252, 255}, {0, 0}, 0, 0);
+  check(28, {0, 255}, {0, 255}, 0, 0); // Known zero controls Z.
+  check(29, {255, 0}, {0, 255}, 255, 0);
+  check(32, {0, 255, 255}, {255, 255, 255}, 0, 255);
+  check(43, {255, 253}, {0, 0}, 255, 0); // (-1) ** -3.
+  check(43, {2, 255}, {0, 0}, 0, 0);
+  check(43, {0, 255}, {0, 0}, 0, 255);
+}

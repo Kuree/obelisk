@@ -4,6 +4,7 @@
 #include "SimulationVerifiers.h"
 #include "obelisk/Dialect/Simulation/SimulationOps.h"
 #include "obelisk/Dialect/Simulation/SimulationVPI.h"
+#include "obelisk/Dialect/Simulation/SimulationVPIConstantValues.h"
 #include "obelisk/Reflection/VPIObjectModel.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -118,25 +119,21 @@ struct Endpoint {
         width(type ? getPackedWidth(type).value_or(0)
                    : integralWidth(semantic).value_or(0)) {}
 };
-std::optional<int64_t> knownInteger(const Endpoint &endpoint) {
-  if (!endpoint.frozen)
+std::optional<VPIConstantValue> constantLeaf(const Endpoint &endpoint) {
+  if (!endpoint.frozen || (endpoint.kind != uint32_t(Kind::Constant) &&
+                           endpoint.kind != uint32_t(Kind::Parameter) &&
+                           endpoint.kind != uint32_t(Kind::SpecParam) &&
+                           endpoint.kind != uint32_t(Kind::EnumConst)))
     return std::nullopt;
   auto planes = dyn_cast<ArrayAttr>(endpoint.frozen.getValue());
   if (!planes || planes.size() != 2)
     return std::nullopt;
   auto bits = dyn_cast<IntegerAttr>(planes[0]);
   auto unknown = dyn_cast<IntegerAttr>(planes[1]);
-  if (!bits || !unknown || !unknown.getValue().isZero())
+  if (!bits || !unknown || bits.getValue().getBitWidth() != endpoint.width ||
+      unknown.getValue().getBitWidth() != endpoint.width)
     return std::nullopt;
-  const auto &value = bits.getValue();
-  if (endpoint.frozen.getIsSigned()) {
-    if (!value.isSignedIntN(64))
-      return std::nullopt;
-    return value.sextOrTrunc(64).getSExtValue();
-  }
-  if (value.getActiveBits() > 63)
-    return std::nullopt;
-  return static_cast<int64_t>(value.getZExtValue());
+  return VPIConstantValue{bits.getValue(), unknown.getValue()};
 }
 // Definition defaults are source occurrences, not an effective specialization.
 // Keep their proof separate from value-typed instance expressions: the only
@@ -592,6 +589,92 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
     outgoing[relation.getSource()].push_back(relation);
     incoming[relation.getTarget()].push_back(relation);
   }
+  // Resolve only immutable arithmetic. This walk precedes the complete
+  // ownership proof, so it checks cycles, exact operand ordering, arity and
+  // effective type context before invoking the pure evaluator.
+  auto knownInteger = [&](const Endpoint &requested) -> std::optional<int64_t> {
+    DenseMap<Operation *, std::optional<VPIConstantValue>> values;
+    DenseSet<Operation *> visiting;
+    SmallVector<std::pair<const Endpoint *, bool>> pending{{&requested, false}};
+    auto operandsFor = [&](const Endpoint &node)
+        -> std::optional<SmallVector<const Endpoint *, 3>> {
+      auto expression =
+          dyn_cast_if_present<SimVPIExpressionDeclOp>(node.operation);
+      if (!expression || expression.getSourceOnly() ||
+          node.kind != uint32_t(Kind::Operation) || !expression.getOpType())
+        return std::nullopt;
+      auto descriptor =
+          reflection::findVPISourceOperator(*expression.getOpType());
+      if (!descriptor || reflection::integralOperatorRule(descriptor->value) ==
+                             reflection::VPIIntegralOperatorRule::Unsupported)
+        return std::nullopt;
+      SmallVector<const Endpoint *, 3> result(descriptor->arity, nullptr);
+      for (auto relation : outgoing[symbolic(expression.getSymNameAttr())]) {
+        if (relation.getSelector() == uint32_t(Relation::UseRel))
+          continue;
+        if (relation.getSelector() != uint32_t(Relation::OperandRel) ||
+            relation.getMode() != VPIRelationMode::Iterate ||
+            relation.getOrdinal() >= result.size() ||
+            result[relation.getOrdinal()])
+          return std::nullopt;
+        auto found = endpoints.find(relation.getTarget());
+        if (found == endpoints.end() || !found->second.semantic ||
+            !isIntegral(found->second.semantic) || !found->second.width)
+          return std::nullopt;
+        result[relation.getOrdinal()] = &found->second;
+      }
+      if (llvm::is_contained(result, nullptr))
+        return std::nullopt;
+      return result;
+    };
+    auto valueFor =
+        [&](const Endpoint &node) -> std::optional<VPIConstantValue> {
+      if (auto leaf = constantLeaf(node))
+        return leaf;
+      return values.lookup(node.operation);
+    };
+    while (!pending.empty()) {
+      auto [node, ready] = pending.pop_back_val();
+      if (constantLeaf(*node) || values.contains(node->operation))
+        continue;
+      auto operands = operandsFor(*node);
+      if (!operands || !node->semantic || !isIntegral(node->semantic))
+        return std::nullopt;
+      if (!ready) {
+        if (!visiting.insert(node->operation).second)
+          return std::nullopt;
+        pending.push_back({node, true});
+        for (auto *operand : *operands)
+          pending.push_back({operand, false});
+        continue;
+      }
+      SmallVector<VPIConstantValue, 3> inputs;
+      SmallVector<reflection::VPIIntegralExpressionShape, 3> shapes;
+      for (auto *operand : *operands) {
+        auto value = valueFor(*operand);
+        if (!value)
+          return std::nullopt;
+        inputs.push_back(std::move(*value));
+        auto child =
+            dyn_cast_if_present<SimVPIExpressionDeclOp>(operand->operation);
+        shapes.push_back({operand->width, operand->semantic.getIsSigned(),
+                          operand->semantic.getIsFourState(),
+                          child ? uint32_t(child.getOpType().value_or(0)) : 0});
+      }
+      auto expression = cast<SimVPIExpressionDeclOp>(node->operation);
+      values[node->operation] = evaluateVPIIntegralConstant(
+          *expression.getOpType(),
+          {node->width, node->semantic.getIsSigned(),
+           node->semantic.getIsFourState()},
+          inputs, shapes);
+      visiting.erase(node->operation);
+    }
+    auto value = valueFor(requested);
+    return value && requested.semantic
+               ? knownVPIConstantInteger(*value,
+                                         requested.semantic.getIsSigned())
+               : std::nullopt;
+  };
   DenseMap<Attribute, Attribute> parents;
   for (auto expression : expressions) {
     auto self = symbolic(expression.getSymNameAttr());
