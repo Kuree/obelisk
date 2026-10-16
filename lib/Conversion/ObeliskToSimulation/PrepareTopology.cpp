@@ -5328,7 +5328,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   // equally valid connections (37.14). Computed connections use shared
   // expression recipes with distinct occurrence identities in the instantiating
   // scope.
-  VPIExpressionMaterializer portExpressions(design, descriptors, builder);
+  VPIExpressionMaterializer expressions(design, descriptors, builder);
   const auto *highConnection = reflection::findVPITraversal(
       static_cast<uint32_t>(VPIKind::Port),
       static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
@@ -5343,7 +5343,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       continue;
     auto source = sim::VPIObjectRefAttr::get(
         builder.getContext(), sim::VPIObjectRefKind::Port, port.getIdAttr());
-    auto resolved = portExpressions.resolve(
+    auto resolved = expressions.resolve(
         actual, source, static_cast<uint32_t>(VPIKind::Port),
         *instance->second.getParent(),
         static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel));
@@ -5373,10 +5373,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     }
   }
 
-  // Preserve direct whole-object operands of scope-owned statements as cold
-  // immutable relation inventory. Selects and computed expressions require a
-  // distinct occurrence identity and are intentionally left for the compact
-  // expression table instead of being misrepresented as their root storage.
+  // Whole-declaration endpoints retain direct connectivity relations. Selected
+  // and computed source expressions use the shared occurrence graph below.
   struct DirectEndpoint {
     sim::VPIObjectRefAttr reference;
     const DescriptorInfo *descriptor;
@@ -5592,24 +5590,32 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     std::optional<DirectEndpoint> lhs = directEndpoint(lhsRhs[0]);
     std::optional<DirectEndpoint> rhs = directEndpoint(lhsRhs[1]);
     sim::VPIObjectRefAttr statement = statementReference(plan.statementId);
-    auto emitForward = [&](std::optional<DirectEndpoint> target,
+    auto emitForward = [&](Operation *expression,
                            reflection::VPIRelationKind selector) {
+      uint32_t selectorNumber = selectorValue(selector);
+      auto resolved = expressions.resolve(expression, statement,
+                                          static_cast<uint32_t>(plan.kind),
+                                          plan.scopeId, selectorNumber);
+      if (failed(resolved)) {
+        invalid = true;
+        return;
+      }
+      auto target = *resolved;
       if (!target)
         return;
-      uint32_t selectorNumber = selectorValue(selector);
       const auto *edge = reflection::findVPITraversal(
           static_cast<uint32_t>(plan.kind), selectorNumber,
           reflection::VPITraversalMode::Handle);
       if (!edge || edge->statementContainment ||
           edge->automaticRelation != reflection::VPIAutomaticRelation::None ||
-          !reflection::vpiObjectSetContains(edge->targets, target->vpiKind))
+          !reflection::vpiObjectSetContains(edge->targets, target->kind))
         return;
       sim::SimVPIRelationDeclOp::create(
           builder, getSemanticLocation(plan.source), statement, selectorNumber,
           sim::VPIRelationMode::Handle, 0, target->reference);
     };
-    emitForward(lhs, reflection::VPIRelationKind::LhsRel);
-    emitForward(rhs, reflection::VPIRelationKind::RhsRel);
+    emitForward(lhsRhs[0], reflection::VPIRelationKind::LhsRel);
+    emitForward(lhsRhs[1], reflection::VPIRelationKind::RhsRel);
 
     if (plan.kind == VPIKind::AliasStmt)
       continue;
@@ -5661,8 +5667,8 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     }
   }
   // A terminal is an occurrence, even when two terminals name the same net.
-  // Preserve the source order and the assignment wrapper's lvalue identity;
-  // selected and compound expressions require their own occurrence graph.
+  // Preserve source order and the assignment wrapper's lvalue identity;
+  // selected and compound expressions use their own occurrence graph.
   for (Operation *source : anchorSources) {
     auto primitive = dyn_cast<semantic::SVPrimitiveInstanceSymbolOp>(source);
     if (!primitive)
@@ -5710,13 +5716,22 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
       auto terminalRef = sim::VPIObjectRefAttr::get(
           builder.getContext(), sim::VPIObjectRefKind::Symbol, {},
           FlatSymbolRefAttr::get(terminal.getSymNameAttr()));
+      auto resolved = expressions.resolve(
+          expression, terminalRef, static_cast<uint32_t>(VPIKind::PrimTerm),
+          parent.getEnclosingScopeId(),
+          selectorValue(reflection::VPIRelationKind::ExprRel));
+      if (failed(resolved)) {
+        invalid = true;
+        continue;
+      }
+      if (auto target = *resolved)
+        sim::SimVPIRelationDeclOp::create(
+            builder, getSemanticLocation(terminalSource), terminalRef,
+            selectorValue(reflection::VPIRelationKind::ExprRel),
+            sim::VPIRelationMode::Handle, 0, target->reference);
       auto endpoint = directEndpoint(expression);
       if (!endpoint)
         continue;
-      sim::SimVPIRelationDeclOp::create(
-          builder, getSemanticLocation(terminalSource), terminalRef,
-          selectorValue(reflection::VPIRelationKind::ExprRel),
-          sim::VPIRelationMode::Handle, 0, endpoint->reference);
       auto reverse = [&](const DirectEndpoint &spelling, uint32_t selector) {
         const auto *edge = reflection::findVPITraversal(
             spelling.vpiKind, selector, reflection::VPITraversalMode::Iterate);

@@ -42,7 +42,7 @@ or unused IO endpoint slots. Original defaults and override-assignment relations
 for these shared instance parameters remain incomplete: a known original default
 reports a notice until its expression is retained. Nonpacked value parameters remain outside this inventory slice.
 
-Procedural expression slots retain integral literals, concatenations,
+Retained expression slots include integral literals, concatenations,
 replications, and part-selects of scalar bits or one-bit packed-array elements.
 The query layer preserves ordered operands, exact selected parents, contextual
 parameter identity, Module/Instance ancestry, and owning-statement `vpiUse`.
@@ -68,11 +68,16 @@ their source parent, while repeated connections retain distinct expression
 identities and deduplicated declaration uses. These connections reuse the same
 expression templates and bindings.
 
+Continuous-assignment `vpiLhs`/`vpiRhs` and primitive-terminal `vpiExpr`
+relations use the same expression records for supported selections, constants,
+and compound operands. Whole-declaration connectivity remains available;
+selected-net driver/load connectivity is a separate remaining step.
+
 Identical syntax templates share their node and type metadata across instances;
 small root and leaf bindings preserve distinct occurrence identities and values.
 Effective type or width differences split templates. Ordinary unary/binary
 operators, bit-object selection, hierarchical reference spelling,
-and broader port or primitive source expressions
+and broader source expressions
 remain follow-ups to this bounded procedural slice.
 
 Elaborated generate scopes preserve packed parameters and localparams, including
