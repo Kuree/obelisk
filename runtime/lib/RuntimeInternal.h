@@ -1695,6 +1695,8 @@ struct DesignDatabaseCache {
   uint64_t classTypeBindingCount = 0;
   uint64_t semanticClassBindings = 0;
   uint64_t semanticClassBindingCount = 0;
+  uint64_t classMemberBindings = 0;
+  uint64_t classMemberBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -1749,6 +1751,20 @@ struct DesignDatabaseCache {
 struct VPIRelationRange {
   uint64_t first = 0;
   uint64_t count = 0;
+};
+
+// Immutable declaration metadata. The VPI handle supplies a live receiver for
+// instance members; static members refer to independent design storage/events.
+struct VPIClassMemberBinding {
+  uint64_t classID = 0;
+  uint64_t byteOffset = UINT64_MAX;
+  obelisk_rt_design_cursor_v1 ownerTypespec{};
+  obelisk_rt_design_cursor_v1 backingStorage{};
+  uint64_t staticEventID = UINT64_MAX;
+  bool isStatic = false;
+  bool isMethod = false;
+  const uint8_t *name = nullptr;
+  uint64_t nameSize = 0;
 };
 
 struct FunctionalCoverageValue {
@@ -3706,6 +3722,9 @@ obelisk_rt_status obelisk_rt_cached_design_semantic_root(
 obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
     const obelisk_rt_context *context, uint64_t classID,
     obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+obelisk_rt_status obelisk_rt_cached_vpi_class_member(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
+    VPIClassMemberBinding *outBinding) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
     obelisk_rt_design_cursor_v1 *outCursor) noexcept;

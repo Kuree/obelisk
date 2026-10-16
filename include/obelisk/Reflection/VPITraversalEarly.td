@@ -751,7 +751,8 @@ def VPIEarlyClassTypespecClassDefn : VPITraversalEdge<ClassTypespecObjects,
 def VPIEarlyClassTypespecExtends : VPITraversalEdge<ClassTypespecObjects,
   ExtendsRel, HandleMode, ClassTypespecObjects, NoOrder, "37.32">;
 def VPIEarlyClassTypespecMethods : VPITraversalEdge<ClassTypespecObjects,
-  MethodsRel, IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.32">;
+  MethodsRel, IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.32", 0,
+  AutomaticDirectChild>;
 def VPIEarlyClassTypespecConstraints : VPITraversalEdge<ClassTypespecObjects,
   Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.32">;
 def VPIEarlyClassVarObject : VPITraversalEdge<ClassVarObjects, ClassObj,
@@ -762,6 +763,13 @@ def VPIEarlyClassObjTypespec : VPITraversalEdge<ClassObjectObjects,
   ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjVariables : VPITraversalEdge<ClassObjectObjects,
   VariablesRel, IterateMode, VPIEarlyVariables, NoOrder, "37.33">;
+// The scope diagram explicitly includes class objects (37.12).
+def VPIEarlyClassObjRegs : VPITraversalEdge<ClassObjectObjects, Reg,
+  IterateMode, RegObjects, NoOrder, "37.12">;
+def VPIEarlyClassObjRegArrays : VPITraversalEdge<ClassObjectObjects, RegArray,
+  IterateMode, RegArrayObjects, NoOrder, "37.12">;
+def VPIEarlyClassObjMemories : VPITraversalEdge<ClassObjectObjects, Memory,
+  IterateMode, RegArrayObjects, NoOrder, "37.12">;
 def VPIEarlyClassObjWaiters : VPITraversalEdge<ClassObjectObjects,
   WaitingProcessesRel, IterateMode, ThreadObjects, NoOrder, "37.33">;
 def VPIEarlyClassObjMessages : VPITraversalEdge<ClassObjectObjects,

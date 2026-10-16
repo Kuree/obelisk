@@ -97,6 +97,20 @@ uint32_t vpiKindForScope(SimScopeDeclOp scope) {
                  : static_cast<uint16_t>(reflection::VPIObjectKind::Module)));
 }
 
+uint32_t vpiKindForClassMember(VPITypeSemanticsAttr type) {
+  VPITypeSemanticsAttr element = type;
+  bool array = false;
+  while (element && element.getKind() == VPITypeKind::UnpackedArray) {
+    array = true;
+    if (element.getChildren().size() != 1)
+      break;
+    element = mlir::dyn_cast<VPITypeSemanticsAttr>(element.getChildren()[0]);
+  }
+  if (array && element && element.getKind() == VPITypeKind::Event)
+    return static_cast<uint32_t>(reflection::VPIObjectKind::NamedEventArray);
+  return vpiKindForStorage(type);
+}
+
 uint32_t vpiKindForStorage(VPITypeSemanticsAttr type) {
   using Kind = VPITypeKind;
   using VPIKind = reflection::VPIObjectKind;

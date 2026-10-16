@@ -388,6 +388,7 @@ LogicalResult rewriteBuiltinBaseClasses(ModuleOp module) {
              builder.getStringAttr(classType.getSymName() + ".$base")),
          builder.getNamedAttr("hierarchical_name", builder.getStringAttr(path)),
          builder.getNamedAttr("name", builder.getStringAttr("$base")),
+         builder.getNamedAttr("is_compiler_generated", builder.getUnitAttr()),
          builder.getNamedAttr("semantic_type", TypeAttr::get(type))});
     BuiltinBase base{type, path, symbolPath(property)};
     bases[classType.getSymName()] = base;

@@ -18,6 +18,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSet.h"
 
@@ -1220,7 +1221,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   });
   auto sourceAnchorKind = [&](Operation *operation) -> std::optional<VPIKind> {
     if (!isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
-             semantic::SVClassTypeOp, semantic::SVSubroutineSymbolOp,
+             semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
+             semantic::SVSubroutineSymbolOp,
              semantic::SVPropertySymbolOp, semantic::SVSequenceSymbolOp,
              semantic::SVClockingBlockSymbolOp, semantic::SVVariableSymbolOp,
              semantic::SVParameterSymbolOp, semantic::SVInstanceArraySymbolOp,
@@ -1265,12 +1267,24 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         return std::nullopt;
       return VPIKind::Parameter;
     }
-    if (isa<semantic::SVClassTypeOp>(operation))
+    if (isa<semantic::SVGenericClassDefSymbolOp>(operation))
       return VPIKind::ClassDefn;
-    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation))
+    if (auto classType = dyn_cast<semantic::SVClassTypeOp>(operation)) {
+      // A generic declaration has one lexical class definition. Its
+      // elaborated class types are specializations of that definition, not
+      // additional source declarations (IEEE 1800-2023 37.32).
+      if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()) ||
+          classType.getIsUninstantiated())
+        return std::nullopt;
+      return VPIKind::ClassDefn;
+    }
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(operation)) {
+      if (subroutine.getIsBuiltin().value_or(false))
+        return std::nullopt;
       return subroutine.getSubroutineKind() == semantic::SVSubroutineKind::Task
                  ? VPIKind::Task
                  : VPIKind::Function;
+    }
     if (isa<semantic::SVPropertySymbolOp>(operation))
       return VPIKind::PropertyDecl;
     if (isa<semantic::SVSequenceSymbolOp>(operation))
@@ -1382,6 +1396,18 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     anchorSymbols[source] =
         FlatSymbolRefAttr::get(builder.getContext(), symbolName);
     anchorInventoryIds[source] = inventoryId;
+  }
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> classTypespecSymbols;
+  llvm::DenseMap<Operation *, FlatSymbolRefAttr> classDefinitionSymbols;
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    StringAttr runtimeSymbol = classes.symbols.lookup(classType);
+    classTypespecSymbols[classType] = FlatSymbolRefAttr::get(
+        builder.getContext(),
+        (runtimeSymbol.getValue() + "_vpi_typespec").str());
+    Operation *definition = classType;
+    if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+      definition = classType->getParentOp();
+    classDefinitionSymbols[classType] = anchorSymbols.lookup(definition);
   }
   llvm::DenseMap<Operation *, uint64_t> nextAnchorOrdinal;
   auto identityProperties = [&](Operation *source, VPIKind sourceKind) {
@@ -1580,9 +1606,12 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   };
   for (auto [inventoryId, source] : llvm::enumerate(anchorSources)) {
     Operation *parent = source->getParentOp();
-    while (parent && !anchorSymbols.count(parent))
+    while (parent && !anchorSymbols.count(parent) &&
+           !classTypespecSymbols.count(parent))
       parent = parent->getParentOp();
     FlatSymbolRefAttr parentSymbol = anchorSymbols.lookup(parent);
+    if (!parentSymbol)
+      parentSymbol = classTypespecSymbols.lookup(parent);
     uint64_t ordinal = nextAnchorOrdinal[parent]++;
     uint64_t scopeId = scopes.lookup(source);
 
@@ -1690,7 +1719,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount, anchorVPIType, immutableValue,
-        hasExplicitParameterRange);
+        hasExplicitParameterRange, classes.methodSymbols.lookup(source));
     anchorDeclarations[source] = anchor;
     if (isa<semantic::SVPackageSymbolOp, semantic::SVCompilationUnitSymbolOp>(
             source))
@@ -1988,7 +2017,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
           DenseI64ArrayAttr{}, builder.getDenseI64ArrayAttr(indices),
           IntegerAttr{}, sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{},
-          UnitAttr{});
+          UnitAttr{}, FlatSymbolRefAttr{});
       if (sim::VPIPropertySetAttr properties =
               identityProperties(source, VPIKind::NamedEvent))
         member->setAttr("vpi_properties", properties);
@@ -1998,6 +2027,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     for (Operation *cursor = member; cursor; cursor = cursor->getParentOp()) {
       if (FlatSymbolRefAttr anchor = anchorSymbols.lookup(cursor))
         return anchor;
+      if (FlatSymbolRefAttr typespec = classTypespecSymbols.lookup(cursor))
+        return typespec;
       if (isa<semantic::SVStatementBlockSymbolOp>(cursor))
         return {};
     }
@@ -2457,6 +2488,147 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
   }
 
+  // Class declarations and their fully resolved types have independent VPI
+  // identities. The latter are shared by every variable of that class type,
+  // including variables whose current value is null.
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    FlatSymbolRefAttr owner = classDefinitionSymbols.lookup(classType);
+    if (!owner) {
+      emitError(getSemanticLocation(classType))
+          << "VPI class specialization is missing its lexical definition";
+      invalid = true;
+      continue;
+    }
+    FailureOr<sim::VPITypeSemanticsAttr> target = makeVPITypeSemantics(
+        classType.getSemanticType(), getSemanticLocation(classType), {},
+        classType);
+    if (failed(target)) {
+      invalid = true;
+      continue;
+    }
+    sim::SimVPITypespecDeclOp::create(
+        builder, getSemanticLocation(classType),
+        classTypespecSymbols.lookup(classType).getValue(), nextTypespecId++,
+        scopes.lookup(classType), owner.getValue(), getHierarchyName(classType),
+        getDebugName(classType), *target,
+        sim::VPITypespecOrigin::ClassSpecialization, IntegerAttr{});
+  }
+  // Nonparameterized declarations still have separate lexical and resolved
+  // member views. The executable method belongs to the canonical view so its
+  // IO declarations and body remain reachable from live class objects.
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+      continue;
+    uint64_t ordinal = 0;
+    for (Operation *child : getChildren(classType)) {
+      semantic::SVSubroutineSymbolOp method = getClassMethod(child);
+      sim::SimVPIObjectAnchorOp lexical = anchorDeclarations.lookup(method);
+      if (!lexical || !classes.methodSymbols.count(method))
+        continue;
+      auto specialized =
+          cast<sim::SimVPIObjectAnchorOp>(builder.clone(*lexical));
+      std::string symbolName =
+          "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+      specialized.setSymNameAttr(builder.getStringAttr(symbolName));
+      specialized.setInventoryIdAttr(
+          builder.getI64IntegerAttr(nextSyntheticInventoryId++));
+      specialized.setParentAttr(classTypespecSymbols.lookup(classType));
+      specialized.setOwnerOrdinalAttr(builder.getI64IntegerAttr(ordinal++));
+      sim::set<sim::metadata::VpiAnchor>(
+          method, FlatSymbolRefAttr::get(specialized.getSymNameAttr()));
+    }
+  }
+  auto emitClassRelation = [&](Location location, FlatSymbolRefAttr source,
+                               uint32_t selector, sim::VPIRelationMode mode,
+                               uint64_t ordinal, FlatSymbolRefAttr target) {
+    sim::SimVPIRelationDeclOp::create(
+        builder, location,
+        sim::VPIObjectRefAttr::get(builder.getContext(), source), selector,
+        mode, ordinal,
+        sim::VPIObjectRefAttr::get(builder.getContext(), target));
+  };
+  llvm::DenseSet<std::pair<Attribute, Attribute>> derivedDefinitions;
+  llvm::DenseMap<Attribute, uint64_t> nextDerivedOrdinal;
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    auto baseType = dyn_cast_or_null<semantic::ClassHandleType>(
+        classType.getBaseClass().value_or(Type{}));
+    if (!baseType)
+      continue;
+    semantic::SVClassTypeOp baseClass = classes.semanticClasses.lookup(
+        baseType.getClassName().getLeafReference());
+    FlatSymbolRefAttr baseTypespec = classTypespecSymbols.lookup(baseClass);
+    FlatSymbolRefAttr definition = classDefinitionSymbols.lookup(classType);
+    FlatSymbolRefAttr baseDefinition = classDefinitionSymbols.lookup(baseClass);
+    if (!baseTypespec || !definition || !baseDefinition) {
+      emitError(getSemanticLocation(classType))
+          << "VPI class inheritance cannot resolve its base class identity";
+      invalid = true;
+      continue;
+    }
+    emitClassRelation(getSemanticLocation(classType),
+                      classTypespecSymbols.lookup(classType), 677,
+                      sim::VPIRelationMode::Handle, 0, baseTypespec);
+    // Unlike the specialization inventory, 37.31 does not restrict derived
+    // definitions to immediate inheritance. Walk the ancestry of each
+    // concrete type and deduplicate definitions reached by multiple generic
+    // specializations.
+    llvm::SmallPtrSet<Operation *, 8> ancestors;
+    for (semantic::SVClassTypeOp ancestor = baseClass; ancestor;) {
+      if (!ancestors.insert(ancestor).second) {
+        emitError(getSemanticLocation(classType))
+            << "VPI class inheritance contains a cycle";
+        invalid = true;
+        break;
+      }
+      FlatSymbolRefAttr ancestorDefinition =
+          classDefinitionSymbols.lookup(ancestor);
+      if (!ancestorDefinition) {
+        emitError(getSemanticLocation(classType))
+            << "VPI class inheritance cannot resolve an ancestor definition";
+        invalid = true;
+        break;
+      }
+      if (derivedDefinitions.insert({ancestorDefinition, definition}).second)
+        emitClassRelation(getSemanticLocation(classType), ancestorDefinition,
+                          727, sim::VPIRelationMode::Iterate,
+                          nextDerivedOrdinal[ancestorDefinition]++, definition);
+      auto ancestorBase = dyn_cast_or_null<semantic::ClassHandleType>(
+          ancestor.getBaseClass().value_or(Type{}));
+      ancestor = ancestorBase
+                     ? classes.semanticClasses.lookup(
+                           ancestorBase.getClassName().getLeafReference())
+                     : semantic::SVClassTypeOp{};
+    }
+
+    // A nonparameterized class typespec may also represent the lexical
+    // construct. Parameterized lexical extends expressions need their own
+    // unresolved source typespec, rather than one chosen specialization.
+    if (isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()) ||
+        isa<semantic::SVGenericClassDefSymbolOp>(baseClass->getParentOp()))
+      continue;
+    std::string symbolName =
+        "__obelisk_vpi_anchor_" + std::to_string(nextSyntheticInventoryId);
+    auto extends = sim::SimVPIObjectAnchorOp::create(
+        builder, getSemanticLocation(classType), symbolName,
+        nextSyntheticInventoryId++, static_cast<uint32_t>(VPIKind::Extends),
+        scopes.lookup(classType), definition,
+        nextAnchorOrdinal[classType]++,
+        builder.getStringAttr((getHierarchyName(classType) + "::extends").str()),
+        builder.getStringAttr("extends"), UnitAttr{},
+        sim::VPIObjectBackingAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
+        DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
+        sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
+        FlatSymbolRefAttr{});
+    FlatSymbolRefAttr extendsRef =
+        FlatSymbolRefAttr::get(extends.getSymNameAttr());
+    emitClassRelation(getSemanticLocation(classType), definition, 677,
+                      sim::VPIRelationMode::Handle, 0, extendsRef);
+    emitClassRelation(getSemanticLocation(classType), extendsRef, 652,
+                      sim::VPIRelationMode::Handle, 0, definition);
+    emitClassRelation(getSemanticLocation(classType), extendsRef, 630,
+                      sim::VPIRelationMode::Handle, 0, baseTypespec);
+  }
+
   struct InterfaceTypespec {
     SymbolRefAttr identity;
     StringAttr modport;
@@ -2857,7 +3029,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               sim::VPIObjectBackingAttr{}, builder.getDenseI64ArrayAttr(bounds),
               builder.getDenseI64ArrayAttr(packed), DenseI64ArrayAttr{},
               DenseI64ArrayAttr{}, IntegerAttr{}, sim::VPITypeSemanticsAttr{},
-              sim::FrozenConstantAttr{}, UnitAttr{});
+              sim::FrozenConstantAttr{}, UnitAttr{}, FlatSymbolRefAttr{});
           anchor->setAttr("vpi_properties",
                           netProperties(cast<semantic::SVNetSymbolOp>(op)));
           return anchor;
@@ -2943,7 +3115,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
               builder.getDenseI64ArrayAttr(indices), IntegerAttr{},
               sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{},
-              UnitAttr{});
+              UnitAttr{}, FlatSymbolRefAttr{});
         }
         return;
       }
@@ -3183,7 +3355,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           lexicalOwnerSymbol, nextAnchorOrdinal[lexicalOwner]++, hierarchy,
           debug, UnitAttr{}, backing, DenseI64ArrayAttr{}, DenseI64ArrayAttr{},
           DenseI64ArrayAttr{}, DenseI64ArrayAttr{}, IntegerAttr{},
-          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{});
+          sim::VPITypeSemanticsAttr{}, sim::FrozenConstantAttr{}, UnitAttr{},
+        FlatSymbolRefAttr{});
       anchor->setAttr("vpi_properties", netProperties(net));
     }
     if (net.getNetKind() == semantic::SVNetKind::UserDefined) {
@@ -3206,6 +3379,73 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   for (Operation *op : designObjects)
     if (!portAliases.aliases.count(getHierarchyName(op)))
       emitDescriptor(op);
+
+  // Source properties are immutable declarations, even though the same field
+  // is backed by distinct storage in every live receiver. Keep that binding
+  // symbolic until native class layout is known to the bytecode serializer.
+  SymbolTable classSymbols(design);
+  for (semantic::SVClassTypeOp classType : classes.sources) {
+    for (Operation *child : getChildren(classType)) {
+      auto property = dyn_cast<semantic::SVClassPropertySymbolOp>(child);
+      if (!property || property.getIsCompilerGenerated().value_or(false))
+        continue;
+      FlatSymbolRefAttr fieldRef = classes.fieldSymbols.lookup(property);
+      if (!fieldRef)
+        continue;
+      auto field = dyn_cast_or_null<sim::SimClassFieldDeclOp>(
+          classSymbols.lookup(fieldRef.getValue()));
+      // Slang may materialize inherited embedded-covergroup declarations in
+      // a derived scope. They retain their base field identity and are reached
+      // through vpiExtends, not redeclared as properties of the derived class.
+      if (!field || field.getOwnerAttr().getValue() !=
+                        classes.symbols.lookup(classType).getValue())
+        continue;
+      auto semanticType = property.getSemanticType();
+      if (!semanticType) {
+        property.emitError("VPI class property is missing its semantic type");
+        invalid = true;
+        continue;
+      }
+      FailureOr<sim::VPITypeSemanticsAttr> vpiType = makeVPITypeSemantics(
+          *semanticType, getSemanticLocation(property),
+          typedefLayersFor(property), property);
+      if (failed(vpiType)) {
+        invalid = true;
+        continue;
+      }
+      IntegerAttr storageID, eventID;
+      if (field.getIsStatic()) {
+        auto descriptor = descriptors.find(getHierarchyName(property));
+        if (descriptor == descriptors.end() ||
+            (descriptor->second.kind != DescriptorInfo::Kind::Storage &&
+             descriptor->second.kind != DescriptorInfo::Kind::Event)) {
+          property.emitError("VPI static class property has no design backing");
+          invalid = true;
+          continue;
+        }
+        IntegerAttr id = builder.getI64IntegerAttr(descriptor->second.id);
+        if (descriptor->second.kind == DescriptorInfo::Kind::Storage)
+          storageID = id;
+        else
+          eventID = id;
+      }
+      auto emitMember = [&](FlatSymbolRefAttr owner) {
+        std::string symbolName =
+            "__obelisk_vpi_class_member_" +
+            std::to_string(nextSyntheticInventoryId);
+        auto declaration = sim::SimVPIClassMemberDeclOp::create(
+            builder, getSemanticLocation(property), symbolName,
+            nextSyntheticInventoryId++, scopes.lookup(property),
+            owner.getValue(), fieldRef.getValue(), getHierarchyName(property),
+            getDebugName(property),
+            *vpiType, storageID, eventID);
+        retainVPISourceTypeIdentity(property, declaration, *vpiType);
+      };
+      emitMember(classTypespecSymbols.lookup(classType));
+      if (!isa<semantic::SVGenericClassDefSymbolOp>(classType->getParentOp()))
+        emitMember(classDefinitionSymbols.lookup(classType));
+    }
+  }
 
   // A static constraint block has one mode bit shared by every instance of
   // its declaring class (IEEE 1800-2017 18.5.11). Keep that bit in flattened

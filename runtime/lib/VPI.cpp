@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -186,6 +187,9 @@ struct __vpiHandle {
   std::vector<VPISelectionStep> useSelectionSteps;
   obelisk::reflection::VPIObjectSetID requestedTargets{};
   VPIRelationRange relationRange{};
+  std::vector<VPIRelationRange> classMemberRanges;
+  size_t classMemberRange = 0;
+  std::set<std::string> seenClassMethods;
   size_t next = 0;
   std::string scratch;
   void *userData = nullptr;
@@ -540,6 +544,41 @@ vpiHandle makeHandle(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
     setError(state, "could not allocate VPI handle", vpiInternal);
     return nullptr;
   }
+}
+
+// Bind an immutable member declaration to a receiver only when the member
+// needs an instance. Static members retain their independent lifetime.
+vpiHandle makeRelatedHandle(__vpiHandle *source,
+                            obelisk_rt_design_cursor_v1 target,
+                            uint32_t targetType, bool statement = false) {
+  uint32_t sourceType = source->exactVpiType;
+  if (!sourceType)
+    (void)obelisk_rt_cached_vpi_type(source->owner->context, source->cursor,
+                                     &sourceType);
+  vpiHandle result =
+      makeHandle(source->owner, target, targetType, statement,
+                 obelisk::runtime::hasClassDefinitionValueOrigin(
+                     sourceType, source->classDefinitionOrigin, targetType));
+  if (!result || !source->dynamicObject)
+    return result;
+  VPIClassMemberBinding member{};
+  obelisk_rt_status status = obelisk_rt_cached_vpi_class_member(
+      source->owner->context, target, &member);
+  bool instanceMember = status == OBELISK_RT_OK && !member.isStatic;
+  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF) {
+    source->owner->handles.erase(reinterpret_cast<uintptr_t>(result));
+    setError(source->owner, "VPI class member binding is invalid", vpiInternal);
+    return nullptr;
+  }
+  if (instanceMember || targetType == vpiConstraint) {
+    auto *handle = findHandle(result);
+    if (!handle)
+      return nullptr;
+    handle->dynamicObject = source->dynamicObject;
+    handle->dynamicIdentity = source->dynamicIdentity;
+    handle->allocationScheme = vpiDynamicScheme;
+  }
+  return result;
 }
 
 uint32_t semanticTypespecKind(VPIState *state,
@@ -1053,6 +1092,15 @@ bool valueRequirementsSatisfied(
   using Requirement = obelisk::reflection::VPIValueRequirement;
   if (handle->form == VPIObjectForm::IntegralConstant)
     return true;
+  VPIClassMemberBinding member{};
+  if (obelisk_rt_cached_vpi_class_member(handle->owner->context, handle->cursor,
+                                         &member) == OBELISK_RT_OK &&
+      !member.isStatic && !handle->dynamicObject) {
+    setError(handle->owner,
+             "a non-static class member requires a live class object",
+             vpiNotice);
+    return false;
+  }
   VPIFrozenValue frozen{};
   if (handle->form == VPIObjectForm::Design &&
       obelisk_rt_cached_vpi_frozen_value(handle->owner->context, handle->cursor,
@@ -1088,12 +1136,6 @@ bool valueRequirementsSatisfied(
       return false;
     }
   }
-  // The current immutable database contains runtime design storage only: it
-  // has no physical record kind for variables reached from a non-static class
-  // typespec, nor for constants. Consequently the remaining two generated
-  // origin/string requirements are structurally unreachable until those
-  // object records are introduced; their serializer must add provenance at
-  // the same time.
   return true;
 }
 
@@ -1348,11 +1390,20 @@ int exactTypeFor(VPIState *state, obelisk_rt_design_cursor_v1 cursor,
   return vpiTypeFor(fallbackKind);
 }
 
-bool nameFor(__vpiHandle *handle, std::string &name) {
+bool nameFor(__vpiHandle *handle, std::string &name, bool localMember = false) {
   const uint8_t *data = nullptr;
   uint64_t size = 0;
   obelisk_rt_status status = obelisk_rt_cached_design_name(
       handle->owner->context, handle->cursor, &data, &size);
+  if (localMember) {
+    VPIClassMemberBinding member{};
+    if (obelisk_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK) {
+      data = member.name;
+      size = member.nameSize;
+      status = OBELISK_RT_OK;
+    }
+  }
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "design name lookup failed");
     return false;
@@ -1921,6 +1972,8 @@ makeIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->protectedObject = source->protectedObject;
     handle->allocationScheme = source->allocationScheme;
     handle->classDefinitionOrigin = source->classDefinitionOrigin;
+    handle->dynamicObject = source->dynamicObject;
+    handle->dynamicIdentity = source->dynamicIdentity;
     handle->suppressSemanticDimension = steps.back().suppressSemanticDimension;
     handle->selectionRootType = rootType;
     handle->selectionAccessKind = accessKind;
@@ -2015,8 +2068,8 @@ vpiHandle makeIndexedPrefix(__vpiHandle *source, size_t count) {
       count > source->selectionSteps.size())
     return nullptr;
   if (count == 0)
-    return makeHandle(source->owner, source->cursor, source->selectionRootType,
-                      source->statement, source->classDefinitionOrigin);
+    return makeRelatedHandle(source, source->cursor, source->selectionRootType,
+                             source->statement);
   OBELISK_RT_TRY {
     std::vector<VPISelectionStep> prefix(
         source->selectionSteps.begin(), source->selectionSteps.begin() + count);
@@ -2323,6 +2376,8 @@ vpiHandle makeRelationIndexedHandle(__vpiHandle *source, uint32_t rootType,
     handle->protectedObject = source->protectedObject;
     handle->allocationScheme = source->allocationScheme;
     handle->classDefinitionOrigin = source->classDefinitionOrigin;
+    handle->dynamicObject = source->dynamicObject;
+    handle->dynamicIdentity = source->dynamicIdentity;
     handle->selectionRootType = rootType;
     handle->selectionAccessKind =
         obelisk::reflection::VPIIndexedAccessKind::RelationElement;
@@ -2996,6 +3051,8 @@ void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.useSuppressSemanticAlias = source.suppressSemanticAlias;
   iterator.useSuppressSemanticDimension = source.suppressSemanticDimension;
   iterator.useClassDefinitionOrigin = source.classDefinitionOrigin;
+  iterator.dynamicObject = source.dynamicObject;
+  iterator.dynamicIdentity = source.dynamicIdentity;
   iterator.useForm = source.form;
   iterator.useSemanticCursor = source.semanticCursor;
   iterator.useSemanticEdge = source.semanticEdge;
@@ -3013,6 +3070,23 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
                                   iterator->interModPathEndpoints);
   if (!iterator->hasUse)
     return nullptr;
+  auto finish = [&](vpiHandle result) {
+    if (result) {
+      if (auto *handle = findHandle(result)) {
+        handle->dynamicObject = iterator->dynamicObject;
+        handle->dynamicIdentity = iterator->dynamicIdentity;
+        handle->allocationScheme = iterator->useAllocationScheme;
+      }
+    }
+    return result;
+  };
+  if (iterator->useForm == VPIObjectForm::ClassObject) {
+    vpiHandle result =
+        makeHandle(iterator->owner, iterator->useCursor, vpiClassObj);
+    if (auto *handle = result ? findHandle(result) : nullptr)
+      handle->form = VPIObjectForm::ClassObject;
+    return finish(result);
+  }
   if (iterator->useForm == VPIObjectForm::Design) {
     vpiHandle result =
         makeHandle(iterator->owner, iterator->useCursor, iterator->useType,
@@ -3021,7 +3095,7 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       if (__vpiHandle *handle = findHandle(result))
         handle->allocationScheme = iterator->useAllocationScheme;
     }
-    return result;
+    return finish(result);
   }
   if (iterator->useForm == VPIObjectForm::Indexed) {
     OBELISK_RT_TRY {
@@ -3030,6 +3104,8 @@ vpiHandle makeUseHandle(__vpiHandle *iterator) {
       source.cursor = iterator->useCursor;
       source.statement = iterator->useStatement;
       source.classDefinitionOrigin = iterator->useClassDefinitionOrigin;
+      source.dynamicObject = iterator->dynamicObject;
+      source.dynamicIdentity = iterator->dynamicIdentity;
       source.selectionRootType = iterator->useSelectionRootType;
       source.selectionAccessKind = iterator->useSelectionAccessKind;
       source.selectionBitOffset = iterator->useSelectionBitOffset;
@@ -3209,6 +3285,69 @@ bool encodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
   return false;
 }
 
+obelisk_rt_status readClassMemberBits(__vpiHandle *handle,
+                                      obelisk_rt_design_cursor_v1 cursor,
+                                      uint64_t firstBit, uint64_t bitWidth,
+                                      uint64_t *value, uint64_t *unknown) {
+  VPIClassMemberBinding member{};
+  obelisk_rt_status status = obelisk_rt_cached_vpi_class_member(
+      handle->owner->context, cursor, &member);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (member.isMethod || handle->classDefinitionOrigin ||
+      (!member.isStatic && !handle->dynamicObject)) {
+    setError(handle->owner, "class member has no readable actual", vpiNotice);
+    return OBELISK_RT_INVALID_HANDLE;
+  }
+  if (member.isStatic)
+    return member.backingStorage.offset
+               ? obelisk_rt_read_design_slice(handle->owner->context,
+                                              member.backingStorage, firstBit,
+                                              bitWidth, value, unknown)
+               : OBELISK_RT_INVALID_HANDLE;
+
+  ManagedExecutionScope managed(handle->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+    return OBELISK_RT_INVALID_LIFECYCLE;
+  ManagedObjectLease lease;
+  if (obelisk_rt_managed_object_acquire(
+          managed.getLane(), handle->dynamicObject, OBELISK_RT_MANAGED_CLASS,
+          &lease) != OBELISK_RT_OK ||
+      obelisk_rt_v1_object_id(handle->dynamicObject) != handle->dynamicIdentity)
+    return OBELISK_RT_INVALID_HANDLE;
+  const auto *descriptor =
+      obelisk_rt_managed_object_class_descriptor(handle->dynamicObject);
+  while (descriptor && descriptor->class_id != member.classID)
+    descriptor = descriptor->base;
+  if (!descriptor)
+    return OBELISK_RT_INVALID_HANDLE;
+
+  obelisk_rt_design_info_v1 root{};
+  obelisk_rt_design_type_info_v1 type{};
+  if (obelisk_rt_cached_design_info(handle->owner->context, cursor, &root) !=
+          OBELISK_RT_OK ||
+      obelisk_rt_cached_design_type_info(
+          handle->owner->context, {root.type_offset}, &type) != OBELISK_RT_OK ||
+      firstBit > root.bit_width || bitWidth > root.bit_width - firstBit)
+    return OBELISK_RT_INVALID_DESIGN;
+  const uint64_t planeSize = root.bit_width / 8 + (root.bit_width % 8 != 0);
+  const bool fourState = (type.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+  if (member.byteOffset > lease.extent ||
+      planeSize > (lease.extent - member.byteOffset) / (fourState ? 2 : 1))
+    return OBELISK_RT_INVALID_DESIGN;
+  const uint8_t *bytes = lease.object + member.byteOffset;
+  for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+    uint64_t sourceBit = firstBit + bit;
+    uint64_t mask = uint64_t{1} << (bit % 64);
+    if ((bytes[sourceBit / 8] >> (sourceBit % 8)) & 1)
+      value[bit / 64] |= mask;
+    if (fourState && unknown &&
+        ((bytes[planeSize + sourceBit / 8] >> (sourceBit % 8)) & 1))
+      unknown[bit / 64] |= mask;
+  }
+  return OBELISK_RT_OK;
+}
+
 bool readValue(__vpiHandle *handle, const VPIValueSource &source,
                std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
   const auto &info = source.info;
@@ -3233,6 +3372,14 @@ bool readValue(__vpiHandle *handle, const VPIValueSource &source,
   if (source.form == VPIObjectForm::IntegralConstant) {
     value[0] = static_cast<uint64_t>(handle->integralValue);
     return true;
+  }
+  obelisk_rt_status memberStatus =
+      readClassMemberBits(handle, source.cursor, source.selectionBitOffset,
+                          info.bit_width, value.data(), unknown.data());
+  if (memberStatus != OBELISK_RT_EOF) {
+    if (memberStatus != OBELISK_RT_OK && !handle->owner->errorLevel)
+      setError(handle->owner, "VPI class member read failed", vpiInternal);
+    return memberStatus == OBELISK_RT_OK;
   }
   if (source.form == VPIObjectForm::Design) {
     VPIFrozenValue frozen{};
@@ -3294,13 +3441,18 @@ bool readManagedStateWord(__vpiHandle *handle,
     return false;
   }
   uint64_t unknown = 0;
-  obelisk_rt_status status =
-      form == VPIObjectForm::Indexed
-          ? obelisk_rt_read_design_slice(handle->owner->context, cursor,
-                                         selectionBitOffset, 64, &word,
-                                         &unknown)
-          : obelisk_rt_v1_design_read(handle->owner->context, cursor, &word,
-                                      &unknown, 64);
+  word = 0;
+  obelisk_rt_status status = readClassMemberBits(
+      handle, cursor, selectionBitOffset, 64, &word, &unknown);
+  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+    return false;
+  if (status == OBELISK_RT_EOF)
+    status = form == VPIObjectForm::Indexed
+                 ? obelisk_rt_read_design_slice(handle->owner->context, cursor,
+                                                selectionBitOffset, 64, &word,
+                                                &unknown)
+                 : obelisk_rt_v1_design_read(handle->owner->context, cursor,
+                                             &word, &unknown, 64);
   if (status != OBELISK_RT_OK) {
     setError(handle->owner, "managed VPI state read failed", vpiInternal);
     return false;
@@ -3831,6 +3983,160 @@ vpiHandle classObjectTypespec(__vpiHandle *handle) {
   return makeHandle(handle->owner, typespec, vpiClassTypespec);
 }
 
+vpiHandle makeReceiverHandle(__vpiHandle *source) {
+  vpiHandle result = classObjectTypespec(source);
+  if (auto *handle = result ? findHandle(result) : nullptr) {
+    handle->form = VPIObjectForm::ClassObject;
+    handle->exactVpiType = vpiClassObj;
+    handle->dynamicObject = source->dynamicObject;
+    handle->dynamicIdentity = source->dynamicIdentity;
+    handle->allocationScheme = vpiDynamicScheme;
+  }
+  return result;
+}
+
+vpiHandle classMemberByName(__vpiHandle *source, std::string_view name) {
+  obelisk_rt_design_cursor_v1 scope = source->cursor;
+  std::set<uint64_t> visited;
+  constexpr PLI_INT32 selectors[] = {
+      vpiVariables,       vpiMethods,    vpiNamedEvent,
+      vpiNamedEventArray, vpiConstraint, vpiParameter,
+      vpiInternalScope,   vpiTypedef,    vpiClassDefn};
+  for (;;) {
+    if (!visited.insert(scope.offset).second)
+      return nullptr;
+    bool isProtected = false;
+    if (!fixedProtectionFor(source->owner, scope, isProtected) || isProtected)
+      return nullptr;
+    for (PLI_INT32 selector : selectors) {
+      VPIRelationRange range{};
+      if (obelisk_rt_cached_vpi_relation_range(source->owner->context, scope,
+                                               selector, true,
+                                               &range) != OBELISK_RT_OK)
+        continue;
+      for (uint64_t index = 0; index != range.count; ++index) {
+        obelisk_rt_design_cursor_v1 target{};
+        uint32_t type = 0;
+        bool statement = false;
+        const uint8_t *data = nullptr;
+        uint64_t size = 0;
+        if (obelisk_rt_cached_vpi_relation_target(
+                source->owner->context, range.first + index, &target, &type,
+                &statement) != OBELISK_RT_OK ||
+            obelisk_rt_cached_design_name(source->owner->context, target, &data,
+                                          &size) != OBELISK_RT_OK)
+          return nullptr;
+        std::string_view qualified(reinterpret_cast<const char *>(data), size);
+        // Match the declaration name, using the same qualification convention
+        // as vpiName. Traversal supplies ownership; names never infer edges.
+        size_t separator = qualified.find_last_of(".:");
+        std::string_view local = separator == std::string_view::npos
+                                     ? qualified
+                                     : qualified.substr(separator + 1);
+        VPIClassMemberBinding member{};
+        if (obelisk_rt_cached_vpi_class_member(source->owner->context, target,
+                                               &member) == OBELISK_RT_OK)
+          local = std::string_view(reinterpret_cast<const char *>(member.name),
+                                   member.nameSize);
+        if (local == name)
+          return makeRelatedHandle(source, target, type, statement);
+      }
+    }
+    VPIRelationRange base{};
+    if (obelisk_rt_cached_vpi_relation_range(source->owner->context, scope,
+                                             vpiExtends, false,
+                                             &base) != OBELISK_RT_OK)
+      return nullptr;
+    uint32_t type = 0;
+    bool statement = false;
+    if (obelisk_rt_cached_vpi_relation_target(source->owner->context,
+                                              base.first, &scope, &type,
+                                              &statement) != OBELISK_RT_OK ||
+        type != vpiClassTypespec || statement)
+      return nullptr;
+  }
+}
+
+vpiHandle classPathByName(__vpiHandle *source, std::string_view path) {
+  if (!source || path.empty() ||
+      !allowProtectedSource(source, "class member lookup"))
+    return nullptr;
+  VPIState *state = source->owner;
+  vpiHandle receiver = nullptr;
+  vpiHandle result = nullptr;
+  OBELISK_RT_TRY {
+    if (vpiTypeForHandle(source) == vpiClassVar) {
+      receiver = makeClassObjectHandle(source);
+      if (!receiver)
+        return nullptr;
+      source = findHandle(receiver);
+    }
+    uint32_t type = static_cast<uint32_t>(vpiTypeForHandle(source));
+    bool escaped = path.front() == '\\';
+    size_t end = path.find_first_of(escaped ? " \t\r\n" : ".[");
+    size_t begin = escaped ? 1 : 0;
+    std::string_view memberName = path.substr(begin, end - begin);
+    if (type == vpiClassObj || type == vpiClassTypespec || type == vpiClassDefn)
+      result = classMemberByName(source, memberName);
+    else if (obelisk::reflection::findVPITraversal(
+                 type, vpiMember,
+                 obelisk::reflection::VPITraversalMode::Iterate)) {
+      obelisk_rt_design_cursor_v1 semantic{};
+      obelisk_rt_design_semantic_type_info_v1 info{};
+      if (semanticCursorFor(source, semantic) &&
+          semanticTypeInfo(source, semantic, info))
+        for (uint32_t index = 0; index != info.edge_count; ++index) {
+          obelisk_rt_design_semantic_type_edge_v1 edge{};
+          if (!semanticEdge(source, semantic, index, edge))
+            break;
+          if (edge.role == OBELISK_RT_DESIGN_SEMANTIC_EDGE_MEMBER &&
+              std::string_view(reinterpret_cast<const char *>(edge.name),
+                               edge.name_size) == memberName) {
+            result = handleByAggregateMember(source, index);
+            break;
+          }
+        }
+    }
+    size_t position = end == std::string_view::npos ? path.size() : end;
+    if (escaped)
+      while (position < path.size() &&
+             std::isspace(static_cast<unsigned char>(path[position])))
+        ++position;
+    while (result && position < path.size() && path[position] == '[') {
+      size_t close = path.find(']', position + 1);
+      PLI_INT32 index = 0;
+      if (close == std::string_view::npos ||
+          !parseHierarchicalIndex(std::string(path), position + 1, close,
+                                  index)) {
+        source->owner->handles.erase(reinterpret_cast<uintptr_t>(result));
+        result = nullptr;
+        break;
+      }
+      vpiHandle selected = handleByIndices(result, 1, &index);
+      source->owner->handles.erase(reinterpret_cast<uintptr_t>(result));
+      result = selected;
+      position = close + 1;
+    }
+    if (result && position < path.size()) {
+      vpiHandle nested =
+          path[position] == '.'
+              ? classPathByName(findHandle(result), path.substr(position + 1))
+              : nullptr;
+      source->owner->handles.erase(reinterpret_cast<uintptr_t>(result));
+      result = nested;
+    }
+    if (receiver)
+      state->handles.erase(reinterpret_cast<uintptr_t>(receiver));
+    return result;
+  }
+  OBELISK_RT_CATCH_ALL {
+    state->handles.erase(reinterpret_cast<uintptr_t>(result));
+    state->handles.erase(reinterpret_cast<uintptr_t>(receiver));
+    setError(state, "could not resolve class member name", vpiSystem);
+    return nullptr;
+  }
+}
+
 } // namespace
 
 obelisk_rt_status
@@ -4144,6 +4450,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
   bool absolute = requested.rfind("$root.", 0) == 0;
   if (absolute)
     requested.erase(0, 6);
+  if (base && !absolute &&
+      (vpiTypeForHandle(base) == vpiClassObj ||
+       vpiTypeForHandle(base) == vpiClassVar ||
+       vpiTypeForHandle(base) == vpiClassDefn ||
+       vpiTypeForHandle(base) == vpiClassTypespec))
+    return classPathByName(base, requested);
   uint32_t sourceType = 0;
   bool sourceClassDefinitionOrigin = false;
   std::string compatibilityName;
@@ -4187,6 +4499,39 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
         (!compatibilityName.empty() &&
          protectedNameIntermediate(state, compatibilityName)))
       return nullptr;
+    // A class variable's value supplies the receiver for the remainder of a
+    // hierarchical name (37.33 detail 9). The prefix uses the ordinary index;
+    // member ownership is resolved through the specialization's relations.
+    for (size_t split = requested.rfind('.'); split != std::string::npos;
+         split = split == 0 ? std::string::npos
+                            : requested.rfind('.', split - 1)) {
+      obelisk_rt_design_cursor_v1 prefix{};
+      uint32_t prefixType = 0;
+      std::string prefixName = requested.substr(0, split);
+      vpiHandle prefixHandle = nullptr;
+      if (lookup(state, prefixName, prefix) &&
+          obelisk_rt_cached_vpi_type(state->context, prefix, &prefixType) ==
+              OBELISK_RT_OK &&
+          prefixType == vpiClassVar)
+        prefixHandle = makeHandle(state, prefix, prefixType, false,
+                                  sourceClassDefinitionOrigin);
+      else if (!prefixName.empty() && prefixName.back() == ']')
+        prefixHandle = handleSyntheticSelectionByName(
+            state, prefixName, sourceClassDefinitionOrigin);
+      if (!prefixHandle)
+        continue;
+      __vpiHandle *prefixObject =
+          prefixHandle ? findHandle(prefixHandle) : nullptr;
+      vpiHandle member =
+          prefixObject && vpiTypeForHandle(prefixObject) == vpiClassVar &&
+                  allowProtectedSource(prefixObject, "class lookup")
+              ? classPathByName(prefixObject,
+                                std::string_view(requested).substr(split + 1))
+              : nullptr;
+      state->handles.erase(reinterpret_cast<uintptr_t>(prefixHandle));
+      if (member)
+        return member;
+    }
     if (vpiHandle indexed = handleSyntheticSelectionByName(
             state, requested, sourceClassDefinitionOrigin))
       return indexed;
@@ -4211,6 +4556,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle_by_name(PLI_BYTE8 *name,
              vpiNotice);
     return nullptr;
   }
+  if (base && !absolute)
+    return makeRelatedHandle(base, cursor, exactType);
   return makeHandle(state, cursor, exactType, false,
                     obelisk::runtime::hasClassDefinitionValueOrigin(
                         sourceType, sourceClassDefinitionOrigin, exactType));
@@ -4255,6 +4602,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     return makeClassObjectHandle(handle);
   if (handle->form == VPIObjectForm::ClassObject)
     return type == vpiClassTypespec ? classObjectTypespec(handle) : nullptr;
+  if (handle->dynamicObject && type == vpiParent && sourceType == vpiConstraint)
+    return makeReceiverHandle(handle);
   // Class-variable type queries denote the declared specialization even
   // when the image also records a lexical typedef-use relation (37.32/37.33).
   // The semantic path retains the lexical exception for class definitions.
@@ -4472,10 +4821,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
         return nullptr;
       return makeSimulatedNetHandle(target, targetType);
     }
-    return makeHandle(
-        handle->owner, target, targetType, targetIsStatement,
-        obelisk::runtime::hasClassDefinitionValueOrigin(
-            sourceType, handle->classDefinitionOrigin, targetType));
+    if (handle->dynamicObject && type == vpiScope &&
+        targetType == vpiClassTypespec)
+      return makeReceiverHandle(handle);
+    return makeRelatedHandle(handle, target, targetType, targetIsStatement);
   }
   if (relationStatus != OBELISK_RT_EOF)
     return nullptr;
@@ -4710,6 +5059,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
     sourceStatement = handle->statement;
     sourceClassDefinitionOrigin = handle->classDefinitionOrigin;
     sourceDesign = handle->form == VPIObjectForm::Design;
+    if (handle->form == VPIObjectForm::ClassObject) {
+      if (!obelisk::reflection::findVPITraversal(
+              vpiClassObj, static_cast<uint32_t>(type),
+              obelisk::reflection::VPITraversalMode::Iterate))
+        return nullptr;
+      // The specialization owns the immutable member inventory. The iterator
+      // retains a weak receiver recipe for automatic members only.
+      sourceDesign = true;
+    }
     sourceType = handle->exactVpiType;
     if (sourceType == 0 &&
         obelisk_rt_cached_vpi_type(state->context, parent, &sourceType) !=
@@ -4761,6 +5119,55 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
   } else if (obelisk_rt_cached_design_root(state->context, &parent) !=
              OBELISK_RT_OK) {
     return nullptr;
+  }
+  if (reference &&
+      (sourceType == vpiClassObj || sourceType == vpiClassTypespec) &&
+      (type == vpiVariables || type == vpiMethods || type == vpiNamedEvent ||
+       type == vpiNamedEventArray || type == vpiVirtualInterfaceVar ||
+       type == vpiParameter || type == vpiReg || type == vpiRegArray ||
+       type == vpiMemory)) {
+    OBELISK_RT_TRY {
+      std::vector<VPIRelationRange> ranges;
+      std::set<uint64_t> visited;
+      auto scope = parent;
+      while (visited.insert(scope.offset).second) {
+        bool isProtected = false;
+        if (!fixedProtectionFor(state, scope, isProtected) || isProtected)
+          break;
+        VPIRelationRange range{};
+        if (obelisk_rt_cached_vpi_relation_range(state->context, scope, type,
+                                                 true, &range) == OBELISK_RT_OK)
+          ranges.push_back(range);
+        VPIRelationRange base{};
+        if (obelisk_rt_cached_vpi_relation_range(state->context, scope,
+                                                 vpiExtends, false,
+                                                 &base) != OBELISK_RT_OK)
+          break;
+        uint32_t baseType = 0;
+        bool statement = false;
+        if (obelisk_rt_cached_vpi_relation_target(
+                state->context, base.first, &scope, &baseType, &statement) !=
+                OBELISK_RT_OK ||
+            baseType != vpiClassTypespec || statement)
+          return nullptr;
+      }
+      if (ranges.empty())
+        return nullptr;
+      auto iterator = std::make_unique<__vpiHandle>();
+      iterator->owner = state;
+      iterator->kind = VPIHandleKind::Iterator;
+      iterator->iteratorType = type;
+      iterator->relationIterator = true;
+      iterator->relationRange = ranges.front();
+      iterator->classMemberRanges = std::move(ranges);
+      copyUseRecipe(*iterator, *referenceHandle);
+      iterator->classDefinitionOrigin = sourceClassDefinitionOrigin;
+      return keepHandle(state, std::move(iterator));
+    }
+    OBELISK_RT_CATCH_ALL {
+      setError(state, "could not allocate class member iterator", vpiSystem);
+      return nullptr;
+    }
   }
   VPIRelationRange range{};
   obelisk_rt_status relationStatus = OBELISK_RT_EOF;
@@ -5085,33 +5492,66 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
     return result;
   }
   if (iterator->relationIterator) {
-    if (iterator->next == iterator->relationRange.count) {
-      iterator->owner->handles.erase(iterator->token);
-      return nullptr;
-    }
-    obelisk_rt_design_cursor_v1 target{};
-    uint32_t targetType = 0;
-    bool targetIsStatement = false;
-    obelisk_rt_status status = obelisk_rt_cached_vpi_relation_target(
-        iterator->owner->context,
-        iterator->relationRange.first + iterator->next, &target, &targetType,
-        &targetIsStatement);
-    if (status != OBELISK_RT_OK) {
+    for (;;) {
+      if (iterator->next == iterator->relationRange.count) {
+        if (++iterator->classMemberRange < iterator->classMemberRanges.size()) {
+          iterator->relationRange =
+              iterator->classMemberRanges[iterator->classMemberRange];
+          iterator->next = 0;
+          continue;
+        }
+        iterator->owner->handles.erase(iterator->token);
+        return nullptr;
+      }
+      obelisk_rt_design_cursor_v1 target{};
+      uint32_t targetType = 0;
+      bool targetIsStatement = false;
+      obelisk_rt_status status = obelisk_rt_cached_vpi_relation_target(
+          iterator->owner->context,
+          iterator->relationRange.first + iterator->next, &target, &targetType,
+          &targetIsStatement);
+      if (status != OBELISK_RT_OK) {
+        VPIState *state = iterator->owner;
+        state->handles.erase(iterator->token);
+        setError(state, "VPI relation target lookup failed", vpiInternal);
+        return nullptr;
+      }
+      ++iterator->next;
+      if (!iterator->classMemberRanges.empty() &&
+          iterator->iteratorType == vpiMethods) {
+        VPIClassMemberBinding member{};
+        if (obelisk_rt_cached_vpi_class_member(iterator->owner->context, target,
+                                               &member) == OBELISK_RT_OK) {
+          OBELISK_RT_TRY {
+            if (!iterator->seenClassMethods
+                     .emplace(reinterpret_cast<const char *>(member.name),
+                              member.nameSize)
+                     .second)
+              continue;
+          }
+          OBELISK_RT_CATCH_ALL {
+            VPIState *state = iterator->owner;
+            state->handles.erase(iterator->token);
+            setError(state, "could not track inherited VPI methods", vpiSystem);
+            return nullptr;
+          }
+        }
+      }
       VPIState *state = iterator->owner;
-      state->handles.erase(iterator->token);
-      setError(state, "VPI relation target lookup failed", vpiInternal);
-      return nullptr;
+      const uintptr_t iteratorToken = iterator->token;
+      __vpiHandle source;
+      source.owner = state;
+      source.cursor = iterator->useCursor;
+      source.exactVpiType = iterator->useType;
+      source.classDefinitionOrigin = iterator->classDefinitionOrigin;
+      source.dynamicObject = iterator->dynamicObject;
+      source.dynamicIdentity = iterator->dynamicIdentity;
+      vpiHandle result =
+          makeRelatedHandle(&source, target, targetType, targetIsStatement);
+      if (!result)
+        state->handles.erase(iteratorToken);
+      return result;
     }
-    ++iterator->next;
-    VPIState *state = iterator->owner;
-    const uintptr_t iteratorToken = iterator->token;
-    vpiHandle result = makeHandle(
-        state, target, targetType, targetIsStatement,
-        obelisk::runtime::hasClassDefinitionValueOrigin(
-            iterator->useType, iterator->classDefinitionOrigin, targetType));
-    if (!result)
-      state->handles.erase(iteratorToken);
-    return result;
   }
   if (iterator->designIterator) {
     if (iterator->cursor.offset == 0) {
@@ -5239,8 +5679,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // provenance when they are created. Dynamic class-object, virtual-interface,
   // and frame representations will refine this branch when those handle forms
   // are introduced.
-  if (property == vpiHasActual)
-    return !handle->classDefinitionOrigin;
+  if (property == vpiHasActual) {
+    if (handle->classDefinitionOrigin)
+      return 0;
+    VPIClassMemberBinding member{};
+    if (obelisk_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK)
+      return member.isStatic || handle->dynamicObject != nullptr;
+    return 1;
+  }
   // Class methods are always automatic. Variable objects derive their
   // declaration lifetime from allocation provenance because the same exact
   // VPI kind may denote persistent storage, an automatic frame local, or a
@@ -5252,6 +5699,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
         static_cast<uint32_t>(vpiTypeForHandle(handle));
     if (objectType == vpiClassDefn || objectType == vpiClassTypespec)
       return 1;
+    VPIClassMemberBinding member{};
+    if (obelisk_rt_cached_vpi_class_member(
+            handle->owner->context, handle->cursor, &member) == OBELISK_RT_OK &&
+        !member.isMethod)
+      return !member.isStatic;
     if (isVariableVPIKind(objectType))
       return handle->allocationScheme == vpiOtherScheme ? 0 : 1;
   }
@@ -5946,6 +6398,22 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiName || property == vpiFullName) {
+    if (property == vpiName) {
+      VPIClassMemberBinding member{};
+      if (obelisk_rt_cached_vpi_class_member(handle->owner->context,
+                                             handle->cursor,
+                                             &member) == OBELISK_RT_OK) {
+        return nameFor(handle, scratch, true) ? scratch.data() : nullptr;
+      }
+    }
+    if (property == vpiFullName && handle->dynamicObject) {
+      VPIClassMemberBinding member{};
+      if (obelisk_rt_cached_vpi_class_member(handle->owner->context,
+                                             handle->cursor,
+                                             &member) == OBELISK_RT_OK &&
+          !member.isStatic && !member.isMethod)
+        return nullptr;
+    }
     if (property == vpiName && !handle->statement) {
       obelisk_rt_design_info_v1 info{};
       if (obelisk_rt_cached_design_info(handle->owner->context, handle->cursor,
@@ -6433,10 +6901,21 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return nullptr;
+  if (!allowProtectedSource(handle, "vpi_put_value"))
+    return nullptr;
   obelisk_rt_context *context = handle->owner->context;
   if (!context->execution ||
       (context->execution->flags & OBELISK_RT_EXECUTION_VPI_WRITE) == 0) {
     setError(handle->owner, "VPI mutation requires --vpi=full");
+    return nullptr;
+  }
+  VPIClassMemberBinding member{};
+  bool classMember = obelisk_rt_cached_vpi_class_member(
+                         context, handle->cursor, &member) == OBELISK_RT_OK;
+  if (handle->classDefinitionOrigin ||
+      (classMember &&
+       (member.isMethod || (!member.isStatic && !handle->dynamicObject)))) {
+    setError(handle->owner, "class member has no writable actual", vpiNotice);
     return nullptr;
   }
   if (handle->form == VPIObjectForm::Indexed) {
@@ -6449,8 +6928,15 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
     setError(handle->owner, "VPI driver writes are not supported");
     return nullptr;
   }
+  const auto storage =
+      classMember && member.isStatic ? member.backingStorage : handle->cursor;
+  if (classMember && !member.isStatic && flags != vpiNoDelay) {
+    setError(handle->owner, "class member writes require vpiNoDelay",
+             vpiNotice);
+    return nullptr;
+  }
   if (flags == vpiReleaseFlag) {
-    if (obelisk_rt_v1_design_release(context, handle->cursor) != OBELISK_RT_OK)
+    if (obelisk_rt_v1_design_release(context, storage) != OBELISK_RT_OK)
       setError(handle->owner, "VPI release failed");
     else if (source)
       // IEEE 1800-2023 38.34: release returns the object's resolved value.
@@ -6466,11 +6952,54 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   if (!decodeValue(handle, source, info.bit_width, vpiTypeForHandle(handle),
                    value, unknown))
     return nullptr;
+  if (classMember && !member.isStatic) {
+    ContextTransaction transaction(context);
+    ManagedExecutionScope managed(context);
+    ManagedObjectLease lease;
+    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane() ||
+        obelisk_rt_managed_object_acquire(
+            managed.getLane(), handle->dynamicObject, OBELISK_RT_MANAGED_CLASS,
+            &lease) != OBELISK_RT_OK ||
+        obelisk_rt_v1_object_id(handle->dynamicObject) !=
+            handle->dynamicIdentity) {
+      setError(handle->owner, "class member receiver is invalid");
+      return nullptr;
+    }
+    const auto *descriptor =
+        obelisk_rt_managed_object_class_descriptor(handle->dynamicObject);
+    while (descriptor && descriptor->class_id != member.classID)
+      descriptor = descriptor->base;
+    obelisk_rt_design_type_info_v1 type{};
+    if (!descriptor ||
+        obelisk_rt_cached_design_type_info(context, {info.type_offset},
+                                           &type) != OBELISK_RT_OK) {
+      setError(handle->owner, "class member layout is invalid", vpiInternal);
+      return nullptr;
+    }
+    const uint64_t bytes = info.bit_width / 8 + (info.bit_width % 8 != 0);
+    const bool fourState =
+        (type.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+    // The public write entry points acquire the object lock and notify field
+    // observers. Release our validation lease before entering them; the active
+    // GC lane continues to protect the receiver.
+    obelisk_rt_managed_object_release(&lease);
+    obelisk_rt_status status =
+        fourState
+            ? obelisk_rt_v1_object_write_planes(handle->dynamicObject,
+                                                member.byteOffset, value.data(),
+                                                unknown.data(), bytes)
+            : obelisk_rt_v1_object_write(handle->dynamicObject,
+                                         member.byteOffset, value.data(),
+                                         bytes);
+    if (status != OBELISK_RT_OK)
+      setError(handle->owner, "VPI class member write failed");
+    return nullptr;
+  }
   obelisk_rt_status status =
       flags == vpiForceFlag
-          ? obelisk_rt_v1_design_force(context, handle->cursor, value.data(),
+          ? obelisk_rt_v1_design_force(context, storage, value.data(),
                                        unknown.data(), info.bit_width)
-          : obelisk_rt_v1_design_write(context, handle->cursor, value.data(),
+          : obelisk_rt_v1_design_write(context, storage, value.data(),
                                        unknown.data(), info.bit_width);
   if (status != OBELISK_RT_OK)
     setError(handle->owner, "VPI write failed");
@@ -6503,6 +7032,22 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
       right->form == VPIObjectForm::ClassObject)
     return left->form == right->form &&
            left->dynamicIdentity == right->dynamicIdentity;
+  if (left->dynamicIdentity != right->dynamicIdentity)
+    return 0;
+  bool sameDeclaration = left->cursor.offset == right->cursor.offset;
+  if (!sameDeclaration) {
+    VPIClassMemberBinding a{}, b{};
+    if (obelisk_rt_cached_vpi_class_member(left->owner->context, left->cursor,
+                                           &a) == OBELISK_RT_OK &&
+        obelisk_rt_cached_vpi_class_member(right->owner->context, right->cursor,
+                                           &b) == OBELISK_RT_OK &&
+        !a.isMethod && !b.isMethod && a.classID == b.classID &&
+        a.isStatic == b.isStatic)
+      sameDeclaration =
+          a.isStatic ? a.backingStorage.offset == b.backingStorage.offset &&
+                           a.staticEventID == b.staticEventID
+                     : a.byteOffset == b.byteOffset;
+  }
   bool sameSelection =
       left->selectionRootType == right->selectionRootType &&
       left->selectionAccessKind == right->selectionAccessKind &&
@@ -6526,8 +7071,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
                           a.suppressSemanticDimension ==
                               b.suppressSemanticDimension;
                  });
-  return left->form == right->form &&
-         left->cursor.offset == right->cursor.offset &&
+  return left->form == right->form && sameDeclaration &&
          left->semanticCursor.offset == right->semanticCursor.offset &&
          left->semanticEdge == right->semanticEdge &&
          left->suppressSemanticAlias == right->suppressSemanticAlias &&
@@ -7118,6 +7662,8 @@ bool prepareArrayElement(__vpiHandle *source,
   element.exactVpiType = selected.back().exactVpiType;
   element.statement = source->statement;
   element.classDefinitionOrigin = source->classDefinitionOrigin;
+  element.dynamicObject = source->dynamicObject;
+  element.dynamicIdentity = source->dynamicIdentity;
   element.suppressSemanticDimension = selected.back().suppressSemanticDimension;
   element.selectionRootType = rootType;
   element.selectionAccessKind = accessKind;

@@ -567,8 +567,8 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     if (!declaration)
       return emitOpError() << "references an unknown " << endpoint
                            << " VPI symbol " << reference.getSymbol();
-    if (!isa<SimVPIObjectAnchorOp, SimVPITypespecDeclOp, SimVPINettypeDeclOp>(
-            declaration))
+    if (!isa<SimVPIObjectAnchorOp, SimVPITypespecDeclOp, SimVPINettypeDeclOp,
+             SimVPIClassMemberDeclOp>(declaration))
       return emitOpError()
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
@@ -613,6 +613,11 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("VPI kind is not a concrete object");
   using Kind = reflection::VPIObjectKind;
   Kind anchorKind = static_cast<Kind>(getVpiKind());
+  if (getClassMethodAttr() && anchorKind != Kind::Task &&
+      anchorKind != Kind::Function)
+    return emitOpError("class_method requires a task or function anchor");
+  if (getClassMethodAttr() && getDebugName().empty())
+    return emitOpError("class_method requires a nonempty declaration name");
   if (failed(verifyFixedReflection(*this, getVpiKind(),
                                    reflectionProperties(*this),
                                    reflectionDefinitionLoc(*this))))
@@ -802,17 +807,41 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
   return success();
 }
 
+static Operation *lookupVPILexicalOwner(Operation *from,
+                                        FlatSymbolRefAttr reference,
+                                        SymbolTableCollection &symbolTable) {
+  Operation *owner = symbolTable.lookupNearestSymbolFrom(from, reference);
+  if (isa_and_nonnull<SimVPIObjectAnchorOp>(owner))
+    return owner;
+  auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner);
+  return typespec &&
+                 typespec.getOrigin() == VPITypespecOrigin::ClassSpecialization
+             ? owner
+             : nullptr;
+}
+
+static uint32_t getVPILexicalOwnerKind(Operation *owner) {
+  if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner))
+    return anchor.getVpiKind();
+  return static_cast<uint32_t>(reflection::VPIObjectKind::ClassTypespec);
+}
+
+static uint64_t getVPILexicalOwnerScope(Operation *owner) {
+  if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner))
+    return anchor.getEnclosingScopeId();
+  return cast<SimVPITypespecDeclOp>(owner).getScopeId();
+}
+
 LogicalResult
 SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (FlatSymbolRefAttr parent = getParentAttr()) {
-    SimVPIObjectAnchorOp target =
-        symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
-                                                                  parent);
-    if (!target)
+    Operation *owner = lookupVPILexicalOwner(*this, parent, symbolTable);
+    if (!owner)
       return emitOpError("references an unknown VPI parent anchor");
+    auto target = dyn_cast<SimVPIObjectAnchorOp>(owner);
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
-    Kind parentKind = static_cast<Kind>(target.getVpiKind());
+    Kind parentKind = static_cast<Kind>(getVPILexicalOwnerKind(owner));
     bool parentFixedArray =
         parentKind == Kind::ModuleArray || parentKind == Kind::InterfaceArray ||
         parentKind == Kind::ProgramArray || parentKind == Kind::GateArray ||
@@ -855,7 +884,8 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     };
     auto isDeclarationScope = [&](Kind kind) {
       return isDesignScope(kind) || kind == Kind::Package ||
-             kind == Kind::ClassDefn || kind == Kind::Task ||
+             kind == Kind::ClassDefn || kind == Kind::ClassTypespec ||
+             kind == Kind::Task ||
              kind == Kind::Function || kind == Kind::GenScope;
     };
     bool legal = false;
@@ -943,7 +973,7 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     }
     if (!legal)
       return emitOpError("has an illegal lexical parent kind: child ")
-             << getVpiKind() << ", parent " << target.getVpiKind();
+             << getVpiKind() << ", parent " << getVPILexicalOwnerKind(owner);
   } else {
     using Kind = reflection::VPIObjectKind;
     Kind kind = static_cast<Kind>(getVpiKind());
@@ -960,6 +990,25 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
         *this, backing.getSymbol());
     if (!target)
       return emitOpError("references an unknown backing class declaration");
+  }
+  if (auto methodRef = (*this)->getAttrOfType<FlatSymbolRefAttr>("class_method")) {
+    auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+        *this, methodRef);
+    if (!method)
+      return emitOpError("references an unknown class method declaration");
+    uint32_t expected = static_cast<uint32_t>(
+        method.getIsTask() ? reflection::VPIObjectKind::Task
+                           : reflection::VPIObjectKind::Function);
+    if (getVpiKind() != expected)
+      return emitOpError("kind does not match its class method declaration");
+    Operation *owner = getParentAttr()
+                           ? lookupVPILexicalOwner(*this, getParentAttr(),
+                                                  symbolTable)
+                           : nullptr;
+    if (auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner))
+      if (typespec.getTargetType().getSymbol() != method.getOwnerAttr())
+        return emitOpError(
+            "class method owner does not match its parent specialization");
   }
   return verifyFixedReflection(*this, getVpiKind(), reflectionProperties(*this),
                                reflectionDefinitionLoc(*this));
@@ -1009,6 +1058,55 @@ LogicalResult SimVPITypespecDeclOp::verify() {
                                reflectionDefinitionLoc(*this));
 }
 
+LogicalResult SimVPIClassMemberDeclOp::verify() {
+  if (failed(verifyNonnegative(*this, getIdAttr(), "VPI source inventory ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")) ||
+      (getStaticStorageAttr() &&
+       failed(verifyNonnegative(*this, getStaticStorageAttr(), "static storage ID"))) ||
+      (getStaticEventAttr() &&
+       failed(verifyNonnegative(*this, getStaticEventAttr(), "static event ID"))))
+    return failure();
+  if (getHierarchicalName().empty() || getDebugName().empty())
+    return emitOpError("requires nonempty hierarchy and property names");
+  if (getStaticStorageAttr() && getStaticEventAttr())
+    return emitOpError("static storage and event bindings are mutually exclusive");
+  return verifyFixedReflection(*this, vpiKindForClassMember(getVpiType()),
+                               reflectionProperties(*this),
+                               reflectionDefinitionLoc(*this));
+}
+
+LogicalResult SimVPIClassMemberDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbolTable) {
+  auto field = symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+      *this, getFieldAttr());
+  if (!field)
+    return emitOpError("references an unknown class field");
+  Operation *owner = symbolTable.lookupNearestSymbolFrom(*this, getOwnerAttr());
+  uint64_t ownerScope = UINT64_MAX;
+  if (auto anchor = dyn_cast_or_null<SimVPIObjectAnchorOp>(owner)) {
+    if (anchor.getVpiKind() !=
+        static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+      return emitOpError("owner anchor must be a class definition");
+    ownerScope = anchor.getEnclosingScopeId();
+  } else if (auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner)) {
+    if (typespec.getOrigin() != VPITypespecOrigin::ClassSpecialization ||
+        typespec.getTargetType().getSymbol() != field.getOwnerAttr())
+      return emitOpError("owner must be the field's canonical class specialization");
+    ownerScope = typespec.getScopeId();
+  } else {
+    return emitOpError("owner must name a class definition or specialization");
+  }
+  if (ownerScope != getScopeId())
+    return emitOpError("scope ID does not match the class owner");
+  if (field.getIsStatic() !=
+      static_cast<bool>(getStaticStorageAttr() || getStaticEventAttr()))
+    return emitOpError("static class fields require exactly one static backing");
+  if (getStaticEventAttr() && getVpiType().getKind() != VPITypeKind::Event)
+    return emitOpError("static event backing requires a scalar named event");
+  return verifyVPITypeSemantics([&] { return emitOpError(); }, field.getType(),
+                                getVpiType());
+}
+
 LogicalResult SimVPINettypeDeclOp::verify() {
   if (failed(verifyNonnegative(*this, getIdAttr(), "nettype ID")) ||
       failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
@@ -1027,15 +1125,13 @@ LogicalResult SimVPINettypeDeclOp::verify() {
 
 LogicalResult
 SimVPINettypeDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  SimVPIObjectAnchorOp owner =
-      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
-                                                                getOwnerAttr());
+  Operation *owner = lookupVPILexicalOwner(*this, getOwnerAttr(), symbolTable);
   if (!owner)
     return emitOpError("nettype must be owned by a VPI anchor");
-  if (owner.getEnclosingScopeId() != getScopeId())
+  if (getVPILexicalOwnerScope(owner) != getScopeId())
     return emitOpError("scope ID does not match the owner anchor");
   if (!reflection::findVPITraversal(
-          owner.getVpiKind(),
+          getVPILexicalOwnerKind(owner),
           static_cast<uint32_t>(reflection::VPIRelationKind::NetTypedefRel),
           reflection::VPITraversalMode::Iterate))
     return emitOpError("owner kind does not support vpiNetTypedef traversal");
@@ -1122,15 +1218,13 @@ SimVPIEnumConstDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 LogicalResult
 SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  SimVPIObjectAnchorOp anchor =
-      symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(*this,
-                                                                getOwnerAttr());
-  if (!anchor)
+  Operation *owner = lookupVPILexicalOwner(*this, getOwnerAttr(), symbolTable);
+  if (!owner)
     return emitOpError("typespec must be owned by a VPI anchor");
-  if (anchor.getEnclosingScopeId() != getScopeId())
+  if (getVPILexicalOwnerScope(owner) != getScopeId())
     return emitOpError("scope ID does not match the owner anchor");
   if (getOrigin() == VPITypespecOrigin::ClassSpecialization) {
-    if (anchor.getVpiKind() !=
+    if (getVPILexicalOwnerKind(owner) !=
         static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
       return emitOpError(
           "class specialization requires a class-definition owner");
@@ -1139,7 +1233,7 @@ SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       return emitOpError("class specialization references an unknown class");
   }
   if (getOrigin() == VPITypespecOrigin::Typedef &&
-      !reflection::findVPITraversal(anchor.getVpiKind(), 725,
+      !reflection::findVPITraversal(getVPILexicalOwnerKind(owner), 725,
                                     reflection::VPITraversalMode::Iterate))
     return emitOpError("owner kind does not support vpiTypedef traversal");
   return success();
@@ -2792,6 +2886,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPINettypeDeclOp> nettypes;
   SmallVector<SimVPITypespecDeclOp> typespecs;
+  SmallVector<SimVPIClassMemberDeclOp> classMembers;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
   SmallVector<SimStorageDeclOp> storages;
   llvm::DenseMap<uint64_t, Type> storageTypes, netTypes, driverTypes;
@@ -2867,6 +2962,10 @@ LogicalResult SimDesignOp::verifyRegions() {
         return failure();
       vpiAnchors.push_back(anchor);
       vpiAnchorsById[anchor.getInventoryId()] = anchor;
+    } else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(op)) {
+      if (failed(addId(member.getIdAttr(), vpiAnchorIds, "VPI source inventory")))
+        return failure();
+      classMembers.push_back(member);
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (failed(addId(typespec.getIdAttr(), typespecIds, "VPI typespec")))
         return failure();
@@ -3478,6 +3577,52 @@ LogicalResult SimDesignOp::verifyRegions() {
     if (failed(verifyTypeReferences(nettype, nettype.getTargetType())))
       return failure();
 
+  DenseSet<std::pair<Attribute, Attribute>> classMemberIdentities;
+  DenseSet<std::pair<Attribute, Attribute>> classMethodIdentities;
+  for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
+    if (!anchor.getClassMethodAttr())
+      continue;
+    if (!classMethodIdentities
+             .insert({anchor.getParentAttr(), anchor.getClassMethodAttr()})
+             .second)
+      return anchor.emitOpError("duplicates a class method in the same owner");
+    auto method = symbolTable.lookupNearestSymbolFrom<SimClassMethodDeclOp>(
+        anchor, anchor.getClassMethodAttr());
+    Operation *owner = anchor.getParentAttr()
+                           ? symbolTable.lookupNearestSymbolFrom(
+                                 anchor, anchor.getParentAttr())
+                           : nullptr;
+    if (!method || !classSpecializations.contains(method.getOwnerAttr()))
+      return anchor.emitOpError("class method requires a canonical class specialization");
+    if (auto lexical = dyn_cast_or_null<SimVPIObjectAnchorOp>(owner);
+        lexical && classVPIIdentities.lookup(method.getOwnerAttr()) != lexical)
+      return anchor.emitOpError("lexical owner does not define the method's class");
+  }
+  for (SimVPIClassMemberDeclOp member : classMembers) {
+    auto field = symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+        member, member.getFieldAttr());
+    Operation *owner =
+        symbolTable.lookupNearestSymbolFrom(member, member.getOwnerAttr());
+    if (!classMemberIdentities
+             .insert({member.getOwnerAttr(), member.getFieldAttr()})
+             .second)
+      return member.emitOpError("duplicates a class field in the same owner");
+    if (!scopes.contains(member.getScopeId()))
+      return member.emitOpError("references an unknown enclosing scope");
+    if (!classSpecializations.contains(field.getOwnerAttr()))
+      return member.emitOpError("class field requires a canonical class specialization");
+    if (auto anchor = dyn_cast<SimVPIObjectAnchorOp>(owner);
+        anchor && classVPIIdentities.lookup(field.getOwnerAttr()) != anchor)
+      return member.emitOpError("lexical owner does not define the field's class");
+    if (auto storageID = member.getStaticStorage()) {
+      auto storage = storagesById.lookup(*storageID);
+      if (!storage || storage.getType() != field.getType())
+        return member.emitOpError("static storage must exist and match the class field type");
+    }
+    if (failed(verifyTypeReferences(member, member.getVpiType())))
+      return failure();
+  }
+
   // Validate the whole direct-alias forest once. Memoizing completed paths
   // keeps a long legal alias chain linear rather than retraversing every
   // suffix from every declaration.
@@ -3516,6 +3661,8 @@ LogicalResult SimDesignOp::verifyRegions() {
     else if (auto specialization =
                  dyn_cast<SimVPIDefinitionMemberSpecializationOp>(op))
       semantic = specialization.getEffectiveTypeAttr();
+    else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(op))
+      semantic = member.getVpiType();
     if (!semantic)
       continue;
     if (failed(verifyTypeReferences(&op, semantic)))
@@ -4012,6 +4159,8 @@ LogicalResult SimDesignOp::verifyRegions() {
           kind = vpiKindForTypespec(typespec.getTargetType()).value_or(0);
         else if (isa<SimVPINettypeDeclOp>(declaration))
           kind = static_cast<uint32_t>(reflection::VPIObjectKind::NettypeDecl);
+        else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(declaration))
+          kind = vpiKindForClassMember(member.getVpiType());
         break;
       }
       }
@@ -4340,14 +4489,16 @@ LogicalResult SimDesignOp::verifyRegions() {
 
   for (SimVPIObjectAnchorOp anchor : vpiAnchors) {
     llvm::SmallPtrSet<Operation *, 8> path;
-    for (SimVPIObjectAnchorOp cursor = anchor; cursor;) {
+    for (Operation *cursor = anchor; cursor;) {
       if (!path.insert(cursor).second)
         return anchor.emitOpError("lexical parent relation contains a cycle");
-      FlatSymbolRefAttr parent = cursor.getParentAttr();
-      cursor = parent
-                   ? symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
-                         cursor, parent)
-                   : SimVPIObjectAnchorOp{};
+      FlatSymbolRefAttr parent;
+      if (auto object = dyn_cast<SimVPIObjectAnchorOp>(cursor))
+        parent = object.getParentAttr();
+      else
+        parent = cast<SimVPITypespecDeclOp>(cursor).getOwnerAttr();
+      cursor = parent ? lookupVPILexicalOwner(cursor, parent, symbolTable)
+                      : nullptr;
     }
   }
   for (uint64_t id = 1; id <= classIds.size(); ++id)

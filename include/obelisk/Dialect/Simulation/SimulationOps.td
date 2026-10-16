@@ -352,8 +352,9 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
   let summary = "canonical source identity for a persistent VPI object";
   let description = [{
     Separates source-language identity from executable descriptor identity.
-    `parent` preserves exact lexical ownership even when the display hierarchy
-    is ambiguous, as it is for multiple compilation units.  A backing maps the
+    `parent` names another anchor or a canonical class-specialization typespec
+    and preserves exact lexical ownership even when the display hierarchy is
+    ambiguous, as it is for multiple compilation units. A backing maps the
     anchor onto an existing scope, class, or code-unit record; otherwise the
     serializer materializes a static-only reflection object.  Anchors never
     participate in scheduling or executable lowering. Relation-backed arrays
@@ -382,12 +383,40 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
                        OptionalAttr<I64Attr>:$primitive_input_count,
                        OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
                        OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
-                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range);
+                       OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
+                       OptionalAttr<FlatSymbolRefAttr>:$class_method);
   let assemblyFormat = [{
     $sym_name `id` $inventory_id `type` $vpi_kind
     `in` $enclosing_scope_id (`parent` $parent^)?
     `ordinal` $owner_ordinal `hierarchy` $hierarchical_name
     `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
+def SimVPIClassMemberDeclOp : SimOp<"vpi_class_member.decl", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    MemoryEffects<[MemWrite<SimInventoryResource>]>
+  ]> {
+  let summary = "immutable class property declaration and executable binding";
+  let description = [{
+    Separates a lexical or specialized property declaration from its live
+    receiver. `owner` names a class-definition anchor or canonical class
+    typespec; `field` names the exact executable class field. The source ID
+    shares the VPI anchor inventory namespace. A static property names its
+    existing storage or named event; instance properties use the class field's
+    native offset. This operation never allocates executable state.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
+                       I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
+                       FlatSymbolRefAttr:$field,
+                       StrAttr:$hierarchical_name, StrAttr:$debug_name,
+                       SimVPITypeSemanticsAttr:$vpi_type,
+                       OptionalAttr<I64Attr>:$static_storage,
+                       OptionalAttr<I64Attr>:$static_event);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `field` $field
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
   }];
   let hasVerifier = 1;
 }

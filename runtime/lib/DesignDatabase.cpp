@@ -47,6 +47,8 @@ constexpr uint64_t kClassTypeBindingSize =
     obelisk::reflection::ClassTypeBindingLayout.size;
 constexpr uint64_t kSemanticClassBindingSize =
     obelisk::reflection::SemanticClassBindingLayout.size;
+constexpr uint64_t kClassMemberBindingSize =
+    obelisk::reflection::ClassMemberBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
     obelisk::reflection::RelationIndexLayout.size;
 constexpr uint64_t kRelationIndexDimensionSize =
@@ -168,7 +170,9 @@ bool recordKindSupportsVPI(uint32_t physicalKind, uint32_t vpiKind) {
     return vpiKind == static_cast<uint16_t>(VPIKind::Port);
   case OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT:
     return obelisk::reflection::vpiObjectSetContains(
-        obelisk::reflection::VPIObjectSetID::StaticImageObjects, vpiKind);
+               obelisk::reflection::VPIObjectSetID::StaticImageObjects, vpiKind) ||
+           obelisk::reflection::vpiObjectSetContains(
+               obelisk::reflection::VPIObjectSetID::DataVariableObjects, vpiKind);
   default:
     return false;
   }
@@ -242,6 +246,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t semanticRootBindingOffset = 0, semanticRootBindingCount = 0;
   uint64_t classTypeBindingOffset = 0, classTypeBindingCount = 0;
   uint64_t semanticClassBindingOffset = 0, semanticClassBindingCount = 0;
+  uint64_t classMemberBindingOffset = 0, classMemberBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -333,6 +338,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     classTypeBindingCount = reader.getClassTypeBindingCount();
     semanticClassBindingOffset = reader.getSemanticClassBindingOffset();
     semanticClassBindingCount = reader.getSemanticClassBindingCount();
+    classMemberBindingOffset = reader.getClassMemberBindingOffset();
+    classMemberBindingCount = reader.getClassMemberBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -364,6 +371,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               classTypeBindingCount,
               semanticClassBindingOffset,
               semanticClassBindingCount,
+              classMemberBindingOffset,
+              classMemberBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -434,6 +443,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kClassTypeBindingSize},
         {database.semanticClassBindings, database.semanticClassBindingCount,
          kSemanticClassBindingSize},
+        {database.classMemberBindings, database.classMemberBindingCount,
+         kClassMemberBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -505,6 +516,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.semanticRootBindingCount != 0 ||
         database.classTypeBindingCount != 0 ||
         database.semanticClassBindingCount != 0 ||
+        database.classMemberBindingCount != 0 ||
         database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
@@ -551,6 +563,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       !validRange(database.semanticClassBindings,
                   database.semanticClassBindingCount, kSemanticClassBindingSize,
                   database.size) ||
+      !validRange(database.classMemberBindings, database.classMemberBindingCount,
+                  kClassMemberBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -620,6 +634,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.classTypeBindings < kHeaderSize) ||
       (database.semanticClassBindingCount != 0 &&
        database.semanticClassBindings < kHeaderSize) ||
+      (database.classMemberBindingCount != 0 &&
+       database.classMemberBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -690,6 +706,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.semanticRootBindingCount > UINT32_MAX ||
       database.classTypeBindingCount > UINT32_MAX ||
       database.semanticClassBindingCount > UINT32_MAX ||
+      database.classMemberBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -904,6 +921,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kClassTypeBindingSize},
       {database.semanticClassBindings, database.semanticClassBindingCount,
        kSemanticClassBindingSize},
+      {database.classMemberBindings, database.classMemberBindingCount,
+       kClassMemberBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -2655,6 +2674,7 @@ bool validateDatabaseImpl(const Database &database) {
   // Each runtime class has one canonical specialization. Semantic aliases
   // may bind to it independently while retaining their lexical ClassDefn.
   std::unordered_map<uint32_t, uint32_t> canonicalClassRoots;
+  std::unordered_map<uint64_t, uint32_t> canonicalClassTypes;
   uint64_t previousClassID = 0;
   for (uint64_t index = 0; index != database.classTypeBindingCount; ++index) {
     obelisk::reflection::ClassTypeBindingView binding(
@@ -2679,6 +2699,7 @@ bool validateDatabaseImpl(const Database &database) {
         read32(type + 12) != UINT32_MAX)
       return false;
     previousClassID = classID;
+    canonicalClassTypes.emplace(classID, packed);
   }
   std::unordered_set<uint32_t> canonicalClassRootBindings;
   std::unordered_map<uint32_t, uint32_t> semanticClassTargets;
@@ -2721,6 +2742,96 @@ bool validateDatabaseImpl(const Database &database) {
   }
   if (canonicalClassRootBindings.size() != canonicalClassRoots.size())
     return false;
+
+  std::unordered_set<uint32_t> boundClassFields;
+  std::unordered_set<uint64_t> classBackingStorage;
+  std::unordered_set<uint64_t> classMemberParents;
+  uint32_t previousMember = 0;
+  for (uint64_t index = 0; index != database.classMemberBindingCount; ++index) {
+    obelisk::reflection::ClassMemberBindingView binding(
+        database.data + database.classMemberBindings +
+        index * kClassMemberBindingSize);
+    uint32_t member = binding.getMemberIndexAndTable();
+    uint32_t owner = binding.getOwnerIndexAndTable();
+    auto canonical = canonicalClassTypes.find(binding.getClassID());
+    uint64_t memberOffset = 0, ownerOffset = 0;
+    std::string_view memberName;
+    if ((index && member <= previousMember) || binding.getFlags() > 3 ||
+        canonical == canonicalClassTypes.end() ||
+        !packedObjectReferenceOffset(database, member, memberOffset) ||
+        !packedObjectReferenceOffset(database, owner, ownerOffset) ||
+        !getRelativeString(binding.getName(), memberName) || memberName.empty())
+      return false;
+    previousMember = member;
+    uint32_t canonicalRoot = canonicalClassRoots.at(canonical->second);
+    const uint8_t *classType = database.data + database.semanticTypes +
+                              uint64_t{canonicalRoot} * kSemanticTypeSize;
+    if (owner != canonical->second && owner != read32(classType + 16))
+      return false;
+    classMemberParents.insert((uint64_t{owner} << 32) | member);
+    uint32_t kind = objectReferenceVPIKind(database, memberOffset);
+    bool isStatic = (binding.getFlags() & 1) != 0;
+    bool isMethod = (binding.getFlags() & 2) != 0;
+    bool hasStorage = binding.getStorageIndexAndTable() != UINT32_MAX;
+    bool hasEvent = binding.getEventID() != UINT64_MAX;
+    if (isMethod) {
+      if ((kind != static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Task) &&
+           kind != static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Function)) ||
+          hasStorage || hasEvent || binding.getByteOffset() != UINT64_MAX)
+        return false;
+      continue;
+    }
+    uint32_t semanticRoot = UINT32_MAX;
+    bool dataVariable = obelisk::reflection::vpiObjectSetContains(
+        obelisk::reflection::VPIObjectSetID::DataVariableObjects, kind);
+    bool namedEvent = kind == static_cast<uint32_t>(
+                                 obelisk::reflection::VPIObjectKind::NamedEvent);
+    bool namedEventArray = kind == static_cast<uint32_t>(
+                                      obelisk::reflection::VPIObjectKind::NamedEventArray);
+    if ((!dataVariable && !namedEvent && !namedEventArray) ||
+        !isObjectOffset(database, memberOffset) ||
+        recordKind(database.data + memberOffset) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        read64(database.data + memberOffset + 48) == 0 ||
+        !findSemanticRootBinding(database, member, semanticRoot) ||
+        (isStatic ? binding.getByteOffset() != UINT64_MAX || hasStorage == hasEvent
+                  : binding.getByteOffset() < sizeof(void *) ||
+                        binding.getByteOffset() == UINT64_MAX || hasStorage || hasEvent) ||
+        (hasEvent && !namedEvent))
+      return false;
+    if (hasStorage) {
+      uint64_t storageOffset = 0;
+      if (!packedObjectReferenceOffset(database, binding.getStorageIndexAndTable(),
+                                       storageOffset) ||
+          !isObjectOffset(database, storageOffset) ||
+          recordKind(database.data + storageOffset) != OBELISK_RT_DESIGN_RECORD_STORAGE ||
+          read64(database.data + storageOffset + 48) !=
+              read64(database.data + memberOffset + 48))
+        return false;
+      classBackingStorage.insert(storageOffset);
+    }
+    boundClassFields.insert(member);
+  }
+  // Variable kinds newly admitted to the immutable table are class
+  // declarations, never synthetic executable storage. Existing source-only
+  // kinds (including named events and their arrays) retain their lexical
+  // inventory representation without requiring a class-member binding.
+  for (uint32_t index = 0; index != database.objectCount; ++index) {
+    const uint8_t *object = database.data + database.objects +
+                            uint64_t{index} * kObjectSize;
+    if (recordKind(object) != OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        !obelisk::reflection::vpiObjectSetContains(
+            obelisk::reflection::VPIObjectSetID::DataVariableObjects,
+            recordVPIKind(object)) ||
+        obelisk::reflection::vpiObjectSetContains(
+            obelisk::reflection::VPIObjectSetID::StaticImageObjects,
+            recordVPIKind(object)))
+      continue;
+    uint32_t packed = 0;
+    if (!obelisk::reflection::tryPackTableIndex(
+            obelisk::reflection::TableKind::Object, index, packed) ||
+        !boundClassFields.count(packed))
+      return false;
+  }
 
   // Validate the hash-consed immutable value pool once. Query-time lookup is
   // then one binary search over sparse source bindings and one indexed load.
@@ -3560,6 +3671,7 @@ bool validateDatabaseImpl(const Database &database) {
   uint64_t automaticChildCursor = 0;
   std::unordered_set<uint64_t> staticLexicalChildren;
   std::unordered_set<uint64_t> staticLexicalParents;
+  std::unordered_set<uint64_t> canonicalMethodObjects;
   std::vector<uint32_t> firstStaticSuccessor(database.staticObjectCount,
                                              UINT32_MAX);
   std::vector<uint32_t> staticSuccessorCount(database.staticObjectCount, 0);
@@ -3852,6 +3964,17 @@ bool validateDatabaseImpl(const Database &database) {
         // a different container (for example a package or enclosing class).
         staticLexicalParents.insert(lexicalPair(
             packedTarget, relationEndpoint(sourceTable, sourceIndex)));
+        // Canonical methods share their display name with the lexical
+        // declaration. The validated specialization owner keeps this
+        // executable view reachable without a second name-index entry.
+        if ((read32(sourceRecord + 4) &
+             OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0 &&
+            (sourceKind == static_cast<uint32_t>(
+                               obelisk::reflection::VPIObjectKind::Task) ||
+             sourceKind == static_cast<uint32_t>(
+                               obelisk::reflection::VPIObjectKind::Function)) &&
+            canonicalClassRoots.count(packedTarget) != 0)
+          canonicalMethodObjects.insert(sourceOffset);
       } else if (sourceTable == obelisk::reflection::TableKind::StaticObject) {
         staticLexicalParents.insert(lexicalPair(
             packedTarget, relationEndpoint(sourceTable, sourceIndex)));
@@ -3960,6 +4083,11 @@ bool validateDatabaseImpl(const Database &database) {
   if (!std::all_of(staticLexicalChildren.begin(), staticLexicalChildren.end(),
                    [&](uint64_t child) {
                      return staticLexicalParents.count(child) != 0;
+                   }))
+    return false;
+  if (!std::all_of(classMemberParents.begin(), classMemberParents.end(),
+                   [&](uint64_t member) {
+                     return staticLexicalParents.count(member) != 0;
                    }))
     return false;
   if (haveStatementContainment &&
@@ -4350,8 +4478,12 @@ bool validateDatabaseImpl(const Database &database) {
     // Compiler/runtime machinery is deliberately absent from the public name
     // index. Static records without the named-typespec capability are reached
     // exclusively through generated VPI relations (for example anonymous
-    // typespecs and interface-type variants).
+    // typespecs and interface-type variants). A statically allocated class
+    // field is indexed by its member declaration; its validated backing
+    // storage must not create a second name-index identity.
     if ((caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 ||
+        classBackingStorage.count(offset) != 0 ||
+        canonicalMethodObjects.count(offset) != 0 ||
         (recordKind(port) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
          (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0))
       continue;
@@ -4487,6 +4619,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.classTypeBindingCount == right.classTypeBindingCount &&
          left.semanticClassBindings == right.semanticClassBindings &&
          left.semanticClassBindingCount == right.semanticClassBindingCount &&
+         left.classMemberBindings == right.classMemberBindings &&
+         left.classMemberBindingCount == right.classMemberBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -6199,6 +6333,53 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
              *database, binding.getTypespecIndexAndTable(), outCursor->offset)
              ? OBELISK_RT_OK
              : OBELISK_RT_INVALID_DESIGN;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_class_member(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
+    VPIClassMemberBinding *outBinding) noexcept {
+  if (!outBinding)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBinding = {};
+  const Database *database = cachedDatabase(context);
+  uint32_t packed = 0;
+  if (!database ||
+      !packedObjectReferenceForCursor(*database, member.offset, packed))
+    return OBELISK_RT_INVALID_HANDLE;
+  uint64_t low = 0, high = database->classMemberBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::ClassMemberBindingView binding(
+        database->data + database->classMemberBindings +
+        middle * kClassMemberBindingSize);
+    if (binding.getMemberIndexAndTable() < packed)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->classMemberBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::ClassMemberBindingView binding(
+      database->data + database->classMemberBindings + low * kClassMemberBindingSize);
+  if (binding.getMemberIndexAndTable() != packed)
+    return OBELISK_RT_EOF;
+  outBinding->classID = binding.getClassID();
+  outBinding->byteOffset = binding.getByteOffset();
+  outBinding->staticEventID = binding.getEventID();
+  outBinding->isStatic = (binding.getFlags() & 1) != 0;
+  outBinding->isMethod = (binding.getFlags() & 2) != 0;
+  std::string_view name;
+  if (!getString(*database, database->strings + binding.getName(), name))
+    return OBELISK_RT_INVALID_DESIGN;
+  outBinding->name = reinterpret_cast<const uint8_t *>(name.data());
+  outBinding->nameSize = name.size();
+  if (obelisk_rt_cached_vpi_class_typespec(context, binding.getClassID(),
+                                          &outBinding->ownerTypespec) != OBELISK_RT_OK ||
+      (binding.getStorageIndexAndTable() != UINT32_MAX &&
+       !packedObjectReferenceOffset(*database, binding.getStorageIndexAndTable(),
+                                      outBinding->backingStorage.offset)))
+    return OBELISK_RT_INVALID_DESIGN;
+  return OBELISK_RT_OK;
 }
 
 obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(

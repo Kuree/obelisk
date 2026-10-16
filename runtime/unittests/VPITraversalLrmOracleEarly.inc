@@ -3,6 +3,12 @@
 // expanded source set, selector/mode, complete concrete target set, and
 // ordering.  Do not replace these relations with production TableGen sets;
 // that would make a broadened or omitted production relation self-validating.
+add("37.12", S({vpiClassObj}), vpiReg, Mode::Iterate, S({vpiReg}),
+    Order::None);
+add("37.12", S({vpiClassObj}), vpiRegArray, Mode::Iterate, S({vpiRegArray}),
+    Order::None);
+add("37.12", S({vpiClassObj}), vpiMemory, Mode::Iterate, S({vpiRegArray}),
+    Order::None);
 add("37.5", S({vpiModule}), vpiContAssign, Mode::Iterate, S({vpiContAssign}),
     Order::None, true);
 add("37.17",

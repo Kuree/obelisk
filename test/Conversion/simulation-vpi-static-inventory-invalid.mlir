@@ -27,4 +27,4 @@ module attributes {
   }
 }
 
-// CHECK: error: 'simulation.vpi_typespec.decl' op source type has no concrete IEEE VPI typespec object
+// CHECK: error: 'simulation.vpi_typespec.decl' op declared data type has no concrete VPI typespec

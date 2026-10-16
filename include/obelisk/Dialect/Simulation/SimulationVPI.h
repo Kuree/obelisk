@@ -21,6 +21,7 @@ bool isVPIVisibleCodeUnit(SimCodeUnitDeclOp codeUnit);
 uint32_t vpiKindForCodeUnit(SimCodeUnitDeclOp codeUnit);
 uint32_t vpiKindForScope(SimScopeDeclOp scope);
 uint32_t vpiKindForStorage(VPITypeSemanticsAttr type);
+uint32_t vpiKindForClassMember(VPITypeSemanticsAttr type);
 uint32_t vpiKindForNet(VPITypeSemanticsAttr type);
 std::optional<uint32_t> vpiKindForTypespec(VPITypeSemanticsAttr type);
 /// Compare SystemVerilog ref-port type identity while ignoring typedef

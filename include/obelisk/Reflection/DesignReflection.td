@@ -283,6 +283,22 @@ def SemanticClassBindingTypespec
 def SemanticClassBinding : ReflectionLayout<"SemanticClassBinding", 8,
   [SemanticClassBindingType, SemanticClassBindingTypespec]>;
 
+// Sparse class declaration bindings. Flags bit 0 is static and bit 1 is a
+// method. Nonapplicable byte offsets/event IDs use UINT64_MAX, and absent
+// backing storage uses UINT32_MAX. The owner is lexical or specialized.
+def ClassMemberBindingMember : ReflectionField<"MemberIndexAndTable", 0, U32LE>;
+def ClassMemberBindingOwner : ReflectionField<"OwnerIndexAndTable", 4, U32LE>;
+def ClassMemberBindingClassID : ReflectionField<"ClassID", 8, U64LE>;
+def ClassMemberBindingByteOffset : ReflectionField<"ByteOffset", 16, U64LE>;
+def ClassMemberBindingStorage : ReflectionField<"StorageIndexAndTable", 24, U32LE>;
+def ClassMemberBindingFlags : ReflectionField<"Flags", 28, U32LE>;
+def ClassMemberBindingEventID : ReflectionField<"EventID", 32, U64LE>;
+def ClassMemberBindingName : ReflectionField<"Name", 40, U32LE>;
+def ClassMemberBinding : ReflectionLayout<"ClassMemberBinding", 44,
+  [ClassMemberBindingMember, ClassMemberBindingOwner, ClassMemberBindingClassID,
+   ClassMemberBindingByteOffset, ClassMemberBindingStorage,
+   ClassMemberBindingFlags, ClassMemberBindingEventID, ClassMemberBindingName]>;
+
 // Immutable indexing geometry for relation-backed static arrays.  Records are
 // sorted by object-table index; dense arrays reference declared ranges in
 // left-to-right order, while sparse generate arrays reference exact source
@@ -607,7 +623,11 @@ def SemanticDirectorySemanticClassBindingOffset
     : ReflectionField<"SemanticClassBindingOffset", 416, U64LE>;
 def SemanticDirectorySemanticClassBindingCount
     : ReflectionField<"SemanticClassBindingCount", 424, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 432,
+def SemanticDirectoryClassMemberBindingOffset
+    : ReflectionField<"ClassMemberBindingOffset", 432, U64LE>;
+def SemanticDirectoryClassMemberBindingCount
+    : ReflectionField<"ClassMemberBindingCount", 440, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 448,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -658,7 +678,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 432,
    SemanticDirectoryClassTypeBindingOffset,
    SemanticDirectoryClassTypeBindingCount,
    SemanticDirectorySemanticClassBindingOffset,
-   SemanticDirectorySemanticClassBindingCount]>;
+   SemanticDirectorySemanticClassBindingCount,
+   SemanticDirectoryClassMemberBindingOffset,
+   SemanticDirectoryClassMemberBindingCount]>;
 
 def ScopeRecord : ReflectionRecordKind<"Scope", 1, Scope>;
 def StorageRecord : ReflectionRecordKind<"Storage", 2, Object>;

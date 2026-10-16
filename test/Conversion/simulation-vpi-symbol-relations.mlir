@@ -34,6 +34,7 @@ module attributes {
         ordinal 0 hierarchy "top.Derived.extends" debug "extends"
     simulation.vpi_typespec.decl @base_type id 0 in 1 owner @base
         hierarchy "top.Base.base_type" debug "base_type" {
+      origin = 3 : i32,
       target_type = #simulation.vpi_type<kind = class, isSigned = false,
           isFourState = false, symbol = @base_class, range = [],
           children = [], childNames = []>
@@ -44,9 +45,15 @@ module attributes {
           isFourState = false, symbol = @derived_class, range = [],
           children = [], childNames = []>
     }
+    simulation.vpi_typespec.decl @local_type id 2 in 1 owner @base_type
+        hierarchy "top.Base.local_type" debug "local_type" {
+      target_type = #simulation.vpi_type<kind = reg, isSigned = false,
+          isFourState = true, range = [7, 0],
+          children = [], childNames = []>
+    }
     simulation.code_unit.decl 4 in 1 function
         hierarchy "top.Base.method" debug "method"
-    simulation.vpi_object.anchor @method id 4 type 20 in 1 parent @base
+    simulation.vpi_object.anchor @method id 4 type 20 in 1 parent @base_type
         ordinal 0 hierarchy "top.Base.method" debug "method" {
       backing = #simulation.vpi_backing<kind = code_unit, id = 4 : i64>
     }
@@ -72,8 +79,6 @@ module attributes {
         selector 652 handle ordinal 0 to <kind = symbol, symbol = @derived>
     simulation.vpi_relation.decl <kind = symbol, symbol = @derived_type>
         selector 677 handle ordinal 0 to <kind = symbol, symbol = @base_type>
-    simulation.vpi_relation.decl <kind = symbol, symbol = @base_type>
-        selector 730 iterate ordinal 0 to <kind = symbol, symbol = @method>
     simulation.vpi_relation.decl <kind = symbol, symbol = @derived>
         selector 745 iterate ordinal 0 to <kind = symbol, symbol = @top>
     simulation.code_unit.decl 1 in 1 initial hierarchy "top.initial"
@@ -97,3 +102,4 @@ module attributes {
 // CHECK-DAG: relation {{.*}} source_type=652 mode=iterate selector=745 ordinal=0 {{.*}} source_name=top.Derived target_name=top
 // CHECK-DAG: relation {{.*}} source_type=677 mode=iterate selector=89 ordinal=0 {{.*}} source_name=top.Derived.extends target_name=top.arg0
 // CHECK-DAG: relation {{.*}} source_type=677 mode=iterate selector=89 ordinal=1 {{.*}} source_name=top.Derived.extends target_name=top.arg1
+// CHECK-DAG: relation {{.*}} source_type=630 mode=iterate selector=725 ordinal=0 {{.*}} source_name=top.Base.base_type target_name=top.Base.local_type
