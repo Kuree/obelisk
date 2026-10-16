@@ -310,13 +310,15 @@ private:
 /// the shape: the reached gates in postorder, with operands renamed to local
 /// positions. Relations of one shape are the same relation over
 /// renamed inputs, so a constraint iterated over an array needs one circuit
-/// and one diagram for all of its elements.
+/// and one diagram for all of its elements. A specialized relation has only
+/// random inputs and gates; anything else leaves the copy invalid.
 struct LocalRelation {
   std::vector<size_t> originals;
   std::vector<uint32_t> shape;
   BooleanCircuit circuit;
   Bits inputs;
   ID root = 0;
+  bool valid = true;
 
   LocalRelation(const BooleanCircuit &source, ID relation, NodeScratch &scratch,
                 const std::vector<size_t> &extra = {}) {
@@ -344,6 +346,8 @@ struct LocalRelation {
       }
       if (nodes[node].opcode == PlanOpcode::RandomBit)
         originals.push_back(nodes[node].b);
+      else
+        valid = false;
       reached.push_back(node);
     }
     originals.insert(originals.end(), extra.begin(), extra.end());
@@ -419,8 +423,9 @@ public:
   /// The relation's top-level conjuncts: requirements with the fixed inputs
   /// substituted, split at positive ANDs. Substitution can expose new ones,
   /// such as the body of a guard that an earlier solve-before layer decided.
-  /// A contradiction is the single conjunct 0.
-  std::vector<ID> conjuncts() const {
+  /// A contradiction is the single conjunct 0. Substitution adds gates to the
+  /// shared circuit.
+  std::vector<ID> conjuncts() {
     bool restricted =
         std::find(fixed.begin(), fixed.end(), true) != fixed.end();
     std::vector<ID> result;
@@ -505,6 +510,8 @@ public:
       if (group.parts == 1 && leavesFree(group.relation, eliminated))
         continue;
       LocalRelation local(circuit, group.relation, scratch);
+      if (!local.valid)
+        return SamplerResult::Invalid;
       local.build();
       std::vector<bool> localKept;
       Bits originals;
@@ -601,6 +608,8 @@ public:
       return status;
     for (ID relation : relations) {
       LocalRelation local(circuit, relation, scratch);
+      if (!local.valid)
+        return SamplerResult::Invalid;
       local.build();
       ModelCounter counter(local.circuit, local.inputs);
       if (!counter.build(local.root))
@@ -638,6 +647,8 @@ public:
       unconstrained[input] = keep[input] && !fixed[input];
     for (ID relation : relations) {
       locals.emplace_back(circuit, relation, scratch);
+      if (!locals.back().valid)
+        return SamplerResult::Invalid;
       for (size_t input : locals.back().originals)
         unconstrained[input] = false;
     }
