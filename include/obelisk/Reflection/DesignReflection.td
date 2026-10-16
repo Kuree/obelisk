@@ -652,7 +652,11 @@ def SemanticDirectoryEventBindingOffset
     : ReflectionField<"EventBindingOffset", 480, U64LE>;
 def SemanticDirectoryEventBindingCount
     : ReflectionField<"EventBindingCount", 488, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 496,
+def SemanticDirectoryEventArrayStorageBindingOffset
+    : ReflectionField<"EventArrayStorageBindingOffset", 496, U64LE>;
+def SemanticDirectoryEventArrayStorageBindingCount
+    : ReflectionField<"EventArrayStorageBindingCount", 504, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 512,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -711,10 +715,21 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 496,
    SemanticDirectoryMailboxElementBindingOffset,
    SemanticDirectoryMailboxElementBindingCount,
    SemanticDirectoryEventBindingOffset,
-   SemanticDirectoryEventBindingCount]>;
+   SemanticDirectoryEventBindingCount,
+   SemanticDirectoryEventArrayStorageBindingOffset,
+   SemanticDirectoryEventArrayStorageBindingCount]>;
 
 // Exact runtime identity of a source named event without a mutable event cell.
 // Event zero is valid. The all-ones sentinel is never an event identity.
+// Lexical fixed event arrays retain their exact private executable storage.
+// The public members remain immutable relation-index objects; their ordinal
+// selects the physical array using each validated dimension's stride.
+def EventArrayStorageBindingArray
+    : ReflectionField<"ArrayIndexAndTable", 0, U32LE>;
+def EventArrayStorageBindingStorage : ReflectionField<"StorageIndex", 4, U32LE>;
+def EventArrayStorageBinding : ReflectionLayout<"EventArrayStorageBinding", 8,
+  [EventArrayStorageBindingArray, EventArrayStorageBindingStorage]>;
+
 def EventBindingObject : ReflectionField<"EventIndexAndTable", 0, U32LE>;
 def EventBindingReserved : ReflectionField<"Reserved", 4, U32LE>;
 def EventBindingID : ReflectionField<"EventID", 8, U64LE>;

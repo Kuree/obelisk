@@ -1666,8 +1666,9 @@ enum {
   // to the scheduler and waveform backends.
   OBELISK_RT_DESIGN_CAP_PORT_REF = UINT32_C(1) << 7,
   // The same record-kind-specific bit marks a process, function, generic
-  // interconnect net, or class-static backing storage whose lexical VPI owner
-  // is supplied by generated relations or a class-member binding instead of
+  // interconnect net, class-static backing storage, or event-array storage
+  // whose lexical VPI owner is supplied by generated relations or an exact
+  // backing binding instead of
   // its physical executable scope. These kinds cannot be typespec records.
   OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR = UINT32_C(1) << 7,
   // The same record-kind-specific bit marks a value parameter that directly

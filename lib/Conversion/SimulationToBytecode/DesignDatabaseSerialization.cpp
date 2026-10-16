@@ -240,6 +240,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint64_t id;
   };
   SmallVector<EventBindingRecord> eventBindings;
+  struct EventArrayStorageBindingRecord {
+    uint32_t array = 0;
+    uint32_t storage = 0;
+  };
+  SmallVector<EventArrayStorageBindingRecord> eventArrayStorageBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -323,6 +328,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPIClassMemberDeclOp> classMembers;
   DenseMap<Operation *, sim::SimClassFieldDeclOp> classMemberFields;
   DenseSet<uint64_t> classStaticStorage;
+  DenseMap<Operation *, sim::SimVPIObjectAnchorOp> eventArrayStorage;
+  DenseMap<Operation *, sim::VPITypeSemanticsAttr> eventArraySemantics;
   SmallVector<sim::SimVPIEnumConstDeclOp> enumConstants;
   SmallVector<sim::SimVPIDefinitionDeclOp> definitionDeclarations;
   SmallVector<sim::SimVPIDefinitionMemberDeclOp> definitionMemberDeclarations;
@@ -785,7 +792,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
         }
         if (includeStatements && hasFixedReflectionMetadata(storage))
           explicitlyHandledFixedMetadata.insert(storage);
-        continue;
+        if (!includeStatements)
+          continue;
+        eventArrayStorage[storage] = owner->second;
+        eventArraySemantics[owner->second] = storage.getVpiTypeAttr();
       }
       uint32_t caps = profile & kDatabaseProfileWrite ? 3u : 1u;
       if (sim::SimPortDeclOp port = directStoragePorts.lookup(storage.getId()))
@@ -885,7 +895,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   for (Record &object : objects)
     if (auto storage =
             dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
-        storage && classStaticStorage.contains(storage.getId())) {
+        storage && (classStaticStorage.contains(storage.getId()) ||
+                    eventArrayStorage.contains(storage))) {
       object.indexName = false;
       object.caps |= OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR;
     }
@@ -1364,7 +1375,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     for (auto [index, object] : llvm::enumerate(objects))
       if (auto storage =
               dyn_cast_if_present<sim::SimStorageDeclOp>(object.identity);
-          storage && classStaticStorage.contains(storage.getId()))
+          storage && (classStaticStorage.contains(storage.getId()) ||
+                      eventArrayStorage.contains(storage)))
         lexicallyAnchoredObjectIndices.insert(static_cast<uint32_t>(index));
     for (sim::SimVPIObjectAnchorOp anchor : anchors) {
       sim::VPIObjectBackingAttr backing = anchor.getBackingAttr();
@@ -1407,6 +1419,33 @@ SmallVector<uint8_t> serializeDesignDatabase(
           typespecsBySymbol.contains(anchor.getParentAttr().getValue()))
         objects[index].indexName = false;
       lexicallyAnchoredObjectIndices.insert(index);
+    }
+    for (auto [storage, anchor] : eventArrayStorage) {
+      ImageObjectRef target = anchorRefs.lookup(anchor);
+      uint32_t packed = 0;
+      if (!tryPackTableIndex(target.table, target.index, packed)) {
+        storage->emitError("named-event-array binding index cannot be packed");
+        return {};
+      }
+      eventArrayStorageBindings.push_back(
+          {packed, objectIndices.lookup(storage)});
+    }
+    // The declaration and its scalar members share the exact semantic type
+    // retained on the executable storage, including source typedef identity.
+    for (sim::SimVPIObjectAnchorOp anchor : anchors) {
+      if (!anchor.getParentAttr() ||
+          anchor.getVpiKind() !=
+              static_cast<uint32_t>(VPIObjectKind::NamedEvent))
+        continue;
+      auto parent = anchorsBySymbol.find(anchor.getParentAttr().getValue());
+      if (parent == anchorsBySymbol.end())
+        continue;
+      sim::VPITypeSemanticsAttr semantic =
+          eventArraySemantics.lookup(parent->second);
+      while (semantic && semantic.getKind() == sim::VPITypeKind::UnpackedArray)
+        semantic = cast<sim::VPITypeSemanticsAttr>(semantic.getChildren()[0]);
+      if (semantic)
+        eventArraySemantics[anchor] = semantic;
     }
     for (auto binding :
          design.getBody().front().getOps<sim::SimVPIEventBindingOp>()) {
@@ -2268,6 +2307,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       else if (auto anchor = dyn_cast_if_present<sim::SimVPIObjectAnchorOp>(
                    identity))
         semantic = anchor.getVpiTypeAttr();
+      if (!semantic)
+        semantic = eventArraySemantics.lookup(identity);
       if (!semantic)
         return success();
       FlatSymbolRefAttr declaredNettype;
@@ -3152,6 +3193,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return port.getVpiTypeAttr();
     if (auto anchor = dyn_cast<sim::SimVPIObjectAnchorOp>(identity)) {
       if (sim::VPITypeSemanticsAttr semantic = anchor.getVpiTypeAttr())
+        return semantic;
+      if (auto semantic = eventArraySemantics.lookup(anchor))
         return semantic;
       return semanticArrayShape(anchor);
     }
@@ -4169,8 +4212,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t eventBindingOffset =
       mailboxElementBindingOffset +
       mailboxElementBindings.size() * MailboxElementBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t eventArrayStorageBindingOffset =
       eventBindingOffset + eventBindings.size() * EventBindingLayout.size;
+  uint64_t relationIndexOffset =
+      eventArrayStorageBindingOffset +
+      eventArrayStorageBindings.size() * EventArrayStorageBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4489,6 +4535,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setMailboxElementBindingCount(mailboxElementBindings.size());
     writer.setEventBindingOffset(eventBindingOffset);
     writer.setEventBindingCount(eventBindings.size());
+    writer.setEventArrayStorageBindingOffset(eventArrayStorageBindingOffset);
+    writer.setEventArrayStorageBindingCount(eventArrayStorageBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4635,6 +4683,17 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setPhysicalTypeIndex(binding.physicalType);
   }
 
+  llvm::sort(eventArrayStorageBindings,
+             [](const auto &left, const auto &right) {
+               return left.array < right.array;
+             });
+  for (auto [index, binding] : llvm::enumerate(eventArrayStorageBindings)) {
+    EventArrayStorageBindingWriter writer(
+        output.data() + eventArrayStorageBindingOffset +
+        index * EventArrayStorageBindingLayout.size);
+    writer.setArrayIndexAndTable(binding.array);
+    writer.setStorageIndex(binding.storage);
+  }
   llvm::sort(eventBindings, [](const auto &left, const auto &right) {
     return left.event < right.event;
   });

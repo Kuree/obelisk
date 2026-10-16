@@ -52,6 +52,8 @@ constexpr uint64_t kClassMemberBindingSize =
     obelisk::reflection::ClassMemberBindingLayout.size;
 constexpr uint64_t kEventBindingSize =
     obelisk::reflection::EventBindingLayout.size;
+constexpr uint64_t kEventArrayStorageBindingSize =
+    obelisk::reflection::EventArrayStorageBindingLayout.size;
 constexpr uint64_t kModportBindingSize =
     obelisk::reflection::ModportBindingLayout.size;
 constexpr uint64_t kMailboxElementBindingSize =
@@ -257,6 +259,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t modportBindingOffset = 0, modportBindingCount = 0;
   uint64_t mailboxElementBindingOffset = 0, mailboxElementBindingCount = 0;
   uint64_t eventBindingOffset = 0, eventBindingCount = 0;
+  uint64_t eventArrayStorageBindingOffset = 0,
+           eventArrayStorageBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -356,6 +360,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     mailboxElementBindingCount = reader.getMailboxElementBindingCount();
     eventBindingOffset = reader.getEventBindingOffset();
     eventBindingCount = reader.getEventBindingCount();
+    eventArrayStorageBindingOffset = reader.getEventArrayStorageBindingOffset();
+    eventArrayStorageBindingCount = reader.getEventArrayStorageBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -395,6 +401,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               mailboxElementBindingCount,
               eventBindingOffset,
               eventBindingCount,
+              eventArrayStorageBindingOffset,
+              eventArrayStorageBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -472,6 +480,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         {database.mailboxElementBindings, database.mailboxElementBindingCount,
          kMailboxElementBindingSize},
         {database.eventBindings, database.eventBindingCount, kEventBindingSize},
+        {database.eventArrayStorageBindings,
+         database.eventArrayStorageBindingCount, kEventArrayStorageBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -546,7 +556,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.classMemberBindingCount != 0 ||
         database.modportBindingCount != 0 ||
         database.mailboxElementBindingCount != 0 ||
-        database.eventBindingCount != 0 || database.relationIndexCount != 0 ||
+        database.eventBindingCount != 0 ||
+        database.eventArrayStorageBindingCount != 0 ||
+        database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
@@ -602,6 +614,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   kMailboxElementBindingSize, database.size) ||
       !validRange(database.eventBindings, database.eventBindingCount,
                   kEventBindingSize, database.size) ||
+      !validRange(database.eventArrayStorageBindings,
+                  database.eventArrayStorageBindingCount,
+                  kEventArrayStorageBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -679,6 +694,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.mailboxElementBindings < kHeaderSize) ||
       (database.eventBindingCount != 0 &&
        database.eventBindings < kHeaderSize) ||
+      (database.eventArrayStorageBindingCount != 0 &&
+       database.eventArrayStorageBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -753,6 +770,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.modportBindingCount > UINT32_MAX ||
       database.mailboxElementBindingCount > UINT32_MAX ||
       database.eventBindingCount > UINT32_MAX ||
+      database.eventArrayStorageBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -974,6 +992,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       {database.mailboxElementBindings, database.mailboxElementBindingCount,
        kMailboxElementBindingSize},
       {database.eventBindings, database.eventBindingCount, kEventBindingSize},
+      {database.eventArrayStorageBindings,
+       database.eventArrayStorageBindingCount, kEventArrayStorageBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -3398,6 +3418,48 @@ bool validateDatabaseImpl(const Database &database) {
                                   uint64_t{index} * kStaticObjectSize + 28)))
       return false;
 
+  // The lexical array owns the public identity; a checked binding keeps its
+  // executable cells private. Physical and semantic dimensions are checked
+  // against the relation-index shape below, after that inventory is validated.
+  std::unordered_map<uint32_t, uint64_t> eventArrayStorage;
+  std::unordered_set<uint64_t> eventBackingStorage;
+  uint32_t previousEventArray = 0;
+  for (uint64_t index = 0; index != database.eventArrayStorageBindingCount;
+       ++index) {
+    obelisk::reflection::EventArrayStorageBindingView binding(
+        database.data + database.eventArrayStorageBindings +
+        index * kEventArrayStorageBindingSize);
+    const uint32_t array = binding.getArrayIndexAndTable();
+    uint64_t arrayOffset = 0;
+    if ((index && array <= previousEventArray) ||
+        obelisk::reflection::unpackTableIndexKind(array) !=
+            obelisk::reflection::TableKind::Object ||
+        !packedObjectReferenceOffset(database, array, arrayOffset) ||
+        recordKind(database.data + arrayOffset) !=
+            OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT ||
+        objectReferenceVPIKind(database, arrayOffset) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::NamedEventArray) ||
+        read64(database.data + arrayOffset + 48) != 0 ||
+        binding.getStorageIndex() >= database.objectCount)
+      return false;
+    const uint64_t storageOffset =
+        database.objects + uint64_t{binding.getStorageIndex()} * kObjectSize;
+    const uint8_t *storage = database.data + storageOffset;
+    // The private backing retains its physical array classification. The
+    // public declaration above carries the named-event-array identity.
+    if (recordKind(storage) != OBELISK_RT_DESIGN_RECORD_STORAGE ||
+        recordVPIKind(storage) !=
+            static_cast<uint32_t>(
+                obelisk::reflection::VPIObjectKind::ArrayVar) ||
+        read64(storage + 16) != read64(database.data + arrayOffset + 16) ||
+        !isTypeOffset(database, read64(storage + 48)) ||
+        !eventBackingStorage.insert(storageOffset).second)
+      return false;
+    eventArrayStorage.emplace(array, storageOffset);
+    previousEventArray = array;
+  }
+
   std::unordered_set<uint32_t> boundClassFields;
   std::unordered_set<uint64_t> classBackingStorage;
   std::unordered_set<uint64_t> classMemberParents;
@@ -3413,6 +3475,7 @@ bool validateDatabaseImpl(const Database &database) {
     std::string_view memberName;
     if ((index && member <= previousMember) || binding.getFlags() > 3 ||
         boundEvents.count(member) != 0 ||
+        eventArrayStorage.count(member) != 0 ||
         canonical == canonicalClassTypes.end() ||
         !packedObjectReferenceOffset(database, member, memberOffset) ||
         !packedObjectReferenceOffset(database, owner, ownerOffset) ||
@@ -3469,19 +3532,22 @@ bool validateDatabaseImpl(const Database &database) {
           read64(database.data + storageOffset + 48) !=
               read64(database.data + memberOffset + 48))
         return false;
+      if (eventBackingStorage.count(storageOffset) != 0)
+        return false;
       classBackingStorage.insert(storageOffset);
     }
     boundClassFields.insert(member);
   }
-  // Class-static storage is only a backing value for its immutable member
-  // declaration. The marker excludes it from physical scope discovery and
-  // is valid only when a checked member binding proves that ownership.
+  // Private class-static and event-array storage has one public declaration
+  // identity. The marker excludes it from physical scope discovery and is
+  // valid only when a checked binding proves that ownership.
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     uint64_t offset = database.objects + uint64_t{index} * kObjectSize;
     const uint8_t *object = database.data + offset;
     if (recordKind(object) == OBELISK_RT_DESIGN_RECORD_STORAGE &&
         (((read32(object + 4) & OBELISK_RT_DESIGN_CAP_LEXICAL_ANCHOR) != 0) !=
-         (classBackingStorage.count(offset) != 0)))
+         (classBackingStorage.count(offset) != 0 ||
+          eventBackingStorage.count(offset) != 0)))
       return false;
   }
   // Variable kinds newly admitted to the immutable table are class
@@ -4970,6 +5036,7 @@ bool validateDatabaseImpl(const Database &database) {
                   }))
     return false;
 
+  std::unordered_set<uint32_t> checkedEventArrays;
   std::vector<bool> relationIndexedObjects(database.objectCount, false);
   std::vector<bool> usedDimensions(database.relationIndexDimensionCount, false);
   std::vector<bool> usedKeys(database.relationIndexKeyCount, false);
@@ -5079,6 +5146,23 @@ bool validateDatabaseImpl(const Database &database) {
             database.relationIndexDimensionCount - firstDimension ||
         firstKey != UINT32_MAX || firstOrdinalKey != UINT32_MAX)
       return false;
+    uint32_t packedArray = 0;
+    if (!obelisk::reflection::tryPackTableIndex(
+            obelisk::reflection::TableKind::Object, objectIndex, packedArray))
+      return false;
+    auto eventStorage = eventArrayStorage.find(packedArray);
+    uint64_t eventPhysical = 0;
+    uint32_t eventSemantic = UINT32_MAX, storageSemantic = UINT32_MAX;
+    if (eventStorage != eventArrayStorage.end()) {
+      uint32_t packedStorage = 0;
+      if (!packedObjectReferenceForCursor(database, eventStorage->second,
+                                          packedStorage) ||
+          !findSemanticRootBinding(database, packedArray, eventSemantic) ||
+          !findSemanticRootBinding(database, packedStorage, storageSemantic))
+        return false;
+      eventPhysical = read64(database.data + eventStorage->second + 48);
+      checkedEventArrays.insert(packedArray);
+    }
     uint64_t product = 1;
     for (uint32_t dimension = 0; dimension != dimensionCount; ++dimension) {
       uint32_t dimensionIndex = firstDimension + dimension;
@@ -5098,13 +5182,48 @@ bool validateDatabaseImpl(const Database &database) {
           product > UINT32_MAX / (distance + 1))
         return false;
       product *= distance + 1;
+      if (eventStorage != eventArrayStorage.end()) {
+        const uint8_t *physical = database.data + eventPhysical;
+        const uint8_t *semantic = semanticRecord(eventSemantic);
+        const uint8_t *stored = semanticRecord(storageSemantic);
+        if (read32(physical + 4) != OBELISK_RT_DESIGN_TYPE_ARRAY ||
+            readI64(physical + 16) != left || readI64(physical + 24) != right ||
+            (read32(semantic) & UINT32_C(0xff)) !=
+                OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+            (read32(stored) & UINT32_C(0xff)) !=
+                OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+            readI64(semantic + 32) != left || readI64(semantic + 40) != right ||
+            readI64(stored + 32) != left || readI64(stored + 40) != right)
+          return false;
+        // The physical type validator proves each dimension has an integral
+        // stride that contains its child; padding is preserved, not guessed.
+        eventPhysical = read64(physical + 32);
+        eventSemantic =
+            read32(database.data + database.semanticTypeEdges +
+                   uint64_t{read32(semantic + 4)} * kSemanticTypeEdgeSize);
+        storageSemantic =
+            read32(database.data + database.semanticTypeEdges +
+                   uint64_t{read32(stored + 4)} * kSemanticTypeEdgeSize);
+      }
       if (dimension == 0 &&
           (readI64(object + 64) != left || readI64(object + 72) != right))
         return false;
     }
     if (product != elementCount)
       return false;
+    if (eventStorage != eventArrayStorage.end()) {
+      const uint8_t *physical = database.data + eventPhysical;
+      if (read32(physical + 4) != OBELISK_RT_DESIGN_TYPE_SCALAR ||
+          read64(physical + 8) != 64 ||
+          (read32(semanticRecord(eventSemantic)) & UINT32_C(0xff)) !=
+              OBELISK_RT_DESIGN_SEMANTIC_EVENT ||
+          (read32(semanticRecord(storageSemantic)) & UINT32_C(0xff)) !=
+              OBELISK_RT_DESIGN_SEMANTIC_EVENT)
+        return false;
+    }
   }
+  if (checkedEventArrays.size() != eventArrayStorage.size())
+    return false;
   for (uint32_t index = 0; index != database.objectCount; ++index) {
     const uint8_t *object =
         database.data + database.objects + uint64_t{index} * kObjectSize;
@@ -5188,6 +5307,9 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t packedArray = 0;
     if (!obelisk::reflection::tryPackTableIndex(
             obelisk::reflection::TableKind::Object, sourceIndex, packedArray))
+      return false;
+    if (eventArrayStorage.count(packedArray) != 0 &&
+        boundEvents.count(packedTarget) != 0)
       return false;
     auto firstEdge = std::lower_bound(
         std::begin(obelisk::reflection::vpiTraversals),
@@ -5365,6 +5487,7 @@ bool validateDatabaseImpl(const Database &database) {
     // storage must not create a second name-index identity.
     if ((caps & OBELISK_RT_DESIGN_CAP_INTERNAL) != 0 ||
         classBackingStorage.count(offset) != 0 ||
+        eventBackingStorage.count(offset) != 0 ||
         canonicalMethodObjects.count(offset) != 0 ||
         (recordKind(port) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
          (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0))
@@ -5509,6 +5632,9 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.mailboxElementBindingCount == right.mailboxElementBindingCount &&
          left.eventBindings == right.eventBindings &&
          left.eventBindingCount == right.eventBindingCount &&
+         left.eventArrayStorageBindings == right.eventArrayStorageBindings &&
+         left.eventArrayStorageBindingCount ==
+             right.eventArrayStorageBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -7222,6 +7348,71 @@ obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
     }
   }
   return OBELISK_RT_EOF;
+}
+
+obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
+    VPIEventCellBinding *outBinding) noexcept {
+  if (!outBinding)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outBinding = {};
+  const Database *database = cachedDatabase(context);
+  if (!database)
+    return OBELISK_RT_INVALID_HANDLE;
+  VPIArrayMemberInfo member{};
+  auto status = designVPIArrayMember(*database, event, &member);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (member.arrayType !=
+      static_cast<uint32_t>(
+          obelisk::reflection::VPIObjectKind::NamedEventArray))
+    return OBELISK_RT_EOF;
+  uint32_t packedArray = 0;
+  if (!packedObjectReferenceForCursor(*database, member.array.offset,
+                                      packedArray))
+    return OBELISK_RT_INVALID_DESIGN;
+  uint64_t low = 0, high = database->eventArrayStorageBindingCount;
+  while (low < high) {
+    uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::EventArrayStorageBindingView binding(
+        database->data + database->eventArrayStorageBindings +
+        middle * kEventArrayStorageBindingSize);
+    if (binding.getArrayIndexAndTable() < packedArray)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->eventArrayStorageBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::EventArrayStorageBindingView binding(
+      database->data + database->eventArrayStorageBindings +
+      low * kEventArrayStorageBindingSize);
+  if (binding.getArrayIndexAndTable() != packedArray)
+    return OBELISK_RT_EOF;
+  const uint64_t storage =
+      database->objects + uint64_t{binding.getStorageIndex()} * kObjectSize;
+  uint64_t physical = read64(database->data + storage + 48);
+  uint64_t remaining = member.index.elementCount;
+  uint64_t ordinal = member.ordinal, bitOffset = 0;
+  for (uint32_t dimension = 0; dimension != member.index.dimensionCount;
+       ++dimension) {
+    const uint8_t *type = database->data + physical;
+    uint64_t extent = 0;
+    // Validation ties the physical ranges and dimension count to the public
+    // relation-index inventory, and proves each stride contains its child.
+    if (!rangeExtent(type, extent) || !extent || remaining % extent)
+      return OBELISK_RT_INVALID_DESIGN;
+    remaining /= extent;
+    if (!remaining)
+      return OBELISK_RT_INVALID_DESIGN;
+    uint64_t coordinate = ordinal / remaining;
+    ordinal %= remaining;
+    bitOffset += coordinate * (read64(type + 8) / extent);
+    physical = read64(type + 32);
+  }
+  outBinding->storage.offset = storage;
+  outBinding->bitOffset = bitOffset;
+  return OBELISK_RT_OK;
 }
 
 obelisk_rt_status

@@ -4345,6 +4345,26 @@ vpiHandle namedEventWaitingProcesses(__vpiHandle *source) {
                vpiInternal);
       return nullptr;
     }
+    if (status == OBELISK_RT_EOF && source->form == VPIObjectForm::Design) {
+      VPIEventCellBinding cell{};
+      status = obelisk_rt_cached_vpi_event_array_cell(source->owner->context,
+                                                      source->cursor, &cell);
+      if (status == OBELISK_RT_OK) {
+        uint64_t unknown = 0;
+        status = obelisk_rt_read_design_slice(source->owner->context,
+                                              cell.storage, cell.bitOffset, 64,
+                                              &eventID, &unknown);
+        if (status != OBELISK_RT_OK || unknown) {
+          setError(source->owner, "named event VPI array cell read failed",
+                   vpiInternal);
+          return nullptr;
+        }
+      } else if (status != OBELISK_RT_EOF) {
+        setError(source->owner, "named event VPI array binding is invalid",
+                 vpiInternal);
+        return nullptr;
+      }
+    }
     if (status == OBELISK_RT_EOF) {
       // Event variables and selected class event fields hold the executable
       // event identity. Source-only declaration anchors carry no such value.

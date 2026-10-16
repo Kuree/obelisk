@@ -1703,6 +1703,8 @@ struct DesignDatabaseCache {
   uint64_t mailboxElementBindingCount = 0;
   uint64_t eventBindings = 0;
   uint64_t eventBindingCount = 0;
+  uint64_t eventArrayStorageBindings = 0;
+  uint64_t eventArrayStorageBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -3789,6 +3791,16 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_typespec(
 obelisk_rt_status
 obelisk_rt_cached_vpi_scope(const obelisk_rt_context *context, uint64_t scopeID,
                             obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// A named-event array leaf selects a private storage cell without creating
+// another public VPI identity. The offset is in bits relative to storage.
+struct VPIEventCellBinding {
+  obelisk_rt_design_cursor_v1 storage{};
+  uint64_t bitOffset = 0;
+};
+obelisk_rt_status obelisk_rt_cached_vpi_event_array_cell(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 event,
+    VPIEventCellBinding *outBinding) noexcept;
+
 // Returns EOF when the source event uses a mutable cell or has no executable
 // binding in this image. A successful lookup may return event identity zero.
 obelisk_rt_status
