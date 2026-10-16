@@ -71,7 +71,10 @@ names, scopes, declared types, lifetime, constness, random mode, and visibility
 remain queryable; value access reports a notice. A dependent field such as
 `T value` has no public variable kind until specialization and is therefore
 not fabricated as a `vpiReg`. Its source declaration is retained for subsequent
-specialization. Dependent typedefs, nested generic types, broader concrete type
+specialization. Dependent typedef aliases retain distinct named typespec
+identities with exact `vpiTypedefAlias` chains to their unresolved type parameters. They appear only
+in the typedef inventory; declaration-only effective type, default, and
+localparam queries report a notice. Nested generic types, broader concrete type
 syntax, and broader original-default expression forms remain incomplete.
 
 Mailbox, semaphore, and process variables also expose `vpiClassObj` and

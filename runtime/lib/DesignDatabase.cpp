@@ -1766,6 +1766,9 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_map<uint32_t, uint32_t> sourceClassPropertyOwners;
   std::unordered_map<uint32_t, uint32_t> sourceClassPropertyScopes;
   std::unordered_set<uint32_t> unresolvedTypeParameters;
+  std::unordered_set<uint32_t> unresolvedTypeAliases, namedUnresolvedAliases;
+  std::unordered_map<uint32_t, uint32_t> unresolvedAliasOwners,
+      unresolvedAliasScopes, unresolvedAliasTargets;
   std::unordered_set<uint32_t> unresolvedValueParameters;
   std::unordered_set<uint32_t> sourceExpressionObjects;
   std::unordered_map<uint32_t, uint16_t> sourceExpressionOperators;
@@ -1888,6 +1891,7 @@ bool validateDatabaseImpl(const Database &database) {
             intrinsicKind == static_cast<uint32_t>(VPIKind::Udp);
         if ((caps & ~(OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
                       OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                      OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
                       parameterSourceFlags)) != 0 ||
             !validParameterSourceFlags(intrinsicKind, caps) ||
             read64(record + 80) != 0 ||
@@ -1959,7 +1963,8 @@ bool validateDatabaseImpl(const Database &database) {
                  (ordinalCaps &
                   ~(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
                         ? parameterSourceFlags |
-                              OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY
+                              OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                              OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS
                         : 0u)) != 0) {
         return false;
       }
@@ -2012,6 +2017,21 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       exactKind = recordVPIKind(database.data + database.objects +
                                 uint64_t{sourceIndex} * kObjectSize);
+      if (recordKind(database.data + database.objects +
+                     uint64_t{sourceIndex} * kObjectSize) ==
+              OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+          (read32(database.data + database.objects +
+                  uint64_t{sourceIndex} * kObjectSize + 4) &
+           OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0) {
+        // This typespec inherits the parameter's public kind, but is not a
+        // parameter declaration. Only its exact source name is a fixed fact.
+        if (selector != 2)
+          return false;
+        std::string_view name;
+        if (!getString(database, payload, name) || name.empty())
+          return false;
+        namedUnresolvedAliases.insert(packedSource);
+      }
       break;
     case obelisk::reflection::TableKind::Statement:
       if (sourceIndex >= database.statementCount)
@@ -2757,12 +2777,26 @@ bool validateDatabaseImpl(const Database &database) {
                         : 0;
     bool unresolved =
         (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
+    bool unresolvedAlias =
+        (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
     if (typespec &&
-        (unresolved ? objectSemanticRoots[index] : !objectSemanticRoots[index]))
+        ((unresolved || unresolvedAlias) ? objectSemanticRoots[index]
+                                         : !objectSemanticRoots[index]))
       return false;
     uint32_t packed =
         (static_cast<uint32_t>(obelisk::reflection::TableKind::Object) << 30) |
         index;
+    if (unresolvedAlias) {
+      if (recordVPIKind(object) !=
+              static_cast<uint32_t>(
+                  obelisk::reflection::VPIObjectKind::TypeParameter) ||
+          caps != (OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                   OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) ||
+          read64(object + 48) != 0 || objectSemanticRoots[index] ||
+          !namedUnresolvedAliases.count(packed))
+        return false;
+      unresolvedTypeAliases.insert(packed);
+    }
     if ((caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0) {
       using Kind = obelisk::reflection::VPIObjectKind;
       if (caps != OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY ||
@@ -2812,7 +2846,8 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t caps = read16(object + 30);
     bool unresolved =
         (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
-    if ((caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0 ||
+    if ((caps & (OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
+                 OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS)) != 0 ||
         !validParameterSourceFlags(read16(object + 28), caps) ||
         (typespec && (unresolved ? staticObjectSemanticRoots[index]
                                  : !staticObjectSemanticRoots[index])))
@@ -5105,6 +5140,48 @@ bool validateDatabaseImpl(const Database &database) {
     }
 
     uint32_t sourceEndpoint = relationEndpoint(sourceTable, sourceIndex);
+    if (unresolvedTypeAliases.count(packedTarget)) {
+      if (iterate &&
+          selector == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::Parameter))
+        return false;
+      if (iterate &&
+          selector == static_cast<uint32_t>(
+                          obelisk::reflection::VPIRelationKind::TypedefRel)) {
+        if (sourceKind != static_cast<uint32_t>(
+                              obelisk::reflection::VPIObjectKind::ClassDefn) ||
+            !unresolvedAliasOwners.emplace(packedTarget, sourceEndpoint).second)
+          return false;
+      }
+    }
+    if (unresolvedTypeAliases.count(sourceEndpoint)) {
+      if (iterate)
+        return false;
+      if (selector ==
+          static_cast<uint32_t>(
+              obelisk::reflection::VPIRelationKind::TypedefAliasRel)) {
+        if ((!unresolvedTypeAliases.count(packedTarget) &&
+             !unresolvedTypeParameters.count(packedTarget)) ||
+            !unresolvedAliasTargets.emplace(sourceEndpoint, packedTarget)
+                 .second)
+          return false;
+      } else if (selector ==
+                 static_cast<uint32_t>(
+                     obelisk::reflection::VPIRelationKind::ScopeRel)) {
+        uint64_t ownerScope =
+            targetTable == obelisk::reflection::TableKind::StaticObject
+                ? database.scopes + uint64_t{read32(target + 8)} * kScopeSize
+                : read64(target + 16);
+        if (targetKind != static_cast<uint32_t>(
+                              obelisk::reflection::VPIObjectKind::ClassDefn) ||
+            read64(sourceRecord + 16) != ownerScope ||
+            !unresolvedAliasScopes.emplace(sourceEndpoint, packedTarget).second)
+          return false;
+      } else {
+        return false;
+      }
+    }
+
     if (iterate &&
         (lexicalForward ||
          selector == static_cast<uint32_t>(
@@ -5447,6 +5524,43 @@ bool validateDatabaseImpl(const Database &database) {
           scope->second != owner->second)
         return false;
     }
+  }
+  // Rootless typedefs retain a distinct identity and terminate at an unresolved
+  // parameter of the same lexical class. Memoized iterative walks reject cycles
+  // without recursively consuming the host stack on an untrusted image.
+  std::unordered_set<uint32_t> provenUnresolvedAliases;
+  for (uint32_t alias : unresolvedTypeAliases) {
+    std::vector<uint32_t> path;
+    std::unordered_set<uint32_t> visiting;
+    uint32_t cursor = alias;
+    auto owner = unresolvedAliasOwners.find(alias);
+    if (owner == unresolvedAliasOwners.end())
+      return false;
+    while (unresolvedTypeAliases.count(cursor)) {
+      auto aliasOwner = unresolvedAliasOwners.find(cursor);
+      auto scope = unresolvedAliasScopes.find(cursor);
+      auto target = unresolvedAliasTargets.find(cursor);
+      if (aliasOwner == unresolvedAliasOwners.end() ||
+          aliasOwner->second != owner->second ||
+          scope == unresolvedAliasScopes.end() ||
+          scope->second != owner->second ||
+          target == unresolvedAliasTargets.end())
+        return false;
+      if (provenUnresolvedAliases.count(cursor))
+        break;
+      if (!visiting.insert(cursor).second)
+        return false;
+      path.push_back(cursor);
+      cursor = target->second;
+    }
+    if (!unresolvedTypeAliases.count(cursor)) {
+      auto parent = unresolvedParameterParents.find(cursor);
+      if (!unresolvedTypeParameters.count(cursor) ||
+          parent == unresolvedParameterParents.end() ||
+          parent->second != lexicalPair(owner->second, cursor))
+        return false;
+    }
+    provenUnresolvedAliases.insert(path.begin(), path.end());
   }
   // Each occurrence belongs to exactly one acyclic tree rooted in a precise
   // parameter default. Cache roots while following parent links so shared

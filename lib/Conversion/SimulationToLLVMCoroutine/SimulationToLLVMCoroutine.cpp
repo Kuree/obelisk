@@ -2170,12 +2170,12 @@ LogicalResult NativePipelineAnalysis::materialize() {
               sim::SimNetConnectDeclOp, sim::SimPassSwitchDeclOp,
               sim::SimClassDeclOp, sim::SimCovergroupDeclOp,
               sim::SimVPIObjectAnchorOp, sim::SimVPINettypeDeclOp,
-              sim::SimVPITypespecDeclOp, sim::SimVPIBoxTypeDeclOp,
-              sim::SimVPIEnumConstDeclOp, sim::SimVPIClassMemberDeclOp,
-              sim::SimVPIEventBindingOp, sim::SimVPIThreadOriginBindingOp,
-              sim::SimVPICallDeclOp, sim::SimClassFieldDeclOp,
-              schedule::NativeMethodOp, sim::SimRandomConstraintTemplateOp>(
-              operation)) {
+              sim::SimVPITypespecDeclOp, sim::SimVPIUnresolvedTypeAliasDeclOp,
+              sim::SimVPIBoxTypeDeclOp, sim::SimVPIEnumConstDeclOp,
+              sim::SimVPIClassMemberDeclOp, sim::SimVPIEventBindingOp,
+              sim::SimVPIThreadOriginBindingOp, sim::SimVPICallDeclOp,
+              sim::SimClassFieldDeclOp, schedule::NativeMethodOp,
+              sim::SimRandomConstraintTemplateOp>(operation)) {
         operation->erase();
         continue;
       }

@@ -343,6 +343,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
   SmallVector<sim::SimVPIObjectAnchorOp> anchors;
   SmallVector<sim::SimVPINettypeDeclOp> nettypes;
   SmallVector<sim::SimVPITypespecDeclOp> typespecs;
+  SmallVector<sim::SimVPIUnresolvedTypeAliasDeclOp> unresolvedAliases;
   SmallVector<sim::SimVPIClassMemberDeclOp> classMembers;
   DenseMap<Operation *, sim::SimClassFieldDeclOp> classMemberFields;
   DenseSet<uint64_t> classStaticStorage;
@@ -367,6 +368,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
   DenseMap<uint64_t, sim::SimVPIObjectAnchorOp> anchorsByInventoryId;
   llvm::StringMap<sim::SimVPINettypeDeclOp> nettypesBySymbol;
   llvm::StringMap<sim::SimVPITypespecDeclOp> typespecsBySymbol;
+  llvm::StringMap<sim::SimVPIUnresolvedTypeAliasDeclOp>
+      unresolvedAliasesBySymbol;
   llvm::StringMap<sim::SimVPIClassMemberDeclOp> classMembersBySymbol;
   DenseMap<uint64_t, sim::SimVPITypespecDeclOp> anonymousTypespecsByIdentity;
   SmallVector<RelationRecord> relations;
@@ -498,6 +501,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
         nettypes.push_back(nettype);
         nettypesBySymbol[nettype.getSymName()] = nettype;
       }
+    } else if (auto alias =
+                   dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation)) {
+      if (includeStatements) {
+        unresolvedAliases.push_back(alias);
+        unresolvedAliasesBySymbol[alias.getSymName()] = alias;
+      }
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (includeStatements) {
         typespecs.push_back(typespec);
@@ -517,7 +526,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
           }
         }
       }
-    } else if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
+    } else if (auto member =
+                   dyn_cast<sim::SimVPIClassMemberDeclOp>(operation)) {
       if (includeStatements) {
         classMembers.push_back(member);
         classMembersBySymbol[member.getSymName()] = member;
@@ -739,6 +749,20 @@ SmallVector<uint8_t> serializeDesignDatabase(
                          *id, nettype.getScopeId(),
                          nettype.getHierarchicalName().str(), Type{}, 0,
                          sourceFor(nettype), true, nettype});
+    } else if (auto alias =
+                   dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation)) {
+      if (!includeStatements)
+        continue;
+      auto id = staticInventoryID(alias, alias.getId(), 1);
+      if (!id)
+        return {};
+      objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
+                         static_cast<uint16_t>(VPIObjectKind::TypeParameter),
+                         OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS |
+                             OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC,
+                         *id, alias.getScopeId(),
+                         alias.getHierarchicalName().str(), Type{}, 0,
+                         sourceFor(alias), true, alias});
     } else if (auto typespec = dyn_cast<sim::SimVPITypespecDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -1452,7 +1476,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t vpiKind;
   };
   DenseMap<Operation *, ImageObjectRef> anchorRefs, nettypeRefs, typespecRefs,
-      classMemberRefs;
+      classMemberRefs, unresolvedAliasRefs;
   DenseSet<uint32_t> lexicallyAnchoredObjectIndices;
   if (includeStatements) {
     for (auto [index, object] : llvm::enumerate(objects))
@@ -1544,6 +1568,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
       }
       eventBindings.push_back({packed, binding.getEventId()});
+    }
+    for (auto alias : unresolvedAliases) {
+      uint32_t index = objectIndices.lookup(alias);
+      unresolvedAliasRefs[alias] = {TableKind::Object, index,
+                                    objects[index].vpiKind};
     }
     for (sim::SimVPITypespecDeclOp typespec : typespecs) {
       uint32_t index = objectIndices.lookup(typespec);
@@ -2387,6 +2416,37 @@ SmallVector<uint8_t> serializeDesignDatabase(
         return {};
     }
 
+    llvm::sort(unresolvedAliases, [](auto left, auto right) {
+      return left.getId() < right.getId();
+    });
+    for (auto alias : unresolvedAliases) {
+      Operation *owner = lookupLexicalOwner(alias.getOwnerAttr());
+      ImageObjectRef ownerRef = lexicalOwnerRef(owner);
+      ImageObjectRef aliasRef = unresolvedAliasRefs.lookup(alias);
+      ImageObjectRef targetRef{};
+      if (auto target = unresolvedAliasesBySymbol.lookup(alias.getTarget()))
+        targetRef = unresolvedAliasRefs.lookup(target);
+      else
+        targetRef =
+            anchorRefs.lookup(anchorsBySymbol.lookup(alias.getTarget()));
+      if (failed(addRelation(
+              alias, ownerRef.table, ownerRef.index, ownerRef.vpiKind,
+              static_cast<uint32_t>(VPIRelationKind::TypedefRel),
+              VPITraversalMode::Iterate, aliasRef.table, aliasRef.index,
+              aliasRef.vpiKind, typedefOrdinals[owner]++)) ||
+          failed(addRelation(
+              alias, aliasRef.table, aliasRef.index, aliasRef.vpiKind,
+              static_cast<uint32_t>(VPIRelationKind::TypedefAliasRel),
+              VPITraversalMode::Handle, targetRef.table, targetRef.index,
+              targetRef.vpiKind)) ||
+          failed(addRelation(alias, aliasRef.table, aliasRef.index,
+                             aliasRef.vpiKind,
+                             static_cast<uint32_t>(VPIRelationKind::ScopeRel),
+                             VPITraversalMode::Handle, ownerRef.table,
+                             ownerRef.index, ownerRef.vpiKind)))
+        return {};
+    }
+
     llvm::sort(enumConstants, [](sim::SimVPIEnumConstDeclOp left,
                                  sim::SimVPIEnumConstDeclOp right) {
       return std::tuple(left.getEnumTypespecAttr().getValue(),
@@ -2766,6 +2826,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
         else if (auto typespec = typespecsBySymbol.find(name);
                  typespec != typespecsBySymbol.end())
           resolved = typespecRefs.lookup(typespec->second);
+        else if (auto alias = unresolvedAliasesBySymbol.find(name);
+                 alias != unresolvedAliasesBySymbol.end())
+          resolved = unresolvedAliasRefs.lookup(alias->second);
         else if (auto nettype = nettypesBySymbol.find(name);
                  nettype != nettypesBySymbol.end())
           resolved = nettypeRefs.lookup(nettype->second);
@@ -4033,6 +4096,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
           !anchor.getDebugName().empty())
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     anchor.getDebugNameAttr())))
+          return failure();
+      if (auto alias =
+              dyn_cast<sim::SimVPIUnresolvedTypeAliasDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    alias.getDebugNameAttr())))
           return failure();
       if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation))
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,

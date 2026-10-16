@@ -630,7 +630,8 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       return emitOpError() << "references an unknown " << endpoint
                            << " VPI symbol " << reference.getSymbol();
     if (!isa<SimVPIObjectAnchorOp, SimVPITypespecDeclOp, SimVPINettypeDeclOp,
-             SimVPIClassMemberDeclOp>(declaration))
+             SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp>(
+            declaration))
       return emitOpError()
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
@@ -1265,6 +1266,56 @@ SimBoxBindTypeOp::verifySymbolUses(SymbolTableCollection &symbols) {
   if (cast<DynamicArrayType>(getInput().getType()).getElementType() !=
       descriptor.getValueType())
     return emitOpError("input element type must exactly match the descriptor");
+  return success();
+}
+
+LogicalResult SimVPIUnresolvedTypeAliasDeclOp::verify() {
+  if (!isa<SimDesignOp>((*this)->getParentOp()))
+    return emitOpError("requires a simulation.design owner");
+  if (failed(verifyNonnegative(*this, getIdAttr(), "typespec ID")) ||
+      failed(verifyNonnegative(*this, getScopeIdAttr(), "scope ID")))
+    return failure();
+  if (getDebugName().empty() || getHierarchicalName().empty() ||
+      getDebugName().contains('\0') || getHierarchicalName().contains('\0'))
+    return emitOpError(
+        "requires nonempty source typedef names without NUL bytes");
+  if ((*this)->hasAttr("vpi_type") || (*this)->hasAttr("target_type") ||
+      (*this)->hasAttr("constant_value") || (*this)->hasAttr("vpi_properties"))
+    return emitOpError("unresolved typedef cannot carry an effective type or "
+                       "parameter payload");
+  return success();
+}
+
+LogicalResult SimVPIUnresolvedTypeAliasDeclOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  auto owner = symbols.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+      *this, getOwnerAttr());
+  if (!owner || owner.getVpiKind() !=
+                    static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))
+    return emitOpError("owner must be a lexical class definition");
+  if (owner.getEnclosingScopeId() != getScopeId())
+    return emitOpError("scope ID must match the lexical class owner");
+  Operation *target = symbols.lookupNearestSymbolFrom(*this, getTargetAttr());
+  FlatSymbolRefAttr targetOwner;
+  if (auto parameter = dyn_cast_or_null<SimVPIObjectAnchorOp>(target)) {
+    if (parameter.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter) ||
+        !parameter.getUnresolvedTypeParameterAttr())
+      return emitOpError(
+          "target must be an unresolved type parameter or alias");
+    targetOwner = parameter.getParentAttr();
+  } else if (auto alias =
+                 dyn_cast_or_null<SimVPIUnresolvedTypeAliasDeclOp>(target)) {
+    targetOwner = alias.getOwnerAttr();
+  } else {
+    return emitOpError("target must be an unresolved type parameter or alias");
+  }
+  if (targetOwner != getOwnerAttr())
+    return emitOpError("target must belong to the same lexical class");
+  if (target == getOperation() ||
+      target->getBlock() != getOperation()->getBlock() ||
+      !target->isBeforeInBlock(getOperation()))
+    return emitOpError("target must precede the typedef declaration");
   return success();
 }
 
@@ -3301,6 +3352,7 @@ LogicalResult SimDesignOp::verifyRegions() {
   SmallVector<SimVPIObjectAnchorOp> vpiAnchors;
   SmallVector<SimVPINettypeDeclOp> nettypes;
   SmallVector<SimVPITypespecDeclOp> typespecs;
+  SmallVector<SimVPIUnresolvedTypeAliasDeclOp> unresolvedAliases;
   DenseSet<uint64_t> boxTypeIDs;
   SmallVector<SimVPIClassMemberDeclOp> classMembers;
   SmallVector<SimVPIEnumConstDeclOp> enumConstants;
@@ -3388,6 +3440,10 @@ LogicalResult SimDesignOp::verifyRegions() {
       if (failed(addId(member.getIdAttr(), vpiAnchorIds, "VPI source inventory")))
         return failure();
       classMembers.push_back(member);
+    } else if (auto alias = dyn_cast<SimVPIUnresolvedTypeAliasDeclOp>(op)) {
+      if (failed(addId(alias.getIdAttr(), typespecIds, "typespec")))
+        return failure();
+      unresolvedAliases.push_back(alias);
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (failed(addId(typespec.getIdAttr(), typespecIds, "VPI typespec")))
         return failure();
@@ -3940,6 +3996,17 @@ LogicalResult SimDesignOp::verifyRegions() {
         backing.getSymbol())
       classVPIIdentities[backing.getSymbol()] = anchor;
   }
+
+  llvm::DenseSet<std::pair<Attribute, Attribute>> typedefNames;
+  for (SimVPITypespecDeclOp typespec : typespecs)
+    if (typespec.getOrigin() == VPITypespecOrigin::Typedef)
+      typedefNames.insert(
+          {typespec.getOwnerAttr(), typespec.getDebugNameAttr()});
+  for (SimVPIUnresolvedTypeAliasDeclOp alias : unresolvedAliases)
+    if (!typedefNames.insert({alias.getOwnerAttr(), alias.getDebugNameAttr()})
+             .second)
+      return alias.emitOpError(
+          "duplicates a typedef name in its lexical owner");
 
   llvm::SmallDenseSet<Attribute, 8> classSpecializations;
   llvm::SmallDenseSet<Attribute, 8> builtinClassTypes;
@@ -4685,6 +4752,9 @@ LogicalResult SimDesignOp::verifyRegions() {
           kind = anchor.getVpiKind();
         else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(declaration))
           kind = vpiKindForTypespec(typespec.getTargetType()).value_or(0);
+        else if (isa<SimVPIUnresolvedTypeAliasDeclOp>(declaration))
+          kind =
+              static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter);
         else if (isa<SimVPINettypeDeclOp>(declaration))
           kind = static_cast<uint32_t>(reflection::VPIObjectKind::NettypeDecl);
         else if (auto member = dyn_cast<SimVPIClassMemberDeclOp>(declaration))
@@ -4715,6 +4785,23 @@ LogicalResult SimDesignOp::verifyRegions() {
       return failure();
     auto mode = static_cast<reflection::VPITraversalMode>(
         static_cast<uint32_t>(relation.getMode()));
+    auto symbolDeclaration = [&](VPIObjectRefAttr reference) -> Operation * {
+      return reference.getKind() == VPIObjectRefKind::Symbol
+                 ? symbolTable.lookupNearestSymbolFrom(relation,
+                                                       reference.getSymbol())
+                 : nullptr;
+    };
+    if (isa_and_nonnull<SimVPIUnresolvedTypeAliasDeclOp>(
+            symbolDeclaration(relation.getSource())))
+      return relation.emitOpError(
+          "unresolved typedef relations are supplied by its declaration");
+    if (isa_and_nonnull<SimVPIUnresolvedTypeAliasDeclOp>(
+            symbolDeclaration(relation.getTarget())) &&
+        relation.getSelector() ==
+            static_cast<uint32_t>(reflection::VPIObjectKind::Parameter) &&
+        mode == reflection::VPITraversalMode::Iterate)
+      return relation.emitOpError(
+          "unresolved typedef is not a parameter declaration");
     const auto *edge =
         reflection::findVPITraversal(*sourceKind, relation.getSelector(), mode);
     bool declaredNetConnection =
@@ -5311,6 +5398,9 @@ LogicalResult SimDesignOp::verifyRegions() {
               statement->second.getVpiKind(), phase))
         return site.emitOpError(
             "phase is not legal for the statement's Table 38-6 policy");
+    } else if (auto alias = dyn_cast<SimVPIUnresolvedTypeAliasDeclOp>(op)) {
+      if (!scopeIds.count(alias.getScopeId()))
+        return alias.emitOpError("references an unknown scope ID");
     } else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(op)) {
       if (!scopeIds.count(typespec.getScopeId()))
         return typespec.emitOpError("references an unknown scope ID");

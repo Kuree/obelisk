@@ -579,6 +579,30 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
   let hasVerifier = 1;
 }
 
+def SimVPIUnresolvedTypeAliasDeclOp
+    : SimOp<"vpi_unresolved_type_alias.decl",
+            [Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+             MemoryEffects<[MemWrite<SimInventoryResource>]>]> {
+  let summary = "lexical typedef of an unresolved class type parameter";
+  let description = [{
+    Preserves a distinct named typespec identity when its underlying type
+    parameter has no effective type (IEEE 1800-2023 37.25 details 6 and 11).
+    The exact target is an unresolved type parameter in the same lexical class,
+    or a preceding alias of such a parameter. The object has public kind
+    TypeParameter, but is a typedef, not a parameter declaration: it has no
+    effective semantic root, value, default expression, or Parameter inventory
+    membership. Concrete typedefs continue to use vpi_typespec.decl.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id, I64Attr:$scope_id,
+      FlatSymbolRefAttr:$owner, FlatSymbolRefAttr:$target,
+      StrAttr:$hierarchical_name, StrAttr:$debug_name);
+  let assemblyFormat = [{
+    $sym_name `id` $id `in` $scope_id `owner` $owner `alias` $target
+    `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 def SimVPIEnumConstDeclOp : SimOp<"vpi_enum_const.decl", [
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,
     MemoryEffects<[MemWrite<SimInventoryResource>]>

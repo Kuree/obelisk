@@ -1354,6 +1354,14 @@ bool rejectSourceClassPropertyValue(__vpiHandle *handle) {
   return true;
 }
 
+bool isUnresolvedTypeAlias(__vpiHandle *handle) {
+  if (handle->form != VPIObjectForm::Design)
+    return false;
+  obelisk_rt_design_info_v1 info{};
+  return infoFor(handle, info) &&
+         (info.capabilities & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS) != 0;
+}
+
 bool rejectUnresolvedParameterQuery(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
@@ -7635,6 +7643,13 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
           type == vpiLeftRange ? left : right);
     }
   }
+  if ((type == vpiTypespec || type == vpiExpr) &&
+      isUnresolvedTypeAlias(handle)) {
+    setError(handle->owner,
+             "unresolved typedef has no effective type or parameter default",
+             vpiNotice);
+    return nullptr;
+  }
   if (type == vpiTypespec && rejectUnresolvedParameterQuery(handle))
     return nullptr;
   if (type == vpiExpr && handle->form == VPIObjectForm::Design &&
@@ -9155,6 +9170,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (propertyDescriptor->valueKind != PropertyValueKind::Boolean &&
       propertyDescriptor->valueKind != PropertyValueKind::Integer) {
     setError(handle->owner, "property is not a 32-bit integer VPI property",
+             vpiNotice);
+    return vpiUndefined;
+  }
+  if (property == vpiLocalParam && isUnresolvedTypeAlias(handle)) {
+    setError(handle->owner, "unresolved typedef is not a parameter declaration",
              vpiNotice);
     return vpiUndefined;
   }

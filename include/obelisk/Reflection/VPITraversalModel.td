@@ -1298,8 +1298,11 @@ def NetTargetObjects : VPIObjectSet<"NetTargetObjects", [Net]>;
 def NetArrayTargetObjects : VPIObjectSet<"NetArrayTargetObjects", [NetArray]>;
 def AssertionTargetObjects : VPIObjectSet<"AssertionTargetObjects",
   [Assert, Assume, Cover, Restrict]>;
+// 37.25 details 6 and 11: aliases inherit the target kind, including an
+// unresolved type parameter acting as a typespec.
 def TypedefTargetObjects : VPIObjectSet<"TypedefTargetObjects",
-  [LongIntTypespec, ShortRealTypespec, ByteTypespec, ShortIntTypespec,
+  [TypeParameter, LongIntTypespec, ShortRealTypespec, ByteTypespec,
+   ShortIntTypespec,
    IntTypespec, ClassTypespec, StringTypespec, ChandleTypespec, EnumTypespec,
    IntegerTypespec, TimeTypespec, RealTypespec, StructTypespec, UnionTypespec,
    BitTypespec, LogicTypespec, ArrayTypespec, VoidTypespec,

@@ -2734,6 +2734,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
   // arbitrary instance of the generic class.
   SymbolTableCollection sourceTypeSymbols;
   DenseMap<Operation *, sim::VPITypeSemanticsAttr> lexicalDeclaredTypes;
+  DenseMap<Operation *, FlatSymbolRefAttr> lexicalUnresolvedAliases;
   module.walk([&](semantic::SVGenericClassDefSymbolOp definition) {
     FlatSymbolRefAttr owner = anchorSymbols.lookup(definition);
     if (!owner)
@@ -2744,6 +2745,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         continue;
       Operation *declared = getChildren(source).front();
       sim::VPITypeSemanticsAttr target;
+      Operation *referencedDeclaration = nullptr;
       if (auto concrete =
               dyn_cast<semantic::SVSourceDeclaredTypeOp>(declared)) {
         auto converted = makeVPITypeSemantics(concrete.getSemanticType(),
@@ -2759,10 +2761,30 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                          declared)) {
         Operation *declaration = sourceTypeSymbols.lookupNearestSymbolFrom(
             reference, reference.getDeclarationAttr());
+        referencedDeclaration = declaration;
         target = lexicalDeclaredTypes.lookup(declaration);
       }
-      if (!target)
+      if (!target) {
+        if (!isa<semantic::SVSourceClassTypeAliasSymbolOp>(source))
+          continue;
+        FlatSymbolRefAttr unresolved =
+            lexicalUnresolvedAliases.lookup(referencedDeclaration);
+        if (!unresolved &&
+            isa_and_nonnull<semantic::SVSourceTypeParameterSymbolOp>(
+                referencedDeclaration))
+          unresolved = anchorSymbols.lookup(referencedDeclaration);
+        if (!unresolved)
+          continue;
+        std::string name =
+            "__obelisk_vpi_source_typedef_" + std::to_string(nextTypespecId);
+        auto alias = sim::SimVPIUnresolvedTypeAliasDeclOp::create(
+            builder, getSemanticLocation(source), name, nextTypespecId++,
+            scopes.lookup(source), owner.getValue(), unresolved.getValue(),
+            getHierarchyName(source), getDebugName(source));
+        lexicalUnresolvedAliases[source] =
+            FlatSymbolRefAttr::get(alias.getSymNameAttr());
         continue;
+      }
       if (isa<semantic::SVSourceClassTypeAliasSymbolOp>(source)) {
         std::string name =
             "__obelisk_vpi_source_typedef_" + std::to_string(nextTypespecId);

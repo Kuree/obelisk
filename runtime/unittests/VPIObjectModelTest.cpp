@@ -3321,6 +3321,13 @@ TEST(VPIObjectModel, EarlyDiagramEnclosuresExpandWithoutFamilyLeakage) {
 // relations.  In particular, a virtual interface cannot accept an arbitrary
 // concrete typespec merely because both are declarations.
 TEST(VPIObjectModel, TypeRelationsPreserveLrmNarrowing) {
+  // 37.25 details 6 and 11: typedef aliases retain the public kind of an
+  // unresolved type parameter while remaining in the typedef inventory.
+  for (uint32_t owner : {vpiModule, vpiPackage, vpiClassDefn})
+    expectContains(owner, vpiTypedef, Mode::Iterate,
+                   {vpiTypeParameter, vpiIntTypespec}, {vpiParameter});
+  expectContains(vpiTypeParameter, vpiTypedefAlias, Mode::Handle,
+                 {vpiTypeParameter}, {vpiParameter});
   expectTargetsExactly(vpiVirtualInterfaceVar, vpiTypespec, Mode::Handle,
                        {vpiInterfaceTypespec});
   expectContains(vpiVirtualInterfaceVar, vpiExpr, Mode::Handle,

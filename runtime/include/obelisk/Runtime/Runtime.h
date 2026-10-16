@@ -1687,6 +1687,9 @@ enum {
   // Concrete lexical class property with exact source type but no executable
   // field/storage binding. Values are unavailable until specialization.
   OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY = UINT32_C(1) << 11,
+  // Named typedef of an unresolved lexical class type parameter. This object
+  // acts as a typespec, not a parameter declaration with an effective value.
+  OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_ALIAS = UINT32_C(1) << 12,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,

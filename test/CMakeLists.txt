@@ -279,6 +279,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIFrameLifecycleTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIGenericClassMethodsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIGenericClassFieldsTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIDependentAliasesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIStatementFormsTest.cpp"
 )
 target_link_libraries(obelisk-design-database-dump-test PRIVATE
