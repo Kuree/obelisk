@@ -995,6 +995,10 @@ LogicalResult Encoder::encodeOperation(FunctionPlan &plan,
         plan, OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE,
         {emitU64Constant(plan, call.getId())}, {reg(plan, op.getTicket())});
   }
+  if (auto op = dyn_cast<sim::SimVPIResolutionPrepareOp>(operation))
+    return emitIntrinsicRegisters(
+        plan, OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE,
+        {emitU64Constant(plan, op.getNetId())}, {reg(plan, op.getTicket())});
   if (auto op = dyn_cast<sim::SimVPIFrameEnterPreparedOp>(operation))
     return emitIntrinsicRegisters(
         plan, OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED,

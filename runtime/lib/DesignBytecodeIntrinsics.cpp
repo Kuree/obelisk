@@ -6465,6 +6465,14 @@ obelisk_rt_status invokeIntrinsic(const Image &image, Frame &frame,
         obelisk_rt_v1_file_rewind(context, static_cast<uint32_t>(*descriptor));
     return sentinel(0, status == OBELISK_RT_OK ? 0 : UINT32_MAX);
   }
+  case OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE: {
+    auto net = scalar(0);
+    if (!net)
+      return OBELISK_RT_INVALID_BYTECODE;
+    uint64_t ticket = 0;
+    auto status = obelisk_rt_v1_vpi_resolution_prepare(context, *net, &ticket);
+    return status == OBELISK_RT_OK ? sentinel(0, ticket) : status;
+  }
   case OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE: {
     auto call = scalar(0);
     if (!call)

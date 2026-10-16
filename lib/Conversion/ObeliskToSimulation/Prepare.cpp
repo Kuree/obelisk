@@ -12763,6 +12763,9 @@ void ObeliskSimPreparePass::runOnOperation() {
             resolverBuilder, net.getLoc(), TypeRange{net.getType()},
             FlatSymbolRefAttr::get(context, resolutionFunction.getSymName()),
             operands, ArrayAttr{}, ArrayAttr{});
+        if (preserveVPIMethodBindings)
+          sim::set<sim::metadata::VpiResolutionNet>(
+              call, resolverBuilder.getI64IntegerAttr(net.getId()));
         resolved = call.getResult(0);
       }
       for (Value netHandle : netHandles)

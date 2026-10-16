@@ -4296,6 +4296,21 @@ def SimVPICallPrepareOp
   let assemblyFormat = "$runtime_context `from` $call attr-dict";
 }
 
+def SimVPIResolutionPrepareOp
+    : SimOp<"vpi.resolution.prepare",
+            [MemoryEffects<[MemWrite<SimProcessResource>]>]> {
+  let summary = "prepare the exact net-origin activation of its resolver";
+  let description = [{
+    The net's retained nettype and resolution-function binding determine the
+    callee. Net ID zero is valid. The generated caller does not acquire a frame;
+    the resolution function consumes the ticket in its ordinary prologue.
+  }];
+  let arguments = (ins SimContextType:$runtime_context, I64Attr:$net_id);
+  let results = (outs I64:$ticket);
+  let assemblyFormat = "$runtime_context `net` $net_id attr-dict";
+  let hasVerifier = 1;
+}
+
 def SimVPIFrameEnterPreparedOp
     : SimOp<"vpi.frame.enter_prepared",
             [MemoryEffects<[MemWrite<SimProcessResource>]>]> {

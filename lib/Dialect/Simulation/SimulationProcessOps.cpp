@@ -576,6 +576,60 @@ SimVPICallPrepareOp::verifySymbolUses(SymbolTableCollection &symbols) {
   return success();
 }
 
+namespace {
+FailureOr<uint64_t> vpiResolutionTarget(Operation *operation, int64_t id) {
+  auto owner = vpiProbeOwner(operation);
+  if (failed(owner))
+    return failure();
+  SimNetDeclOp net;
+  for (auto candidate : owner->design.getOps<SimNetDeclOp>())
+    if (candidate.getId() == id)
+      net = candidate;
+  if (!net) {
+    operation->emitOpError("references an unknown resolution net ID");
+    return failure();
+  }
+  auto nettype =
+      net.getNettypeAttr()
+          ? SymbolTable::lookupNearestSymbolFrom<SimVPINettypeDeclOp>(
+                net, net.getNettypeAttr())
+          : SimVPINettypeDeclOp{};
+  auto anchor =
+      nettype && nettype.getResolutionFunctionAttr()
+          ? SymbolTable::lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+                nettype, nettype.getResolutionFunctionAttr())
+          : SimVPIObjectAnchorOp{};
+  uint64_t target = 0;
+  if (anchor &&
+      anchor.getVpiKind() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Function)) {
+    if (auto backing = anchor.getBackingAttr()) {
+      if (backing.getKind() == VPIObjectBackingKind::CodeUnit)
+        target = backing.getId().getValue().getZExtValue();
+    } else {
+      for (auto binding : owner->design.getOps<SimVPICodeUnitScopeBindingOp>())
+        if (binding.getSourceAttr().getValue() == anchor.getSymName())
+          target = binding.getCodeUnitId();
+    }
+  }
+  if (!target) {
+    operation->emitOpError("net requires an exact resolution-function binding");
+    return failure();
+  }
+  for (auto unit : owner->design.getOps<SimCodeUnitDeclOp>())
+    if (unit.getId() == target && unit.getCodeUnitKind() == EntryKind::Function)
+      return target;
+  operation->emitOpError("resolution target must be a function code unit");
+  return failure();
+}
+} // namespace
+
+LogicalResult SimVPIResolutionPrepareOp::verify() {
+  if (getNetIdAttr().getValue().isNegative())
+    return emitOpError("net ID must be nonnegative");
+  return success(succeeded(vpiResolutionTarget(*this, getNetId())));
+}
+
 LogicalResult SimVPIFrameEnterPreparedOp::verify() {
   if (failed(verifyPositive(*this, getCodeUnitIdAttr(), "code-unit ID")))
     return failure();
@@ -660,6 +714,16 @@ LogicalResult SimCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return failure();
   auto callee = symbolTable.lookupNearestSymbolFrom<SimFuncOp>(getOperation(),
                                                                getCalleeAttr());
+  if (auto net = sim::get<metadata::VpiResolutionNet>(*this)) {
+    if (sim::has<metadata::VpiCallSite>(*this))
+      return emitOpError("net resolution call cannot also name a source call");
+    auto target = vpiResolutionTarget(*this, net.getInt());
+    if (failed(target))
+      return failure();
+    if (!callee || callee.getCodeUnitId() != *target)
+      return emitOpError(
+          "net resolution call target disagrees with its nettype");
+  }
   if (!callee || (callee.getEntryKind() != EntryKind::Function &&
                   callee.getEntryKind() != EntryKind::Observer))
     return emitOpError("callee must name a sibling function or observer entry");

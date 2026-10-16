@@ -330,6 +330,9 @@ public:
                                            "missing verified VPI call ID");
       function = "obelisk_rt_v1_vpi_call_prepare";
       arguments.push_back(integer(id.getInt()));
+    } else if constexpr (std::is_same_v<Op, sim::SimVPIResolutionPrepareOp>) {
+      function = "obelisk_rt_v1_vpi_resolution_prepare";
+      arguments.push_back(integer(operation.getNetId()));
     } else if constexpr (std::is_same_v<Op, sim::SimVPIFrameEnterPreparedOp>) {
       function = "obelisk_rt_v1_vpi_frame_enter_prepared";
       arguments.push_back(integer(operation.getCodeUnitId()));
@@ -771,6 +774,7 @@ void populateControlToLLVMConversionPatterns(RewritePatternSet &patterns,
   MLIRContext *context = patterns.getContext();
   patterns.add<
       VPIFrameConversion<sim::SimVPICallPrepareOp>,
+      VPIFrameConversion<sim::SimVPIResolutionPrepareOp>,
       VPIFrameConversion<sim::SimVPIFrameEnterPreparedOp>,
       VPIFrameConversion<sim::SimVPIFrameEnterOp>,
       VPIFrameConversion<sim::SimVPIFrameCheckpointOp>,

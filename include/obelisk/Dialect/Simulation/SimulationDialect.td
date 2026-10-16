@@ -543,6 +543,8 @@ def ObeliskSimulationDialect : Dialect {
     "::mlir::IntegerAttr":$vpi_statement_id,
     // Exact source call declaration, including calls nested in expressions.
     "::mlir::FlatSymbolRefAttr":$vpi_call_site,
+    // Exact net whose generated call invokes its retained resolution function.
+    "::mlir::IntegerAttr":$vpi_resolution_net,
     // Exact declaration and remapped source type retained until unit lowering.
     "::mlir::FlatSymbolRefAttr":$vpi_local,
     "::obelisk::sim::VPITypeSemanticsAttr":$vpi_declared_type,

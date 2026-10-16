@@ -173,6 +173,7 @@ TEST(GeneratedDesignDatabase, FrameProbeSignaturesRejectNonIdentityLayouts) {
   };
   const Signature signatures[] = {
       {OBELISK_RT_INTRINSIC_V1_VPI_CALL_PREPARE, 1, 1},
+      {OBELISK_RT_INTRINSIC_V1_VPI_RESOLUTION_PREPARE, 1, 1},
       {OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER_PREPARED, 2, 1},
       {OBELISK_RT_INTRINSIC_V1_VPI_FRAME_ENTER, 3, 1},
       {OBELISK_RT_INTRINSIC_V1_VPI_FRAME_CHECKPOINT, 1, 0},
