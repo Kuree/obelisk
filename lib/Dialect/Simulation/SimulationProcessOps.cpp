@@ -149,18 +149,15 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
   std::optional<unsigned> returnBinding;
   SymbolTableCollection localSymbols;
   llvm::DenseSet<Attribute> localDeclarations;
-  auto verifyLocal = [&](FlatSymbolRefAttr reference, Type valueType,
-                         StringRef path) -> LogicalResult {
+  auto verifyLocal = [&](FlatSymbolRefAttr reference,
+                         Type valueType) -> LogicalResult {
     if (!reference)
       return success();
     if (failed(verifyVPILocalBinding(function, function, reference, valueType,
                                      localSymbols)))
       return failure();
-    auto declaration = localSymbols.lookupNearestSymbolFrom<SimVPILocalDeclOp>(
-        function, reference);
-    if (declaration.getHierarchicalName() != path)
-      return function.emitOpError(
-          "local binding path must match its exact VPI declaration");
+    // Binding paths are private execution keys; the exact declaration symbol
+    // carries identity even when unnamed scopes share a public hierarchy.
     if (!localDeclarations.insert(reference).second)
       return function.emitOpError("duplicates a VPI local declaration binding");
     return success();
@@ -203,8 +200,7 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
       continue;
     }
     if (auto local = dyn_cast<LocalBindingAttr>(binding)) {
-      if (failed(verifyLocal(local.getVpiLocal(), local.getType(),
-                             local.getPath().getValue())))
+      if (failed(verifyLocal(local.getVpiLocal(), local.getType())))
         return failure();
       if (failed(claimProvider(local.getPath().getValue(), index,
                                ProviderKind::Local)))
@@ -258,8 +254,7 @@ LogicalResult verifyUnitBindings(SimFuncOp function) {
     argumentBindings[argumentIndex] = index;
 
     Type argumentType = type.getInput(argument.getArgument());
-    if (failed(verifyLocal(argument.getVpiLocal(), argumentType,
-                           argument.getPath().getValue())))
+    if (failed(verifyLocal(argument.getVpiLocal(), argumentType)))
       return failure();
     StringRef path = argument.getPath().getValue();
     PathState &state = paths[path];
