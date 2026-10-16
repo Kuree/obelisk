@@ -853,9 +853,15 @@ lowerPreparedSuspendableProcess(PreparedSuspendableProcess &process) {
     if (count && count->getBlock() == oldEntry && isa<LLVM::ConstantOp>(count))
       allocaConstants.insert(count);
   }
+  // Only addresses used beyond the source entry need to dominate resumes. An
+  // invocation-local element address there may use a runtime index computed
+  // in that block, which must stay in place.
   for (LLVM::GEPOp address : oldEntry->getOps<LLVM::GEPOp>())
     if (auto allocation = address.getBase().getDefiningOp<LLVM::AllocaOp>();
-        allocation && llvm::is_contained(activationAllocas, allocation))
+        allocation && llvm::is_contained(activationAllocas, allocation) &&
+        llvm::any_of(address->getUsers(), [&](Operation *user) {
+          return !oldEntry->findAncestorOpInBlock(*user);
+        }))
       activationAddresses.push_back(address);
   for (LLVM::AllocaOp alloca : activationAllocas)
     alloca->moveBefore(execute, execute->begin());

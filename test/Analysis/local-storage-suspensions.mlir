@@ -19,6 +19,7 @@ module attributes {
     simulation.code_unit.decl 2 in 0 initial hierarchy "live_across_delay"
     simulation.code_unit.decl 3 in 0 initial hierarchy "loop_carried"
     simulation.code_unit.decl 4 in 0 initial hierarchy "forwarded"
+    simulation.code_unit.decl 5 in 0 initial hierarchy "entry_dynamic_index"
 
     // CHECK-LABEL: function activation_snapshot
     // CHECK-NEXT: local allocation
@@ -43,6 +44,35 @@ module attributes {
       %target = simulation.ref.subelement %state[[0]] : !simulation.ref<!words> -> !simulation.ref<!word>
       simulation.ref.store %value to %target : !word, !simulation.ref<!word>
       cf.br ^wait
+    }
+
+    // An element address with a runtime index computed before the first
+    // suspension stays in the source entry block; the ramp moves only the
+    // allocation, which then dominates resumes as well.
+    // CHECK-LABEL: function entry_dynamic_index
+    // CHECK-NEXT: local allocation
+    // LLVM-LABEL: llvm.func @entry_dynamic_index.__obelisk_coro_ramp
+    // LLVM-NOT: obelisk_rt_v1_native_state_alloc
+    // LLVM: llvm.alloca %{{.*}} x !llvm.struct<(array<4 x i32>, i8)>
+    // LLVM-NOT: obelisk_rt_v1_native_state_alloc
+    // LLVM-LABEL: llvm.func @entry_dynamic_index.__obelisk_native_requirements
+    simulation.func @entry_dynamic_index(
+        %ctx: !simulation.context {simulation.capture_kind = 0 : i32},
+        %slot: !simulation.ref<i32> {simulation.capture_kind = 1 : i32},
+        %state: !simulation.ref<!words> {simulation.capture_kind = 1 : i32})
+        attributes {entry_kind = 1 : i32, code_unit_id = 5 : i64} {
+      %old = simulation.ref.load %state : !simulation.ref<!words> -> !words
+      %copy = simulation.ref.alloc %old : !words -> !simulation.ref<!words>
+      %raw = simulation.ref.load %slot : !simulation.ref<i32> -> i32
+      %index = arith.extsi %raw : i32 to i65
+      %source = simulation.ref.array_element %copy[%index] : (!simulation.ref<!words>, i65) -> !simulation.ref<!word>
+      %value = simulation.ref.load %source : !simulation.ref<!word> -> !word
+      %target = simulation.ref.subelement %state[[0]] : !simulation.ref<!words> -> !simulation.ref<!word>
+      simulation.ref.store %value to %target : !word, !simulation.ref<!word>
+      %delay = simulation.time.constant 1
+      simulation.suspend.delay %delay to ^done
+    ^done:
+      simulation.return
     }
 
     // CHECK-LABEL: function live_across_delay
