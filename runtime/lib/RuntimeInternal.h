@@ -1699,6 +1699,8 @@ struct DesignDatabaseCache {
   uint64_t classMemberBindingCount = 0;
   uint64_t modportBindings = 0;
   uint64_t modportBindingCount = 0;
+  uint64_t mailboxElementBindings = 0;
+  uint64_t mailboxElementBindingCount = 0;
   uint64_t relationIndices = 0;
   uint64_t relationIndexCount = 0;
   uint64_t relationIndexDimensions = 0;
@@ -3779,6 +3781,12 @@ obelisk_rt_cached_vpi_modport(const obelisk_rt_context *context,
                               obelisk_rt_design_cursor_v1 scope,
                               const uint8_t *name, uint64_t nameSize,
                               obelisk_rt_design_cursor_v1 *outCursor) noexcept;
+// Return the immutable normalized storage type for a node in a canonical
+// mailbox's effective element DAG. Legacy images without bindings return EOF.
+obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept;
 obelisk_rt_status obelisk_rt_cached_vpi_class_member(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 member,
     VPIClassMemberBinding *outBinding) noexcept;

@@ -471,6 +471,9 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
     traversal. A builtin class typespec represents the alias-free process,
     semaphore, or mailbox specialization and is owned by the source standard
     package; it has no class definition or executable class descriptor.
+    A canonical mailbox specialization can preserve its normalized element
+    storage type in `message_type`. It supplies exact immutable layout for VPI
+    message snapshots and does not change the mailbox's own handle storage.
     `target_type` retains the complete canonical source shape,
     optional interface/modport identity, and ordered typedef-alias layers. The
     declaration is reflection inventory only and never participates in
@@ -483,7 +486,8 @@ def SimVPITypespecDeclOp : SimOp<"vpi_typespec.decl", [
                        SimVPITypeSemanticsAttr:$target_type,
                        DefaultValuedAttr<SimVPITypespecOrigin,
                          "::obelisk::sim::VPITypespecOrigin::Typedef">:$origin,
-                       OptionalAttr<I64Attr>:$source_type_identity);
+                       OptionalAttr<I64Attr>:$source_type_identity,
+                       OptionalAttr<TypeAttr>:$message_type);
   let assemblyFormat = [{
     $sym_name `id` $id `in` $scope_id `owner` $owner
     `hierarchy` $hierarchical_name

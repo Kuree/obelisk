@@ -52,6 +52,8 @@ constexpr uint64_t kClassMemberBindingSize =
     obelisk::reflection::ClassMemberBindingLayout.size;
 constexpr uint64_t kModportBindingSize =
     obelisk::reflection::ModportBindingLayout.size;
+constexpr uint64_t kMailboxElementBindingSize =
+    obelisk::reflection::MailboxElementBindingLayout.size;
 constexpr uint64_t kRelationIndexSize =
     obelisk::reflection::RelationIndexLayout.size;
 constexpr uint64_t kRelationIndexDimensionSize =
@@ -251,6 +253,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
   uint64_t semanticClassBindingOffset = 0, semanticClassBindingCount = 0;
   uint64_t classMemberBindingOffset = 0, classMemberBindingCount = 0;
   uint64_t modportBindingOffset = 0, modportBindingCount = 0;
+  uint64_t mailboxElementBindingOffset = 0, mailboxElementBindingCount = 0;
   uint64_t relationIndexOffset = 0, relationIndexCount = 0;
   uint64_t relationIndexDimensionOffset = 0, relationIndexDimensionCount = 0;
   uint64_t relationIndexKeyOffset = 0, relationIndexKeyCount = 0;
@@ -346,6 +349,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
     classMemberBindingCount = reader.getClassMemberBindingCount();
     modportBindingOffset = reader.getModportBindingOffset();
     modportBindingCount = reader.getModportBindingCount();
+    mailboxElementBindingOffset = reader.getMailboxElementBindingOffset();
+    mailboxElementBindingCount = reader.getMailboxElementBindingCount();
   }
   database = {data,
               execution->design_database_size,
@@ -381,6 +386,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
               classMemberBindingCount,
               modportBindingOffset,
               modportBindingCount,
+              mailboxElementBindingOffset,
+              mailboxElementBindingCount,
               relationIndexOffset,
               relationIndexCount,
               relationIndexDimensionOffset,
@@ -455,6 +462,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
          kClassMemberBindingSize},
         {database.modportBindings, database.modportBindingCount,
          kModportBindingSize},
+        {database.mailboxElementBindings, database.mailboxElementBindingCount,
+         kMailboxElementBindingSize},
         {database.relationIndices, database.relationIndexCount,
          kRelationIndexSize},
         {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -527,7 +536,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
         database.classTypeBindingCount != 0 ||
         database.semanticClassBindingCount != 0 ||
         database.classMemberBindingCount != 0 ||
-        database.modportBindingCount != 0 || database.relationIndexCount != 0 ||
+        database.modportBindingCount != 0 ||
+        database.mailboxElementBindingCount != 0 ||
+        database.relationIndexCount != 0 ||
         database.relationIndexDimensionCount != 0 ||
         database.relationIndexKeyCount != 0 ||
         database.relationIndexMemberCount != 0 ||
@@ -578,6 +589,9 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
                   database.size) ||
       !validRange(database.modportBindings, database.modportBindingCount,
                   kModportBindingSize, database.size) ||
+      !validRange(database.mailboxElementBindings,
+                  database.mailboxElementBindingCount,
+                  kMailboxElementBindingSize, database.size) ||
       !validRange(database.relationIndices, database.relationIndexCount,
                   kRelationIndexSize, database.size) ||
       !validRange(database.relationIndexDimensions,
@@ -651,6 +665,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        database.classMemberBindings < kHeaderSize) ||
       (database.modportBindingCount != 0 &&
        database.modportBindings < kHeaderSize) ||
+      (database.mailboxElementBindingCount != 0 &&
+       database.mailboxElementBindings < kHeaderSize) ||
       (database.semanticRootBindingCount != 0 &&
        database.semanticRootBindings < kHeaderSize) ||
       (database.relationIndexCount != 0 &&
@@ -723,6 +739,7 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
       database.semanticClassBindingCount > UINT32_MAX ||
       database.classMemberBindingCount > UINT32_MAX ||
       database.modportBindingCount > UINT32_MAX ||
+      database.mailboxElementBindingCount > UINT32_MAX ||
       database.relationIndexCount > UINT32_MAX ||
       database.relationIndexDimensionCount > UINT32_MAX ||
       database.relationIndexKeyCount > UINT32_MAX ||
@@ -941,6 +958,8 @@ bool parseHeader(const obelisk_rt_execution_descriptor_v1 *execution,
        kClassMemberBindingSize},
       {database.modportBindings, database.modportBindingCount,
        kModportBindingSize},
+      {database.mailboxElementBindings, database.mailboxElementBindingCount,
+       kMailboxElementBindingSize},
       {database.relationIndices, database.relationIndexCount,
        kRelationIndexSize},
       {database.relationIndexDimensions, database.relationIndexDimensionCount,
@@ -1277,6 +1296,42 @@ bool semanticBitWidth(const Database &database, uint32_t semanticType,
       break;
     }
   return true;
+}
+
+obelisk_rt_status semanticPackedBitWidth(const Database &database,
+                                         uint32_t index, uint64_t *outWidth) {
+  uint64_t multiplier = 1;
+  // The image validator has already established an acyclic semantic graph.
+  // Packed dimensions and enum bases have one child, so no traversal stack or
+  // allocation is needed; aggregate widths use their required layout metadata.
+  for (;;) {
+    const uint8_t *record = database.data + database.semanticTypes +
+                            uint64_t{index} * kSemanticTypeSize;
+    const uint32_t kind = read32(record) & UINT32_C(0xff);
+    // An unpacked dimension's range is its element count, not a packed width.
+    if (kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+      return OBELISK_RT_EOF;
+    uint64_t width = 0;
+    if (!semanticBitWidth(database, index, width))
+      return OBELISK_RT_INVALID_DESIGN;
+    if (kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
+        kind != OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
+      if (width == 0)
+        return OBELISK_RT_EOF;
+      if (multiplier > UINT64_MAX / width)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      *outWidth = multiplier * width;
+      return OBELISK_RT_OK;
+    }
+    if (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
+      if (width == 0 || multiplier > UINT64_MAX / width)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      multiplier *= width;
+    }
+    const uint8_t *edge = database.data + database.semanticTypeEdges +
+                          uint64_t{read32(record + 4)} * kSemanticTypeEdgeSize;
+    index = read32(edge);
+  }
 }
 
 bool packedObjectReferenceOffset(const Database &database, uint32_t packed,
@@ -2091,6 +2146,10 @@ bool validateDatabaseImpl(const Database &database) {
     uint64_t width = read64(record + 8);
     uint64_t firstChild = read64(record + 40);
     uint64_t childCount = read64(record + 48);
+    const bool disjointTaggedUnion =
+        kind == OBELISK_RT_DESIGN_TYPE_UNION &&
+        (flags & OBELISK_RT_DESIGN_TYPE_PACKED) == 0 &&
+        (flags & OBELISK_RT_DESIGN_TYPE_TAGGED) != 0;
     uint64_t sum = 0, maximum = 0;
     bool fourState = false;
     std::vector<std::pair<uint64_t, uint64_t>> packedRanges;
@@ -2105,7 +2164,7 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       sum += fieldWidth;
       maximum = std::max(maximum, fieldWidth);
-      if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT ||
+      if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT || disjointTaggedUnion ||
           (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0) {
         uint64_t tagBits = read64(record + 56);
         if (kind == OBELISK_RT_DESIGN_TYPE_UNION && tagBits > width)
@@ -2116,11 +2175,13 @@ bool validateDatabaseImpl(const Database &database) {
             fieldWidth > payloadWidth - packedOffset)
           return false;
         packedRanges.emplace_back(packedOffset, packedOffset + fieldWidth);
+      } else if (packedOffset != 0) {
+        return false;
       }
     }
     if (((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) != fourState)
       return false;
-    if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT) {
+    if (kind == OBELISK_RT_DESIGN_TYPE_STRUCT || disjointTaggedUnion) {
       // Unpacked storage may contain alignment and tail padding, notably
       // around string handles and real fields in covergroup options. Only
       // packed structs require contiguous bits (IEEE 1800-2023 7.2/7.2.1).
@@ -2138,7 +2199,9 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
     } else {
       uint64_t tagBits = read64(record + 56);
-      if (maximum > UINT64_MAX - tagBits || maximum + tagBits != width)
+      if (maximum > UINT64_MAX - tagBits || maximum + tagBits > width ||
+          ((flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
+           maximum + tagBits != width))
         return false;
     }
   }
@@ -2195,6 +2258,16 @@ bool validateDatabaseImpl(const Database &database) {
         !(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
           read64(record + 48) == 0) &&
         !visitType(read64(record + 48)))
+      return false;
+  }
+  for (uint64_t index = 0; index != database.mailboxElementBindingCount;
+       ++index) {
+    obelisk::reflection::MailboxElementBindingView binding(
+        database.data + database.mailboxElementBindings +
+        index * kMailboxElementBindingSize);
+    if (binding.getPhysicalTypeIndex() >= database.typeCount ||
+        !visitType(database.types +
+                   uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize))
       return false;
   }
   if (std::any_of(typeState.begin(), typeState.end(),
@@ -2952,6 +3025,209 @@ bool validateDatabaseImpl(const Database &database) {
   }
   if (canonicalClassRootBindings.size() != canonicalClassRoots.size())
     return false;
+
+  // A mailbox's canonical semantic element and its normalized storage graph
+  // are paired explicitly. Managed containers hide their children in the
+  // physical graph, so their element values have separate bindings. Enum
+  // values and associative keys are whole packed leaves: normalization may
+  // scalarize their semantic shape. The table is optional for older images,
+  // but a present layout graph must include all remaining reachable values.
+  std::unordered_map<uint32_t, std::unordered_map<uint32_t, uint32_t>>
+      mailboxLayouts;
+  uint64_t previousMailboxElement = 0;
+  for (uint64_t index = 0; index != database.mailboxElementBindingCount;
+       ++index) {
+    obelisk::reflection::MailboxElementBindingView binding(
+        database.data + database.mailboxElementBindings +
+        index * kMailboxElementBindingSize);
+    const uint32_t owner = binding.getTypespecIndexAndTable();
+    const uint32_t semantic = binding.getSemanticTypeIndex();
+    const uint32_t physical = binding.getPhysicalTypeIndex();
+    const uint64_t key = (uint64_t{owner} << 32) | semantic;
+    auto canonical = canonicalClassRoots.find(owner);
+    if ((index && key <= previousMailboxElement) ||
+        semantic >= database.semanticTypeCount ||
+        physical >= database.typeCount ||
+        canonical == canonicalClassRoots.end() ||
+        (read32(semanticRecord(canonical->second)) & UINT32_C(0xff)) !=
+            OBELISK_RT_DESIGN_SEMANTIC_MAILBOX)
+      return false;
+    mailboxLayouts[owner].emplace(semantic, physical);
+    previousMailboxElement = key;
+  }
+  for (const auto &[owner, layouts] : mailboxLayouts) {
+    const uint8_t *mailbox = semanticRecord(canonicalClassRoots.at(owner));
+    const uint8_t *element =
+        database.data + database.semanticTypeEdges +
+        uint64_t{read32(mailbox + 4)} * kSemanticTypeEdgeSize;
+    std::vector<uint32_t> work{read32(element)};
+    std::unordered_set<uint32_t> visited;
+    while (!work.empty()) {
+      const uint32_t semanticIndex = work.back();
+      work.pop_back();
+      // Enumeration constants use their total packed width. Executable enum
+      // storage can scalarize a composite source base; it has no layout view.
+      if ((read32(semanticRecord(semanticIndex)) & UINT32_C(0xff)) ==
+          OBELISK_RT_DESIGN_SEMANTIC_ENUM)
+        continue;
+      if (!visited.insert(semanticIndex).second)
+        continue;
+      auto binding = layouts.find(semanticIndex);
+      if (binding == layouts.end())
+        return false;
+      const uint8_t *semantic = semanticRecord(semanticIndex);
+      const uint8_t *physical = database.data + database.types +
+                                uint64_t{binding->second} * kTypeSize;
+      const uint32_t semanticKind = read32(semantic) & UINT32_C(0xff);
+      const uint32_t physicalKind = read32(physical + 4) & UINT32_C(0xff);
+      const uint32_t physicalFlags = read32(physical + 4) >> 8;
+      const bool fourState =
+          (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0;
+      const bool physicalFourState =
+          (physicalFlags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+      const bool physicalPacked =
+          (physicalFlags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0;
+      const uint32_t first = read32(semantic + 4);
+      const uint32_t count = read32(semantic + 8);
+      auto childEdge = [&](uint32_t ordinal) {
+        return database.data + database.semanticTypeEdges +
+               uint64_t{first + ordinal} * kSemanticTypeEdgeSize;
+      };
+      auto matchesChildPhysical = [&](uint32_t ordinal, uint64_t offset) {
+        const uint32_t childIndex = read32(childEdge(ordinal));
+        const uint8_t *childSemantic = semanticRecord(childIndex);
+        if ((read32(childSemantic) & UINT32_C(0xff)) ==
+            OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
+          uint64_t width = 0;
+          const uint8_t *childPhysical = database.data + offset;
+          const uint32_t flags = read32(childPhysical + 4) >> 8;
+          return semanticPackedBitWidth(database, childIndex, &width) ==
+                     OBELISK_RT_OK &&
+                 read64(childPhysical + 8) == width &&
+                 (flags & OBELISK_RT_DESIGN_TYPE_PACKED) != 0 &&
+                 ((flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0) ==
+                     ((read32(childSemantic) &
+                       OBELISK_RT_DESIGN_SEMANTIC_FOUR_STATE) != 0);
+        }
+        auto child = layouts.find(childIndex);
+        return child != layouts.end() &&
+               offset == database.types + uint64_t{child->second} * kTypeSize;
+      };
+      for (uint32_t ordinal = 0; ordinal != count; ++ordinal) {
+        // Integral associative keys similarly normalize to the runtime lookup
+        // domain. Their copied values use descriptor width, never field layout.
+        const uint32_t childKind =
+            read32(semanticRecord(read32(childEdge(ordinal)))) & UINT32_C(0xff);
+        const bool integral =
+            (childKind >= OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
+             childKind <= OBELISK_RT_DESIGN_SEMANTIC_TIME) ||
+            childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+            childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+            childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+        uint64_t keyWidth = 0;
+        if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
+            ordinal == 0 && integral &&
+            semanticPackedBitWidth(database, read32(childEdge(ordinal)),
+                                   &keyWidth) == OBELISK_RT_OK)
+          continue;
+        work.push_back(read32(childEdge(ordinal)));
+      }
+      switch (semanticKind) {
+      case OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY:
+      case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY:
+        if (physicalKind != OBELISK_RT_DESIGN_TYPE_ARRAY ||
+            physicalPacked !=
+                (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) ||
+            physicalFourState != fourState ||
+            readI64(physical + 16) != readI64(semantic + 32) ||
+            readI64(physical + 24) != readI64(semantic + 40) ||
+            !matchesChildPhysical(0, read64(physical + 32)))
+          return false;
+        break;
+      case OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT:
+      case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT:
+      case OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION:
+      case OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION: {
+        const bool packed =
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+        const bool isUnion =
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION ||
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION;
+        const bool tagged =
+            (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_TAGGED) != 0;
+        if (physicalKind != (isUnion ? OBELISK_RT_DESIGN_TYPE_UNION
+                                     : OBELISK_RT_DESIGN_TYPE_STRUCT) ||
+            physicalPacked != packed || physicalFourState != fourState ||
+            ((physicalFlags & OBELISK_RT_DESIGN_TYPE_TAGGED) != 0) != tagged ||
+            read64(physical + 56) != read64(semantic + 56) ||
+            read64(physical + 48) != count ||
+            (packed && read64(physical + 8) != read64(semantic + 48)))
+          return false;
+        for (uint32_t ordinal = 0; ordinal != count; ++ordinal) {
+          const uint8_t *field = database.data + read64(physical + 40) +
+                                 uint64_t{ordinal} * kTypeSize;
+          const uint8_t *edge = childEdge(ordinal);
+          std::string_view physicalName, semanticName;
+          if (!matchesChildPhysical(ordinal, read64(field + 32)) ||
+              !getString(database, read64(field + 72), physicalName) ||
+              !getRelativeString(read32(edge + 12), semanticName) ||
+              physicalName != semanticName ||
+              (packed && read64(field + 64) != read64(edge + 16)))
+            return false;
+        }
+        break;
+      }
+      case OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL:
+      case OBELISK_RT_DESIGN_SEMANTIC_BIT:
+      case OBELISK_RT_DESIGN_SEMANTIC_LOGIC:
+      case OBELISK_RT_DESIGN_SEMANTIC_REG:
+      case OBELISK_RT_DESIGN_SEMANTIC_BYTE:
+      case OBELISK_RT_DESIGN_SEMANTIC_SHORT_INT:
+      case OBELISK_RT_DESIGN_SEMANTIC_INT:
+      case OBELISK_RT_DESIGN_SEMANTIC_LONG_INT:
+      case OBELISK_RT_DESIGN_SEMANTIC_INTEGER:
+      case OBELISK_RT_DESIGN_SEMANTIC_TIME:
+      case OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL:
+      case OBELISK_RT_DESIGN_SEMANTIC_REAL:
+      case OBELISK_RT_DESIGN_SEMANTIC_REALTIME: {
+        const bool real =
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_SHORT_REAL ||
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REAL ||
+            semanticKind == OBELISK_RT_DESIGN_SEMANTIC_REALTIME;
+        uint64_t width = 0;
+        if (physicalKind != OBELISK_RT_DESIGN_TYPE_SCALAR ||
+            physicalPacked == real || physicalFourState != fourState ||
+            !semanticBitWidth(database, semanticIndex, width) || width == 0 ||
+            read64(physical + 8) != width)
+          return false;
+        break;
+      }
+      case OBELISK_RT_DESIGN_SEMANTIC_STRING:
+      case OBELISK_RT_DESIGN_SEMANTIC_CHANDLE:
+      case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:
+      case OBELISK_RT_DESIGN_SEMANTIC_QUEUE:
+      case OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY:
+      case OBELISK_RT_DESIGN_SEMANTIC_CLASS:
+      case OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE:
+      case OBELISK_RT_DESIGN_SEMANTIC_EVENT:
+      case OBELISK_RT_DESIGN_SEMANTIC_PROCESS:
+      case OBELISK_RT_DESIGN_SEMANTIC_COVERGROUP:
+      case OBELISK_RT_DESIGN_SEMANTIC_MAILBOX:
+      case OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE:
+      case OBELISK_RT_DESIGN_SEMANTIC_UNTYPED:
+        if (physicalKind != OBELISK_RT_DESIGN_TYPE_SCALAR || physicalPacked ||
+            physicalFourState || read64(physical + 8) != 64)
+          return false;
+        break;
+      default:
+        return false;
+      }
+    }
+    // A reachable graph can share nodes, but cannot hide unrelated bindings.
+    if (visited.size() != layouts.size())
+      return false;
+  }
 
   std::unordered_set<uint32_t> boundModports;
   std::unordered_set<uint64_t> modportParents;
@@ -4965,6 +5241,8 @@ bool sameDatabase(const Database &left, const Database &right) noexcept {
          left.classMemberBindingCount == right.classMemberBindingCount &&
          left.modportBindings == right.modportBindings &&
          left.modportBindingCount == right.modportBindingCount &&
+         left.mailboxElementBindings == right.mailboxElementBindings &&
+         left.mailboxElementBindingCount == right.mailboxElementBindingCount &&
          left.relationIndices == right.relationIndices &&
          left.relationIndexCount == right.relationIndexCount &&
          left.relationIndexDimensions == right.relationIndexDimensions &&
@@ -6850,6 +7128,48 @@ obelisk_rt_status obelisk_rt_cached_vpi_class_member(
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status obelisk_rt_cached_vpi_mailbox_element_type(
+    const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 typespec,
+    obelisk_rt_design_cursor_v1 semantic,
+    obelisk_rt_design_cursor_v1 *outType) noexcept {
+  if (!outType)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outType = {};
+  const Database *database = cachedDatabase(context);
+  uint32_t packed = 0;
+  if (!database || semantic.offset == 0 ||
+      semantic.offset > database->semanticTypeCount ||
+      !packedObjectReferenceForCursor(*database, typespec.offset, packed))
+    return OBELISK_RT_INVALID_HANDLE;
+  const uint32_t semanticIndex = static_cast<uint32_t>(semantic.offset - 1);
+  const uint64_t key = (uint64_t{packed} << 32) | semanticIndex;
+  uint64_t low = 0, high = database->mailboxElementBindingCount;
+  while (low != high) {
+    const uint64_t middle = low + (high - low) / 2;
+    obelisk::reflection::MailboxElementBindingView binding(
+        database->data + database->mailboxElementBindings +
+        middle * kMailboxElementBindingSize);
+    const uint64_t candidate =
+        (uint64_t{binding.getTypespecIndexAndTable()} << 32) |
+        binding.getSemanticTypeIndex();
+    if (candidate < key)
+      low = middle + 1;
+    else
+      high = middle;
+  }
+  if (low == database->mailboxElementBindingCount)
+    return OBELISK_RT_EOF;
+  obelisk::reflection::MailboxElementBindingView binding(
+      database->data + database->mailboxElementBindings +
+      low * kMailboxElementBindingSize);
+  if (binding.getTypespecIndexAndTable() != packed ||
+      binding.getSemanticTypeIndex() != semanticIndex)
+    return OBELISK_RT_EOF;
+  outType->offset =
+      database->types + uint64_t{binding.getPhysicalTypeIndex()} * kTypeSize;
+  return OBELISK_RT_OK;
+}
+
 obelisk_rt_status obelisk_rt_cached_vpi_semantic_class_typespec(
     const obelisk_rt_context *context, obelisk_rt_design_cursor_v1 semantic,
     obelisk_rt_design_cursor_v1 *outCursor) noexcept {
@@ -6906,39 +7226,8 @@ obelisk_rt_cached_design_semantic_bit_width(const obelisk_rt_context *context,
   if (!database || cursor.offset == 0 ||
       cursor.offset > database->semanticTypeCount)
     return OBELISK_RT_INVALID_HANDLE;
-  uint32_t index = static_cast<uint32_t>(cursor.offset - 1);
-  uint64_t multiplier = 1;
-  // The image validator has already established an acyclic semantic graph.
-  // Packed dimensions and enum bases have one child, so no traversal stack or
-  // allocation is needed; aggregate widths use their required layout metadata.
-  for (;;) {
-    const uint8_t *record = database->data + database->semanticTypes +
-                            uint64_t{index} * kSemanticTypeSize;
-    const uint32_t kind = read32(record) & UINT32_C(0xff);
-    // An unpacked dimension's range is its element count, not a packed width.
-    if (kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
-      return OBELISK_RT_EOF;
-    uint64_t width = 0;
-    if (!semanticBitWidth(*database, index, width))
-      return OBELISK_RT_INVALID_DESIGN;
-    if (kind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY &&
-        kind != OBELISK_RT_DESIGN_SEMANTIC_ENUM) {
-      if (width == 0)
-        return OBELISK_RT_EOF;
-      if (multiplier > UINT64_MAX / width)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      *outWidth = multiplier * width;
-      return OBELISK_RT_OK;
-    }
-    if (kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY) {
-      if (width == 0 || multiplier > UINT64_MAX / width)
-        return OBELISK_RT_OUT_OF_RESOURCES;
-      multiplier *= width;
-    }
-    const uint8_t *edge = database->data + database->semanticTypeEdges +
-                          uint64_t{read32(record + 4)} * kSemanticTypeEdgeSize;
-    index = read32(edge);
-  }
+  return semanticPackedBitWidth(
+      *database, static_cast<uint32_t>(cursor.offset - 1), outWidth);
 }
 
 obelisk_rt_status obelisk_rt_cached_design_semantic_type_edge(

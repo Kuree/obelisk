@@ -231,6 +231,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
     std::string name;
   };
   SmallVector<ModportBindingRecord> modportBindings;
+  struct MailboxElementBindingRecord {
+    uint32_t typespec, semanticType, physicalType;
+  };
+  SmallVector<MailboxElementBindingRecord> mailboxElementBindings;
   struct FrozenValueRecord {
     uint32_t kindAndFlags = 0;
     uint64_t bitWidth = 0;
@@ -3391,6 +3395,96 @@ SmallVector<uint8_t> serializeDesignDatabase(
       return {};
   }
 
+  // Retain exact storage types throughout each mailbox message DAG, including
+  // the element/key types hidden behind managed container handles. The ordinary
+  // physical type graph intentionally represents those handles as scalar64.
+  for (sim::SimVPITypespecDeclOp typespec : typespecs) {
+    TypeAttr message = typespec.getMessageTypeAttr();
+    if (!message)
+      continue;
+    auto reference = typespecRefs.find(typespec);
+    uint32_t packed = 0;
+    if (reference == typespecRefs.end() ||
+        !tryPackTableIndex(reference->second.table, reference->second.index,
+                           packed)) {
+      typespec.emitOpError("canonical mailbox typespec was not serialized");
+      return {};
+    }
+    using WorkItem = std::pair<Type, sim::VPITypeSemanticsAttr>;
+    SmallVector<WorkItem> pending{
+        {message.getValue(), cast<sim::VPITypeSemanticsAttr>(
+                                 typespec.getTargetType().getChildren()[0])}};
+    DenseMap<Attribute, Type> visited;
+    while (!pending.empty()) {
+      auto [physical, semantic] = pending.pop_back_val();
+      if (semantic.getKind() == sim::VPITypeKind::Enum)
+        continue;
+      auto [found, inserted] = visited.try_emplace(semantic, physical);
+      if (!inserted) {
+        if (found->second != physical) {
+          typespec.emitOpError(
+              "mailbox semantic node has conflicting storage layouts");
+          return {};
+        }
+        continue;
+      }
+      auto physicalIndex = addType(physical);
+      auto semanticIndex = addSemanticType(semantic);
+      if (!physicalIndex || !semanticIndex) {
+        typespec.emitOpError(
+            "mailbox message storage layout was not serialized");
+        return {};
+      }
+      mailboxElementBindings.push_back(
+          {packed, *semanticIndex, *physicalIndex});
+      ArrayAttr children = semantic.getChildren();
+      if (children.empty())
+        continue;
+      SmallVector<Type> childTypes;
+      if (auto array = dyn_cast<sim::PackedArrayType>(physical))
+        childTypes.push_back(array.getElementType());
+      else if (auto array = dyn_cast<sim::UnpackedArrayType>(physical))
+        childTypes.push_back(array.getElementType());
+      else if (auto array = dyn_cast<sim::AssocArrayType>(physical)) {
+        childTypes.push_back(array.getKeyType());
+        childTypes.push_back(array.getElementType());
+      } else if (auto mailbox = dyn_cast<sim::MailboxType>(physical))
+        childTypes.push_back(mailbox.getElementType());
+      else if (Type element = sim::getContainerElement(physical))
+        childTypes.push_back(element);
+      else {
+        ArrayAttr fields;
+        if (auto value = dyn_cast<sim::PackedStructType>(physical))
+          fields = value.getFields();
+        else if (auto value = dyn_cast<sim::UnpackedStructType>(physical))
+          fields = value.getFields();
+        else if (auto value = dyn_cast<sim::PackedUnionType>(physical))
+          fields = value.getFields();
+        else if (auto value = dyn_cast<sim::UnpackedUnionType>(physical))
+          fields = value.getFields();
+        if (fields)
+          for (Attribute field : fields)
+            childTypes.push_back(cast<sim::FieldAttr>(field).getType());
+      }
+      if (childTypes.size() != children.size()) {
+        typespec.emitOpError(
+            "mailbox semantic children have no exact storage layout");
+        return {};
+      }
+      for (auto [ordinal, child] : llvm::enumerate(children)) {
+        if (semantic.getKind() == sim::VPITypeKind::AssocArray &&
+            ordinal == 0 && sim::getPackedWidth(childTypes[ordinal]))
+          continue;
+        pending.emplace_back(childTypes[ordinal],
+                             cast<sim::VPITypeSemanticsAttr>(child));
+      }
+    }
+  }
+  llvm::sort(mailboxElementBindings, [](const auto &left, const auto &right) {
+    return std::tie(left.typespec, left.semanticType) <
+           std::tie(right.typespec, right.semanticType);
+  });
+
   // Freeze immutable object values only after anchor identities have their
   // final physical table/index. Values are hash-consed separately from sparse
   // source bindings so later definition specializations can reuse this pool.
@@ -4024,8 +4118,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
   uint64_t modportBindingOffset =
       classMemberBindingOffset +
       classMemberBindings.size() * ClassMemberBindingLayout.size;
-  uint64_t relationIndexOffset =
+  uint64_t mailboxElementBindingOffset =
       modportBindingOffset + modportBindings.size() * ModportBindingLayout.size;
+  uint64_t relationIndexOffset =
+      mailboxElementBindingOffset +
+      mailboxElementBindings.size() * MailboxElementBindingLayout.size;
   uint64_t relationIndexDimensionOffset =
       relationIndexOffset + relationIndices.size() * RelationIndexLayout.size;
   uint64_t relationIndexKeyOffset =
@@ -4340,6 +4437,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     writer.setClassMemberBindingCount(classMemberBindings.size());
     writer.setModportBindingOffset(modportBindingOffset);
     writer.setModportBindingCount(modportBindings.size());
+    writer.setMailboxElementBindingOffset(mailboxElementBindingOffset);
+    writer.setMailboxElementBindingCount(mailboxElementBindings.size());
     writer.setRelationIndexOffset(relationIndexOffset);
     writer.setRelationIndexCount(relationIndices.size());
     writer.setRelationIndexDimensionOffset(relationIndexDimensionOffset);
@@ -4476,6 +4575,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
                                   index * ClassTypeBindingLayout.size);
     writer.setClassID(binding.classID);
     writer.setTypespecIndexAndTable(binding.typespecIndexAndTable);
+  }
+  for (auto [index, binding] : llvm::enumerate(mailboxElementBindings)) {
+    MailboxElementBindingWriter writer(
+        output.data() + mailboxElementBindingOffset +
+        index * MailboxElementBindingLayout.size);
+    writer.setTypespecIndexAndTable(binding.typespec);
+    writer.setSemanticTypeIndex(binding.semanticType);
+    writer.setPhysicalTypeIndex(binding.physicalType);
   }
   llvm::sort(modportBindings, [](const auto &left, const auto &right) {
     return left.modport < right.modport;

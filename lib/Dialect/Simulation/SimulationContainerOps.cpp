@@ -1202,7 +1202,7 @@ std::optional<ElementDescriptor> getElementDescriptor(Type type) {
   }
   if (!isAggregateType(type))
     return std::nullopt;
-  std::optional<uint64_t> width = getProvenanceSpan(type);
+  std::optional<uint64_t> width = getElementStorageSpan(type);
   if (!width || *width == 0 ||
       failed(collectExpectedManagedTrace(type, result.traceOffsets,
                                          result.traceKinds)))

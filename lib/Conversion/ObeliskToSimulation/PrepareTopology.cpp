@@ -2585,7 +2585,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, getSemanticLocation(alias),
         aliasSymbols.lookup(alias).getValue(), nextTypespecId++,
         scopes.lookup(alias), owner.getValue(), hierarchy, debug, *target,
-        sim::VPITypespecOrigin::Typedef, sourceTypeIdentity);
+        sim::VPITypespecOrigin::Typedef, sourceTypeIdentity, TypeAttr{});
     if (target->getKind() == sim::VPITypeKind::Enum)
       enumTypespecsByIdentity.try_emplace(
           getEnumIdentity(alias, *target),
@@ -2629,7 +2629,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
             builder, getSemanticLocation(concrete), symbolName,
             nextTypespecId++, scopes.lookup(parameter), ownerRef.getValue(), "",
             "", *semantic, sim::VPITypespecOrigin::SourceDefault,
-            IntegerAttr{});
+            IntegerAttr{}, TypeAttr{});
         target = FlatSymbolRefAttr::get(typespec.getSymNameAttr());
       }
       if (target)
@@ -2707,7 +2707,23 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, getSemanticLocation(source), symbolName, nextTypespecId++,
         scopes.lookup(source), owner.getValue(), getHierarchyName(source),
         getDebugName(source), canonical, sim::VPITypespecOrigin::BuiltinClass,
-        IntegerAttr{});
+        IntegerAttr{}, TypeAttr{});
+    if (canonical.getKind() == sim::VPITypeKind::Mailbox) {
+      // Reuse the exact layout already normalized for the retained source
+      // specialization. The semantic root deliberately strips typedef aliases;
+      // storage offsets and tracing instead come from the executable type.
+      auto normalized = getNormalizedSemanticType(source);
+      auto mailbox = succeeded(normalized)
+                         ? dyn_cast<sim::MailboxType>(*normalized)
+                         : sim::MailboxType{};
+      if (!mailbox) {
+        emitError(getSemanticLocation(source))
+            << "canonical mailbox has no normalized source message layout";
+        invalid = true;
+        return {};
+      }
+      declaration.setMessageTypeAttr(TypeAttr::get(mailbox.getElementType()));
+    }
     auto reference = FlatSymbolRefAttr::get(declaration.getSymNameAttr());
     builtinClassTypespecs[canonical] = reference;
     // Builtin specializations retain their own effective formal parameters.
@@ -2786,7 +2802,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         classTypespecSymbols.lookup(classType).getValue(), nextTypespecId++,
         scopes.lookup(classType), owner.getValue(), getHierarchyName(classType),
         getDebugName(classType), *target,
-        sim::VPITypespecOrigin::ClassSpecialization, IntegerAttr{});
+        sim::VPITypespecOrigin::ClassSpecialization, IntegerAttr{}, TypeAttr{});
   }
   // Nonparameterized declarations still have separate lexical and resolved
   // member views. The executable method belongs to the canonical view so its
@@ -3047,7 +3063,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         builder, getSemanticLocation(entry.representative),
         symbolName.getValue(), nextTypespecId++,
         scopes.lookup(entry.representative), owner.getValue(), identity, debug,
-        *target, sim::VPITypespecOrigin::Interface, IntegerAttr{});
+        *target, sim::VPITypespecOrigin::Interface, IntegerAttr{}, TypeAttr{});
   }
 
   // Materialize a standalone enum typespec when no typedef declaration names
@@ -3140,7 +3156,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
     sim::SimVPITypespecDeclOp::create(
         builder, getSemanticLocation(enumValue), symbolName, nextTypespecId++,
         scopes.lookup(enumValue), inventory.owner.getValue(), hierarchy, name,
-        target, sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity);
+        target, sim::VPITypespecOrigin::AnonymousEnum, sourceTypeIdentity,
+        TypeAttr{});
     enumTypespecsByIdentity[identity] = symbol;
   }
 

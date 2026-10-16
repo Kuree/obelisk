@@ -1122,6 +1122,19 @@ LogicalResult SimVPITypespecDeclOp::verify() {
     return emitOpError(
         "builtin-class origin requires an unaliased process, semaphore, or "
         "mailbox type");
+  if (TypeAttr message = getMessageTypeAttr()) {
+    if (getOrigin() != VPITypespecOrigin::BuiltinClass ||
+        getTargetType().getKind() != VPITypeKind::Mailbox)
+      return emitOpError(
+          "message_type requires a canonical builtin mailbox typespec");
+    auto semantic =
+        cast<VPITypeSemanticsAttr>(getTargetType().getChildren()[0]);
+    if (failed(verifyVPITypeSemantics([&] { return emitOpError(); },
+                                      message.getValue(), semantic)))
+      return failure();
+    if (!getElementDescriptor(message.getValue()))
+      return emitOpError("message_type requires supported element storage");
+  }
   if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
       (getTargetType().getKind() != VPITypeKind::Enum ||
        !getSourceTypeIdentityAttr()))

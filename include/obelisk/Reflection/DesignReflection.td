@@ -283,6 +283,19 @@ def SemanticClassBindingTypespec
 def SemanticClassBinding : ReflectionLayout<"SemanticClassBinding", 8,
   [SemanticClassBindingType, SemanticClassBindingTypespec]>;
 
+// A canonical mailbox class typespec binds its effective element's exact
+// normalized storage layout. Rows are sorted by (packed typespec reference,
+// semantic type index). Enum values and associative lookup keys are whole
+// packed leaves without layout bindings. The physical type index is distinct
+// from semantic type identity.
+def MailboxElementBindingTypespec
+    : ReflectionField<"TypespecIndexAndTable", 0, U32LE>;
+def MailboxElementBindingSemantic : ReflectionField<"SemanticTypeIndex", 4, U32LE>;
+def MailboxElementBindingType : ReflectionField<"PhysicalTypeIndex", 8, U32LE>;
+def MailboxElementBinding : ReflectionLayout<"MailboxElementBinding", 12,
+  [MailboxElementBindingTypespec, MailboxElementBindingSemantic,
+   MailboxElementBindingType]>;
+
 // Sparse class declaration bindings. Flags bit 0 is static and bit 1 is a
 // method. Nonapplicable byte offsets/event IDs use UINT64_MAX, and absent
 // backing storage uses UINT32_MAX. The owner is lexical or specialized.
@@ -631,7 +644,11 @@ def SemanticDirectoryModportBindingOffset
     : ReflectionField<"ModportBindingOffset", 448, U64LE>;
 def SemanticDirectoryModportBindingCount
     : ReflectionField<"ModportBindingCount", 456, U64LE>;
-def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 464,
+def SemanticDirectoryMailboxElementBindingOffset
+    : ReflectionField<"MailboxElementBindingOffset", 464, U64LE>;
+def SemanticDirectoryMailboxElementBindingCount
+    : ReflectionField<"MailboxElementBindingCount", 472, U64LE>;
+def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 480,
   [SemanticDirectoryTypeOffset, SemanticDirectoryTypeCount,
    SemanticDirectoryEdgeOffset, SemanticDirectoryEdgeCount,
    SemanticDirectoryRootOffset, SemanticDirectoryRootCount,
@@ -686,7 +703,9 @@ def SemanticDirectory : ReflectionLayout<"SemanticDirectory", 464,
    SemanticDirectoryClassMemberBindingOffset,
    SemanticDirectoryClassMemberBindingCount,
    SemanticDirectoryModportBindingOffset,
-   SemanticDirectoryModportBindingCount]>;
+   SemanticDirectoryModportBindingCount,
+   SemanticDirectoryMailboxElementBindingOffset,
+   SemanticDirectoryMailboxElementBindingCount]>;
 
 // Exact source names identify modports within a physical interface instance.
 // Hierarchy display strings may contain escaped separators. Entries are sorted
