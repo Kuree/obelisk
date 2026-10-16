@@ -89,8 +89,14 @@ expire when their referents are collected; the iterator's `vpiUse` also holds
 the mailbox weakly. Unpacked arrays, structs, dynamic arrays, and queues expose
 nested positional assignment-pattern expressions through `vpiOperand`.
 Scanned operands keep their copied values after parent handles are released.
-Union, associative-array, and untyped mailbox message snapshots are still
-being completed.
+Union snapshots expose read-only `vpiUnionVar` views and typed `vpiMember`
+children. Tagged unions retain the active tag; inactive members remain
+queryable but their values are unavailable. Void tags appear only in the
+typespec's member inventory. Packed union values retain their value and unknown
+bits; unpacked union values are accessed through their members. Nested variable
+views preserve member names, array indices, packed-bit selections, and parent
+relations after the mailbox is collected. Associative-array and untyped mailbox
+message snapshots are still being completed.
 
 Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`

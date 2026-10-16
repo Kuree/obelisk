@@ -99,6 +99,20 @@ struct VPISnapshotValue {
   uint32_t exactType = vpiConstant;
   PLI_INT32 constType = vpiIntConst;
   PLI_INT32 opType = 0;
+  std::string name;
+  std::string tagName;
+  const VPISnapshotValue *parent = nullptr;
+  bool variableView = false;
+  bool readable = true;
+  bool sizeKnown = true;
+  bool array = false;
+  bool tagged = false;
+  int64_t activeMember = -1;
+  int64_t arrayLeft = 0;
+  int64_t arrayRight = -1;
+  size_t parentOrdinal = 0;
+  bool bitSelection = false;
+  int64_t bitIndex = 0;
   // A flat snapshot arena owns children; these links never retain another node.
   std::vector<const VPISnapshotValue *> children;
   uint64_t bitWidth = 0;
@@ -198,6 +212,7 @@ struct __vpiHandle {
   bool timeQueueIterator = false;
   bool threadIterator = false;
   bool snapshotIterator = false;
+  bool snapshotBitIterator = false;
   bool designIterator = false;
   bool relationIterator = false;
   VPISemanticIteratorKind semanticIterator = VPISemanticIteratorKind::None;
@@ -1078,6 +1093,20 @@ bool valueShapeFor(__vpiHandle *handle,
                    const obelisk_rt_design_info_v1 &objectInfo,
                    VPIValueShape &shape) {
   if (handle->form == VPIObjectForm::SnapshotValue) {
+    if (handle->snapshot->bitSelection) {
+      shape = VPIValueShape::Scalar;
+      return true;
+    }
+    obelisk_rt_design_semantic_type_info_v1 semantic{};
+    if (handle->snapshot->integral &&
+        semanticTypeInfo(handle, handle->snapshot->semantic, semantic) &&
+        ((semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0 ||
+         semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+         semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+         semantic.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION)) {
+      shape = VPIValueShape::Vector;
+      return true;
+    }
     shape = !handle->snapshot->integral ? VPIValueShape::Neither
             : objectInfo.bit_width == 1 ? VPIValueShape::Scalar
                                         : VPIValueShape::Vector;
@@ -1978,6 +2007,9 @@ bool supportsPackedBitSelect(__vpiHandle *handle,
 }
 
 bool isIndexedArrayMember(const __vpiHandle *handle) {
+  if (handle->form == VPIObjectForm::SnapshotValue)
+    return handle->snapshot->parent && handle->snapshot->parent->array &&
+           handle->snapshot->parent->exactType == vpiRegArray;
   if (handle->form == VPIObjectForm::Indexed)
     return !handle->selectionSteps.empty() &&
            handle->selectionSteps.back().arrayDimension &&
@@ -1991,6 +2023,9 @@ bool isIndexedArrayMember(const __vpiHandle *handle) {
 
 bool isIndexedPackedArrayMember(const __vpiHandle *handle,
                                 uint32_t objectType) {
+  if (handle->form == VPIObjectForm::SnapshotValue)
+    return handle->snapshot->parent && handle->snapshot->parent->array &&
+           handle->snapshot->parent->exactType == vpiPackedArrayVar;
   if (handle->form != VPIObjectForm::Indexed ||
       handle->selectionSteps.empty() ||
       !handle->selectionSteps.back().arrayDimension ||
@@ -2724,6 +2759,65 @@ vpiHandle handleRelationByIndices(
   }
 }
 
+vpiHandle makeSnapshotHandle(VPIState *state,
+                             obelisk_rt_design_cursor_v1 source,
+                             std::shared_ptr<const VPISnapshotValue> value);
+
+// A selected bit owns only itself and an alias of its copied parent arena.
+// Wider values never allocate one node per bit merely to support indexing.
+std::shared_ptr<const VPISnapshotValue>
+snapshotBitSelection(__vpiHandle *source,
+                     std::shared_ptr<const VPISnapshotValue> parent,
+                     int64_t index) {
+  if (!parent->variableView || !parent->integral || parent->array ||
+      parent->bitWidth == 0 ||
+      !obelisk::reflection::findVPIIndexedAccess(parent->exactType))
+    return {};
+  obelisk_rt_design_semantic_type_info_v1 semantic{};
+  if (!semanticTypeInfo(source, parent->semantic, semantic))
+    return {};
+  int64_t left = parent->bitWidth - 1, right = 0;
+  if (semantic.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) {
+    left = semantic.range_left;
+    right = semantic.range_right;
+  }
+  uint64_t ordinal = 0, extent = 0;
+  if (!sourceIndexOrdinal(left, right, index, ordinal, extent) ||
+      extent != parent->bitWidth)
+    return {};
+  OBELISK_RT_TRY {
+    using Owner =
+        std::pair<std::shared_ptr<const VPISnapshotValue>, VPISnapshotValue>;
+    auto owner = std::make_shared<Owner>();
+    owner->first = std::move(parent);
+    const auto &original = *owner->first;
+    auto &bit = owner->second;
+    bit.semantic = original.semantic;
+    bit.parent = &original;
+    bit.exactType =
+        obelisk::reflection::findVPIIndexedAccess(original.exactType)
+            ->terminalResult;
+    bit.bitWidth = 1;
+    bit.variableView = bit.integral = bit.bitSelection = true;
+    bit.readable = original.readable;
+    bit.parentOrdinal = ordinal;
+    bit.bitIndex = index;
+    const uint64_t offset = extent - ordinal - 1;
+    bit.value.assign(1, bit.readable
+                            ? (original.value[offset / 64] >> (offset % 64)) & 1
+                            : 0);
+    bit.unknown.assign(
+        1, bit.readable ? (original.unknown[offset / 64] >> (offset % 64)) & 1
+                        : 0);
+    return std::shared_ptr<const VPISnapshotValue>(owner, &bit);
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner, "could not allocate copied bit selection",
+             vpiSystem);
+    return {};
+  }
+}
+
 vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
                           const PLI_INT32 *indices,
                           bool directNameLookup = false) {
@@ -2739,6 +2833,29 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
   if (count <= 0 || !indices) {
     setError(source->owner, "VPI indexed access requires at least one index");
     return nullptr;
+  }
+  if (source->form == VPIObjectForm::SnapshotValue) {
+    auto selected = source->snapshot;
+    for (PLI_INT32 position = 0; position != count; ++position) {
+      if (!selected->variableView ||
+          !obelisk::reflection::findVPIIndexedAccess(selected->exactType))
+        return nullptr;
+      if (!selected->array) {
+        selected = snapshotBitSelection(source, selected, indices[position]);
+        if (!selected)
+          return nullptr;
+        continue;
+      }
+      uint64_t ordinal = 0, extent = 0;
+      if (!sourceIndexOrdinal(selected->arrayLeft, selected->arrayRight,
+                              indices[position], ordinal, extent) ||
+          ordinal >= selected->children.size())
+        return nullptr;
+      selected = std::shared_ptr<const VPISnapshotValue>(
+          selected, selected->children[ordinal]);
+    }
+    return makeSnapshotHandle(source->owner, source->cursor,
+                              std::move(selected));
   }
   if (source->form != VPIObjectForm::Design &&
       source->form != VPIObjectForm::Indexed)
@@ -3021,14 +3138,24 @@ bool isDimensionForVPIObject(uint32_t publicType, uint32_t semanticKind,
   if (isDimensionForTypespec(publicType, semanticKind, semanticFlags,
                              suppressDimension))
     return true;
-  if (suppressDimension ||
-      (semanticKind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
-       semanticKind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY))
+  if (suppressDimension)
     return false;
   const auto *access = obelisk::reflection::findVPIIndexedAccess(publicType);
-  return access &&
-         access->accessKind ==
-             obelisk::reflection::VPIIndexedAccessKind::RelationElement;
+  if (!access)
+    return false;
+  using AccessKind = obelisk::reflection::VPIIndexedAccessKind;
+  if (access->accessKind == AccessKind::VariableElement ||
+      access->accessKind == AccessKind::NetElement) {
+    // Unpacked array ranges end before their element's packed dimensions.
+    // Packed variables exclude an enum base or an aggregate's implicit range.
+    if (publicType == access->unpackedFallback)
+      return isUnpackedDimension(semanticKind);
+    return isDimensionForTypespec(vpiPackedArrayTypespec, semanticKind,
+                                  semanticFlags);
+  }
+  return access->accessKind == AccessKind::RelationElement &&
+         (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+          semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY);
 }
 
 bool relationElementSelectorForIteration(uint32_t sourceType,
@@ -3235,9 +3362,6 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
   return nullptr;
 }
 
-vpiHandle makeSnapshotHandle(VPIState *state,
-                             obelisk_rt_design_cursor_v1 source,
-                             std::shared_ptr<const VPISnapshotValue> value);
 
 void copyUseRecipe(__vpiHandle &iterator, const __vpiHandle &source) {
   iterator.hasUse = true;
@@ -3745,6 +3869,11 @@ obelisk_rt_status readClassMemberBits(__vpiHandle *handle,
 bool readValue(__vpiHandle *handle, const VPIValueSource &source,
                std::vector<uint64_t> &value, std::vector<uint64_t> &unknown) {
   if (source.form == VPIObjectForm::SnapshotValue) {
+    if (!handle->snapshot->readable) {
+      setError(handle->owner, "snapshot member has no readable value",
+               vpiNotice);
+      return false;
+    }
     OBELISK_RT_TRY {
       value = handle->snapshot->value;
       unknown = handle->snapshot->unknown;
@@ -3838,6 +3967,11 @@ bool readManagedStateWord(__vpiHandle *handle,
   if (form == VPIObjectForm::SnapshotValue &&
       handle->snapshot->exactType == vpiClassVar &&
       handle->snapshot->bitWidth == 64) {
+    if (!handle->snapshot->readable) {
+      setError(handle->owner, "snapshot member has no readable class reference",
+               vpiNotice);
+      return false;
+    }
     word = handle->snapshot->value[0];
     return true;
   }
@@ -4456,38 +4590,32 @@ struct VPIClassReference {
 // The caller holds the context transaction and an active GC lane through use
 // of this weak reference. A process token must never enter managed-pointer
 // validation, even when its numerical value happens to look like an address.
-bool readClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
-                        VPIClassReference &reference) {
-  uint64_t word = 0;
-  if (!readManagedStateWord(source, word))
-    return false;
+// Capture reference identity without reporting an API error. Union views may
+// contain bytes that are not a valid value of another overlapping member type;
+// their metadata still exists, and value access reports that condition later.
+obelisk_rt_status
+captureClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+                      uint64_t word, obelisk_rt_design_cursor_v1 semantic,
+                      uint32_t semanticKind, VPIClassReference &reference) {
   if (word == 0)
-    return true;
-  obelisk_rt_design_cursor_v1 semantic{};
-  obelisk_rt_design_semantic_type_info_v1 info{};
-  if (semanticCursorFor(source, semantic) &&
-      !semanticTypeInfo(source, semantic, info))
-    return false;
-  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
-    if (obelisk_rt_process_object_identity(source->owner->context, word,
-                                           &reference.identity) !=
-        OBELISK_RT_OK) {
-      setError(source->owner, "invalid process reference in VPI design state",
-               vpiInternal);
-      return false;
-    }
+    return OBELISK_RT_OK;
+  if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
+    const auto status = obelisk_rt_process_object_identity(
+        source->owner->context, word, &reference.identity);
+    if (status != OBELISK_RT_OK)
+      return status;
     reference.logicalProcess = word;
     reference.semantic = semantic;
   } else {
     auto *object = obelisk_rt_object_from_managed_word(word);
     const BuiltinClassKind expected =
-        info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX
+        semanticKind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX
             ? BuiltinClassKind::Mailbox
-        : info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE
+        : semanticKind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE
             ? BuiltinClassKind::Semaphore
             : BuiltinClassKind::None;
     ManagedObjectLease lease;
-    if (!object ||
+    if (!object || word != obelisk_rt_managed_word_from_object(object) ||
         obelisk_rt_managed_object_acquire(lane, object,
                                           expected == BuiltinClassKind::None
                                               ? OBELISK_RT_MANAGED_CLASS
@@ -4495,24 +4623,37 @@ bool readClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
                                           &lease) != OBELISK_RT_OK ||
         obelisk_rt_managed_object_context(object) != source->owner->context ||
         (expected != BuiltinClassKind::None &&
-         obelisk_rt_builtin_class_kind(lease) != expected)) {
-      setError(source->owner, "invalid class reference in VPI design state",
-               vpiInternal);
-      return false;
-    }
+         obelisk_rt_builtin_class_kind(lease) != expected))
+      return OBELISK_RT_INVALID_HANDLE;
     reference.object = object;
     reference.identity = obelisk_rt_v1_object_id(object);
-    // A user class derived from a builtin still has its own allocated class
-    // typespec. Only direct builtin containers use the declared builtin type.
     if (obelisk_rt_managed_object_kind(object) == OBELISK_RT_MANAGED_CONTAINER)
       reference.semantic = semantic;
   }
-  if (reference.identity == 0 || reference.identity > INT64_MAX) {
-    setError(source->owner, "invalid class identity in VPI design state",
-             vpiInternal);
+  return reference.identity && reference.identity <= INT64_MAX
+             ? OBELISK_RT_OK
+             : OBELISK_RT_INVALID_HANDLE;
+}
+
+bool readClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+                        VPIClassReference &reference) {
+  uint64_t word = 0;
+  if (!readManagedStateWord(source, word))
     return false;
-  }
-  return true;
+  if (!word)
+    return true;
+  obelisk_rt_design_cursor_v1 semantic{};
+  obelisk_rt_design_semantic_type_info_v1 info{};
+  if (semanticCursorFor(source, semantic) &&
+      !semanticTypeInfo(source, semantic, info))
+    return false;
+  const auto status =
+      captureClassReference(source, lane, word, semantic, info.kind, reference);
+  if (status == OBELISK_RT_OK)
+    return true;
+  setError(source->owner, "invalid class reference in VPI design state",
+           status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
+  return false;
 }
 
 vpiHandle makeClassObjectHandle(__vpiHandle *source) {
@@ -4661,6 +4802,7 @@ vpiHandle makeSnapshotHandle(VPIState *state,
     handle->semanticCursor = value->semantic;
     handle->exactVpiType = value->exactType;
     handle->snapshot = std::move(value);
+    handle->suppressSemanticDimension = handle->snapshot->bitSelection;
     handle->dynamicObject = handle->snapshot->object;
     handle->dynamicIdentity = handle->snapshot->identity;
     handle->logicalProcess = handle->snapshot->logicalProcess;
@@ -4684,11 +4826,11 @@ vpiHandle makeSnapshotHandle(VPIState *state,
   }
 }
 
-std::shared_ptr<const VPISnapshotValue>
+std::shared_ptr<VPISnapshotValue>
 snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
                      obelisk_rt_design_cursor_v1 semantic,
                      const obelisk_rt_element_type_v1 &element,
-                     const uint8_t *bytes) {
+                     const uint8_t *bytes, bool variableView = false) {
   obelisk_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return {};
@@ -4810,6 +4952,11 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
         obelisk_rt_v1_string_view(word, scratch, &data, &size) !=
             OBELISK_RT_OK ||
         size > std::numeric_limits<size_t>::max() || size > UINT64_MAX / 8) {
+      if (variableView) {
+        value->readable = false;
+        value->sizeKnown = false;
+        return value;
+      }
       setError(source->owner, "invalid string in mailbox message", vpiInternal);
       return {};
     }
@@ -4818,19 +4965,18 @@ snapshotMailboxValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     // The managed word is no longer needed: the copied bytes carry the value.
     value->value[0] = 0;
   } else if (classReference) {
-    __vpiHandle reference;
-    reference.owner = source->owner;
-    reference.form = VPIObjectForm::SnapshotValue;
-    reference.cursor = source->cursor;
-    reference.semanticCursor = semantic;
-    reference.exactVpiType = vpiClassVar;
-    reference.snapshot = value;
-    reference.hasInfo = true;
-    reference.info.kind = OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT;
-    reference.info.bit_width = 64;
     VPIClassReference identity;
-    if (!readClassReference(&reference, lane, identity))
+    const auto status = captureClassReference(source, lane, value->value[0],
+                                              semantic, info.kind, identity);
+    if (status != OBELISK_RT_OK) {
+      if (variableView && status != OBELISK_RT_OUT_OF_MEMORY) {
+        value->readable = false;
+        return value;
+      }
+      setError(source->owner, "invalid class reference in mailbox message",
+               status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
       return {};
+    }
     value->object = identity.object;
     value->identity = identity.identity;
     value->logicalProcess = identity.logicalProcess;
@@ -4919,33 +5065,92 @@ struct VPISnapshotRequest {
   obelisk_rt_design_cursor_v1 semantic{};
   obelisk_rt_element_type_v1 element{};
   std::vector<uint8_t> bytes;
+  bool variableView = false;
+  bool readable = true;
+  std::string name;
 };
 
-std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
-    __vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
-    obelisk_rt_design_cursor_v1 mailboxType,
-    obelisk_rt_design_cursor_v1 semantic,
-    const obelisk_rt_element_type_v1 &element, const uint8_t *bytes,
-    std::vector<VPISnapshotRequest> &pending,
-    std::vector<std::shared_ptr<VPISnapshotValue>> &aggregates) {
+std::shared_ptr<VPISnapshotValue>
+snapshotMessageNode(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+                    obelisk_rt_design_cursor_v1 mailboxType,
+                    obelisk_rt_design_cursor_v1 semantic,
+                    const obelisk_rt_element_type_v1 &element,
+                    const uint8_t *bytes,
+                    std::vector<VPISnapshotRequest> &pending,
+                    std::vector<std::shared_ptr<VPISnapshotValue>> &aggregates,
+                    bool variableView = false, bool readable = true) {
   obelisk_rt_design_semantic_type_info_v1 info{};
   if (!semanticTypeInfo(source, semantic, info))
     return {};
-  const bool array = info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY;
+  const bool array =
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY ||
+      (variableView && info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY);
   const bool structure =
-      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT;
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+      (variableView && info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT);
   const bool dynamic = info.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY;
   const bool queue = info.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE;
-  if (!array && !structure && !dynamic && !queue)
-    return snapshotMailboxValue(source, lane, semantic, element, bytes);
-  auto value = std::make_shared<VPISnapshotValue>();
+  const bool unionType =
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION ||
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+  variableView |= unionType;
+  auto variableKind = [&]() -> uint32_t {
+    const auto *access = obelisk::reflection::findVPIIndexedAccess(vpiUnionVar);
+    return access ? indexedResultType(
+                        source, *access, semantic,
+                        info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY,
+                        false)
+                  : 0;
+  };
+  if (!array && !structure && !dynamic && !queue && !unionType) {
+    auto value = readable ? snapshotMailboxValue(source, lane, semantic,
+                                                 element, bytes, variableView)
+                          : std::make_shared<VPISnapshotValue>();
+    if (!value)
+      return {};
+    value->semantic = semantic;
+    value->variableView = variableView;
+    value->readable &= readable;
+    if (variableView)
+      value->exactType = variableKind();
+    if (!readable) {
+      value->bitWidth =
+          element.bit_width ? element.bit_width : element.value_size * 8;
+      value->integral = (element.kind == OBELISK_RT_ELEMENT_BITS ||
+                         element.kind == OBELISK_RT_ELEMENT_LOGIC) &&
+                        info.kind != OBELISK_RT_DESIGN_SEMANTIC_PROCESS;
+      value->sizeKnown = info.kind != OBELISK_RT_DESIGN_SEMANTIC_STRING;
+    }
+    return value;
+  }
+  const bool packed = info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+                      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+                      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+  auto value = packed && readable
+                   ? snapshotMailboxValue(source, lane, semantic, element,
+                                          bytes, variableView)
+                   : std::make_shared<VPISnapshotValue>();
+  if (!value)
+    return {};
   value->semantic = semantic;
-  value->exactType = vpiOperation;
-  value->opType = vpiAssignmentPatternOp;
-  aggregates.push_back(value);
+  value->variableView = variableView;
+  value->readable = readable;
+  value->exactType = variableView ? variableKind() : vpiOperation;
+  value->array = array || dynamic || queue;
+  if (variableView) {
+    value->sizeKnown = true;
+    if (packed && !readable) {
+      value->bitWidth = element.bit_width;
+      value->integral = true;
+    }
+  } else {
+    value->opType = vpiAssignmentPatternOp;
+    aggregates.push_back(value);
+  }
   auto append = [&](obelisk_rt_design_cursor_v1 childSemantic,
                     const obelisk_rt_element_type_v1 &childElement,
-                    const uint8_t *childBytes) {
+                    const uint8_t *childBytes, bool childReadable = true,
+                    std::string childName = {}) {
     const uint64_t planes =
         (childElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
     if (!childElement.value_size ||
@@ -4958,6 +5163,9 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
     request.ordinal = value->children.size();
     request.semantic = childSemantic;
     request.element = childElement;
+    request.variableView = variableView;
+    request.readable = readable && childReadable;
+    request.name = std::move(childName);
     request.bytes.assign(childBytes,
                          childBytes + childElement.value_size * planes);
     value->children.emplace_back();
@@ -4974,6 +5182,10 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
     }
     obelisk_rt_managed_word_v1 word = 0;
     std::memcpy(&word, bytes, sizeof(word));
+    if (!readable) {
+      value->sizeKnown = false;
+      return value;
+    }
     if (!word)
       return value;
     auto *object = obelisk_rt_object_from_managed_word(word);
@@ -4983,6 +5195,10 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
           obelisk_rt_managed_object_acquire(lane, object,
                                             OBELISK_RT_MANAGED_CONTAINER,
                                             &lease) != OBELISK_RT_OK) {
+        if (variableView) {
+          value->readable = value->sizeKnown = false;
+          return value;
+        }
         setError(source->owner, "invalid container in mailbox message",
                  vpiInternal);
         return {};
@@ -4998,6 +5214,10 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
         kind != (dynamic ? OBELISK_RT_CONTAINER_DYNAMIC_ARRAY
                          : OBELISK_RT_CONTAINER_QUEUE) ||
         !semanticElement(source, semantic, childSemantic)) {
+      if (variableView && status != OBELISK_RT_OUT_OF_MEMORY) {
+        value->readable = value->sizeKnown = false;
+        return value;
+      }
       setError(source->owner, "could not snapshot mailbox container value",
                status == OBELISK_RT_OUT_OF_MEMORY ? vpiSystem : vpiInternal);
       return {};
@@ -5011,6 +5231,12 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
       return {};
     }
     const size_t stride = childElement->value_size * planes;
+    if (contents.size() / stride > INT64_MAX) {
+      setError(source->owner, "container snapshot exceeds index capacity",
+               vpiSystem);
+      return {};
+    }
+    value->arrayRight = static_cast<int64_t>(contents.size() / stride) - 1;
     value->children.reserve(contents.size() / stride);
     for (size_t offset = 0; offset < contents.size(); offset += stride)
       if (!append(childSemantic, *childElement, contents.data() + offset))
@@ -5030,15 +5256,40 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
   }
   const bool fourState = (element.flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
   if (!layout.bit_width || layout.bit_width > UINT64_MAX - 7 ||
-      element.kind != OBELISK_RT_ELEMENT_AGGREGATE ||
+      (packed ? element.kind != (fourState ? OBELISK_RT_ELEMENT_LOGIC
+                                           : OBELISK_RT_ELEMENT_BITS)
+              : element.kind != OBELISK_RT_ELEMENT_AGGREGATE) ||
       element.value_size != (layout.bit_width + 7) / 8 ||
-      element.bit_width != element.value_size * 8 ||
+      element.bit_width !=
+          (packed ? layout.bit_width : element.value_size * 8) ||
       fourState != ((layout.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0)) {
     setError(source->owner, "aggregate message does not match its storage",
              vpiInternal);
     return {};
   }
   uint64_t count = layout.child_count;
+  if (unionType && (info.flags & OBELISK_RT_DESIGN_SEMANTIC_TAGGED)) {
+    value->tagged = true;
+    bool known = readable && layout.tag_bits <= 64 &&
+                 layout.tag_bits <= layout.bit_width;
+    uint64_t tag = 0;
+    if (known)
+      for (uint64_t bit = 0; bit != layout.tag_bits; ++bit) {
+        const uint64_t at = layout.bit_width - layout.tag_bits + bit;
+        known &= !fourState ||
+                 !((bytes[element.value_size + at / 8] >> (at % 8)) & 1);
+        tag |= uint64_t{(bytes[at / 8] >> (at % 8)) & 1u} << bit;
+      }
+    if (known && (packed ? tag < count : tag > 0 && tag <= count))
+      value->activeMember = static_cast<int64_t>(packed ? tag : tag - 1);
+    if (value->activeMember >= 0) {
+      obelisk_rt_design_semantic_type_edge_v1 active{};
+      if (!semanticEdge(source, semantic, value->activeMember, active))
+        return {};
+      value->tagName.assign(reinterpret_cast<const char *>(active.name),
+                            active.name_size);
+    }
+  }
   uint64_t stride = 0;
   obelisk_rt_design_cursor_v1 arraySemantic{};
   if (array) {
@@ -5057,6 +5308,8 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
                 : static_cast<uint64_t>(layout.range_right) -
                       static_cast<uint64_t>(layout.range_left) + 1;
     stride = layout.bit_width / count;
+    value->arrayLeft = layout.range_left;
+    value->arrayRight = layout.range_right;
   }
   if (count > SIZE_MAX) {
     setError(source->owner, "mailbox aggregate exceeds host capacity",
@@ -5066,8 +5319,9 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
   value->children.reserve(static_cast<size_t>(count));
   for (uint64_t index = 0; index != count; ++index) {
     obelisk_rt_design_cursor_v1 childSemantic = arraySemantic;
-    uint64_t offset = index * stride;
-    if (structure) {
+    uint64_t offset = (packed && array ? count - index - 1 : index) * stride;
+    std::string childName;
+    if (structure || unionType) {
       obelisk_rt_design_cursor_v1 field{};
       obelisk_rt_design_type_info_v1 fieldInfo{};
       obelisk_rt_design_semantic_type_edge_v1 edge{};
@@ -5080,7 +5334,16 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
         return {};
       }
       childSemantic = edge.child;
+      childName.assign(reinterpret_cast<const char *>(edge.name),
+                       edge.name_size);
       offset = fieldInfo.packed_offset;
+      obelisk_rt_design_semantic_type_info_v1 childInfo{};
+      if (!semanticTypeInfo(source, childSemantic, childInfo))
+        return {};
+      // A void tag names a variant containing no value (7.3.2). Its declaration
+      // remains in TypespecMember; there is no VPI variable kind for void.
+      if (childInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_VOID)
+        continue;
     }
     obelisk_rt_element_type_v1 childElement{};
     if (!messageElementDescriptor(source, mailboxType, childSemantic,
@@ -5121,7 +5384,10 @@ std::shared_ptr<const VPISnapshotValue> snapshotMessageNode(
           ((bytes[element.value_size + at / 8] >> (at % 8)) & 1))
         copied[childElement.value_size + bit / 8] |= uint8_t{1} << (bit % 8);
     }
-    if (!append(childSemantic, childElement, copied.data()))
+    const bool childReadable =
+        !value->tagged || value->activeMember == static_cast<int64_t>(index);
+    if (!append(childSemantic, childElement, copied.data(), childReadable,
+                std::move(childName)))
       return {};
   }
   return value;
@@ -5147,11 +5413,41 @@ snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
   while (!pending.empty()) {
     auto request = std::move(pending.back());
     pending.pop_back();
-    auto child = snapshotMessageNode(source, lane, mailboxType,
-                                     request.semantic, request.element,
-                                     request.bytes.data(), pending, aggregates);
+    auto child =
+        snapshotMessageNode(source, lane, mailboxType, request.semantic,
+                            request.element, request.bytes.data(), pending,
+                            aggregates, request.variableView, request.readable);
     if (!child)
       return {};
+    child->parent = request.parent.get();
+    child->parentOrdinal = request.ordinal;
+    if (request.parent->array && request.parent->integral && !child->array &&
+        child->bitWidth == 1) {
+      obelisk_rt_design_semantic_type_info_v1 childType{};
+      if (!semanticTypeInfo(source, child->semantic, childType))
+        return {};
+      const bool scalarBit =
+          childType.kind == OBELISK_RT_DESIGN_SEMANTIC_BIT ||
+          childType.kind == OBELISK_RT_DESIGN_SEMANTIC_LOGIC ||
+          childType.kind == OBELISK_RT_DESIGN_SEMANTIC_REG;
+      if (scalarBit &&
+          (childType.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0) {
+        const auto *access = obelisk::reflection::findVPIIndexedAccess(
+            request.parent->exactType);
+        if (!access)
+          return {};
+        child->exactType = access->terminalResult;
+        child->bitSelection = true;
+        child->bitIndex =
+            request.parent->arrayLeft >= request.parent->arrayRight
+                ? request.parent->arrayLeft -
+                      static_cast<int64_t>(request.ordinal)
+                : request.parent->arrayLeft +
+                      static_cast<int64_t>(request.ordinal);
+      }
+    }
+    if (!request.name.empty())
+      child->name = std::move(request.name);
     request.parent->children[request.ordinal] = child.get();
     arena->push_back(std::move(child));
   }
@@ -5159,6 +5455,8 @@ snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
   // excludes native padding and counts each copied value in its own width.
   for (auto it = aggregates.rbegin(); it != aggregates.rend(); ++it) {
     for (const auto &child : (*it)->children) {
+      if (!child->sizeKnown)
+        (*it)->sizeKnown = false;
       if (child->bitWidth > UINT64_MAX - (*it)->bitWidth) {
         setError(source->owner, "mailbox expression exceeds VPI size capacity",
                  vpiSystem);
@@ -5173,19 +5471,68 @@ snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
   return std::shared_ptr<const VPISnapshotValue>(arena, result.get());
 }
 
-vpiHandle snapshotOperands(__vpiHandle *source) {
+bool snapshotPackedPrefix(__vpiHandle *source, const VPISnapshotValue &value) {
+  if (value.array)
+    return value.integral;
+  if (value.exactType != vpiBitVar && value.exactType != vpiReg)
+    return false;
+  obelisk_rt_design_semantic_type_info_v1 info{};
+  return semanticTypeInfo(source, value.semantic, info) &&
+         (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+}
+
+const VPISnapshotValue *snapshotParentValue(__vpiHandle *source,
+                                            const VPISnapshotValue &value) {
+  const auto *parent = value.parent;
+  if (!parent)
+    return nullptr;
+  auto aggregate = [](const VPISnapshotValue *node) {
+    return node &&
+           (node->exactType == vpiStructVar || node->exactType == vpiUnionVar ||
+            node->exactType == vpiClassVar);
+  };
+  // IEEE37.17d26: prefer an aggregate or a named member prefix. Otherwise
+  // cross consecutive dimensions to the largest containing packed/unpacked
+  // array, stopping at the boundary between the two categories.
+  if (aggregate(parent) || (!parent->name.empty() && aggregate(parent->parent)))
+    return parent;
+  const bool packed = snapshotPackedPrefix(source, *parent);
+  if (!packed && !parent->array)
+    return nullptr;
+  while (parent->parent && !aggregate(parent->parent)) {
+    const auto *next = parent->parent;
+    if (snapshotPackedPrefix(source, *next) != packed ||
+        (!packed && !next->array))
+      break;
+    parent = next;
+    if (!parent->name.empty() && aggregate(parent->parent))
+      break;
+  }
+  return parent;
+}
+
+vpiHandle snapshotChildren(__vpiHandle *source, PLI_INT32 selector) {
   if (source->snapshot->children.empty())
     return nullptr;
   OBELISK_RT_TRY {
     auto iterator = std::make_unique<__vpiHandle>();
     iterator->owner = source->owner;
     iterator->kind = VPIHandleKind::Iterator;
-    iterator->iteratorType = vpiOperand;
+    iterator->iteratorType = selector;
     iterator->snapshotIterator = true;
     iterator->cursor = source->cursor;
     iterator->snapshotItems.reserve(source->snapshot->children.size());
+    const auto *edge = obelisk::reflection::findVPITraversal(
+        source->snapshot->exactType, selector,
+        obelisk::reflection::VPITraversalMode::Iterate);
+    if (!edge)
+      return nullptr;
     for (const auto *child : source->snapshot->children)
-      iterator->snapshotItems.emplace_back(source->snapshot, child);
+      if (obelisk::reflection::vpiObjectSetContains(edge->targets,
+                                                    child->exactType))
+        iterator->snapshotItems.emplace_back(source->snapshot, child);
+    if (iterator->snapshotItems.empty())
+      return nullptr;
     copyUseRecipe(*iterator, *source);
     return keepHandle(source->owner, std::move(iterator));
   }
@@ -5906,10 +6253,60 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
   }
   if (sourceType == vpiClassVar && type == vpiClassObj)
     return makeClassObjectHandle(handle);
-  if (handle->form == VPIObjectForm::SnapshotValue)
+  if (handle->form == VPIObjectForm::SnapshotValue) {
+    const auto *relation = obelisk::reflection::findVPITraversal(
+        sourceType, type, obelisk::reflection::VPITraversalMode::Handle);
+    if (relation && (type == vpiLeftRange || type == vpiRightRange)) {
+      int64_t bound = 0;
+      if (handle->snapshot->array) {
+        if (handle->snapshot->children.empty())
+          return nullptr;
+        bound = type == vpiLeftRange ? handle->snapshot->arrayLeft
+                                     : handle->snapshot->arrayRight;
+      } else {
+        obelisk_rt_design_semantic_type_info_v1 info{};
+        if (!semanticTypeInfo(handle, handle->snapshot->semantic, info) ||
+            !(info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE))
+          return nullptr;
+        bound = type == vpiLeftRange ? info.range_left : info.range_right;
+      }
+      return makeSemanticObjectHandle(
+          handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
+          handle->snapshot->semantic, type == vpiLeftRange ? 0 : 1, vpiConstant,
+          bound);
+    }
+    if (relation && type == vpiIndex && handle->snapshot->bitSelection)
+      return makeSemanticObjectHandle(
+          handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
+          handle->snapshot->semantic, handle->snapshot->parentOrdinal,
+          vpiConstant, handle->snapshot->bitIndex);
+    if (relation && type == vpiIndex && handle->snapshot->parent &&
+        handle->snapshot->parent->array) {
+      const auto *parent = handle->snapshot->parent;
+      const int64_t index =
+          parent->arrayLeft >= parent->arrayRight
+              ? parent->arrayLeft -
+                    static_cast<int64_t>(handle->snapshot->parentOrdinal)
+              : parent->arrayLeft +
+                    static_cast<int64_t>(handle->snapshot->parentOrdinal);
+      return makeSemanticObjectHandle(
+          handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
+          parent->semantic, handle->snapshot->parentOrdinal, vpiConstant,
+          index);
+    }
+    if (type == vpiParent) {
+      const auto *parent = snapshotParentValue(handle, *handle->snapshot);
+      if (parent && relation &&
+          obelisk::reflection::vpiObjectSetContains(relation->targets,
+                                                    parent->exactType))
+        return makeSnapshotHandle(
+            handle->owner, handle->cursor,
+            std::shared_ptr<const VPISnapshotValue>(handle->snapshot, parent));
+    }
     return type == vpiTypespec || type == vpiClassTypespec
                ? makeSemanticRelation(handle, type)
                : nullptr;
+  }
   if (sourceType == vpiVirtualInterfaceVar && type == vpiActual)
     return virtualInterfaceActual(handle);
   if (handle->form == VPIObjectForm::ClassObject)
@@ -6389,10 +6786,83 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
       return classWaitingProcesses(handle);
     if (handle->form == VPIObjectForm::ClassObject && type == vpiMessages)
       return classMessages(handle);
-    if (handle->form == VPIObjectForm::SnapshotValue)
-      return type == vpiOperand && handle->snapshot->opType
-                 ? snapshotOperands(handle)
-                 : nullptr;
+    if (handle->form == VPIObjectForm::SnapshotValue) {
+      if (type == vpiRange)
+        return makeSemanticIterator(handle, type);
+      if (type == vpiBit && handle->snapshot->integral &&
+          obelisk::reflection::findVPITraversal(
+              handle->snapshot->exactType, vpiBit,
+              obelisk::reflection::VPITraversalMode::Iterate)) {
+        OBELISK_RT_TRY {
+          auto iterator = std::make_unique<__vpiHandle>();
+          iterator->owner = state;
+          iterator->kind = VPIHandleKind::Iterator;
+          iterator->iteratorType = type;
+          iterator->snapshotBitIterator = true;
+          iterator->cursor = handle->cursor;
+          iterator->snapshot = handle->snapshot;
+          copyUseRecipe(*iterator, *handle);
+          return keepHandle(state, std::move(iterator));
+        }
+        OBELISK_RT_CATCH_ALL {
+          setError(state, "could not allocate copied bit iterator", vpiSystem);
+          return nullptr;
+        }
+      }
+      if (type == vpiIndex && handle->snapshot->parent &&
+          (handle->snapshot->bitSelection || handle->snapshot->parent->array) &&
+          obelisk::reflection::findVPITraversal(
+              handle->snapshot->exactType, vpiIndex,
+              obelisk::reflection::VPITraversalMode::Iterate)) {
+        OBELISK_RT_TRY {
+          auto iterator = std::make_unique<__vpiHandle>();
+          iterator->owner = state;
+          iterator->kind = VPIHandleKind::Iterator;
+          iterator->iteratorType = type;
+          iterator->semanticIterator = VPISemanticIteratorKind::Indices;
+          iterator->cursor = handle->cursor;
+          const auto *stop = snapshotParentValue(handle, *handle->snapshot);
+          for (const auto *child = handle->snapshot.get(); child->parent;) {
+            const auto *parent = child->parent;
+            if (!child->bitSelection && !parent->array)
+              break;
+            VPISelectionStep step{};
+            step.semanticType = parent->semantic;
+            step.selectionOrdinal = child->parentOrdinal;
+            step.index = child->bitSelection ? child->bitIndex
+                         : parent->arrayLeft >= parent->arrayRight
+                             ? parent->arrayLeft -
+                                   static_cast<int64_t>(child->parentOrdinal)
+                             : parent->arrayLeft +
+                                   static_cast<int64_t>(child->parentOrdinal);
+            iterator->indexItems.push_back(step);
+            if (parent == stop)
+              break;
+            child = parent;
+          }
+          copyUseRecipe(*iterator, *handle);
+          return keepHandle(state, std::move(iterator));
+        }
+        OBELISK_RT_CATCH_ALL {
+          setError(state, "could not allocate copied variable indices",
+                   vpiSystem);
+          return nullptr;
+        }
+      }
+      if (type == vpiOperand && handle->snapshot->opType)
+        return snapshotChildren(handle, type);
+      const auto *edge = obelisk::reflection::findVPITraversal(
+          handle->snapshot->exactType, type,
+          obelisk::reflection::VPITraversalMode::Iterate);
+      if (handle->snapshot->variableView && edge &&
+          ((type == vpiMember &&
+            (handle->snapshot->exactType == vpiUnionVar ||
+             handle->snapshot->exactType == vpiStructVar)) ||
+           (handle->snapshot->array &&
+            (type == vpiElement || type == vpiReg || type == vpiMemoryWord))))
+        return snapshotChildren(handle, type);
+      return nullptr;
+    }
     referenceHandle = handle;
     parent = handle->cursor;
     sourceStatement = handle->statement;
@@ -6690,6 +7160,46 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
   __vpiHandle *iterator = validate(opaque, VPIHandleKind::Iterator);
   if (!iterator)
     return nullptr;
+  if (iterator->snapshotBitIterator) {
+    if (iterator->next == iterator->snapshot->bitWidth) {
+      iterator->owner->handles.erase(iterator->token);
+      return nullptr;
+    }
+    uint64_t ordinal = iterator->next++;
+    auto selected = iterator->snapshot;
+    while (selected->array && !selected->children.empty()) {
+      const uint64_t width = selected->children.front()->bitWidth;
+      if (!width || ordinal / width >= selected->children.size()) {
+        setError(iterator->owner, "invalid copied packed array width",
+                 vpiInternal);
+        iterator->owner->handles.erase(iterator->token);
+        return nullptr;
+      }
+      const auto *child = selected->children[ordinal / width];
+      ordinal %= width;
+      selected = std::shared_ptr<const VPISnapshotValue>(selected, child);
+    }
+    if (!selected->bitSelection) {
+      obelisk_rt_design_semantic_type_info_v1 info{};
+      if (!semanticTypeInfo(iterator, selected->semantic, info))
+        return nullptr;
+      const bool ranged =
+          (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) != 0;
+      const int64_t left = ranged ? info.range_left : selected->bitWidth - 1;
+      const int64_t right = ranged ? info.range_right : 0;
+      const int64_t index = left >= right
+                                ? left - static_cast<int64_t>(ordinal)
+                                : left + static_cast<int64_t>(ordinal);
+      selected = snapshotBitSelection(iterator, selected, index);
+    }
+    vpiHandle result =
+        selected ? makeSnapshotHandle(iterator->owner, iterator->cursor,
+                                      std::move(selected))
+                 : nullptr;
+    if (!result)
+      iterator->owner->handles.erase(iterator->token);
+    return result;
+  }
   if (iterator->snapshotIterator) {
     if (iterator->next == iterator->snapshotItems.size()) {
       iterator->owner->handles.erase(iterator->token);
@@ -7243,11 +7753,56 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (handle->form == VPIObjectForm::SnapshotValue) {
     if (property == vpiOpType && handle->snapshot->opType)
       return handle->snapshot->opType;
-    if (property == vpiSize)
-      return static_cast<PLI_INT32>(
-          std::min<uint64_t>(handle->snapshot->bitWidth, INT32_MAX));
+    if (property == vpiSize) {
+      if (!handle->snapshot->sizeKnown) {
+        setError(handle->owner, "snapshot has no fixed source bit size",
+                 vpiNotice);
+        return vpiUndefined;
+      }
+      uint64_t size = handle->snapshot->bitWidth;
+      if (handle->snapshot->variableView) {
+        obelisk_rt_design_semantic_type_info_v1 info{};
+        if (!semanticTypeInfo(handle, handle->snapshot->semantic, info))
+          return vpiUndefined;
+        if (objectType == vpiRegArray) {
+          size = handle->snapshot->children.size();
+          obelisk_rt_design_cursor_v1 child{};
+          if (!semanticElement(handle, handle->snapshot->semantic, child))
+            return vpiUndefined;
+          for (;;) {
+            obelisk_rt_design_semantic_type_info_v1 nested{};
+            if (!semanticTypeInfo(handle, child, nested))
+              return vpiUndefined;
+            if (nested.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY)
+              break;
+            uint64_t ordinal = 0, extent = 0;
+            if (!sourceIndexOrdinal(nested.range_left, nested.range_right,
+                                    nested.range_left, ordinal, extent) ||
+                size > UINT64_MAX / extent) {
+              setError(handle->owner, "copied array size exceeds capacity",
+                       vpiInternal);
+              return vpiUndefined;
+            }
+            size *= extent;
+            if (!semanticElement(handle, child, child))
+              return vpiUndefined;
+          }
+        } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+                   info.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION)
+          size = info.edge_count;
+        else if (objectType == vpiStringVar)
+          size = handle->snapshot->string.size();
+      }
+      return static_cast<PLI_INT32>(std::min<uint64_t>(size, INT32_MAX));
+    }
     if (property == vpiConstType)
       return handle->snapshot->constType;
+    if (property == vpiStructUnionMember) {
+      const auto *parent = handle->snapshot->parent;
+      return !handle->snapshot->bitSelection && parent &&
+             (parent->exactType == vpiStructVar ||
+              parent->exactType == vpiUnionVar);
+    }
   }
   if (property == vpiSize &&
       (objectType == vpiStringVar || objectType == vpiRefObj)) {
@@ -7326,7 +7881,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return (type.flags & OBELISK_RT_DESIGN_TYPE_SIGNED) != 0;
   }
   if (handle->kind == VPIHandleKind::Object &&
-      (isSemanticObjectForm(handle->form) || isTypespecVPIKind(objectType)) &&
+      (isSemanticObjectForm(handle->form) || isTypespecVPIKind(objectType) ||
+       (handle->form == VPIObjectForm::SnapshotValue &&
+        (property == vpiPacked || property == vpiTagged ||
+         property == vpiArrayType || property == vpiIsProtected))) &&
       property != vpiLineNo) {
     if (!propertyFor(handle, property))
       return vpiUndefined;
@@ -7699,7 +8257,10 @@ static bool decompileSnapshotScalar(__vpiHandle *handle,
     if (!semanticTypeInfo(handle, value.semantic, info))
       return false;
     result = std::to_string(value.bitWidth) +
-             ((info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) ? "'sb" : "'b") +
+             ((!value.bitSelection &&
+               (info.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED))
+                  ? "'sb"
+                  : "'b") +
              bits;
     return true;
   }
@@ -7745,9 +8306,44 @@ static bool decompileSnapshot(__vpiHandle *handle,
   result.clear();
   while (!stack.empty()) {
     auto &frame = stack.back();
-    if (frame.value->opType != vpiAssignmentPatternOp) {
+    const auto &node = *frame.value;
+    if (!node.readable) {
+      setError(handle->owner, "inactive union member has no value expression",
+               vpiNotice);
+      return false;
+    }
+    if (node.exactType == vpiUnionVar) {
+      if (!node.tagged || node.activeMember < 0) {
+        setError(handle->owner,
+                 "union value has no equivalent literal spelling", vpiNotice);
+        return false;
+      }
+      if (frame.opened) {
+        stack.pop_back();
+        continue;
+      }
+      // Escape the exact declared identifier, including keywords and dots.
+      result += "tagged \\" + node.tagName + " ";
+      const VPISnapshotValue *active = nullptr;
+      for (const auto *child : node.children)
+        if (child->name == node.tagName) {
+          active = child;
+          break;
+        }
+      if (!active) { // A void tag contains no expression (7.3.2).
+        stack.pop_back();
+        continue;
+      }
+      frame.opened = true;
+      stack.push_back({active});
+      continue;
+    }
+    const bool pattern = node.opType == vpiAssignmentPatternOp ||
+                         (node.variableView && !node.integral &&
+                          (node.exactType == vpiStructVar || node.array));
+    if (!pattern) {
       std::string scalar;
-      if (!decompileSnapshotScalar(handle, *frame.value, scalar))
+      if (!decompileSnapshotScalar(handle, node, scalar))
         return false;
       result += scalar;
       stack.pop_back();
@@ -7757,14 +8353,14 @@ static bool decompileSnapshot(__vpiHandle *handle,
       result += "'{";
       frame.opened = true;
     }
-    if (frame.next == frame.value->children.size()) {
+    if (frame.next == node.children.size()) {
       result += '}';
       stack.pop_back();
       continue;
     }
     if (frame.next)
       result += ", ";
-    auto *child = frame.value->children[frame.next++];
+    const auto *child = node.children[frame.next++];
     stack.push_back({child});
   }
   return true;
@@ -7946,6 +8542,19 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     return nullptr;
   }
   if (handle->form == VPIObjectForm::SnapshotValue) {
+    if (property == vpiName && handle->snapshot->variableView) {
+      if (handle->snapshot->name.empty())
+        return nullptr;
+      OBELISK_RT_TRY {
+        scratch = handle->snapshot->name;
+        return scratch.data();
+      }
+      OBELISK_RT_CATCH_ALL {
+        setError(handle->owner, "could not copy snapshot member name",
+                 vpiSystem);
+        return nullptr;
+      }
+    }
     if (property != vpiDecompile) {
       setError(handle->owner, "snapshot has no source declaration string",
                vpiNotice);
@@ -8340,6 +8949,16 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
   if (!allowProtectedSource(handle, "vpi_get_value"))
     return;
   if (handle->form == VPIObjectForm::SnapshotValue &&
+      (!handle->snapshot->readable ||
+       (handle->snapshot->variableView && !handle->snapshot->integral &&
+        (handle->snapshot->exactType == vpiUnionVar ||
+         handle->snapshot->exactType == vpiStructVar ||
+         handle->snapshot->array)))) {
+    setError(handle->owner, "snapshot member has no whole readable value",
+             vpiNotice);
+    return;
+  }
+  if (handle->form == VPIObjectForm::SnapshotValue &&
       handle->snapshot->opType) {
     setError(handle->owner,
              "aggregate snapshot values are available through operands",
@@ -8377,7 +8996,8 @@ extern "C" OBELISK_VPI_EXPORT void vpi_get_value(vpiHandle opaque,
        !valueRequirementsSatisfied(handle, source.info, *source.policy)))
     return;
   const PLI_INT32 exactType = static_cast<PLI_INT32>(source.exactType);
-  const bool managedStringSource = exactType == vpiStringVar;
+  const bool managedStringSource =
+      exactType == vpiStringVar && source.form != VPIObjectForm::SnapshotValue;
   std::optional<ContextTransaction> stringTransaction;
   std::optional<ManagedExecutionScope> stringManaged;
   if (managedStringSource) {
@@ -8910,7 +9530,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
   }
   if (left->form == VPIObjectForm::SnapshotValue ||
       right->form == VPIObjectForm::SnapshotValue)
-    return left->form == right->form && left->snapshot == right->snapshot;
+    return left->form == right->form &&
+           (left->snapshot == right->snapshot ||
+            (left->snapshot->bitSelection && right->snapshot->bitSelection &&
+             left->snapshot->parent == right->snapshot->parent &&
+             left->snapshot->bitIndex == right->snapshot->bitIndex));
   if (left->form == VPIObjectForm::Thread ||
       right->form == VPIObjectForm::Thread)
     return left->form == right->form &&

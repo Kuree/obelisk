@@ -76,7 +76,7 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
   EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
 }
 
-constexpr size_t kExpectedTraversalCount = 1897;
+constexpr size_t kExpectedTraversalCount = 1899;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2337;
@@ -3640,3 +3640,19 @@ TEST(VPIObjectModel,
 }
 
 } // namespace
+
+TEST(VPIObjectModel, ArrayVariablesAndPrefixParentsUseVariableKinds) {
+  using namespace obelisk::reflection;
+  const auto *elements =
+      findVPITraversal(vpiRegArray, vpiReg, VPITraversalMode::Iterate);
+  ASSERT_NE(elements, nullptr);
+  EXPECT_EQ(elements->order, VPITraversalOrder::Index);
+  for (uint32_t kind : {vpiIntVar, vpiStringVar, vpiStructVar, vpiRegArray})
+    EXPECT_TRUE(vpiObjectSetContains(elements->targets, kind));
+  const auto *parent =
+      findVPITraversal(vpiRegBit, vpiParent, VPITraversalMode::Handle);
+  ASSERT_NE(parent, nullptr);
+  // 37.17d26 includes a member-variable prefix and the largest packed array.
+  for (uint32_t kind : {vpiIntVar, vpiReg, vpiBitVar, vpiPackedArrayVar})
+    EXPECT_TRUE(vpiObjectSetContains(parent->targets, kind));
+}

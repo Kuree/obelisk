@@ -1,3 +1,11 @@
+add("37.17", S({vpiRegArray}), vpiRange, Mode::Iterate, S({vpiRange}),
+    Order::Index);
+add("37.17", S({vpiRegArray}), vpiReg, Mode::Iterate,
+    S({vpiIntegerVar, vpiRealVar, vpiReg, vpiRegBit, vpiTimeVar,
+       vpiRegArray, vpiLongIntVar, vpiShortIntVar, vpiIntVar, vpiShortRealVar,
+       vpiByteVar, vpiClassVar, vpiStringVar, vpiEnumVar, vpiStructVar,
+       vpiUnionVar, vpiBitVar, vpiChandleVar, vpiPackedArrayVar,
+       vpiVirtualInterfaceVar}), Order::Index);
 // IEEE 1800-2023 clauses 37.5-37.50. This is deliberately a test-side
 // concrete-object oracle: every entry names the LRM clause, the complete
 // expanded source set, selector/mode, complete concrete target set, and
@@ -2124,7 +2132,11 @@ add("37.17",
        vpiPackedArrayVar,
        vpiVirtualInterfaceVar}),
     vpiParent, Mode::Handle,
-    S({vpiRegArray, vpiClassVar, vpiStructVar, vpiUnionVar, vpiPackedArrayVar}),
+    S({vpiIntegerVar, vpiRealVar, vpiReg, vpiRegBit, vpiTimeVar,
+       vpiRegArray, vpiLongIntVar, vpiShortIntVar, vpiIntVar, vpiShortRealVar,
+       vpiByteVar, vpiClassVar, vpiStringVar, vpiEnumVar, vpiStructVar,
+       vpiUnionVar, vpiBitVar, vpiChandleVar, vpiPackedArrayVar,
+       vpiVirtualInterfaceVar}),
     Order::None);
 add("37.27", S({vpiNamedEvent}), vpiParent, Mode::Handle,
     S({vpiNamedEventArray}), Order::None);

@@ -3169,6 +3169,7 @@ bool validateDatabaseImpl(const Database &database) {
         uint64_t{read32(mailbox + 4)} * kSemanticTypeEdgeSize;
     std::vector<uint32_t> work{read32(element)};
     std::unordered_set<uint32_t> visited;
+    std::unordered_set<uint32_t> voidMembers;
     while (!work.empty()) {
       const uint32_t semanticIndex = work.back();
       work.pop_back();
@@ -3231,6 +3232,13 @@ bool validateDatabaseImpl(const Database &database) {
             childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
             childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
             childKind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+        if (childKind == OBELISK_RT_DESIGN_SEMANTIC_VOID) {
+          if ((semanticKind != OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION &&
+               semanticKind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION) ||
+              (read32(semantic) & OBELISK_RT_DESIGN_SEMANTIC_TAGGED) == 0)
+            return false;
+          voidMembers.insert(read32(childEdge(ordinal)));
+        }
         uint64_t keyWidth = 0;
         if (semanticKind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
             ordinal == 0 && integral &&
@@ -3310,6 +3318,12 @@ bool validateDatabaseImpl(const Database &database) {
           return false;
         break;
       }
+      case OBELISK_RT_DESIGN_SEMANTIC_VOID:
+        if (voidMembers.count(semanticIndex) == 0 ||
+            physicalKind != OBELISK_RT_DESIGN_TYPE_SCALAR || !physicalPacked ||
+            physicalFourState || read64(physical + 8) != 1)
+          return false;
+        break;
       case OBELISK_RT_DESIGN_SEMANTIC_STRING:
       case OBELISK_RT_DESIGN_SEMANTIC_CHANDLE:
       case OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY:

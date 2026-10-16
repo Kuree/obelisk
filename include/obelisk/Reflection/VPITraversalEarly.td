@@ -91,8 +91,6 @@ def VPIEarlyInterfaceExprs : VPIObjectSet<"EarlyInterfaceExprs",
 def VPIEarlyRefActuals : VPIObjectSet<"EarlyRefActuals",
   [Interface, InterfaceArray, Modport, PartSelect],
   [NetFamily, VariableFamily], [Parameter, SpecParam]>;
-def VPIEarlyVarParents : VPIObjectSet<"EarlyVarParents",
-  [RegArray, PackedArrayVar, StructVar, UnionVar, ClassVar]>;
 def VPIEarlyPackedVarElements : VPIObjectSet<"EarlyPackedVarElements",
   [EnumVar, StructVar, UnionVar, PackedArrayVar]>;
 def VPIEarlyPackedNetElements : VPIObjectSet<"EarlyPackedNetElements",
@@ -486,7 +484,9 @@ def VPIEarlyVariableTchkTerms : VPITraversalEdge<VPIEarlyVariables, TchkTerm,
 def VPIEarlyVariableTypespec : VPITraversalEdge<VPIEarlyNonVirtualVariables,
   Typespec, HandleMode, VPIEarlyTypespecs, NoOrder, "37.17">;
 def VPIEarlyVariableParent : VPITraversalEdge<VPIEarlyVariables, ParentRel,
-  HandleMode, VPIEarlyVarParents, NoOrder, "37.17">;
+  HandleMode, VPIEarlyVariables, NoOrder, "37.17">;
+def VPIEarlyArrayVariables : VPITraversalEdge<RegArrayObjects, Reg,
+  IterateMode, VPIEarlyVariables, IndexOrder, "37.17">;
 def VPIEarlyArrayVarSelects : VPITraversalEdge<RegArrayObjects, VarSelect,
   IterateMode, VPIObjectSet<"EarlyVarSelectTargets", [VarSelect]>, IndexOrder,
   "37.17; 37.19">;
@@ -500,7 +500,7 @@ def VPIEarlyVarBitIndex : VPITraversalEdge<
 def VPIEarlyArrayVarIndices : VPITraversalEdge<VPIEarlyVariables, IndexRel,
   IterateMode, VPIEarlyOrdinaryExpressions, IndexOrder, "37.17; 37.18">;
 def VPIEarlyVectorVarRanges : VPITraversalEdge<
-  VPIObjectSet<"EarlyVectorVarSources", [PackedArrayVar, BitVar, Reg,
+  VPIObjectSet<"EarlyRangedVarSources", [RegArray, PackedArrayVar, BitVar, Reg,
     StructVar, UnionVar, EnumVar]>, Range, IterateMode, RangeObjects,
   IndexOrder, "37.17">;
 def VPIEarlyVectorVarLeftRange : VPITraversalEdge<

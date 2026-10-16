@@ -1215,6 +1215,27 @@ LogicalResult SimVPITypespecDeclOp::verify() {
       return failure();
     if (!getElementDescriptor(message.getValue()))
       return emitOpError("message_type requires supported element storage");
+    // The executable i1 representation of void is only a tagged-union layout
+    // placeholder. It does not introduce a value into the message type.
+    SmallVector<VPITypeSemanticsAttr> pending{semantic};
+    llvm::DenseSet<Attribute> visited;
+    if (semantic.getKind() == VPITypeKind::Void)
+      return emitOpError("mailbox void storage requires a tagged union member");
+    while (!pending.empty()) {
+      auto parent = pending.pop_back_val();
+      if (!visited.insert(parent).second)
+        continue;
+      for (Attribute attribute : parent.getChildren()) {
+        auto child = cast<VPITypeSemanticsAttr>(attribute);
+        if (child.getKind() == VPITypeKind::Void &&
+            ((parent.getKind() != VPITypeKind::PackedUnion &&
+              parent.getKind() != VPITypeKind::UnpackedUnion) ||
+             !parent.getIsTagged().getValue()))
+          return emitOpError(
+              "mailbox void storage requires a tagged union member");
+        pending.push_back(child);
+      }
+    }
   }
   if (getOrigin() == VPITypespecOrigin::AnonymousEnum &&
       (getTargetType().getKind() != VPITypeKind::Enum ||
