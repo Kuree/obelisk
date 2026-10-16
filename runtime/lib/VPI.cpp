@@ -2733,7 +2733,8 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
 
   if ((handle->form == VPIObjectForm::Design ||
        handle->form == VPIObjectForm::Indexed) &&
-      selector == vpiTypespec && !isTypespecVPIKind(sourceType)) {
+      (selector == vpiTypespec || selector == vpiClassTypespec) &&
+      !isTypespecVPIKind(sourceType)) {
     if (sourceType == vpiRefObj) {
       VPIRelationRange range{};
       obelisk_rt_design_cursor_v1 actual{};
@@ -2750,14 +2751,19 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
         return nullptr;
     }
     const auto *relation = obelisk::reflection::findVPITraversal(
-        sourceType, vpiTypespec, obelisk::reflection::VPITraversalMode::Handle);
+        sourceType, static_cast<uint32_t>(selector),
+        obelisk::reflection::VPITraversalMode::Handle);
     if (!relation)
       return nullptr;
+    // 37.32 detail 1: a class variable outside a lexical class definition
+    // denotes its specialization, even when declared through a typedef.
+    bool honorAlias = sourceType != vpiClassVar ||
+                      handle->classDefinitionOrigin;
     uint32_t targetType = info.public_vpi_kind;
-    if (info.alias_object.offset != 0 ||
+    if ((honorAlias && info.alias_object.offset != 0) ||
         (info.kind == OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE &&
          info.identity_target.offset != 0)) {
-      obelisk_rt_design_cursor_v1 target = info.alias_object.offset != 0
+      obelisk_rt_design_cursor_v1 target = honorAlias && info.alias_object.offset != 0
                                                ? info.alias_object
                                                : info.identity_target;
       if (obelisk_rt_cached_vpi_type(handle->owner->context, target,
@@ -2767,7 +2773,7 @@ vpiHandle makeSemanticRelation(__vpiHandle *handle, PLI_INT32 selector) {
     if (!obelisk::reflection::vpiObjectSetContains(relation->targets,
                                                    targetType))
       return nullptr;
-    return makeTypespecHandle(handle->owner, handle->cursor, semantic, true,
+    return makeTypespecHandle(handle->owner, handle->cursor, semantic, honorAlias,
                               handle->suppressSemanticDimension);
   }
 
@@ -4075,6 +4081,12 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
+  // Class-variable type queries denote the declared specialization even
+  // when the image also records a lexical typedef-use relation (37.32/37.33).
+  // The semantic path retains the lexical exception for class definitions.
+  if (sourceType == vpiClassVar &&
+      (type == vpiTypespec || type == vpiClassTypespec))
+    return makeSemanticRelation(handle, type);
   if (handle->form == VPIObjectForm::Indexed && type == vpiIndex) {
     const auto *edge = obelisk::reflection::findVPITraversal(
         sourceType, vpiIndex, obelisk::reflection::VPITraversalMode::Handle);

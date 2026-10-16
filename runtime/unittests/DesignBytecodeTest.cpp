@@ -2495,6 +2495,68 @@ std::vector<uint8_t> makeStaticSemanticEndpointDatabase(bool classIdentity) {
   return bytes;
 }
 
+std::vector<uint8_t> makeAliasedClassSemanticDatabase() {
+  std::vector<uint8_t> bytes = makeStaticSemanticEndpointDatabase(true);
+  constexpr uint64_t directory = 496;
+  constexpr uint64_t originalTypes = directory + kSemanticDirectorySize;
+  constexpr uint64_t originalStatic = originalTypes + 11 * 64 + 10 * 24 + 8;
+  const uint64_t types = bytes.size();
+  const uint64_t objects = types + 12 * 64;
+  const uint64_t roots = objects + 2 * 32;
+  const uint64_t nameIndex = roots + 2 * 8;
+  bytes.resize(nameIndex + 4 * 24, 0);
+  std::memcpy(bytes.data() + types, bytes.data() + originalTypes, 11 * 64);
+  // The use has a typedef alias; the alias itself owns the unaliased class
+  // typespec. Both refer to the same source class definition.
+  std::memcpy(bytes.data() + types + 11 * 64,
+              bytes.data() + originalTypes + 10 * 64, 64);
+  put32(bytes, types + 10 * 64 + 12, (uint32_t{3} << 30) | 1);
+  std::memcpy(bytes.data() + objects, bytes.data() + originalStatic, 32);
+  std::memcpy(bytes.data() + objects + 32, bytes.data() + originalStatic, 32);
+  put64(bytes, objects + 32, 100);
+  put32(bytes, objects + 32 + 16, 8); // typedef value
+  put16(bytes, objects + 32 + 28, vpiClassTypespec);
+  put32(bytes, roots, uint32_t{1} << 30);
+  put32(bytes, roots + 4, 10);
+  put32(bytes, roots + 8, (uint32_t{3} << 30) | 1);
+  put32(bytes, roots + 12, 11);
+  put64(bytes, directory, types);
+  put64(bytes, directory + 8, 12);
+  put64(bytes, directory + 32, roots);
+  put64(bytes, directory + 40, 2);
+  put64(bytes, directory + 160, objects);
+  put64(bytes, directory + 168, 2);
+  const uint64_t index = get64(bytes, 112);
+  std::array<std::array<uint64_t, 3>, 4> names{};
+  for (uint64_t entry = 0; entry != 3; ++entry) {
+    names[entry] = {get64(bytes, index + entry * 24),
+                    get64(bytes, index + entry * 24 + 8),
+                    get64(bytes, index + entry * 24 + 16)};
+    if (names[entry][2] == originalStatic)
+      names[entry][2] = objects;
+  }
+  names[3] = {nameHash("value"), 416 + 8, objects + 32};
+  std::sort(names.begin(), names.end());
+  for (uint64_t entry = 0; entry != names.size(); ++entry)
+    for (uint64_t field = 0; field != 3; ++field)
+      put64(bytes, nameIndex + entry * 24 + field * 8, names[entry][field]);
+  put64(bytes, 112, nameIndex);
+  put64(bytes, 120, names.size());
+  // Production serialization also carries the explicit typedef-use edge.
+  // Querying a class variable must still return the specialization (37.32).
+  const uint64_t relation = bytes.size();
+  bytes.resize(relation + 16, 0);
+  put64(bytes, 160, relation);
+  put64(bytes, 168, 1);
+  put32(bytes, relation, 0);
+  put32(bytes, relation + 4, (uint32_t{3} << 30) | 1);
+  put16(bytes, relation + 12, vpiTypespec);
+  put16(bytes, relation + 14, designRelationSource(1, vpiClassVar, false));
+  put64(bytes, 24, bytes.size());
+  put64(bytes, 32, imageChecksum(bytes));
+  return bytes;
+}
+
 std::vector<uint8_t> makeRootStaticRelationDatabase() {
   constexpr uint64_t scopeOffset = 176;
   constexpr uint64_t objectOffset = 240;
@@ -14655,6 +14717,71 @@ TEST(VPI, ResolvesCompactStaticSemanticEndpoints) {
     EXPECT_EQ(vpi_compare_objects(source, endpoint), 0);
     EXPECT_EQ(vpi_release_handle(endpoint), 1);
     EXPECT_EQ(vpi_release_handle(source), 1);
+    obelisk_rt_v1_context_destroy(context);
+  }
+}
+
+TEST(VPI, ClassVariableTypespecDoesNotDependOnLiveValue) {
+  // 37.33 detail 5: even a null class variable has its declared class type.
+  // A built-in mailbox has a class typespec but no source class definition.
+  for (unsigned variant = 0; variant != 3; ++variant) {
+    SCOPED_TRACE(variant);
+    bool builtin = variant == 1;
+    Fixture fixture;
+    fixture.database = builtin ? makeMailboxSemanticDatabase()
+                       : variant == 2 ? makeAliasedClassSemanticDatabase()
+                                      : makeStaticSemanticEndpointDatabase(true);
+    constexpr uint64_t objectOffset = 240;
+    constexpr uint64_t physicalTypeOffset = 336;
+    put32(fixture.database, objectOffset,
+          designRecordKind(OBELISK_RT_DESIGN_RECORD_STORAGE, vpiClassVar));
+    put32(fixture.database, objectOffset + 4, OBELISK_RT_DESIGN_CAP_READ);
+    put64(fixture.database, objectOffset + 56, 64);
+    put64(fixture.database, objectOffset + 64, 63);
+    put64(fixture.database, objectOffset + 72, 0);
+    put64(fixture.database, objectOffset + 80, 0);
+    put32(fixture.database, physicalTypeOffset + 4,
+          OBELISK_RT_DESIGN_TYPE_SCALAR);
+    put64(fixture.database, physicalTypeOffset + 8, 64);
+    put64(fixture.database, physicalTypeOffset + 16, 63);
+    put64(fixture.database, physicalTypeOffset + 24, 0);
+    put64(fixture.database, 32, imageChecksum(fixture.database));
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    fixture.execution.flags &= ~OBELISK_RT_EXECUTION_VPI_WRITE;
+
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle variable = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(variable, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, variable), vpiClassVar);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable), 0);
+    vpiHandle typespec = vpi_handle(vpiClassTypespec, variable);
+    ASSERT_NE(typespec, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, typespec), vpiClassTypespec);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    vpiHandle again = vpi_handle(vpiTypespec, variable);
+    ASSERT_NE(again, nullptr);
+    EXPECT_EQ(vpi_compare_objects(typespec, again), 1);
+    EXPECT_EQ(vpi_handle(vpiTypedefAlias, typespec), nullptr);
+    vpiHandle definition = vpi_handle(vpiClassDefn, typespec);
+    if (builtin) {
+      EXPECT_EQ(definition, nullptr);
+    } else {
+      ASSERT_NE(definition, nullptr);
+      EXPECT_EQ(vpi_get(vpiType, definition), vpiClassDefn);
+      EXPECT_STREQ(vpi_get_str(vpiName, definition), "logic");
+      EXPECT_EQ(vpi_release_handle(definition), 1);
+    }
+    EXPECT_EQ(vpi_release_handle(again), 1);
+    EXPECT_EQ(vpi_release_handle(typespec), 1);
+    EXPECT_EQ(vpi_release_handle(variable), 1);
     obelisk_rt_v1_context_destroy(context);
   }
 }

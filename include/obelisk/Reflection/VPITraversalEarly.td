@@ -723,7 +723,7 @@ def VPIEarlyParamAssignInterfaceTypespec : VPITraversalEdge<
 def VPIEarlyRootClassDefns : VPITraversalEdge<RootSource, ClassDefn,
   IterateMode, ClassDefnObjects, NoOrder, "37.31">;
 def VPIEarlyClassDefnTypespec : VPITraversalEdge<ClassDefnObjects,
-  ClassTypespec, HandleMode, ClassTypespecObjects, NoOrder, "37.31">;
+  ClassTypespec, IterateMode, ClassTypespecObjects, NoOrder, "37.31">;
 def VPIEarlyClassExtends : VPITraversalEdge<ClassDefnObjects, ExtendsRel,
   HandleMode, VPIObjectSet<"EarlyExtendsTarget", [Extends]>, NoOrder,
   "37.31">;
@@ -753,7 +753,7 @@ def VPIEarlyClassTypespecExtends : VPITraversalEdge<ClassTypespecObjects,
 def VPIEarlyClassTypespecMethods : VPITraversalEdge<ClassTypespecObjects,
   MethodsRel, IterateMode, VPIEarlyTaskFuncs, NoOrder, "37.32">;
 def VPIEarlyClassTypespecConstraints : VPITraversalEdge<ClassTypespecObjects,
-  Constraint, IterateMode, ConstraintObjects, NoOrder, "37.32">;
+  Constraint, IterateMode, ConstraintObjects, DeclarationOrder, "37.32">;
 def VPIEarlyClassVarObject : VPITraversalEdge<ClassVarObjects, ClassObj,
   HandleMode, ClassObjectObjects, NoOrder, "37.33">;
 def VPIEarlyClassVarTypespec : VPITraversalEdge<ClassVarObjects,

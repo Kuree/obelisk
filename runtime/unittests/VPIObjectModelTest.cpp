@@ -3461,12 +3461,17 @@ TEST(VPIObjectModel, SpecialExpressionRelationsAddOnlyTheirNamedNodes) {
 }
 
 TEST(VPIObjectModel, ClassClassObjectAndClockingIterationsDoNotInventOrder) {
-  for (uint32_t selector : {vpiDerivedClasses, vpiInstance, vpiMethods})
+  for (uint32_t selector :
+       {vpiDerivedClasses, vpiInstance, vpiMethods, vpiClassTypespec})
     expectNoOrder(vpiClassDefn, selector, Mode::Iterate);
   EXPECT_EQ(requireTraversal(vpiClassDefn, vpiConstraint, Mode::Iterate).order,
             Order::Declaration);
-  for (uint32_t selector : {vpiMethods, vpiConstraint})
-    expectNoOrder(vpiClassTypespec, selector, Mode::Iterate);
+  EXPECT_EQ(requireTraversal(vpiClassTypespec, vpiConstraint, Mode::Iterate)
+                .order,
+            Order::Declaration);
+  expectNoOrder(vpiClassTypespec, vpiMethods, Mode::Iterate);
+  EXPECT_EQ(findVPITraversal(vpiClassDefn, vpiClassTypespec, Mode::Handle),
+            nullptr);
   for (uint32_t selector : {vpiVariables, vpiWaitingProcesses, vpiMessages,
                             vpiMethods, vpiConstraint, vpiParameter})
     expectNoOrder(vpiClassObj, selector, Mode::Iterate);

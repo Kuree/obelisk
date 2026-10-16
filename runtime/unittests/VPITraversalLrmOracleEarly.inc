@@ -4220,7 +4220,9 @@ add("37.10", S({vpiModule, vpiPackage, vpiInterface, vpiProgram}),
     vpiTypeParameter, Mode::Iterate, S({vpiTypeParameter}), Order::None);
 add("37.33", S({vpiClassVar}), vpiClassObj, Mode::Handle, S({vpiClassObj}),
     Order::None);
-add("37.31", S({vpiClassDefn, vpiExtends}), vpiClassTypespec, Mode::Handle,
+add("37.31", S({vpiExtends}), vpiClassTypespec, Mode::Handle,
+    S({vpiClassTypespec}), Order::None);
+add("37.31", S({vpiClassDefn}), vpiClassTypespec, Mode::Iterate,
     S({vpiClassTypespec}), Order::None);
 add("37.33", S({vpiClassVar, vpiClassObj}), vpiClassTypespec, Mode::Handle,
     S({vpiClassTypespec}), Order::None);
@@ -4266,7 +4268,7 @@ add("37.34", S({0}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
 add("37.33", S({vpiClassObj}), vpiConstraint, Mode::Iterate, S({vpiConstraint}),
     Order::None);
 add("37.32", S({vpiClassTypespec}), vpiConstraint, Mode::Iterate,
-    S({vpiConstraint}), Order::None);
+    S({vpiConstraint}), Order::Declaration);
 add("37.31", S({vpiClassDefn}), vpiConstraint, Mode::Iterate,
     S({vpiConstraint}), Order::Declaration);
 add("37.12",
