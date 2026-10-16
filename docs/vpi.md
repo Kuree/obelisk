@@ -1,4 +1,4 @@
-# VPI startup and backdoor access
+# VPI queries, startup, and backdoor access
 
 VPI is selected explicitly with `--vpi=off`, `--vpi=read`, or `--vpi=full`.
 The mode controls design observability and mutation; shared libraries are
@@ -32,6 +32,35 @@ Int, Vector, and BinStr values. `vpiNoDelay`, `vpiForceFlag`, and
 `vpiReleaseFlag` require `--vpi=full`; driver handles are read-only. Vector
 limbs use the standard 32-bit encoding with `bval = unknown` and
 `aval = value XOR unknown`.
+
+Class queries distinguish a lexical `vpiClassDefn`, a resolved specialization's
+`vpiClassTypespec`, and a live `vpiClassObj` (IEEE 1800-2023 37.31–37.33).
+`vpiClassTypespec` on a variable reports its declared type; on a live object it
+reports the allocated type. Null class variables have `vpiObjId` zero and a
+null `vpiClassObj` relation. Aliases of one live object compare equal and share
+an identity. Object and automatic-member handles are weak references: they
+do not keep an SV object alive, and collection invalidates them.
+
+The class inventory includes data members, methods with explicit declarations,
+effective value and type parameters, and normal constraints. Specializations
+and live objects include inherited members and methods. Constraint iteration
+returns only the class's own declarations in source order; inherited
+constraints are reached through `vpiExtends`. A static member has one backing
+storage location without an additional declaration in the physical module's
+variable inventory. Lexical class handles cannot read member values, and
+non-static members reached from a typespec need a live receiver for value
+access. Generic lexical declarations without a realized specialization and
+original parameter-default expression graphs remain incomplete.
+
+Virtual-interface variables expose their current `vpiActual` interface or
+exact modport; a null variable returns a quiet null handle. `vpiIsModPort`
+describes the declared type even for a null variable. Interface modport
+iteration includes unused declarations, and a modport's reverse relation is
+`vpiInterface`. Virtual-interface iteration flattens fixed arrays into element
+handles, while `vpiVariables` returns one array declaration. Fixed class event
+arrays likewise select the event references stored in the object. Dynamic
+virtual-interface arrays and live built-in class inventories are still being
+completed.
 
 Port handles additionally expose `vpiDirection`, `vpiPortIndex`,
 `vpiPortType`, `vpiScalar`, and `vpiVector` directly from their immutable
