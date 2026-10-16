@@ -7287,6 +7287,10 @@ obelisk_rt_status obelisk_rt_assoc_snapshot(obelisk_rt_object_v1 *array,
               default:
                 return OBELISK_RT_INVALID_HANDLE;
               }
+              status = serializeStoredAssocKey(header, slot,
+                                               entry.value.identity, 0);
+              if (status != OBELISK_RT_OK)
+                return status;
               copy.entries.push_back(std::move(entry));
             }
             return copy.entries.size() == header.size

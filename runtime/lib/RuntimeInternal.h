@@ -3239,6 +3239,9 @@ obelisk_rt_container_element_snapshot(obelisk_rt_object_v1 *container,
 // without publishing or allocating its managed ordering cache.
 struct VPIAssocSnapshotEntry {
   uint64_t keyWidth = 0;
+  // Context-local equality encoding, independent of live key allocations.
+  // Aggregate/container keys use the runtime's canonical key serializer.
+  std::vector<uint8_t> identity;
   std::vector<uint8_t> key;
   std::vector<uint8_t> value;
 };

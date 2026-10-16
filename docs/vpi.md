@@ -128,9 +128,11 @@ returns one array declaration. Element handles reread current storage after
 retargeting or resizing and retain their parent, index, and declared typespec
 relations without keeping the containers alive. The outer dynamic-array or
 queue range reflects its current size; nested managed dimensions retain the
-standard empty ranges. Fixed class event arrays likewise select the event
-references stored in the object. Associative virtual-interface arrays are still
-being completed.
+standard empty ranges. Associative selections retain copied keys and resolve
+the current entry after deletion, reinsertion, or replacement of the array.
+Copied index values survive independently of the selected entry; class-reference
+indices remain weak. Default entries are excluded from iteration. Fixed class
+event arrays likewise select the event references stored in the object.
 
 Port handles additionally expose `vpiDirection`, `vpiPortIndex`,
 `vpiPortType`, `vpiScalar`, and `vpiVector` directly from their immutable

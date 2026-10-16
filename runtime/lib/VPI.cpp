@@ -131,6 +131,20 @@ struct VPISnapshotValue {
   uint64_t logicalProcess = 0;
 };
 
+struct VPIAssociativeSelection {
+  uint32_t kind = 0;
+  uint64_t width = 0;
+  std::vector<uint8_t> identity;
+  std::shared_ptr<const VPISnapshotValue> expression;
+};
+
+bool sameAssociativeSelection(
+    const std::shared_ptr<const VPIAssociativeSelection> &a,
+    const std::shared_ptr<const VPIAssociativeSelection> &b) {
+  return (!a && !b) || (a && b && a->kind == b->kind && a->width == b->width &&
+                        a->identity == b->identity);
+}
+
 struct VPISelectionStep {
   obelisk_rt_design_cursor_v1 physicalType{};
   obelisk_rt_design_cursor_v1 semanticType{};
@@ -150,6 +164,7 @@ struct VPISelectionStep {
   // This selection enters an element of the current managed container.
   // Following offsets are relative to that element's copied value plane.
   bool managedContainer = false;
+  std::shared_ptr<const VPIAssociativeSelection> associativeKey;
 };
 
 struct VPIInterModPathEndpoint {
@@ -260,6 +275,10 @@ struct __vpiHandle {
   std::string scratch;
   void *userData = nullptr;
 };
+
+static bool decompileSnapshot(__vpiHandle *handle,
+                              const VPISnapshotValue &value,
+                              std::string &result);
 
 namespace {
 
@@ -1663,7 +1682,15 @@ bool nameFor(__vpiHandle *handle, std::string &name, bool localMember = false) {
                       static_cast<size_t>(edge.name_size));
         } else {
           name.push_back('[');
-          name += std::to_string(step.index);
+          if (step.associativeKey) {
+            std::string key;
+            if (!decompileSnapshot(handle, *step.associativeKey->expression,
+                                   key))
+              return false;
+            name += key;
+          } else {
+            name += std::to_string(step.index);
+          }
           name.push_back(']');
         }
       }
@@ -2306,7 +2333,8 @@ bool sameInterModPathEndpoint(const VPIInterModPathEndpoint &first,
                a.memberSelection == b.memberSelection &&
                a.aggregateBoundary == b.aggregateBoundary &&
                a.suppressSemanticDimension == b.suppressSemanticDimension &&
-               a.managedContainer == b.managedContainer;
+               a.managedContainer == b.managedContainer &&
+               sameAssociativeSelection(a.associativeKey, b.associativeKey);
       });
 }
 
@@ -2404,7 +2432,8 @@ bool isVirtualInterfaceSequence(__vpiHandle *source,
       return true;
     if (info.kind != OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY &&
         info.kind != OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY &&
-        info.kind != OBELISK_RT_DESIGN_SEMANTIC_QUEUE)
+        info.kind != OBELISK_RT_DESIGN_SEMANTIC_QUEUE &&
+        info.kind != OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
       return false;
     if (!semanticElement(source, semantic, semantic))
       return false;
@@ -2471,6 +2500,235 @@ bool sequentialInterfaceElement(__vpiHandle *source,
   return true;
 }
 
+bool snapshotIndexEquals(const VPISnapshotValue &key, PLI_INT32 index);
+bool messageElementDescriptor(__vpiHandle *source,
+                              std::optional<VPIValueLayoutOwner> layoutOwner,
+                              obelisk_rt_design_cursor_v1 semantic,
+                              obelisk_rt_element_type_v1 &element);
+std::shared_ptr<const VPISnapshotValue>
+snapshotMessageValue(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
+                     std::optional<VPIValueLayoutOwner> layoutOwner,
+                     obelisk_rt_design_cursor_v1 semantic,
+                     const obelisk_rt_element_type_v1 &element,
+                     const uint8_t *bytes);
+
+bool interfaceAssociativeSnapshot(__vpiHandle *source,
+                                  obelisk_rt_design_cursor_v1 semantic,
+                                  uint64_t word, VPIAssocSnapshot &snapshot,
+                                  VPIValueLayoutOwner &layout,
+                                  obelisk_rt_design_cursor_v1 &keySemantic,
+                                  obelisk_rt_element_type_v1 &keyElement) {
+  snapshot = {};
+  obelisk_rt_design_semantic_type_edge_v1 keyEdge{};
+  obelisk_rt_design_semantic_type_info_v1 keyInfo{};
+  obelisk_rt_design_cursor_v1 element{};
+  if (!semanticEdge(source, semantic, 0, keyEdge) ||
+      keyEdge.role != OBELISK_RT_DESIGN_SEMANTIC_EDGE_ASSOC_INDEX ||
+      !semanticTypeInfo(source, keyEdge.child, keyInfo) ||
+      !semanticElement(source, semantic, element) ||
+      obelisk_rt_cached_vpi_value_layout_owner(
+          source->owner->context, source->cursor, &layout) != OBELISK_RT_OK) {
+    setError(source->owner,
+             "associative virtual-interface layout is unavailable", vpiNotice);
+    return false;
+  }
+  keySemantic = keyEdge.child;
+  if (!word)
+    return true;
+  auto *object = obelisk_rt_object_from_managed_word(word);
+  if (word != obelisk_rt_managed_word_from_object(object) ||
+      !obelisk_rt_managed_object_belongs_to(source->owner->context, object)) {
+    setError(source->owner, "invalid associative virtual-interface reference",
+             vpiNotice);
+    return false;
+  }
+  auto status = obelisk_rt_assoc_snapshot(object, &snapshot);
+  if (status == OBELISK_RT_OK)
+    status = obelisk_rt_vpi_element_matches(source->owner->context, layout,
+                                            element, snapshot.element);
+  if (status != OBELISK_RT_OK) {
+    setError(source->owner, "associative virtual-interface storage mismatch",
+             status == OBELISK_RT_OUT_OF_MEMORY ||
+                     status == OBELISK_RT_OUT_OF_RESOURCES
+                 ? vpiSystem
+                 : vpiNotice);
+    return false;
+  }
+  if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+    if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_UNTYPED)
+      return true;
+  } else if (messageElementDescriptor(source, layout, keySemantic,
+                                      keyElement)) {
+    switch (snapshot.keyKind) {
+    case OBELISK_RT_ASSOC_KEY_SIGNED:
+    case OBELISK_RT_ASSOC_KEY_UNSIGNED:
+      if ((keyElement.kind == OBELISK_RT_ELEMENT_BITS ||
+           keyElement.kind == OBELISK_RT_ELEMENT_LOGIC) &&
+          keyElement.bit_width == snapshot.keyWidth &&
+          ((keyInfo.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0) ==
+              (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED))
+        return true;
+      break;
+    case OBELISK_RT_ASSOC_KEY_STRING:
+      if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_STRING)
+        return true;
+      break;
+    case OBELISK_RT_ASSOC_KEY_CLASS:
+      if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS)
+        return true;
+      break;
+    case OBELISK_RT_ASSOC_KEY_PROCESS:
+      if (keyInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS)
+        return true;
+      break;
+    case OBELISK_RT_ASSOC_KEY_ELEMENT:
+      if (snapshot.keyElement) {
+        const auto match = obelisk_rt_vpi_element_matches(
+            source->owner->context, layout, keySemantic, snapshot.keyElement);
+        if (match == OBELISK_RT_OK)
+          return true;
+        if (match == OBELISK_RT_OUT_OF_MEMORY ||
+            match == OBELISK_RT_OUT_OF_RESOURCES) {
+          setError(source->owner, "could not validate associative index layout",
+                   vpiSystem);
+          return false;
+        }
+      }
+      break;
+    }
+  }
+  if (!source->owner->errorLevel)
+    setError(source->owner,
+             "associative index does not match its declared type", vpiNotice);
+  return false;
+}
+
+bool interfaceAssociativeKeys(
+    __vpiHandle *source, const std::vector<VPISelectionStep> &steps,
+    obelisk_rt_design_cursor_v1 semantic,
+    std::vector<std::shared_ptr<const VPIAssociativeSelection>> &keys) {
+  ManagedExecutionScope managed(source->owner->context);
+  if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+    return false;
+  OBELISK_RT_TRY {
+    uint64_t word = 0;
+    VPIAssocSnapshot snapshot;
+    VPIValueLayoutOwner layout;
+    obelisk_rt_design_cursor_v1 keySemantic{};
+    obelisk_rt_element_type_v1 keyElement{};
+    if (!readManagedSelectionWord(source, steps, word) ||
+        !interfaceAssociativeSnapshot(source, semantic, word, snapshot, layout,
+                                      keySemantic, keyElement))
+      return false;
+    for (auto &entry : snapshot.entries) {
+      auto key = std::make_shared<VPIAssociativeSelection>();
+      key->kind = snapshot.keyKind;
+      key->width = entry.keyWidth;
+      key->identity = std::move(entry.identity);
+      if (snapshot.keyKind == OBELISK_RT_ASSOC_KEY_WILDCARD) {
+        if (!entry.keyWidth || entry.keyWidth > SIZE_MAX - 63 ||
+            entry.key.size() != (entry.keyWidth + 7) / 8)
+          return false;
+        auto expression = std::make_shared<VPISnapshotValue>();
+        expression->integral = expression->unsignedIndex = true;
+        expression->indexExpression = true;
+        expression->constType = vpiBinaryConst;
+        expression->bitWidth = entry.keyWidth;
+        expression->value.assign((entry.keyWidth + 63) / 64, 0);
+        expression->unknown.assign(expression->value.size(), 0);
+        for (size_t byte = 0; byte != entry.key.size(); ++byte)
+          expression->value[byte / 8] |= uint64_t{entry.key[byte]}
+                                         << ((byte % 8) * 8);
+        key->expression = std::move(expression);
+      } else {
+        const uint64_t planes =
+            (keyElement.flags & OBELISK_RT_ELEMENT_FOUR_STATE) ? 2 : 1;
+        const bool integral = snapshot.keyKind == OBELISK_RT_ASSOC_KEY_SIGNED ||
+                              snapshot.keyKind == OBELISK_RT_ASSOC_KEY_UNSIGNED;
+        if (!keyElement.value_size ||
+            keyElement.value_size > SIZE_MAX / planes ||
+            entry.key.size() != keyElement.value_size * (integral ? 1 : planes))
+          return false;
+        entry.key.resize(keyElement.value_size * planes, 0);
+        key->expression =
+            snapshotMessageValue(source, managed.getLane(), layout, keySemantic,
+                                 keyElement, entry.key.data());
+        if (!key->expression)
+          return false;
+      }
+      keys.push_back(std::move(key));
+    }
+    return true;
+  }
+  OBELISK_RT_CATCH_ALL {
+    setError(source->owner,
+             "could not copy associative virtual-interface indices", vpiSystem);
+    return false;
+  }
+}
+
+bool readInterfaceAssociativeElement(__vpiHandle *source,
+                                     obelisk_rt_design_cursor_v1 semantic,
+                                     uint64_t word,
+                                     const VPIAssociativeSelection &key,
+                                     std::vector<uint8_t> &value) {
+  VPIAssocSnapshot snapshot;
+  VPIValueLayoutOwner layout;
+  obelisk_rt_design_cursor_v1 keySemantic{};
+  obelisk_rt_element_type_v1 keyElement{};
+  if (!interfaceAssociativeSnapshot(source, semantic, word, snapshot, layout,
+                                    keySemantic, keyElement))
+    return false;
+  if (snapshot.keyKind != key.kind)
+    return false;
+  for (auto &entry : snapshot.entries)
+    if (entry.keyWidth == key.width && entry.identity == key.identity) {
+      value = std::move(entry.value);
+      return true;
+    }
+  return false;
+}
+
+bool appendInterfaceAssociativeSelection(
+    __vpiHandle *source, obelisk_rt_design_cursor_v1 semantic,
+    std::shared_ptr<const VPIAssociativeSelection> key,
+    std::vector<VPISelectionStep> &steps) {
+  obelisk_rt_design_cursor_v1 childSemantic{}, childPhysical{};
+  if (!semanticElement(source, semantic, childSemantic) ||
+      obelisk_rt_cached_vpi_value_element_type(source->owner->context,
+                                               source->cursor, childSemantic,
+                                               &childPhysical) != OBELISK_RT_OK)
+    return false;
+  obelisk_rt_design_type_info_v1 childType{};
+  uint32_t currentType = steps.empty()
+                             ? static_cast<uint32_t>(vpiTypeForHandle(source))
+                             : steps.back().exactVpiType;
+  const auto *access = obelisk::reflection::findVPIIndexedAccess(currentType);
+  if (!access ||
+      access->accessKind !=
+          obelisk::reflection::VPIIndexedAccessKind::VariableElement ||
+      obelisk_rt_cached_design_type_info(source->owner->context, childPhysical,
+                                         &childType) != OBELISK_RT_OK ||
+      steps.size() > UINT32_MAX)
+    return false;
+  VPISelectionStep step;
+  step.physicalType = childPhysical;
+  step.semanticType = childSemantic;
+  step.bitWidth = childType.bit_width;
+  step.selectionOrdinal = static_cast<uint32_t>(steps.size());
+  step.exactVpiType =
+      indexedResultType(source, *access, childSemantic,
+                        childType.kind == OBELISK_RT_DESIGN_TYPE_ARRAY &&
+                            !(childType.flags & OBELISK_RT_DESIGN_TYPE_PACKED),
+                        false);
+  if (!step.exactVpiType)
+    return false;
+  step.arrayDimension = step.managedContainer = true;
+  step.associativeKey = std::move(key);
+  steps.push_back(std::move(step));
+  return true;
+}
+
 bool appendIndexedSelection(
     __vpiHandle *source, obelisk::reflection::VPIIndexedAccessKind accessKind,
     int64_t index, std::vector<VPISelectionStep> &steps) {
@@ -2508,6 +2766,22 @@ bool appendIndexedSelection(
     return false;
   }
   obelisk_rt_design_semantic_type_info_v1 semanticInfo{};
+  if (semantic.offset && semanticTypeInfo(source, semantic, semanticInfo) &&
+      semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY &&
+      isVirtualInterfaceSequence(source, semantic)) {
+    if (index < INT32_MIN || index > INT32_MAX ||
+        type.kind != OBELISK_RT_DESIGN_TYPE_SCALAR || type.bit_width != 64 ||
+        type.flags != 0)
+      return false;
+    std::vector<std::shared_ptr<const VPIAssociativeSelection>> keys;
+    if (!interfaceAssociativeKeys(source, steps, semantic, keys))
+      return false;
+    for (auto &key : keys)
+      if (snapshotIndexEquals(*key->expression, static_cast<PLI_INT32>(index)))
+        return appendInterfaceAssociativeSelection(source, semantic,
+                                                   std::move(key), steps);
+    return false;
+  }
   if (semantic.offset && semanticTypeInfo(source, semantic, semanticInfo) &&
       (semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_DYNAMIC_ARRAY ||
        semanticInfo.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE) &&
@@ -3899,6 +4173,22 @@ bool collectInterfaceArraySelections(
         selections.push_back(std::move(current.steps));
         continue;
       }
+      if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY) {
+        std::vector<std::shared_ptr<const VPIAssociativeSelection>> keys;
+        obelisk_rt_design_cursor_v1 child{};
+        if (!semanticElement(source, current.semantic, child) ||
+            !interfaceAssociativeKeys(source, current.steps, current.semantic,
+                                      keys))
+          return false;
+        for (size_t ordinal = keys.size(); ordinal != 0;) {
+          auto selected = current.steps;
+          if (!appendInterfaceAssociativeSelection(source, current.semantic,
+                                                   keys[--ordinal], selected))
+            return false;
+          pending.push_back({child, std::move(selected)});
+        }
+        continue;
+      }
       int64_t left = 0, right = 0;
       uint64_t count = 0;
       if (!interfaceArrayExtent(source, current.steps, current.semantic, left,
@@ -4281,10 +4571,17 @@ bool readManagedSelectionWord(__vpiHandle *source,
       if (step.managedContainer) {
         uint64_t container = 0;
         VPIContainerElementSnapshot selected;
-        if (!readAt(offset, container) || step.index < 0 ||
-            !sequentialInterfaceElement(source, semantic, container,
-                                        static_cast<uint64_t>(step.index),
-                                        selected)) {
+        bool found = readAt(offset, container);
+        if (found && step.associativeKey)
+          found = readInterfaceAssociativeElement(source, semantic, container,
+                                                  *step.associativeKey,
+                                                  selected.value);
+        else if (found)
+          found = step.index >= 0 &&
+                  sequentialInterfaceElement(source, semantic, container,
+                                             static_cast<uint64_t>(step.index),
+                                             selected);
+        if (!found) {
           if (!source->owner->errorLevel)
             setError(source->owner,
                      "virtual-interface array selection is no longer present",
@@ -7147,6 +7444,9 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
     if (!edge || !supportsIndexQuery(handle, sourceType))
       return nullptr;
     const VPISelectionStep &step = handle->selectionSteps.back();
+    if (step.associativeKey)
+      return makeSnapshotHandle(handle->owner, handle->cursor,
+                                step.associativeKey->expression);
     return makeSemanticObjectHandle(
         handle->owner, VPIObjectForm::IntegralConstant, handle->cursor,
         step.semanticType, step.selectionOrdinal, vpiConstant, step.index);
@@ -8105,7 +8405,10 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_scan(vpiHandle opaque) {
       const size_t reverseOrdinal = iterator->next++;
       const VPISelectionStep &step = iterator->indexItems[reverseOrdinal];
       vpiHandle result =
-          step.snapshotIndex
+          step.associativeKey
+              ? makeSnapshotHandle(state, iterator->cursor,
+                                   step.associativeKey->expression)
+          : step.snapshotIndex
               ? makeSnapshotHandle(state, iterator->cursor,
                                    std::shared_ptr<const VPISnapshotValue>(
                                        iterator->snapshot, step.snapshotIndex))
@@ -8871,6 +9174,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
             return vpiDynamicArray;
           if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_QUEUE)
             return vpiQueueArray;
+          if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_ASSOC_ARRAY)
+            return vpiAssocArray;
         } else {
           obelisk_rt_design_cursor_v1 child{};
           obelisk_rt_design_semantic_type_info_v1 childType{};
@@ -10470,25 +10775,26 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_compare_objects(vpiHandle first,
       left->selectionBitOffset == right->selectionBitOffset &&
       left->liveInterfaceRange == right->liveInterfaceRange &&
       left->selectionSteps.size() == right->selectionSteps.size() &&
-      std::equal(left->selectionSteps.begin(), left->selectionSteps.end(),
-                 right->selectionSteps.begin(),
-                 [](const VPISelectionStep &a, const VPISelectionStep &b) {
-                   return a.physicalType.offset == b.physicalType.offset &&
-                          a.semanticType.offset == b.semanticType.offset &&
-                          a.bitOffset == b.bitOffset &&
-                          a.bitWidth == b.bitWidth && a.index == b.index &&
-                          a.selectionOrdinal == b.selectionOrdinal &&
-                          a.exactVpiType == b.exactVpiType &&
-                          a.memberSemanticParent.offset ==
-                              b.memberSemanticParent.offset &&
-                          a.packed == b.packed &&
-                          a.arrayDimension == b.arrayDimension &&
-                          a.memberSelection == b.memberSelection &&
-                          a.aggregateBoundary == b.aggregateBoundary &&
-                          a.suppressSemanticDimension ==
-                              b.suppressSemanticDimension &&
-                          a.managedContainer == b.managedContainer;
-                 });
+      std::equal(
+          left->selectionSteps.begin(), left->selectionSteps.end(),
+          right->selectionSteps.begin(),
+          [](const VPISelectionStep &a, const VPISelectionStep &b) {
+            return a.physicalType.offset == b.physicalType.offset &&
+                   a.semanticType.offset == b.semanticType.offset &&
+                   a.bitOffset == b.bitOffset && a.bitWidth == b.bitWidth &&
+                   a.index == b.index &&
+                   a.selectionOrdinal == b.selectionOrdinal &&
+                   a.exactVpiType == b.exactVpiType &&
+                   a.memberSemanticParent.offset ==
+                       b.memberSemanticParent.offset &&
+                   a.packed == b.packed &&
+                   a.arrayDimension == b.arrayDimension &&
+                   a.memberSelection == b.memberSelection &&
+                   a.aggregateBoundary == b.aggregateBoundary &&
+                   a.suppressSemanticDimension == b.suppressSemanticDimension &&
+                   a.managedContainer == b.managedContainer &&
+                   sameAssociativeSelection(a.associativeKey, b.associativeKey);
+          });
   return left->form == right->form && sameDeclaration &&
          left->semanticCursor.offset == right->semanticCursor.offset &&
          left->semanticEdge == right->semanticEdge &&
