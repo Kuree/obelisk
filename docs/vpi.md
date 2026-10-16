@@ -87,9 +87,11 @@ provide `vpiOrigin`, including outlined fork branches and nested native or
 bytecode calls. The origin statement keeps its lexical owner and survives
 thread termination. Procedural lowering emits exact origins for initial/always
 bodies and supported fork branches, with lexical statement nesting retained
-through optimization. Unsupported source statement forms remain unbound;
-frame relations and the remaining procedural statement forms are still being
-completed.
+through optimization. The inventory includes case-item groups, ordered loop
+controls, immediate assertion actions, procedural assignments, and repeated
+event controls. Call statements retain their exact function, task, system, or method-call
+kind and enclosing scope. Unsupported source statement forms remain unbound;
+frame relations are still being completed.
 
 `vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
 Integral and packed values retain every bit and unknown bit; real and string

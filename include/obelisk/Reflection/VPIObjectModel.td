@@ -80,7 +80,7 @@ def For : VPIObjectKind<"vpiFor", 15, [StatementFamily, ScopeFamily]>;
 def Force : VPIObjectKind<"vpiForce", 16, [StatementFamily]>;
 def Forever : VPIObjectKind<"vpiForever", 17, [StatementFamily]>;
 def Fork : VPIObjectKind<"vpiFork", 18, [StatementFamily, ScopeFamily]>;
-def FuncCall : VPIObjectKind<"vpiFuncCall", 19, [ExpressionFamily]>;
+def FuncCall : VPIObjectKind<"vpiFuncCall", 19, [ExpressionFamily, StatementFamily]>;
 def Function : VPIObjectKind<"vpiFunction", 20,
   [DeclarationFamily, ScopeFamily]>;
 def Gate : VPIObjectKind<"vpiGate", 21, [PrimitiveFamily]>;
@@ -124,7 +124,7 @@ def SchedEvent : VPIObjectKind<"vpiSchedEvent", 53, [RuntimeFamily]>;
 def SpecParam : VPIObjectKind<"vpiSpecParam", 54,
   [DeclarationFamily, VariableFamily]>;
 def Switch : VPIObjectKind<"vpiSwitch", 55, [PrimitiveFamily]>;
-def SysFuncCall : VPIObjectKind<"vpiSysFuncCall", 56, [ExpressionFamily]>;
+def SysFuncCall : VPIObjectKind<"vpiSysFuncCall", 56, [ExpressionFamily, StatementFamily]>;
 def SysTaskCall : VPIObjectKind<"vpiSysTaskCall", 57, [StatementFamily]>;
 def TableEntry : VPIObjectKind<"vpiTableEntry", 58, [DeclarationFamily]>;
 def Task : VPIObjectKind<"vpiTask", 59, [DeclarationFamily, ScopeFamily]>;
@@ -264,7 +264,7 @@ def AliasStmt : VPIObjectKind<"vpiAliasStmt", 646,
 def Thread : VPIObjectKind<"vpiThread", 647,
   [ProcessFamily, TransientFamily]>;
 def MethodFuncCall : VPIObjectKind<"vpiMethodFuncCall", 648,
-  [ExpressionFamily]>;
+  [ExpressionFamily, StatementFamily]>;
 def MethodTaskCall : VPIObjectKind<"vpiMethodTaskCall", 649,
   [StatementFamily]>;
 def Assert : VPIObjectKind<"vpiAssert", 686, [AssertionFamily]>;

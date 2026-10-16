@@ -654,6 +654,8 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins
         StrAttr:$callee_name,
         BoolAttr:$is_system_call,
+        // Exact bound builtin-method identity, independent of receiver layout.
+        UnitAttr:$is_builtin_method,
         SlangSubroutineKind:$subroutine_kind,
         I64Attr:$argument_count,
         BoolAttr:$has_this_class,
@@ -683,7 +685,8 @@ class SlangCallExpressionASTNodeOp<string mnemonic>
         // for $cast: the function form reports a failed cast through its 0
         // result instead of raising the task form's run-time error.
         UnitAttr:$is_void_casted
-      )>;
+      ), [PredOpTrait<"builtin methods are system calls",
+            CPred<"!getIsBuiltinMethod() || getIsSystemCall()">>]>;
 
 class SlangNewClassExpressionASTNodeOp<string mnemonic>
     : SlangExpressionASTNodeOp<mnemonic, (ins

@@ -1,3 +1,4 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=VPI
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' \
 // RUN:   '--encode-obelisk-sim-to-bytecode=vpi=off' -o /dev/null
@@ -88,3 +89,9 @@ module attributes {
 // CHECK: simulation.spawn @{{.*override.*}}
 // CHECK: simulation.dynamic_override %[[TWO]] = {{.*}} owner {{.*}} assign false claim true
 // CHECK: simulation.release_override %[[TWO]] assign false
+
+// VPI: simulation.statement.decl [[BEGIN:[0-9]+]] in [[UNIT:[0-9]+]] scope [[SCOPE:[0-9]+]] type 4
+// VPI: simulation.statement.decl [[FORCE:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 16 parent [[BEGIN]]
+// VPI: simulation.vpi_statement_relation.decl statement [[BEGIN]] type 4 selector 104 ordinal 0 modes 2 to [[FORCE]]
+// VPI: simulation.statement.decl [[RELEASE:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 50 parent [[BEGIN]]
+// VPI: simulation.vpi_statement_relation.decl statement [[BEGIN]] type 4 selector 104 ordinal 1 modes 2 to [[RELEASE]]

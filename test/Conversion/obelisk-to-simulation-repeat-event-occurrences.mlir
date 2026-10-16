@@ -1,3 +1,4 @@
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --check-prefix=VPI
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s
 
 // IEEE 1800-2023 9.4.5: a repeat event control counts each OR'd event that
@@ -78,3 +79,12 @@ module attributes {coverage.language_version = 2023 : i32} {
 // CHECK: %[[REMAINING:.*]] = arith.subi %[[LEFT]], %[[OCCURRED]]
 // CHECK: %[[MORE:.*]] = arith.cmpi sgt, %[[REMAINING]]
 // CHECK: cf.cond_br %[[MORE]], ^[[WAIT]](%[[REMAINING]] : i64)
+
+// The assignment owns a repeat control, which owns its exact event control.
+// No statement is invented for the repeat count or individual event operands.
+// VPI: simulation.statement.decl [[ASSIGN:[0-9]+]] in [[UNIT:[0-9]+]] scope [[SCOPE:[0-9]+]] type 3
+// VPI: simulation.vpi_thread_origin_binding [[UNIT]] origin [[ASSIGN]]
+// VPI: simulation.statement.decl [[REPEAT:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 52 parent [[ASSIGN]]
+// VPI: simulation.vpi_statement_relation.decl statement [[ASSIGN]] type 3 selector 52 ordinal 0 modes 1 to [[REPEAT]]
+// VPI: simulation.statement.decl [[EVENT:[0-9]+]] in [[UNIT]] scope [[SCOPE]] type 13 parent [[REPEAT]]
+// VPI: simulation.vpi_statement_relation.decl statement [[REPEAT]] type 52 selector 13 ordinal 0 modes 1 to [[EVENT]]

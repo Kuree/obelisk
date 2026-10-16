@@ -3824,6 +3824,26 @@ private:
     } else if constexpr (std::same_as<T, slang::ast::CallExpression>) {
       SET_OP_ATTR(CalleeName, builder.getStringAttr(node.getSubroutineName()));
       SET_OP_ATTR(IsSystemCall, builder.getBoolAttr(node.isSystemCall()));
+      if (const auto *system =
+              std::get_if<slang::ast::CallExpression::SystemCallInfo>(
+                  &node.subroutine)) {
+        const auto *bound = system->subroutine.get();
+        auto [entry, inserted] = builtinMethodCache.try_emplace(bound, false);
+        if (inserted) {
+          // Slang represents builtin methods as system calls and places the
+          // receiver in arguments(), not thisClass(). Compare the bound object
+          // with the method registry, including special symbol-based methods
+          // and implicit class randomize, rather than inferring from spelling.
+          for (auto kind : slang::ast::SymbolKind_traits::values)
+            if (compilation.getSystemMethod(kind, node.getSubroutineName()) ==
+                bound) {
+              entry->second = true;
+              break;
+            }
+        }
+        if (entry->second)
+          SET_OP_ATTR(IsBuiltinMethod, builder.getUnitAttr());
+      }
       SET_OP_ATTR(SubroutineKind, slangir::SubroutineKindAttr::get(
                                       builder.getContext(),
                                       convertEnum(node.getSubroutineKind())));
@@ -6626,6 +6646,7 @@ private:
   const slang::analysis::AnalysisManager &analysisManager;
   const SDFAnnotationDatabase &sdfAnnotations;
   SlangTypeConverter typeConverter;
+  llvm::DenseMap<const slang::ast::SystemSubroutine *, bool> builtinMethodCache;
   llvm::DenseMap<const slang::ast::Type *, ArrayAttr> arrayQueryDimensionCache;
   llvm::DenseMap<const slang::ast::Type *, ArrayAttr> vpiTypedefLayerCache;
   llvm::DenseMap<const slang::ast::Symbol *, std::string> anonymousSymbolPaths;

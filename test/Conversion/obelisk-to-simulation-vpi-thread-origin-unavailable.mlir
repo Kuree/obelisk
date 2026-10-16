@@ -1,45 +1,19 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=opt-level=0' | FileCheck %s --implicit-check-not=simulation.vpi_thread_origin_binding --implicit-check-not=simulation.statement.decl
 
-// Case item inventory is not represented by this bounded producer yet. Its
-// initial therefore stays unbound; neither assignment descendant is substituted
-// for the actual case statement at the origin.
-
-module {
-  obelisk.sv.symbol.definition @s0.case_signedness attributes {definition_kind = 0 : i32, hierarchical_name = "case_signedness", name = "case_signedness", node_id = 0 : i64} {
+// The current statement model has no exact atomic-operation route for ++.
+// Do not substitute an Assignment kind or its variable operand as the origin.
+module attributes {llvm.data_layout = "e-m:e-p:64:64-i64:64-n8:16:32:64-S128", llvm.target_triple = "x86_64-unknown-linux-gnu"} {
+  obelisk.sv.symbol.definition @definition attributes {definition_kind = 0 : i32, hierarchical_name = "top", name = "top", node_id = 47 : i64} {
   }
-  obelisk.sv.symbol.root @s1.$root attributes {hierarchical_name = "\\$root ", name = "$root", node_id = 1 : i64} {
-    obelisk.sv.symbol.compilation_unit @s2 attributes {hierarchical_name = "$unit", node_id = 2 : i64} {
-    }
-    obelisk.sv.symbol.instance @s3.case_signedness attributes {hierarchical_name = "case_signedness", is_uninstantiated = false, name = "case_signedness", node_id = 3 : i64, referenced_path = "case_signedness", referenced_symbol = @s0.case_signedness} {
-      obelisk.sv.symbol.instance_body @s4.case_signedness attributes {hierarchical_name = "case_signedness", name = "case_signedness", node_id = 4 : i64} {
-        obelisk.sv.symbol.variable @s5.selector attributes {hierarchical_name = "case_signedness.selector", lifetime = 1 : i32, name = "selector", node_id = 5 : i64, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
+  obelisk.sv.symbol.root @root attributes {hierarchical_name = "$root", name = "$root", node_id = 50 : i64} {
+    obelisk.sv.symbol.instance @top attributes {hierarchical_name = "top", name = "top", is_uninstantiated = false, referenced_path = "top", referenced_symbol = @definition, node_id = 49 : i64} {
+      obelisk.sv.symbol.instance_body @body attributes {hierarchical_name = "top", name = "top", time_precision_fs = 1 : i64, time_unit_fs = 1 : i64, node_id = 48 : i64} {
+        obelisk.sv.symbol.variable @i attributes {hierarchical_name = "top.i", name = "i", lifetime = 1 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, node_id = 42 : i64} {
         }
-        obelisk.sv.symbol.variable @s7.matched attributes {hierarchical_name = "case_signedness.matched", lifetime = 1 : i32, name = "matched", node_id = 14 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-        }
-        obelisk.sv.symbol.procedural_block @s6 attributes {hierarchical_name = "case_signedness", node_id = 6 : i64, procedure_kind = 0 : i32, time_precision_fs = 1000000 : i64, time_unit_fs = 1000000 : i64} {
-          obelisk.sv.statement.case attributes {check_kind = 0 : i32, condition_kind = 0 : i32, has_default = true, item_count = 1 : i64, item_label_counts = array<i64: 1>, node_id = 7 : i64} {
-            obelisk.sv.expression.conversion attributes {node_id = 8 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
-              obelisk.sv.expression.named_value attributes {node_id = 9 : i64, referenced_path = "case_signedness.selector", referenced_symbol = @s1.$root::@s3.case_signedness::@s4.case_signedness::@s5.selector, semantic_type = !obelisk.ranged_packed_array<1 : 0 x !obelisk.integral<1, true, true, 0 : 0, logic>>} {
-              }
-            }
-            obelisk.sv.expression.conversion attributes {node_id = 10 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, true, 0 : 0, logic>>} {
-              obelisk.sv.expression.integer_literal attributes {constant_value = "4'b1111", node_id = 11 : i64, semantic_type = !obelisk.ranged_packed_array<3 : 0 x !obelisk.integral<1, false, false, 0 : 0, bit>>} {
-              }
-            }
-            obelisk.sv.statement.expression_statement attributes {node_id = 12 : i64} {
-              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 15 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                obelisk.sv.expression.named_value attributes {node_id = 16 : i64, referenced_path = "case_signedness.matched", referenced_symbol = @s1.$root::@s3.case_signedness::@s4.case_signedness::@s7.matched, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                }
-                obelisk.sv.expression.integer_literal attributes {constant_value = "1'b1", node_id = 17 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                }
-              }
-            }
-            obelisk.sv.statement.expression_statement attributes {node_id = 13 : i64} {
-              obelisk.sv.expression.assignment attributes {assignment_kind = 0 : i32, node_id = 18 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                obelisk.sv.expression.named_value attributes {node_id = 19 : i64, referenced_path = "case_signedness.matched", referenced_symbol = @s1.$root::@s3.case_signedness::@s4.case_signedness::@s7.matched, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                }
-                obelisk.sv.expression.integer_literal attributes {constant_value = "1'b0", node_id = 20 : i64, semantic_type = !obelisk.integral<1, false, true, 0 : 0, logic>} {
-                }
+        obelisk.sv.symbol.procedural_block @increment attributes {hierarchical_name = "top", procedure_kind = 0 : i32, time_precision_fs = 1 : i64, time_unit_fs = 1 : i64, node_id = 46 : i64} {
+          obelisk.sv.statement.expression_statement attributes {node_id = 45 : i64} {
+            obelisk.sv.expression.unary_op attributes {operator_kind = 12 : i32, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, node_id = 44 : i64} {
+              obelisk.sv.expression.named_value attributes {referenced_symbol = @root::@top::@body::@i, referenced_path = "top.i", semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>, node_id = 43 : i64} {
               }
             }
           }
@@ -48,6 +22,6 @@ module {
     }
   }
 }
-
 // CHECK: simulation.code_unit.decl {{[0-9]+}} in {{[0-9]+}} initial
+// CHECK: arith.addi
 // CHECK: simulation.ref.store

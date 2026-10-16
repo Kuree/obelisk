@@ -204,7 +204,8 @@ def StatementObjects : VPIObjectSet<"StatementObjects",
    NamedFork, NullStmt, Release, Repeat, RepeatControl, SysTaskCall, TaskCall,
    Wait, While, MethodTaskCall, ImmediateAssert, ImmediateAssume,
    ImmediateCover, DoWhile, OrderedWait, WaitFork, DisableFork, ExpectStmt,
-   ForeachStmt, ReturnStmt, Break, Continue]>;
+   ForeachStmt, ReturnStmt, Break, Continue, FuncCall, MethodFuncCall,
+   SysFuncCall]>;
 def ExpressionObjects : VPIObjectSet<"ExpressionObjects", [],
   [ExpressionFamily]>;
 def VariableObjects : VPIObjectSet<"VariableObjects", [], [VariableFamily]>;
@@ -1076,7 +1077,9 @@ def MethodProperty : VPIProperty<"vpiMethod", 645, BooleanProperty,
 def IsClockInferredProperty : VPIProperty<"vpiIsClockInferred", 649,
   BooleanProperty, ConcurrentAssertionPropertyObjects, "37.50">;
 def QualifierProperty : VPIProperty<"vpiQualifier", 650, IntegerProperty,
-  QualifierPropertyObjects, "37.71; 37.72">;
+  QualifierPropertyObjects, "37.71; 37.72", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  FixedImageProperty>;
 def InputEdgeProperty : VPIProperty<"vpiInputEdge", 651, IntegerProperty,
   ClockingPropertyObjects, "37.48">;
 def OutputEdgeProperty : VPIProperty<"vpiOutputEdge", 652, IntegerProperty,

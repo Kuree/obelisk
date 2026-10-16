@@ -320,7 +320,9 @@ def VPIEarlyScopeRegArrays : VPITraversalEdge<NonInstanceScopeObjects,
   RegArray, IterateMode, RegArrayObjects, NoOrder, "37.12">;
 def VPIEarlyScopeMemories : VPITraversalEdge<NonInstanceScopeObjects, Memory,
   IterateMode, RegArrayObjects, NoOrder, "37.12; 37.20; 37.85">;
-def VPIEarlyScopeOfChild : VPITraversalEdge<StatementObjects, ScopeRel,
+def VPIEarlyNonCallStatements : VPIObjectSet<"EarlyNonCallStatements",
+  StatementObjects.objects, [], [FuncCall, MethodFuncCall, SysFuncCall]>;
+def VPIEarlyScopeOfChild : VPITraversalEdge<VPIEarlyNonCallStatements, ScopeRel,
   HandleMode, ScopeObjects, NoOrder, "37.12", 0, AutomaticParentScope>;
 def VPIEarlyScopeOfDeclaredChild : VPITraversalEdge<VPIEarlyScopeChildren,
   ScopeRel, HandleMode, ScopeObjects, NoOrder, "37.12", 0,
@@ -918,7 +920,8 @@ def VPIEarlyTaskCallTask : VPITraversalEdge<
 def VPIEarlyCallScope : VPITraversalEdge<
   VPIObjectSet<"EarlyExpressionCallSources",
     [FuncCall, MethodFuncCall, SysFuncCall]>,
-  ScopeRel, HandleMode, VPIEarlyScopes, NoOrder, "37.42">;
+  ScopeRel, HandleMode, VPIEarlyScopes, NoOrder, "37.42", 0,
+  AutomaticParentScope>;
 def VPIEarlyCallArgumentsEdge : VPITraversalEdge<TaskFunctionCallObjects,
   ArgumentRel, IterateMode, VPIEarlyCallArguments, NoOrder, "37.42">;
 def VPIEarlyMethodWith : VPITraversalEdge<

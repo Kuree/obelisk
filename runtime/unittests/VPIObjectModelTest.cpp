@@ -76,7 +76,7 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
   EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
 }
 
-constexpr size_t kExpectedTraversalCount = 1899;
+constexpr size_t kExpectedTraversalCount = 1902;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2337;
@@ -2110,7 +2110,8 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         descriptor.property == vpiDefFile ||
         descriptor.property == vpiDefLineNo ||
         descriptor.property == vpiAlwaysType ||
-        descriptor.property == vpiLocalParam)
+        descriptor.property == vpiLocalParam ||
+        descriptor.property == vpiQualifier)
       expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiName &&
          (descriptor.sourceType == vpiParameter ||

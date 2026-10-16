@@ -8926,8 +8926,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   if (property == vpiSize) {
     if (!propertyFor(handle, property))
       return vpiUndefined;
-    if (handle->statement)
+    if (handle->statement) {
+      const auto type = vpiTypeForHandle(handle);
+      if (type == vpiFuncCall || type == vpiMethodFuncCall ||
+          type == vpiSysFuncCall) {
+        setError(handle->owner, "call statement has no result type metadata",
+                 vpiNotice);
+        return vpiUndefined;
+      }
       return 0;
+    }
     obelisk_rt_design_info_v1 info{};
     if (!infoFor(handle, info))
       return vpiUndefined;

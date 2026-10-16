@@ -107,7 +107,8 @@ def LateSimpleUseTargets : VPIObjectSet<"LateSimpleUseTargets",
    NamedFork, NullStmt, Release, Repeat, RepeatControl, SysTaskCall, TaskCall,
    Wait, While, MethodTaskCall, ImmediateAssert, ImmediateAssume,
    ImmediateCover, DoWhile, OrderedWait, WaitFork, DisableFork, ExpectStmt,
-   ForeachStmt, ReturnStmt, Break, Continue]>;
+   ForeachStmt, ReturnStmt, Break, Continue, FuncCall, MethodFuncCall,
+   SysFuncCall]>;
 def LateBitSelectSource : VPIObjectSet<"LateBitSelectSource", [BitSelect]>;
 
 def LateIndexedPartSelectSource : VPIObjectSet<
