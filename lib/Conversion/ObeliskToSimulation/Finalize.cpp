@@ -665,6 +665,10 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
               named.getName() ==
                   sim::SimVPIDefinitionBindingOp::getDefinitionAttrName(
                       op->getName())) ||
+             (isa<sim::SimVPIExpressionDeclOp>(op) &&
+              named.getName() ==
+                  sim::SimVPIExpressionDeclOp::getDefinitionAttrName(
+                      op->getName())) ||
              (isa<sim::SimVPIDefinitionMemberDeclOp>(op) &&
               named.getName() ==
                   sim::SimVPIDefinitionMemberDeclOp::getDefinitionAttrName(
@@ -709,10 +713,25 @@ verifyExecutableSubtree(Operation *root, ModuleOp module,
               contextualMemberReference =
                   endpoint.getKind() == sim::VPIObjectRefKind::DefinitionMember &&
                   endpoint.getSymbol() == reference;
+        bool originalDefaultReference = false;
+        if (auto endpoint = dyn_cast<sim::VPIObjectRefAttr>(named.getValue());
+            endpoint && endpoint.getKind() == sim::VPIObjectRefKind::Symbol &&
+            endpoint.getSymbol() == reference &&
+            isa_and_nonnull<sim::SimVPIDefinitionMemberDeclOp>(
+                SymbolTable::lookupNearestSymbolFrom(op, reference))) {
+          if (auto relation = dyn_cast<sim::SimVPIRelationDeclOp>(op))
+            originalDefaultReference =
+                named.getName() == relation.getSourceAttrName() ||
+                named.getName() == relation.getTargetAttrName();
+          else if (auto expression = dyn_cast<sim::SimVPIExpressionDeclOp>(op))
+            originalDefaultReference =
+                expression.getDefinitionAttr() &&
+                named.getName() == expression.getOwnerAttrName();
+        }
         bool allowed = callTarget || observerTarget || graphReference ||
                        executableReference || definitionReference ||
                        specializationReference || definitionMemberReference ||
-                       contextualMemberReference;
+                       contextualMemberReference || originalDefaultReference;
         if (!allowed) {
           op->emitError() << "disallowed symbol reference " << reference;
           invalid = true;

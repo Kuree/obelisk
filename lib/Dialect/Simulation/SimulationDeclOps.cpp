@@ -370,11 +370,15 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verify() {
     if (!getDirectionAttr())
       return emitOpError("vpiIODecl member requires a direction");
     if (getIsLocalParamAttr() || getHasExplicitParameterRangeAttr() ||
-        getUnavailableDefaultAttr())
+        getUnavailableDefaultAttr() || getHasOriginalDefaultAttr())
       return emitOpError("IO declaration cannot carry parameter facts");
   } else if (kind == Kind::Parameter || kind == Kind::TypeParameter) {
     if (getDirectionAttr())
       return emitOpError("parameter declaration cannot carry an IO direction");
+    if (getHasOriginalDefaultAttr() &&
+        (kind != Kind::Parameter || getUnavailableDefaultAttr()))
+      return emitOpError(
+          "original value default is exclusive with unavailability");
     if (kind == Kind::TypeParameter && getHasExplicitParameterRangeAttr())
       return emitOpError("type parameter cannot carry a value range");
   } else {
@@ -848,7 +852,7 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
              SimVPIClassMemberDeclOp, SimVPIUnresolvedTypeAliasDeclOp,
              SimVPILexicalClassTypespecDeclOp, SimVPIClassExtendsDeclOp,
              SimVPIClassParameterAssignDeclOp, SimVPILocalDeclOp,
-             SimVPIExpressionDeclOp>(declaration))
+             SimVPIExpressionDeclOp, SimVPIDefinitionMemberDeclOp>(declaration))
       return emitOpError()
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
@@ -5832,6 +5836,9 @@ LogicalResult SimDesignOp::verifyRegions() {
         else if (auto expression =
                      dyn_cast<SimVPIExpressionDeclOp>(declaration))
           kind = expression.getVpiKind();
+        else if (auto member =
+                     dyn_cast<SimVPIDefinitionMemberDeclOp>(declaration))
+          kind = member.getVpiKind();
         else if (auto typespec = dyn_cast<SimVPITypespecDeclOp>(declaration))
           kind = vpiKindForTypespec(typespec.getTargetType()).value_or(0);
         else if (isa<SimVPILexicalClassTypespecDeclOp>(declaration))

@@ -122,7 +122,8 @@ def SimVPIDefinitionMemberDeclOp : SimOp<"vpi_definition_member.decl", [
                        OptionalAttr<SimVPIIODirection>:$direction,
                        OptionalAttr<UnitAttr>:$is_local_param,
                        OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
-                       OptionalAttr<UnitAttr>:$unavailable_default);
+                       OptionalAttr<UnitAttr>:$unavailable_default,
+                       OptionalAttr<UnitAttr>:$has_original_default);
   let assemblyFormat = [{
     $sym_name `of` $definition `type` $vpi_kind `ordinal` $ordinal
     `name` $member_name (`direction` $direction^)? attr-dict
@@ -582,18 +583,22 @@ def SimVPIExpressionDeclOp : SimOp<"vpi_expression.decl", [
     explicitly retains syntax without an elaborated result type or value.
     Its physical and semantic type pair must be absent. Operation and indexed-select
     classifications are retained explicitly. These records neither allocate
-    simulation storage nor execute or schedule the expression.
+    simulation storage nor execute or schedule the expression. Exactly one
+    source context is retained: an instance scope, or a shared definition whose
+    original Parameter default owns this occurrence. The latter never captures
+    an arbitrary effective specialization.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
-      I32Attr:$vpi_kind, I64Attr:$scope_id, SimVPIObjectRefAttr:$owner,
+      I32Attr:$vpi_kind, OptionalAttr<I64Attr>:$scope_id,
+      SimVPIObjectRefAttr:$owner,
       I32Attr:$selector, SimVPIRelationMode:$mode, I64Attr:$ordinal,
       OptionalAttr<TypeAttr>:$type,
       OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
       OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
       OptionalAttr<I32Attr>:$op_type, OptionalAttr<I32Attr>:$indexed_direction,
-      UnitAttr:$source_only);
+      UnitAttr:$source_only, OptionalAttr<FlatSymbolRefAttr>:$definition);
   let assemblyFormat = [{
-    $sym_name `id` $id `type` $vpi_kind `in` $scope_id `owned_by` $owner
+    $sym_name `id` $id `type` $vpi_kind (`in` $scope_id^)? `owned_by` $owner
     `selector` $selector $mode `ordinal` $ordinal (`:` $type^)? attr-dict
   }];
   let hasVerifier = 1;

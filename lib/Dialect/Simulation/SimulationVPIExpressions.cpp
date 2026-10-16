@@ -138,6 +138,151 @@ std::optional<int64_t> knownInteger(const Endpoint &endpoint) {
     return std::nullopt;
   return static_cast<int64_t>(value.getZExtValue());
 }
+// Definition defaults are source occurrences, not an effective specialization.
+// Keep their proof separate from value-typed instance expressions: the only
+// untyped leaves are exact preceding Parameter declarations in this definition.
+LogicalResult verifyDefinitionDefaults(SimDesignOp design) {
+  SymbolTableCollection symbols;
+  auto lookup = [&](VPIObjectRefAttr reference) -> Operation * {
+    return reference.getKind() == VPIObjectRefKind::Symbol
+               ? symbols.lookupSymbolIn(design, reference.getSymbol())
+               : nullptr;
+  };
+  DenseMap<Operation *, SmallVector<SimVPIRelationDeclOp>> incoming, outgoing;
+  DenseMap<Operation *, SimVPIDefinitionMemberDeclOp> roots;
+  SmallVector<SimVPIExpressionDeclOp> expressions;
+  for (auto expression : design.getOps<SimVPIExpressionDeclOp>())
+    if (expression.getDefinitionAttr())
+      expressions.push_back(expression);
+  for (auto relation : design.getOps<SimVPIRelationDeclOp>()) {
+    Operation *source = lookup(relation.getSource());
+    Operation *target = lookup(relation.getTarget());
+    auto member = dyn_cast_or_null<SimVPIDefinitionMemberDeclOp>(source);
+    auto computed = dyn_cast_or_null<SimVPIExpressionDeclOp>(source);
+    auto targetComputed = dyn_cast_or_null<SimVPIExpressionDeclOp>(target);
+    bool touchesDefinition =
+        member || isa_and_nonnull<SimVPIDefinitionMemberDeclOp>(target) ||
+        (computed && computed.getDefinitionAttr()) ||
+        (targetComputed && targetComputed.getDefinitionAttr());
+    if (!touchesDefinition)
+      continue;
+    if ((!member && (!computed || !computed.getDefinitionAttr())) ||
+        (!isa_and_nonnull<SimVPIDefinitionMemberDeclOp>(target) &&
+         (!targetComputed || !targetComputed.getDefinitionAttr())))
+      return relation.emitOpError(
+          "shared declaration symbols require an exact definition default");
+    if (auto identifier = get<metadata::VpiExpressionIdentifier>(relation)) {
+      auto leaf = dyn_cast<SimVPIDefinitionMemberDeclOp>(target);
+      if (!computed || !leaf || identifier != leaf.getMemberNameAttr())
+        return relation.emitOpError(
+            "default identifier must match its exact declaration name");
+    }
+    incoming[target].push_back(relation);
+    outgoing[source].push_back(relation);
+    if (!member)
+      continue;
+    if (member.getVpiKind() != uint32_t(Kind::Parameter) ||
+        member.getUnavailableDefault() || !member.getHasOriginalDefault() ||
+        relation.getSelector() != uint32_t(Relation::ExprRel) ||
+        relation.getMode() != VPIRelationMode::Handle || relation.getOrdinal())
+      return relation.emitOpError(
+          "definition default requires one available Parameter Expr slot");
+    if (outgoing[source].size() != 1)
+      return relation.emitOpError("duplicates a definition default root");
+    if (targetComputed)
+      roots[target] = member;
+    else {
+      auto leaf = cast<SimVPIDefinitionMemberDeclOp>(target);
+      if (leaf.getVpiKind() != uint32_t(Kind::Parameter) ||
+          leaf.getDefinitionAttr() != member.getDefinitionAttr() ||
+          leaf.getOrdinal() >= member.getOrdinal())
+        return relation.emitOpError(
+            "default leaf must be an exact preceding value parameter");
+    }
+  }
+  for (auto member : design.getOps<SimVPIDefinitionMemberDeclOp>())
+    if (bool(member.getHasOriginalDefaultAttr()) !=
+        (outgoing[member].size() == 1))
+      return member.emitOpError(
+          "original default fact requires exactly one source root");
+  // Resolve the unique declaration root iteratively. Ownership remains a tree;
+  // repeated references to declaration leaves do not participate in this walk.
+  for (auto expression : expressions) {
+    SmallVector<Operation *> path;
+    DenseSet<Operation *> visiting;
+    Operation *cursor = expression;
+    while (!roots.count(cursor)) {
+      if (!visiting.insert(cursor).second)
+        return expression.emitOpError("definition default ownership is cyclic");
+      path.push_back(cursor);
+      auto current = dyn_cast<SimVPIExpressionDeclOp>(cursor);
+      if (!current || !current.getDefinitionAttr() ||
+          incoming[cursor].size() != 1)
+        return expression.emitOpError(
+            "definition default occurrence requires one exact owner");
+      cursor = lookup(incoming[cursor].front().getSource());
+    }
+    auto owner = roots.lookup(cursor);
+    for (Operation *node : path)
+      roots[node] = owner;
+  }
+  for (auto expression : expressions) {
+    auto declaration = roots.lookup(expression);
+    if (!declaration || incoming[expression].size() != 1 ||
+        expression.getDefinitionAttr() != declaration.getDefinitionAttr())
+      return expression.emitOpError(
+          "definition occurrence must match its declaring parameter");
+    auto relation = incoming[expression].front();
+    auto self = VPIObjectRefAttr::get(design.getContext(),
+                                      FlatSymbolRefAttr::get(expression));
+    if (relation.getTarget() != self ||
+        relation.getSource() != expression.getOwner() ||
+        relation.getSelector() != expression.getSelector() ||
+        relation.getMode() != expression.getMode() ||
+        relation.getOrdinal() != expression.getOrdinal())
+      return expression.emitOpError(
+          "definition occurrence requires its matching exact owner slot");
+    bool literal = expression.getVpiKind() == uint32_t(Kind::Constant);
+    if (!literal &&
+        (!expression.getSourceOnly() ||
+         (!reflection::findVPISourceOperator(*expression.getOpType()) &&
+          *expression.getOpType() != 33 && *expression.getOpType() != 34)))
+      return expression.emitOpError(
+          "definition default requires an unbound value expression operator");
+    auto children = outgoing[expression];
+    llvm::sort(children, [](auto left, auto right) {
+      return left.getOrdinal() < right.getOrdinal();
+    });
+    if ((literal && !children.empty()) ||
+        (!literal && !reflection::validVPISourceOnlyArity(
+                         *expression.getOpType(), children.size())))
+      return expression.emitOpError(
+          "definition default operator requires its exact ordered operands");
+    for (auto [ordinal, child] : llvm::enumerate(children)) {
+      if (child.getSelector() != uint32_t(Relation::OperandRel) ||
+          child.getMode() != VPIRelationMode::Iterate ||
+          child.getOrdinal() != ordinal)
+        return child.emitOpError(
+            "definition operands require dense source order");
+      Operation *target = lookup(child.getTarget());
+      if (auto leaf = dyn_cast<SimVPIDefinitionMemberDeclOp>(target)) {
+        if (leaf.getVpiKind() != uint32_t(Kind::Parameter) ||
+            leaf.getDefinitionAttr() != declaration.getDefinitionAttr() ||
+            leaf.getOrdinal() >= declaration.getOrdinal())
+          return child.emitOpError(
+              "default leaf must be an exact preceding value parameter");
+      } else if (auto node = dyn_cast<SimVPIExpressionDeclOp>(target)) {
+        if (node.getDefinitionAttr() != declaration.getDefinitionAttr() ||
+            roots.lookup(node) != declaration)
+          return child.emitOpError(
+              "default child must belong to the exact declaration occurrence");
+      } else
+        return child.emitOpError("default operand has no source identity");
+    }
+  }
+  return success();
+}
+
 } // namespace
 
 LogicalResult SimVPIExpressionDeclOp::verify() {
@@ -145,7 +290,6 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
     return emitOpError("requires a simulation.design owner");
   for (auto [attribute, label] :
        {std::pair(getIdAttr(), "expression ID"),
-        std::pair(getScopeIdAttr(), "scope ID"),
         std::pair(getSelectorAttr(), "owner selector"),
         std::pair(getOrdinalAttr(), "owner ordinal")})
     if (attribute.getValue().isNegative())
@@ -153,6 +297,10 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
   if (getSelector() > UINT16_MAX || getOrdinal() > UINT32_MAX ||
       (getMode() == VPIRelationMode::Handle && getOrdinal() != 0))
     return emitOpError("owner relation slot is not encodable");
+  if (bool(getScopeIdAttr()) == bool(getDefinitionAttr()) ||
+      (getScopeIdAttr() && getScopeIdAttr().getValue().isNegative()))
+    return emitOpError(
+        "requires exactly one nonnegative scope or definition context");
   bool sourceOnly = getSourceOnly();
   if (sourceOnly) {
     if (getVpiKind() != uint32_t(Kind::Operation) || getTypeAttr() ||
@@ -197,6 +345,11 @@ LogicalResult SimVPIExpressionDeclOp::verify() {
 
 LogicalResult
 SimVPIExpressionDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
+  if (getDefinitionAttr() &&
+      !symbols.lookupNearestSymbolFrom<SimVPIDefinitionDeclOp>(
+          *this, getDefinitionAttr()))
+    return emitOpError(
+        "definition context must name an exact source definition");
   if (getOwner().getKind() == VPIObjectRefKind::Symbol &&
       !symbols.lookupNearestSymbolFrom(*this, getOwner().getSymbol()))
     return emitOpError("references an unknown expression owner");
@@ -204,6 +357,8 @@ SimVPIExpressionDeclOp::verifySymbolUses(SymbolTableCollection &symbols) {
 }
 
 LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
+  if (failed(verifyDefinitionDefaults(design)))
+    return failure();
   SymbolTableCollection referenceSymbols;
   for (auto relation : design.getOps<SimVPIRelationDeclOp>()) {
     if (relation.getTarget().getKind() != VPIObjectRefKind::DefinitionMember ||
@@ -227,13 +382,27 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
           "contextual declaration root requires a singular or case-label slot");
   }
   SmallVector<SimVPIExpressionDeclOp> expressions;
-  for (auto expression : design.getOps<SimVPIExpressionDeclOp>())
-    expressions.push_back(expression);
+  DenseSet<uint64_t> allExpressionIDs;
+  for (auto expression : design.getOps<SimVPIExpressionDeclOp>()) {
+    if (!allExpressionIDs.insert(expression.getId()).second)
+      return expression.emitOpError("duplicates an expression occurrence ID");
+    if (!expression.getDefinitionAttr())
+      expressions.push_back(expression);
+  }
   if (expressions.empty()) {
     for (auto relation : design.getOps<SimVPIRelationDeclOp>())
-      if (get<metadata::VpiExpressionIdentifier>(relation))
-        return relation.emitOpError(
-            "expression identifier requires a computed source");
+      if (get<metadata::VpiExpressionIdentifier>(relation)) {
+        auto reference = relation.getSource();
+        auto source =
+            reference.getKind() == VPIObjectRefKind::Symbol
+                ? referenceSymbols
+                      .lookupNearestSymbolFrom<SimVPIExpressionDeclOp>(
+                          relation, reference.getSymbol())
+                : SimVPIExpressionDeclOp{};
+        if (!source || !source.getDefinitionAttr())
+          return relation.emitOpError(
+              "expression identifier requires a computed source");
+      }
     return success();
   }
   Builder builder(design.getContext());
@@ -283,12 +452,14 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
           local, vpiKindForClassMember(local.getVpiType()), local.getScopeId(),
           local.getValueType(), local.getVpiType()};
     else if (auto expression = dyn_cast<SimVPIExpressionDeclOp>(operation)) {
+      if (expression.getDefinitionAttr())
+        continue;
       if (!ids.insert(expression.getId()).second)
         return expression.emitOpError("duplicates an expression occurrence ID");
       endpoints[symbolic(expression.getSymNameAttr())] = {
           expression,
           expression.getVpiKind(),
-          expression.getScopeId(),
+          *expression.getScopeId(),
           expression.getType().value_or(Type{}),
           expression.getVpiTypeAttr(),
           expression.getImmutableValueAttr()};
@@ -337,6 +508,23 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
     if (auto name = get<metadata::VpiExpressionIdentifier>(relation)) {
       auto source = endpoints.find(relation.getSource());
       auto target = endpoints.find(relation.getTarget());
+      auto definitionSource =
+          source == endpoints.end() &&
+                  relation.getSource().getKind() == VPIObjectRefKind::Symbol
+              ? referenceSymbols
+                    .lookupNearestSymbolFrom<SimVPIExpressionDeclOp>(
+                        relation, relation.getSource().getSymbol())
+              : SimVPIExpressionDeclOp{};
+      if (definitionSource && definitionSource.getDefinitionAttr()) {
+        auto member =
+            referenceSymbols
+                .lookupNearestSymbolFrom<SimVPIDefinitionMemberDeclOp>(
+                    relation, relation.getTarget().getSymbol());
+        if (!member || name != member.getMemberNameAttr())
+          return relation.emitOpError(
+              "default identifier must match its exact declaration name");
+        continue;
+      }
       if (name.empty() ||
           llvm::any_of(
               name.getValue(),
@@ -358,7 +546,7 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
   for (auto expression : expressions) {
     auto self = symbolic(expression.getSymNameAttr());
     auto owner = endpoints.find(expression.getOwner());
-    if (owner == endpoints.end() || !scopes.count(expression.getScopeId()))
+    if (owner == endpoints.end() || !scopes.count(*expression.getScopeId()))
       return expression.emitOpError("requires exact retained owner and scope");
     bool ownerExpression = isa<SimVPIExpressionDeclOp>(owner->second.operation);
     bool ownerStatement = isa<SimStatementDeclOp>(owner->second.operation);
@@ -382,7 +570,7 @@ LogicalResult verifyVPIExpressionInventory(SimDesignOp design) {
             "higher connection requires an instantiating scope");
       scope = *instance.getParent();
     }
-    if (scope != expression.getScopeId())
+    if (scope != *expression.getScopeId())
       return expression.emitOpError(
           "expression scope disagrees with its source occurrence");
     const auto *edge = reflection::findVPITraversal(

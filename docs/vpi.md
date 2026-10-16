@@ -38,9 +38,15 @@ instance identity while sharing declaration metadata and identical effective
 specializations. Packed value parameters and localparams expose their elaborated
 values, signedness, types, and explicitly declared ranges; type parameters retain
 typedef identity. Shared declarations do not add per-instance parameter records
-or unused IO endpoint slots. Original defaults and override-assignment relations
-for these shared instance parameters remain incomplete: a known original default
-reports a notice until its expression is retained. Nonpacked value parameters remain outside this inventory slice.
+or unused IO endpoint slots. Original packed value defaults retain integer
+literals, preceding parameter references, and supported unary, binary, and
+conditional syntax once per definition. Contextual handles preserve the queried
+instance and resolve declaration leaves to its effective parameters; source
+operations remain unevaluated. Identical syntax in different declarations keeps
+separate occurrence identity. Missing defaults are absent, while unsupported
+whole expressions report a notice. Four default recipes add 416 image bytes at
+1, 32, and 128 instances in the differential test. Type-parameter defaults,
+override-assignment relations, and nonpacked value parameters remain incomplete.
 
 Retained expression slots include integral literals, concatenations,
 replications, and part-selects of scalar bits or one-bit packed-array elements.

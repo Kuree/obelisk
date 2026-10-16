@@ -118,9 +118,13 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
     EXPECT_EQ(vpi_handle(vpiLeftRange, parameters[0]), nullptr);
     EXPECT_EQ(intValue(keep(vpi_handle(vpiLeftRange, parameters[1]))), 7);
     EXPECT_EQ(intValue(keep(vpi_handle(vpiRightRange, parameters[1]))), 0);
-    EXPECT_EQ(vpi_handle(vpiExpr, parameters[0]), nullptr);
+    auto originalDefault = keep(vpi_handle(vpiExpr, parameters[0]));
+    ASSERT_NE(originalDefault, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, originalDefault), vpiConstant);
+    EXPECT_EQ(intValue(originalDefault), 3);
+    EXPECT_EQ(intValue(parameters[0]),
+              std::string(name) == "different" ? 5 : 4);
     s_vpi_error_info error{};
-    EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
     EXPECT_EQ(vpi_handle(vpiExpr, parameters[1]), nullptr);
     EXPECT_EQ(vpi_chk_error(&error), 0);
     ASSERT_EQ(children(vpiIODecl, owner).size(), 1u);
@@ -165,7 +169,8 @@ TEST(GeneratedDesignDatabase, SharedInstanceParameters) {
   EXPECT_EQ(directory.getDefinitionSpecializationCount(), 3u);
   EXPECT_EQ(directory.getDefinitionSpecializationBindingCount(), 9u);
   EXPECT_EQ(directory.getDefinitionParameterValueCount(), 5u);
-  EXPECT_EQ(directory.getFrozenValueCount(), 3u);
+  // Effective 4/5/254 and the shared original literal 3.
+  EXPECT_EQ(directory.getFrozenValueCount(), 4u);
   EXPECT_EQ(directory.getFrozenValueBindingCount(), 0u);
   EXPECT_EQ(directory.getDefinitionMemberEndpointCount(),
             3u); // Only IO declarations consume endpoint slots.

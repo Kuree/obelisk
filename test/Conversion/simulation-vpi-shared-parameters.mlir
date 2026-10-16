@@ -5,6 +5,7 @@
 #bit = #simulation.vpi_type<kind = bit, isSigned = false, isFourState = false, range = [0, 0], children = [], childNames = []>
 #range = #simulation.vpi_type<kind = packed_array, isSigned = false, isFourState = false, range = [7, 0], children = [#bit], childNames = []>
 #alias = #simulation.vpi_type<kind = int, isSigned = true, isFourState = false, range = [31, 0], children = [], childNames = [], typedefAliases = [@word]>
+#three = #simulation.frozen_constant<value = [3 : i32, 0 : i32], isSigned = true> : i32
 #four = #simulation.frozen_constant<value = [4 : i32, 0 : i32], isSigned = true> : i32
 #five = #simulation.frozen_constant<value = [5 : i32, 0 : i32], isSigned = true> : i32
 #minus = #simulation.frozen_constant<value = [254 : i8, 0 : i8], isSigned = false> : !simulation.packed_array<7 : 0 x i1>
@@ -13,7 +14,9 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
     simulation.vpi_object.anchor @pkg id 0 type 600 in 0 ordinal 0 hierarchy "pkg" debug "pkg"
     simulation.vpi_typespec.decl @word id 0 in 0 owner @pkg hierarchy "pkg::Word" debug "Word" {target_type = #alias}
     simulation.vpi_definition.decl @cell type 32 name "cell"
-    simulation.vpi_definition_member.decl @N of @cell type 41 ordinal 0 name "N" {unavailable_default}
+    simulation.vpi_definition_member.decl @N of @cell type 41 ordinal 0 name "N" {has_original_default}
+    simulation.vpi_expression.decl @originalN id 0 type 7 owned_by <kind = symbol, symbol = @N> selector 102 handle ordinal 0 : i32 {definition = @cell, immutable_value = #three, vpi_type = #int}
+    simulation.vpi_relation.decl <kind = symbol, symbol = @N> selector 102 handle ordinal 0 to <kind = symbol, symbol = @originalN>
     simulation.vpi_definition_member.decl @port of @cell type 28 ordinal 1 name "port" direction input
     simulation.vpi_definition_member.decl @L of @cell type 41 ordinal 2 name "L.p" {is_local_param, has_explicit_parameter_range}
     simulation.vpi_definition_member.decl @T of @cell type 609 ordinal 3 name "T" {unavailable_default}

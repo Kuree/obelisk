@@ -142,6 +142,7 @@ constexpr uint64_t kDefinitionParameterValueSize =
 constexpr uint16_t kDefinitionParameterLocal = UINT16_C(1) << 8;
 constexpr uint16_t kDefinitionParameterRange = UINT16_C(1) << 9;
 constexpr uint16_t kDefinitionParameterDefaultUnavailable = UINT16_C(1) << 10;
+constexpr uint16_t kDefinitionParameterOriginalDefault = UINT16_C(1) << 11;
 
 constexpr uint64_t kDefinitionMemberEndpointSize =
     obelisk::reflection::DefinitionMemberEndpointLayout.size;
@@ -3246,6 +3247,8 @@ constexpr uint32_t kExpressionOperandLeafFlag = UINT32_C(1) << 31;
 constexpr uint32_t kExpressionInstanceRelation = UINT32_MAX - 1;
 constexpr uint32_t kExpressionModuleRelation = UINT32_MAX - 2;
 constexpr uint32_t kExpressionUseOwnerRelation = UINT32_MAX - 3;
+constexpr uint32_t kDefaultInstanceRelation = UINT32_MAX - 4;
+constexpr uint32_t kDefaultModuleRelation = UINT32_MAX - 5;
 // A root group iterates root indices in the low payload bits. This domain is
 // disjoint from operand indices (<2^30) and the high reserved sentinels.
 constexpr uint32_t kExpressionRootGroupFlag = UINT32_C(1) << 31;
@@ -3274,25 +3277,89 @@ const uint8_t *expressionNode(const Database &database, const uint8_t *recipe,
                    (uint64_t{first} + ordinal) * kExpressionNodeSize
              : nullptr;
 }
+bool isDefinitionDefault(const uint8_t *root) {
+  return (read16(root + 14) &
+          obelisk::reflection::expressionRootDefinitionMember) != 0;
+}
+// The node pools have globally unique source occurrences. A default cursor
+// combines that occurrence with the querying instance binding, without an
+// image row per instance. Ordinary expression cursors retain their root index.
+bool definitionDefaultForNode(const Database &database, uint32_t globalNode,
+                              uint32_t &rootIndex, uint32_t &ordinal,
+                              const uint8_t *&root, const uint8_t *&recipe) {
+  for (uint32_t index = 0; index != database.expressionRootBindingCount;
+       ++index) {
+    const uint8_t *candidate = expressionRoot(database, index);
+    const uint8_t *type = expressionTemplate(database, candidate);
+    if (!isDefinitionDefault(candidate) || !type)
+      continue;
+    uint32_t first = read32(type + 4);
+    if (globalNode >= first &&
+        uint64_t{globalNode} - first < read32(type + 8)) {
+      rootIndex = index;
+      ordinal = globalNode - first;
+      root = candidate;
+      recipe = type;
+      return true;
+    }
+  }
+  return false;
+}
 bool expressionForCursor(const Database &database, uint64_t cursor,
                          uint32_t &rootIndex, uint32_t &ordinal,
                          const uint8_t *&root, const uint8_t *&recipe,
-                         const uint8_t *&node) {
-  uint32_t payload = 0;
-  if (!decodeVirtualToken(cursor, kVirtualMemberTag, rootIndex, payload) ||
-      (payload & (kExpressionCursorFlag | kVirtualRefObjectFlag)) !=
-          kExpressionCursorFlag ||
-      !(root = expressionRoot(database, rootIndex)) ||
-      !(recipe = expressionTemplate(database, root)))
+                         const uint8_t *&node,
+                         uint32_t *outDefaultBinding = nullptr) {
+  if (outDefaultBinding)
+    *outDefaultBinding = UINT32_MAX;
+  uint32_t payload = 0, context = 0;
+  if (!decodeVirtualToken(cursor, kVirtualMemberTag, context, payload))
     return false;
-  ordinal = payload & ~kExpressionCursorFlag;
+  uint32_t domain = payload & kExpressionPayloadDomainMask;
+  if (domain == kExpressionPayloadDomainMask) {
+    if (!definitionDefaultForNode(database,
+                                  payload & ~kExpressionPayloadDomainMask,
+                                  rootIndex, ordinal, root, recipe))
+      return false;
+    uint32_t scope = 0, memberIndex = 0;
+    const uint8_t *member = nullptr;
+    if (!virtualMemberForCursor(
+            database, virtualToken(kVirtualMemberTag, context, read32(root)),
+            scope, memberIndex, member))
+      return false;
+    if (outDefaultBinding)
+      *outDefaultBinding = context;
+  } else {
+    rootIndex = context;
+    if (domain != kExpressionCursorFlag ||
+        !(root = expressionRoot(database, rootIndex)) ||
+        isDefinitionDefault(root) ||
+        !(recipe = expressionTemplate(database, root)))
+      return false;
+    ordinal = payload & ~kExpressionCursorFlag;
+  }
   node = expressionNode(database, recipe, ordinal);
   return node != nullptr;
 }
 bool expressionContext(const Database &database, const uint8_t *root,
                        uint32_t &scope, uint32_t *outKind = nullptr,
-                       uint64_t *outOwner = nullptr) {
+                       uint64_t *outOwner = nullptr,
+                       uint32_t defaultBinding = UINT32_MAX) {
   using obelisk::reflection::TableKind;
+  if (isDefinitionDefault(root)) {
+    uint32_t memberIndex = 0;
+    const uint8_t *member = nullptr;
+    uint64_t cursor =
+        virtualToken(kVirtualMemberTag, defaultBinding, read32(root));
+    if (defaultBinding == UINT32_MAX ||
+        !virtualMemberForCursor(database, cursor, scope, memberIndex, member))
+      return false;
+    if (outKind)
+      *outKind = read16(member + 16);
+    if (outOwner)
+      *outOwner = cursor;
+    return true;
+  }
   uint32_t packed = read32(root),
            index = obelisk::reflection::unpackTableIndex(packed);
   uint64_t offset = 0;
@@ -3369,9 +3436,11 @@ struct ExpressionLeafInfo {
   uint32_t kind = 0, semantic = 0;
 };
 bool expressionInstance(const Database &database, const uint8_t *root,
-                        bool requireModule, uint64_t &offset, uint32_t &kind) {
+                        bool requireModule, uint64_t &offset, uint32_t &kind,
+                        uint32_t defaultBinding = UINT32_MAX) {
   uint32_t scope = 0;
-  if (!expressionContext(database, root, scope))
+  if (!expressionContext(database, root, scope, nullptr, nullptr,
+                         defaultBinding))
     return false;
   offset = database.scopes + uint64_t{scope} * kScopeSize;
   using Kind = obelisk::reflection::VPIObjectKind;
@@ -3386,7 +3455,8 @@ bool expressionInstance(const Database &database, const uint8_t *root,
   }
 }
 bool expressionLeaf(const Database &database, const uint8_t *root,
-                    uint32_t ordinal, ExpressionLeafInfo &out) {
+                    uint32_t ordinal, ExpressionLeafInfo &out,
+                    uint32_t defaultBinding = UINT32_MAX) {
   uint64_t index = uint64_t{read32(root + 8)} + ordinal;
   if (index >= database.expressionLeafCount)
     return false;
@@ -3408,7 +3478,8 @@ bool expressionLeaf(const Database &database, const uint8_t *root,
   uint32_t binding = 0, memberIndex = payload;
   if (tag == 0) {
     uint32_t scope = 0, definition = 0, specialization = 0;
-    if (!expressionContext(database, root, scope) ||
+    if (!expressionContext(database, root, scope, nullptr, nullptr,
+                           defaultBinding) ||
         !findDefinitionBinding(database, scope, definition, specialization,
                                &binding))
       return false;
@@ -3534,8 +3605,8 @@ bool expressionKnownInteger(const Database &database, const uint8_t *root,
 }
 
 bool expressionOperandTarget(const Database &database, uint32_t rootIndex,
-                             uint32_t operand, uint64_t &cursor,
-                             uint32_t &kind) {
+                             uint32_t operand, uint64_t &cursor, uint32_t &kind,
+                             uint32_t defaultBinding = UINT32_MAX) {
   const uint8_t *root = expressionRoot(database, rootIndex);
   const uint8_t *recipe = root ? expressionTemplate(database, root) : nullptr;
   if (!root)
@@ -3544,7 +3615,7 @@ bool expressionOperandTarget(const Database &database, uint32_t rootIndex,
     ExpressionLeafInfo leaf;
     uint32_t ordinal = operand & ~kExpressionOperandLeafFlag;
     if (ordinal >= (recipe ? read32(recipe + 20) : 1) ||
-        !expressionLeaf(database, root, ordinal, leaf))
+        !expressionLeaf(database, root, ordinal, leaf, defaultBinding))
       return false;
     cursor = leaf.cursor;
     kind = leaf.kind;
@@ -3554,8 +3625,17 @@ bool expressionOperandTarget(const Database &database, uint32_t rootIndex,
       recipe ? expressionNode(database, recipe, operand) : nullptr;
   if (!node)
     return false;
-  cursor = virtualToken(kVirtualMemberTag, rootIndex,
-                        kExpressionCursorFlag | operand);
+  if (isDefinitionDefault(root)) {
+    uint32_t scope = 0;
+    if (!expressionContext(database, root, scope, nullptr, nullptr,
+                           defaultBinding))
+      return false;
+    cursor = virtualToken(kVirtualMemberTag, defaultBinding,
+                          kExpressionPayloadDomainMask |
+                              (read32(recipe + 4) + operand));
+  } else
+    cursor = virtualToken(kVirtualMemberTag, rootIndex,
+                          kExpressionCursorFlag | operand);
   kind = read16(node);
   return true;
 }
@@ -3568,6 +3648,46 @@ bool validateExpressions(const Database &database,
   std::vector<uint8_t> templatesUsed(database.expressionTemplateCount, 0);
   std::vector<uint8_t> leavesUsed(database.expressionLeafCount, 0);
   std::vector<uint8_t> boundUsed(database.expressionBoundMemberCount, 0);
+  std::vector<uint32_t> defaultTemplateOwner(database.expressionTemplateCount,
+                                             UINT32_MAX);
+  std::vector<uint8_t> defaultRoots(database.definitionMemberCount, 0);
+  std::vector<uint32_t> memberDefinitions(database.definitionMemberCount,
+                                          UINT32_MAX);
+  for (uint32_t index = 0; index != database.definitionCount; ++index) {
+    const uint8_t *definition = database.data + database.definitions +
+                                uint64_t{index} * kDefinitionSize;
+    uint32_t first = read32(definition + 16), count = read32(definition + 20);
+    if (uint64_t{first} + count > database.definitionMemberCount)
+      return false;
+    for (uint32_t member = first; member != first + count; ++member)
+      memberDefinitions[member] = index;
+  }
+  for (uint32_t index = 0; index != database.expressionRootBindingCount;
+       ++index) {
+    const uint8_t *root = expressionRoot(database, index);
+    if (!isDefinitionDefault(root))
+      continue;
+    // Default relation tokens reserve zero for occurrence-mode root groups and
+    // encode the instance binding as index + 1 below the two virtual tag bits.
+    if (database.definitionBindingCount > kVirtualScopeMask)
+      return false;
+    uint32_t owner = read32(root), recipe = read32(root + 4);
+    if (owner >= database.definitionMemberCount || defaultRoots[owner]++)
+      return false;
+    if (recipe != UINT32_MAX) {
+      if (recipe >= database.expressionTemplateCount ||
+          defaultTemplateOwner[recipe] != UINT32_MAX)
+        return false;
+      defaultTemplateOwner[recipe] = owner;
+    }
+  }
+  for (uint32_t index = 0; index != database.definitionMemberCount; ++index) {
+    const uint8_t *member = database.data + database.definitionMembers +
+                            uint64_t{index} * kDefinitionMemberSize;
+    if (bool(read16(member + 18) & kDefinitionParameterOriginalDefault) !=
+        bool(defaultRoots[index]))
+      return false;
+  }
   uint64_t nextNode = 0, nextOperand = 0, nextShape = 0;
   std::unordered_set<std::string> templateKeys;
   for (uint32_t index = 0; index != database.expressionTemplateCount; ++index) {
@@ -3583,6 +3703,10 @@ bool validateExpressions(const Database &database,
         uint64_t{first} + count > database.expressionNodeCount ||
         nextOperand + operands > database.expressionOperandCount ||
         nextShape + leaves > database.expressionLeafShapeCount)
+      return false;
+    bool definitionDefault = defaultTemplateOwner[index] != UINT32_MAX;
+    if (definitionDefault &&
+        definition != memberDefinitions[defaultTemplateOwner[index]])
       return false;
     std::vector<uint8_t> owned(count, 0), leafUsed(leaves, 0);
     owned[0] = 1;
@@ -3607,6 +3731,11 @@ bool validateExpressions(const Database &database,
         return false;
       Kind kind = static_cast<Kind>(read16(node));
       uint16_t code = read16(node + 2);
+      if (definitionDefault && kind != Kind::Constant &&
+          (kind != Kind::Operation || !sourceOnly ||
+           (!obelisk::reflection::findVPISourceOperator(code) && code != 33 &&
+            code != 34)))
+        return false;
       if (sourceOnly) {
         if (kind != Kind::Operation || read32(node + 28) != UINT32_MAX ||
             !obelisk::reflection::validVPISourceOnlyArity(code, size))
@@ -3664,8 +3793,13 @@ bool validateExpressions(const Database &database,
               (nextShape + leafIndex) * kExpressionLeafShapeSize;
           uint64_t childWidth = 0;
           uint32_t childFlags = 0;
-          if (read16(shape + 6) || !expressionIntegral(database, read32(shape),
-                                                       childWidth, childFlags))
+          bool unboundLeaf = read32(shape) == UINT32_MAX;
+          if (read16(shape + 6) ||
+              (unboundLeaf ? !definitionDefault || !sourceOnly ||
+                                 read16(shape + 4) != uint16_t(Kind::Parameter)
+                           : definitionDefault ||
+                                 !expressionIntegral(database, read32(shape),
+                                                     childWidth, childFlags)))
             return false;
           uint32_t name = read32(shape + 8);
           if (name != UINT32_MAX) {
@@ -3722,7 +3856,7 @@ bool validateExpressions(const Database &database,
                    database.data + database.expressionLeafShapes +
                    nextShape * kExpressionLeafShapeSize),
                size_t(leaves) * kExpressionLeafShapeSize);
-    if (!templateKeys.insert(std::move(key)).second)
+    if (!definitionDefault && !templateKeys.insert(std::move(key)).second)
       return false;
     nextNode += count;
     nextOperand += operands;
@@ -3741,16 +3875,35 @@ bool validateExpressions(const Database &database,
                                read16(root + 14), read32(root + 16));
     uint32_t scope = 0, ownerKind = 0;
     uint64_t owner = 0;
-    bool iterate = read16(root + 14) == uint16_t(Mode::Iterate);
+    bool definitionDefault = isDefinitionDefault(root);
+    uint16_t mode = read16(root + 14) &
+                    ~obelisk::reflection::expressionRootDefinitionMember;
+    bool iterate = mode == uint16_t(Mode::Iterate);
+    uint32_t ownerDefinition = UINT32_MAX;
+    if (definitionDefault) {
+      uint32_t memberIndex = read32(root);
+      if (memberIndex >= database.definitionMemberCount)
+        return false;
+      const uint8_t *member = database.data + database.definitionMembers +
+                              uint64_t{memberIndex} * kDefinitionMemberSize;
+      ownerKind = read16(member + 16);
+      ownerDefinition = memberDefinitions[memberIndex];
+      if (ownerKind != uint32_t(Kind::Parameter) ||
+          !(read16(member + 18) & kDefinitionParameterOriginalDefault) ||
+          (read16(member + 18) & kDefinitionParameterDefaultUnavailable) ||
+          mode != uint16_t(Mode::Handle) ||
+          read16(root + 12) != uint16_t(Rel::ExprRel))
+        return false;
+    }
     bool sameGroup = index && std::get<0>(key) == std::get<0>(previous) &&
                      std::get<1>(key) == std::get<1>(previous) &&
                      std::get<2>(key) == std::get<2>(previous);
     uint64_t expectedOrdinal =
         sameGroup ? uint64_t(std::get<3>(previous)) + 1 : 0;
-    if ((index && key <= previous) ||
-        read16(root + 14) > uint16_t(Mode::Iterate) ||
+    if ((index && key <= previous) || mode > uint16_t(Mode::Iterate) ||
         read32(root + 16) != expectedOrdinal || (!iterate && sameGroup) ||
-        !expressionContext(database, root, scope, &ownerKind, &owner))
+        (!definitionDefault &&
+         !expressionContext(database, root, scope, &ownerKind, &owner)))
       return false;
     if (iterate && (ownerKind != uint32_t(Kind::CaseItem) ||
                     read16(root + 12) != uint16_t(Rel::ExprRel)))
@@ -3763,14 +3916,15 @@ bool validateExpressions(const Database &database,
             obelisk::reflection::VPIAutomaticRelation::None)
       return false;
     auto table = obelisk::reflection::unpackTableIndexKind(read32(root));
-    if (table != obelisk::reflection::TableKind::Statement &&
+    if (!definitionDefault &&
+        table != obelisk::reflection::TableKind::Statement &&
         ownerKind != uint32_t(Kind::Port) &&
         ownerKind != uint32_t(Kind::PrimTerm))
       return false;
     uint32_t ownerIndex = obelisk::reflection::unpackTableIndex(read32(root));
     uint64_t physical = lowerBoundRelation(database, table, ownerIndex,
                                            read16(root + 12), iterate);
-    if (physical < database.relationCount &&
+    if (!definitionDefault && physical < database.relationCount &&
         relationMatches(relationAt(database, physical), table, ownerIndex,
                         read16(root + 12), iterate))
       return false;
@@ -3781,15 +3935,43 @@ bool validateExpressions(const Database &database,
     if (recipe) {
       templatesUsed[read32(root + 4)] = 1;
       uint32_t definition = UINT32_MAX, specialization = 0;
-      findDefinitionBinding(database, scope, definition, specialization);
+      if (definitionDefault)
+        definition = ownerDefinition;
+      else
+        findDefinitionBinding(database, scope, definition, specialization);
+      if (!definitionDefault &&
+          defaultTemplateOwner[read32(root + 4)] != UINT32_MAX)
+        return false;
       if (read32(recipe) != definition)
         return false;
     } else if (read32(root + 4) != UINT32_MAX)
       return false;
     for (uint32_t leafIndex = 0; leafIndex != count; ++leafIndex) {
       ExpressionLeafInfo leaf;
-      if (leavesUsed[first + leafIndex]++ ||
-          !expressionLeaf(database, root, leafIndex, leaf))
+      if (leavesUsed[first + leafIndex]++)
+        return false;
+      if (definitionDefault) {
+        uint32_t target =
+            read32(database.data + database.expressionLeaves +
+                   uint64_t{first + leafIndex} * kExpressionLeafSize);
+        if (target >= read32(root) ||
+            target >= database.definitionMemberCount ||
+            memberDefinitions[target] != ownerDefinition)
+          return false;
+        const uint8_t *member = database.data + database.definitionMembers +
+                                uint64_t{target} * kDefinitionMemberSize;
+        leaf.kind = read16(member + 16);
+        leaf.semantic = UINT32_MAX;
+        if (leaf.kind != uint32_t(Kind::Parameter))
+          return false;
+        if (recipe) {
+          const uint8_t *shape = database.data + database.expressionLeafShapes +
+                                 (uint64_t{read32(recipe + 24)} + leafIndex) *
+                                     kExpressionLeafShapeSize;
+          if (read32(shape + 8) != read32(member))
+            return false;
+        }
+      } else if (!expressionLeaf(database, root, leafIndex, leaf))
         return false;
       uint32_t encoded =
           read32(database.data + database.expressionLeaves +
@@ -6844,11 +7026,14 @@ bool validateDatabaseImpl(const Database &database) {
            : memberKind == static_cast<uint16_t>(Kind::Parameter)
                ? (memberFlags &
                   ~(kDefinitionParameterLocal | kDefinitionParameterRange |
-                    kDefinitionParameterDefaultUnavailable)) != 0
+                    kDefinitionParameterDefaultUnavailable |
+                    kDefinitionParameterOriginalDefault)) != 0
            : memberKind == static_cast<uint16_t>(Kind::TypeParameter)
                ? (memberFlags & ~(kDefinitionParameterLocal |
                                   kDefinitionParameterDefaultUnavailable)) != 0
                : true) ||
+          ((memberFlags & kDefinitionParameterDefaultUnavailable) &&
+           (memberFlags & kDefinitionParameterOriginalDefault)) ||
           !getRelativeString(memberName, text) || text.empty() ||
           !memberNames.insert(text).second ||
           (memberFile != 0 && !getRelativeString(memberFile, text)))
@@ -9434,12 +9619,15 @@ obelisk_rt_status designRoot(const Database &database,
 obelisk_rt_status designParent(const Database &database,
                                obelisk_rt_design_cursor_v1 cursor,
                                obelisk_rt_design_cursor_v1 *outCursor) {
-  uint32_t expressionRootIndex = 0, expressionOrdinal = 0;
+  uint32_t expressionRootIndex = 0, expressionOrdinal = 0,
+           defaultBinding = UINT32_MAX;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (expressionForCursor(database, cursor.offset, expressionRootIndex,
-                          expressionOrdinal, root, recipe, node)) {
+                          expressionOrdinal, root, recipe, node,
+                          &defaultBinding)) {
     uint32_t scope = 0;
-    if (!expressionContext(database, root, scope))
+    if (!expressionContext(database, root, scope, nullptr, nullptr,
+                           defaultBinding))
       return OBELISK_RT_INVALID_DESIGN;
     outCursor->offset = database.scopes + uint64_t{scope} * kScopeSize;
     return OBELISK_RT_OK;
@@ -10616,10 +10804,12 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
     return OBELISK_RT_EOF;
   auto mode = iterate ? obelisk::reflection::VPITraversalMode::Iterate
                       : obelisk::reflection::VPITraversalMode::Handle;
-  uint32_t expressionRootIndex = 0, expressionOrdinal = 0;
+  uint32_t expressionRootIndex = 0, expressionOrdinal = 0,
+           defaultBinding = UINT32_MAX;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (expressionForCursor(database, source.offset, expressionRootIndex,
-                          expressionOrdinal, root, recipe, node)) {
+                          expressionOrdinal, root, recipe, node,
+                          &defaultBinding)) {
     using Kind = obelisk::reflection::VPIObjectKind;
     using Rel = obelisk::reflection::VPIRelationKind;
     Kind kind = static_cast<Kind>(read16(node));
@@ -10628,11 +10818,17 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
       uint64_t instance = 0;
       uint32_t instanceKind = 0;
       bool module = selector == uint32_t(Kind::Module);
-      if (!expressionInstance(database, root, module, instance, instanceKind))
+      if (!expressionInstance(database, root, module, instance, instanceKind,
+                              defaultBinding))
         return OBELISK_RT_EOF;
-      outRange->first = virtualToken(kVirtualMemberTag, expressionRootIndex,
-                                     module ? kExpressionModuleRelation
-                                            : kExpressionInstanceRelation);
+      outRange->first =
+          defaultBinding == UINT32_MAX
+              ? virtualToken(kVirtualMemberTag, expressionRootIndex,
+                             module ? kExpressionModuleRelation
+                                    : kExpressionInstanceRelation)
+              : virtualToken(kVirtualMemberTag, defaultBinding,
+                             module ? kDefaultModuleRelation
+                                    : kDefaultInstanceRelation);
       outRange->count = 1;
       return OBELISK_RT_OK;
     }
@@ -10654,9 +10850,12 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
     }
     if (child == UINT32_MAX)
       return OBELISK_RT_EOF;
+    uint32_t operand = read32(recipe + 12) + read32(node + 8) + child;
     outRange->first =
-        virtualToken(kVirtualMemberTag, expressionRootIndex,
-                     read32(recipe + 12) + read32(node + 8) + child);
+        defaultBinding == UINT32_MAX
+            ? virtualToken(kVirtualMemberTag, expressionRootIndex, operand)
+            : virtualToken(kVirtualMemberTag, defaultBinding,
+                           kExpressionCursorFlag | operand);
     outRange->count = count;
     return OBELISK_RT_OK;
   }
@@ -10694,6 +10893,35 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
         return OBELISK_RT_EOF;
       outRange->first = virtualToken(kVirtualReverseRelationTag, virtualBinding,
                                      virtualMember);
+      outRange->count = 1;
+      return OBELISK_RT_OK;
+    }
+    if (!virtualRefObject && !iterate &&
+        sourceType == uint32_t(obelisk::reflection::VPIObjectKind::Parameter) &&
+        selector == uint32_t(obelisk::reflection::VPIRelationKind::ExprRel)) {
+      uint32_t low = 0, high = database.expressionRootBindingCount;
+      auto wanted = std::make_tuple(
+          virtualMember, uint16_t(selector),
+          obelisk::reflection::expressionRootDefinitionMember, uint32_t{0});
+      while (low != high) {
+        uint32_t middle = low + (high - low) / 2;
+        const uint8_t *candidate = expressionRoot(database, middle);
+        auto key =
+            std::make_tuple(read32(candidate), read16(candidate + 12),
+                            read16(candidate + 14), read32(candidate + 16));
+        if (key < wanted)
+          low = middle + 1;
+        else
+          high = middle;
+      }
+      const uint8_t *candidate = expressionRoot(database, low);
+      if (!candidate || read32(candidate) != virtualMember ||
+          read16(candidate + 12) != selector || !isDefinitionDefault(candidate))
+        return OBELISK_RT_EOF;
+      // Upper zero is reserved for CaseItem groups. Binding+1 keeps their
+      // root-group tokens disjoint from contextual default root tokens.
+      outRange->first = virtualToken(kVirtualMemberTag, virtualBinding + 1,
+                                     kExpressionRootGroupFlag | low);
       outRange->count = 1;
       return OBELISK_RT_OK;
     }
@@ -10922,18 +11150,62 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
   uint32_t payload = 0;
   if (decodeVirtualToken(relationIndex, kVirtualMemberTag, bindingIndex,
                          payload)) {
-    if ((payload & kExpressionPayloadDomainMask) == kExpressionRootGroupFlag) {
-      if (bindingIndex != 0)
+    uint32_t defaultBinding = UINT32_MAX;
+    if (payload == kDefaultInstanceRelation ||
+        payload == kDefaultModuleRelation) {
+      if (bindingIndex >= database.definitionBindingCount)
         return OBELISK_RT_INVALID_HANDLE;
+      const uint8_t *binding = database.data + database.definitionBindings +
+                               uint64_t{bindingIndex} * kDefinitionBindingSize;
+      uint32_t packed = read32(binding),
+               scope = obelisk::reflection::unpackTableIndex(packed);
+      if (obelisk::reflection::unpackTableIndexKind(packed) !=
+              obelisk::reflection::TableKind::Scope ||
+          scope >= database.scopeCount)
+        return OBELISK_RT_INVALID_HANDLE;
+      outCursor->offset = database.scopes + uint64_t{scope} * kScopeSize;
+      *outType = recordVPIKind(database.data + outCursor->offset);
+      *outStatement = false;
+      return payload != kDefaultModuleRelation ||
+                     *outType ==
+                         uint32_t(obelisk::reflection::VPIObjectKind::Module)
+                 ? OBELISK_RT_OK
+                 : OBELISK_RT_INVALID_HANDLE;
+    }
+    if ((payload & kExpressionPayloadDomainMask) == kExpressionCursorFlag) {
+      defaultBinding = bindingIndex;
+      uint32_t position = payload & ~kExpressionPayloadDomainMask;
+      bool found = false;
+      for (uint32_t index = 0; index != database.expressionRootBindingCount;
+           ++index) {
+        const uint8_t *candidate = expressionRoot(database, index);
+        const uint8_t *type = expressionTemplate(database, candidate);
+        if (!isDefinitionDefault(candidate) || !type ||
+            position < read32(type + 12) ||
+            uint64_t{position} - read32(type + 12) >= read32(type + 16))
+          continue;
+        bindingIndex = index;
+        found = true;
+        break;
+      }
+      if (!found)
+        return OBELISK_RT_INVALID_HANDLE;
+      payload = position;
+    }
+    if ((payload & kExpressionPayloadDomainMask) == kExpressionRootGroupFlag) {
+      if (bindingIndex)
+        defaultBinding = bindingIndex - 1;
       bindingIndex = payload & ~kExpressionPayloadDomainMask;
       const uint8_t *groupRoot = expressionRoot(database, bindingIndex);
-      if (!groupRoot || read16(groupRoot + 14) != 1)
+      if (!groupRoot ||
+          (defaultBinding == UINT32_MAX ? read16(groupRoot + 14) != 1
+                                        : !isDefinitionDefault(groupRoot)))
         return OBELISK_RT_INVALID_HANDLE;
       payload = UINT32_MAX;
     }
     const uint8_t *root = expressionRoot(database, bindingIndex);
     const uint8_t *recipe = root ? expressionTemplate(database, root) : nullptr;
-    if (!root)
+    if (!root || (isDefinitionDefault(root) != (defaultBinding != UINT32_MAX)))
       return OBELISK_RT_INVALID_HANDLE;
     if (payload == kExpressionUseOwnerRelation) {
       if (!expressionUseOwner(database, root, *outType, outCursor->offset))
@@ -10961,7 +11233,7 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
     }
     *outStatement = false;
     return expressionOperandTarget(database, bindingIndex, operand,
-                                   outCursor->offset, *outType)
+                                   outCursor->offset, *outType, defaultBinding)
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_HANDLE;
   }
@@ -13633,17 +13905,17 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_operand(
   const auto *database = cachedDatabase(context);
   if (!database)
     return OBELISK_RT_INVALID_DESIGN;
-  uint32_t rootIndex = 0, ordinal = 0;
+  uint32_t rootIndex = 0, ordinal = 0, defaultBinding = UINT32_MAX;
   const uint8_t *root = nullptr, *recipe = nullptr, *node = nullptr;
   if (!expressionForCursor(*database, cursor.offset, rootIndex, ordinal, root,
-                           recipe, node) ||
+                           recipe, node, &defaultBinding) ||
       index >= read32(node + 12))
     return OBELISK_RT_EOF;
   uint64_t position = uint64_t{read32(recipe + 12)} + read32(node + 8) + index;
   uint32_t operand = read32(database->data + database->expressionOperands +
                             position * kExpressionOperandSize);
   return expressionOperandTarget(*database, rootIndex, operand,
-                                 outCursor->offset, *outKind)
+                                 outCursor->offset, *outKind, defaultBinding)
              ? OBELISK_RT_OK
              : OBELISK_RT_INVALID_DESIGN;
 }
@@ -13689,6 +13961,8 @@ obelisk_rt_status obelisk_rt_cached_vpi_expression_use_ranges(
     for (uint32_t index = 0; index != database->expressionRootBindingCount;
          ++index) {
       const uint8_t *root = expressionRoot(*database, index);
+      if (isDefinitionDefault(root))
+        continue;
       const uint8_t *recipe = expressionTemplate(*database, root);
       uint32_t leafCount = recipe ? read32(recipe + 20) : 1;
       bool matches = false;

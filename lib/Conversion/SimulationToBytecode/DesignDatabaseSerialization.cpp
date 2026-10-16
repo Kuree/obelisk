@@ -3902,6 +3902,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
          relation.getTarget().getKind() ==
              sim::VPIObjectRefKind::DefinitionMember))
       compactCaseGroups.insert(relation.getSource());
+  auto definitionMemberFor = [&](sim::VPIObjectRefAttr reference) {
+    return reference.getKind() == sim::VPIObjectRefKind::Symbol
+               ? definitionMembersBySymbol.lookup(
+                     reference.getSymbol().getValue())
+               : sim::SimVPIDefinitionMemberDeclOp{};
+  };
   for (sim::SimVPIRelationDeclOp relation : generalRelationDeclarations) {
     if (relation.getSource().getKind() ==
         sim::VPIObjectRefKind::DefinitionMember) {
@@ -3921,6 +3927,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
                              "exact expression root");
         return {};
       }
+      continue;
+    }
+    if (definitionMemberFor(relation.getSource())) {
+      expressionRootDeclarations.push_back(relation);
       continue;
     }
     if (auto expression = expressionFor(relation.getSource())) {
@@ -5068,6 +5078,15 @@ SmallVector<uint8_t> serializeDesignDatabase(
     auto leaf =
         [&](Operation *use, sim::VPIObjectRefAttr reference, uint64_t context,
             ExpressionLeafShapeRecord &shape) -> std::optional<uint32_t> {
+      if (auto member = definitionMemberFor(reference)) {
+        auto index = definitionMemberIndices.find(member);
+        if (context != UINT64_MAX || index == definitionMemberIndices.end() ||
+            index->second >= (uint32_t{1} << 30))
+          return std::nullopt;
+        shape = {UINT32_MAX, uint16_t(member.getVpiKind())};
+        return index
+            ->second; // Definition-local declaration, contextual at query.
+      }
       if (reference.getKind() == sim::VPIObjectRefKind::DefinitionMember) {
         auto instance = expressionScopeBindings.find(
             reference.getId().getValue().getZExtValue());
@@ -5135,21 +5154,32 @@ SmallVector<uint8_t> serializeDesignDatabase(
             "expression root count exceeds the compact cursor limit");
         return {};
       }
-      auto owner = resolvePhysicalReference(relation, relation.getSource(),
-                                            "expression owner");
-      auto context =
-          owner ? contextScope(*owner, relation.getSelector()) : std::nullopt;
-      uint32_t packedOwner = 0;
-      if (!owner || !context ||
-          !tryPackTableIndex(owner->table, owner->index, packedOwner)) {
-        relation.emitOpError(
-            "expression root requires an exact retained source context");
-        return {};
+      auto memberOwner = definitionMemberFor(relation.getSource());
+      std::optional<uint64_t> context;
+      uint32_t packedOwner = 0, definition = UINT32_MAX;
+      uint16_t rootMode = uint16_t(relation.getMode());
+      if (memberOwner) {
+        if (!definitionMemberIndices.count(memberOwner))
+          return {};
+        packedOwner = definitionMemberIndices.lookup(memberOwner);
+        definition = definitionMembers[packedOwner].definition;
+        context = UINT64_MAX; // Deliberately no instance scope.
+        rootMode |= expressionRootDefinitionMember;
+      } else {
+        auto owner = resolvePhysicalReference(relation, relation.getSource(),
+                                              "expression owner");
+        context =
+            owner ? contextScope(*owner, relation.getSelector()) : std::nullopt;
+        if (!owner || !context ||
+            !tryPackTableIndex(owner->table, owner->index, packedOwner)) {
+          relation.emitOpError(
+              "expression root requires an exact retained source context");
+          return {};
+        }
+        if (auto instance = expressionScopeBindings.find(*context);
+            instance != expressionScopeBindings.end())
+          definition = definitionBindings[instance->second].definition;
       }
-      uint32_t definition = UINT32_MAX;
-      if (auto instance = expressionScopeBindings.find(*context);
-          instance != expressionScopeBindings.end())
-        definition = definitionBindings[instance->second].definition;
       SmallVector<ExpressionNodeRecord> nodes;
       SmallVector<uint32_t> operands, leaves;
       SmallVector<ExpressionLeafShapeRecord> shapes;
@@ -5251,6 +5281,9 @@ SmallVector<uint8_t> serializeDesignDatabase(
       if (root) {
         std::string key;
         append32(key, definition);
+        // Source defaults have declaration-owned occurrence identity even when
+        // two declarations contain equal syntax and source coordinates.
+        append32(key, memberOwner ? packedOwner : UINT32_MAX);
         append32(key, nodes.size());
         append32(key, operands.size());
         append32(key, shapes.size());
@@ -5305,10 +5338,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
             "expression leaf bindings exceed the compact limit");
         return {};
       }
-      expressionRoots.push_back(
-          {packedOwner, templateIndex, uint32_t(expressionLeaves.size()),
-           uint16_t(relation.getSelector()), uint16_t(relation.getMode()),
-           uint32_t(relation.getOrdinal())});
+      expressionRoots.push_back({packedOwner, templateIndex,
+                                 uint32_t(expressionLeaves.size()),
+                                 uint16_t(relation.getSelector()), rootMode,
+                                 uint32_t(relation.getOrdinal())});
       llvm::append_range(expressionLeaves, leaves);
     }
     llvm::sort(expressionRoots, [](const auto &left, const auto &right) {
@@ -6785,6 +6818,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
       flags |= 1u << 9;
     if (member.declaration.getUnavailableDefault())
       flags |= 1u << 10;
+    if (member.declaration.getHasOriginalDefault())
+      flags |= 1u << 11;
     writer.setFlags(flags);
   }
   for (auto [index, relation] : llvm::enumerate(definitionMemberRelations)) {
