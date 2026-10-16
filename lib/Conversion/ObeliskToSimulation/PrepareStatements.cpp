@@ -34,6 +34,47 @@ struct Shape {
   SmallVector<Attribute> properties;
 };
 
+static void addIntegerProperty(Shape &shape, Operation *source,
+                               uint32_t selector, uint32_t value) {
+  Builder builder(source->getContext());
+  shape.properties.push_back(sim::VPIPropertyAttr::get(
+      builder.getContext(), builder.getI32IntegerAttr(selector),
+      builder.getI32IntegerAttr(value)));
+}
+
+static uint32_t qualifier(semantic::SVUniquePriorityCheck check) {
+  switch (check) {
+  case semantic::SVUniquePriorityCheck::None:
+    return 0;
+  case semantic::SVUniquePriorityCheck::Unique:
+  case semantic::SVUniquePriorityCheck::Unique0:
+    // Annex M represents the uniqueness qualifier with one bit; it has no
+    // separate unique0 value.
+    return 1;
+  case semantic::SVUniquePriorityCheck::Priority:
+    return 2;
+  }
+  llvm_unreachable("unknown source qualifier");
+}
+
+static void addCaseProperties(Shape &shape, Operation *source,
+                              semantic::SVCaseCondition condition,
+                              semantic::SVUniquePriorityCheck check,
+                              bool pattern = false) {
+  uint32_t caseType = 1; // vpiCaseExact
+  if (condition == semantic::SVCaseCondition::WildcardXOrZ)
+    caseType = 2; // vpiCaseX
+  else if (condition == semantic::SVCaseCondition::WildcardJustZ)
+    caseType = 3; // vpiCaseZ
+  addIntegerProperty(shape, source, 42, caseType);
+  uint32_t flags = qualifier(check);
+  if (condition == semantic::SVCaseCondition::Inside)
+    flags |= 16; // vpiInsideQualifier
+  if (pattern)
+    flags |= 4; // vpiTaggedQualifier
+  addIntegerProperty(shape, source, 650, flags);
+}
+
 // Explicit receivers and exact declaration ownership both establish a method.
 // Static methods and implicit-this calls need not carry a receiver expression.
 static bool isMethodCall(semantic::SVCallExpressionOp call,
@@ -126,6 +167,8 @@ statementShape(Operation *source,
     if (children.size() < count)
       return std::nullopt;
     shape.kind = conditional.getHasElse() ? Kind::IfElse : Kind::If;
+    addIntegerProperty(shape, source, 650,
+                       qualifier(conditional.getCheckKind()));
     shape.children.push_back({children[children.size() - count]});
     if (conditional.getHasElse())
       shape.children.push_back({children.back(), Relation::ElseStmtRel});
@@ -152,6 +195,8 @@ statementShape(Operation *source,
   }
   if (auto statement = dyn_cast<semantic::SVCaseStatementOp>(source)) {
     shape.kind = Kind::Case;
+    addCaseProperties(shape, source, statement.getConditionKind(),
+                      statement.getCheckKind());
     size_t next = 1; // The selector is an expression, not a statement.
     for (int64_t count : statement.getItemLabelCounts()) {
       next += count;
@@ -172,6 +217,8 @@ statementShape(Operation *source,
   }
   if (auto statement = dyn_cast<semantic::SVPatternCaseStatementOp>(source)) {
     shape.kind = Kind::Case;
+    addCaseProperties(shape, source, statement.getConditionKind(),
+                      statement.getCheckKind(), true);
     size_t next = 1;
     for (int64_t hasFilter : statement.getItemFilterFlags()) {
       next += 1 + hasFilter; // Pattern and optional filter remain expressions.
@@ -336,6 +383,21 @@ statementShape(Operation *source,
   }
   if (auto assignment = dyn_cast<semantic::SVAssignmentExpressionOp>(source)) {
     shape.kind = Kind::Assignment;
+    uint32_t operatorType = 82; // vpiAssignmentOp, including nonblocking <=.
+    if (auto binary = assignment.getOperatorKind()) {
+      auto name = semantic::stringifySVBinaryOperator(*binary);
+      auto *operation = reflection::findVPISourceOperator(
+          std::string_view(name.data(), name.size()), 2);
+      if (!operation)
+        return std::nullopt;
+      operatorType = operation->value;
+    }
+    addIntegerProperty(shape, source, 39, operatorType);
+    Builder builder(source->getContext());
+    shape.properties.push_back(sim::VPIPropertyAttr::get(
+        builder.getContext(), builder.getI32IntegerAttr(41),
+        builder.getBoolAttr(assignment.getAssignmentKind() ==
+                            semantic::SVAssignmentKind::Blocking)));
     if (assignment.getHasTimingControl()) {
       if (children.size() != 3)
         return std::nullopt;

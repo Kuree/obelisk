@@ -2128,6 +2128,7 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         descriptor.property == vpiDefFile ||
         descriptor.property == vpiDefLineNo ||
         descriptor.property == vpiAlwaysType ||
+        descriptor.property == vpiCaseType ||
         descriptor.property == vpiLocalParam ||
         descriptor.property == vpiQualifier)
       expected = PropertyRealization::FixedImage;
@@ -2137,7 +2138,10 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
     if ((descriptor.property == vpiConstType &&
          descriptor.sourceType == vpiConstant) ||
         (descriptor.property == vpiOpType &&
-         descriptor.sourceType == vpiOperation))
+         (descriptor.sourceType == vpiOperation ||
+          descriptor.sourceType == vpiAssignment)) ||
+        (descriptor.property == vpiBlocking &&
+         descriptor.sourceType == vpiAssignment))
       expected = PropertyRealization::FixedImage;
     if ((descriptor.property == vpiTopModule ||
          descriptor.property == vpiCellInstance) &&

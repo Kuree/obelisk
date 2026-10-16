@@ -305,6 +305,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIDependentAliasesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPINestedClassesTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIStatementFormsTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIRTLPropertiesTest.cpp"
 )
 target_link_libraries(obelisk-design-database-dump-test PRIVATE
   ObeliskSimulationToBytecode

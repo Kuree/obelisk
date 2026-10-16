@@ -916,11 +916,17 @@ def TchkTypeProperty : VPIProperty<"vpiTchkType", 38, IntegerProperty,
 def OpTypeProperty : VPIProperty<"vpiOpType", 39, IntegerProperty,
   OperationPropertyObjects, "37.52; 37.54; 37.59; 37.64", StaticProperty,
   DeniedWhenProtected, 1, NoPropertyObjects, NoPropertyObjects, DerivedProperty,
-  VPIObjectSet<"SourceOperationProperties", [Operation]>>;
+  VPIObjectSet<"SourceOperationProperties", [Operation, Assignment]>>;
 def BlockingProperty : VPIProperty<"vpiBlocking", 41, BooleanProperty,
-  BlockingPropertyObjects, "37.62; 37.64">;
+  BlockingPropertyObjects, "37.62; 37.64", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  VPIObjectSet<"SourceAssignmentBlockingProperties", [Assignment]>>;
 def CaseTypeProperty : VPIProperty<"vpiCaseType", 42, IntegerProperty,
-  ReadCaseObjects, "37.72">;
+  ReadCaseObjects, "37.72", StaticProperty, DeniedWhenProtected, 0,
+  NoPropertyObjects, NoPropertyObjects, FixedImageProperty>;
+def CaseTypeExact : VPIIntegerPropertyValue<CaseTypeProperty, 1>;
+def CaseTypeX : VPIIntegerPropertyValue<CaseTypeProperty, 2>;
+def CaseTypeZ : VPIIntegerPropertyValue<CaseTypeProperty, 3>;
 def NetDeclAssignProperty : VPIProperty<"vpiNetDeclAssign", 43,
   BooleanProperty, NetAndContinuousObjects, "37.16; 37.47", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
