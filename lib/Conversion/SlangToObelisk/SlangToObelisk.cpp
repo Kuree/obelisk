@@ -633,6 +633,8 @@ public:
                                        ir::SVSourceUnaryExpressionOp>,
              ConcreteASTNodeConversion<slangir::SourceBinaryExpressionOp,
                                        ir::SVSourceBinaryExpressionOp>,
+             ConcreteASTNodeConversion<slangir::SourceConditionalExpressionOp,
+                                       ir::SVSourceConditionalExpressionOp>,
              ConcreteASTNodeConversion<slangir::SourceTypeParameterSymbolOp,
                                        ir::SVSourceTypeParameterSymbolOp>>(
             converter, &context);

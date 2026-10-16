@@ -576,6 +576,7 @@ bool isSupportedClassDeclaration(Operation *op) {
       semantic::SVSourceValueParameterSymbolOp,
       semantic::SVSourceValueDefaultOp, semantic::SVSourceParameterReferenceOp,
       semantic::SVSourceUnaryExpressionOp, semantic::SVSourceBinaryExpressionOp,
+      semantic::SVSourceConditionalExpressionOp,
       semantic::SVSourceTypeDefaultOp, semantic::SVSourceTypeReferenceDefaultOp,
       semantic::SVSourceUnsupportedDefaultOp,
       semantic::SVMethodPrototypeSymbolOp, semantic::SVClassPropertySymbolOp,

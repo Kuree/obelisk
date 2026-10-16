@@ -3101,6 +3101,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
               semantic::stringifySVBinaryOperator(binary.getOperatorKind());
           operation = reflection::findVPISourceOperator(
               std::string_view(name.data(), name.size()), 2);
+        } else if (isa<semantic::SVSourceConditionalExpressionOp>(node)) {
+          kind = VPIKind::Operation;
+          operation = reflection::findVPISourceOperator("conditional", 3);
         } else if (isa<semantic::SVIntegerLiteralOp>(node)) {
           kind = VPIKind::Constant;
           auto semantic = makeVPITypeSemantics(

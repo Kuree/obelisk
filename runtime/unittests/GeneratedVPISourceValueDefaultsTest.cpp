@@ -151,6 +151,43 @@ TEST(GeneratedDesignDatabase, SourceValueDefaults) {
   EXPECT_EQ(integer(sourceOperands[1]), 2);
   EXPECT_EQ(decompile(sourceAdd), "\\N + " + binary(2));
 
+  auto conditionalClass = named("H");
+  EXPECT_EQ(vpi_iterate(vpiClassTypespec, conditionalClass), nullptr);
+  auto conditionParameter = named("H::N");
+  const std::array<const char *, 4> conditionalNames{
+      "H::Simple", "H::Condition", "H::Left", "H::Right"};
+  const std::array<std::string, 4> conditionalText{
+      "\\N ? " + binary(2) + " : " + binary(3),
+      "(\\N ? " + binary(4) + " : " + binary(5) + ") ? " + binary(6) + " : " +
+          binary(7),
+      "\\N ? (\\N ? " + binary(8) + " : " + binary(9) + ") : " + binary(10),
+      "\\N ? " + binary(11) + " : \\N ? " + binary(12) + " : " + binary(13)};
+  for (size_t index = 0; index != conditionalNames.size(); ++index) {
+    SCOPED_TRACE(conditionalNames[index]);
+    auto parameter = named(conditionalNames[index]);
+    auto expression = keep(vpi_handle(vpiExpr, parameter));
+    EXPECT_EQ(vpi_get(vpiOpType, expression), vpiConditionOp);
+    auto children = operands(expression);
+    ASSERT_EQ(children.size(), 3u);
+    EXPECT_EQ(decompile(expression), conditionalText[index]);
+    auto condition = children[0];
+    if (index == 1) {
+      EXPECT_EQ(vpi_get(vpiOpType, condition), vpiConditionOp);
+      auto nested = operands(condition);
+      ASSERT_EQ(nested.size(), 3u);
+      condition = nested[0];
+    }
+    EXPECT_EQ(vpi_compare_objects(condition, conditionParameter), 1);
+    if (index == 0) {
+      EXPECT_EQ(integer(children[1]), 2);
+      EXPECT_EQ(integer(children[2]), 3);
+    }
+    s_vpi_value unavailable{};
+    unavailable.format = vpiIntVal;
+    vpi_get_value(expression, &unavailable);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiNotice);
+  }
+
   auto definition = named("C");
   iterator = vpi_iterate(vpiClassTypespec, definition);
   ASSERT_NE(iterator, nullptr);

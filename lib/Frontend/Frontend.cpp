@@ -5710,6 +5710,14 @@ private:
           return !slang::syntax::SyntaxFacts::isAssignmentOperator(node.kind) &&
                  node.kind != SyntaxKind::LogicalEquivalenceExpression &&
                  self(self, *binary->left) && self(self, *binary->right);
+        if (auto *conditional =
+                node.as_if<slang::syntax::ConditionalExpressionSyntax>()) {
+          const auto &conditions = conditional->predicate->conditions;
+          return conditions.size() == 1 && !conditions[0]->matchesClause &&
+                 self(self, *conditions[0]->expr) &&
+                 self(self, *conditional->left) &&
+                 self(self, *conditional->right);
+        }
         if (node.kind == SyntaxKind::IdentifierName)
           return bool(valueReference(node.as<slang::syntax::NameSyntax>()));
         return node.kind == SyntaxKind::IntegerLiteralExpression ||
@@ -5760,6 +5768,18 @@ private:
             builder.setInsertionPointToStart(&operation.getBody().front());
             self(self, *binary->left);
             self(self, *binary->right);
+          } else if (auto *conditional =
+                         node.as_if<
+                             slang::syntax::ConditionalExpressionSyntax>()) {
+            auto operation = slangir::SourceConditionalExpressionOp::create(
+                builder, location, TypeRange{}, ValueRange{},
+                exprAttrs.getAttrs());
+            operation.getBody().emplaceBlock();
+            OpBuilder::InsertionGuard guard(builder);
+            builder.setInsertionPointToStart(&operation.getBody().front());
+            self(self, *conditional->predicate->conditions[0]->expr);
+            self(self, *conditional->left);
+            self(self, *conditional->right);
           } else if (node.kind == SyntaxKind::IdentifierName) {
             exprAttrs.set("parameter",
                           valueReference(node.as<slang::syntax::NameSyntax>()));

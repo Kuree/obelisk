@@ -710,8 +710,8 @@ LogicalResult SVSourceValueDefaultOp::verify() {
     return emitOpError(
         "original value default requires exactly one expression");
   if (!isa<SVSourceUnaryExpressionOp, SVSourceBinaryExpressionOp,
-           SVSourceParameterReferenceOp, SVIntegerLiteralOp>(
-          getBody().front().front()))
+           SVSourceConditionalExpressionOp, SVSourceParameterReferenceOp,
+           SVIntegerLiteralOp>(getBody().front().front()))
     return emitOpError(
         "original value default requires a supported typed expression");
   return success();
@@ -720,8 +720,8 @@ LogicalResult SVSourceValueDefaultOp::verify() {
 LogicalResult SVSourceParameterReferenceOp::verify() {
   return sourceparameter::verifyValueExpression<
       SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 0);
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 0);
 }
 
 LogicalResult
@@ -743,8 +743,8 @@ LogicalResult SVSourceUnaryExpressionOp::verify() {
   }
   return sourceparameter::verifyValueExpression<
       SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 1);
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 1);
 }
 
 LogicalResult SVSourceBinaryExpressionOp::verify() {
@@ -753,8 +753,15 @@ LogicalResult SVSourceBinaryExpressionOp::verify() {
         "original default operator has no VPI expression encoding");
   return sourceparameter::verifyValueExpression<
       SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
-      SVSourceBinaryExpressionOp, SVSourceParameterReferenceOp,
-      SVIntegerLiteralOp>(*this, 2);
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 2);
+}
+
+LogicalResult SVSourceConditionalExpressionOp::verify() {
+  return sourceparameter::verifyValueExpression<
+      SVSourceValueDefaultOp, SVSourceUnaryExpressionOp,
+      SVSourceBinaryExpressionOp, SVSourceConditionalExpressionOp,
+      SVSourceParameterReferenceOp, SVIntegerLiteralOp>(*this, 3);
 }
 
 LogicalResult SVSourceTypeDefaultOp::verify() {

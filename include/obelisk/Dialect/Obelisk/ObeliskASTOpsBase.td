@@ -1188,6 +1188,16 @@ def SVSourceBinaryExpressionOp
   let hasVerifier = 1;
 }
 
+def SVSourceConditionalExpressionOp
+    : ObeliskASTNodeOp<"sv.source.conditional_expression"> {
+  let summary = "unbound conditional operation in an original default";
+  let description = [{
+    Owns the condition, true expression, and false expression in source order.
+    None of the branches is selected or evaluated during source import.
+  }];
+  let hasVerifier = 1;
+}
+
 def SVSourceTypeDefaultOp
     : ObeliskASTNodeOp<"sv.source.type_default", [],
         (ins TypeAttr:$semantic_type)> {

@@ -638,8 +638,8 @@ LogicalResult SourceValueDefaultOp::verify() {
     return emitOpError(
         "original value default requires exactly one expression");
   if (!isa<SourceUnaryExpressionOp, SourceBinaryExpressionOp,
-           SourceParameterReferenceOp, IntegerLiteralOp>(
-          getBody().front().front()))
+           SourceConditionalExpressionOp, SourceParameterReferenceOp,
+           IntegerLiteralOp>(getBody().front().front()))
     return emitOpError(
         "original value default requires a supported typed expression");
   return success();
@@ -648,7 +648,8 @@ LogicalResult SourceValueDefaultOp::verify() {
 LogicalResult SourceParameterReferenceOp::verify() {
   return sourceparameter::verifyValueExpression<
       SourceValueDefaultOp, SourceUnaryExpressionOp, SourceBinaryExpressionOp,
-      SourceParameterReferenceOp, IntegerLiteralOp>(*this, 0);
+      SourceConditionalExpressionOp, SourceParameterReferenceOp,
+      IntegerLiteralOp>(*this, 0);
 }
 
 LogicalResult
@@ -670,7 +671,8 @@ LogicalResult SourceUnaryExpressionOp::verify() {
   }
   return sourceparameter::verifyValueExpression<
       SourceValueDefaultOp, SourceUnaryExpressionOp, SourceBinaryExpressionOp,
-      SourceParameterReferenceOp, IntegerLiteralOp>(*this, 1);
+      SourceConditionalExpressionOp, SourceParameterReferenceOp,
+      IntegerLiteralOp>(*this, 1);
 }
 
 LogicalResult SourceBinaryExpressionOp::verify() {
@@ -679,7 +681,15 @@ LogicalResult SourceBinaryExpressionOp::verify() {
         "original default operator has no VPI expression encoding");
   return sourceparameter::verifyValueExpression<
       SourceValueDefaultOp, SourceUnaryExpressionOp, SourceBinaryExpressionOp,
-      SourceParameterReferenceOp, IntegerLiteralOp>(*this, 2);
+      SourceConditionalExpressionOp, SourceParameterReferenceOp,
+      IntegerLiteralOp>(*this, 2);
+}
+
+LogicalResult SourceConditionalExpressionOp::verify() {
+  return sourceparameter::verifyValueExpression<
+      SourceValueDefaultOp, SourceUnaryExpressionOp, SourceBinaryExpressionOp,
+      SourceConditionalExpressionOp, SourceParameterReferenceOp,
+      IntegerLiteralOp>(*this, 3);
 }
 
 LogicalResult SourceTypeDefaultOp::verify() {

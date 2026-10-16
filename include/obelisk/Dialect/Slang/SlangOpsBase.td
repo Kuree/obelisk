@@ -1192,6 +1192,16 @@ def SourceBinaryExpressionOp
   let hasVerifier = 1;
 }
 
+def SourceConditionalExpressionOp
+    : SlangASTNodeOp<"sv.source.conditional_expression"> {
+  let summary = "unbound conditional operation in an original default";
+  let description = [{
+    Owns the condition, true expression, and false expression in source order.
+    None of the branches is selected or evaluated during source import.
+  }];
+  let hasVerifier = 1;
+}
+
 def SourceTypeDefaultOp
     : SlangASTNodeOp<"sv.source.type_default", [],
         (ins TypeAttr:$semantic_type)> {

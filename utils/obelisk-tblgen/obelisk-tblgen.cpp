@@ -1950,9 +1950,9 @@ bool emitVPIObjectModel(const RecordKeeper &records, raw_ostream &os) {
     auto arity = operation->getValueAsInt("arity");
     auto precedence = operation->getValueAsInt("precedence");
     if (name.empty() || value < 0 || value > UINT16_MAX ||
-        (arity != 1 && arity != 2) || precedence <= 0 ||
-        precedence > UINT8_MAX ||
+        (arity < 1 || arity > 3) || precedence <= 0 || precedence > UINT8_MAX ||
         operation->getValueAsString("token").empty() ||
+        (arity == 3 && operation->getValueAsString("token").size() != 2) ||
         !sourceOperatorValues.insert(value).second ||
         !sourceOperatorNames.insert({name, arity}).second)
       PrintFatalError(operation->getLoc(),

@@ -3653,6 +3653,15 @@ TEST(VPIObjectModel,
   ASSERT_NE(implication, nullptr);
   EXPECT_FALSE(power->rightAssociative);
   EXPECT_TRUE(implication->rightAssociative);
+  const auto *conditional = findVPISourceOperator("conditional", 3);
+  ASSERT_NE(conditional, nullptr);
+  EXPECT_EQ(conditional->value, vpiConditionOp);
+  EXPECT_EQ(conditional->arity, 3u);
+  EXPECT_STREQ(conditional->token, "?:");
+  EXPECT_TRUE(conditional->rightAssociative);
+  EXPECT_GT(conditional->precedence, implication->precedence);
+  EXPECT_LT(conditional->precedence,
+            findVPISourceOperator(vpiLogOrOp)->precedence);
   EXPECT_GT(power->precedence, add->precedence);
   EXPECT_GT(add->precedence, implication->precedence);
 }

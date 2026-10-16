@@ -10537,12 +10537,20 @@ bool decompileSourceExpression(__vpiHandle *handle, std::string &result) {
             statement)
           return invalid();
         child.parentPrecedence = operation->precedence;
-        child.parenthesizeEqual = operation->arity == 2 &&
-                                  (ordinal == 0 ? operation->rightAssociative
-                                                : !operation->rightAssociative);
+        child.parenthesizeEqual =
+            operation->arity == 3
+                ? ordinal != 2
+                : operation->arity == 2 &&
+                      (ordinal == 0 ? operation->rightAssociative
+                                    : !operation->rightAssociative);
         pending.push_back(std::move(child));
-        if (ordinal != 0)
-          pending.push_back(token(std::string(" ") + operation->token + " "));
+        if (ordinal != 0) {
+          std::string separator =
+              operation->arity == 3
+                  ? std::string(1, operation->token[ordinal - 1])
+                  : operation->token;
+          pending.push_back(token(" " + separator + " "));
+        }
       }
       if (operation->arity == 1)
         append(std::string(operation->token) + " ");

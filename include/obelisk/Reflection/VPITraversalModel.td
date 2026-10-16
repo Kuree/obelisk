@@ -1644,6 +1644,7 @@ def SourceOperatorBinaryAnd : VPISourceOperator<"binary_and", 28, 2, "&", 7>;
 def SourceOperatorBinaryOr : VPISourceOperator<"binary_or", 29, 2, "|", 5>;
 def SourceOperatorBinaryXor : VPISourceOperator<"binary_xor", 30, 2, "^", 6>;
 def SourceOperatorBinaryXnor : VPISourceOperator<"binary_xnor", 31, 2, "~^", 6>;
+def SourceOperatorConditional : VPISourceOperator<"conditional", 32, 3, "?:", 2, 1>;
 def SourceOperatorArithmeticShiftLeft : VPISourceOperator<"arithmetic_shift_left", 41, 2, "<<<", 10>;
 def SourceOperatorArithmeticShiftRight : VPISourceOperator<"arithmetic_shift_right", 42, 2, ">>>", 10>;
 def SourceOperatorPower : VPISourceOperator<"power", 43, 2, "**", 13>;

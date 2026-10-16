@@ -22,6 +22,81 @@ obelisk.sv.expression.integer_literal attributes {node_id = 7 : i64, constant_va
 }
 }
       }
+      obelisk.sv.symbol.generic_class_def @h attributes {hierarchical_name = "H", name = "H", node_id = 199 : i64,
+          is_interface = false, specialization_count = 0 : i64} {
+        obelisk.sv.source.value_parameter @n attributes {node_id = 227 : i64, hierarchical_name = "H::N", name = "N"} {
+        obelisk.sv.source.value_default attributes {node_id = 228 : i64} {
+        obelisk.sv.expression.integer_literal attributes {node_id = 201 : i64, constant_value = "1", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        }
+        obelisk.sv.source.value_parameter @simple attributes {node_id = 229 : i64, hierarchical_name = "H::Simple", name = "Simple"} {
+        obelisk.sv.source.value_default attributes {node_id = 230 : i64} {
+        obelisk.sv.source.conditional_expression attributes {node_id = 205 : i64} {
+        obelisk.sv.source.parameter_reference attributes {node_id = 202 : i64, parameter = @n} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 203 : i64, constant_value = "2", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 204 : i64, constant_value = "3", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        }
+        }
+        obelisk.sv.source.value_parameter @condition attributes {node_id = 231 : i64, hierarchical_name = "H::Condition", name = "Condition"} {
+        obelisk.sv.source.value_default attributes {node_id = 232 : i64} {
+        obelisk.sv.source.conditional_expression attributes {node_id = 212 : i64} {
+        obelisk.sv.source.conditional_expression attributes {node_id = 209 : i64} {
+        obelisk.sv.source.parameter_reference attributes {node_id = 206 : i64, parameter = @n} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 207 : i64, constant_value = "4", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 208 : i64, constant_value = "5", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 210 : i64, constant_value = "6", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 211 : i64, constant_value = "7", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        }
+        }
+        obelisk.sv.source.value_parameter @left attributes {node_id = 233 : i64, hierarchical_name = "H::Left", name = "Left"} {
+        obelisk.sv.source.value_default attributes {node_id = 234 : i64} {
+        obelisk.sv.source.conditional_expression attributes {node_id = 219 : i64} {
+        obelisk.sv.source.parameter_reference attributes {node_id = 213 : i64, parameter = @n} {
+        }
+        obelisk.sv.source.conditional_expression attributes {node_id = 217 : i64} {
+        obelisk.sv.source.parameter_reference attributes {node_id = 214 : i64, parameter = @n} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 215 : i64, constant_value = "8", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 216 : i64, constant_value = "9", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 218 : i64, constant_value = "10", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        }
+        }
+        obelisk.sv.source.value_parameter @right attributes {node_id = 235 : i64, hierarchical_name = "H::Right", name = "Right"} {
+        obelisk.sv.source.value_default attributes {node_id = 236 : i64} {
+        obelisk.sv.source.conditional_expression attributes {node_id = 226 : i64} {
+        obelisk.sv.source.parameter_reference attributes {node_id = 220 : i64, parameter = @n} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 221 : i64, constant_value = "11", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.source.conditional_expression attributes {node_id = 225 : i64} {
+        obelisk.sv.source.parameter_reference attributes {node_id = 222 : i64, parameter = @n} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 223 : i64, constant_value = "12", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 224 : i64, constant_value = "13", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        }
+        }
+        }
+        }
+      }
       obelisk.sv.type.class_type @c attributes {bitstream_width = 0 : i64,
           declared_interfaces = [], generic_parameter_paths = [], generic_parameter_symbols = [],
           has_base_constructor_call = false, has_cycles = false, hierarchical_name = "C",
@@ -93,3 +168,8 @@ obelisk.sv.source.parameter_reference attributes {node_id = 38 : i64, parameter 
 // CHECK-DAG: simulation.vpi_relation.decl <kind = symbol, symbol = @[[MADD]]> selector 97 iterate ordinal 0 to <kind = symbol, symbol = @[[N]]>
 // CHECK-DAG: simulation.vpi_object.anchor @[[MVAL:[^ ]+]] {{.*}}type 7 {{.*}}parent @[[MADD]] ordinal 0 hierarchy "" debug ""
 // CHECK-DAG: simulation.vpi_relation.decl <kind = symbol, symbol = @[[MADD]]> selector 97 iterate ordinal 1 to <kind = symbol, symbol = @[[MVAL]]>
+
+// CHECK-DAG: simulation.vpi_object.anchor @[[COND:[^ ]+]] {{.*}}type 39 {{.*}}selector = 39 : i32, value = 32 : i32
+// CHECK-DAG: simulation.vpi_relation.decl <kind = symbol, symbol = @[[COND]]> selector 97 iterate ordinal 0
+// CHECK-DAG: simulation.vpi_relation.decl <kind = symbol, symbol = @[[COND]]> selector 97 iterate ordinal 1
+// CHECK-DAG: simulation.vpi_relation.decl <kind = symbol, symbol = @[[COND]]> selector 97 iterate ordinal 2

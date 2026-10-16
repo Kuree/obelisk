@@ -114,20 +114,21 @@ mlir::LogicalResult verifyValueParameter(Parameter op) {
   return mlir::success();
 }
 
-template <typename Root, typename Unary, typename Binary, typename Reference,
-          typename Literal, typename Expression>
+template <typename Root, typename Unary, typename Binary, typename Conditional,
+          typename Reference, typename Literal, typename Expression>
 mlir::LogicalResult verifyValueExpression(Expression op, unsigned operands) {
   if (op->hasAttr("semantic_type"))
     return op.emitOpError(
         "unbound source expression cannot carry an effective type");
-  if (!mlir::isa_and_nonnull<Root, Unary, Binary>(op->getParentOp()))
+  if (!mlir::isa_and_nonnull<Root, Unary, Binary, Conditional>(
+          op->getParentOp()))
     return op.emitOpError(
         "source expression requires an original value default owner");
   if (childCount(op) != operands)
     return op.emitOpError("source expression has an incorrect operand count");
   if (!op.getBody().empty())
     for (mlir::Operation &child : op.getBody().front())
-      if (!mlir::isa<Unary, Binary, Reference, Literal>(child))
+      if (!mlir::isa<Unary, Binary, Conditional, Reference, Literal>(child))
         return op.emitOpError(
             "source expression operand must be a supported typed node");
   return mlir::success();

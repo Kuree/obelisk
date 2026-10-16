@@ -112,3 +112,41 @@ obelisk.sv.source.type_default attributes {node_id = 2 : i64, semantic_type = !o
 obelisk.sv.source.unsupported_default attributes {node_id = 4 : i64, syntax = "T[1:0]", reason = "dependent"} {}
 }
 }
+
+// -----
+
+module {
+obelisk.sv.symbol.generic_class_def @g attributes {hierarchical_name = "G", name = "G", node_id = 0 : i64, is_interface = false, specialization_count = 0 : i64} {
+obelisk.sv.source.value_parameter @p attributes {name = "P", node_id = 1 : i64} {
+obelisk.sv.source.value_default attributes {node_id = 2 : i64} {
+// expected-error @+1 {{source expression has an incorrect operand count}}
+obelisk.sv.source.conditional_expression attributes {node_id = 3 : i64} {
+        obelisk.sv.expression.integer_literal attributes {node_id = 237 : i64, constant_value = "0", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 238 : i64, constant_value = "1", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+}
+}
+}
+}
+}
+
+// -----
+
+module {
+obelisk.sv.symbol.generic_class_def @g attributes {hierarchical_name = "G", name = "G", node_id = 0 : i64, is_interface = false, specialization_count = 0 : i64} {
+obelisk.sv.source.value_parameter @p attributes {name = "P", node_id = 1 : i64} {
+obelisk.sv.source.value_default attributes {node_id = 2 : i64} {
+// expected-error @+1 {{unbound source expression cannot carry an effective type}}
+obelisk.sv.source.conditional_expression attributes {node_id = 3 : i64, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        obelisk.sv.expression.integer_literal attributes {node_id = 239 : i64, constant_value = "0", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 240 : i64, constant_value = "1", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+        obelisk.sv.expression.integer_literal attributes {node_id = 241 : i64, constant_value = "2", is_signed = true, semantic_type = !obelisk.integral<32, true, false, 31 : 0, int>} {
+        }
+}
+}
+}
+}
+}
