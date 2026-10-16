@@ -110,6 +110,11 @@ static LogicalResult verifyVPIProperties(Operation *operation,
             reflection::VPIPropertyRealization::OptionalImage)
       return operation->emitOpError()
              << "VPI property " << selector << " is not a FixedImage property";
+    if (exactKind == uint32_t(reflection::VPIObjectKind::Function) &&
+        selector == 4 &&
+        !cast<IntegerAttr>(property.getValue()).getValue().isZero())
+      return operation->emitOpError(
+          "fixed function Size is reserved for source-proven void returns");
     if (selector == 74 && cast<BoolAttr>(property.getValue()).getValue() !=
                               operation->hasAttr("is_protected"))
       return operation->emitOpError(
@@ -5965,6 +5970,46 @@ LogicalResult SimDesignOp::verifyRegions() {
       return relation.emitOpError(
           "is not a legal non-containment traversal in the generated VPI "
           "model");
+
+    if (relation.getSelector() ==
+        uint32_t(reflection::VPIRelationKind::ReturnRel)) {
+      auto anchor = dyn_cast_or_null<SimVPIObjectAnchorOp>(
+          symbolDeclaration(relation.getSource()));
+      auto backing = anchor ? anchor.getBackingAttr() : VPIObjectBackingAttr{};
+      auto unit = backing && backing.getKind() == VPIObjectBackingKind::CodeUnit
+                      ? codeUnits.lookup(backing.getId().getInt())
+                      : SimCodeUnitDeclOp{};
+      bool exact = unit && !unit.getInternal() &&
+                   unit.getCodeUnitKind() == EntryKind::Function;
+      if (auto properties =
+              unit ? reflectionProperties(unit) : VPIPropertySetAttr{})
+        for (Attribute property : properties.getProperties())
+          exact &= cast<VPIPropertyAttr>(property).getSelector().getInt() != 4;
+      if (!exact)
+        return relation.emitOpError(
+            "Return requires a nonvoid public function owner");
+      StringRef name;
+      if (auto local = dyn_cast_or_null<SimVPILocalDeclOp>(
+              symbolDeclaration(relation.getTarget()))) {
+        exact &= local.getCodeUnitId() == unit.getId() &&
+                 !local.getStatementScopeIdAttr();
+        name = local.getDebugName();
+      } else if (relation.getTarget().getKind() == VPIObjectRefKind::Storage) {
+        uint64_t id = relation.getTarget().getId().getInt();
+        auto storage = storagesById.lookup(id);
+        exact &= llvm::any_of(staticLocals, [&](auto binding) {
+          return binding.getStorageId() == id &&
+                 binding.getCodeUnitId() == unit.getId() &&
+                 !binding.getStatementScopeIdAttr();
+        });
+        if (storage)
+          name = storage.getDebugName().value_or("");
+      } else
+        exact = false;
+      if (!exact || name.empty() || name != anchor.getDebugName())
+        return relation.emitOpError(
+            "Return requires the function's exact root-scope return variable");
+    }
 
     auto numericId = [](VPIObjectRefAttr reference) {
       return reference.getId() ? reference.getId().getValue().getZExtValue()

@@ -55,7 +55,12 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
         if (isa<semantic::SVFormalArgumentSymbolOp>(child))
           add(child, {});
       auto routine = cast<semantic::SVSubroutineSymbolOp>(unit.source);
-      if (auto path = routine.getReturnVariablePath()) {
+      if (auto reference = routine.getReturnVariableSymbolAttr()) {
+        auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(
+            sourceSymbols.lookupSymbolIn(module, reference));
+        if (variable && variable->getParentOp() == routine)
+          add(variable, {});
+      } else if (auto path = routine.getReturnVariablePath()) {
         for (Operation *child : getChildren(unit.source))
           if (isa<semantic::SVVariableSymbolOp>(child) &&
               getHierarchyName(child) == *path)
@@ -200,6 +205,69 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
     for (Candidate candidate : candidates)
       if (failed(materialize(candidate)))
         return failure();
+
+    // The implicit return variable already has a declaration identity. Retain
+    // its exact source-symbol relationship, independently of execution or IPO.
+    if (auto routine = dyn_cast<semantic::SVSubroutineSymbolOp>(unit.source);
+        routine &&
+        routine.getSubroutineKind() == semantic::SVSubroutineKind::Function) {
+      auto signature =
+          routine.getSemanticType()
+              ? dyn_cast<semantic::SubroutineType>(*routine.getSemanticType())
+              : semantic::SubroutineType{};
+      auto functionType = signature
+                              ? dyn_cast<FunctionType>(signature.getSignature())
+                              : FunctionType{};
+      bool isVoid = functionType && functionType.getNumResults() == 1 &&
+                    isa<semantic::VoidType>(functionType.getResult(0));
+      if (isVoid) {
+        SmallVector<Attribute> properties;
+        if (auto existing =
+                owner->getAttrOfType<sim::VPIPropertySetAttr>("vpi_properties"))
+          llvm::append_range(properties, existing.getProperties());
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(4),
+            builder.getI32IntegerAttr(0)));
+        llvm::sort(properties, [](Attribute left, Attribute right) {
+          return cast<sim::VPIPropertyAttr>(left).getSelector().getInt() <
+                 cast<sim::VPIPropertyAttr>(right).getSelector().getInt();
+        });
+        owner->setAttr("vpi_properties", sim::VPIPropertySetAttr::get(
+                                             builder.getContext(),
+                                             builder.getArrayAttr(properties)));
+      } else if (auto reference = routine.getReturnVariableSymbolAttr()) {
+        auto variable = dyn_cast_or_null<semantic::SVVariableSymbolOp>(
+            sourceSymbols.lookupSymbolIn(module, reference));
+        auto anchor = sim::get<sim::metadata::VpiAnchor>(routine);
+        sim::VPIObjectRefAttr target;
+        if (variable && variable->getParentOp() == routine && anchor) {
+          if (auto local = sim::get<sim::metadata::VpiLocal>(variable))
+            target = sim::VPIObjectRefAttr::get(
+                builder.getContext(), sim::VPIObjectRefKind::Symbol, {}, local);
+          else if (auto found = descriptors.find(getHierarchyName(variable));
+                   found != descriptors.end() &&
+                   isContextResolvableStorage(found->second))
+            for (auto binding :
+                 design.getOps<sim::SimVPIStaticLocalBindingOp>())
+              if (binding.getStorageId() == found->second.id &&
+                  binding.getCodeUnitId() == owner.getId() &&
+                  !binding.getStatementScopeIdAttr()) {
+                target = sim::VPIObjectRefAttr::get(
+                    builder.getContext(), sim::VPIObjectRefKind::Storage,
+                    builder.getI64IntegerAttr(found->second.id));
+                break;
+              }
+        }
+        if (target)
+          sim::SimVPIRelationDeclOp::create(
+              builder, getSemanticLocation(routine),
+              sim::VPIObjectRefAttr::get(builder.getContext(),
+                                         sim::VPIObjectRefKind::Symbol, {},
+                                         anchor),
+              uint32_t(reflection::VPIRelationKind::ReturnRel),
+              sim::VPIRelationMode::Handle, 0, target);
+      }
+    }
 
     // Foreach iterators are implicit symbols owned by the loop's scope, not
     // ordinary declaration statements or members of the indexed collection.

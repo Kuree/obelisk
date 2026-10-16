@@ -206,6 +206,14 @@ computed occurrences remain distinct. Argument queries read current supported
 values without executing a call. Defaulted, output/ref, method/system, and
 unsupported argument groups remain unavailable. Source function results report
 a notice because the inventory does not retain an invocation result.
+Function declarations expose their exact implicit return variable through
+`vpiReturn`, preserving its existing automatic/static identity and declared
+typespec. Function `vpiSize` and `vpiSigned` use retained return-type facts;
+explicit range queries reuse that return type. A source-proven void function
+has size zero. Missing return metadata and invocation-dependent string sizes
+remain unavailable. This adds only a relation per retained return and a sparse
+void-size fact, without duplicating variables or types. Legacy `vpiFuncType`
+categorization remains a follow-up.
 Unsupported source statement forms remain unbound.
 
 Virtual-interface call lowering considers every elaborated instance of the exact

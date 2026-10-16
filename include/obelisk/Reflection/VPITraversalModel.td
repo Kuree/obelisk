@@ -603,7 +603,8 @@ def StructuralSizeProperty : VPIProperty<"vpiSize", 4, IntegerProperty,
   "37.11; 37.13; 37.14; 37.16; 37.17; 37.18; 37.19; 37.22; 37.28; "
   "37.35; 37.36; 37.41; 37.59; 37.85", StaticProperty,
   DeniedWhenProtected, 0, DynamicSizePropertyObjects,
-  ProtectedExpressionSizeObjects, DerivedProperty, NoPropertyObjects,
+  ProtectedExpressionSizeObjects, DerivedProperty,
+  VPIObjectSet<"VoidFunctionSizeProperties", [Function]>,
   DynamicSizePropertyObjects>;
 def StructuralPackedProperty : VPIProperty<"vpiPacked", 630,
   BooleanProperty, PackedPropertyObjects, "37.18; 37.24; 37.25; 37.26">;

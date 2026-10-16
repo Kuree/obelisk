@@ -4649,6 +4649,8 @@ bool validateDatabaseImpl(const Database &database) {
   // Fixed properties are a sparse, globally sorted map.  Validate against the
   // generated exact-kind catalog once when publishing the immutable image so
   // every VPI query can use a zero-allocation binary search.
+  std::unordered_set<uint32_t> voidFunctions;
+  std::unordered_map<uint32_t, uint32_t> functionReturns;
   bool havePreviousFixedProperty = false;
   uint32_t previousFixedSource = 0;
   uint16_t previousFixedSelector = 0;
@@ -4763,6 +4765,12 @@ bool validateDatabaseImpl(const Database &database) {
         fixedNames.emplace(packedSource, value);
       break;
     }
+    }
+    if (exactKind == uint32_t(obelisk::reflection::VPIObjectKind::Function) &&
+        selector == 4) {
+      if (payload != 0)
+        return false;
+      voidFunctions.insert(packedSource);
     }
     if (selector == 33)
       primitiveTypes.emplace(packedSource, static_cast<uint32_t>(payload));
@@ -8236,6 +8244,20 @@ bool validateDatabaseImpl(const Database &database) {
     }
 
     uint32_t sourceEndpoint = relationEndpoint(sourceTable, sourceIndex);
+    if (!iterate &&
+        selector == uint32_t(obelisk::reflection::VPIRelationKind::ReturnRel)) {
+      if (sourceTable != obelisk::reflection::TableKind::Object ||
+          recordKind(sourceRecord) != OBELISK_RT_DESIGN_RECORD_FUNCTION ||
+          (read32(sourceRecord + 4) & OBELISK_RT_DESIGN_CAP_INTERNAL) ||
+          voidFunctions.count(sourceEndpoint) ||
+          (!frameLocals.count(packedTarget) &&
+           !proceduralStaticStorage.count(packedTarget)) ||
+          fixedNames.find(sourceEndpoint) == fixedNames.end() ||
+          fixedNames.find(packedTarget) == fixedNames.end() ||
+          fixedNames.at(sourceEndpoint) != fixedNames.at(packedTarget) ||
+          !functionReturns.emplace(packedTarget, sourceEndpoint).second)
+        return false;
+    }
     if (unresolvedTypeAliases.count(packedTarget)) {
       if (iterate &&
           selector == static_cast<uint32_t>(
@@ -8788,6 +8810,16 @@ bool validateDatabaseImpl(const Database &database) {
   if (foreachNullOwners.size() != foreachNulls.size() ||
       foreachCollections.size() != foreachSlotCounts.size())
     return false;
+  for (const auto &[variable, function] : functionReturns) {
+    auto automatic = frameLocalOwners.find(variable);
+    auto persistent = proceduralStaticScopes.find(variable);
+    if ((automatic != frameLocalOwners.end() &&
+         automatic->second != function) ||
+        (automatic == frameLocalOwners.end() &&
+         (persistent == proceduralStaticScopes.end() ||
+          persistent->second != function)))
+      return false;
+  }
   for (const auto &[owner, count] : foreachSlotCounts) {
     auto collection = foreachCollections.find(owner);
     uint32_t semanticIndex = 0;

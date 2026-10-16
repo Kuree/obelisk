@@ -3922,6 +3922,70 @@ bool isEmptyDimension(uint32_t kind) {
          kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_OPEN_ARRAY;
 }
 
+// A function's return relation names the existing variable declaration; it
+// never denotes an invocation result or causes the function to execute.
+bool functionReturnVariable(__vpiHandle *function, __vpiHandle &variable) {
+  VPIRelationRange range{};
+  obelisk_rt_design_cursor_v1 cursor{};
+  uint32_t kind = 0;
+  bool statement = false;
+  if (obelisk_rt_cached_vpi_relation_range(function->owner->context,
+                                           function->cursor, vpiReturn, false,
+                                           &range) != OBELISK_RT_OK ||
+      obelisk_rt_cached_vpi_relation_target(function->owner->context,
+                                            range.first, &cursor, &kind,
+                                            &statement) != OBELISK_RT_OK ||
+      statement)
+    return false;
+  variable.owner = function->owner;
+  variable.cursor = cursor;
+  variable.exactVpiType = kind;
+  variable.protectedObject = function->protectedObject;
+  return true;
+}
+
+PLI_INT32 functionReturnProperty(__vpiHandle *function, PLI_INT32 property) {
+  __vpiHandle variable;
+  obelisk_rt_design_cursor_v1 semantic{};
+  obelisk_rt_design_semantic_type_info_v1 type{};
+  auto unavailable = [&]() {
+    setError(function->owner,
+             "function return property requires retained static type facts",
+             vpiNotice);
+    return vpiUndefined;
+  };
+  if (!functionReturnVariable(function, variable) ||
+      !semanticCursorFor(&variable, semantic) ||
+      !semanticTypeInfo(&variable, semantic, type))
+    return unavailable();
+  if (property == vpiSigned)
+    return (type.flags & OBELISK_RT_DESIGN_SEMANTIC_SIGNED) != 0;
+  uint64_t width = 0;
+  bool packed = (type.kind >= OBELISK_RT_DESIGN_SEMANTIC_GENERIC_INTEGRAL &&
+                 type.kind <= OBELISK_RT_DESIGN_SEMANTIC_TIME) ||
+                type.kind == OBELISK_RT_DESIGN_SEMANTIC_ENUM ||
+                type.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_ARRAY ||
+                type.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_STRUCT ||
+                type.kind == OBELISK_RT_DESIGN_SEMANTIC_PACKED_UNION;
+  if (packed &&
+      obelisk_rt_cached_design_semantic_bit_width(
+          function->owner->context, semantic, &width) == OBELISK_RT_OK)
+    return static_cast<PLI_INT32>(std::min<uint64_t>(width, INT32_MAX));
+  if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_STRUCT ||
+      type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_UNION)
+    return static_cast<PLI_INT32>(
+        std::min<uint32_t>(type.edge_count, INT32_MAX));
+  if (type.kind == OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
+    obelisk_rt_design_info_v1 info{};
+    uint64_t count = 0;
+    if (infoFor(&variable, info) && info.type_offset &&
+        unpackedArrayElementCount(&variable, {info.type_offset}, count))
+      return static_cast<PLI_INT32>(std::min<uint64_t>(count, INT32_MAX));
+  }
+  // In particular, a string return's length is invocation-dependent.
+  return unavailable();
+}
+
 bool isDimensionForTypespec(uint32_t publicType, uint32_t semanticKind,
                             uint32_t semanticFlags,
                             bool suppressDimension = false) {
@@ -9501,6 +9565,24 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
           type == vpiLeftRange ? left : right);
     }
   }
+  if (handle->form == VPIObjectForm::Design && sourceType == vpiFunction &&
+      (type == vpiLeftRange || type == vpiRightRange)) {
+    __vpiHandle variable;
+    obelisk_rt_design_cursor_v1 semantic{};
+    obelisk_rt_design_semantic_type_info_v1 info{};
+    if (!functionReturnVariable(handle, variable) ||
+        !semanticCursorFor(&variable, semantic) ||
+        !semanticTypeInfo(&variable, semantic, info) ||
+        !isDimensionForVPIObject(variable.exactVpiType, info.kind,
+                                 info.flags) ||
+        (info.flags & OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE) == 0 ||
+        isEmptyDimension(info.kind))
+      return nullptr;
+    return makeSemanticObjectHandle(
+        handle->owner, VPIObjectForm::IntegralConstant, variable.cursor,
+        semantic, type == vpiLeftRange ? 0 : 1, vpiConstant,
+        type == vpiLeftRange ? info.range_left : info.range_right);
+  }
   if (rejectUnavailableInheritanceRelation(handle, type, false))
     return nullptr;
   if ((type == vpiTypespec || type == vpiExpr) &&
@@ -11179,6 +11261,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     return static_cast<PLI_INT32>(optional.payload);
   if (optionalStatus != OBELISK_RT_EOF)
     return vpiUndefined;
+  if (handle->form == VPIObjectForm::Design &&
+      vpiTypeForHandle(handle) == vpiFunction &&
+      (property == vpiSize || property == vpiSigned)) {
+    VPIFixedPropertyValue value{};
+    if (property == vpiSize && obelisk_rt_cached_vpi_fixed_property(
+                                   handle->owner->context, handle->cursor,
+                                   vpiSize, &value) == OBELISK_RT_OK)
+      return static_cast<PLI_INT32>(value.payload);
+    return functionReturnProperty(handle, property);
+  }
   if (propertyDescriptor->realization ==
           obelisk::reflection::VPIPropertyRealization::FixedImage ||
       propertyDescriptor->realization ==
