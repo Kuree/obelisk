@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PrepareTopology.h"
+#include "PrepareExpressions.h"
 #include "PrepareRandomFunctions.h"
 #include "obelisk/Dialect/Schedule/ScheduleAttrs.h"
 
@@ -4830,7 +4831,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
 
   uint64_t nextPortId = 0;
   SmallVector<std::pair<sim::SimPortDeclOp, semantic::SVPortConnectionOp>>
-      declaredNetPorts;
+      declaredNetPorts, declaredPorts;
   llvm::StringSet<> emittedPorts;
   auto hasInterconnectLeaves = [&](StringRef root) {
     std::string prefix = (root + Twine("[")).str();
@@ -4931,6 +4932,7 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
             ? builder.getStringAttr(*connection.getFormalName())
             : StringAttr{},
         *formalVPIType);
+    declaredPorts.emplace_back(declaration, connection);
     if (source->second.kind == DescriptorInfo::Kind::Net)
       declaredNetPorts.emplace_back(declaration, connection);
     cov::mark<cov::SourceAuthored>(declaration);
@@ -5106,19 +5108,51 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
           builder, getSemanticLocation(connection), source,
           static_cast<uint32_t>(reflection::VPIRelationKind::LowConnRel),
           sim::VPIRelationMode::Handle, 0, low->second.reference);
+  }
+
+  struct ReverseRelation {
+    sim::VPIObjectRefAttr source;
+    uint32_t selector;
+    sim::VPIObjectRefAttr target;
+    Location location;
+  };
+  SmallVector<ReverseRelation> reverseRelations;
+
+  // Both variable and net ports retain the exact higher-side expression.
+  // Electrical collapse does not decide the identity of the declaration that
+  // appeared in source; named variables and independently resolved nets are
+  // equally valid whole-object connections (37.14).
+  VPIExpressionResolver portExpressions(design, descriptors);
+  const auto *highConnection = reflection::findVPITraversal(
+      static_cast<uint32_t>(VPIKind::Port),
+      static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
+      reflection::VPITraversalMode::Handle);
+  for (auto [port, connection] : declaredPorts) {
     Operation *actual = getPortActualLValue(connection);
-    FailureOr<StaticStorageView> view =
-        actual ? getStaticStorageView(actual)
-               : FailureOr<StaticStorageView>(failure());
-    if (failed(view) || !view->identity)
+    if (!actual)
       continue;
-    auto high = declaredNets.find(view->path);
-    if (high != declaredNets.end() &&
-        (declaredLow || low->second.backingNetId == high->second.backingNetId))
-      sim::SimVPIRelationDeclOp::create(
-          builder, getSemanticLocation(connection), source,
-          static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
-          sim::VPIRelationMode::Handle, 0, high->second.reference);
+    auto high = portExpressions.resolve(actual);
+    if (!high || !highConnection ||
+        !reflection::vpiObjectSetContains(highConnection->targets, high->kind))
+      continue;
+    auto source = sim::VPIObjectRefAttr::get(
+        builder.getContext(), sim::VPIObjectRefKind::Port, port.getIdAttr());
+    sim::SimVPIRelationDeclOp::create(
+        builder, getSemanticLocation(connection), source,
+        static_cast<uint32_t>(reflection::VPIRelationKind::HighConnRel),
+        sim::VPIRelationMode::Handle, 0, high->reference);
+    for (auto selector : {reflection::VPIRelationKind::PortInstRel,
+                          reflection::VPIRelationKind::UseRel}) {
+      auto *edge = reflection::findVPITraversal(
+          high->kind, static_cast<uint32_t>(selector),
+          reflection::VPITraversalMode::Iterate);
+      if (!edge || !reflection::vpiObjectSetContains(
+                       edge->targets, static_cast<uint32_t>(VPIKind::Port)))
+        continue;
+      reverseRelations.push_back({high->reference,
+                                  static_cast<uint32_t>(selector), source,
+                                  getSemanticLocation(connection)});
+    }
   }
 
   // Preserve direct whole-object operands of scope-owned statements as cold
@@ -5269,13 +5303,6 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   auto selectorValue = [](reflection::VPIRelationKind relation) {
     return static_cast<uint32_t>(relation);
   };
-  struct ReverseRelation {
-    sim::VPIObjectRefAttr source;
-    uint32_t selector;
-    sim::VPIObjectRefAttr target;
-    Location location;
-  };
-  SmallVector<ReverseRelation> reverseRelations;
   auto addReverse = [&](const DirectEndpoint &source, uint32_t selector,
                         const ScopeOwnedStatementPlan &target) {
     const auto *edge = reflection::findVPITraversal(
@@ -5415,14 +5442,17 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   }
   llvm::sort(reverseRelations, [](const ReverseRelation &left,
                                   const ReverseRelation &right) {
-    uint64_t leftSource = left.source.getId().getValue().getZExtValue();
-    uint64_t rightSource = right.source.getId().getValue().getZExtValue();
-    uint64_t leftTarget = left.target.getId().getValue().getZExtValue();
-    uint64_t rightTarget = right.target.getId().getValue().getZExtValue();
-    return std::make_tuple(left.source.getKind(), leftSource, left.selector,
-                           leftTarget) <
-           std::make_tuple(right.source.getKind(), rightSource, right.selector,
-                           rightTarget);
+    auto targetKey = [](sim::VPIObjectRefAttr reference) {
+      return std::tuple(
+          reference.getKind(),
+          reference.getId() ? reference.getId().getValue().getZExtValue() : 0,
+          reference.getSymbol() ? reference.getSymbol().getValue()
+                                : StringRef{});
+    };
+    return std::make_tuple(targetKey(left.source), left.selector,
+                           targetKey(left.target)) <
+           std::make_tuple(targetKey(right.source), right.selector,
+                           targetKey(right.target));
   });
   reverseRelations.erase(std::unique(reverseRelations.begin(),
                                      reverseRelations.end(),
