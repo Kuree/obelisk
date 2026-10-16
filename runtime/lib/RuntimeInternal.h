@@ -3206,6 +3206,25 @@ obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
                               const obelisk_rt_element_type_v1 **outElement,
                               std::vector<uint8_t> &outValues);
 
+// Sparse associative snapshots preserve exact stored keys and value planes.
+// Managed key words remain weak; callers keep their lane active until copying
+// the referenced values. Entries are returned in the runtime's index order,
+// without publishing or allocating its managed ordering cache.
+struct VPIAssocSnapshotEntry {
+  uint64_t keyWidth = 0;
+  std::vector<uint8_t> key;
+  std::vector<uint8_t> value;
+};
+struct VPIAssocSnapshot {
+  uint32_t keyKind = 0;
+  uint64_t keyWidth = 0;
+  const obelisk_rt_element_type_v1 *keyElement = nullptr;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  std::vector<VPIAssocSnapshotEntry> entries;
+};
+obelisk_rt_status obelisk_rt_assoc_snapshot(obelisk_rt_object_v1 *array,
+                                            VPIAssocSnapshot *outSnapshot);
+
 // Returns logical process tokens, including the native-process tag. The
 // caller holds an active lane and no lease for object; the helper does not
 // change wait readiness or scheduler state and promises no iteration order.

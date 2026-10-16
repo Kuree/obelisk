@@ -103,8 +103,12 @@ queryable but their values are unavailable. Void tags appear only in the
 typespec's member inventory. Packed union values retain their value and unknown
 bits; unpacked union values are accessed through their members. Nested variable
 views preserve member names, array indices, packed-bit selections, and parent
-relations after the mailbox is collected. Associative-array and untyped mailbox
-message snapshots are still being completed.
+relations after the mailbox is collected. Associative arrays expose their
+stored values in index order and copied key expressions through `vpiIndex`,
+including wide integral, string, composite, and wildcard keys. Default values
+are excluded from the stored-entry inventory. Nested unpacked-array iteration
+flattens to leaf variables while indexed access retains intermediate arrays.
+Untyped mailbox message snapshots are still being completed.
 
 Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`

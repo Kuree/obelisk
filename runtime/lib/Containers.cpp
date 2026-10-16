@@ -6996,6 +6996,172 @@ static obelisk_rt_status compareAssocSlotWithKey(const ContainerHeader &header,
   return OBELISK_RT_OK;
 }
 
+obelisk_rt_status obelisk_rt_assoc_snapshot(obelisk_rt_object_v1 *array,
+                                            VPIAssocSnapshot *outSnapshot) {
+  if (!outSnapshot)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSnapshot = {};
+  ContainerHeader snapshot{};
+  auto status = snapshotHeader(array, snapshot);
+  if (status != OBELISK_RT_OK)
+    return status;
+  if (snapshot.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  struct Entry {
+    VPIAssocSnapshotEntry value;
+    std::vector<uint8_t> order;
+    uint64_t integral = 0;
+  };
+  struct Copy {
+    VPIAssocSnapshot result;
+    std::vector<Entry> entries;
+  } copy;
+  OBELISK_RT_TRY {
+    status = obelisk_rt_managed_object_access(
+        array, OBELISK_RT_MANAGED_CONTAINER,
+        [](void *opaque, uint8_t *object,
+           uint64_t extent) -> obelisk_rt_status {
+          auto &copy = *static_cast<Copy *>(opaque);
+          if (extent != sizeof(ContainerHeader))
+            return OBELISK_RT_INVALID_HANDLE;
+          const auto &header = *reinterpret_cast<ContainerHeader *>(object);
+          if (header.descriptor != &containerDescriptorToken ||
+              header.kind != OBELISK_RT_CONTAINER_ASSOCIATIVE_ARRAY)
+            return OBELISK_RT_INVALID_HANDLE;
+          copy.result.keyKind = header.keyKind;
+          copy.result.keyWidth = header.keyWidth;
+          copy.result.keyElement = header.keyElement;
+          copy.result.element = header.element;
+          if (header.size > SIZE_MAX)
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          copy.entries.reserve(static_cast<size_t>(header.size));
+          if (!header.size)
+            return OBELISK_RT_OK;
+          const uint64_t stride = assocSlotStride(header.element);
+          const uint64_t valueSize = elementStride(header.element);
+          uint64_t capacityBytes = 0;
+          if (valueSize > SIZE_MAX ||
+              !multiplyFits(header.capacity, stride, capacityBytes))
+            return OBELISK_RT_OUT_OF_RESOURCES;
+          return accessBuffer(header.buffer, [&](uint8_t *data,
+                                                 uint64_t extent) {
+            if (extent < capacityBytes)
+              return OBELISK_RT_INVALID_HANDLE;
+            for (uint64_t index = 0; index != header.capacity; ++index) {
+              const auto &slot =
+                  *reinterpret_cast<AssocSlot *>(data + index * stride);
+              if (slot.hash == emptyAssocHash)
+                continue;
+              Entry entry;
+              entry.integral = slot.integral;
+              entry.value.keyWidth = header.keyWidth;
+              const auto *value =
+                  data + index * stride + assocValueOffset(header.element);
+              entry.value.value.assign(value, value + valueSize);
+              auto word = [&](uint64_t bits) {
+                entry.value.key.resize(sizeof(bits));
+                std::memcpy(entry.value.key.data(), &bits, sizeof(bits));
+              };
+              obelisk_rt_status status = OBELISK_RT_OK;
+              switch (header.keyKind) {
+              case OBELISK_RT_ASSOC_KEY_STRING: {
+                word(slot.string);
+                StringView view;
+                status = readString(slot.string, view);
+                if (status != OBELISK_RT_OK)
+                  return status;
+                entry.order.assign(view.bytes, view.bytes + view.size);
+                break;
+              }
+              case OBELISK_RT_ASSOC_KEY_CLASS:
+                word(obelisk_rt_managed_word_from_object(slot.object));
+                break;
+              case OBELISK_RT_ASSOC_KEY_PROCESS:
+                word(slot.integral);
+                break;
+              case OBELISK_RT_ASSOC_KEY_WILDCARD: {
+                NormalizedAssocKey key;
+                status = normalizeWildcardAssocObject(
+                    obelisk_rt_managed_object_context(slot.object), slot.object,
+                    key);
+                if (status != OBELISK_RT_OK)
+                  return status;
+                if (key.wideIntegral.size() < 24)
+                  return OBELISK_RT_INVALID_HANDLE;
+                std::memcpy(&entry.value.keyWidth, key.wideIntegral.data() + 8,
+                            sizeof(uint64_t));
+                entry.value.key.assign(key.wideIntegral.begin() + 24,
+                                       key.wideIntegral.end());
+                entry.order = std::move(key.wideIntegral);
+                break;
+              }
+              case OBELISK_RT_ASSOC_KEY_ELEMENT: {
+                obelisk_rt_assoc_key_v1 key{};
+                status = readAssocKeyBox(slot.object, entry.value.key, key);
+                if (status == OBELISK_RT_OK)
+                  status =
+                      serializeAssocKeyBox(header, slot.object, entry.order, 0);
+                if (status != OBELISK_RT_OK)
+                  return status;
+                break;
+              }
+              case OBELISK_RT_ASSOC_KEY_SIGNED:
+              case OBELISK_RT_ASSOC_KEY_UNSIGNED:
+                if (header.keyWidth <= 64) {
+                  word(slot.integral);
+                  entry.value.key.resize((header.keyWidth + 7) / 8);
+                } else {
+                  StringView view;
+                  status = readIntegralSlot(header, slot, view);
+                  if (status != OBELISK_RT_OK)
+                    return status;
+                  entry.value.key.assign(view.bytes, view.bytes + view.size);
+                }
+                break;
+              default:
+                return OBELISK_RT_INVALID_HANDLE;
+              }
+              copy.entries.push_back(std::move(entry));
+            }
+            return copy.entries.size() == header.size
+                       ? OBELISK_RT_OK
+                       : OBELISK_RT_INVALID_HANDLE;
+          });
+        },
+        &copy);
+    if (status != OBELISK_RT_OK)
+      return status;
+    // Only independent host buffers are read by this comparator. No runtime
+    // lock, allocation, or fallible managed lookup is hidden inside std::sort.
+    std::sort(copy.entries.begin(), copy.entries.end(),
+              [&](const Entry &left, const Entry &right) {
+                switch (copy.result.keyKind) {
+                case OBELISK_RT_ASSOC_KEY_STRING:
+                case OBELISK_RT_ASSOC_KEY_ELEMENT:
+                  return compareAssocKeyBytes(left.order, right.order) < 0;
+                case OBELISK_RT_ASSOC_KEY_WILDCARD:
+                  return compareWildcardAssocKeys(left.order, right.order) < 0;
+                case OBELISK_RT_ASSOC_KEY_CLASS:
+                case OBELISK_RT_ASSOC_KEY_PROCESS:
+                  return left.integral < right.integral;
+                default:
+                  return compareIntegralBytes(
+                             left.value.key.data(), right.value.key.data(),
+                             left.value.key.size(), copy.result.keyWidth,
+                             copy.result.keyKind ==
+                                 OBELISK_RT_ASSOC_KEY_SIGNED) < 0;
+                }
+              });
+    copy.result.entries.reserve(copy.entries.size());
+    for (auto &entry : copy.entries)
+      copy.result.entries.push_back(std::move(entry.value));
+    *outSnapshot = std::move(copy.result);
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
 using AllocateOrderBuffer = obelisk_rt_status (*)(obelisk_rt_gc_lane_v1 *,
                                                   uint64_t,
                                                   obelisk_rt_object_v1 **);
