@@ -525,6 +525,62 @@ LogicalResult RandCaseStatementOp::verify() {
   return success();
 }
 
+LogicalResult SourceClassPropertySymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      GenericClassDefSymbolOp, SourceDeclaredTypeOp,
+      SourceDeclaredTypeReferenceOp, SourceUnavailableTypeOp,
+      SourceClassPropertySymbolOp, SourceClassTypeAliasSymbolOp,
+      SourceClassMethodSymbolOp, SourceTypeParameterSymbolOp,
+      SourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SourceClassTypeAliasSymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      GenericClassDefSymbolOp, SourceDeclaredTypeOp,
+      SourceDeclaredTypeReferenceOp, SourceUnavailableTypeOp,
+      SourceClassPropertySymbolOp, SourceClassTypeAliasSymbolOp,
+      SourceClassMethodSymbolOp, SourceTypeParameterSymbolOp,
+      SourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SourceDeclaredTypeOp::verify() {
+  if (failed(sourceclass::verifyDeclaredTypeOwner<SourceClassPropertySymbolOp,
+                                                  SourceClassTypeAliasSymbolOp>(
+          *this, true)))
+    return failure();
+  bool unresolved = false;
+  getSemanticType().walk([&](Type type) {
+    unresolved |=
+        isa<ErrorType, UntypedType, UnboundedType, TypeReferenceType>(type);
+  });
+  if (unresolved)
+    return emitOpError(
+        "concrete declared type cannot contain an unresolved type");
+  return success();
+}
+
+LogicalResult SourceDeclaredTypeReferenceOp::verify() {
+  return sourceclass::verifyDeclaredTypeOwner<SourceClassPropertySymbolOp,
+                                              SourceClassTypeAliasSymbolOp>(
+      *this, false);
+}
+
+LogicalResult SourceDeclaredTypeReferenceOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  return sourceclass::verifyDeclaredTypeReference<SourceTypeParameterSymbolOp,
+                                                  SourceClassTypeAliasSymbolOp>(
+      *this, symbols);
+}
+
+LogicalResult SourceUnavailableTypeOp::verify() {
+  if (getSyntax().empty())
+    return emitOpError(
+        "unavailable declared type requires original source text");
+  return sourceclass::verifyDeclaredTypeOwner<SourceClassPropertySymbolOp,
+                                              SourceClassTypeAliasSymbolOp>(
+      *this, false);
+}
+
 LogicalResult SourceClassMethodSymbolOp::verify() {
   return sourceclass::verifyMethod<GenericClassDefSymbolOp,
                                    SourceValueParameterSymbolOp,

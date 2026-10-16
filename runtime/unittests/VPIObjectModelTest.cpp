@@ -2106,6 +2106,13 @@ TEST(VPIObjectModel, UniversalPropertiesCoverEveryConcreteObject) {
 TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
   for (const VPIPropertyDescriptor &descriptor : vpiProperties) {
     PropertyRealization expected = PropertyRealization::Derived;
+    if (descriptor.property == vpiName || descriptor.property == vpiAutomatic ||
+        descriptor.property == vpiVisibility ||
+        descriptor.property == vpiRandType ||
+        descriptor.property == vpiConstantVariable ||
+        descriptor.property == vpiVirtual ||
+        descriptor.property == vpiAccessType)
+      expected = PropertyRealization::OptionalImage;
     if (descriptor.property == vpiIsProtected ||
         descriptor.property == vpiDefFile ||
         descriptor.property == vpiDefLineNo ||
@@ -2113,11 +2120,7 @@ TEST(VPIObjectModel, PropertyRealizationIsCompleteAndImageEquivalent) {
         descriptor.property == vpiLocalParam ||
         descriptor.property == vpiQualifier)
       expected = PropertyRealization::FixedImage;
-    if ((descriptor.property == vpiName &&
-         (descriptor.sourceType == vpiParameter ||
-          descriptor.sourceType == vpiTask ||
-          descriptor.sourceType == vpiFunction)) ||
-        (descriptor.property == vpiConstType &&
+    if ((descriptor.property == vpiConstType &&
          descriptor.sourceType == vpiConstant) ||
         (descriptor.property == vpiOpType &&
          descriptor.sourceType == vpiOperation))

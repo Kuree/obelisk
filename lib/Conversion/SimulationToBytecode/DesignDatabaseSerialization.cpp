@@ -216,6 +216,7 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint16_t selector = 0;
     uint16_t kindAndFlags = 0;
     uint64_t payload = 0;
+    bool optionalImage = false;
     std::string stringPayload;
   };
   struct ClassMemberBindingRecord {
@@ -516,9 +517,11 @@ SmallVector<uint8_t> serializeDesignDatabase(
         classMembersBySymbol[member.getSymName()] = member;
         if (member.getStaticStorage())
           classStaticStorage.insert(*member.getStaticStorage());
-        classMemberFields[member] =
-            classMemberSymbols.lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
-                member, member.getFieldAttr());
+        if (member.getFieldAttr())
+          classMemberFields[member] =
+              classMemberSymbols
+                  .lookupNearestSymbolFrom<sim::SimClassFieldDeclOp>(
+                      member, member.getFieldAttr());
       }
     } else if (auto enumConstant =
                    dyn_cast<sim::SimVPIEnumConstDeclOp>(operation)) {
@@ -703,15 +706,18 @@ SmallVector<uint8_t> serializeDesignDatabase(
         continue;
       auto field = classMemberFields.lookup(member);
       auto id = staticInventoryID(member, member.getId(), 0);
-      if (!field || !id)
+      if (!id || (member.getFieldAttr() && !field))
         return {};
       bool specialized = typespecsBySymbol.contains(member.getOwner());
-      bool indexName = field.getIsStatic() ? specialized : !specialized;
+      bool indexName =
+          !field || (field.getIsStatic() ? specialized : !specialized);
+      uint32_t flags = field ? 0 : OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY;
       objects.push_back({OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT,
-                         sim::vpiKindForClassMember(member.getVpiType()), 0, *id,
-                         member.getScopeId(), member.getHierarchicalName().str(),
-                         field.getType(), 0, sourceFor(member), indexName,
-                         member});
+                         sim::vpiKindForClassMember(member.getVpiType()), flags,
+                         *id, member.getScopeId(),
+                         member.getHierarchicalName().str(),
+                         field ? field.getType() : Type{}, 0, sourceFor(member),
+                         indexName, member});
     } else if (auto nettype = dyn_cast<sim::SimVPINettypeDeclOp>(operation)) {
       if (!includeStatements)
         continue;
@@ -2444,12 +2450,12 @@ SmallVector<uint8_t> serializeDesignDatabase(
     return success();
   };
   llvm::sort(classMembers, [&](auto left, auto right) {
-    return std::make_tuple(left.getOwner(),
-                           classMemberFields.lookup(left).getOrdinal(),
-                           left.getId()) <
-           std::make_tuple(right.getOwner(),
-                           classMemberFields.lookup(right).getOrdinal(),
-                           right.getId());
+    auto ordinal = [&](auto member) -> uint64_t {
+      auto field = classMemberFields.lookup(member);
+      return field ? field.getOrdinal() : member.getId();
+    };
+    return std::make_tuple(left.getOwner(), ordinal(left), left.getId()) <
+           std::make_tuple(right.getOwner(), ordinal(right), right.getId());
   });
   DenseMap<std::pair<uint32_t, uint32_t>, uint32_t> memberOrdinals;
   for (sim::SimVPIClassMemberDeclOp member : classMembers) {
@@ -2459,15 +2465,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
     uint32_t packedOwner = 0;
     if (!tryPackTableIndex(source.table, source.index, packedOwner))
       return {};
-    if (!field.getIsStatic() && !field.getOffset()) {
+    if (field && !field.getIsStatic() && !field.getOffset()) {
       member.emitOpError("class field layout was not materialized");
       return {};
     }
-    if (failed(appendMemberBinding(member, target, source, field.getOwnerAttr(),
-                                   field.getIsStatic(), false,
-                                   field.getOffset().value_or(UINT64_MAX),
-                                   member.getStaticEvent().value_or(UINT64_MAX),
-                                   member.getStaticStorage(), member.getDebugName())))
+    if (field &&
+        failed(appendMemberBinding(
+            member, target, source, field.getOwnerAttr(), field.getIsStatic(),
+            false, field.getOffset().value_or(UINT64_MAX),
+            member.getStaticEvent().value_or(UINT64_MAX),
+            member.getStaticStorage(), member.getDebugName())))
       return {};
     if (failed(addAutomaticRelation(
             source.table, source.index, source.vpiKind, target.table,
@@ -3826,7 +3833,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
         findVPIProperty(exactKind, selector);
     if (!descriptor ||
         (descriptor->realization != VPIPropertyRealization::FixedImage &&
-         descriptor->realization != VPIPropertyRealization::DefinitionImage) ||
+         descriptor->realization != VPIPropertyRealization::DefinitionImage &&
+         descriptor->realization != VPIPropertyRealization::OptionalImage) ||
         selector > UINT16_MAX)
       return operation->emitError(
           "immutable property is not an encodable image property for "
@@ -3857,6 +3865,8 @@ SmallVector<uint8_t> serializeDesignDatabase(
     }
     FixedPropertyRecord record;
     record.sourceIndexAndTable = packedSource;
+    record.optionalImage =
+        descriptor->realization == VPIPropertyRealization::OptionalImage;
     record.selector = static_cast<uint16_t>(selector);
     record.kindAndFlags = static_cast<uint16_t>(descriptor->valueKind);
     switch (descriptor->valueKind) {
@@ -3924,9 +3934,14 @@ SmallVector<uint8_t> serializeDesignDatabase(
         if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
                                     anchor.getDebugNameAttr())))
           return failure();
+      if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation))
+        if (failed(addFixedProperty(operation, packedSource, exactKind, 2,
+                                    member.getDebugNameAttr())))
+          return failure();
       if (auto member = dyn_cast<sim::SimVPIClassMemberDeclOp>(operation);
-          member && (exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEvent) ||
-                     exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEventArray)))
+          member && member.getFieldAttr() &&
+          (exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEvent) ||
+           exactKind == static_cast<uint32_t>(VPIObjectKind::NamedEventArray)))
         if (failed(addFixedProperty(
                 operation, packedSource, exactKind, 50,
                 builder.getBoolAttr(!classMemberFields.lookup(member).getIsStatic()))))
@@ -3999,17 +4014,16 @@ SmallVector<uint8_t> serializeDesignDatabase(
                 addCodeUnitProperties(operation, packedSource, source.vpiKind)))
           return {};
     }
-    // False is the canonical sparse representation of every immutable Boolean
-    // property, but it participates in duplicate/conflict detection before
-    // being erased.
+    // Required image Booleans encode false by absence. Optional image facts
+    // retain explicit false because absence requests the derived fallback.
     fixedProperties.erase(
-        std::remove_if(fixedProperties.begin(), fixedProperties.end(),
-                       [](const FixedPropertyRecord &property) {
-                         return property.kindAndFlags ==
-                                    static_cast<uint16_t>(
-                                        VPIPropertyValueKind::Boolean) &&
-                                property.payload == 0;
-                       }),
+        std::remove_if(
+            fixedProperties.begin(), fixedProperties.end(),
+            [](const FixedPropertyRecord &property) {
+              return property.kindAndFlags ==
+                         static_cast<uint16_t>(VPIPropertyValueKind::Boolean) &&
+                     property.payload == 0 && !property.optionalImage;
+            }),
         fixedProperties.end());
     llvm::sort(fixedProperties, [](const FixedPropertyRecord &left,
                                    const FixedPropertyRecord &right) {

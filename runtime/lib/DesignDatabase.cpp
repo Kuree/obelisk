@@ -1745,6 +1745,9 @@ bool validateDatabaseImpl(const Database &database) {
     return kind == static_cast<uint32_t>(Kind::Constant) ||
            kind == static_cast<uint32_t>(Kind::Operation);
   };
+  std::unordered_set<uint32_t> sourceClassProperties;
+  std::unordered_map<uint32_t, uint32_t> sourceClassPropertyOwners;
+  std::unordered_map<uint32_t, uint32_t> sourceClassPropertyScopes;
   std::unordered_set<uint32_t> unresolvedTypeParameters;
   std::unordered_set<uint32_t> unresolvedValueParameters;
   std::unordered_set<uint32_t> sourceExpressionObjects;
@@ -1857,6 +1860,7 @@ bool validateDatabaseImpl(const Database &database) {
         const auto *indexed =
             obelisk::reflection::findVPIIndexedAccess(intrinsicKind);
         bool relationIndexed =
+            (caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) == 0 &&
             indexed &&
             indexed->accessKind ==
                 obelisk::reflection::VPIIndexedAccessKind::RelationElement;
@@ -1866,6 +1870,7 @@ bool validateDatabaseImpl(const Database &database) {
             intrinsicKind == static_cast<uint32_t>(VPIKind::Switch) ||
             intrinsicKind == static_cast<uint32_t>(VPIKind::Udp);
         if ((caps & ~(OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
+                      OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY |
                       parameterSourceFlags)) != 0 ||
             !validParameterSourceFlags(intrinsicKind, caps) ||
             read64(record + 80) != 0 ||
@@ -1934,9 +1939,11 @@ bool validateDatabaseImpl(const Database &database) {
                  kind != OBELISK_RT_DESIGN_RECORD_NET) {
         return false;
       } else if (portCaps == 0 &&
-                 (ordinalCaps & ~(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
-                                      ? parameterSourceFlags
-                                      : 0u)) != 0) {
+                 (ordinalCaps &
+                  ~(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                        ? parameterSourceFlags |
+                              OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY
+                        : 0u)) != 0) {
         return false;
       }
       uint64_t stateOffset = read64(record + 80);
@@ -2008,16 +2015,20 @@ bool validateDatabaseImpl(const Database &database) {
         (descriptor->realization !=
              obelisk::reflection::VPIPropertyRealization::FixedImage &&
          descriptor->realization !=
-             obelisk::reflection::VPIPropertyRealization::DefinitionImage) ||
+             obelisk::reflection::VPIPropertyRealization::DefinitionImage &&
+         descriptor->realization !=
+             obelisk::reflection::VPIPropertyRealization::OptionalImage) ||
         kindAndFlags != static_cast<uint16_t>(descriptor->valueKind))
       return false;
     using ValueKind = obelisk::reflection::VPIPropertyValueKind;
     switch (descriptor->valueKind) {
     case ValueKind::Boolean:
-      // Immutable false values have one canonical encoding: absence from the
-      // sparse table. Reject redundant false records for every generated
-      // FixedImage Boolean, not only vpiIsProtected.
-      if (payload != 1)
+      // Optional source facts retain explicit false; ordinary FixedImage
+      // Booleans keep their canonical false-as-absence encoding.
+      if (payload > 1 ||
+          (payload == 0 &&
+           descriptor->realization !=
+               obelisk::reflection::VPIPropertyRealization::OptionalImage))
         return false;
       break;
     case ValueKind::Integer:
@@ -2735,6 +2746,19 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t packed =
         (static_cast<uint32_t>(obelisk::reflection::TableKind::Object) << 30) |
         index;
+    if ((caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0) {
+      using Kind = obelisk::reflection::VPIObjectKind;
+      if (caps != OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY ||
+          !objectSemanticRoots[index] || read64(object + 48) != 0 ||
+          (!obelisk::reflection::vpiObjectSetContains(
+               obelisk::reflection::VPIObjectSetID::DataVariableObjects,
+               recordVPIKind(object)) &&
+           recordVPIKind(object) != static_cast<uint32_t>(Kind::NamedEvent) &&
+           recordVPIKind(object) !=
+               static_cast<uint32_t>(Kind::NamedEventArray)))
+        return false;
+      sourceClassProperties.insert(packed);
+    }
     if (unresolved)
       unresolvedTypeParameters.insert(packed);
     if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0) {
@@ -2771,7 +2795,8 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t caps = read16(object + 30);
     bool unresolved =
         (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
-    if (!validParameterSourceFlags(read16(object + 28), caps) ||
+    if ((caps & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0 ||
+        !validParameterSourceFlags(read16(object + 28), caps) ||
         (typespec && (unresolved ? staticObjectSemanticRoots[index]
                                  : !staticObjectSemanticRoots[index])))
       return false;
@@ -2981,6 +3006,38 @@ bool validateDatabaseImpl(const Database &database) {
     if (!packedObjectReferenceOffset(database, read32(binding), objectOffset))
       return false;
     uint32_t root = read32(binding + 4);
+    if (sourceClassProperties.count(read32(binding)) != 0) {
+      // Reuse the generated typespec-to-variable mapping. Events are separate
+      // declaration kinds, including an unpacked event-array declaration.
+      const uint8_t *semantic = database.data + database.semanticTypes +
+                                uint64_t{root} * kSemanticTypeSize;
+      uint32_t rootKind = (read32(semantic) &
+                           OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_MASK) >>
+                          OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT;
+      uint32_t expected = 0;
+      if (const auto *mapping = obelisk::reflection::findVPIIndexedTypeResult(
+              obelisk::reflection::VPIIndexedAccessKind::VariableElement,
+              rootKind))
+        expected = mapping->resultType;
+      bool eventArray = false;
+      while ((read32(semantic) & UINT32_C(0xff)) ==
+             OBELISK_RT_DESIGN_SEMANTIC_UNPACKED_ARRAY) {
+        eventArray = true;
+        const uint8_t *edge =
+            database.data + database.semanticTypeEdges +
+            uint64_t{read32(semantic + 4)} * kSemanticTypeEdgeSize;
+        semantic = database.data + database.semanticTypes +
+                   uint64_t{read32(edge)} * kSemanticTypeSize;
+      }
+      if ((read32(semantic) & UINT32_C(0xff)) ==
+          OBELISK_RT_DESIGN_SEMANTIC_EVENT)
+        expected = static_cast<uint32_t>(
+            eventArray ? obelisk::reflection::VPIObjectKind::NamedEventArray
+                       : obelisk::reflection::VPIObjectKind::NamedEvent);
+      if (!expected ||
+          expected != objectReferenceVPIKind(database, objectOffset))
+        return false;
+    }
     // A type parameter is itself a typespec while unresolved (37.25), but
     // its elaborated semantic root describes its effective type (37.28).
     // Only concrete typespec declarations share their root's exact kind.
@@ -3756,7 +3813,8 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t packed = 0;
     if (!obelisk::reflection::tryPackTableIndex(
             obelisk::reflection::TableKind::Object, index, packed) ||
-        !boundClassFields.count(packed))
+        (!boundClassFields.count(packed) &&
+         !sourceClassProperties.count(packed)))
       return false;
   }
 
@@ -4939,6 +4997,27 @@ bool validateDatabaseImpl(const Database &database) {
     }
 
     uint32_t sourceEndpoint = relationEndpoint(sourceTable, sourceIndex);
+    if (iterate &&
+        (lexicalForward ||
+         selector == static_cast<uint32_t>(
+                         obelisk::reflection::VPIRelationKind::VariablesRel)) &&
+        sourceClassProperties.count(packedTarget)) {
+      if (sourceKind !=
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::ClassDefn))
+        return false;
+      auto [entry, inserted] =
+          sourceClassPropertyOwners.emplace(packedTarget, sourceEndpoint);
+      if (!inserted && entry->second != sourceEndpoint)
+        return false;
+    }
+    if (!iterate && sourceClassProperties.count(sourceEndpoint) &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::ScopeRel)) {
+      if (targetKind !=
+          static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::ClassDefn))
+        return false;
+      sourceClassPropertyScopes.emplace(sourceEndpoint, packedTarget);
+    }
     if (!iterate &&
         selector == static_cast<uint32_t>(
                         obelisk::reflection::VPIRelationKind::ExprRel) &&
@@ -5205,6 +5284,29 @@ bool validateDatabaseImpl(const Database &database) {
                             staticLexicalParents.count(parent->second) != 0;
                    }))
     return false;
+  for (uint32_t property : sourceClassProperties) {
+    auto owner = sourceClassPropertyOwners.find(property);
+    if (owner == sourceClassPropertyOwners.end() ||
+        boundClassFields.count(property) || boundEvents.count(property) ||
+        eventArrayStorage.count(property))
+      return false;
+    uint64_t offset = 0;
+    if (!packedObjectReferenceOffset(database, property, offset))
+      return false;
+    const auto *scopeEdge = obelisk::reflection::findVPITraversal(
+        objectReferenceVPIKind(database, offset),
+        static_cast<uint32_t>(obelisk::reflection::VPIRelationKind::ScopeRel),
+        obelisk::reflection::VPITraversalMode::Handle);
+    if (scopeEdge && obelisk::reflection::vpiObjectSetContains(
+                         scopeEdge->targets,
+                         static_cast<uint32_t>(
+                             obelisk::reflection::VPIObjectKind::ClassDefn))) {
+      auto scope = sourceClassPropertyScopes.find(property);
+      if (scope == sourceClassPropertyScopes.end() ||
+          scope->second != owner->second)
+        return false;
+    }
+  }
   // Each occurrence belongs to exactly one acyclic tree rooted in a precise
   // parameter default. Cache roots while following parent links so shared
   // suffixes are checked once, including maliciously deep images.
@@ -5477,7 +5579,10 @@ bool validateDatabaseImpl(const Database &database) {
             obelisk::reflection::TableKind::Object, index)) != 0;
     bool requiresIndex =
         recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
-        !classEventArray && access &&
+        !classEventArray &&
+        !sourceClassProperties.count(
+            relationEndpoint(obelisk::reflection::TableKind::Object, index)) &&
+        access &&
         access->accessKind ==
             obelisk::reflection::VPIIndexedAccessKind::RelationElement;
     if (requiresIndex != relationIndexedObjects[index])

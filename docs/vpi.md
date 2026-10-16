@@ -61,8 +61,18 @@ queries report a notice. Generic lexical methods are retained without a
 realized specialization, including constructors, tasks, static methods, extern
 declarations, and pure virtual declarations. Their exact names, declaration
 order, scope, lifetime, and visibility remain queryable without resolving
-dependent signatures or bodies. Other lexical members without a realized
-specialization and broader original-default expression forms remain incomplete.
+dependent signatures or bodies. Explicit or otherwise established virtuality is
+queryable; unresolved inherited virtuality reports a notice. Ordinary class
+`extern` syntax does not imply DPI access metadata.
+
+Generic classes also retain lexical fields with primitive concrete declared
+types and concrete typedef chains without creating an executable class. Exact
+names, scopes, declared types, lifetime, constness, random mode, and visibility
+remain queryable; value access reports a notice. A dependent field such as
+`T value` has no public variable kind until specialization and is therefore
+not fabricated as a `vpiReg`. Its source declaration is retained for subsequent
+specialization. Dependent typedefs, nested generic types, broader concrete type
+syntax, and broader original-default expression forms remain incomplete.
 
 Mailbox, semaphore, and process variables also expose `vpiClassObj` and
 `vpiClassTypespec`. Upcasting a user class to its mailbox or semaphore base

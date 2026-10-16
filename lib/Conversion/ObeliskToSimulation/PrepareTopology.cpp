@@ -1550,11 +1550,36 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder.getI32IntegerAttr(value)));
       addBoolean(645, isMethod);
     };
-    if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source))
+    if (auto method = dyn_cast<semantic::SVSourceClassMethodSymbolOp>(source)) {
       addMethodProperties(method.getMemberVisibility(), true);
-    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source))
+      BoolAttr virtuality = method.getSourceVirtualityAttr();
+      if (!virtuality &&
+          (method.getIsDeclaredVirtualAttr() || method.getIsPureAttr()))
+        virtuality = builder.getBoolAttr(true);
+      if (!virtuality &&
+          (method.getIsStaticAttr() || method.getIsConstructorAttr()))
+        virtuality = builder.getBoolAttr(false);
+      if (virtuality)
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(635), virtuality));
+    }
+    if (auto subroutine = dyn_cast<semantic::SVSubroutineSymbolOp>(source)) {
       addMethodProperties(subroutine.getMemberVisibility(),
                           isa<semantic::SVClassTypeOp>(source->getParentOp()));
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(635),
+          builder.getBoolAttr(
+              static_cast<bool>(subroutine.getIsVirtualAttr()))));
+      // IEEE 37.41 detail 6 defines these exact DPI access modes. Ordinary
+      // extern class prototypes are not interface tf declarations.
+      int32_t access = subroutine.getDpiExportCIdentifierAttr() ? 3
+                       : subroutine.getIsDpiImportAttr()        ? 4
+                                                                : 0;
+      if (access)
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(604),
+            builder.getI32IntegerAttr(access)));
+    }
     if (auto parameter =
             dyn_cast<semantic::SVSourceValueParameterSymbolOp>(source))
       addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
@@ -2650,6 +2675,136 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           getEnumIdentity(alias, *target),
           FlatSymbolRefAttr::get(declaration.getSymNameAttr()));
   }
+
+  auto classPropertyFacts = [&](Operation *source, uint32_t kind) {
+    SmallVector<Attribute> properties;
+    auto add = [&](uint32_t selector, Attribute value) {
+      if (reflection::findVPIProperty(kind, selector))
+        properties.push_back(sim::VPIPropertyAttr::get(
+            builder.getContext(), builder.getI32IntegerAttr(selector), value));
+    };
+    auto lifetime =
+        source->getAttrOfType<semantic::SVVariableLifetimeAttr>("lifetime");
+    auto visibility =
+        source->getAttrOfType<semantic::SVVisibilityAttr>("member_visibility");
+    auto random = source->getAttrOfType<semantic::SVRandModeAttr>("rand_mode");
+    add(2, builder.getStringAttr(getDebugName(source)));
+    if (lifetime)
+      add(50, builder.getBoolAttr(lifetime.getValue() ==
+                                  semantic::SVVariableLifetime::Automatic));
+    if (random) {
+      int32_t value = 1;
+      switch (random.getValue()) {
+      case semantic::SVRandMode::None:
+        break;
+      case semantic::SVRandMode::Rand:
+        value = 2;
+        break;
+      case semantic::SVRandMode::RandC:
+        value = 3;
+        break;
+      }
+      add(610, builder.getI32IntegerAttr(value));
+    }
+    auto constant = source->getAttr("is_const");
+    add(612, builder.getBoolAttr(isa_and_nonnull<UnitAttr>(constant) ||
+                                 (isa_and_nonnull<BoolAttr>(constant) &&
+                                  cast<BoolAttr>(constant).getValue())));
+    if (visibility) {
+      int32_t value = 1;
+      switch (visibility.getValue()) {
+      case semantic::SVVisibility::Public:
+        break;
+      case semantic::SVVisibility::Protected:
+        value = 2;
+        break;
+      case semantic::SVVisibility::Local:
+        value = 3;
+        break;
+      }
+      add(620, builder.getI32IntegerAttr(value));
+    }
+    return sim::VPIPropertySetAttr::get(builder.getContext(),
+                                        builder.getArrayAttr(properties));
+  };
+
+  // Original generic declarations have their own type graph. Only exact
+  // concrete source types are materialized here; an unresolved T property has
+  // no IEEE variable kind until specialization and is never guessed from an
+  // arbitrary instance of the generic class.
+  SymbolTableCollection sourceTypeSymbols;
+  DenseMap<Operation *, sim::VPITypeSemanticsAttr> lexicalDeclaredTypes;
+  module.walk([&](semantic::SVGenericClassDefSymbolOp definition) {
+    FlatSymbolRefAttr owner = anchorSymbols.lookup(definition);
+    if (!owner)
+      return;
+    for (Operation *source : getChildren(definition)) {
+      if (!isa<semantic::SVSourceClassPropertySymbolOp,
+               semantic::SVSourceClassTypeAliasSymbolOp>(source))
+        continue;
+      Operation *declared = getChildren(source).front();
+      sim::VPITypeSemanticsAttr target;
+      if (auto concrete =
+              dyn_cast<semantic::SVSourceDeclaredTypeOp>(declared)) {
+        auto converted = makeVPITypeSemantics(concrete.getSemanticType(),
+                                              getSemanticLocation(concrete),
+                                              ArrayAttr{}, concrete);
+        if (failed(converted)) {
+          invalid = true;
+          continue;
+        }
+        target = *converted;
+      } else if (auto reference =
+                     dyn_cast<semantic::SVSourceDeclaredTypeReferenceOp>(
+                         declared)) {
+        Operation *declaration = sourceTypeSymbols.lookupNearestSymbolFrom(
+            reference, reference.getDeclarationAttr());
+        target = lexicalDeclaredTypes.lookup(declaration);
+      }
+      if (!target)
+        continue;
+      if (isa<semantic::SVSourceClassTypeAliasSymbolOp>(source)) {
+        std::string name =
+            "__obelisk_vpi_source_typedef_" + std::to_string(nextTypespecId);
+        FlatSymbolRefAttr symbol =
+            FlatSymbolRefAttr::get(builder.getContext(), name);
+        SmallVector<Attribute> aliases{symbol};
+        if (ArrayAttr previous = target.getTypedefAliases())
+          llvm::append_range(aliases, previous);
+        target = sim::VPITypeSemanticsAttr::get(
+            builder.getContext(), target.getKind(), target.getIsSigned(),
+            target.getIsFourState(), target.getName(), target.getSymbol(),
+            target.getModport(), target.getRange(), target.getChildren(),
+            target.getChildNames(), target.getIsTagged(), target.getIsSoft(),
+            target.getBitWidth(), target.getSelectableWidth(),
+            target.getBitstreamWidth(), target.getTagBits(),
+            target.getQueueBound(), target.getWildcardIndex(),
+            target.getChildOrdinals(), target.getChildPackedOffsets(),
+            target.getChildRandTypes(), builder.getArrayAttr(aliases));
+        auto declaration = sim::SimVPITypespecDeclOp::create(
+            builder, getSemanticLocation(source), name, nextTypespecId++,
+            scopes.lookup(source), owner.getValue(), getHierarchyName(source),
+            getDebugName(source), target, sim::VPITypespecOrigin::Typedef,
+            IntegerAttr{}, TypeAttr{});
+        (void)declaration;
+        lexicalDeclaredTypes[source] = target;
+      } else {
+        std::string name = "__obelisk_vpi_class_member_" +
+                           std::to_string(nextSyntheticInventoryId);
+        auto property = sim::SimVPIClassMemberDeclOp::create(
+            builder, getSemanticLocation(source), builder.getStringAttr(name),
+            builder.getI64IntegerAttr(nextSyntheticInventoryId++),
+            builder.getI64IntegerAttr(scopes.lookup(source)), owner,
+            FlatSymbolRefAttr{},
+            builder.getStringAttr(getHierarchyName(source)),
+            builder.getStringAttr(getDebugName(source)), target, IntegerAttr{},
+            IntegerAttr{});
+        property->setAttr(
+            "vpi_properties",
+            classPropertyFacts(source, sim::vpiKindForClassMember(target)));
+      }
+    }
+  });
 
   // Class declarations and their fully resolved types have independent VPI
   // identities. The latter are shared by every variable of that class type,
@@ -3935,9 +4090,11 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         auto declaration = sim::SimVPIClassMemberDeclOp::create(
             builder, getSemanticLocation(property), symbolName,
             nextSyntheticInventoryId++, scopes.lookup(property),
-            owner.getValue(), fieldRef.getValue(), getHierarchyName(property),
-            getDebugName(property),
-            *vpiType, storageID, eventID);
+            owner.getValue(), fieldRef, getHierarchyName(property),
+            getDebugName(property), *vpiType, storageID, eventID);
+        declaration->setAttr(
+            "vpi_properties",
+            classPropertyFacts(property, sim::vpiKindForClassMember(*vpiType)));
         retainVPISourceTypeIdentity(property, declaration, *vpiType);
       };
       emitMember(classTypespecSymbols.lookup(classType));

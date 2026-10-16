@@ -5761,6 +5761,118 @@ private:
     node.getBody().emplaceBlock();
   }
 
+  void importSourceDeclaredType(const slang::ast::DeclaredType &declared,
+                                const slang::ast::Symbol &symbol,
+                                const OriginalParameterMap &types) {
+    const auto *syntax = declared.getTypeSyntax();
+    const auto *dimensions = declared.getDimensionSyntax();
+    const bool noDimensions = !dimensions || dimensions->empty();
+    const auto *scope = symbol.getParentScope();
+    auto range = syntax ? syntax->sourceRange() : getSourceRange(symbol);
+    auto attrs = originalSourceAttributes(range);
+    if (syntax && scope && noDimensions) {
+      slang::ast::ASTContext context(
+          *scope, slang::ast::LookupLocation::before(symbol));
+      if (const auto *named = syntax->as_if<slang::syntax::NamedTypeSyntax>();
+          named &&
+          named->name->kind == slang::syntax::SyntaxKind::IdentifierName) {
+        slang::ast::LookupResult lookup;
+        slang::ast::Lookup::name(*named->name, context,
+                                 slang::ast::LookupFlags::Type, lookup);
+        if (auto reference = types.lookup(lookup.found)) {
+          attrs.set("declaration", reference);
+          auto type = slangir::SourceDeclaredTypeReferenceOp::create(
+              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+              attrs.getAttrs());
+          type.getBody().emplaceBlock();
+          return;
+        }
+      }
+      // Bind only primitive syntax whose meaning is independent of every
+      // parameter. Named types use exact source symbols above, not the invalid
+      // specialization's resolved DeclaredType.
+      bool independent = false;
+      if (const auto *integer =
+              syntax->as_if<slang::syntax::IntegerTypeSyntax>())
+        independent = integer->dimensions.empty();
+      if (syntax->as_if<slang::syntax::KeywordTypeSyntax>())
+        independent = syntax->kind != slang::syntax::SyntaxKind::Untyped;
+      if (independent) {
+        const auto &type = slang::ast::Type::fromSyntax(
+            scope->getCompilation(), *syntax, context, nullptr);
+        if (!type.isError()) {
+          attrs.set("semantic_type",
+                    TypeAttr::get(typeConverter.convert(type)));
+          auto node = slangir::SourceDeclaredTypeOp::create(
+              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+              attrs.getAttrs());
+          node.getBody().emplaceBlock();
+          return;
+        }
+      }
+    }
+    std::string spelling = syntax ? syntax->toString() : std::string{};
+    if (dimensions)
+      for (const auto &dimension : *dimensions)
+        spelling += dimension->toString();
+    if (spelling.empty())
+      spelling = symbol.getSyntax() ? symbol.getSyntax()->toString()
+                                    : std::string(symbol.name);
+    attrs.set("syntax", builder.getStringAttr(spelling));
+    auto node = slangir::SourceUnavailableTypeOp::create(
+        builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+        attrs.getAttrs());
+    node.getBody().emplaceBlock();
+  }
+
+  void importSourceClassDataMember(
+      const slang::ast::Symbol &member,
+      const slang::ast::GenericClassDefSymbol &definition,
+      const OriginalParameterMap &types) {
+    auto attrs = originalSourceAttributes(getSourceRange(member));
+    attrs.set("sym_name", getInternalSymbolName(member));
+    attrs.set("name", builder.getStringAttr(member.name));
+    attrs.set("hierarchical_name",
+              builder.getStringAttr(getSymbolPath(definition) +
+                                    "::" + std::string(member.name)));
+    const slang::ast::DeclaredType *declared = nullptr;
+    Operation *operation = nullptr;
+    if (member.kind == slang::ast::SymbolKind::ClassProperty) {
+      const auto &property = member.as<slang::ast::ClassPropertySymbol>();
+      if (!property.getSyntax() ||
+          property.flags.has(slang::ast::VariableFlags::CompilerGenerated))
+        return;
+      attrs.set("lifetime",
+                slangir::VariableLifetimeAttr::get(
+                    builder.getContext(), convertEnum(property.lifetime)));
+      attrs.set("member_visibility",
+                slangir::VisibilityAttr::get(builder.getContext(),
+                                             convertEnum(property.visibility)));
+      attrs.set("rand_mode",
+                slangir::RandModeAttr::get(builder.getContext(),
+                                           convertEnum(property.randMode)));
+      if (property.flags.has(slang::ast::VariableFlags::Const))
+        attrs.set("is_const", builder.getUnitAttr());
+      operation = slangir::SourceClassPropertySymbolOp::create(
+          builder, sourceLocation(member.location), TypeRange{}, ValueRange{},
+          attrs.getAttrs());
+      declared = property.getDeclaredType();
+    } else {
+      const auto &alias = member.as<slang::ast::TypeAliasType>();
+      attrs.set("member_visibility",
+                slangir::VisibilityAttr::get(builder.getContext(),
+                                             convertEnum(alias.visibility)));
+      operation = slangir::SourceClassTypeAliasSymbolOp::create(
+          builder, sourceLocation(member.location), TypeRange{}, ValueRange{},
+          attrs.getAttrs());
+      declared = &alias.targetType;
+    }
+    operation->getRegion(0).emplaceBlock();
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(&operation->getRegion(0).front());
+    importSourceDeclaredType(*declared, member, types);
+  }
+
   template <typename Method>
   void
   importSourceClassMethod(const Method &method,
@@ -5810,6 +5922,21 @@ private:
       attrs.set("is_pure", builder.getUnitAttr());
     if (method.flags.has(MF::Constructor))
       attrs.set("is_constructor", builder.getUnitAttr());
+    // isVirtual reads existing flags / override identity without binding the
+    // signature or base class. Its false result is conclusive only where no
+    // inherited method can change virtuality.
+    if (method.isVirtual())
+      attrs.set("source_virtuality", builder.getBoolAttr(true));
+    else {
+      const auto *syntax =
+          definition.getSyntax()
+              ? definition.getSyntax()
+                    ->as_if<slang::syntax::ClassDeclarationSyntax>()
+              : nullptr;
+      if (method.flags.has(MF::Static | MF::Constructor) ||
+          (syntax && !syntax->extendsClause && !syntax->implementsClause))
+        attrs.set("source_virtuality", builder.getBoolAttr(false));
+    }
     auto declaration = slangir::SourceClassMethodSymbolOp::create(
         builder, sourceLocation(method.location), TypeRange{}, ValueRange{},
         attrs.getAttrs());
@@ -5831,9 +5958,24 @@ private:
       return;
     const auto &source = invalidType.as<slang::ast::ClassType>();
     auto parameters = originalParameterMap(source);
+    OriginalParameterMap sourceTypes;
     for (const auto &member : source.members()) {
       if (member.getParentScope() != &source)
         continue;
+      if (member.kind == slang::ast::SymbolKind::TypeParameter) {
+        auto reference = FlatSymbolRefAttr::get(getInternalSymbolName(member));
+        sourceTypes[&member] = reference;
+        sourceTypes[&member.as<slang::ast::TypeParameterSymbol>()
+                         .getTypeAlias()] = reference;
+      }
+      if (member.kind == slang::ast::SymbolKind::ClassProperty ||
+          member.kind == slang::ast::SymbolKind::TypeAlias) {
+        importSourceClassDataMember(member, definition, sourceTypes);
+        if (member.kind == slang::ast::SymbolKind::TypeAlias)
+          sourceTypes[&member] =
+              FlatSymbolRefAttr::get(getInternalSymbolName(member));
+        continue;
+      }
       if (member.kind == slang::ast::SymbolKind::Subroutine) {
         importSourceClassMethod(member.as<slang::ast::SubroutineSymbol>(),
                                 definition);

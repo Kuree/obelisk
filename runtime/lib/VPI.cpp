@@ -1259,6 +1259,22 @@ bool unresolvedValueParameter(uint32_t type,
           OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER) != 0;
 }
 
+bool isSourceClassProperty(const obelisk_rt_design_info_v1 &info) {
+  return info.kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+         (info.capabilities & OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY) != 0;
+}
+
+bool rejectSourceClassPropertyValue(__vpiHandle *handle) {
+  if (handle->form != VPIObjectForm::Design)
+    return false;
+  obelisk_rt_design_info_v1 info{};
+  if (!infoFor(handle, info) || !isSourceClassProperty(info))
+    return false;
+  setError(handle->owner,
+           "lexical generic class property has no elaborated value", vpiNotice);
+  return true;
+}
+
 bool rejectUnresolvedParameterQuery(__vpiHandle *handle) {
   if (handle->form != VPIObjectForm::Design)
     return false;
@@ -1324,6 +1340,12 @@ bool valueSourceFor(
                                    &source.semanticCursor) == OBELISK_RT_OK;
   } else {
     source.hasSemanticCursor = semanticCursorFor(handle, source.semanticCursor);
+  }
+  if (isSourceClassProperty(source.info)) {
+    setError(handle->owner,
+             "lexical generic class property has no elaborated value",
+             vpiNotice);
+    return false;
   }
   if (unresolvedValueParameter(source.exactType, source.info)) {
     setError(handle->owner,
@@ -1562,6 +1584,35 @@ propertyFor(__vpiHandle *handle, PLI_INT32 property) {
     return nullptr;
   }
   return descriptor;
+}
+
+// Optional immutable facts are sparse overrides, not default values. Legacy
+// images and live views without a row retain the generated derived behavior.
+obelisk_rt_status optionalPropertyFor(
+    __vpiHandle *handle,
+    const obelisk::reflection::VPIPropertyDescriptor *descriptor,
+    VPIFixedPropertyValue &value) {
+  if (!descriptor || handle->form != VPIObjectForm::Design ||
+      descriptor->realization !=
+          obelisk::reflection::VPIPropertyRealization::OptionalImage)
+    return OBELISK_RT_EOF;
+  auto status = obelisk_rt_cached_vpi_fixed_property(
+      handle->owner->context, handle->cursor, descriptor->property, &value);
+  if (status == OBELISK_RT_OK &&
+      value.kind != static_cast<uint8_t>(descriptor->valueKind))
+    status = OBELISK_RT_INVALID_DESIGN;
+  if (status == OBELISK_RT_EOF) {
+    obelisk_rt_design_info_v1 info{};
+    if (infoFor(handle, info) && isSourceClassProperty(info)) {
+      setError(handle->owner, "lexical class property modifier is unavailable",
+               vpiNotice);
+      return OBELISK_RT_INVALID_ARGUMENT;
+    }
+  }
+  if (status != OBELISK_RT_OK && status != OBELISK_RT_EOF)
+    setError(handle->owner, "optional VPI property image lookup failed",
+             vpiInternal);
+  return status;
 }
 
 bool fixedPropertyFor(
@@ -3304,6 +3355,8 @@ vpiHandle handleByIndices(vpiHandle opaque, PLI_INT32 count,
   // vpi_handle_by_index is an operation on an existing protected handle and is
   // denied by IEEE 1800's protected-object rules.
   if (!directNameLookup && !allowProtectedSource(source, "indexed access"))
+    return nullptr;
+  if (rejectSourceClassPropertyValue(source))
     return nullptr;
   if (count <= 0 || !indices) {
     setError(source->owner, "VPI indexed access requires at least one index");
@@ -8808,6 +8861,13 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
     if (handle->form == VPIObjectForm::IntegralConstant)
       return vpiIntConst;
   }
+  VPIFixedPropertyValue optional{};
+  const auto optionalStatus =
+      optionalPropertyFor(handle, propertyDescriptor, optional);
+  if (optionalStatus == OBELISK_RT_OK)
+    return static_cast<PLI_INT32>(optional.payload);
+  if (optionalStatus != OBELISK_RT_EOF)
+    return vpiUndefined;
   if (propertyDescriptor->realization ==
           obelisk::reflection::VPIPropertyRealization::FixedImage ||
       propertyDescriptor->realization ==
@@ -8868,7 +8928,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
   // and frame representations will refine this branch when those handle forms
   // are introduced.
   if (property == vpiHasActual) {
-    if (handle->classDefinitionOrigin)
+    obelisk_rt_design_info_v1 info{};
+    if (handle->classDefinitionOrigin ||
+        (handle->form == VPIObjectForm::Design && infoFor(handle, info) &&
+         isSourceClassProperty(info)))
       return 0;
     VPIClassMemberBinding member{};
     if (obelisk_rt_cached_vpi_class_member(
@@ -9008,6 +9071,11 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
         objectType == vpiRefObj || objectType == vpiConstant ||
         objectType == vpiParameter || objectType == vpiSpecParam ||
         isTypespecVPIKind(objectType);
+    if (!usesSemanticSignedness) {
+      obelisk_rt_design_info_v1 info{};
+      usesSemanticSignedness =
+          infoFor(handle, info) && isSourceClassProperty(info);
+    }
     if (usesSemanticSignedness && semanticCursorFor(handle, semanticCursor)) {
       obelisk_rt_design_semantic_type_info_v1 semantic{};
       if (obelisk_rt_cached_design_semantic_type_info(
@@ -9246,6 +9314,16 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       return vpiUndefined;
     uint32_t exactType = static_cast<uint32_t>(vpiTypeForHandle(handle));
     obelisk_rt_design_cursor_v1 semantic{};
+    if (isSourceClassProperty(info)) {
+      uint64_t width = 0;
+      if (semanticCursorFor(handle, semantic) &&
+          obelisk_rt_cached_design_semantic_bit_width(
+              handle->owner->context, semantic, &width) == OBELISK_RT_OK)
+        return static_cast<PLI_INT32>(std::min<uint64_t>(width, INT32_MAX));
+      setError(handle->owner,
+               "lexical class property has no value-dependent size", vpiNotice);
+      return vpiUndefined;
+    }
     if (exactType == vpiRegArray && semanticCursorFor(handle, semantic) &&
         isVirtualInterfaceSequence(handle, semantic)) {
       std::vector<std::vector<VPISelectionStep>> selections;
@@ -9389,6 +9467,12 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT64 vpi_get64(PLI_INT32 property,
              vpiNotice);
     return vpiUndefined;
   }
+  VPIFixedPropertyValue optional{};
+  const auto optionalStatus = optionalPropertyFor(handle, descriptor, optional);
+  if (optionalStatus == OBELISK_RT_OK)
+    return static_cast<PLI_INT64>(optional.payload);
+  if (optionalStatus != OBELISK_RT_EOF)
+    return vpiUndefined;
   if (descriptor->realization ==
           obelisk::reflection::VPIPropertyRealization::FixedImage ||
       descriptor->realization ==
@@ -9822,28 +9906,33 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       return nullptr;
     }
   }
-  // Older declaration images derive vpiName from their hierarchy. New
-  // parameter and method declarations retain the exact identifier, including
-  // separators inside escaped names, in the ordinary fixed-property table.
-  VPIFixedPropertyValue declarationName{};
-  const auto declarationKind = vpiTypeForHandle(handle);
-  const bool parameter =
-      handle->form == VPIObjectForm::Design && declarationKind == vpiParameter;
-  const bool namedDeclaration =
-      handle->form == VPIObjectForm::Design &&
-      (declarationKind == vpiParameter || declarationKind == vpiTask ||
-       declarationKind == vpiFunction);
-  const bool hasDeclarationName =
-      ((namedDeclaration && property == vpiName) ||
-       (parameter && property == vpiDecompile)) &&
-      obelisk_rt_cached_vpi_fixed_property(handle->owner->context,
-                                           handle->cursor, vpiName,
-                                           &declarationName) == OBELISK_RT_OK;
-  if (property == vpiName && hasDeclarationName) {
+  // Exact optional declaration names apply to every named source kind.
+  // Parameter decompilation separately uses the same declared identifier.
+  const auto *imageDescriptor = propertyDescriptor;
+  if (property == vpiName)
+    imageDescriptor = obelisk::reflection::findVPIProperty(
+        static_cast<uint32_t>(vpiTypeForHandle(handle)), property);
+  VPIFixedPropertyValue optional{};
+  const auto optionalStatus =
+      optionalPropertyFor(handle, imageDescriptor, optional);
+  if (optionalStatus == OBELISK_RT_OK) {
     OBELISK_RT_TRY {
-      scratch.assign(reinterpret_cast<const char *>(declarationName.stringData),
-                     static_cast<size_t>(declarationName.stringSize));
-      return scratch.data();
+      if (imageDescriptor->valueKind ==
+          obelisk::reflection::VPIPropertyValueKind::String) {
+        scratch.assign(reinterpret_cast<const char *>(optional.stringData),
+                       static_cast<size_t>(optional.stringSize));
+        return scratch.data();
+      }
+      const auto *symbolic = obelisk::reflection::findVPIIntegerPropertyValue(
+          imageDescriptor->property, static_cast<uint32_t>(optional.payload));
+      if (imageDescriptor->symbolicString && symbolic &&
+          symbolic->symbolicName[0]) {
+        scratch = symbolic->symbolicName;
+        return scratch.data();
+      }
+      setError(handle->owner, "VPI property has no symbolic string spelling",
+               vpiNotice);
+      return nullptr;
     }
     OBELISK_RT_CATCH_ALL {
       setError(handle->owner, "VPI property string buffer is out of memory",
@@ -9851,6 +9940,15 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
       return nullptr;
     }
   }
+  if (optionalStatus != OBELISK_RT_EOF)
+    return nullptr;
+  VPIFixedPropertyValue declarationName{};
+  const bool hasDeclarationName =
+      property == vpiDecompile && handle->form == VPIObjectForm::Design &&
+      vpiTypeForHandle(handle) == vpiParameter &&
+      obelisk_rt_cached_vpi_fixed_property(handle->owner->context,
+                                           handle->cursor, vpiName,
+                                           &declarationName) == OBELISK_RT_OK;
   if (propertyDescriptor &&
       (propertyDescriptor->realization ==
            obelisk::reflection::VPIPropertyRealization::FixedImage ||
@@ -9905,7 +10003,7 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     }
   }
   if (property == vpiDecompile) {
-    if (parameter && hasDeclarationName)
+    if (hasDeclarationName)
       return decompileSourceExpression(handle, scratch) ? scratch.data()
                                                         : nullptr;
     const auto type = vpiTypeForHandle(handle);
@@ -10606,7 +10704,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_put_value(vpiHandle opaque,
   __vpiHandle *handle = validate(opaque);
   if (!handle)
     return nullptr;
-  if (!allowProtectedSource(handle, "vpi_put_value"))
+  if (!allowProtectedSource(handle, "vpi_put_value") ||
+      rejectSourceClassPropertyValue(handle))
     return nullptr;
   if (handle->form == VPIObjectForm::SnapshotValue) {
     setError(handle->owner, "mailbox message snapshots are read-only",

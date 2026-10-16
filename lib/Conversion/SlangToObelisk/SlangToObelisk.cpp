@@ -609,7 +609,17 @@ public:
                                            ir::SVCoverageOptionOp>>(converter,
                                                                     &context);
     patterns
-        .add<ConcreteASTNodeConversion<slangir::SourceClassMethodSymbolOp,
+        .add<ConcreteASTNodeConversion<slangir::SourceClassPropertySymbolOp,
+                                       ir::SVSourceClassPropertySymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassTypeAliasSymbolOp,
+                                       ir::SVSourceClassTypeAliasSymbolOp>,
+             ConcreteASTNodeConversion<slangir::SourceDeclaredTypeOp,
+                                       ir::SVSourceDeclaredTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceDeclaredTypeReferenceOp,
+                                       ir::SVSourceDeclaredTypeReferenceOp>,
+             ConcreteASTNodeConversion<slangir::SourceUnavailableTypeOp,
+                                       ir::SVSourceUnavailableTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassMethodSymbolOp,
                                        ir::SVSourceClassMethodSymbolOp>,
              ConcreteASTNodeConversion<slangir::SourceValueParameterSymbolOp,
                                        ir::SVSourceValueParameterSymbolOp>,

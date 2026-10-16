@@ -595,6 +595,63 @@ LogicalResult SVRandCaseStatementOp::verify() {
   return success();
 }
 
+LogicalResult SVSourceClassPropertySymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      SVGenericClassDefSymbolOp, SVSourceDeclaredTypeOp,
+      SVSourceDeclaredTypeReferenceOp, SVSourceUnavailableTypeOp,
+      SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
+      SVSourceClassMethodSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceClassTypeAliasSymbolOp::verify() {
+  return sourceclass::verifyDataDeclaration<
+      SVGenericClassDefSymbolOp, SVSourceDeclaredTypeOp,
+      SVSourceDeclaredTypeReferenceOp, SVSourceUnavailableTypeOp,
+      SVSourceClassPropertySymbolOp, SVSourceClassTypeAliasSymbolOp,
+      SVSourceClassMethodSymbolOp, SVSourceTypeParameterSymbolOp,
+      SVSourceValueParameterSymbolOp>(*this);
+}
+
+LogicalResult SVSourceDeclaredTypeOp::verify() {
+  if (failed(
+          sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
+                                               SVSourceClassTypeAliasSymbolOp>(
+              *this, true)))
+    return failure();
+  bool unresolved = false;
+  getSemanticType().walk([&](Type type) {
+    unresolved |=
+        isa<ErrorType, UntypedType, UnboundedType, TypeReferenceType>(type);
+  });
+  if (unresolved)
+    return emitOpError(
+        "concrete declared type cannot contain an unresolved type");
+  return success();
+}
+
+LogicalResult SVSourceDeclaredTypeReferenceOp::verify() {
+  return sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
+                                              SVSourceClassTypeAliasSymbolOp>(
+      *this, false);
+}
+
+LogicalResult SVSourceDeclaredTypeReferenceOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  return sourceclass::verifyDeclaredTypeReference<
+      SVSourceTypeParameterSymbolOp, SVSourceClassTypeAliasSymbolOp>(*this,
+                                                                     symbols);
+}
+
+LogicalResult SVSourceUnavailableTypeOp::verify() {
+  if (getSyntax().empty())
+    return emitOpError(
+        "unavailable declared type requires original source text");
+  return sourceclass::verifyDeclaredTypeOwner<SVSourceClassPropertySymbolOp,
+                                              SVSourceClassTypeAliasSymbolOp>(
+      *this, false);
+}
+
 LogicalResult SVSourceClassMethodSymbolOp::verify() {
   return sourceclass::verifyMethod<SVGenericClassDefSymbolOp,
                                    SVSourceValueParameterSymbolOp,

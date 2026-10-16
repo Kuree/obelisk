@@ -1684,6 +1684,9 @@ enum {
   OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT = UINT32_C(1) << 9,
   // Lexical generic value declaration: no specialization has supplied a value.
   OBELISK_RT_DESIGN_CAP_UNRESOLVED_VALUE_PARAMETER = 1u << 10,
+  // Concrete lexical class property with exact source type but no executable
+  // field/storage binding. Values are unavailable until specialization.
+  OBELISK_RT_DESIGN_CAP_SOURCE_CLASS_PROPERTY = UINT32_C(1) << 11,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,

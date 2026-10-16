@@ -326,6 +326,10 @@ def IndexedImageProperty : VPIPropertyRealization<"IndexedImage", 3>;
 // Immutable metadata stored once on a source definition and reached through
 // the elaborated instance's compact definition binding.
 def DefinitionImageProperty : VPIPropertyRealization<"DefinitionImage", 4>;
+// A source declaration may preserve an exact immutable fact even where older
+// images or live views derive it. Absence falls through to the derived query;
+// explicit false remains distinct from unavailable source information.
+def OptionalImageProperty : VPIPropertyRealization<"OptionalImage", 5>;
 
 class VPIProperty<string apiName_, int value_,
                   VPIPropertyValueKind valueKind_, VPIObjectSet sources_,
@@ -606,7 +610,9 @@ def StructuralTaggedProperty : VPIProperty<"vpiTagged", 632,
 def StructuralArrayTypeProperty : VPIProperty<"vpiArrayType", 606,
   IntegerProperty, ArrayTypePropertyObjects, "37.17; 37.25">;
 def StructuralRandTypeProperty : VPIProperty<"vpiRandType", 610,
-  IntegerProperty, RandomizationTypeObjects, "37.17; 37.25">;
+  IntegerProperty, RandomizationTypeObjects, "37.17; 37.25", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  OptionalImageProperty>;
 def StructuralConstTypeProperty : VPIProperty<"vpiConstType", 40,
   IntegerProperty, ConstantTypePropertyObjects, "37.28; 37.59",
   StaticProperty, DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
@@ -776,12 +782,9 @@ def ReadClassTypespecObjects : VPIObjectSet<"ReadClassTypespecObjects",
 def InterfaceTypePropertyObjects : VPIObjectSet<
   "InterfaceTypePropertyObjects", [VirtualInterfaceVar, InterfaceTypespec]>;
 
-def ExactDeclarationNameObjects : VPIObjectSet<"ExactDeclarationNameObjects",
-  [Parameter, Task, Function]>;
-
 def NameProperty : VPIProperty<"vpiName", 2, StringProperty,
   NamedPropertyObjects, "37.4-37.85", StaticProperty, DeniedWhenProtected, 0,
-  NoPropertyObjects, NoPropertyObjects, DerivedProperty, ExactDeclarationNameObjects>;
+  NoPropertyObjects, NoPropertyObjects, OptionalImageProperty>;
 def FullNameProperty : VPIProperty<"vpiFullName", 3, StringProperty,
   FullNamePropertyObjects, "37.10-37.85">;
 def TopModuleProperty : VPIProperty<"vpiTopModule", 7, BooleanProperty,
@@ -935,7 +938,7 @@ def ActiveProperty : VPIProperty<"vpiActive", 49, BooleanProperty,
 def AutomaticProperty : VPIProperty<"vpiAutomatic", 50, BooleanProperty,
   AutomaticPropertyObjects, "37.3.7; 37.10; 37.17; 37.27; 37.31; 37.32; "
   "37.34; 37.41", StaticProperty, DeniedWhenProtected, 0,
-  NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  NoPropertyObjects, NoPropertyObjects, OptionalImageProperty,
   AutomaticImageObjects>;
 def CellProperty : VPIProperty<"vpiCell", 51, StringProperty,
   InstanceObjects, "37.10">;
@@ -1022,7 +1025,7 @@ def JoinTypeProperty : VPIProperty<"vpiJoinType", 603, IntegerProperty,
   ForkObjects, "37.12">;
 def AccessTypeProperty : VPIProperty<"vpiAccessType", 604, IntegerProperty,
   AccessTypePropertyObjects, "37.8; 37.34; 37.41", StaticProperty,
-  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects, DerivedProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects, OptionalImageProperty,
   ReadConstraintObjects>;
 def IsRandomizedProperty : VPIProperty<"vpiIsRandomized", 608,
   BooleanProperty, OrdinaryVariablePropertyObjects, "37.17", DynamicProperty,
@@ -1031,14 +1034,16 @@ def IsRandomizedProperty : VPIProperty<"vpiIsRandomized", 608,
 def LocalVarDeclsProperty : VPIProperty<"vpiLocalVarDecls", 609,
   IntegerProperty, ReadForObjects, "37.74">;
 def ConstantVariableProperty : VPIProperty<"vpiConstantVariable", 612,
-  BooleanProperty, OrdinaryVariablePropertyObjects, "37.17">;
+  BooleanProperty, OrdinaryVariablePropertyObjects, "37.17", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  OptionalImageProperty>;
 def StructUnionMemberProperty : VPIProperty<"vpiStructUnionMember", 615,
   BooleanProperty, StructUnionMemberPropertyObjects,
   "37.16; 37.17; 37.18">;
 def VisibilityProperty : VPIProperty<"vpiVisibility", 620, IntegerProperty,
   VisibilityPropertyObjects, "37.17; 37.41", StaticProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
-  DerivedProperty, TaskFunctionDeclObjects>;
+  OptionalImageProperty, TaskFunctionDeclObjects>;
 def VisibilityPublic : VPIIntegerPropertyValue<VisibilityProperty, 1>;
 def VisibilityProtected : VPIIntegerPropertyValue<VisibilityProperty, 2>;
 def VisibilityLocal : VPIIntegerPropertyValue<VisibilityProperty, 3>;
@@ -1057,7 +1062,9 @@ def AlwaysTypeAlwaysLatch
 def DistTypeProperty : VPIProperty<"vpiDistType", 625, IntegerProperty,
   DistributionItemObjects, "37.34">;
 def VirtualProperty : VPIProperty<"vpiVirtual", 635, BooleanProperty,
-  VirtualPropertyObjects, "37.31; 37.34; 37.41">;
+  VirtualPropertyObjects, "37.31; 37.34; 37.41", StaticProperty,
+  DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,
+  OptionalImageProperty>;
 def HasActualProperty : VPIProperty<"vpiHasActual", 636, BooleanProperty,
   DynamicPrefixPropertyObjects, "37.61", DynamicProperty,
   DeniedWhenProtected, 0, NoPropertyObjects, NoPropertyObjects,

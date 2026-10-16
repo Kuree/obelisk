@@ -1054,6 +1054,49 @@ def SVFrozenRandSeqProductionOp
 // they never carry an elaborated replacement for an unresolved parameter.
 // A generic class's own lexical method identity does not depend on any
 // specialization or require binding its signature or body.
+def SVSourceClassPropertySymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_property", [], (ins
+        ObeliskSVVariableLifetime:$lifetime,
+        ObeliskSVVisibility:$member_visibility,
+        ObeliskSVRandMode:$rand_mode,
+        OptionalAttr<UnitAttr>:$is_const)> {
+  let summary = "lexical generic class property without executable storage";
+  let description = [{
+    Owns exactly one source declared-type node. The declaration preserves its
+    lexical identity and modifiers without binding a specialization or initializer.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceClassTypeAliasSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_type_alias", [], (ins
+        ObeliskSVVisibility:$member_visibility)> {
+  let summary = "lexical generic class typedef without an effective target";
+  let hasVerifier = 1;
+}
+
+def SVSourceDeclaredTypeOp
+    : ObeliskASTNodeOp<"sv.source.declared_type", [],
+        (ins TypeAttr:$semantic_type)> {
+  let summary = "exact parameter-independent source declared type";
+  let hasVerifier = 1;
+}
+
+def SVSourceDeclaredTypeReferenceOp
+    : ObeliskASTNodeOp<"sv.source.declared_type_reference",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$declaration)> {
+  let summary = "source declared type naming an exact preceding lexical type";
+  let hasVerifier = 1;
+}
+
+def SVSourceUnavailableTypeOp
+    : ObeliskASTNodeOp<"sv.source.unavailable_type", [],
+        (ins StrAttr:$syntax)> {
+  let summary = "source declared type awaiting structural import";
+  let hasVerifier = 1;
+}
+
 def SVSourceClassMethodSymbolOp
     : ObeliskSymbolASTNodeOp<"sv.source.class_method", [], (ins
         ObeliskSVSubroutineKind:$subroutine_kind,
@@ -1063,7 +1106,8 @@ def SVSourceClassMethodSymbolOp
         OptionalAttr<UnitAttr>:$is_declared_virtual,
         OptionalAttr<UnitAttr>:$is_pure,
         OptionalAttr<UnitAttr>:$is_constructor,
-        OptionalAttr<UnitAttr>:$is_extern)> {
+        OptionalAttr<UnitAttr>:$is_extern,
+        OptionalAttr<BoolAttr>:$source_virtuality)> {
   let summary = "lexical generic-class method without an effective signature";
   let description = [{
     Directly owned by a generic class definition, with an empty body and no

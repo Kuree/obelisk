@@ -105,7 +105,9 @@ static LogicalResult verifyVPIProperties(Operation *operation,
     if (descriptor->realization !=
             reflection::VPIPropertyRealization::FixedImage &&
         descriptor->realization !=
-            reflection::VPIPropertyRealization::DefinitionImage)
+            reflection::VPIPropertyRealization::DefinitionImage &&
+        descriptor->realization !=
+            reflection::VPIPropertyRealization::OptionalImage)
       return operation->emitOpError()
              << "VPI property " << selector << " is not a FixedImage property";
     if (selector == 74 && cast<BoolAttr>(property.getValue()).getValue() !=
@@ -1347,6 +1349,23 @@ LogicalResult SimVPIClassMemberDeclOp::verify() {
     return emitOpError("requires nonempty hierarchy and property names");
   if (getStaticStorageAttr() && getStaticEventAttr())
     return emitOpError("static storage and event bindings are mutually exclusive");
+  if (!getFieldAttr() && (getStaticStorageAttr() || getStaticEventAttr()))
+    return emitOpError("a lexical property cannot have executable backing");
+  // An unresolved type parameter has no generic public variable kind. Do not
+  // manufacture a reg declaration from the storage helper's legacy fallback.
+  if (!getFieldAttr() && (!vpiKindForTypespec(getVpiType()) ||
+                          getVpiType().getKind() == VPITypeKind::Void ||
+                          getVpiType().getKind() == VPITypeKind::Sequence ||
+                          getVpiType().getKind() == VPITypeKind::Property))
+    return emitOpError("class property requires a concrete declared type");
+  if (auto properties = reflectionProperties(*this))
+    for (Attribute attribute : properties.getProperties()) {
+      auto property = cast<VPIPropertyAttr>(attribute);
+      if (property.getSelector().getValue().getZExtValue() == 2 &&
+          property.getValue() != getDebugNameAttr())
+        return emitOpError(
+            "vpiName must match the exact property declaration name");
+    }
   return verifyFixedReflection(*this, vpiKindForClassMember(getVpiType()),
                                reflectionProperties(*this),
                                reflectionDefinitionLoc(*this));
@@ -1354,9 +1373,11 @@ LogicalResult SimVPIClassMemberDeclOp::verify() {
 
 LogicalResult SimVPIClassMemberDeclOp::verifySymbolUses(
     SymbolTableCollection &symbolTable) {
-  auto field = symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
-      *this, getFieldAttr());
-  if (!field)
+  auto field = getFieldAttr()
+                   ? symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
+                         *this, getFieldAttr())
+                   : SimClassFieldDeclOp{};
+  if (getFieldAttr() && !field)
     return emitOpError("references an unknown class field");
   Operation *owner = symbolTable.lookupNearestSymbolFrom(*this, getOwnerAttr());
   uint64_t ownerScope = UINT64_MAX;
@@ -1366,7 +1387,8 @@ LogicalResult SimVPIClassMemberDeclOp::verifySymbolUses(
       return emitOpError("owner anchor must be a class definition");
     ownerScope = anchor.getEnclosingScopeId();
   } else if (auto typespec = dyn_cast_or_null<SimVPITypespecDeclOp>(owner)) {
-    if (typespec.getOrigin() != VPITypespecOrigin::ClassSpecialization ||
+    if (!field ||
+        typespec.getOrigin() != VPITypespecOrigin::ClassSpecialization ||
         typespec.getTargetType().getSymbol() != field.getOwnerAttr())
       return emitOpError("owner must be the field's canonical class specialization");
     ownerScope = typespec.getScopeId();
@@ -1375,6 +1397,8 @@ LogicalResult SimVPIClassMemberDeclOp::verifySymbolUses(
   }
   if (ownerScope != getScopeId())
     return emitOpError("scope ID does not match the class owner");
+  if (!field)
+    return success();
   if (field.getIsStatic() !=
       static_cast<bool>(getStaticStorageAttr() || getStaticEventAttr()))
     return emitOpError("static class fields require exactly one static backing");
@@ -3959,7 +3983,19 @@ LogicalResult SimDesignOp::verifyRegions() {
         lexical && classVPIIdentities.lookup(method.getOwnerAttr()) != lexical)
       return anchor.emitOpError("lexical owner does not define the method's class");
   }
+  llvm::DenseSet<std::pair<Attribute, Attribute>> classPropertyNames;
   for (SimVPIClassMemberDeclOp member : classMembers) {
+    if (!classPropertyNames
+             .insert({member.getOwnerAttr(), member.getDebugNameAttr()})
+             .second)
+      return member.emitOpError(
+          "duplicates a property name in the same class owner");
+    if (!scopes.contains(member.getScopeId()))
+      return member.emitOpError("references an unknown enclosing scope");
+    if (failed(verifyTypeReferences(member, member.getVpiType())))
+      return failure();
+    if (!member.getFieldAttr())
+      continue;
     auto field = symbolTable.lookupNearestSymbolFrom<SimClassFieldDeclOp>(
         member, member.getFieldAttr());
     Operation *owner =

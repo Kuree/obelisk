@@ -447,20 +447,22 @@ def SimVPIClassMemberDeclOp : SimOp<"vpi_class_member.decl", [
   let description = [{
     Separates a lexical or specialized property declaration from its live
     receiver. `owner` names a class-definition anchor or canonical class
-    typespec; `field` names the exact executable class field. The source ID
+    typespec; an optional `field` names the exact executable class field. A
+    declaration without a field is lexical: it has an exact concrete source
+    type and a ClassDefn owner, but no executable value or backing. The source ID
     shares the VPI anchor inventory namespace. A static property names its
     existing storage or named event; instance properties use the class field's
     native offset. This operation never allocates executable state.
   }];
   let arguments = (ins SymbolNameAttr:$sym_name, I64Attr:$id,
                        I64Attr:$scope_id, FlatSymbolRefAttr:$owner,
-                       FlatSymbolRefAttr:$field,
+                       OptionalAttr<FlatSymbolRefAttr>:$field,
                        StrAttr:$hierarchical_name, StrAttr:$debug_name,
                        SimVPITypeSemanticsAttr:$vpi_type,
                        OptionalAttr<I64Attr>:$static_storage,
                        OptionalAttr<I64Attr>:$static_event);
   let assemblyFormat = [{
-    $sym_name `id` $id `in` $scope_id `owner` $owner `field` $field
+    $sym_name `id` $id `in` $scope_id `owner` $owner (`field` $field^)?
     `hierarchy` $hierarchical_name `debug` $debug_name attr-dict
   }];
   let hasVerifier = 1;

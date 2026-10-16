@@ -943,11 +943,8 @@ bool validateVPIObjectModel(const RecordKeeper &records) {
   const std::pair<StringRef, uint32_t> supportedPropertyProtectedAccesses[] = {
       {"Denied", 0}, {"Allowed", 1}};
   const std::pair<StringRef, uint32_t> supportedPropertyRealizations[] = {
-      {"Derived", 0},
-      {"FixedImage", 1},
-      {"Runtime", 2},
-      {"IndexedImage", 3},
-      {"DefinitionImage", 4}};
+      {"Derived", 0},      {"FixedImage", 1},      {"Runtime", 2},
+      {"IndexedImage", 3}, {"DefinitionImage", 4}, {"OptionalImage", 5}};
   const std::pair<StringRef, uint32_t> supportedObjectRepresentations[] = {
       {"PhysicalScope", 0}, {"PhysicalObject", 1}, {"CodeUnit", 2},
       {"Statement", 3},     {"StaticImage", 4},    {"SemanticSynthetic", 5},
@@ -3738,7 +3735,7 @@ inline constexpr bool validateVPIObjectModelImageStructure(const uint8_t *data,
         record[4] > static_cast<uint8_t>(
                                     VPIPropertyValueKind::String) ||
         ((record[5] >> 3) & 7) >
-            static_cast<uint8_t>(VPIPropertyRealization::DefinitionImage) ||
+            static_cast<uint8_t>(VPIPropertyRealization::OptionalImage) ||
         (record[5] & ~UINT8_C(63)) != 0)
       return false;
     if (record[4] != static_cast<uint8_t>(descriptor->valueKind) ||

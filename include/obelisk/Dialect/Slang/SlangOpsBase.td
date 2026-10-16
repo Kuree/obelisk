@@ -1058,6 +1058,49 @@ class SlangRandSeqASTNodeOp<string mnemonic>
 // they never carry an elaborated replacement for an unresolved parameter.
 // A generic class's own lexical method identity does not depend on any
 // specialization or require binding its signature or body.
+def SourceClassPropertySymbolOp
+    : SlangSymbolASTNodeOp<"sv.source.class_property", [], (ins
+        SlangVariableLifetime:$lifetime,
+        SlangVisibility:$member_visibility,
+        SlangRandMode:$rand_mode,
+        OptionalAttr<UnitAttr>:$is_const)> {
+  let summary = "lexical generic class property without executable storage";
+  let description = [{
+    Owns exactly one source declared-type node. The declaration preserves its
+    lexical identity and modifiers without binding a specialization or initializer.
+  }];
+  let hasVerifier = 1;
+}
+
+def SourceClassTypeAliasSymbolOp
+    : SlangSymbolASTNodeOp<"sv.source.class_type_alias", [], (ins
+        SlangVisibility:$member_visibility)> {
+  let summary = "lexical generic class typedef without an effective target";
+  let hasVerifier = 1;
+}
+
+def SourceDeclaredTypeOp
+    : SlangASTNodeOp<"sv.source.declared_type", [],
+        (ins TypeAttr:$semantic_type)> {
+  let summary = "exact parameter-independent source declared type";
+  let hasVerifier = 1;
+}
+
+def SourceDeclaredTypeReferenceOp
+    : SlangASTNodeOp<"sv.source.declared_type_reference",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$declaration)> {
+  let summary = "source declared type naming an exact preceding lexical type";
+  let hasVerifier = 1;
+}
+
+def SourceUnavailableTypeOp
+    : SlangASTNodeOp<"sv.source.unavailable_type", [],
+        (ins StrAttr:$syntax)> {
+  let summary = "source declared type awaiting structural import";
+  let hasVerifier = 1;
+}
+
 def SourceClassMethodSymbolOp
     : SlangSymbolASTNodeOp<"sv.source.class_method", [], (ins
         SlangSubroutineKind:$subroutine_kind,
@@ -1067,7 +1110,8 @@ def SourceClassMethodSymbolOp
         OptionalAttr<UnitAttr>:$is_declared_virtual,
         OptionalAttr<UnitAttr>:$is_pure,
         OptionalAttr<UnitAttr>:$is_constructor,
-        OptionalAttr<UnitAttr>:$is_extern)> {
+        OptionalAttr<UnitAttr>:$is_extern,
+        OptionalAttr<BoolAttr>:$source_virtuality)> {
   let summary = "lexical generic-class method without an effective signature";
   let description = [{
     Directly owned by a generic class definition, with an empty body and no
