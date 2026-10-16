@@ -621,6 +621,8 @@ public:
                                        ir::SVSourceDeclaredTypeReferenceOp>,
              ConcreteASTNodeConversion<slangir::SourceUnavailableTypeOp,
                                        ir::SVSourceUnavailableTypeOp>,
+             ConcreteASTNodeConversion<slangir::SourceClassConstraintSymbolOp,
+                                       ir::SVSourceClassConstraintSymbolOp>,
              ConcreteASTNodeConversion<slangir::SourceClassMethodSymbolOp,
                                        ir::SVSourceClassMethodSymbolOp>,
              ConcreteASTNodeConversion<slangir::SourceValueParameterSymbolOp,

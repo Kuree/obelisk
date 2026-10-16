@@ -572,6 +572,7 @@ bool isSupportedClassDeclaration(Operation *op) {
       semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
       semantic::SVSourceClassDefinitionSymbolOp,
       semantic::SVSourceClassMethodSymbolOp,
+      semantic::SVSourceClassConstraintSymbolOp,
       semantic::SVSourceTypeParameterSymbolOp,
       semantic::SVSourceValueParameterSymbolOp,
       semantic::SVSourceValueDefaultOp, semantic::SVSourceParameterReferenceOp,

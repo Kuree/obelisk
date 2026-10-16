@@ -1114,6 +1114,22 @@ def SourceUnavailableTypeOp
   let hasVerifier = 1;
 }
 
+def SourceClassConstraintSymbolOp
+    : SlangSymbolASTNodeOp<"sv.source.class_constraint", [], (ins
+        OptionalAttr<UnitAttr>:$is_static,
+        OptionalAttr<UnitAttr>:$is_pure,
+        OptionalAttr<UnitAttr>:$is_prototype,
+        BoolAttr:$has_external_definition)> {
+  let summary = "lexical normal constraint without a bound constraint body";
+  let description = [{
+    Owned by a lexical class definition, with an empty body and no
+    semantic_type. The source position is the declaration or prototype
+    position. has_external_definition records an exact out-of-block definition
+    lookup without binding its constraint expressions.
+  }];
+  let hasVerifier = 1;
+}
+
 def SourceClassMethodSymbolOp
     : SlangSymbolASTNodeOp<"sv.source.class_method", [], (ins
         SlangSubroutineKind:$subroutine_kind,

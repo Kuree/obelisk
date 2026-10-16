@@ -5995,6 +5995,47 @@ private:
     importSourceDeclaredType(*declared, member, types);
   }
 
+  void importSourceClassConstraint(
+      const slang::ast::ConstraintBlockSymbol &constraint,
+      const slang::ast::Symbol &definition) {
+    const auto *syntax = constraint.getSyntax();
+    if (!syntax)
+      return;
+    using CF = slang::ast::ConstraintBlockFlags;
+    const bool prototype =
+        syntax->kind == slang::syntax::SyntaxKind::ConstraintPrototype;
+    const bool pure = constraint.flags.has(CF::Pure);
+    bool external = false;
+    if (prototype && !pure) {
+      // This is the same exact declaration registry used by getConstraints(),
+      // but observing source identity neither binds the dependent body nor
+      // marks the declaration as used by an executable specialization.
+      const auto &owner = constraint.getParentScope()->asSymbol();
+      const auto &outer = *owner.getParentScope();
+      const auto *body = std::get<0>(outer.getCompilation().findOutOfBlockDecl(
+          outer, owner.name, constraint.name));
+      external = body &&
+                 body->kind == slang::syntax::SyntaxKind::ConstraintDeclaration;
+    }
+    auto attrs = originalSourceAttributes(getSourceRange(constraint));
+    attrs.set("sym_name", getInternalSymbolName(constraint));
+    attrs.set("name", builder.getStringAttr(constraint.name));
+    attrs.set("hierarchical_name",
+              builder.getStringAttr(sourceClassPath(definition) +
+                                    "::" + std::string(constraint.name)));
+    attrs.set("has_external_definition", builder.getBoolAttr(external));
+    if (constraint.flags.has(CF::Static))
+      attrs.set("is_static", builder.getUnitAttr());
+    if (pure)
+      attrs.set("is_pure", builder.getUnitAttr());
+    if (prototype)
+      attrs.set("is_prototype", builder.getUnitAttr());
+    auto declaration = slangir::SourceClassConstraintSymbolOp::create(
+        builder, sourceLocation(constraint.location), TypeRange{}, ValueRange{},
+        attrs.getAttrs());
+    declaration.getBody().emplaceBlock();
+  }
+
   template <typename Method>
   void importSourceClassMethod(const Method &method,
                                const slang::ast::Symbol &definition) {
@@ -6106,6 +6147,11 @@ private:
         if (member.kind == slang::ast::SymbolKind::TypeAlias)
           sourceTypes[&member] =
               FlatSymbolRefAttr::get(getInternalSymbolName(member));
+        continue;
+      }
+      if (member.kind == slang::ast::SymbolKind::ConstraintBlock) {
+        importSourceClassConstraint(
+            member.as<slang::ast::ConstraintBlockSymbol>(), definition);
         continue;
       }
       if (member.kind == slang::ast::SymbolKind::Subroutine) {

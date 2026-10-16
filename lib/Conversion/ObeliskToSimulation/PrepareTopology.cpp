@@ -1229,6 +1229,7 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
              semantic::SVSourceClassDefinitionSymbolOp,
              semantic::SVSubroutineSymbolOp,
              semantic::SVSourceClassMethodSymbolOp,
+             semantic::SVSourceClassConstraintSymbolOp,
              semantic::SVConstraintBlockSymbolOp, semantic::SVPropertySymbolOp,
              semantic::SVSequenceSymbolOp, semantic::SVClockingBlockSymbolOp,
              semantic::SVModportSymbolOp, semantic::SVVariableSymbolOp,
@@ -1261,6 +1262,8 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       return method.getSubroutineKind() == semantic::SVSubroutineKind::Task
                  ? VPIKind::Task
                  : VPIKind::Function;
+    if (isa<semantic::SVSourceClassConstraintSymbolOp>(operation))
+      return VPIKind::Constraint;
     if (isa<semantic::SVSourceTypeParameterSymbolOp,
             semantic::SVSourceValueParameterSymbolOp>(operation)) {
       Operation *owner = operation->getParentOp();
@@ -1603,6 +1606,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
       addBoolean(70, static_cast<bool>(parameter.getIsLocalParamAttr()));
     if (auto constraint = dyn_cast<semantic::SVConstraintBlockSymbolOp>(source))
       isAutomatic = !constraint.getIsStatic().value_or(false);
+    if (auto constraint =
+            dyn_cast<semantic::SVSourceClassConstraintSymbolOp>(source))
+      isAutomatic = !constraint.getIsStaticAttr();
     if (sourceKind == VPIKind::Module) {
       addBoolean(7, top);                     // vpiTopModule
       addBoolean(8, cell && cell.getValue()); // vpiCellInstance
@@ -1644,6 +1650,14 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
           builder.getI32IntegerAttr(constraint.getOutOfBlockIndex() != 0
                                        ? 2  // vpiExternAcc
                                        : 0)));
+    if (auto constraint =
+            dyn_cast<semantic::SVSourceClassConstraintSymbolOp>(source))
+      properties.push_back(sim::VPIPropertyAttr::get(
+          builder.getContext(), builder.getI32IntegerAttr(604),
+          builder.getI32IntegerAttr(
+              constraint.getHasExternalDefinition() ? 2 : 0)));
+    if (sourceKind == VPIKind::Constraint)
+      addString(2, builder.getStringAttr(getDebugName(source)));
     addBoolean(600, top); // vpiTop
     addBoolean(602, isa<semantic::SVCompilationUnitSymbolOp>(source));
 

@@ -66,6 +66,10 @@ order, scope, lifetime, and visibility remain queryable without resolving
 dependent signatures or bodies. Explicit or otherwise established virtuality is
 queryable; unresolved inherited virtuality reports a notice. Ordinary class
 `extern` syntax does not imply DPI access metadata.
+Generic and nested lexical classes retain normal constraint declarations in
+source order, including a prototype at its declaration position. Static lifetime
+and the presence of an actual out-of-block definition remain queryable without
+binding dependent constraint bodies.
 
 Generic classes also retain lexical fields with primitive concrete declared
 types and concrete typedef chains without creating an executable class. Exact

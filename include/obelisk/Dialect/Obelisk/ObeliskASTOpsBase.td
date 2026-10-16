@@ -1110,6 +1110,22 @@ def SVSourceUnavailableTypeOp
   let hasVerifier = 1;
 }
 
+def SVSourceClassConstraintSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.class_constraint", [], (ins
+        OptionalAttr<UnitAttr>:$is_static,
+        OptionalAttr<UnitAttr>:$is_pure,
+        OptionalAttr<UnitAttr>:$is_prototype,
+        BoolAttr:$has_external_definition)> {
+  let summary = "lexical normal constraint without a bound constraint body";
+  let description = [{
+    Owned by a lexical class definition, with an empty body and no
+    semantic_type. The source position is the declaration or prototype
+    position. has_external_definition records an exact out-of-block definition
+    lookup without binding its constraint expressions.
+  }];
+  let hasVerifier = 1;
+}
+
 def SVSourceClassMethodSymbolOp
     : ObeliskSymbolASTNodeOp<"sv.source.class_method", [], (ins
         ObeliskSVSubroutineKind:$subroutine_kind,

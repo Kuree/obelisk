@@ -92,6 +92,32 @@ verifyLexicalDefinition(Declaration op, mlir::SymbolTableCollection &symbols) {
   return mlir::success();
 }
 
+template <typename GenericClass, typename SourceClass, typename... Declarations,
+          typename Constraint>
+mlir::LogicalResult verifyConstraint(Constraint op) {
+  if (!mlir::isa_and_nonnull<GenericClass, SourceClass>(op->getParentOp()))
+    return op.emitOpError("source constraint requires a lexical class owner");
+  if (op.getSemanticTypeAttr())
+    return op.emitOpError("source constraint cannot carry an effective type");
+  if (!op.getName() || op.getName()->empty() || op.getName()->contains('\0'))
+    return op.emitOpError(
+        "source constraint requires a nonempty declaration name");
+  if (!op.getBody().empty() && !op.getBody().front().empty())
+    return op.emitOpError("source constraint cannot contain a bound body");
+  if (op.getIsPureAttr() &&
+      (!op.getIsPrototypeAttr() || op.getHasExternalDefinition()))
+    return op.emitOpError("pure constraint requires a bodyless prototype");
+  if (op.getHasExternalDefinition() && !op.getIsPrototypeAttr())
+    return op.emitOpError(
+        "external constraint definition requires a prototype");
+  for (mlir::Operation &sibling : op->getBlock()->getOperations())
+    if (&sibling != op.getOperation() &&
+        mlir::isa<Constraint, SourceClass, Declarations...>(sibling) &&
+        sibling.getAttr("name") == op->getAttr("name"))
+      return op.emitOpError("duplicates a lexical class declaration name");
+  return mlir::success();
+}
+
 template <typename GenericClass, typename SourceClass, typename ValueParameter,
           typename TypeParameter, typename Method>
 mlir::LogicalResult verifyMethod(Method op, bool isTask) {
