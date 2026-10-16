@@ -3414,9 +3414,10 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
         size_t processCompactionThreshold = std::max<size_t>(
             1, processes.size() / 4 + (processes.size() % 4 != 0));
         bool compactProcesses =
-            context->schedulerDeadProcessCount == processes.size() ||
-            context->schedulerDeadProcessCount >= processCompactionThreshold;
-        if (compactProcesses && context->schedulerDeadProcessCount != 0) {
+            context->schedulerDeadProcessCount != 0 &&
+            (context->schedulerDeadProcessCount == processes.size() ||
+             context->schedulerDeadProcessCount >= processCompactionThreshold);
+        if (compactProcesses) {
           size_t cursor = processes.empty()
                               ? 0
                               : context->schedulerCursor % processes.size();
@@ -3458,7 +3459,11 @@ obelisk_rt_status runScheduler(obelisk_rt_context *context,
               context->designPollCandidates.insert(task.id);
           }
         }
-        obelisk_rt_prune_finished_process_parents_unlocked(context);
+        // A prune scans every scheduled process. Compaction already paid for
+        // one such scan after a quarter of the vector died; below that, a
+        // pending compaction persists across iterations and must stay O(1).
+        if (compactProcesses)
+          obelisk_rt_prune_finished_process_parents_unlocked(context);
         context->schedulerCompactionPending =
             context->schedulerDeadProcessCount != 0;
       }

@@ -7751,6 +7751,83 @@ TEST(Scheduler, TerminatedJoinNoneParentsPreserveDescendantAncestry) {
   obelisk_rt_v1_context_destroy(context);
 }
 
+TEST(Scheduler, FinishedParentLinksPruneOnlyWithProcessCompaction) {
+  // A prune scans every scheduled process. A dead slot below the compaction
+  // threshold keeps compaction pending on every scheduler iteration, so it
+  // must not repeat that scan.
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  SchedulerFixture fixture(1);
+  schedulerWaitKind = OBELISK_RT_SUSPEND_EVENT;
+  schedulerWaitEdge = OBELISK_RT_WAIT_EDGE_NONE;
+  schedulerWaitWidth = 0;
+  schedulerResumeCount = 0;
+  schedulerWaitHandle = 42;
+  ASSERT_EQ(
+      obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+      OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  schedulerWaitHandle = 43;
+  for (int index = 0; index != 7; ++index)
+    ASSERT_EQ(
+        obelisk_rt_v1_scheduler_add(context, makeSchedulerInstance(fixture), 0),
+        OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  // Nothing descends from this finished parent.
+  context->finishedProcessParents[tag | 1000] = 0;
+
+  obelisk_rt_v1_scheduler_event(context, 42, 0);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 1u);
+  EXPECT_EQ(context->scheduledProcesses.size(), 8u);
+  EXPECT_EQ(context->finishedProcessParents.count(tag | 1000), 1u);
+
+  obelisk_rt_v1_scheduler_event(context, 43, 0);
+  ASSERT_EQ(obelisk_rt_v1_scheduler_run(context), OBELISK_RT_OK);
+  EXPECT_EQ(schedulerResumeCount, 8u);
+  EXPECT_TRUE(context->scheduledProcesses.empty());
+  EXPECT_TRUE(context->finishedProcessParents.empty());
+  obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(Scheduler, FinishedParentPrunesAmortizeTheLiveProcessScan) {
+  obelisk_rt_context *context = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);
+  constexpr uint64_t tag = OBELISK_RT_NATIVE_LOGICAL_PROCESS_TAG;
+  constexpr uint64_t liveCount = 1000;
+  auto live = reinterpret_cast<obelisk_rt_process_instance_v1 *>(
+      static_cast<uintptr_t>(1));
+  for (uint64_t token = 1; token <= liveCount; ++token) {
+    ScheduledProcess process;
+    process.instance = live;
+    process.token = token;
+    context->scheduledProcesses.push_back(std::move(process));
+  }
+  // Every retired parent is childless by now, so each recorded link is stale.
+  uint64_t nextToken = liveCount + 1;
+  auto retire = [&] {
+    uint64_t finished = tag | nextToken++;
+    context->logicalProcessParentsWithChildren.insert(finished);
+    obelisk_rt_retire_process_parent_unlocked(context, finished, 0);
+  };
+  for (int index = 0; index != 64; ++index)
+    retire();
+  EXPECT_EQ(context->finishedProcessParents.size(), 64u);
+  retire();
+  EXPECT_EQ(context->finishedProcessParents.size(), 1u);
+
+  // That prune scanned every live process. The next one waits until as many
+  // links have been recorded.
+  for (uint64_t index = 1; index != liveCount; ++index)
+    retire();
+  EXPECT_EQ(context->finishedProcessParents.size(), liveCount);
+  retire();
+  EXPECT_EQ(context->finishedProcessParents.size(), 1u);
+  context->scheduledProcesses.clear();
+  obelisk_rt_v1_context_destroy(context);
+}
+
 TEST(Scheduler, NativeChildAttachIndexesActualProcess) {
   obelisk_rt_context *context = nullptr;
   ASSERT_EQ(obelisk_rt_v1_context_create(&context), OBELISK_RT_OK);

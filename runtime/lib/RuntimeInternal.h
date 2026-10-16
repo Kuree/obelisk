@@ -2459,8 +2459,9 @@ struct obelisk_rt_context {
   // leads from every ancestor to them. Pruned once no live process descends
   // from an entry.
   std::unordered_map<uint64_t, uint64_t> finishedProcessParents;
-  // Size at which recording another finished parent prunes the links first,
-  // bounding them on executors without scheduler compaction.
+  // Size at which recording another finished parent prunes the links first.
+  // This bounds them between scheduler compactions and on executors without
+  // compaction.
   size_t finishedProcessParentsPruneSize = 64;
   // A bytecode design task is moved out of the scheduler vector while it
   // executes, so its lane-local stream cannot be rediscovered by token.
@@ -3308,8 +3309,13 @@ obelisk_rt_retire_process_parent_unlocked(obelisk_rt_context *context,
   auto &links = context->finishedProcessParents;
   if (links.size() >= context->finishedProcessParentsPruneSize) {
     obelisk_rt_prune_finished_process_parents_unlocked(context);
+    // The prune scanned every link and scheduled process. Record at least as
+    // many links again before the next one so retirement stays amortized O(1)
+    // however many processes are alive.
+    size_t scanned = context->scheduledProcesses.size() +
+                     context->scheduledDesignTasks.size();
     context->finishedProcessParentsPruneSize =
-        std::max<size_t>(64, 2 * links.size());
+        links.size() + std::max({size_t{64}, links.size(), scanned});
   }
   links[finished] = parent;
 }
