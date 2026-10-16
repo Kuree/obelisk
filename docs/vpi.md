@@ -49,8 +49,13 @@ constraints are reached through `vpiExtends`. A static member has one backing
 storage location without an additional declaration in the physical module's
 variable inventory. Lexical class handles cannot read member values, and
 non-static members reached from a typespec need a live receiver for value
-access. Generic lexical declarations without a realized specialization and
-original parameter-default expression graphs remain incomplete.
+access. Generic lexical type parameters are preserved even without a realized
+specialization. Their `vpiExpr` relation retains an original primitive type
+default or an exact reference to a preceding type parameter. An absent default
+returns a quiet null; a preserved but unsupported default form returns a
+notice. Generic value parameters, other lexical members without a realized
+specialization, and broader original-default expression graphs remain
+incomplete.
 
 Mailbox, semaphore, and process variables also expose `vpiClassObj` and
 `vpiClassTypespec`. Upcasting a user class to its mailbox or semaphore base

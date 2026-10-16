@@ -2,7 +2,9 @@
 
 #include "obelisk/Dialect/ForeachLoopMetadata.h"
 #include "obelisk/Dialect/Obelisk/ObeliskOps.h"
+#include "obelisk/Dialect/SourceParameterMetadata.h"
 
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/TypeUtilities.h"
 
@@ -589,6 +591,48 @@ LogicalResult SVRandCaseStatementOp::verify() {
     return failure();
   if (astBodySize(*this) != expected)
     return emitOpError("malformed randcase item inventory");
+  return success();
+}
+
+LogicalResult SVSourceTypeParameterSymbolOp::verify() {
+  return sourceparameter::verifyTypeParameter<
+      SVGenericClassDefSymbolOp, SVSourceTypeDefaultOp,
+      SVSourceTypeReferenceDefaultOp, SVSourceUnsupportedDefaultOp>(*this);
+}
+
+LogicalResult SVSourceTypeDefaultOp::verify() {
+  if (failed(sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp>(
+          *this)))
+    return failure();
+  bool unresolved = false;
+  getSemanticType().walk([&](Type type) {
+    unresolved |=
+        isa<ErrorType, UntypedType, UnboundedType, TypeReferenceType>(type);
+  });
+  if (unresolved)
+    return emitOpError(
+        "concrete source default cannot contain an unresolved type");
+  return success();
+}
+
+LogicalResult SVSourceTypeReferenceDefaultOp::verify() {
+  return sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp>(
+      *this);
+}
+
+LogicalResult SVSourceTypeReferenceDefaultOp::verifySymbolUses(
+    SymbolTableCollection &symbols) {
+  return sourceparameter::verifyTypeReference<SVSourceTypeParameterSymbolOp>(
+      *this, symbols);
+}
+
+LogicalResult SVSourceUnsupportedDefaultOp::verify() {
+  if (failed(sourceparameter::verifyDefaultOwner<SVSourceTypeParameterSymbolOp>(
+          *this)))
+    return failure();
+  if (getSyntax().empty() || getReason().empty())
+    return emitOpError(
+        "unsupported default requires source syntax and a reason");
   return success();
 }
 

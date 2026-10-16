@@ -1674,6 +1674,12 @@ enum {
   // declares a packed range. Built-in and typedef-provided ranges do not set
   // it, as required by IEEE 1800-2023 37.28 detail 5.
   OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE = UINT32_C(1) << 7,
+  // Static-only lexical type parameters have no effective semantic payload.
+  // Their exact ClassDefn owner and source declaration remain authoritative.
+  OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER = UINT32_C(1) << 8,
+  // A present original parameter default has no supported expression graph.
+  // Distinct from an absent default; a vpiExpr relation cannot coexist.
+  OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT = UINT32_C(1) << 9,
   // Definition-backed vpiIODecl views use these record-kind-specific bits
   // for the exact IEEE direction, including vpiRef and undefined.
   OBELISK_RT_DESIGN_CAP_IO_DIRECTION_SHIFT = 8,
@@ -4842,7 +4848,8 @@ struct obelisk_rt_random_state_v1 {
 #define OBELISK_RT_RANDOM_PROGRAM_EXACT_UNIFORM UINT32_C(32)
 // Function arguments subdivide the constraints into priority stages. Higher
 // stages ignore lower-stage constraints and become state for later stages.
-// Requires EXACT_UNIFORM; failed later stages commit no assignment or RNG state.
+// Requires EXACT_UNIFORM; failed later stages commit no assignment or RNG
+// state.
 #define OBELISK_RT_RANDOM_PROGRAM_HAS_FUNCTION_PRIORITY UINT32_C(64)
 // Exact weighted target projections with arbitrary-precision unsigned masses.
 // Requires a compiled sampling plan and stateful sampling. Dist records use

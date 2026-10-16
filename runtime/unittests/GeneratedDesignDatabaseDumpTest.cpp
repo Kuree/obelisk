@@ -4635,3 +4635,156 @@ TEST(GeneratedDesignDatabase, BuiltinClassAliases) {
   }
   obelisk_rt_v1_context_destroy(runtime);
 }
+
+TEST(GeneratedDesignDatabase, SourceTypeParameters) {
+  const char *inputPath = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(inputPath, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  obelisk::sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(inputPath, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<obelisk::sim::SimDesignOp>().begin();
+  obelisk::SimulationBytecodeOptions options;
+  options.vpi = "read";
+  auto encoded = obelisk::encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  uint64_t bytecodeChecksum = 0;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    bytecodeChecksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  obelisk_rt_execution_descriptor_v1 execution{OBELISK_RT_VERSION,
+                                               encoded->executionFlags,
+                                               0,
+                                               encoded->bytecode.data(),
+                                               encoded->bytecode.size(),
+                                               encoded->designDatabase.data(),
+                                               encoded->designDatabase.size(),
+                                               encoded->stateBitCount,
+                                               bytecodeChecksum};
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *runtime = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &runtime),
+            OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(runtime, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(runtime), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(runtime), OBELISK_RT_OK);
+  char className[] = "G";
+  vpiHandle definition = vpi_handle_by_name(className, nullptr);
+  ASSERT_NE(definition, nullptr);
+  EXPECT_EQ(vpi_iterate(vpiClassTypespec, definition), nullptr);
+  vpiHandle iterator = vpi_iterate(vpiParameter, definition);
+  ASSERT_NE(iterator, nullptr);
+  std::array<vpiHandle, 4> parameters{};
+  for (size_t index = 0; index != parameters.size(); ++index) {
+    parameters[index] = vpi_scan(iterator);
+    ASSERT_NE(parameters[index], nullptr);
+    EXPECT_EQ(vpi_get(vpiType, parameters[index]), vpiTypeParameter);
+    EXPECT_STREQ(vpi_get_str(vpiName, parameters[index]),
+                 (std::array<const char *, 4>{"T", "U", "V", "W"})[index]);
+    EXPECT_EQ(vpi_get(vpiLocalParam, parameters[index]), index == 3);
+    vpiHandle owner = vpi_handle(vpiScope, parameters[index]);
+    ASSERT_NE(owner, nullptr);
+    EXPECT_EQ(vpi_compare_objects(owner, definition), 1);
+    EXPECT_EQ(vpi_free_object(owner), 1);
+    // An unresolved declaration is the typespec referenced by its users;
+    // there is no effective specialization type behind it.
+    EXPECT_EQ(vpi_handle(vpiTypespec, parameters[index]), nullptr);
+  }
+  EXPECT_EQ(vpi_scan(iterator), nullptr);
+  vpiHandle concrete = vpi_handle(vpiExpr, parameters[0]);
+  ASSERT_NE(concrete, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, concrete), vpiIntTypespec);
+  EXPECT_EQ(vpi_get_str(vpiName, concrete), nullptr);
+  vpiHandle reference = vpi_handle(vpiExpr, parameters[1]);
+  ASSERT_NE(reference, nullptr);
+  EXPECT_EQ(vpi_get(vpiType, reference), vpiTypeParameter);
+  EXPECT_EQ(vpi_compare_objects(reference, parameters[0]), 1);
+  EXPECT_EQ(vpi_handle(vpiExpr, parameters[2]), nullptr);
+  EXPECT_EQ(vpi_chk_error(nullptr), 0);
+  EXPECT_EQ(vpi_handle(vpiExpr, parameters[3]), nullptr);
+  s_vpi_error_info error{};
+  EXPECT_EQ(vpi_chk_error(&error), vpiNotice);
+  ASSERT_NE(error.message, nullptr);
+  EXPECT_NE(std::string_view(error.message).find("original parameter default"),
+            std::string_view::npos);
+  for (auto handle : parameters)
+    EXPECT_EQ(vpi_free_object(handle), 1);
+  EXPECT_EQ(vpi_free_object(concrete), 1);
+  EXPECT_EQ(vpi_free_object(reference), 1);
+  EXPECT_EQ(vpi_free_object(definition), 1);
+  obelisk_rt_v1_context_destroy(runtime);
+
+  HeaderView header(encoded->designDatabase.data());
+  SemanticDirectoryView directory(encoded->designDatabase.data() +
+                                  header.getReserved());
+  uint64_t parameterRow = 0;
+  uint32_t parameterIndex = UINT32_MAX;
+  uint32_t packageEndpoint = UINT32_MAX;
+  for (uint32_t index = 0; index != directory.getStaticObjectCount(); ++index) {
+    uint64_t row = directory.getStaticObjectOffset() +
+                   uint64_t{index} * StaticObjectLayout.size;
+    StaticObjectView object(encoded->designDatabase.data() + row);
+    std::string name;
+    ASSERT_TRUE(relativeStringAt(
+        encoded->designDatabase.data(), header.getStringOffset(),
+        header.getStringSize(), object.getName(), name));
+    if (name == "G::T") {
+      parameterRow = row;
+      parameterIndex = index;
+    }
+    if (object.getVPIKind() == vpiPackage)
+      packageEndpoint =
+          (static_cast<uint32_t>(TableKind::StaticObject) << 30) | index;
+  }
+  ASSERT_NE(parameterRow, 0u);
+  ASSERT_NE(parameterIndex, UINT32_MAX);
+  ASSERT_NE(packageEndpoint, UINT32_MAX);
+  auto original = [&] {
+    return std::vector<uint8_t>(encoded->designDatabase.begin(),
+                                encoded->designDatabase.end());
+  };
+  auto expectRejected = [&](std::vector<uint8_t> image) {
+    put64(image, field::HeaderChecksum, imageChecksum(image));
+    execution.design_database = image.data();
+    execution.design_database_size = image.size();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&execution),
+              OBELISK_RT_INVALID_DESIGN);
+  };
+  // Rootless typespecs require the exact unresolved declaration proof.
+  auto image = original();
+  StaticObjectWriter(image.data() + parameterRow).setFlags(0);
+  expectRejected(std::move(image));
+  // A present unsupported default cannot coexist with the existing Expr edge.
+  image = original();
+  StaticObjectWriter(image.data() + parameterRow)
+      .setFlags(OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
+                OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT);
+  expectRejected(std::move(image));
+  // The same capability bits are not legal on an arbitrary source object.
+  image = original();
+  const uint32_t packageIndex = unpackTableIndex(packageEndpoint);
+  StaticObjectWriter(image.data() + directory.getStaticObjectOffset() +
+                     uint64_t{packageIndex} * StaticObjectLayout.size)
+      .setFlags(OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER);
+  expectRejected(std::move(image));
+  // A parameter's ordinary legal Scope edge must specifically identify its
+  // lexical ClassDefn when the effective type is unresolved.
+  bool mutatedScope = false;
+  image = original();
+  for (uint64_t index = 0; index != header.getRelationCount(); ++index) {
+    uint64_t row = header.getRelationOffset() + index * RelationLayout.size;
+    RelationView relation(image.data() + row);
+    if (unpackRelationSourceTable(relation.getSourceKindAndTable()) ==
+            TableKind::StaticObject &&
+        relation.getSourceIndex() == parameterIndex &&
+        relation.getSelector() == vpiScope) {
+      RelationWriter(image.data() + row)
+          .setTargetIndexAndTable(packageEndpoint);
+      mutatedScope = true;
+      break;
+    }
+  }
+  ASSERT_TRUE(mutatedScope);
+  expectRejected(std::move(image));
+}

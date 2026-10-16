@@ -364,8 +364,13 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
     `primitive_input_count` preserves the IEEE 37.33 vpiSize value for scalar
     primitive anchors. `vpi_type` and `immutable_value` preserve the exact
     source type and elaborated value of static-only objects such as parameters.
-    Type parameters retain only `vpi_type`; their resolved data type is not a
-    value and does not allocate immutable value storage.
+    Effective type parameters retain only `vpi_type`; their resolved data type
+    is not a value and does not allocate immutable value storage. A lexical
+    generic type parameter instead carries `unresolved_type_parameter` and no
+    effective payload; its exact ClassDefn owner supplies source identity.
+    `unavailable_default` retains the original source text for a present default
+    whose structure is unsupported. It is exclusive with an explicit Expr
+    relation; absence of both denotes no source default.
     `has_explicit_parameter_range` records whether a value parameter directly
     declared a packed range, rather than inheriting one from a built-in or
     typedef type. These attributes remain reflection metadata and never
@@ -386,7 +391,9 @@ def SimVPIObjectAnchorOp : SimOp<"vpi_object.anchor", [
                        OptionalAttr<SimVPITypeSemanticsAttr>:$vpi_type,
                        OptionalAttr<SimFrozenConstantAttr>:$immutable_value,
                        OptionalAttr<UnitAttr>:$has_explicit_parameter_range,
-                       OptionalAttr<FlatSymbolRefAttr>:$class_method);
+                       OptionalAttr<FlatSymbolRefAttr>:$class_method,
+                       OptionalAttr<UnitAttr>:$unresolved_type_parameter,
+                       OptionalAttr<StrAttr>:$unavailable_default);
   let assemblyFormat = [{
     $sym_name `id` $inventory_id `type` $vpi_kind
     `in` $enclosing_scope_id (`parent` $parent^)?

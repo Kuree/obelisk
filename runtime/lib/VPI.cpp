@@ -5387,6 +5387,18 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_handle(PLI_INT32 type,
       obelisk_rt_cached_vpi_type(handle->owner->context, handle->cursor,
                                  &sourceType) != OBELISK_RT_OK)
     return nullptr;
+  if (type == vpiExpr && handle->form == VPIObjectForm::Design &&
+      (sourceType == vpiParameter || sourceType == vpiTypeParameter)) {
+    obelisk_rt_design_info_v1 info{};
+    if (!infoFor(handle, info))
+      return nullptr;
+    if ((info.capabilities &
+         OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0) {
+      setError(handle->owner, "original parameter default form is unavailable",
+               vpiNotice);
+      return nullptr;
+    }
+  }
   if (handle->form == VPIObjectForm::Thread) {
     if (type == vpiParent)
       return threadParent(handle);

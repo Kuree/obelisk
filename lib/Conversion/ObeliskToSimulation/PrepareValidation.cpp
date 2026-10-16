@@ -568,10 +568,13 @@ FailureOr<CoverageWithCandidatePlan> buildCoverageWithCandidatePlan(
 }
 
 bool isSupportedClassDeclaration(Operation *op) {
-  return isa<semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
-             semantic::SVMethodPrototypeSymbolOp,
-             semantic::SVClassPropertySymbolOp,
-             semantic::SVConstraintBlockSymbolOp>(op);
+  return isa<
+      semantic::SVClassTypeOp, semantic::SVGenericClassDefSymbolOp,
+      semantic::SVSourceTypeParameterSymbolOp, semantic::SVSourceTypeDefaultOp,
+      semantic::SVSourceTypeReferenceDefaultOp,
+      semantic::SVSourceUnsupportedDefaultOp,
+      semantic::SVMethodPrototypeSymbolOp, semantic::SVClassPropertySymbolOp,
+      semantic::SVConstraintBlockSymbolOp>(op);
 }
 
 bool isSupportedConstraintNode(Operation *op) {

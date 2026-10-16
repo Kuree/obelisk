@@ -1580,6 +1580,21 @@ bool validateDatabaseImpl(const Database &database) {
   std::array<std::unordered_set<uint64_t>,
              OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT + 1>
       stableIDs;
+  constexpr uint32_t parameterSourceFlags =
+      OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER |
+      OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
+  auto validParameterSourceFlags = [](uint32_t kind, uint32_t caps) {
+    using Kind = obelisk::reflection::VPIObjectKind;
+    if ((caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0 &&
+        (kind != static_cast<uint32_t>(Kind::TypeParameter) ||
+         (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0))
+      return false;
+    return (caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) == 0 ||
+           kind == static_cast<uint32_t>(Kind::Parameter) ||
+           kind == static_cast<uint32_t>(Kind::TypeParameter);
+  };
+  std::unordered_set<uint32_t> unresolvedTypeParameters;
+  std::unordered_set<uint32_t> unavailableParameterDefaults;
   std::unordered_set<uint64_t> reached;
   std::vector<uint64_t> pending{database.root};
   while (!pending.empty()) {
@@ -1643,7 +1658,14 @@ bool validateDatabaseImpl(const Database &database) {
       return false;
     std::string_view name;
     uint64_t nameOffset = read64(record + 40);
-    if (!getString(database, nameOffset, name) || name.empty())
+    bool unnamedTypespec =
+        kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT &&
+        (caps & OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) == 0 &&
+        obelisk::reflection::vpiObjectSetContains(
+            obelisk::reflection::VPIObjectSetID::ConcreteTypespecObjects,
+            intrinsicKind);
+    if (!getString(database, nameOffset, name) ||
+        (name.empty() && !unnamedTypespec))
       return false;
     if (kind == OBELISK_RT_DESIGN_RECORD_SCOPE) {
       if (caps != OBELISK_RT_DESIGN_CAP_ITERATE ||
@@ -1684,7 +1706,9 @@ bool validateDatabaseImpl(const Database &database) {
             intrinsicKind == static_cast<uint32_t>(VPIKind::Gate) ||
             intrinsicKind == static_cast<uint32_t>(VPIKind::Switch) ||
             intrinsicKind == static_cast<uint32_t>(VPIKind::Udp);
-        if ((caps & ~OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC) != 0 ||
+        if ((caps & ~(OBELISK_RT_DESIGN_CAP_NAMED_TYPESPEC |
+                      parameterSourceFlags)) != 0 ||
+            !validParameterSourceFlags(intrinsicKind, caps) ||
             read64(record + 80) != 0 ||
             (typeOffset == 0
                  ? relationIndexed
@@ -1750,7 +1774,10 @@ bool validateDatabaseImpl(const Database &database) {
       } else if (portCaps != 0 && kind != OBELISK_RT_DESIGN_RECORD_STORAGE &&
                  kind != OBELISK_RT_DESIGN_RECORD_NET) {
         return false;
-      } else if (portCaps == 0 && ordinalCaps != 0) {
+      } else if (portCaps == 0 &&
+                 (ordinalCaps & ~(kind == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                                      ? parameterSourceFlags
+                                      : 0u)) != 0) {
         return false;
       }
       uint64_t stateOffset = read64(record + 80);
@@ -2474,8 +2501,21 @@ bool validateDatabaseImpl(const Database &database) {
         kind && (kind->families &
                  obelisk::reflection::vpiFamilyMask(
                      obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
-    if (typespec && !objectSemanticRoots[index])
+    uint32_t caps = recordKind(object) == OBELISK_RT_DESIGN_RECORD_STATIC_OBJECT
+                        ? read32(object + 4)
+                        : 0;
+    bool unresolved =
+        (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
+    if (typespec &&
+        (unresolved ? objectSemanticRoots[index] : !objectSemanticRoots[index]))
       return false;
+    uint32_t packed =
+        (static_cast<uint32_t>(obelisk::reflection::TableKind::Object) << 30) |
+        index;
+    if (unresolved)
+      unresolvedTypeParameters.insert(packed);
+    if ((caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
+      unavailableParameterDefaults.insert(packed);
   }
   for (uint32_t index = 0; index != database.staticObjectCount; ++index) {
     const uint8_t *object = database.data + database.staticObjects +
@@ -2486,8 +2526,21 @@ bool validateDatabaseImpl(const Database &database) {
         kind && (kind->families &
                  obelisk::reflection::vpiFamilyMask(
                      obelisk::reflection::VPIObjectFamily::Typespec)) != 0;
-    if (typespec && !staticObjectSemanticRoots[index])
+    uint32_t caps = read16(object + 30);
+    bool unresolved =
+        (caps & OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER) != 0;
+    if (!validParameterSourceFlags(read16(object + 28), caps) ||
+        (typespec && (unresolved ? staticObjectSemanticRoots[index]
+                                 : !staticObjectSemanticRoots[index])))
       return false;
+    uint32_t packed =
+        (static_cast<uint32_t>(obelisk::reflection::TableKind::StaticObject)
+         << 30) |
+        index;
+    if (unresolved)
+      unresolvedTypeParameters.insert(packed);
+    if ((caps & OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT) != 0)
+      unavailableParameterDefaults.insert(packed);
   }
   struct SemanticWorkItem {
     uint32_t index;
@@ -3302,13 +3355,14 @@ bool validateDatabaseImpl(const Database &database) {
     uint32_t column = read32(object + 24);
     uint16_t vpiKind = read16(object + 28);
     uint16_t flags = read16(object + 30);
-    bool explicitParameterRange =
-        vpiKind == static_cast<uint32_t>(
-                       obelisk::reflection::VPIObjectKind::Parameter) &&
-        flags == OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
+    uint16_t supportedFlags = parameterSourceFlags;
+    if (vpiKind ==
+        static_cast<uint32_t>(obelisk::reflection::VPIObjectKind::Parameter))
+      supportedFlags |= OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE;
     if ((index != 0 && id <= previousStaticObjectID) ||
         (scopeIndex != UINT32_MAX && scopeIndex >= database.scopeCount) ||
-        (flags != 0 && !explicitParameterRange) ||
+        (flags & ~supportedFlags) != 0 ||
+        !validParameterSourceFlags(vpiKind, flags) ||
         (sourceFile == 0 && (line != 0 || column != 0)) ||
         (sourceFile != 0 && (line == 0 || column == 0)))
       return false;
@@ -3904,6 +3958,7 @@ bool validateDatabaseImpl(const Database &database) {
   std::unordered_set<uint64_t> staticLexicalChildren;
   std::unordered_set<uint64_t> staticLexicalParents;
   std::unordered_set<uint64_t> canonicalMethodObjects;
+  std::unordered_map<uint32_t, uint64_t> unresolvedParameterParents;
   std::vector<uint32_t> firstStaticSuccessor(database.staticObjectCount,
                                              UINT32_MAX);
   std::vector<uint32_t> staticSuccessorCount(database.staticObjectCount, 0);
@@ -4142,6 +4197,27 @@ bool validateDatabaseImpl(const Database &database) {
             relationEndpoint(sourceTable, sourceIndex), packedTarget));
     }
 
+    uint32_t sourceEndpoint = relationEndpoint(sourceTable, sourceIndex);
+    if (!iterate &&
+        selector == static_cast<uint32_t>(
+                        obelisk::reflection::VPIRelationKind::ExprRel) &&
+        unavailableParameterDefaults.count(sourceEndpoint) != 0)
+      return false;
+    if (unresolvedTypeParameters.count(sourceEndpoint) != 0 && !iterate) {
+      if (selector == static_cast<uint32_t>(
+                          obelisk::reflection::VPIObjectKind::Typespec) &&
+          packedTarget != sourceEndpoint)
+        return false;
+      if (selector == static_cast<uint32_t>(
+                          obelisk::reflection::VPIRelationKind::ScopeRel)) {
+        if (targetKind != static_cast<uint32_t>(
+                              obelisk::reflection::VPIObjectKind::ClassDefn))
+          return false;
+        unresolvedParameterParents.emplace(
+            sourceEndpoint, lexicalPair(packedTarget, sourceEndpoint));
+      }
+    }
+
     uint64_t sourceOffset = static_cast<uint64_t>(sourceRecord - database.data);
     uint64_t targetOffset = static_cast<uint64_t>(target - database.data);
     if (!sameGroup) {
@@ -4326,6 +4402,14 @@ bool validateDatabaseImpl(const Database &database) {
   if (!std::all_of(staticLexicalChildren.begin(), staticLexicalChildren.end(),
                    [&](uint64_t child) {
                      return staticLexicalParents.count(child) != 0;
+                   }))
+    return false;
+  if (!std::all_of(unresolvedTypeParameters.begin(),
+                   unresolvedTypeParameters.end(), [&](uint32_t parameter) {
+                     auto parent = unresolvedParameterParents.find(parameter);
+                     return parent != unresolvedParameterParents.end() &&
+                            staticLexicalChildren.count(parent->second) != 0 &&
+                            staticLexicalParents.count(parent->second) != 0;
                    }))
     return false;
   if (!std::all_of(classMemberParents.begin(), classMemberParents.end(),

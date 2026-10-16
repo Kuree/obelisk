@@ -648,6 +648,10 @@ SmallVector<uint8_t> serializeDesignDatabase(
               ? static_cast<uint16_t>(
                     OBELISK_RT_DESIGN_CAP_PARAMETER_EXPLICIT_RANGE)
               : 0;
+      if (anchor.getUnresolvedTypeParameterAttr())
+        staticFlags |= OBELISK_RT_DESIGN_CAP_UNRESOLVED_TYPE_PARAMETER;
+      if (anchor.getUnavailableDefaultAttr())
+        staticFlags |= OBELISK_RT_DESIGN_CAP_UNAVAILABLE_PARAMETER_DEFAULT;
       if (compact)
         staticObjects.push_back({*id, anchor.getEnclosingScopeId(),
                                  std::move(name), anchor.getVpiKind(),

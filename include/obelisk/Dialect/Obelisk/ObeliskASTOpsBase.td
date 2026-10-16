@@ -1045,4 +1045,59 @@ def SVFrozenRandSeqProductionOp
         ArrayAttr:$rule_variables
       )>;
 
+
+// Source declarations exist independently of any selected generic class
+// specialization. Their default subtrees preserve original syntax semantics;
+// they never carry an elaborated replacement for an unresolved parameter.
+def SVSourceTypeParameterSymbolOp
+    : ObeliskSymbolASTNodeOp<"sv.source.type_parameter", [],
+        (ins OptionalAttr<UnitAttr>:$is_local_param)> {
+  let summary = "unresolved lexical type parameter of a generic class";
+  let description = [{
+    The direct parent is a generic class definition. semantic_type is absent;
+    the symbol itself is the unresolved typespec (IEEE 1800-2023 37.25 detail
+    11). Its body contains zero or one original type default. An empty body
+    means there was no default, while an unsupported-default child preserves
+    the distinct case where a source default has no structural import yet.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceTypeDefaultOp
+    : ObeliskASTNodeOp<"sv.source.type_default", [],
+        (ins TypeAttr:$semantic_type)> {
+  let summary = "parameter-independent original type default";
+  let description = [{
+    An exact concrete source type, without evaluating a class specialization.
+    The existing vpi_typedef_layers metadata may retain alias spelling. This
+    node has an empty body and is owned by a source type parameter.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceTypeReferenceDefaultOp
+    : ObeliskASTNodeOp<"sv.source.type_reference_default",
+        [DeclareOpInterfaceMethods<SymbolUserOpInterface>],
+        (ins FlatSymbolRefAttr:$parameter)> {
+  let summary = "original default naming a preceding lexical type parameter";
+  let description = [{
+    The symbol reference names the exact preceding source type parameter in
+    the same generic class. This node does not bind or resolve that parameter.
+    It has an empty body and is owned by another source type parameter.
+  }];
+  let hasVerifier = 1;
+}
+
+def SVSourceUnsupportedDefaultOp
+    : ObeliskASTNodeOp<"sv.source.unsupported_default", [],
+        (ins StrAttr:$syntax, StrAttr:$reason)> {
+  let summary = "present original default awaiting structural import";
+  let description = [{
+    Preserves a present default separately from an absent default without
+    fabricating its value or type. Only unsupported nodes retain source text;
+    supported defaults use typed operations. The body is empty.
+  }];
+  let hasVerifier = 1;
+}
+
 #endif // OBELISK_DIALECT_OBELISK_OBELISKASTOPSBASE_TD

@@ -573,6 +573,27 @@ SimVPIRelationDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
              << endpoint << " VPI symbol " << reference.getSymbol()
              << " must name an object anchor, typespec, or nettype";
   }
+  if (getSelector() ==
+          static_cast<uint32_t>(reflection::VPIRelationKind::ExprRel) &&
+      getMode() == VPIRelationMode::Handle &&
+      getSource().getKind() == VPIObjectRefKind::Symbol) {
+    if (auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+            *this, getSource().getSymbol());
+        source && source.getUnavailableDefaultAttr())
+      return emitOpError(
+          "unavailable source default cannot have an Expr relation");
+  }
+  if (getSelector() ==
+          static_cast<uint32_t>(reflection::VPIObjectKind::Typespec) &&
+      getMode() == VPIRelationMode::Handle &&
+      getSource().getKind() == VPIObjectRefKind::Symbol) {
+    if (auto source = symbolTable.lookupNearestSymbolFrom<SimVPIObjectAnchorOp>(
+            *this, getSource().getSymbol());
+        source && source.getUnresolvedTypeParameterAttr() &&
+        getTarget() != getSource())
+      return emitOpError(
+          "unresolved type parameter cannot reference an effective typespec");
+  }
   return success();
 }
 
@@ -718,9 +739,20 @@ LogicalResult SimVPIObjectAnchorOp::verify() {
     return emitOpError("interconnect-net anchor requires a net backing");
   const bool hasVPIType = static_cast<bool>(getVpiTypeAttr());
   const bool hasImmutableValue = static_cast<bool>(getImmutableValueAttr());
-  if (anchorKind == Kind::TypeParameter && (!hasVPIType || hasImmutableValue))
+  if (getUnresolvedTypeParameterAttr() &&
+      (anchorKind != Kind::TypeParameter || hasVPIType || hasImmutableValue ||
+       getBackingAttr() || !getParentAttr()))
+    return emitOpError("unresolved type parameter requires a lexical owner and "
+                       "no effective payload");
+  if (anchorKind == Kind::TypeParameter &&
+      ((!hasVPIType && !getUnresolvedTypeParameterAttr()) || hasImmutableValue))
     return emitOpError(
         "type parameter requires a source type and no immutable value");
+  if (getUnavailableDefaultAttr() &&
+      ((anchorKind != Kind::Parameter && anchorKind != Kind::TypeParameter) ||
+       getUnavailableDefaultAttr().getValue().empty()))
+    return emitOpError("unavailable default requires a parameter and nonempty "
+                       "original syntax");
   if (anchorKind != Kind::TypeParameter && hasVPIType != hasImmutableValue)
     return emitOpError(
         "immutable source type and value must be present together");
@@ -856,6 +888,9 @@ SimVPIObjectAnchorOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     using Kind = reflection::VPIObjectKind;
     Kind childKind = static_cast<Kind>(getVpiKind());
     Kind parentKind = static_cast<Kind>(getVPILexicalOwnerKind(owner));
+    if (getUnresolvedTypeParameterAttr() && parentKind != Kind::ClassDefn)
+      return emitOpError("unresolved type parameter requires a lexical class "
+                         "definition owner");
     bool parentFixedArray =
         parentKind == Kind::ModuleArray || parentKind == Kind::InterfaceArray ||
         parentKind == Kind::ProgramArray || parentKind == Kind::GateArray ||
@@ -1050,8 +1085,12 @@ LogicalResult SimVPITypespecDeclOp::verify() {
        failed(verifyNonnegative(*this, getSourceTypeIdentityAttr(),
                                 "source type identity"))))
     return failure();
-  if (getHierarchicalName().empty() || getDebugName().empty())
+  if (getOrigin() == VPITypespecOrigin::SourceDefault) {
+    if (!getHierarchicalName().empty() || !getDebugName().empty())
+      return emitOpError("source default typespec must be unnamed");
+  } else if (getHierarchicalName().empty() || getDebugName().empty()) {
     return emitOpError("requires nonempty source names");
+  }
   if (getOrigin() == VPITypespecOrigin::Interface) {
     if (getTargetType().getKind() != VPITypeKind::VirtualInterface)
       return emitOpError("interface typespec origin requires an interface");
@@ -1261,6 +1300,13 @@ SimVPITypespecDeclOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return emitOpError("typespec must be owned by a VPI anchor");
   if (getVPILexicalOwnerScope(owner) != getScopeId())
     return emitOpError("scope ID does not match the owner anchor");
+  if (getOrigin() == VPITypespecOrigin::SourceDefault) {
+    auto parameter = dyn_cast<SimVPIObjectAnchorOp>(owner);
+    if (!parameter ||
+        parameter.getVpiKind() !=
+            static_cast<uint32_t>(reflection::VPIObjectKind::TypeParameter))
+      return emitOpError("source default requires a type parameter owner");
+  }
   if (getOrigin() == VPITypespecOrigin::ClassSpecialization) {
     if (getVPILexicalOwnerKind(owner) !=
         static_cast<uint32_t>(reflection::VPIObjectKind::ClassDefn))

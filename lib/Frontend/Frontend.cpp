@@ -5540,6 +5540,132 @@ private:
     assignment->right().visit(*this);
   }
 
+  // Import the lexical declaration before selecting any effective generic
+  // specialization. The invalid specialization supplies declaration identity
+  // and syntax only; asking it for a parameter type or value would substitute
+  // an error/effective type for the unresolved source declaration.
+  void importSourceTypeParameters(
+      const slang::ast::GenericClassDefSymbol &definition) {
+    if (const auto *scope = definition.getParentScope();
+        scope && scope->asSymbol().kind == slang::ast::SymbolKind::Package &&
+        scope->asSymbol().name == "std" &&
+        (definition.name == "mailbox" || definition.name == "semaphore" ||
+         definition.name == "process"))
+      return;
+    const auto &invalidType = definition.getInvalidSpecialization();
+    if (!invalidType.isClass())
+      return;
+    const auto &source = invalidType.as<slang::ast::ClassType>();
+    llvm::DenseMap<const slang::ast::Symbol *, FlatSymbolRefAttr> parameters;
+    SmallVector<const slang::ast::TypeParameterSymbol *> declarations;
+    for (const auto &member : source.members()) {
+      if (member.kind != slang::ast::SymbolKind::TypeParameter ||
+          member.getParentScope() != &source)
+        continue;
+      const auto &parameter = member.as<slang::ast::TypeParameterSymbol>();
+      auto reference = FlatSymbolRefAttr::get(getInternalSymbolName(parameter));
+      parameters[&parameter] = reference;
+      parameters[&parameter.getTypeAlias()] = reference;
+      declarations.push_back(&parameter);
+    }
+    auto sourceAttributes = [&](slang::SourceRange range) {
+      NamedAttrList attrs;
+      attrs.set("node_id", builder.getI64IntegerAttr(nextNodeId++));
+      if (range.start().valid()) {
+        if (auto source = sourceRangeAttr(range))
+          attrs.set("source_range", *source);
+        if (auto original = sourceRangeAttr(range, true))
+          attrs.set("original_source_range", *original);
+        if (ArrayAttr stack = macroExpansionStack(range.start());
+            !stack.empty())
+          attrs.set("macro_expansion_stack", stack);
+      }
+      return attrs;
+    };
+    for (const auto *parameter : declarations) {
+      NamedAttrList attrs = sourceAttributes(getSourceRange(*parameter));
+      attrs.set("sym_name", getInternalSymbolName(*parameter));
+      attrs.set("name", builder.getStringAttr(parameter->name));
+      attrs.set("hierarchical_name",
+                builder.getStringAttr(getSymbolPath(definition) +
+                                      "::" + std::string(parameter->name)));
+      if (parameter->isLocalParam())
+        attrs.set("is_local_param", builder.getUnitAttr());
+      auto declaration = slangir::SourceTypeParameterSymbolOp::create(
+          builder, sourceLocation(parameter->location), TypeRange{},
+          ValueRange{}, attrs.getAttrs());
+      declaration.getBody().emplaceBlock();
+
+      const slang::syntax::SyntaxNode *defaultSyntax =
+          parameter->defaultValSyntax;
+      if (!defaultSyntax && parameter->getSyntax())
+        if (const auto *syntax =
+                parameter->getSyntax()
+                    ->as_if<slang::syntax::TypeAssignmentSyntax>();
+            syntax && syntax->assignment)
+          defaultSyntax = syntax->assignment->type;
+      if (!defaultSyntax)
+        continue;
+      auto range = defaultSyntax->sourceRange();
+      NamedAttrList defaultAttrs = sourceAttributes(range);
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPointToStart(&declaration.getBody().front());
+      slang::ast::ASTContext context(
+          source, slang::ast::LookupLocation::before(*parameter));
+      // A bare preceding parameter is resolved symbolically, without asking
+      // Slang for that parameter's invalid-specialization target type.
+      if (const auto *named =
+              defaultSyntax->as_if<slang::syntax::NamedTypeSyntax>();
+          named &&
+          named->name->kind == slang::syntax::SyntaxKind::IdentifierName) {
+        slang::ast::LookupResult lookup;
+        slang::ast::Lookup::name(*named->name, context,
+                                 slang::ast::LookupFlags::Type, lookup);
+        if (auto reference = parameters.lookup(lookup.found)) {
+          defaultAttrs.set("parameter", reference);
+          auto node = slangir::SourceTypeReferenceDefaultOp::create(
+              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+              defaultAttrs.getAttrs());
+          node.getBody().emplaceBlock();
+          continue;
+        }
+      }
+      // Primitive type syntax with no dimensions is independent of all class
+      // parameter bindings. Bind only this bounded exact form; dimensions,
+      // aliases, and composite dependent types stay explicitly unsupported.
+      bool independent = false;
+      if (const auto *integer =
+              defaultSyntax->as_if<slang::syntax::IntegerTypeSyntax>())
+        independent = integer->dimensions.empty();
+      if (defaultSyntax->as_if<slang::syntax::KeywordTypeSyntax>())
+        independent = defaultSyntax->kind != slang::syntax::SyntaxKind::Untyped;
+      if (independent) {
+        const auto &type = slang::ast::Type::fromSyntax(
+            source.getCompilation(),
+            defaultSyntax->as<slang::syntax::DataTypeSyntax>(), context,
+            nullptr);
+        if (!type.isError()) {
+          defaultAttrs.set("semantic_type",
+                           TypeAttr::get(typeConverter.convert(type)));
+          auto node = slangir::SourceTypeDefaultOp::create(
+              builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+              defaultAttrs.getAttrs());
+          node.getBody().emplaceBlock();
+          continue;
+        }
+      }
+      defaultAttrs.set("syntax",
+                       builder.getStringAttr(defaultSyntax->toString()));
+      defaultAttrs.set(
+          "reason", builder.getStringAttr("original type default requires an "
+                                          "unimplemented dependent type form"));
+      auto node = slangir::SourceUnsupportedDefaultOp::create(
+          builder, sourceLocation(range.start()), TypeRange{}, ValueRange{},
+          defaultAttrs.getAttrs());
+      node.getBody().emplaceBlock();
+    }
+  }
+
   template <typename Op, typename Node> void importNode(const Node &node) {
     using BareNode = std::remove_cvref_t<Node>;
     if constexpr (std::derived_from<Node, slang::ast::Symbol>) {
@@ -5714,6 +5840,7 @@ private:
       llvm::sort(specializations, [](const auto &lhs, const auto &rhs) {
         return lhs.first < rhs.first;
       });
+      importSourceTypeParameters(node);
       for (const auto &entry : specializations)
         entry.second->visit(*this);
     } else if constexpr (std::same_as<T, slang::ast::ClassType>) {

@@ -608,6 +608,19 @@ public:
     patterns.add<ConcreteASTNodeConversion<slangir::CoverageOptionOp,
                                            ir::SVCoverageOptionOp>>(converter,
                                                                     &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceTypeParameterSymbolOp,
+                                           ir::SVSourceTypeParameterSymbolOp>>(
+        converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceTypeDefaultOp,
+                                           ir::SVSourceTypeDefaultOp>>(
+        converter, &context);
+    patterns
+        .add<ConcreteASTNodeConversion<slangir::SourceTypeReferenceDefaultOp,
+                                       ir::SVSourceTypeReferenceDefaultOp>>(
+            converter, &context);
+    patterns.add<ConcreteASTNodeConversion<slangir::SourceUnsupportedDefaultOp,
+                                           ir::SVSourceUnsupportedDefaultOp>>(
+        converter, &context);
 #define SLANG_AST_NODE(Category, Kind, CppType)                                \
   patterns.add<                                                                \
       ConcreteASTNodeConversion<slangir::CppType##Op, ir::SV##CppType##Op>>(   \
