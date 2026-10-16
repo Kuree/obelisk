@@ -2668,7 +2668,7 @@ void ObeliskSimPreparePass::runOnOperation() {
   FailureOr<llvm::StringMap<DescriptorInfo>> preparedDescriptors =
       materializeDesignDescriptors(module, design, semanticRoot, *portAliases,
                                    *scopes, *classes, designPrecisionFs,
-                                   builder);
+                                   preserveVPIMethodBindings, builder);
   if (failed(preparedDescriptors))
     return abort();
   llvm::StringMap<DescriptorInfo> &descriptors = *preparedDescriptors;

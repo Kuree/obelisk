@@ -369,6 +369,9 @@ void buildObeliskToSimulationPipeline(OpPassManager &manager, uint32_t workers,
                                       StringRef clockedKernels) {
   ObeliskSimPreparePassOptions prepareOptions;
   prepareOptions.pruneUnusedCoverage = earlySymbolDCE && vpiMode == "off";
+  // Source inventory may outlive executable code. Only a VPI profile needs
+  // method bindings to retain otherwise unreachable implementations for queries.
+  prepareOptions.preserveVPIMethodBindings = vpiMode != "off";
   manager.addPass(createObeliskSimPreparePass(std::move(prepareOptions)));
   // Preparation freezes dynamic class dispatch, factory initialization, and
   // external entry points into explicit symbol references. Prune unreachable

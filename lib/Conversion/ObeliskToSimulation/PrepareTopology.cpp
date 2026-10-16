@@ -902,7 +902,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
                              const PreparedPortAliases &portAliases,
                              const PreparedScopeDeclarations &scopes,
                              const PreparedClassDeclarations &classes,
-                             uint64_t designPrecisionFs, OpBuilder &builder) {
+                             uint64_t designPrecisionFs,
+                             bool preserveVPIMethodBindings,
+                             OpBuilder &builder) {
   OpBuilder::InsertionGuard insertionGuard(builder);
   builder.setInsertionPointToEnd(&design.getBody().front());
   llvm::StringMap<DescriptorInfo> descriptors;
@@ -1737,7 +1739,9 @@ materializeDesignDescriptors(ModuleOp module, sim::SimDesignOp design,
         memberIndices.empty() ? DenseI64ArrayAttr{}
                               : builder.getDenseI64ArrayAttr(memberIndices),
         primitiveInputCount, anchorVPIType, immutableValue,
-        hasExplicitParameterRange, classes.methodSymbols.lookup(source));
+        hasExplicitParameterRange,
+        preserveVPIMethodBindings ? classes.methodSymbols.lookup(source)
+                                 : FlatSymbolRefAttr{});
     anchorDeclarations[source] = anchor;
     if (anchorVPIType)
       if (auto identity = source->getAttrOfType<IntegerAttr>(

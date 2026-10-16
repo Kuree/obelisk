@@ -23,7 +23,9 @@ def ObeliskSimPreparePass
   let summary = "Resolve and freeze semantic IR into isolated simulation units";
   let options = [
     Option<"pruneUnusedCoverage", "prune-unused-coverage", "bool", "true",
-           "Prune unreferenced embedded covergroups before declaration materialization">
+           "Prune unreferenced embedded covergroups before declaration materialization">,
+    Option<"preserveVPIMethodBindings", "preserve-vpi-method-bindings", "bool", "true",
+           "Retain executable class method bindings for VPI reflection">
   ];
   let dependentDialects = [
     "obelisk::sim::ObeliskSimulationDialect",

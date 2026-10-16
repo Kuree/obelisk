@@ -1,6 +1,13 @@
 // RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=read' -o %t
 // RUN: FileCheck %s < %t
 // RUN: FileCheck %s --check-prefix=COUNT < %t
+// RUN: obelisk-opt %s '--lower-obelisk-to-sim=vpi=off' | FileCheck %s --check-prefix=OFF --implicit-check-not=class_method --implicit-check-not=simulation.class.method --implicit-check-not='simulation.func private @unit_'
+
+// VPI-only executable bindings must not retain unused methods in off mode.
+// Immutable source declarations remain valid after their code is pruned.
+// OFF: simulation.design
+// OFF: simulation.vpi_object.anchor {{.*}}hierarchy "Base::ping"
+// OFF: simulation.func @__obelisk_root
 
 // Class definitions have one lexical identity. Generic specializations are
 // canonical class typespecs, not additional vpiClassDefn declarations.
