@@ -2213,24 +2213,40 @@ std::vector<uint8_t> makeManagedScalarDatabase(uint32_t exactType,
   return bytes;
 }
 
-std::vector<uint8_t> makeProcessClassVariableDatabase() {
+std::vector<uint8_t> makeBuiltinClassVariableDatabase(uint32_t semanticKind) {
   std::vector<uint8_t> bytes = makeManagedScalarDatabase(vpiClassVar);
+  const bool mailbox = semanticKind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX;
   const uint32_t directoryOffset = static_cast<uint32_t>(bytes.size());
   const uint64_t typeOffset = directoryOffset + kSemanticDirectorySize;
-  const uint64_t rootOffset = typeOffset + 64;
+  const uint64_t edgeOffset = typeOffset + (mailbox ? 2 : 1) * 64;
+  const uint64_t rootOffset = edgeOffset + (mailbox ? 24 : 0);
   bytes.resize(rootOffset + 8, 0);
   put32(bytes, 12, directoryOffset);
   put64(bytes, 24, bytes.size());
   put64(bytes, directoryOffset, typeOffset);
-  put64(bytes, directoryOffset + 8, 1);
+  put64(bytes, directoryOffset + 8, mailbox ? 2 : 1);
+  put64(bytes, directoryOffset + 16, edgeOffset);
+  put64(bytes, directoryOffset + 24, mailbox ? 1 : 0);
   put64(bytes, directoryOffset + 32, rootOffset);
   put64(bytes, directoryOffset + 40, 1);
   put32(bytes, typeOffset,
-        OBELISK_RT_DESIGN_SEMANTIC_PROCESS |
-            (vpiClassTypespec
-             << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+        semanticKind | (vpiClassTypespec
+                        << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
   put32(bytes, typeOffset + 12, UINT32_MAX);
   put32(bytes, typeOffset + 16, UINT32_MAX);
+  if (mailbox) {
+    put32(bytes, typeOffset + 8, 1);
+    put32(bytes, typeOffset + 64,
+          OBELISK_RT_DESIGN_SEMANTIC_BIT |
+              OBELISK_RT_DESIGN_SEMANTIC_HAS_RANGE |
+              (vpiBitTypespec
+               << OBELISK_RT_DESIGN_SEMANTIC_PUBLIC_VPI_KIND_SHIFT));
+    put32(bytes, typeOffset + 64 + 12, UINT32_MAX);
+    put32(bytes, typeOffset + 64 + 16, UINT32_MAX);
+    put64(bytes, typeOffset + 64 + 32, 31);
+    put32(bytes, edgeOffset, 1);
+    put32(bytes, edgeOffset + 4, OBELISK_RT_DESIGN_SEMANTIC_EDGE_ELEMENT);
+  }
   put32(bytes, rootOffset, uint32_t{1} << 30);
   put32(bytes, rootOffset + 4, 0);
   put64(bytes, 32, imageChecksum(bytes));
@@ -7772,7 +7788,8 @@ TEST(VPI, ClassVariableObjectIdTracksLiveManagedIdentity) {
 
 TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
   Fixture fixture;
-  fixture.database = makeProcessClassVariableDatabase();
+  fixture.database =
+      makeBuiltinClassVariableDatabase(OBELISK_RT_DESIGN_SEMANTIC_PROCESS);
   fixture.execution.design_database = fixture.database.data();
   fixture.execution.design_database_size = fixture.database.size();
   obelisk_rt_context *context = nullptr;
@@ -7881,6 +7898,114 @@ TEST(VPI, ProcessClassObjectsRetainIdentityAndTypespecAfterExit) {
   EXPECT_EQ(vpi_release_handle(declaredType), 1);
   EXPECT_EQ(vpi_release_handle(variable), 1);
   obelisk_rt_v1_context_destroy(context);
+}
+
+TEST(VPI, BuiltinClassObjectsHaveWeakIdentityAndExactDeclaredKinds) {
+  for (uint32_t kind : {OBELISK_RT_DESIGN_SEMANTIC_MAILBOX,
+                        OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE}) {
+    SCOPED_TRACE(kind);
+    Fixture fixture;
+    fixture.database = makeBuiltinClassVariableDatabase(kind);
+    fixture.execution.design_database = fixture.database.data();
+    fixture.execution.design_database_size = fixture.database.size();
+    obelisk_rt_context *context = nullptr;
+    ASSERT_EQ(
+        obelisk_rt_v1_context_create_for_design(&fixture.execution, &context),
+        OBELISK_RT_OK);
+    obelisk_rt_gc_lane_v1 *lane = nullptr;
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_create(context, &lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_enter(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_startup(context, nullptr, 0), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(context), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(context), OBELISK_RT_OK);
+    char name[] = "top.value";
+    vpiHandle variable = vpi_handle_by_name(name, nullptr);
+    ASSERT_NE(variable, nullptr);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable), 0);
+    EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    vpiHandle declared = vpi_handle(vpiClassTypespec, variable);
+    ASSERT_NE(declared, nullptr);
+    EXPECT_EQ(vpi_get(vpiClassType, declared),
+              kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ? vpiMailboxClass
+                                                         : vpiSemaphoreClass);
+    EXPECT_NE(vpi_get_str(vpiName, declared), nullptr);
+    EXPECT_EQ(vpi_handle(vpiClassDefn, declared), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+
+    std::array<obelisk_rt_object_v1 *, 3> objects{};
+    obelisk_rt_gc_root_range_v1 roots{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_range_push(lane, &roots, objects.data(),
+                                               objects.size()),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                  lane, 99, OBELISK_RT_ELEMENT_BITS, 0, 4, 4, 32, nullptr, 0, 0,
+                  &objects[0]),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_semaphore_create(lane, 1, &objects[1]),
+              OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_container_create_typed(
+                  lane, OBELISK_RT_CONTAINER_QUEUE, 99, OBELISK_RT_ELEMENT_BITS,
+                  0, 4, 4, 32, nullptr, 0, 0, UINT64_MAX, &objects[2]),
+              OBELISK_RT_OK);
+    obelisk_rt_design_cursor_v1 cursor{};
+    ASSERT_EQ(obelisk_rt_v1_design_lookup(
+                  &fixture.execution, reinterpret_cast<const uint8_t *>(name),
+                  std::strlen(name), &cursor),
+              OBELISK_RT_OK);
+    const size_t selected = kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ? 0 : 1;
+    const uint64_t word =
+        obelisk_rt_managed_word_from_object(objects[selected]);
+    ASSERT_EQ(obelisk_rt_v1_design_write(context, cursor, &word, nullptr, 64),
+              OBELISK_RT_OK);
+    vpiHandle object = vpi_handle(vpiClassObj, variable);
+    vpiHandle alias = vpi_handle(vpiClassObj, variable);
+    ASSERT_NE(object, nullptr);
+    ASSERT_NE(alias, nullptr);
+    const auto identity =
+        static_cast<PLI_INT64>(obelisk_rt_v1_object_id(objects[selected]));
+    EXPECT_EQ(vpi_get64(vpiObjId, object), identity);
+    EXPECT_EQ(vpi_get64(vpiObjId, variable), identity);
+    EXPECT_EQ(vpi_compare_objects(object, alias), 1);
+    EXPECT_EQ(vpi_get(vpiAllocScheme, object), vpiDynamicScheme);
+    vpiHandle actual = vpi_handle(vpiClassTypespec, object);
+    ASSERT_NE(actual, nullptr);
+    EXPECT_EQ(vpi_compare_objects(declared, actual), 1);
+    EXPECT_EQ(vpi_handle(vpiClassDefn, actual), nullptr);
+    EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    for (PLI_INT32 selector :
+         {vpiVariables, vpiMethods, vpiNamedEvent, vpiConstraint}) {
+      EXPECT_EQ(vpi_iterate(selector, object), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), 0);
+    }
+    for (size_t wrong : {1 - selected, size_t{2}}) {
+      const uint64_t invalid =
+          obelisk_rt_managed_word_from_object(objects[wrong]);
+      ASSERT_EQ(
+          obelisk_rt_v1_design_write(context, cursor, &invalid, nullptr, 64),
+          OBELISK_RT_OK);
+      EXPECT_EQ(vpi_get64(vpiObjId, variable), vpiUndefined);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+      EXPECT_EQ(vpi_handle(vpiClassObj, variable), nullptr);
+      EXPECT_EQ(vpi_chk_error(nullptr), vpiInternal);
+    }
+    const uint64_t nullWord = 0;
+    ASSERT_EQ(
+        obelisk_rt_v1_design_write(context, cursor, &nullWord, nullptr, 64),
+        OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_range_pop(lane, &roots), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_collect(lane), OBELISK_RT_OK);
+    EXPECT_EQ(vpi_get(vpiType, object), vpiUndefined);
+    EXPECT_EQ(vpi_chk_error(nullptr), vpiError);
+    EXPECT_EQ(vpi_release_handle(alias), 0);
+    EXPECT_EQ(vpi_get(vpiType, actual), vpiClassTypespec);
+    EXPECT_EQ(vpi_release_handle(actual), 1);
+    EXPECT_EQ(vpi_release_handle(declared), 1);
+    EXPECT_EQ(vpi_release_handle(variable), 1);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_leave(lane), OBELISK_RT_OK);
+    ASSERT_EQ(obelisk_rt_v1_gc_lane_destroy(lane), OBELISK_RT_OK);
+    obelisk_rt_v1_context_destroy(context);
+  }
 }
 
 TEST(VPI, ManagedQueriesRejectFourStateAndUnknownPhysicalStorage) {

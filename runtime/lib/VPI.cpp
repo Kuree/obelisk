@@ -622,7 +622,10 @@ vpiHandle makeTypespecHandle(VPIState *state, obelisk_rt_design_cursor_v1 base,
       return nullptr;
     return makeHandle(state, info.identity_target, exactType);
   }
-  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS) {
+  if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS ||
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX ||
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE ||
+      info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
     obelisk_rt_design_cursor_v1 canonical{};
     auto status = obelisk_rt_cached_vpi_semantic_class_typespec(
         state->context, semanticCursor, &canonical);
@@ -4097,17 +4100,32 @@ bool readClassReference(__vpiHandle *source, obelisk_rt_gc_lane_v1 *lane,
     reference.semantic = semantic;
   } else {
     auto *object = obelisk_rt_object_from_managed_word(word);
+    const BuiltinClassKind expected =
+        info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX
+            ? BuiltinClassKind::Mailbox
+        : info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE
+            ? BuiltinClassKind::Semaphore
+            : BuiltinClassKind::None;
     ManagedObjectLease lease;
     if (!object ||
-        obelisk_rt_managed_object_acquire(
-            lane, object, OBELISK_RT_MANAGED_CLASS, &lease) != OBELISK_RT_OK ||
-        obelisk_rt_managed_object_context(object) != source->owner->context) {
+        obelisk_rt_managed_object_acquire(lane, object,
+                                          expected == BuiltinClassKind::None
+                                              ? OBELISK_RT_MANAGED_CLASS
+                                              : OBELISK_RT_MANAGED_INVALID,
+                                          &lease) != OBELISK_RT_OK ||
+        obelisk_rt_managed_object_context(object) != source->owner->context ||
+        (expected != BuiltinClassKind::None &&
+         obelisk_rt_builtin_class_kind(lease) != expected)) {
       setError(source->owner, "invalid class reference in VPI design state",
                vpiInternal);
       return false;
     }
     reference.object = object;
     reference.identity = obelisk_rt_v1_object_id(object);
+    // A user class derived from a builtin still has its own allocated class
+    // typespec. Only direct builtin containers use the declared builtin type.
+    if (obelisk_rt_managed_object_kind(object) == OBELISK_RT_MANAGED_CONTAINER)
+      reference.semantic = semantic;
   }
   if (reference.identity == 0 || reference.identity > INT64_MAX) {
     setError(source->owner, "invalid class identity in VPI design state",
@@ -4140,7 +4158,7 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
           ? obelisk_rt_managed_object_class_descriptor(reference.object)
           : nullptr;
   obelisk_rt_status typeStatus =
-      reference.logicalProcess ? OBELISK_RT_EOF
+      reference.semantic.offset ? OBELISK_RT_EOF
       : descriptor
           ? obelisk_rt_cached_vpi_class_typespec(
                 source->owner->context, descriptor->class_id, &typespec)
@@ -4160,7 +4178,7 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
     handle->dynamicObject = reference.object;
     handle->dynamicIdentity = reference.identity;
     handle->logicalProcess = reference.logicalProcess;
-    handle->cursor = reference.logicalProcess ? source->cursor : typespec;
+    handle->cursor = reference.semantic.offset ? source->cursor : typespec;
     handle->semanticCursor = reference.semantic;
     handle->protectedObject = isProtected;
     source->owner->hasDynamicHandles |= reference.object != nullptr;
@@ -4174,7 +4192,7 @@ vpiHandle makeClassObjectHandle(__vpiHandle *source) {
 }
 
 vpiHandle classObjectTypespec(__vpiHandle *handle) {
-  if (handle->logicalProcess)
+  if (handle->semanticCursor.offset)
     return makeTypespecHandle(handle->owner, handle->cursor,
                               handle->semanticCursor, false);
   ManagedExecutionScope managed(handle->owner->context);
@@ -5296,8 +5314,8 @@ extern "C" OBELISK_VPI_EXPORT vpiHandle vpi_iterate(PLI_INT32 type,
               vpiClassObj, static_cast<uint32_t>(type),
               obelisk::reflection::VPITraversalMode::Iterate))
         return nullptr;
-      // The process class has no user-declared members or resource waiters.
-      if (handle->logicalProcess)
+      // Direct builtin classes have no explicitly declared member inventory.
+      if (handle->semanticCursor.offset)
         return nullptr;
       // The specialization owns the immutable member inventory. The iterator
       // retains a weak receiver recipe for automatic members only.
@@ -6701,6 +6719,8 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
     if (!semanticTypeInfo(handle, handle->semanticCursor, info) ||
         (info.kind != OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
          info.kind != OBELISK_RT_DESIGN_SEMANTIC_PROCESS &&
+         info.kind != OBELISK_RT_DESIGN_SEMANTIC_MAILBOX &&
+         info.kind != OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE &&
          info.kind != OBELISK_RT_DESIGN_SEMANTIC_VIRTUAL_INTERFACE))
       return nullptr;
     OBELISK_RT_TRY {
@@ -6709,6 +6729,10 @@ extern "C" OBELISK_VPI_EXPORT PLI_BYTE8 *vpi_get_str(PLI_INT32 property,
                        static_cast<size_t>(info.name_size));
       } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_PROCESS) {
         scratch = "process";
+      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_SEMAPHORE) {
+        scratch = "semaphore";
+      } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_MAILBOX) {
+        scratch = "mailbox$" + std::to_string(handle->semanticCursor.offset);
       } else if (info.kind == OBELISK_RT_DESIGN_SEMANTIC_CLASS &&
                  info.identity_target.offset != 0) {
         const uint8_t *name = nullptr;
