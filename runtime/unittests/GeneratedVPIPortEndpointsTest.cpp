@@ -100,6 +100,9 @@ void checkPortEndpoints(bool nets) {
     auto package = named("pkg");
     ASSERT_NE(package, nullptr);
     ASSERT_NE(parameter, nullptr);
+    EXPECT_EQ(
+        vpi_compare_objects(keep(vpi_handle(vpiInstance, parameter)), package),
+        1);
     ASSERT_NE(top, nullptr);
     ASSERT_NE(child, nullptr);
     ASSERT_NE(source, nullptr);

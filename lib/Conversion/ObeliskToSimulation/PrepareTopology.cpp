@@ -1314,20 +1314,31 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
     }
     if (isa<semantic::SVParameterSymbolOp, semantic::SVTypeParameterSymbolOp>(
             operation)) {
-      // Package and class parameters are immutable declarations. Class
-      // specializations retain their own resolved type/value; a generic
-      // definition must not borrow one specialization's parameter payload.
+      // Package, generate-scope, and class parameters are immutable
+      // declarations. Class specializations retain their own resolved
+      // type/value; a generic definition must not borrow one specialization's
+      // parameter payload.
       Operation *owner = operation->getParentOp();
       while (
           owner &&
           !isa<semantic::SVCompilationUnitSymbolOp, semantic::SVPackageSymbolOp,
-               semantic::SVClassTypeOp, semantic::SVInstanceBodySymbolOp>(
-              owner))
+               semantic::SVClassTypeOp, semantic::SVGenerateBlockSymbolOp,
+               semantic::SVInstanceBodySymbolOp>(owner))
         owner = owner->getParentOp();
       if (!isa_and_nonnull<semantic::SVCompilationUnitSymbolOp,
-                           semantic::SVPackageSymbolOp,
-                           semantic::SVClassTypeOp>(owner))
+                           semantic::SVPackageSymbolOp, semantic::SVClassTypeOp,
+                           semantic::SVGenerateBlockSymbolOp>(owner))
         return std::nullopt;
+      // An implicit genvar localparam is already an ordinary ParameterSymbol
+      // of its elaborated generate block (27.4). Preserve that exact scope;
+      // an inactive branch must never hoist its declarations into the parent.
+      for (Operation *ancestor = owner; ancestor;
+           ancestor = ancestor->getParentOp())
+        if (isa<semantic::SVGenerateBlockSymbolOp>(ancestor))
+          if (auto uninstantiated =
+                  ancestor->getAttrOfType<BoolAttr>("is_uninstantiated");
+              uninstantiated && uninstantiated.getValue())
+            return std::nullopt;
       if (auto classType = dyn_cast<semantic::SVClassTypeOp>(owner);
           classType && (classType.getIsUninstantiated() ||
                         !classes.symbols.count(classType)))

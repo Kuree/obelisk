@@ -40,9 +40,15 @@ values, signedness, types, and explicitly declared ranges; type parameters retai
 typedef identity. Shared declarations do not add per-instance parameter records
 or unused IO endpoint slots. Original defaults and override-assignment relations
 for these shared instance parameters remain incomplete: a known original default
-reports a notice until its expression is retained. Nonpacked value parameters and
-generate-scope parameters remain outside this inventory slice. General expression
+reports a notice until its expression is retained. Nonpacked value parameters remain outside this inventory slice. General expression
 use edges for these shared parameters await contextual expression recipes.
+
+Elaborated generate scopes preserve packed parameters and localparams, including
+implicit genvar localparams, under their exact scope. Distinct declarations use
+compact records while their types and immutable values share existing pools.
+Nested generate scopes retain Scope, Instance and Module ancestry; inactive
+branches do not contribute parameter inventory. Supported original literal and
+parameter-reference defaults retain their source identities.
 
 Class queries distinguish a lexical `vpiClassDefn`, a resolved specialization's
 `vpiClassTypespec`, and a live `vpiClassObj` (IEEE 1800-2023 37.31–37.33).
