@@ -17,6 +17,7 @@
 #include "PrepareRandomIteration.h"
 #include "PrepareRandomTemplates.h"
 #include "PrepareTopology.h"
+#include "PrepareStatements.h"
 #include "PrepareUnits.h"
 #include "PrepareValidation.h"
 #include "obelisk/Dialect/DPI/DPIDialect.h"
@@ -4587,6 +4588,9 @@ void ObeliskSimPreparePass::runOnOperation() {
   FailureOr<PreparedUnits> preparedUnits = materializeCodeUnitDeclarations(
       module, semanticRoot, sourceUnits, semanticSymbols, *scopes, builder);
   if (failed(preparedUnits))
+    return abort();
+  if (failed(materializeProceduralStatements(
+          design, *preparedUnits, semanticSymbols, builder)))
     return abort();
   auto &units = preparedUnits->units;
   auto &directCalleeNames = preparedUnits->directCalleeNames;

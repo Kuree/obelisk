@@ -85,8 +85,11 @@ only during that thread's execution. Thread handles expire on finish or kill;
 they have `vpiAutomaticScheme` lifetime. Exact code-unit-to-statement bindings
 provide `vpiOrigin`, including outlined fork branches and nested native or
 bytecode calls. The origin statement keeps its lexical owner and survives
-thread termination. Automatic production of these bindings from procedural
-source statements and frame relations are still being completed.
+thread termination. Procedural lowering emits exact origins for initial/always
+bodies and supported fork branches, with lexical statement nesting retained
+through optimization. Unsupported source statement forms remain unbound;
+frame relations and the remaining procedural statement forms are still being
+completed.
 
 `vpiMessages` snapshots mailbox contents in FIFO order without consuming them.
 Integral and packed values retain every bit and unknown bit; real and string
@@ -170,8 +173,9 @@ select/ref-object identities are serialized and are never widened to the whole
 backing object.
 These immutable tables are emitted only for a VPI profile, not for VCD-only
 reflection, and do not install executable probes or change the scheduler.
-Production SV lowering, tier/fragment/bytecode bindings, and cbStmt dispatch are
-not yet implemented.
+Production lowering emits supported procedural statement inventory and thread
+origins. Executable statement-site bindings and cbStmt dispatch are not yet
+implemented.
 
 An immediate deposit with an exact descriptor/root mapping also reuses
 the generated static fanout index. After updating both four-state planes, the

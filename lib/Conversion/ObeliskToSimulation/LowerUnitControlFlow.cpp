@@ -1640,6 +1640,15 @@ LogicalResult UnitLowering::lowerFork(semantic::SVBlockStatementOp op) {
         outlineForkBranch(branch, forkNode, index);
     if (failed(outlined))
       return failure();
+    // The branch retains its lexical statement owner. Only the explicit
+    // source fork establishes a new thread origin; helper outlining does not.
+    if (auto statement = sim::get<sim::metadata::VpiStatementId>(branch)) {
+      OpBuilder inventoryBuilder(outlined->first);
+      sim::SimVPIThreadOriginBindingOp::create(
+          inventoryBuilder, getSemanticLocation(branch),
+          *outlined->first.getCodeUnitId(),
+          statement.getValue().getZExtValue());
+    }
     processes.push_back(sim::SimSpawnOp::create(
                             builder, location, outlined->first.getSymNameAttr(),
                             outlined->second, ArrayAttr{}, ArrayAttr{})
