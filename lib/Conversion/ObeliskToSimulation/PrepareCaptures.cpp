@@ -106,9 +106,10 @@ static bool isFixedForeachCollectionUse(Operation *reference) {
   return false;
 }
 
-static bool markForeachIteratorObserverCapture(
-    Operation *use, Operation *iterator,
-    const llvm::StringMap<Operation *> &semanticSymbols) {
+static bool
+markForeachIteratorObserverCapture(Operation *use, Operation *iterator,
+                                   SymbolTableCollection &sourceSymbols) {
+  ModuleOp module = use->getParentOfType<ModuleOp>();
   for (Operation *parent = use; parent; parent = parent->getParentOp()) {
     auto foreach = dyn_cast<semantic::SVForeachLoopStatementOp>(parent);
     if (!foreach)
@@ -120,10 +121,9 @@ static bool markForeachIteratorObserverCapture(
           dimension
               ? dimension.getAs<SymbolRefAttr>(foreach_metadata::iteratorSymbol)
               : SymbolRefAttr{};
-      auto found = reference
-                       ? semanticSymbols.find(reference.getLeafReference())
-                       : semanticSymbols.end();
-      if (found == semanticSymbols.end() || found->second != iterator)
+      Operation *found =
+          reference ? sourceSymbols.lookupSymbolIn(module, reference) : nullptr;
+      if (found != iterator)
         continue;
       if (dimension.contains(
               sim::metadata::ForeachIteratorObserverCapture::getNameStr()))
@@ -534,7 +534,7 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
           result.observerLocals[unit.source].push_back(
               {path.str(), *type, true, false});
           if (!markForeachIteratorObserverCapture(nested, referencedSymbol,
-                                                  semanticSymbols)) {
+                                                  sourceSymbols)) {
             emitError(getSemanticLocation(nested))
                 << "observer foreach iterator has no owning loop dimension";
             invalid = true;
@@ -612,12 +612,10 @@ analyzeCodeUnitCaptures(const PreparedUnits &units,
         auto reference = dimension ? dimension.getAs<SymbolRefAttr>(
                                          foreach_metadata::iteratorSymbol)
                                    : SymbolRefAttr{};
-        Operation *referencedSymbol = nullptr;
-        if (reference) {
-          auto symbol = semanticSymbols.find(reference.getLeafReference());
-          if (symbol != semanticSymbols.end())
-            referencedSymbol = symbol->second;
-        }
+        Operation *referencedSymbol =
+            reference ? sourceSymbols.lookupSymbolIn(
+                            unit.source->getParentOfType<ModuleOp>(), reference)
+                      : nullptr;
         auto qualified =
             path ? qualifiedAutomaticPath(path.getValue(), reference,
                                           referencedSymbol)

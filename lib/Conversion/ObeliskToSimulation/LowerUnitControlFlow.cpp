@@ -554,6 +554,7 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
     std::string iteratorPath;
     Type iteratorType;
     bool observerCapture;
+    FlatSymbolRefAttr vpiLocal;
     Value observerReference;
   };
   SmallVector<Dimension> dimensions;
@@ -612,19 +613,25 @@ UnitLowering::lowerForeach(semantic::SVForeachLoopStatementOp op) {
          *iteratorType,
          dimension.contains(
              sim::metadata::ForeachIteratorObserverCapture::getNameStr()),
+         dimension.getAs<FlatSymbolRefAttr>(
+             sim::metadata::VpiLocal::getNameStr()),
          {}});
   }
   if (dimensions.empty())
     return success();
 
   for (Dimension &dimension : dimensions) {
-    if (!dimension.observerCapture)
+    const bool observedByVPI =
+        hasVPIFrameInstrumentation() && dimension.vpiLocal;
+    if (!dimension.observerCapture && !observedByVPI)
       continue;
     FailureOr<Value> reference =
         allocateObserverCapture(dimension.iteratorPath, dimension.iteratorType);
     if (failed(reference))
       return failure();
     dimension.observerReference = *reference;
+    if (observedByVPI)
+      bindVPILocal(dimension.vpiLocal, *reference, location);
   }
 
   uint64_t iterationCount = 1;

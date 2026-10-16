@@ -287,6 +287,7 @@ add_executable(obelisk-design-database-dump-test EXCLUDE_FROM_ALL
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIPortEndpointsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIPrimitiveTerminalsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIForeachTest.cpp"
+  "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPILiveForeachTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIPrimitiveDefinitionsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPILiveUnionsTest.cpp"
   "${PROJECT_SOURCE_DIR}/runtime/unittests/GeneratedVPIProceduralTypesTest.cpp"

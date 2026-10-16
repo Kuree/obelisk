@@ -273,6 +273,18 @@ materializeProceduralLocals(sim::SimDesignOp design, const PreparedUnits &units,
         }
         slots.push_back(declaration);
       }
+      SmallVector<Attribute> dimensions(loop.getLoopDimensions().begin(),
+                                        loop.getLoopDimensions().end());
+      for (auto item : llvm::enumerate(slots)) {
+        if (auto local = dyn_cast<FlatSymbolRefAttr>(item.value())) {
+          NamedAttrList dimension(
+              cast<DictionaryAttr>(dimensions[item.index()]));
+          dimension.set(sim::metadata::VpiLocal::getNameStr(), local);
+          dimensions[item.index()] =
+              DictionaryAttr::get(loop.getContext(), dimension.getAttrs());
+        }
+      }
+      loop->setAttr("loop_dimensions", builder.getArrayAttr(dimensions));
       sim::SimVPIForeachDeclOp::create(builder, getSemanticLocation(loop), id,
                                        collection->reference,
                                        builder.getArrayAttr(slots));
