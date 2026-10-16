@@ -418,10 +418,12 @@ LogicalResult SimVPIDefinitionMemberDeclOp::verifySymbolUses(
     return emitOpError("references an unknown VPI definition");
   if (definition.getPrimitiveTypeAttr())
     return emitOpError("built-in primitive definitions cannot have members");
-  if (getVpiKind() == uint32_t(reflection::VPIObjectKind::ParamAssign) &&
-      definition.getVpiKind() != uint32_t(reflection::VPIObjectKind::Module))
-    return emitOpError(
-        "shared parameter assignments require a module definition");
+  using Kind = reflection::VPIObjectKind;
+  if (getVpiKind() == uint32_t(Kind::ParamAssign) &&
+      definition.getVpiKind() != uint32_t(Kind::Module) &&
+      definition.getVpiKind() != uint32_t(Kind::Interface))
+    return emitOpError("shared parameter assignments require a module or "
+                       "interface definition");
   return success();
 }
 

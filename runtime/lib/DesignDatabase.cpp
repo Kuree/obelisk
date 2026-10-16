@@ -3467,24 +3467,34 @@ struct ExpressionLeafInfo {
   uint64_t cursor = 0;
   uint32_t kind = 0, semantic = 0;
 };
-bool expressionInstance(const Database &database, const uint8_t *root,
-                        bool requireModule, uint64_t &offset, uint32_t &kind,
-                        uint32_t defaultBinding = UINT32_MAX) {
-  uint32_t scope = 0;
-  if (!expressionContext(database, root, scope, nullptr, nullptr,
-                         defaultBinding))
+// A nested interface/program is the immediate instance, while vpiModule
+// follows the enclosing scope chain to a module (37.10 details 2 and 3).
+bool enclosingInstance(const Database &database, uint32_t scope,
+                       bool requireModule, uint64_t &offset, uint32_t &kind) {
+  if (scope >= database.scopeCount)
     return false;
   offset = database.scopes + uint64_t{scope} * kScopeSize;
   using Kind = obelisk::reflection::VPIObjectKind;
   for (;;) {
     kind = recordVPIKind(database.data + offset);
-    if (kind == uint32_t(Kind::Module) || kind == uint32_t(Kind::Interface) ||
-        kind == uint32_t(Kind::Program) || kind == uint32_t(Kind::Package))
-      return !requireModule || kind == uint32_t(Kind::Module);
+    if (kind == uint32_t(Kind::Module) ||
+        (!requireModule &&
+         (kind == uint32_t(Kind::Interface) ||
+          kind == uint32_t(Kind::Program) || kind == uint32_t(Kind::Package))))
+      return true;
     offset = read64(database.data + offset + 16);
     if (!isScopeOffset(database, offset))
       return false;
   }
+}
+
+bool expressionInstance(const Database &database, const uint8_t *root,
+                        bool requireModule, uint64_t &offset, uint32_t &kind,
+                        uint32_t defaultBinding = UINT32_MAX) {
+  uint32_t scope = 0;
+  return expressionContext(database, root, scope, nullptr, nullptr,
+                           defaultBinding) &&
+         enclosingInstance(database, scope, requireModule, offset, kind);
 }
 bool expressionLeaf(const Database &database, const uint8_t *root,
                     uint32_t ordinal, ExpressionLeafInfo &out,
@@ -7355,7 +7365,8 @@ bool validateDatabaseImpl(const Database &database) {
           (memberFile == 0 ? memberLine != 0 || memberColumn != 0
                            : memberLine == 0 || memberColumn == 0) ||
           (memberKind == uint16_t(Kind::ParamAssign)
-               ? kind != uint16_t(Kind::Module) ||
+               ? (kind != uint16_t(Kind::Module) &&
+                  kind != uint16_t(Kind::Interface)) ||
                      (memberFlags &
                       ~(kDefinitionAssignmentNamed | kDefinitionAssignmentType |
                         kDefinitionAssignmentDefault |
@@ -8784,7 +8795,18 @@ bool validateDatabaseImpl(const Database &database) {
         return false;
       break;
     case obelisk::reflection::VPIAutomaticRelation::ParentScope:
-      if (sourceTable == obelisk::reflection::TableKind::Statement) {
+      if (sourceTable == obelisk::reflection::TableKind::Scope &&
+          selector == uint32_t(Kind::Module)) {
+        uint64_t parent = read64(sourceRecord + 16), expected = 0;
+        uint32_t expectedKind = 0;
+        if (targetTable != obelisk::reflection::TableKind::Scope ||
+            !isScopeOffset(database, parent) ||
+            !enclosingInstance(database,
+                               (parent - database.scopes) / kScopeSize, true,
+                               expected, expectedKind) ||
+            targetOffset != expected)
+          return false;
+      } else if (sourceTable == obelisk::reflection::TableKind::Statement) {
         obelisk::reflection::TableKind expectedTable;
         uint32_t expectedIndex = 0;
         if (!effectiveStatementScope(database, sourceIndex, expectedTable,
@@ -11322,6 +11344,16 @@ obelisk_rt_status designVPIRelationRange(const Database &database,
                          obelisk::reflection::VPIObjectKind::Module) ||
          selector == static_cast<uint32_t>(
                          obelisk::reflection::VPIRelationKind::InstanceRel))) {
+      if (selector == uint32_t(obelisk::reflection::VPIObjectKind::Module)) {
+        uint64_t offset = 0;
+        uint32_t kind = 0;
+        if (!enclosingInstance(database, virtualScope, true, offset, kind))
+          return OBELISK_RT_EOF;
+        outRange->first = virtualToken(kVirtualMemberTag, virtualBinding,
+                                       kDefaultModuleRelation);
+        outRange->count = 1;
+        return OBELISK_RT_OK;
+      }
       uint32_t scopeKind = recordVPIKind(database.data + database.scopes +
                                          uint64_t{virtualScope} * kScopeSize);
       if (!obelisk::reflection::vpiObjectSetContains(edge->targets, scopeKind))
@@ -11610,14 +11642,11 @@ designVPIRelationTarget(const Database &database, uint64_t relationIndex,
               obelisk::reflection::TableKind::Scope ||
           scope >= database.scopeCount)
         return OBELISK_RT_INVALID_HANDLE;
-      outCursor->offset = database.scopes + uint64_t{scope} * kScopeSize;
-      *outType = recordVPIKind(database.data + outCursor->offset);
+      if (!enclosingInstance(database, scope, payload == kDefaultModuleRelation,
+                             outCursor->offset, *outType))
+        return OBELISK_RT_INVALID_HANDLE;
       *outStatement = false;
-      return payload != kDefaultModuleRelation ||
-                     *outType ==
-                         uint32_t(obelisk::reflection::VPIObjectKind::Module)
-                 ? OBELISK_RT_OK
-                 : OBELISK_RT_INVALID_HANDLE;
+      return OBELISK_RT_OK;
     }
     if ((payload & kExpressionPayloadDomainMask) == kExpressionCursorFlag) {
       defaultBinding = bindingIndex;

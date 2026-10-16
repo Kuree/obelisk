@@ -705,6 +705,12 @@ def VPIEarlyDefParamRhs : VPITraversalEdge<DefParamObjects, RhsRel,
 def VPIEarlyModuleParamAssigns : VPITraversalEdge<ModuleSource, ParamAssign,
   IterateMode, VPIObjectSet<"EarlyModuleParamAssignTargets", [ParamAssign]>,
   NoOrder, "37.28", 0, AutomaticDirectChild>;
+// Interface is an instance (37.10), hence a scope (37.12). Its specialized
+// diagram need not repeat this inherited 37.28 edge.
+def VPIEarlyInterfaceParamAssigns : VPITraversalEdge<InterfaceObjects,
+  ParamAssign, IterateMode,
+  VPIObjectSet<"EarlyInterfaceParamAssignTargets", [ParamAssign]>,
+  NoOrder, "37.12; 37.28", 0, AutomaticDirectChild>;
 def VPIEarlyScopeParamAssigns : VPITraversalEdge<NonInstanceScopeObjects,
   ParamAssign, IterateMode,
   VPIObjectSet<"EarlyScopeParamAssignTargets", [ParamAssign]>,

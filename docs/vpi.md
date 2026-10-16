@@ -54,7 +54,7 @@ aliases, nominal and aggregate type defaults and nonpacked value parameters
 remain incomplete.
 
 Explicit parameter assignments on direct scalar module/interface children of a
-module retain `vpiParamAssign` occurrence identity, exact child `vpiLhs`,
+module, and interface children of an interface, retain `vpiParamAssign` occurrence identity, exact child `vpiLhs`,
 `vpiConnByName`, and original `vpiRhs`. Literal, supported source operators,
 parent-parameter references, builtin type actuals, and parent type-parameter
 references preserve the source independently of the child's original default
@@ -64,8 +64,10 @@ shared across repeated parent instances; only exact contextual child endpoints
 grow per instance. In the two-assignment differential fixture, 128 parent
 instances occupy 63,344 bytes versus 96,872 bytes with duplicated source
 definitions. Equal syntax in separate assignment occurrences keeps distinct
-identity. Interface-parent, instance-array, generate-owned, defparam, and
-configuration override inventories remain incomplete.
+identity. Instance-array, generate-owned, defparam, and
+configuration override inventories remain incomplete. Programs cannot contain
+module, interface, or program instances (24.3), so this direct-child assignment
+representation does not apply to Program parents.
 
 Retained expression slots include integral literals (including contextual
 `'0`, `'1`, `'x`, and `'z`), concatenations,

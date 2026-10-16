@@ -3097,7 +3097,9 @@ FailureOr<llvm::StringMap<DescriptorInfo>> materializeDesignDescriptors(
   };
   DenseMap<Attribute, AssignmentPlan> assignmentPlans;
   for (auto instance : definitionInstancePlans) {
-    if (sim::vpiKindForScope(instance.scope) != uint32_t(VPIKind::Module))
+    uint32_t parentKind = sim::vpiKindForScope(instance.scope);
+    if (parentKind != uint32_t(VPIKind::Module) &&
+        parentKind != uint32_t(VPIKind::Interface))
       continue;
     auto &declarations = definitionMemberPlans[instance.definition.getValue()];
     SmallVector<semantic::SVSourceParameterActualOp> actuals;

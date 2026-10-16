@@ -76,7 +76,7 @@ TEST(VPIObjectModel, RefObjectTypespecRequiresNetVariableOrPartSelectActual) {
   EXPECT_FALSE(hasRefObjectTypespecActual(vpiParameter));
 }
 
-constexpr size_t kExpectedTraversalCount = 1913;
+constexpr size_t kExpectedTraversalCount = 1914;
 static_assert(sizeof(vpiTraversals) / sizeof(vpiTraversals[0]) ==
               kExpectedTraversalCount);
 constexpr size_t kExpectedPropertyCount = 2337;
@@ -856,9 +856,10 @@ TEST(VPIObjectModel, AutomaticRelationsAreExplicitStructuralEdges) {
         << keyName(edge.sourceType, edge.selector, edge.mode);
   }
 
-  EXPECT_EQ(requireTraversal(vpiModule, vpiParamAssign, Mode::Iterate)
-                .automaticRelation,
-            Automatic::DirectChild);
+  for (int kind : {vpiModule, vpiInterface})
+    EXPECT_EQ(
+        requireTraversal(kind, vpiParamAssign, Mode::Iterate).automaticRelation,
+        Automatic::DirectChild);
   EXPECT_EQ(
       requireTraversal(vpiModule, vpiProcess, Mode::Iterate).automaticRelation,
       Automatic::DirectChild);

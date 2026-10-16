@@ -14,6 +14,8 @@
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <string_view>
+#include <tuple>
 #include <vector>
 
 TEST(GeneratedDesignDatabase, SharedParameterAssignments) {
@@ -439,4 +441,217 @@ module attributes {llvm.data_layout = "e-p:64:64-i64:64-i32:32-i16:16-i8:8", llv
     RecordProperty("shared_" + std::to_string(count), shared.bytes);
     RecordProperty("expanded_" + std::to_string(count), expanded.bytes);
   }
+}
+
+TEST(GeneratedDesignDatabase, ParameterAssignmentsInInstanceScopes) {
+  using namespace obelisk;
+  const char *input = std::getenv("OBELISK_TEST_INPUT");
+  ASSERT_NE(input, nullptr);
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  sim::ObeliskSimulationDialect>();
+  mlir::MLIRContext context(registry);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(input, &context);
+  ASSERT_TRUE(module);
+  auto design = *module->getOps<sim::SimDesignOp>().begin();
+  SimulationBytecodeOptions options;
+  options.vpi = "full";
+  auto encoded = encodeSimulationDesign(design, options);
+  ASSERT_TRUE(mlir::succeeded(encoded));
+  obelisk_rt_execution_descriptor_v1 execution{};
+  execution.version = OBELISK_RT_VERSION;
+  execution.flags = encoded->executionFlags;
+  execution.bytecode = encoded->bytecode.data();
+  execution.bytecode_size = encoded->bytecode.size();
+  execution.design_database = encoded->designDatabase.data();
+  execution.design_database_size = encoded->designDatabase.size();
+  execution.state_bit_count = encoded->stateBitCount;
+  for (unsigned byte = 0; byte != 8; ++byte)
+    execution.checksum |= uint64_t{encoded->bytecode[32 + byte]} << (byte * 8);
+  ASSERT_EQ(obelisk_rt_v1_design_validate(&execution), OBELISK_RT_OK);
+  obelisk_rt_context *raw = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_context_create_for_design(&execution, &raw),
+            OBELISK_RT_OK);
+  std::unique_ptr<obelisk_rt_context, decltype(&obelisk_rt_v1_context_destroy)>
+      runtime(raw, obelisk_rt_v1_context_destroy);
+  ASSERT_EQ(obelisk_rt_v1_vpi_startup(raw, nullptr, 0), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_end_compile(raw), OBELISK_RT_OK);
+  ASSERT_EQ(obelisk_rt_v1_vpi_start_simulation(raw), OBELISK_RT_OK);
+  std::vector<vpiHandle> handles;
+  auto keep = [&](vpiHandle handle) {
+    if (handle)
+      handles.push_back(handle);
+    return handle;
+  };
+  auto named = [&](const char *name) {
+    return keep(vpi_handle_by_name(const_cast<char *>(name), nullptr));
+  };
+  auto integer = [&](vpiHandle handle) {
+    s_vpi_value value{};
+    value.format = vpiIntVal;
+    vpi_get_value(handle, &value);
+    s_vpi_error_info error{};
+    EXPECT_EQ(vpi_chk_error(&error), 0);
+    return value.value.integer;
+  };
+  auto assignments = [&](vpiHandle scope) {
+    std::vector<vpiHandle> result;
+    auto iterator = vpi_iterate(vpiParamAssign, scope);
+    if (iterator)
+      while (auto next = vpi_scan(iterator))
+        result.push_back(keep(next));
+    return result;
+  };
+  auto top = named("top");
+  ASSERT_NE(top, nullptr);
+  std::vector<vpiHandle> literals;
+  for (auto [path, kind, value] : {std::tuple{"top.i", vpiInterface, 11},
+                                   std::tuple{"top.j", vpiInterface, 13},
+                                   std::tuple{"loose", vpiInterface, 19}}) {
+    SCOPED_TRACE(path);
+    auto parent = named(path);
+    ASSERT_NE(parent, nullptr);
+    EXPECT_EQ(vpi_get(vpiType, parent), kind);
+    auto list = assignments(parent);
+    ASSERT_EQ(list.size(), 3u);
+    auto lhsA = named((std::string(path) + ".a.N").c_str());
+    auto lhsB = named((std::string(path) + ".b.N").c_str());
+    auto lhsType = named((std::string(path) + ".a.U").c_str());
+    auto p = named((std::string(path) + ".P").c_str());
+    auto t = named((std::string(path) + ".T").c_str());
+    ASSERT_NE(lhsA, nullptr);
+    ASSERT_NE(lhsB, nullptr);
+    ASSERT_NE(lhsType, nullptr);
+    auto parentModule = keep(vpi_handle(vpiModule, p));
+    if (std::string_view(path) == "loose")
+      EXPECT_EQ(parentModule, nullptr);
+    else
+      EXPECT_TRUE(vpi_compare_objects(parentModule, top));
+    auto typeModule = keep(vpi_handle(vpiModule, t));
+    if (std::string_view(path) == "loose")
+      EXPECT_EQ(typeModule, nullptr);
+    else
+      EXPECT_TRUE(vpi_compare_objects(typeModule, top));
+    EXPECT_TRUE(vpi_compare_objects(keep(vpi_handle(vpiInstance, p)), parent));
+    bool seenA = false, seenB = false, seenType = false;
+    for (auto assignment : list) {
+      EXPECT_EQ(vpi_get(vpiType, assignment), vpiParamAssign);
+      EXPECT_TRUE(
+          vpi_compare_objects(keep(vpi_handle(vpiScope, assignment)), parent));
+      auto moduleHandle = keep(vpi_handle(vpiModule, assignment));
+      if (std::string_view(path) == "loose")
+        EXPECT_EQ(moduleHandle, nullptr);
+      else
+        EXPECT_TRUE(vpi_compare_objects(moduleHandle, top));
+      auto lhs = keep(vpi_handle(vpiLhs, assignment));
+      auto rhs = keep(vpi_handle(vpiRhs, assignment));
+      ASSERT_NE(rhs, nullptr);
+      if (vpi_compare_objects(lhs, lhsA)) {
+        EXPECT_FALSE(seenA);
+        seenA = true;
+        EXPECT_TRUE(vpi_compare_objects(rhs, p));
+        EXPECT_EQ(integer(rhs), value);
+        EXPECT_EQ(integer(lhs), value);
+        EXPECT_EQ(vpi_get(vpiConnByName, assignment), 1);
+      } else if (vpi_compare_objects(lhs, lhsB)) {
+        EXPECT_FALSE(seenB);
+        seenB = true;
+        EXPECT_EQ(vpi_get(vpiType, rhs), vpiConstant);
+        EXPECT_EQ(integer(rhs), 7);
+        EXPECT_EQ(vpi_get(vpiConnByName, assignment), 0);
+        auto rhsModule = keep(vpi_handle(vpiModule, rhs));
+        if (std::string_view(path) == "loose")
+          EXPECT_EQ(rhsModule, nullptr);
+        else
+          EXPECT_TRUE(vpi_compare_objects(rhsModule, top));
+        EXPECT_TRUE(
+            vpi_compare_objects(keep(vpi_handle(vpiInstance, rhs)), parent));
+        literals.push_back(rhs);
+      } else {
+        EXPECT_TRUE(vpi_compare_objects(lhs, lhsType));
+        EXPECT_FALSE(seenType);
+        seenType = true;
+        EXPECT_EQ(vpi_get(vpiType, rhs), vpiTypeParameter);
+        EXPECT_TRUE(vpi_compare_objects(rhs, t));
+      }
+    }
+    EXPECT_TRUE(seenA);
+    EXPECT_TRUE(seenB);
+    EXPECT_TRUE(seenType);
+  }
+  ASSERT_EQ(literals.size(), 3u);
+  for (unsigned i = 0; i != literals.size(); ++i)
+    for (unsigned j = i + 1; j != literals.size(); ++j)
+      EXPECT_FALSE(vpi_compare_objects(literals[i], literals[j]));
+  EXPECT_EQ(vpi_iterate(vpiParamAssign, top), nullptr);
+  using namespace reflection;
+  HeaderView header(encoded->designDatabase.data());
+  SemanticDirectoryView directory(encoded->designDatabase.data() +
+                                  header.getReserved());
+  unsigned sharedAssignments = 0;
+  for (uint64_t i = 0; i != directory.getDefinitionMemberCount(); ++i) {
+    DefinitionMemberView member(encoded->designDatabase.data() +
+                                directory.getDefinitionMemberOffset() +
+                                i * DefinitionMemberLayout.size);
+    sharedAssignments += member.getVPIKind() == vpiParamAssign;
+  }
+  // Three repeated interfaces share one declaration/RHS inventory.
+  // Only child endpoints are contextual.
+  EXPECT_EQ(sharedAssignments, 3u);
+  EXPECT_EQ(directory.getDefinitionMemberEndpointCount(), 9u);
+  // An ancestor relation may skip an Interface, but may not retarget a
+  // different module. Locate the exact physical source and target by IDs.
+  uint32_t otherIndex = UINT32_MAX;
+  for (uint32_t i = 0; i != header.getScopeCount(); ++i) {
+    ScopeView scope(encoded->designDatabase.data() + header.getScopeOffset() +
+                    i * ScopeLayout.size);
+    const char *name = reinterpret_cast<const char *>(
+        encoded->designDatabase.data() + scope.getName());
+    if (std::string_view(name) == "other")
+      otherIndex = i;
+  }
+  ASSERT_NE(otherIndex, UINT32_MAX);
+  bool mutated = false;
+  auto bytes = encoded->designDatabase;
+  for (uint32_t i = 0; i != header.getRelationCount(); ++i) {
+    uint64_t offset = header.getRelationOffset() + i * RelationLayout.size;
+    RelationView relation(bytes.data() + offset);
+    if (unpackRelationSourceTable(relation.getSourceKindAndTable()) !=
+            TableKind::Scope ||
+        unpackRelationSourceKind(relation.getSourceKindAndTable()) !=
+            vpiInterface ||
+        relation.getSelector() != vpiModule)
+      continue;
+    ScopeView sourceScope(bytes.data() + header.getScopeOffset() +
+                          relation.getSourceIndex() * ScopeLayout.size);
+    if (sourceScope.getParent() == 0)
+      continue;
+    ScopeView parentScope(bytes.data() + sourceScope.getParent());
+    if (unpackRecordKindPayload(parentScope.getKindAndVPIKind()) !=
+        vpiInterface)
+      continue;
+    uint32_t target = 0;
+    ASSERT_TRUE(tryPackTableIndex(TableKind::Scope, otherIndex, target));
+    RelationWriter(bytes.data() + offset).setTargetIndexAndTable(target);
+    mutated = true;
+    break;
+  }
+  ASSERT_TRUE(mutated);
+  {
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (size_t i = 0; i != bytes.size(); ++i) {
+      uint8_t byte = i >= field::HeaderChecksum && i < field::HeaderChecksum + 8
+                         ? 0
+                         : bytes[i];
+      hash = (hash ^ byte) * UINT64_C(1099511628211);
+    }
+    HeaderWriter(bytes.data()).setChecksum(hash);
+    auto invalid = execution;
+    invalid.design_database = bytes.data();
+    EXPECT_EQ(obelisk_rt_v1_design_validate(&invalid),
+              OBELISK_RT_INVALID_DESIGN);
+  }
+
+  for (auto handle : handles)
+    vpi_free_object(handle);
 }
