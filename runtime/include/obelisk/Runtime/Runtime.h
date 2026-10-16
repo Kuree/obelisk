@@ -3454,6 +3454,12 @@ obelisk_rt_status obelisk_rt_v1_vpi_call_finish(obelisk_rt_context *context,
 obelisk_rt_status obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context,
                                                uint64_t local_id,
                                                uint64_t automatic_reference);
+// Observe a ref/const-ref formal's actual ArgumentRef location. The binding
+// retains no state allocation or managed root. managed has the same 0/1/2
+// meanings as argument_ref_load; a zero global-state payload is valid.
+obelisk_rt_status obelisk_rt_v1_vpi_frame_bind_alias(
+    obelisk_rt_context *context, uint64_t local_id, obelisk_rt_object_v1 *owner,
+    uint64_t payload, uint32_t managed);
 // A positive source statement ID must belong to the current lexical owner.
 // Zero explicitly marks the current statement unavailable; a later positive
 // checkpoint restores exact identity. This differs from pre-statement absence.

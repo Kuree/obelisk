@@ -727,6 +727,16 @@ obelisk_rt_vpi_automatic_read(obelisk_rt_context *context, uint64_t reference,
                               uint64_t bitOffset, uint64_t bitWidth,
                               uint8_t *outValue, uint8_t *outUnknown) noexcept;
 
+// Query-only access to a complete stable state reference, including design
+// and static roots. Invalid extents never use executable fallback bits.
+obelisk_rt_status obelisk_rt_vpi_state_validate(obelisk_rt_context *context,
+                                                uint64_t reference,
+                                                uint64_t bitWidth) noexcept;
+obelisk_rt_status
+obelisk_rt_vpi_state_read(obelisk_rt_context *context, uint64_t reference,
+                          uint64_t bitOffset, uint64_t bitWidth,
+                          uint8_t *outValue, uint8_t *outUnknown) noexcept;
+
 struct NativeAutomaticState {
   struct CandidateRoot {
     uint64_t byteOffset;

@@ -319,6 +319,16 @@ struct VPISystemTf {
   PLI_BYTE8 *userData = nullptr;
 };
 
+struct VPIFrameReference {
+  // Zero is the existing owned-automatic binding; aliases use ArgumentRef's
+  // state/class/path discriminator plus one. Managed owners remain weak.
+  uint32_t kind = 0;
+  uint64_t payload = 0;
+  obelisk_rt_object_v1 *owner = nullptr;
+  uint64_t identity = 0;
+  bool operator==(const VPIFrameReference &) const = default;
+};
+
 struct VPIFrameActivation {
   uint64_t id = 0;
   uint64_t parent = 0;
@@ -329,7 +339,7 @@ struct VPIFrameActivation {
   obelisk_rt_design_cursor_v1 statement{};
   bool originIsStatement = false;
   obelisk_rt_design_cursor_v1 lexicalScope{};
-  std::unordered_map<uint64_t, uint64_t> localReferences;
+  std::unordered_map<uint64_t, VPIFrameReference> localReferences;
   bool statementUnavailable = false;
 };
 
@@ -4852,6 +4862,114 @@ bool encodeRealBits(__vpiHandle *handle, PLI_INT32 type, uint64_t width,
   return false;
 }
 
+obelisk_rt_status readFrameReference(VPIState *state,
+                                     const VPIFrameReference &reference,
+                                     obelisk_rt_design_cursor_v1 declaration,
+                                     const obelisk_rt_design_info_v1 &info,
+                                     uint64_t firstBit, uint64_t bitWidth,
+                                     uint64_t *value, uint64_t *unknown) {
+  OBELISK_RT_TRY {
+    if (!info.bit_width || info.bit_width > UINT64_MAX - 7 ||
+        firstBit > info.bit_width || bitWidth > info.bit_width - firstBit)
+      return OBELISK_RT_INVALID_ARGUMENT;
+    auto *context = state->context;
+    if (reference.kind <= 1) {
+      auto status = reference.kind == 0
+                        ? obelisk_rt_vpi_automatic_validate(
+                              context, reference.payload, info.bit_width)
+                        : obelisk_rt_vpi_state_validate(
+                              context, reference.payload, info.bit_width);
+      if (status != OBELISK_RT_OK || !value)
+        return status;
+      return reference.kind == 0
+                 ? obelisk_rt_vpi_automatic_read(
+                       context, reference.payload, firstBit, bitWidth,
+                       reinterpret_cast<uint8_t *>(value),
+                       reinterpret_cast<uint8_t *>(unknown))
+                 : obelisk_rt_vpi_state_read(
+                       context, reference.payload, firstBit, bitWidth,
+                       reinterpret_cast<uint8_t *>(value),
+                       reinterpret_cast<uint8_t *>(unknown));
+    }
+    ManagedExecutionScope managed(context);
+    if (managed.getStatus() != OBELISK_RT_OK || !managed.getLane())
+      return OBELISK_RT_INVALID_LIFECYCLE;
+    ManagedObjectLease lease;
+    auto status = obelisk_rt_managed_object_acquire(
+        managed.getLane(), reference.owner,
+        reference.kind == 2 ? OBELISK_RT_MANAGED_CLASS
+                            : OBELISK_RT_MANAGED_REFERENCE_PATH,
+        &lease);
+    if (status != OBELISK_RT_OK ||
+        obelisk_rt_v1_object_id(reference.owner) != reference.identity)
+      return OBELISK_RT_INVALID_HANDLE;
+    obelisk_rt_design_type_info_v1 type{};
+    if (obelisk_rt_cached_design_type_info(context, {info.type_offset},
+                                           &type) != OBELISK_RT_OK)
+      return OBELISK_RT_INVALID_DESIGN;
+    bool fourState = (type.flags & OBELISK_RT_DESIGN_TYPE_FOUR_STATE) != 0;
+    uint64_t planeSize = (info.bit_width + 7) / 8;
+    const uint8_t *sourceValue = nullptr, *sourceUnknown = nullptr;
+    std::vector<uint8_t> copiedValue, copiedUnknown;
+    if (reference.kind == 2) {
+      if (reference.payload > lease.extent ||
+          planeSize > (lease.extent - reference.payload) / (fourState ? 2 : 1))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      if (!value)
+        return OBELISK_RT_OK;
+      sourceValue = lease.object + reference.payload;
+      sourceUnknown = fourState ? sourceValue + planeSize : nullptr;
+    } else {
+      // Path access takes its own lease. The active lane and validated weak
+      // identity protect this query without retaining the path afterward.
+      lease = ManagedObjectLease{};
+      const obelisk_rt_element_type_v1 *element = nullptr;
+      status = obelisk_rt_reference_path_element(reference.owner, &element);
+      obelisk_rt_design_cursor_v1 semantic{};
+      VPIValueLayoutOwner layout;
+      if (status == OBELISK_RT_OK)
+        status = obelisk_rt_cached_design_semantic_root(context, declaration,
+                                                        &semantic);
+      if (status == OBELISK_RT_OK)
+        status = obelisk_rt_cached_vpi_value_layout_owner(context, declaration,
+                                                          &layout);
+      if (status == OBELISK_RT_OK)
+        status =
+            obelisk_rt_vpi_element_matches(context, layout, semantic, element);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (element->value_size < planeSize || element->value_size > SIZE_MAX)
+        return OBELISK_RT_LAYOUT_MISMATCH;
+      planeSize = element->value_size;
+      fourState = (element->flags & OBELISK_RT_ELEMENT_FOUR_STATE) != 0;
+      copiedValue.resize(planeSize);
+      if (fourState)
+        copiedUnknown.resize(planeSize);
+      uint32_t present = 0;
+      status = obelisk_rt_v1_reference_path_load(
+          reference.owner, copiedValue.data(),
+          fourState ? copiedUnknown.data() : nullptr, &present);
+      if (status != OBELISK_RT_OK || !present)
+        return status != OBELISK_RT_OK ? status : OBELISK_RT_INVALID_HANDLE;
+      if (!value)
+        return OBELISK_RT_OK;
+      sourceValue = copiedValue.data();
+      sourceUnknown = fourState ? copiedUnknown.data() : nullptr;
+    }
+    for (uint64_t bit = 0; bit != bitWidth; ++bit) {
+      const uint64_t source = firstBit + bit, mask = uint64_t{1} << (bit % 64);
+      if ((sourceValue[source / 8] >> (source % 8)) & 1)
+        value[bit / 64] |= mask;
+      if (unknown && sourceUnknown &&
+          ((sourceUnknown[source / 8] >> (source % 8)) & 1))
+        unknown[bit / 64] |= mask;
+    }
+    return OBELISK_RT_OK;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
 obelisk_rt_status readFrameLocalBits(__vpiHandle *handle,
                                      obelisk_rt_design_cursor_v1 cursor,
                                      uint64_t firstBit, uint64_t bitWidth,
@@ -4874,13 +4992,8 @@ obelisk_rt_status readFrameLocalBits(__vpiHandle *handle,
              vpiNotice);
     return OBELISK_RT_INVALID_HANDLE;
   }
-  auto status = obelisk_rt_vpi_automatic_validate(
-      handle->owner->context, bound->second, info.bit_width);
-  if (status == OBELISK_RT_OK)
-    status = obelisk_rt_vpi_automatic_read(
-        handle->owner->context, bound->second, firstBit, bitWidth,
-        reinterpret_cast<uint8_t *>(value),
-        reinterpret_cast<uint8_t *>(unknown));
+  auto status = readFrameReference(handle->owner, bound->second, cursor, info,
+                                   firstBit, bitWidth, value, unknown);
   if (status != OBELISK_RT_OK)
     setError(handle->owner, "automatic variable storage is no longer available",
              vpiNotice);
@@ -7896,11 +8009,59 @@ obelisk_rt_v1_vpi_frame_bind(obelisk_rt_context *context, uint64_t localID,
   if (status != OBELISK_RT_OK)
     return status;
   OBELISK_RT_TRY {
-    auto [entry, inserted] =
-        frame->second.localReferences.emplace(localID, automaticReference);
-    return inserted || entry->second == automaticReference
+    auto [entry, inserted] = frame->second.localReferences.emplace(
+        localID, VPIFrameReference{0, automaticReference});
+    return inserted || entry->second == VPIFrameReference{0, automaticReference}
                ? OBELISK_RT_OK
                : OBELISK_RT_INVALID_FRAME;
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
+extern "C" OBELISK_VPI_EXPORT obelisk_rt_status
+obelisk_rt_v1_vpi_frame_bind_alias(obelisk_rt_context *context,
+                                   uint64_t localID,
+                                   obelisk_rt_object_v1 *owner,
+                                   uint64_t payload, uint32_t managed) {
+  if (!context || !localID || managed > 2 || (!managed && owner) ||
+      (managed && !owner) || (managed == 2 && payload))
+    return OBELISK_RT_INVALID_ARGUMENT;
+  ContextMutexLock lock(context);
+  auto *state = static_cast<VPIState *>(context->vpiState);
+  if (!state)
+    return OBELISK_RT_OK;
+  auto frame =
+      state->frames.find(topFrame(state, context->activeLogicalProcessToken));
+  if (frame == state->frames.end())
+    return OBELISK_RT_INVALID_FRAME;
+  VPIFrameLocalBinding local;
+  auto status = obelisk_rt_cached_vpi_frame_local(context, localID, &local);
+  if (status != OBELISK_RT_OK)
+    return status == OBELISK_RT_EOF ? OBELISK_RT_INVALID_ARGUMENT : status;
+  if (local.lexicalCodeUnitID != frame->second.lexicalCodeUnit ||
+      local.scope.offset != frame->second.lexicalScope.offset)
+    return OBELISK_RT_INVALID_FRAME;
+  obelisk_rt_design_info_v1 info{};
+  status = obelisk_rt_cached_design_info(context, local.declaration, &info);
+  if (status != OBELISK_RT_OK)
+    return status;
+  OBELISK_RT_TRY {
+    ManagedExecutionScope execution(context);
+    if (execution.getStatus() != OBELISK_RT_OK)
+      return execution.getStatus();
+    if (managed && !obelisk_rt_managed_object_belongs_to(context, owner))
+      return OBELISK_RT_INVALID_HANDLE;
+    VPIFrameReference reference{managed + 1, payload, owner,
+                                managed ? obelisk_rt_v1_object_id(owner) : 0};
+    status = readFrameReference(state, reference, local.declaration, info, 0,
+                                info.bit_width, nullptr, nullptr);
+    if (status != OBELISK_RT_OK)
+      return status;
+    auto [entry, inserted] =
+        frame->second.localReferences.emplace(localID, reference);
+    return inserted || entry->second == reference ? OBELISK_RT_OK
+                                                  : OBELISK_RT_INVALID_FRAME;
   }
   OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
   OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
@@ -10097,9 +10258,9 @@ extern "C" OBELISK_VPI_EXPORT PLI_INT32 vpi_get(PLI_INT32 property,
       auto bound =
           frame->second.localReferences.find(handle->localDeclarationID);
       return bound != frame->second.localReferences.end() &&
-             obelisk_rt_vpi_automatic_validate(handle->owner->context,
-                                               bound->second,
-                                               info.bit_width) == OBELISK_RT_OK;
+             readFrameReference(handle->owner, bound->second, handle->cursor,
+                                info, 0, info.bit_width, nullptr,
+                                nullptr) == OBELISK_RT_OK;
     }
     VPIClassMemberBinding member{};
     if (obelisk_rt_cached_vpi_class_member(
