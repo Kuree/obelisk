@@ -5058,6 +5058,79 @@ obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
   return status;
 }
 
+obelisk_rt_status obelisk_rt_container_element_snapshot(
+    obelisk_rt_object_v1 *container, std::optional<uint64_t> index,
+    VPIContainerElementSnapshot *outSnapshot) {
+  if (!outSnapshot)
+    return OBELISK_RT_INVALID_ARGUMENT;
+  *outSnapshot = {};
+  OBELISK_RT_TRY {
+    for (;;) {
+      ContainerHeader snapshot{};
+      auto status = snapshotHeader(container, snapshot);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (snapshot.isMailbox ||
+          (snapshot.kind != OBELISK_RT_CONTAINER_DYNAMIC_ARRAY &&
+           snapshot.kind != OBELISK_RT_CONTAINER_QUEUE))
+        return OBELISK_RT_INVALID_ARGUMENT;
+      uint64_t stride = elementStride(snapshot.element);
+      if (stride == 0 || stride > SIZE_MAX)
+        return OBELISK_RT_OUT_OF_RESOURCES;
+      VPIContainerElementSnapshot result;
+      result.kind = snapshot.kind;
+      result.size = snapshot.size;
+      result.element = snapshot.element;
+      if (index && *index < snapshot.size)
+        result.value.resize(static_cast<size_t>(stride));
+      struct Copy {
+        ContainerHeader snapshot;
+        std::optional<uint64_t> index;
+        std::vector<uint8_t> *value;
+        bool retry = false;
+      } copy{snapshot, index, &result.value};
+      status = obelisk_rt_managed_object_access(
+          container, OBELISK_RT_MANAGED_CONTAINER,
+          [](void *opaque, uint8_t *object,
+             uint64_t extent) -> obelisk_rt_status {
+            auto &copy = *static_cast<Copy *>(opaque);
+            if (extent != sizeof(ContainerHeader))
+              return OBELISK_RT_INVALID_HANDLE;
+            auto &current = *reinterpret_cast<ContainerHeader *>(object);
+            if (current.epoch != copy.snapshot.epoch ||
+                current.size != copy.snapshot.size ||
+                current.buffer != copy.snapshot.buffer) {
+              copy.retry = true;
+              return OBELISK_RT_OK;
+            }
+            if (!copy.index)
+              return OBELISK_RT_OK;
+            if (*copy.index >= current.size)
+              return OBELISK_RT_EOF;
+            const uint64_t stride = elementStride(current.element);
+            return accessBuffer(current.buffer, [&](uint8_t *data,
+                                                    uint64_t size) {
+              if (stride == 0 || current.capacity > size / stride)
+                return OBELISK_RT_INVALID_HANDLE;
+              std::memcpy(copy.value->data(),
+                          data + physicalIndex(current, *copy.index) * stride,
+                          static_cast<size_t>(stride));
+              return OBELISK_RT_OK;
+            });
+          },
+          &copy);
+      if (status != OBELISK_RT_OK)
+        return status;
+      if (copy.retry)
+        continue;
+      *outSnapshot = std::move(result);
+      return OBELISK_RT_OK;
+    }
+  }
+  OBELISK_RT_CATCH(const std::bad_alloc &) { return OBELISK_RT_OUT_OF_MEMORY; }
+  OBELISK_RT_CATCH_ALL { return OBELISK_RT_OUT_OF_RESOURCES; }
+}
+
 extern "C" obelisk_rt_status obelisk_rt_v1_mailbox_create_typed(
     obelisk_rt_gc_lane_v1 *lane, uint64_t typeID, uint32_t elementKind,
     uint32_t elementFlags, uint64_t valueSize, uint64_t alignment,

@@ -3206,6 +3206,21 @@ obelisk_rt_container_snapshot(obelisk_rt_object_v1 *container,
                               const obelisk_rt_element_type_v1 **outElement,
                               std::vector<uint8_t> &outValues);
 
+// Copies one sequential-container element under the same owner/buffer access
+// as its size and descriptor. A missing index requests metadata only; an index
+// outside the current size returns EOF. Mailboxes and associative arrays are
+// excluded. Callers keep their lane entered while inspecting managed words.
+struct VPIContainerElementSnapshot {
+  uint32_t kind = 0;
+  uint64_t size = 0;
+  const obelisk_rt_element_type_v1 *element = nullptr;
+  std::vector<uint8_t> value;
+};
+obelisk_rt_status
+obelisk_rt_container_element_snapshot(obelisk_rt_object_v1 *container,
+                                      std::optional<uint64_t> index,
+                                      VPIContainerElementSnapshot *outSnapshot);
+
 // Sparse associative snapshots preserve exact stored keys and value planes.
 // Managed key words remain weak; callers keep their lane active until copying
 // the referenced values. Entries are returned in the runtime's index order,

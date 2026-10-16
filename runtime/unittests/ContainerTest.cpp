@@ -3265,4 +3265,94 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param == BuiltinClassKind::Mailbox ? "Mailbox" : "Semaphore";
     });
 
+TEST_F(ManagedValueTest, SequentialElementSnapshotsTrackResizeAndQueueOrder) {
+  for (bool queueKind : {false, true}) {
+    obelisk_rt_object_v1 *container = nullptr;
+    ASSERT_EQ(queueKind ? obelisk_rt_v1_queue_create(lane, &logicElement,
+                                                     UINT64_MAX, &container)
+                        : obelisk_rt_v1_dynamic_array_create(
+                              lane, &logicElement, 4, &container),
+              OBELISK_RT_OK);
+    obelisk_rt_gc_root_v1 root{};
+    ASSERT_EQ(obelisk_rt_v1_gc_root_push(lane, &root, &container),
+              OBELISK_RT_OK);
+    for (uint8_t i = 0; i != 4; ++i) {
+      uint8_t value = i + 1, unknown = i & 1;
+      ASSERT_EQ(queueKind ? obelisk_rt_v1_queue_push(lane, container, 0, &value,
+                                                     &unknown)
+                          : obelisk_rt_v1_container_write(lane, container, i,
+                                                          &value, &unknown),
+                OBELISK_RT_OK);
+    }
+    if (queueKind) {
+      for (unsigned i = 0; i != 2; ++i) {
+        uint8_t value = 0, unknown = 0;
+        uint32_t present = 0;
+        ASSERT_EQ(
+            obelisk_rt_v1_queue_pop(container, 1, &value, &unknown, &present),
+            OBELISK_RT_OK);
+        ASSERT_EQ(present, 1u);
+      }
+      for (uint8_t value : {5, 6}) {
+        uint8_t unknown = value & 1;
+        ASSERT_EQ(
+            obelisk_rt_v1_queue_push(lane, container, 0, &value, &unknown),
+            OBELISK_RT_OK);
+      }
+    }
+    VPIContainerElementSnapshot metadata;
+    ASSERT_EQ(obelisk_rt_container_element_snapshot(container, std::nullopt,
+                                                    &metadata),
+              OBELISK_RT_OK);
+    EXPECT_EQ(metadata.kind, queueKind ? OBELISK_RT_CONTAINER_QUEUE
+                                       : OBELISK_RT_CONTAINER_DYNAMIC_ARRAY);
+    EXPECT_EQ(metadata.size, 4u);
+    ASSERT_NE(metadata.element, nullptr);
+    EXPECT_EQ(metadata.element->kind, OBELISK_RT_ELEMENT_LOGIC);
+    EXPECT_TRUE(metadata.value.empty());
+    VPIContainerElementSnapshot selected;
+    ASSERT_EQ(obelisk_rt_container_element_snapshot(container, 2, &selected),
+              OBELISK_RT_OK);
+    EXPECT_EQ(selected.value, queueKind ? (std::vector<uint8_t>{5, 1})
+                                        : (std::vector<uint8_t>{3, 0}));
+    EXPECT_EQ(obelisk_rt_v1_container_size(container), 4u);
+    auto copied = selected.value;
+    ASSERT_EQ(queueKind
+                  ? obelisk_rt_v1_container_delete(container)
+                  : obelisk_rt_v1_dynamic_array_resize(lane, container, 1),
+              OBELISK_RT_OK);
+    EXPECT_EQ(selected.value, copied);
+    EXPECT_EQ(obelisk_rt_container_element_snapshot(container, 2, &selected),
+              OBELISK_RT_EOF);
+    EXPECT_EQ(selected.kind, 0u);
+    EXPECT_EQ(selected.element, nullptr);
+    EXPECT_TRUE(selected.value.empty());
+    ASSERT_EQ(obelisk_rt_container_element_snapshot(container, std::nullopt,
+                                                    &selected),
+              OBELISK_RT_OK);
+    EXPECT_EQ(selected.size, queueKind ? 0u : 1u);
+    EXPECT_EQ(obelisk_rt_container_element_snapshot(container, 0, nullptr),
+              OBELISK_RT_INVALID_ARGUMENT);
+    ASSERT_EQ(obelisk_rt_v1_gc_root_pop(lane, &root), OBELISK_RT_OK);
+  }
+}
+
+TEST_F(ManagedValueTest, SequentialElementSnapshotsRejectMailboxIdentity) {
+  obelisk_rt_object_v1 *mailbox = nullptr;
+  ASSERT_EQ(obelisk_rt_v1_mailbox_create_typed(
+                lane, wordElement.type_id, wordElement.kind, wordElement.flags,
+                wordElement.value_size, wordElement.alignment,
+                wordElement.bit_width, nullptr, 0, 0, &mailbox),
+            OBELISK_RT_OK);
+  VPIContainerElementSnapshot snapshot;
+  snapshot.kind = OBELISK_RT_CONTAINER_QUEUE;
+  snapshot.value = {42};
+  EXPECT_EQ(
+      obelisk_rt_container_element_snapshot(mailbox, std::nullopt, &snapshot),
+      OBELISK_RT_INVALID_ARGUMENT);
+  EXPECT_EQ(snapshot.kind, 0u);
+  EXPECT_EQ(snapshot.element, nullptr);
+  EXPECT_TRUE(snapshot.value.empty());
+}
+
 } // namespace
