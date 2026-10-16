@@ -52,6 +52,19 @@ non-static members reached from a typespec need a live receiver for value
 access. Generic lexical declarations without a realized specialization and
 original parameter-default expression graphs remain incomplete.
 
+Mailbox, semaphore, and process variables also expose `vpiClassObj` and
+`vpiClassTypespec`. Upcasting a user class to its mailbox or semaphore base
+preserves the outer object's identity and allocated class type. Built-in
+typespecs have no `vpiClassDefn`. Process objects retain their identity after
+execution finishes or is killed.
+
+`vpiWaitingProcesses` on a mailbox or semaphore returns its suspended threads,
+including when the resource is a built-in base of a user class. Thread handles
+expose `vpiParent`, child `vpiThread` iteration, and `vpiActive`, which is true
+only during that thread's execution. Thread handles expire on finish or kill;
+they have `vpiAutomaticScheme` lifetime. Thread source-statement and frame
+relations, and mailbox message iteration, are still being completed.
+
 Virtual-interface variables expose their current `vpiActual` interface or
 exact modport; a null variable returns a quiet null handle. `vpiIsModPort`
 describes the declared type even for a null variable. Interface modport
